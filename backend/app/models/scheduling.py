@@ -847,6 +847,26 @@ class PatientBookingRequest(BaseModel):
     )
 
 
+#: Shared by both change verbs, because the promise is identical.
+_ACKNOWLEDGE_DESCRIPTION = (
+    "Set true to confirm the patient was told this change falls inside the "
+    "practice's notice period and may incur its policy. REQUIRED for a late "
+    "change: without it the request is refused with LATE_CHANGE_NOT_"
+    "ACKNOWLEDGED, and the refusal is what the client shows them. Ignored "
+    "when the change is not late."
+)
+
+
+class PatientCancelRequest(BaseModel):
+    """What a patient may say when cancelling. Only an acknowledgement.
+
+    A body at all, on a route that otherwise needs none, so that a late
+    cancellation can be confirmed rather than merely reported afterwards.
+    """
+
+    acknowledge_late_change: bool = Field(default=False, description=_ACKNOWLEDGE_DESCRIPTION)
+
+
 class PatientRescheduleRequest(BaseModel):
     """A patient moving one of their own appointments to a different time.
 
@@ -861,3 +881,4 @@ class PatientRescheduleRequest(BaseModel):
     """
 
     start_at: datetime
+    acknowledge_late_change: bool = Field(default=False, description=_ACKNOWLEDGE_DESCRIPTION)

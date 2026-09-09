@@ -892,6 +892,33 @@ def test_a_booking_is_audited_as_the_patient(
 # bearing ones rather than a formality.
 
 
+def _reschedule_of(engine: Engine, appointment_id: str) -> dict[str, Any]:
+    """The reschedule columns, read as the clinician.
+
+    From the database, not the response: ``rescheduled_from`` exists precisely
+    because it outlives the request that set it.
+    """
+    with engine.begin() as conn:
+        conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
+        conn.execute(text("SELECT set_config('app.current_user_id', :u, false)"), {"u": _CLINICIAN})
+        row = conn.execute(
+            text(
+                "SELECT rescheduled_at, rescheduled_from, rescheduled_by, late_reschedule, "
+                "late_change_acknowledged FROM appointments WHERE id = CAST(:i AS uuid)"
+            ),
+            {"i": appointment_id},
+        ).one()
+    return {
+        "rescheduled_at": row[0],
+        "rescheduled_from": row[1]
+        if row[1] is None or row[1].tzinfo
+        else row[1].replace(tzinfo=UTC),
+        "rescheduled_by": row[2],
+        "late_reschedule": row[3],
+        "late_change_acknowledged": row[4],
+    }
+
+
 def _cancellation_of(engine: Engine, appointment_id: str) -> dict[str, Any]:
     """The cancellation columns, read as the clinician.
 
@@ -1046,7 +1073,10 @@ def test_cancelling_inside_the_cutoff_succeeds_and_is_marked_late(
     # Wide enough to swallow the target day, which sits two weeks out.
     _set_policy(engine, cancel_cutoff_hours=24 * 400)
 
-    response = patient_a_client.post(f"/api/patient/booking/{appointment_id}/cancel")
+    response = patient_a_client.post(
+        f"/api/patient/booking/{appointment_id}/cancel",
+        json={"acknowledge_late_change": True},
+    )
 
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "cancelled"
@@ -1274,25 +1304,6 @@ def test_rescheduling_to_a_time_the_engine_never_offered_is_refused(
     assert _start_of(engine, appointment_id) == _at(10)
 
 
-def test_rescheduling_inside_the_cutoff_is_refused(
-    engine: Engine, practice: dict[str, Any], patient_a_client: Any
-) -> None:
-    """The OLD time's cutoff, which is a different question from the new time."""
-    _open_policy(engine)
-    _clear_appointments(engine)
-    appointment_id = _seed_appointment(engine, practice["a"], _at(10))
-    _set_policy(engine, reschedule_cutoff_hours=24 * 400)
-
-    response = patient_a_client.post(
-        f"/api/patient/booking/{appointment_id}/reschedule",
-        json={"start_at": _at(14).isoformat()},
-    )
-
-    assert response.status_code == 409, response.text
-    assert response.json()["detail"]["error"]["code"] == "INSIDE_RESCHEDULE_CUTOFF"
-    assert _start_of(engine, appointment_id) == _at(10)
-
-
 def test_rescheduling_to_the_same_time_is_the_unchanged_appointment(
     engine: Engine, practice: dict[str, Any], patient_a_client: Any
 ) -> None:
@@ -1354,13 +1365,14 @@ def test_self_booking_off_stops_moving_an_appointment_but_not_cancelling_one(
     assert _status_of(engine, appointment_id) == "cancelled"
 
 
-def test_a_late_reschedule_is_refused_and_points_at_cancelling(
+def test_a_late_reschedule_goes_through_once_acknowledged(
     engine: Engine, practice: dict[str, Any], patient_a_client: Any
 ) -> None:
-    """A patient turned away from moving it must be told what they CAN do.
+    """Moving late is allowed on the same terms as cancelling late.
 
-    Otherwise the refusal reads as "nothing you can do online", and the
-    practice hears nothing at all.
+    The two verbs give up a slot at short notice in exactly the same way, so
+    refusing one and permitting the other would only teach patients to cancel
+    and rebook to route around it.
     """
     _open_policy(engine)
     _clear_appointments(engine)
@@ -1369,8 +1381,97 @@ def test_a_late_reschedule_is_refused_and_points_at_cancelling(
 
     response = patient_a_client.post(
         f"/api/patient/booking/{appointment_id}/reschedule",
+        json={"start_at": _at(14).isoformat(), "acknowledge_late_change": True},
+    )
+
+    assert response.status_code == 200, response.text
+    assert _start_of(engine, appointment_id) == _at(14)
+
+    record = _reschedule_of(engine, appointment_id)
+    assert record["late_reschedule"] is True
+    assert record["rescheduled_by"] == "patient"
+    assert record["late_change_acknowledged"] is True
+    # The slot actually given up, which start_at no longer remembers.
+    assert record["rescheduled_from"] == _at(10)
+
+
+def test_an_on_time_reschedule_is_not_marked_late(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """The control, and it needs no acknowledgement to succeed."""
+    _open_policy(engine)
+    _clear_appointments(engine)
+    appointment_id = _seed_appointment(engine, practice["a"], _at(10))
+
+    response = patient_a_client.post(
+        f"/api/patient/booking/{appointment_id}/reschedule",
         json={"start_at": _at(14).isoformat()},
     )
 
-    assert response.status_code == 409, response.text
-    assert "cancel" in response.json()["detail"]["error"]["message"].lower()
+    assert response.status_code == 200, response.text
+    record = _reschedule_of(engine, appointment_id)
+    assert record["late_reschedule"] is False
+    assert record["rescheduled_from"] == _at(10)
+    assert record["late_change_acknowledged"] is None, (
+        "an on-time change recorded an acknowledgement, which would make the "
+        "column meaningless as evidence"
+    )
+
+
+def test_a_late_change_without_acknowledgement_is_refused_and_changes_nothing(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """The gate that makes the boolean worth recording.
+
+    A flag a client may optionally send records what the client claimed. This
+    one cannot be reached without the client having been handed the warning to
+    show, because the first attempt is refused with it.
+    """
+    _open_policy(engine)
+    _clear_appointments(engine)
+    appointment_id = _seed_appointment(engine, practice["a"], _at(10))
+    _set_policy(engine, cancel_cutoff_hours=24 * 400, reschedule_cutoff_hours=24 * 400)
+
+    cancel = patient_a_client.post(f"/api/patient/booking/{appointment_id}/cancel")
+    move = patient_a_client.post(
+        f"/api/patient/booking/{appointment_id}/reschedule",
+        json={"start_at": _at(14).isoformat()},
+    )
+
+    for response in (cancel, move):
+        assert response.status_code == 409, response.text
+        assert response.json()["detail"]["error"]["code"] == "LATE_CHANGE_NOT_ACKNOWLEDGED"
+        # The message is what the patient is shown, so it has to say why.
+        message = response.json()["detail"]["error"]["message"].lower()
+        assert "notice period" in message
+
+    # Nothing moved and nothing was cancelled by the refused attempts.
+    assert _status_of(engine, appointment_id) == "confirmed"
+    assert _start_of(engine, appointment_id) == _at(10)
+
+
+def test_the_same_request_succeeds_once_it_carries_the_acknowledgement(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """Two calls, not a wall. The refusal above must not be a dead end.
+
+    If the second attempt did not succeed, the notice period would be back to
+    withholding permission, and a patient who cannot attend would be left with
+    no way to say so.
+    """
+    _open_policy(engine)
+    _clear_appointments(engine)
+    appointment_id = _seed_appointment(engine, practice["a"], _at(10))
+    _set_policy(engine, cancel_cutoff_hours=24 * 400)
+
+    first = patient_a_client.post(f"/api/patient/booking/{appointment_id}/cancel")
+    assert first.status_code == 409, first.text
+
+    second = patient_a_client.post(
+        f"/api/patient/booking/{appointment_id}/cancel",
+        json={"acknowledge_late_change": True},
+    )
+
+    assert second.status_code == 200, second.text
+    assert _status_of(engine, appointment_id) == "cancelled"
+    assert _cancellation_of(engine, appointment_id)["late_cancellation"] is True

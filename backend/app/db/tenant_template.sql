@@ -141,7 +141,12 @@ CREATE TABLE __TENANT_SCHEMA__.appointments (
     cancelled_at timestamp with time zone,
     cancelled_by character varying(20),
     cancelled_by_id uuid,
-    late_cancellation boolean
+    late_cancellation boolean,
+    rescheduled_at timestamp with time zone,
+    rescheduled_from timestamp with time zone,
+    rescheduled_by character varying(20),
+    late_reschedule boolean,
+    late_change_acknowledged boolean
 );
 
 

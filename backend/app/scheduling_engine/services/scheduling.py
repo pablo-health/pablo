@@ -21,6 +21,7 @@ from ..models.appointment import (
     Appointment,
     AppointmentStatus,
     CancellationActor,
+    ChangeRecord,
     RecurrenceFrequency,
 )
 from ..models.availability import EnforcementLevel
@@ -291,6 +292,16 @@ class SchedulingService:
             "unit_count",
             "place_of_service",
             "diagnosis_codes",
+            # The reschedule record. Settable through here rather than by a
+            # dedicated method so a move keeps everything update_appointment
+            # already does — the overlap re-check that excludes this row, the
+            # rule re-check, and marking a touched occurrence of a series as
+            # an exception.
+            "rescheduled_at",
+            "rescheduled_from",
+            "rescheduled_by",
+            "late_reschedule",
+            "late_change_acknowledged",
         }
         for field, value in updates.items():
             if field not in allowed_fields:
@@ -450,9 +461,7 @@ class SchedulingService:
         appointment_id: str,
         user_id: str,
         *,
-        cancelled_by: str = CancellationActor.CLINICIAN,
-        cancelled_by_id: str | None = None,
-        late: bool | None = None,
+        record: ChangeRecord | None = None,
     ) -> Appointment:
         """Cancel a single appointment.
 
@@ -470,17 +479,20 @@ class SchedulingService:
         the practice's policy — and is frozen here rather than derived on read,
         since an editable policy would otherwise rewrite the past.
 
-        The default actor is the clinician, which is what every in-app cancel
-        has always been. Callers acting for somebody else say so.
+        Omitting ``record`` means the clinician cancelled with nothing else
+        recorded, which is what every in-app cancel has always been. Callers
+        acting for somebody else say so.
         """
         appointment = self.get_appointment(appointment_id, user_id)
         appointment.status = AppointmentStatus.CANCELLED
         appointment.pending_expires_at = None
         appointment.confirmation_token_hash = None
+        record = record or ChangeRecord()
         appointment.cancelled_at = _now()
-        appointment.cancelled_by = cancelled_by
-        appointment.cancelled_by_id = cancelled_by_id
-        appointment.late_cancellation = late
+        appointment.cancelled_by = record.by
+        appointment.cancelled_by_id = record.by_id
+        appointment.late_cancellation = record.late
+        appointment.late_change_acknowledged = record.acknowledged
         appointment.updated_at = _now()
         return self._repo.update(appointment)
 

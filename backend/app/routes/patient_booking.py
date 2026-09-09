@@ -53,6 +53,7 @@ from ..models.audit import AuditAction, ResourceType
 from ..models.scheduling import (
     PatientAppointmentResponse,
     PatientBookingRequest,
+    PatientCancelRequest,
     PatientRescheduleRequest,
     PatientSlotListResponse,
     PatientSlotResponse,
@@ -67,7 +68,11 @@ from ..scheduling_engine.exceptions import (
     InvalidAppointmentError,
     RuleViolationError,
 )
-from ..scheduling_engine.models.appointment import AppointmentStatus, CancellationActor
+from ..scheduling_engine.models.appointment import (
+    AppointmentStatus,
+    CancellationActor,
+    ChangeRecord,
+)
 from ..scheduling_engine.services.availability import AvailabilityEngine
 from ..scheduling_engine.services.scheduling import SchedulingService
 from ..scheduling_engine.services.scheduling_policy import load_policy, may_self_book
@@ -99,13 +104,14 @@ _SLOT_TAKEN = "That time is no longer available."
 _NO_CLINICIAN = "This account is not set up for online booking yet."
 _NO_SUCH_APPOINTMENT = "No such appointment."
 _ALREADY_SETTLED = "That appointment can no longer be changed online."
-#: Moving an appointment late is refused; CANCELLING it late is not. The
-#: message says so, because a patient who cannot make it needs to know there
-#: is still a way to tell the practice — the alternative is that they say
-#: nothing and simply do not arrive.
-_TOO_LATE_TO_RESCHEDULE = (
-    "It is too close to the appointment to move it online. You can still "
-    "cancel it, and the practice's notice policy will apply."
+#: Shown when a change falls inside the notice period and the caller has not
+#: confirmed it knows. Not a refusal in substance — the same request carrying
+#: the acknowledgement succeeds — but it MUST read as a warning a patient can
+#: act on, because it is the only thing standing between them and a fee they
+#: were never told about.
+_LATE_CHANGE_NEEDS_ACK = (
+    "This is inside the practice's notice period, so its cancellation policy "
+    "may apply. Confirm to go ahead."
 )
 
 #: Fallback when an appointment type carries no length of its own.
@@ -301,21 +307,32 @@ def _inside_cutoff(appointment: Appointment, *, cutoff_hours: int, now: datetime
     return _as_utc(appointment.start_at) - now < timedelta(hours=cutoff_hours)
 
 
-def _require_outside_cutoff(
-    appointment: Appointment, *, cutoff_hours: int, message: str, code: str, now: datetime
-) -> None:
-    """Refuse a change made too close to the appointment itself.
+def _late_change(
+    appointment: Appointment, *, cutoff_hours: int, now: datetime, acknowledged: bool
+) -> bool:
+    """Whether this change is late, refusing it if nobody has said they know.
 
-    The practice's own number, not a constant here: a clinician who holds a
-    slot open needs to know when it stops being reclaimable, and 24 hours is a
-    default rather than a rule.
+    The notice period never withholds permission — a patient who cannot attend
+    must always be able to say so, because the alternative is a no-show, which
+    costs the practice the slot AND the warning. What it does is cost money,
+    and being charged for something nobody mentioned is its own harm.
 
-    Used by rescheduling only. Cancelling deliberately does NOT refuse — the
-    two are different questions, and the difference is explained where cancel
-    handles it.
+    So a late change without an acknowledgement is refused ONCE, with a message
+    written to be shown to the patient; the identical request carrying
+    ``acknowledge_late_change`` then succeeds. Two calls, not a wall.
+
+    Making the flag REQUIRED rather than merely recorded is the whole point. A
+    boolean a client may optionally send records what the client claimed. A
+    boolean the API demands cannot be reached without the client having been
+    handed the warning to display, which is what turns it into evidence.
     """
-    if _inside_cutoff(appointment, cutoff_hours=cutoff_hours, now=now):
-        raise _refuse(message, code, status.HTTP_409_CONFLICT)
+    if not _inside_cutoff(appointment, cutoff_hours=cutoff_hours, now=now):
+        return False
+    if not acknowledged:
+        raise _refuse(
+            _LATE_CHANGE_NEEDS_ACK, "LATE_CHANGE_NOT_ACKNOWLEDGED", status.HTTP_409_CONFLICT
+        )
+    return True
 
 
 def _window(policy: dict[str, object], *, now: datetime) -> tuple[datetime, datetime]:
@@ -590,11 +607,17 @@ def reschedule_appointment(
 
     Both ends are gated, and they are different gates:
 
-    * the OLD time answers to ``reschedule_cutoff_hours`` — past that, the
-      clinician has arranged their day around it and reclaiming the slot is a
-      conversation, not a form;
+    * the OLD time answers to ``reschedule_cutoff_hours``, which — exactly as
+      for cancelling — decides a FEE and not permission. Inside it the move
+      still happens; it is recorded as late and needs the acknowledgement.
     * the NEW time answers to the full booking policy, because placing an
-      appointment there is placing a booking there.
+      appointment there is placing a booking there. That one really is a
+      refusal: the practice does not take bookings at that hour from anybody.
+
+    The slot given up is kept in ``rescheduled_from``, because ``start_at`` is
+    about to stop remembering it and that abandoned slot is what a late-change
+    fee is charged for. Only the most recent move is held; a patient who moves
+    the same appointment three times leaves three audit entries and one row.
 
     The kind of appointment does not change. Only the time is in the request,
     so a short check-in cannot be converted into a long slot the practice never
@@ -615,13 +638,13 @@ def reschedule_appointment(
 
         appointment = _own_appointment(service, owner, patient, appointment_id)
         _require_changeable(appointment)
-        _require_outside_cutoff(
+        late = _late_change(
             appointment,
             cutoff_hours=int(policy["reschedule_cutoff_hours"]),  # type: ignore[call-overload]
-            message=_TOO_LATE_TO_RESCHEDULE,
-            code="INSIDE_RESCHEDULE_CUTOFF",
             now=now,
+            acknowledged=payload.acknowledge_late_change,
         )
+        released = _as_utc(appointment.start_at)
 
         start_at = _as_utc(payload.start_at)
         if start_at == _as_utc(appointment.start_at):
@@ -650,6 +673,14 @@ def reschedule_appointment(
                 tz=tz,
                 start_at=start_at,
                 end_at=start_at + timedelta(minutes=duration),
+                # The slot being given up, kept because ``start_at`` is about
+                # to stop remembering it — and the abandoned slot is what a
+                # late-change fee is charged for.
+                rescheduled_at=now,
+                rescheduled_from=released,
+                rescheduled_by=CancellationActor.PATIENT,
+                late_reschedule=late,
+                late_change_acknowledged=payload.acknowledge_late_change if late else None,
             )
         except AppointmentConflictError as exc:
             raise _refuse(_SLOT_TAKEN, "SLOT_TAKEN", status.HTTP_409_CONFLICT) from exc
@@ -675,6 +706,7 @@ def cancel_appointment(
     request: Request,
     appointment_id: str,
     patient: CurrentPatient,
+    payload: PatientCancelRequest = PatientCancelRequest(),
     audit: AuditService = Depends(get_audit_service),
     _: None = Depends(subscription_exempt),
 ) -> PatientAppointmentResponse:
@@ -713,17 +745,21 @@ def cancel_appointment(
         appointment = _own_appointment(service, owner, patient, appointment_id)
         _require_changeable(appointment)
 
-        late = _inside_cutoff(
+        late = _late_change(
             appointment,
             cutoff_hours=int(policy["cancel_cutoff_hours"]),  # type: ignore[call-overload]
             now=now,
+            acknowledged=payload.acknowledge_late_change,
         )
         cancelled = service.cancel_appointment(
             appointment_id,
             owner,
-            cancelled_by=CancellationActor.PATIENT,
-            cancelled_by_id=patient.patient_id,
-            late=late,
+            record=ChangeRecord(
+                by=CancellationActor.PATIENT,
+                by_id=patient.patient_id,
+                late=late,
+                acknowledged=payload.acknowledge_late_change if late else None,
+            ),
         )
         session.commit()
 

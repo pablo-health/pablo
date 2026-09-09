@@ -45,8 +45,33 @@ def upgrade() -> None:
     )
     op.add_column("appointments", sa.Column("late_cancellation", sa.Boolean(), nullable=True))
 
+    # Moving an appointment overwrites start_at, so the slot given up would
+    # otherwise stop existing — and that abandoned slot is what a late-change
+    # fee is charged for.
+    op.add_column(
+        "appointments",
+        sa.Column("rescheduled_at", sa.DateTime(timezone=True), nullable=True),
+    )
+    op.add_column(
+        "appointments",
+        sa.Column("rescheduled_from", sa.DateTime(timezone=True), nullable=True),
+    )
+    op.add_column("appointments", sa.Column("rescheduled_by", sa.String(length=20), nullable=True))
+    op.add_column("appointments", sa.Column("late_reschedule", sa.Boolean(), nullable=True))
+
+    # The caller's attestation that it was told the change fell inside the
+    # notice period. The API refuses a late change without it.
+    op.add_column(
+        "appointments", sa.Column("late_change_acknowledged", sa.Boolean(), nullable=True)
+    )
+
 
 def downgrade() -> None:
+    op.drop_column("appointments", "late_change_acknowledged")
+    op.drop_column("appointments", "late_reschedule")
+    op.drop_column("appointments", "rescheduled_by")
+    op.drop_column("appointments", "rescheduled_from")
+    op.drop_column("appointments", "rescheduled_at")
     op.drop_column("appointments", "late_cancellation")
     op.drop_column("appointments", "cancelled_by_id")
     op.drop_column("appointments", "cancelled_by")

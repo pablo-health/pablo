@@ -54,6 +54,23 @@ class CancellationActor(StrEnum):
     SYSTEM = "system"
 
 
+@dataclass(frozen=True)
+class ChangeRecord:
+    """Who gave up a slot, and on what terms.
+
+    The four facts always travel together and are only meaningful together —
+    "late" says nothing useful without who, and an acknowledgement means
+    nothing attached to a change that was not late. Passing them as one value
+    keeps that grouping visible instead of spreading it across a parameter
+    list where a caller can supply half of it.
+    """
+
+    by: str = CancellationActor.CLINICIAN
+    by_id: str | None = None
+    late: bool | None = None
+    acknowledged: bool | None = None
+
+
 @dataclass
 class Appointment:
     """A scheduled appointment between a therapist and patient.
@@ -145,6 +162,33 @@ class Appointment:
     cancelled_by: str | None = None  # CancellationActor value
     cancelled_by_id: str | None = None  # None for SYSTEM, which is nobody
 
+    # --- Reschedule record --------------------------------------------------
+    #
+    # Moving an appointment overwrites ``start_at``, so without these the time
+    # that was given up simply stops existing — and that abandoned slot is
+    # exactly what a late-change fee is charged for. ``rescheduled_from`` keeps
+    # it.
+    #
+    # Only the most recent move is held here. A patient who moves the same
+    # appointment three times leaves three audit entries and one row, which is
+    # enough to charge for the latest change and not enough to see a pattern;
+    # a per-change history would need its own table.
+    rescheduled_at: datetime | None = None
+    rescheduled_from: datetime | None = None
+    rescheduled_by: str | None = None  # CancellationActor value
+    late_reschedule: bool | None = None
+
+    # Whether the person was told the change fell inside the notice period and
+    # went ahead anyway. Set only alongside a late change.
+    #
+    # Worth being precise about what this proves: it is an attestation made by
+    # the caller, not evidence that a human read a dialog. It is worth
+    # recording because the API REFUSES a late change that does not carry it —
+    # so a client cannot reach this state without having been handed the
+    # warning to show. That is the same standing as any click-through consent:
+    # good evidence, not proof.
+    late_change_acknowledged: bool | None = None
+
     # Whether the notice given fell short of the practice's cancellation
     # window. Frozen here at the moment of cancelling rather than derived on
     # read, because the policy is editable: recomputing later would silently
@@ -198,6 +242,11 @@ class Appointment:
             cancelled_by=data.get("cancelled_by"),
             cancelled_by_id=data.get("cancelled_by_id"),
             late_cancellation=data.get("late_cancellation"),
+            rescheduled_at=data.get("rescheduled_at"),
+            rescheduled_from=data.get("rescheduled_from"),
+            rescheduled_by=data.get("rescheduled_by"),
+            late_reschedule=data.get("late_reschedule"),
+            late_change_acknowledged=data.get("late_change_acknowledged"),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
         )
@@ -244,6 +293,11 @@ class Appointment:
             "cancelled_by": self.cancelled_by,
             "cancelled_by_id": self.cancelled_by_id,
             "late_cancellation": self.late_cancellation,
+            "rescheduled_at": self.rescheduled_at,
+            "rescheduled_from": self.rescheduled_from,
+            "rescheduled_by": self.rescheduled_by,
+            "late_reschedule": self.late_reschedule,
+            "late_change_acknowledged": self.late_change_acknowledged,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }

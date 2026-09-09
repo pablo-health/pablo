@@ -584,6 +584,23 @@ class AppointmentRow(Base):
     # policy is editable, so recomputing later would silently change whether a
     # past cancellation had been chargeable.
     late_cancellation: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # --- Reschedule record ------------------------------------------------
+    #
+    # A move overwrites start_at, so without ``rescheduled_from`` the slot the
+    # patient gave up stops existing — and that abandoned slot is precisely
+    # what a late-change fee is charged for. Only the most recent move is kept;
+    # the audit log carries the sequence.
+    rescheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rescheduled_from: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    rescheduled_by: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    late_reschedule: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # The caller's attestation that it was told the change was late and went
+    # ahead. Load-bearing because the API REFUSES a late change without it, so
+    # a client cannot reach this state without having been handed the warning
+    # to show — which is what makes it evidence rather than a checkbox.
+    late_change_acknowledged: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     #: Which ``appointment_types`` row this is an instance of.
     #:
     #: Nullable because an appointment can outlive its type: deleting a type
