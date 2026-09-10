@@ -603,10 +603,15 @@ async def _deliver(control: str, kind: TransactionKind) -> dict[str, Any]:
             # rule, and the scanner was right to flag it. The class is all a
             # test needs: it asserts that delivery failed, not how.
             delivery["error"] = type(exc).__name__
+            # Keyed by event id, not by control number. The event id is what
+            # the reader logs on its own side, so the two correlate; the
+            # control number carries a patient's claim identity, is already
+            # on the delivery record for a test to read, and would be in a
+            # log line for no one's benefit.
             logger.warning(
-                "webhook delivery failed kind=%s control=%s error=%s",
+                "webhook delivery failed kind=%s event=%s error=%s",
                 kind,
-                control,
+                event_id,
                 type(exc).__name__,
             )
     state.webhooks.append(delivery)
