@@ -752,6 +752,7 @@ class GoogleCalendarService:
             return {
                 "connected": False,
                 "calendar_id": None,
+                "calendar_name": None,
                 "last_synced_at": None,
                 "write_target": None,
                 "event_titling": None,
@@ -760,6 +761,15 @@ class GoogleCalendarService:
         return {
             "connected": True,
             "calendar_id": token_doc.calendar_id,
+            # Only the app calendar needs one: its id is an opaque
+            # ...@group.calendar.google.com hash that means nothing to the
+            # therapist reading it. A primary connection's id is their own
+            # email address, which is already the best label for it.
+            "calendar_name": (
+                _APP_CALENDAR_SUMMARY
+                if token_doc.write_target == CalendarWriteTarget.APP_CALENDAR.value
+                else None
+            ),
             "last_synced_at": token_doc.last_synced_at,
             "write_target": token_doc.write_target,
             "event_titling": self._effective_style(token_doc).value,
@@ -1184,27 +1194,42 @@ class GoogleCalendarService:
 
         Reconnecting finds the existing calendar rather than leaving a second
         one behind — but it finds it in our own token record, not by asking
-        Google. The app-calendar grant is a single scope,
+        for a list. The app-calendar grant is a single scope,
         ``calendar.app.created``, and Google refuses ``calendarList.list``
         under it: this used to open with that call, so the connect could never
         finish. Its identity is already ours to remember, so remember it.
 
-        A calendar the therapist deleted on Google's side still reads as
-        connected here until a push fails. That is the deliberate trade: an
-        existence check would have to be a call this scope may also refuse,
-        and one refused check per reconnect silently leaves a second calendar
-        in the therapist's account every time.
+        A remembered id still has to be checked, because the record outlives
+        the account that id belongs to. ``handle_callback`` runs whenever a
+        connect completes, including one that never disconnected first, so a
+        therapist reconnecting a DIFFERENT Google account would otherwise
+        inherit a calendar living in the previous one — credentials that
+        cannot write there, and a push that fails on every appointment after.
+        ``calendars().get`` answers that, and doubles as the existence check
+        for a calendar deleted on Google's side.
+
+        Any error from that check means create a new one. Being wrong in that
+        direction leaves a stray calendar; being wrong in the other silently
+        points a connection at somebody else's.
         """
+        service = _build_calendar_service(credentials)
+
         stored = self._token_repo.get(user_id)
         if (
             stored is not None
             and stored.calendar_id
             and stored.write_target == CalendarWriteTarget.APP_CALENDAR.value
         ):
-            logger.info("Reusing the existing Pablo-owned Google calendar")
-            return stored.calendar_id
+            try:
+                service.calendars().get(calendarId=stored.calendar_id).execute()
+            except Exception:
+                # Deleted, or owned by an account these credentials do not
+                # speak for. Either way the remembered id is not usable now.
+                logger.info("Stored Pablo-owned calendar is unreachable; creating a new one")
+            else:
+                logger.info("Reusing the existing Pablo-owned Google calendar")
+                return stored.calendar_id
 
-        service = _build_calendar_service(credentials)
         created = service.calendars().insert(body={"summary": _APP_CALENDAR_SUMMARY}).execute()
         calendar_id = created.get("id")
         if not calendar_id:

@@ -77,6 +77,7 @@ vi.mock("@/lib/api/scheduling", async () => {
 const DISCONNECTED: GoogleCalendarStatus = {
   connected: false,
   calendar_id: null,
+  calendar_name: null,
   last_synced_at: null,
   write_target: null,
   event_titling: null,
@@ -115,6 +116,7 @@ async function goToClientsStep(user: ReturnType<typeof userEvent.setup>) {
 const CONNECTED: GoogleCalendarStatus = {
   connected: true,
   calendar_id: "pablo-made@group.calendar.google.com",
+  calendar_name: "Pablo Sessions",
   last_synced_at: null,
   write_target: "app_calendar",
   event_titling: null,
@@ -249,6 +251,7 @@ describe("CalendarSetupWizard", () => {
     getStatus.mockResolvedValue({
       connected: true,
       calendar_id: "pablo-made@group.calendar.google.com",
+      calendar_name: "Pablo Sessions",
       last_synced_at: null,
       write_target: "app_calendar",
       event_titling: null,
@@ -258,7 +261,11 @@ describe("CalendarSetupWizard", () => {
     const user = userEvent.setup()
     renderWizard()
 
-    expect(await screen.findByText("pablo-made@group.calendar.google.com")).toBeInTheDocument()
+    // The name, not the id. A Pablo-made calendar's id is an opaque
+    // ...@group.calendar.google.com hash, and showing it to the therapist
+    // says nothing — this test used to assert the hash was on screen.
+    expect(await screen.findByText("Pablo Sessions")).toBeInTheDocument()
+    expect(screen.queryByText("pablo-made@group.calendar.google.com")).not.toBeInTheDocument()
     expect(screen.getByText("A calendar Pablo made for your sessions")).toBeInTheDocument()
 
     await user.click(screen.getByRole("button", { name: /disconnect/i }))
@@ -395,6 +402,7 @@ describe("CalendarSetupWizard event titling", () => {
     getStatus.mockResolvedValue({
       connected: true,
       calendar_id: "jane@example.test",
+      calendar_name: "Pablo Sessions",
       last_synced_at: null,
       write_target: "app_calendar",
       event_titling: "initials",
@@ -422,6 +430,7 @@ describe("CalendarSetupWizard event titling", () => {
     getStatus.mockResolvedValue({
       connected: true,
       calendar_id: "new-account@example.test",
+      calendar_name: "Pablo Sessions",
       last_synced_at: null,
       write_target: "app_calendar",
       event_titling: "initials",
@@ -439,6 +448,7 @@ describe("CalendarSetupWizard event titling", () => {
     getStatus.mockResolvedValue({
       connected: true,
       calendar_id: "jane@example.test",
+      calendar_name: "Pablo Sessions",
       last_synced_at: null,
       write_target: "app_calendar",
       event_titling: "initials",
