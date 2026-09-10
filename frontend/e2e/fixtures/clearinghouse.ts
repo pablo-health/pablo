@@ -62,12 +62,21 @@ export const clearinghouse = {
     return call<ReceivedLog>("GET", "/_fake/received")
   },
 
-  /** Claim submissions, optionally for one control number. */
+  /**
+   * Claim submissions, optionally for one control number.
+   *
+   * Matches both paths on purpose. Submission moved to the vendor's native
+   * endpoint (`/professional-claim-submissions`) and the older compatibility
+   * path (`/professionalclaims/v3/submission`) is still served, so a spec
+   * that asked about only one of them would answer "nothing was sent" for a
+   * claim that was.
+   */
   async submissions(controlNumber?: string): Promise<ReceivedRequest[]> {
     const log = await this.received()
     return log.requests.filter(
       (r) =>
-        r.path.endsWith("/professionalclaims/v3/submission") &&
+        (r.path.endsWith("/professional-claim-submissions") ||
+          r.path.endsWith("/professionalclaims/v3/submission")) &&
         (controlNumber === undefined || r.control_number === controlNumber),
     )
   },
