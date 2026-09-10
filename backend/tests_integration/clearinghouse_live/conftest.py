@@ -274,7 +274,6 @@ class SubmittedClaim:
     body: dict[str, Any] = field(repr=False)
     idempotency_key: str = field(repr=False)
     result: ClaimSubmissionResult = field(repr=False)
-    raw: dict[str, Any] = field(repr=False)
     submitted_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     @property
@@ -298,6 +297,5 @@ def submitted_claim(live: LiveClient) -> SubmittedClaim:
         body=body,
         idempotency_key=key,
         result=result,
-        raw=live.recorder.last_json(),
         submitted_at=submitted_at,
     )

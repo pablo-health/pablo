@@ -23,8 +23,6 @@ from tests.claims_fixtures import claim, line, person, subscriber_snapshot
 
 from .conftest import (
     TEST_PAYER_ID,
-    assert_same_shape,
-    fixture_shape,
     fresh_control_number,
     fresh_idempotency_key,
 )
@@ -99,7 +97,6 @@ def test_the_test_payer_accepts_a_claim_for_a_dependent(live: LiveClient) -> Non
     assert result.claimReference is not None
     assert result.claimReference.patientControlNumber == control_number
     assert result.claimReference.payerId == TEST_PAYER_ID
-    assert_same_shape(live.recorder.last_json(), fixture_shape(_RECORDING))
 
 
 def test_a_dependent_without_a_date_of_birth_is_rejected(live: LiveClient) -> None:
@@ -115,20 +112,19 @@ def test_a_dependent_without_a_date_of_birth_is_rejected(live: LiveClient) -> No
     # Neither gate lets this claim out, so the request is built from the
     # intact claim and the date blanked afterwards — the empty string is what
     # the mapping writes for a missing date, so this is the claim the vendor
-    # would see if both gates were skipped. (Leaving the field out entirely
-    # never reaches the edits: the vendor's body validator refuses it first,
-    # which the adapter raises as ``ClearinghouseValidationError``.)
+    # would see if both gates were skipped.
     request = _request(_dependent_claim(control_number, _child()))
     assert request.dependent is not None
     request.dependent.dateOfBirth = ""
 
     result = live.adapter.submit_claim(request, idempotency_key=fresh_idempotency_key())
 
-    assert live.recorder.last_status() == 400
+    # A refusal, not an exception: the claim is defective and a person has
+    # to fix it, which is what rejecting a claim means. The vendor names the
+    # field, so the biller is told where to look rather than being handed a
+    # code to go and look up.
     assert result.status == "ERROR"
-    assert result.errors, "an edit rejection carries at least one error"
-    assert {e.code for e in result.errors} == {_EDIT_REJECTED}
-    assert_same_shape(
-        live.recorder.last_json(),
-        fixture_shape("837p_submission_edit_rejected_subscriber_demographics.json"),
-    )
+    assert result.errors, "a refusal carries at least one error"
+    assert any("birth" in (error.code + error.description).lower() for error in result.errors), [
+        (error.code, error.description) for error in result.errors
+    ]

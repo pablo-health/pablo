@@ -9,7 +9,7 @@ planned; this module is the only implementation.
 
 Three hosts, because Stedi splits its healthcare API across them:
 
-* ``healthcare.us.stedi.com`` — eligibility and claim submission.
+* ``healthcare.us.stedi.com`` — eligibility.
 * ``payers.us.stedi.com`` — the payer directory search.
 * ``core.us.stedi.com`` — the generic transaction-polling API (used to fetch
   the inbound 277CA/835 that follow a submission); the 277CA itself is read
@@ -25,22 +25,26 @@ that one origin under the same version paths. Where to point the adapter is
 a property of the deployment's clearinghouse account, which is why it rides
 with the credentials rather than on a second configuration path of its own.
 
+Claim submission does not go through the hosts above. It goes to the
+vendor's own claim API through its SDK, because that API is the only one
+that keeps a per-claim history: a claim filed through the compatibility
+endpoint cannot afterwards be asked what happened to it. What comes back is
+the vendor's claim id, which stays the same across resubmissions and is what
+its acknowledgements and remittances are matched against.
+
 Idempotency: eligibility, payer search, and transaction/enrollment reads are
-side-effect-free, so they retry any transient failure
-(``Idempotency.SAFE``). Claim submission is deduped server-side by the
-``Idempotency-Key`` header, which the caller mints and persists before the
-call (one key per submission attempt) and ``submit_claim`` sends. For 24
-hours after the first request the vendor keys on it: the same key with the
-same body replays the original response (same ``correlationId``, no second
-claim filed); the same key with a different body is refused with ``422
-REQUEST_CHANGED``; a repeat while the original is still being processed is
-``409`` with a ``Retry-After``. That contract is what lets submission run as
-``Idempotency.KEYED`` — a timeout or 5xx that might have reached Stedi is
-retried with the same key, and the replay is safe. The 409 is deliberately
-not retried here; it surfaces as ``ClearinghouseInFlightError`` and the
-caller decides when to resend. Provider registration and enrollment creation
-carry no such key and stay ``Idempotency.UNSAFE``: only a failure that never
-reached the network (DNS, connection refused) is retried automatically.
+side-effect-free, so they retry any transient failure (``Idempotency.SAFE``).
+Claim submission is deduped server-side by an idempotency key the caller
+mints and persists before the call (one per submission attempt), which
+travels on the request body. Verified against the vendor 2026-09-09: the
+same key with the same claim replays the original answer — the same claim
+id, no second claim filed — while the same key with a different claim is
+refused. That is what makes a retry after a timeout safe. A repeat while the
+original is still in flight surfaces as ``ClearinghouseInFlightError`` and is
+deliberately not retried here; the caller decides when to resend. Provider
+registration and enrollment creation carry no such key and stay
+``Idempotency.UNSAFE``: only a failure that never reached the network (DNS,
+connection refused) is retried automatically.
 
 Logging here is limited to what the module docstring for ``app.claims``
 allows: claim control numbers, claim/transaction state, payer id, trace id,
@@ -82,6 +86,7 @@ from ..models.claims_transport import (
 from ..reliability import HTTP_REQUEST, Idempotency, RetryExhaustedError, call_with_retry
 from .clearinghouse import (
     ClearinghouseAccessDeniedError,
+    ClearinghouseError,
     ClearinghouseInFlightError,
     ClearinghouseNotFoundError,
     ClearinghouseNotProvisionedError,
@@ -91,6 +96,14 @@ from .clearinghouse import (
     ClearinghouseUnavailableError,
     ClearinghouseValidationError,
 )
+from .sdk_runtime import run_on_sdk_loop
+from .sdk_submission import (
+    rejection_from_validation,
+    result_from_sdk,
+    submission_error,
+    to_sdk_submission,
+)
+from .stedi_sdk import client_for
 
 logger = logging.getLogger(__name__)
 
@@ -159,8 +172,6 @@ _INVALID_REQUEST_BODY = "INVALID_REQUEST_BODY"
 _ACCOUNT_NOT_PROVISIONED = "ACCOUNT_NOT_PROVISIONED"
 _REQUEST_CHANGED = "REQUEST_CHANGED"
 
-_IDEMPOTENCY_KEY_HEADER = "Idempotency-Key"
-
 #: The submitter loop of an 837P names the sender; Stedi assigns no
 #: submitter id of its own and echoes whatever is sent (the recorded
 #: ``837p_request_test_payer.json`` and its X12 carry this value), and the
@@ -183,11 +194,9 @@ def _retry_after_seconds(response: httpx.Response) -> float | None:
 def _raise_for_error_envelope(response: httpx.Response) -> NoReturn:
     """Translate a non-2xx response into one of this module's typed exceptions.
 
-    A claim submission's 400 edit-rejection is deliberately NOT handled here
-    — it has its own well-formed ``ClaimSubmissionResult`` shape (``status:
-    "ERROR"``, an ``errors`` array) and is a business answer, not a transport
-    failure. Callers of ``submit_claim`` parse that shape directly and never
-    reach this function for it.
+    Claim submission does not reach this function at all: it goes through
+    the vendor's SDK rather than over ``httpx``, and its errors are
+    translated in ``app.claims.sdk_submission``.
 
     Only a 5xx (or a status this function has no name for) becomes
     ``ClearinghouseUnavailableError``; every 4xx the vendor documents has its
@@ -232,21 +241,6 @@ def _raise_for_error_envelope(response: httpx.Response) -> NoReturn:
 
     raise ClearinghouseUnavailableError(
         f"unexpected clearinghouse response: {response.status_code}"
-    )
-
-
-def _is_claim_result_envelope(body: object) -> bool:
-    """Is this a claim submission's own accept/edit-reject shape?
-
-    Distinguishes a business answer (parse it) from a generic vendor error
-    envelope (raise a typed exception) on a 400 — both are plausible bodies
-    for the submission endpoint's non-2xx responses.
-    """
-    return (
-        isinstance(body, dict)
-        and body.get("status") in ("SUCCESS", "ERROR")
-        and "meta" in body
-        and "payer" in body
     )
 
 
@@ -356,23 +350,40 @@ class StediClearinghouseClient:
     def submit_claim(
         self, req: ClaimSubmissionRequest, *, idempotency_key: str
     ) -> ClaimSubmissionResult:
-        response = self._post(
-            f"{self._bases.healthcare}/change/medicalnetwork/professionalclaims/v3/submission",
-            json=req.model_dump(exclude_none=True),
-            idempotency=Idempotency.KEYED,
-            headers={_IDEMPOTENCY_KEY_HEADER: idempotency_key},
-        )
-        body = None
+        """File ``req`` on the vendor's own claim API.
+
+        This is the one write in the adapter, and it goes through the native
+        endpoint rather than the X12 compatibility shim for a reason that is
+        not cosmetic: the claim-lifecycle API only knows claims filed here.
+        A claim submitted through the shim has no timeline, so nothing can
+        ever read its acknowledgements or its payments.
+
+        The retry engine is not in this path. Replay safety is the vendor's
+        job here — ``idempotency_key`` travels on the body, and the vendor
+        answers a repeat with the original claim — and the SDK does its own
+        retrying underneath.
+        """
+
+        async def file() -> Any:
+            client = await client_for(self._credentials)
+            return await client.create_professional_claim_submission(
+                to_sdk_submission(req, idempotency_key=idempotency_key)
+            )
+
         try:
-            parsed = response.json()
-            body = parsed if _is_claim_result_envelope(parsed) else None
-        except ValueError:
-            body = None
-
-        if body is None:
-            _raise_for_error_envelope(response)
-
-        result = ClaimSubmissionResult.model_validate(body)
+            output = run_on_sdk_loop(file())
+        except ClearinghouseError:
+            raise
+        except Exception as exc:
+            # A claim the vendor could not read is a rejection with field
+            # names on it, not a transport failure — see
+            # ``rejection_from_validation``.
+            rejected = rejection_from_validation(exc, req=req)
+            if rejected is None:
+                raise submission_error(exc) from exc
+            result = rejected
+        else:
+            result = result_from_sdk(output, req=req)
         logger.info(
             "clearinghouse_claim_submitted status=%s control_number=%s payer_id=%s",
             result.status,

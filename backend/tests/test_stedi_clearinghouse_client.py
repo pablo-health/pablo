@@ -20,7 +20,6 @@ import pytest
 from app.claims.clearinghouse import (
     ClearinghouseAccessDeniedError,
     ClearinghouseInFlightError,
-    ClearinghouseNotProvisionedError,
     ClearinghouseRateLimitedError,
     ClearinghouseRequestChangedError,
     ClearinghouseUnavailableError,
@@ -40,6 +39,13 @@ from app.models.claims_transport import (
     EnrollmentTransactions,
     ProviderContact,
     ProviderRegistration,
+)
+from stedi.models import (
+    ClaimRejectionError,
+    ConflictException,
+    CreateProfessionalClaimSubmissionOutput,
+    ForbiddenException,
+    InvalidRequestException,
 )
 
 if TYPE_CHECKING:
@@ -129,39 +135,91 @@ class TestCheckEligibility:
         assert response.errors[0].followupAction == "Please Correct and Resubmit"
 
 
+class _FakeSdkClient:
+    """Stands in for the vendor SDK client on the one call that writes.
+
+    Submission is the only adapter method that does not go over ``httpx``:
+    it goes through the vendor's own SDK, so its seam is the SDK client
+    rather than a transport. What the test asserts is unchanged — the
+    request the adapter built, and how it read the answer.
+    """
+
+    def __init__(self, *, answer: object = None, raises: Exception | None = None) -> None:
+        self._answer = answer
+        self._raises = raises
+        self.submitted: object = None
+
+    async def create_professional_claim_submission(self, submission: object) -> object:
+        self.submitted = submission
+        if self._raises is not None:
+            raise self._raises
+        return self._answer
+
+
+def _submitting_client(
+    monkeypatch: pytest.MonkeyPatch, *, answer: object = None, raises: Exception | None = None
+) -> tuple[StediClearinghouseClient, _FakeSdkClient]:
+    sdk = _FakeSdkClient(answer=answer, raises=raises)
+
+    async def _client_for(_credentials: object) -> _FakeSdkClient:
+        return sdk
+
+    monkeypatch.setattr("app.claims.stedi.client_for", _client_for)
+    credentials = ClearinghouseCredentials(api_key="key_test_fixture", mode="test")
+    return StediClearinghouseClient(credentials), sdk
+
+
 class TestSubmitClaim:
-    def test_a_success_response_carries_the_claim_reference(self) -> None:
-        fixture = _fixture("837p_submission_success_test_payer.json")
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            assert (
-                request.url.path
-                == "/2024-04-01/change/medicalnetwork/professionalclaims/v3/submission"
-            )
-            assert request.headers["idempotency-key"] == _IDEMPOTENCY_KEY
-            return _json_response(fixture)
-
-        client = _client_for(handler)
+    def test_a_success_response_carries_the_claim_reference(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client, _ = _submitting_client(
+            monkeypatch,
+            answer=CreateProfessionalClaimSubmissionOutput(
+                claim_id="clm_01TESTCLAIM", submission_id="sbm_01TESTSUB"
+            ),
+        )
 
         result = client.submit_claim(_submission_request(), idempotency_key=_IDEMPOTENCY_KEY)
 
         assert result.status == "SUCCESS"
         assert result.claimReference is not None
-        assert result.claimReference.rhclaimNumber == "01M1T7001FRW15MVE0SSW4FA7G"
+        assert result.claimReference.correlationId == "clm_01TESTCLAIM"
 
-    def test_an_edit_rejection_is_a_result_not_an_exception(self) -> None:
-        fixture = _fixture("837p_submission_edit_rejected_dx_pointer.json")
+    def test_the_idempotency_key_reaches_the_vendor(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """It moved from a header to the body in the switch to the SDK.
 
-        def handler(request: httpx.Request) -> httpx.Response:
-            return _json_response(fixture, status_code=400)
+        Dropping it would not fail anything visibly — it would file a second
+        claim every time a submission was retried after a timeout.
+        """
+        client, sdk = _submitting_client(
+            monkeypatch,
+            answer=CreateProfessionalClaimSubmissionOutput(
+                claim_id="clm_01TESTCLAIM", submission_id="sbm_01TESTSUB"
+            ),
+        )
 
-        client = _client_for(handler)
+        client.submit_claim(_submission_request(), idempotency_key=_IDEMPOTENCY_KEY)
+
+        assert sdk.submitted is not None
+        assert sdk.submitted.idempotency_key == _IDEMPOTENCY_KEY  # type: ignore[attr-defined]
+
+    def test_an_edit_rejection_is_a_result_not_an_exception(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client, _ = _submitting_client(
+            monkeypatch,
+            answer=CreateProfessionalClaimSubmissionOutput(
+                claim_id="clm_01TESTCLAIM",
+                submission_id="sbm_01TESTSUB",
+                errors=[ClaimRejectionError(description="Diagnosis code pointer is invalid")],
+            ),
+        )
 
         result = client.submit_claim(_submission_request(), idempotency_key=_IDEMPOTENCY_KEY)
 
         assert result.status == "ERROR"
-        assert result.errors[0].code == "33"
-        assert result.errors[0].followupAction == "Please Correct and Resubmit"
+        assert result.errors[0].description == "Diagnosis code pointer is invalid"
 
 
 class TestGetTransaction:
@@ -310,15 +368,20 @@ class TestErrorMapping:
         with pytest.raises(ClearinghouseValidationError):
             client.search_payers("anything")
 
-    def test_unprovisioned_account_raises_a_typed_error(self) -> None:
-        fixture = _fixture("error_account_not_provisioned.json")
+    def test_an_account_that_may_not_file_claims_raises_access_denied(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The vendor's native claim API has no "not provisioned" of its own.
 
-        def handler(request: httpx.Request) -> httpx.Response:
-            return _json_response(fixture, status_code=400)
+        The old endpoint distinguished an unenrolled payer from a key with no
+        claim rights; the claim API answers both as a refusal to serve. Both
+        stall the claim with a message a human reads, so the practical
+        outcome is unchanged — but the finer code is genuinely gone rather
+        than being mapped from something that no longer arrives.
+        """
+        client, _ = _submitting_client(monkeypatch, raises=ForbiddenException("forbidden"))
 
-        client = _client_for(handler)
-
-        with pytest.raises(ClearinghouseNotProvisionedError):
+        with pytest.raises(ClearinghouseAccessDeniedError):
             client.submit_claim(_submission_request(), idempotency_key=_IDEMPOTENCY_KEY)
 
     def test_rate_limiting_raises_a_typed_error(self) -> None:
@@ -330,13 +393,19 @@ class TestErrorMapping:
         with pytest.raises(ClearinghouseRateLimitedError):
             client.search_payers("anything")
 
-    def test_a_reused_key_with_a_changed_body_raises_request_changed(self) -> None:
-        fixture = _fixture("error_request_changed.json")
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            return _json_response(fixture, status_code=422)
-
-        client = _client_for(handler)
+    def test_a_reused_key_with_a_changed_body_raises_request_changed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Verified against the vendor 2026-09-09: the same key with a
+        different claim is refused, while the same key with the same claim
+        replays the original — which is what makes retrying a submission
+        safe."""
+        client, _ = _submitting_client(
+            monkeypatch,
+            raises=InvalidRequestException(
+                "This Idempotency-Key was previously used with a different request."
+            ),
+        )
 
         with pytest.raises(ClearinghouseRequestChangedError):
             client.submit_claim(_submission_request(), idempotency_key=_IDEMPOTENCY_KEY)
@@ -352,26 +421,22 @@ class TestErrorMapping:
         with pytest.raises(ClearinghouseAccessDeniedError):
             client.list_enrollments(EnrollmentFilters())
 
-    def test_an_in_flight_key_raises_with_the_retry_hint(self) -> None:
-        def handler(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(
-                409,
-                headers={"Retry-After": "5"},
-                json={"message": "A request with this idempotency key is still in progress."},
-            )
-
-        client = _client_for(handler)
+    def test_an_in_flight_key_raises_with_the_retry_hint(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        conflict = ConflictException("A request with this key is still in progress.")
+        conflict.retry_after = 5.0
+        client, _ = _submitting_client(monkeypatch, raises=conflict)
 
         with pytest.raises(ClearinghouseInFlightError) as raised:
             client.submit_claim(_submission_request(), idempotency_key=_IDEMPOTENCY_KEY)
 
         assert raised.value.retry_after == 5.0
 
-    def test_an_in_flight_key_without_a_hint_carries_none(self) -> None:
-        def handler(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(409, json={"message": "still in progress"})
-
-        client = _client_for(handler)
+    def test_an_in_flight_key_without_a_hint_carries_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client, _ = _submitting_client(monkeypatch, raises=ConflictException("still in progress"))
 
         with pytest.raises(ClearinghouseInFlightError) as raised:
             client.submit_claim(_submission_request(), idempotency_key=_IDEMPOTENCY_KEY)
