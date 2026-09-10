@@ -591,10 +591,13 @@ def test_a_pablo_owned_event_is_still_identified_only_by_its_stored_id() -> None
     the moment a therapist changed how their events read — which they now
     can, which is the whole of this change.
 
-    One comparison against a ``summary`` is legitimate and has to stay: the
-    app-calendar choice finds the calendar Pablo made by its name. That is a
-    calendar's name, not an event's title, and nothing a therapist can
-    retitle. It is pinned to that one function so it can't quietly spread.
+    There used to be one legitimate exception, pinned here so it could not
+    quietly spread: the app-calendar choice found the calendar Pablo made by
+    its name. That comparison is gone. It sat behind ``calendarList.list``,
+    which the app-calendar grant's single scope does not authorize, so the
+    calendar's identity now comes from the stored token record instead of
+    from Google (PABLO-704i). With the carve-out gone the rule is simply
+    absolute, and this list should stay empty.
     """
     source = (
         Path(__file__).resolve().parents[1] / "app" / "services" / "google_calendar_service.py"
@@ -613,9 +616,7 @@ def test_a_pablo_owned_event_is_still_identified_only_by_its_stored_id() -> None
         ):
             offenders.append(node.name)
 
-    assert offenders == ["_get_or_create_app_calendar_id"], (
-        f"an event may be being identified by its title, in: {offenders}"
-    )
+    assert offenders == [], f"an event may be being identified by its title, in: {offenders}"
 
     # And the identifier that actually does the matching is the stored id.
     assert "eventId=appointment.google_event_id" in source

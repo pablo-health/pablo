@@ -398,9 +398,9 @@ class TestOAuthFlow:
     ) -> None:
         """The default choice binds the connection to a calendar Pablo makes."""
         mock_build_flow.return_value.credentials = _oauth_credentials()
+        token_repo.get.return_value = None  # nothing connected yet
 
         mock_service = MagicMock()
-        mock_service.calendarList().list().execute.return_value = {"items": []}
         mock_service.calendars().insert().execute.return_value = {
             "id": "pablo-made@group.calendar.google.com"
         }
@@ -417,6 +417,9 @@ class TestOAuthFlow:
         assert saved_doc.calendar_id == "pablo-made@group.calendar.google.com"
         assert saved_doc.write_target == "app_calendar"
         mock_service.calendars().get.assert_not_called()
+        # `calendar.app.created` does not authorize calendarList.list — asking
+        # is a 403 that no connect can recover from (PABLO-704i).
+        mock_service.calendarList.assert_not_called()
 
     @patch("app.services.google_calendar_service._build_calendar_service")
     @patch("app.services.google_calendar_service._build_flow")
@@ -427,16 +430,20 @@ class TestOAuthFlow:
         calendar_service: GoogleCalendarService,
         token_repo: MagicMock,
     ) -> None:
-        """A second connect must not leave a second calendar on the account."""
+        """A second connect must not leave a second calendar on the account.
+
+        The identity comes from our own token record. Google is never asked,
+        because the only scope this grant carries cannot answer.
+        """
         mock_build_flow.return_value.credentials = _oauth_credentials()
+        token_repo.get.return_value = GoogleCalendarTokenDoc(
+            user_id="user-001",
+            encrypted_tokens="",
+            write_target="app_calendar",
+            calendar_id="already-made@group.calendar.google.com",
+        )
 
         mock_service = MagicMock()
-        mock_service.calendarList().list().execute.return_value = {
-            "items": [
-                {"id": "someone-elses", "summary": "Family"},
-                {"id": "already-made@group.calendar.google.com", "summary": "Pablo Sessions"},
-            ]
-        }
         mock_build_svc.return_value = mock_service
 
         calendar_service.handle_callback(
@@ -449,6 +456,46 @@ class TestOAuthFlow:
         saved_doc = token_repo.save.call_args[0][0]
         assert saved_doc.calendar_id == "already-made@group.calendar.google.com"
         mock_service.calendars().insert.assert_not_called()
+        mock_service.calendarList.assert_not_called()
+
+    @patch("app.services.google_calendar_service._build_calendar_service")
+    @patch("app.services.google_calendar_service._build_flow")
+    def test_a_primary_connection_does_not_donate_its_calendar_to_the_app_target(
+        self,
+        mock_build_flow: Mock,
+        mock_build_svc: Mock,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        """A stored id is only reusable when it was Pablo's calendar to begin with.
+
+        Switching a connection from the therapist's own calendar to an
+        app-owned one must create the app calendar, not silently keep writing
+        to the primary one under a new label.
+        """
+        mock_build_flow.return_value.credentials = _oauth_credentials()
+        token_repo.get.return_value = GoogleCalendarTokenDoc(
+            user_id="user-001",
+            encrypted_tokens="",
+            write_target="primary",
+            calendar_id="therapists-own@gmail.com",
+        )
+
+        mock_service = MagicMock()
+        mock_service.calendars().insert().execute.return_value = {
+            "id": "pablo-made@group.calendar.google.com"
+        }
+        mock_build_svc.return_value = mock_service
+
+        calendar_service.handle_callback(
+            "user-001",
+            "auth-code",
+            "http://localhost/callback",
+            state=_state_for("user-001"),
+        )
+
+        saved_doc = token_repo.save.call_args[0][0]
+        assert saved_doc.calendar_id == "pablo-made@group.calendar.google.com"
 
 
 class TestCallbackStateValidation:

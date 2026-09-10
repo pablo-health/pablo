@@ -576,7 +576,7 @@ class GoogleCalendarService:
 
         encrypted = encrypt_tokens(token_data)
 
-        calendar_id = self._resolve_calendar_id(credentials, write_target)
+        calendar_id = self._resolve_calendar_id(credentials, write_target, user_id)
         granted = self._granted_after(user_id, requested, declarations)
 
         now = _now()
@@ -1166,11 +1166,12 @@ class GoogleCalendarService:
         self,
         credentials: Credentials,
         write_target: CalendarWriteTarget,
+        user_id: str,
     ) -> str:
         """Find the calendar this connection writes to, creating it if it's ours."""
         if write_target is CalendarWriteTarget.PRIMARY:
             return self._get_primary_calendar_id(credentials)
-        return self._get_or_create_app_calendar_id(credentials)
+        return self._get_or_create_app_calendar_id(credentials, user_id)
 
     def _get_primary_calendar_id(self, credentials: Credentials) -> str:
         """Get the user's primary Google Calendar ID."""
@@ -1178,21 +1179,32 @@ class GoogleCalendarService:
         calendar = service.calendars().get(calendarId="primary").execute()
         return calendar.get("id", "primary")  # type: ignore[no-any-return]
 
-    def _get_or_create_app_calendar_id(self, credentials: Credentials) -> str:
+    def _get_or_create_app_calendar_id(self, credentials: Credentials, user_id: str) -> str:
         """Get the calendar Pablo owns on this account, creating it once.
 
-        Under the app-calendar grant the calendar list only contains
-        calendars this app created, so matching on the summary cannot pick
-        up one of the therapist's own. Reconnecting finds the existing
-        calendar rather than leaving a second one behind.
-        """
-        service = _build_calendar_service(credentials)
-        listed = service.calendarList().list().execute()
-        for entry in listed.get("items", []):
-            if entry.get("summary") == _APP_CALENDAR_SUMMARY and entry.get("id"):
-                logger.info("Reusing the existing Pablo-owned Google calendar")
-                return str(entry["id"])
+        Reconnecting finds the existing calendar rather than leaving a second
+        one behind — but it finds it in our own token record, not by asking
+        Google. The app-calendar grant is a single scope,
+        ``calendar.app.created``, and Google refuses ``calendarList.list``
+        under it: this used to open with that call, so the connect could never
+        finish. Its identity is already ours to remember, so remember it.
 
+        A calendar the therapist deleted on Google's side still reads as
+        connected here until a push fails. That is the deliberate trade: an
+        existence check would have to be a call this scope may also refuse,
+        and one refused check per reconnect silently leaves a second calendar
+        in the therapist's account every time.
+        """
+        stored = self._token_repo.get(user_id)
+        if (
+            stored is not None
+            and stored.calendar_id
+            and stored.write_target == CalendarWriteTarget.APP_CALENDAR.value
+        ):
+            logger.info("Reusing the existing Pablo-owned Google calendar")
+            return stored.calendar_id
+
+        service = _build_calendar_service(credentials)
         created = service.calendars().insert(body={"summary": _APP_CALENDAR_SUMMARY}).execute()
         calendar_id = created.get("id")
         if not calendar_id:
