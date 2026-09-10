@@ -54,6 +54,7 @@ from ..claims.fanout import (
 )
 from ..claims.receipts import owned_by_principal
 from ..claims.remittance import post_remittances
+from ..claims.remittance_feed import FeedRemittanceDetails
 from ..claims.sdk_timeline import SdkClaimTimelines
 from ..claims.status_worker import AWAITING_STATES, poll_acknowledgments
 from ..claims.submit_worker import submit_pending
@@ -100,6 +101,10 @@ def run_practice(
     if "submit" in stages and account is None:
         logger.info("claims_pipeline_cannot_file schema=%s reason=billing_profile", practice.schema)
     timelines = _timelines_for(practice) if "remit" in stages else None
+    # One feed scan for the whole practice, built here rather than per
+    # clinician so forty claims do not walk the same pages forty times. It
+    # reads nothing until a claim is actually adjudicated.
+    details = FeedRemittanceDetails(practice.client) if timelines is not None else None
 
     def work(run: TenantRun, _user_id: str) -> None:
         if account is not None:
@@ -133,7 +138,9 @@ def run_practice(
                 if owned_by_principal(run.pipeline, claim, practice.user_ids)
             ]
             totals["remit_read"] += len(waiting)
-            totals["remit_posted"] += post_remittances(run.pipeline, timelines, waiting)
+            totals["remit_posted"] += post_remittances(
+                run.pipeline, timelines, waiting, details=details
+            )
         if "watchdog" in stages:
             watched = run_watchdog(
                 run.pipeline,

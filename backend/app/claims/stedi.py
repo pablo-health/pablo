@@ -420,6 +420,21 @@ class StediClearinghouseClient:
         body = response.json()
         return body if isinstance(body, dict) else {}
 
+    def get_remittance_report(self, transaction_id: str) -> dict[str, Any]:
+        """The 835 behind ``transaction_id``, as the vendor's JSON.
+
+        The only place service-line detail can be had. The vendor's claim
+        API reports payment at claim level — one CLP loop — so a practice
+        that needs to know which session was denied has to come here.
+        """
+        response = self._get(
+            f"{self._bases.healthcare}/change/medicalnetwork/reports/v2/{transaction_id}/835"
+        )
+        if response.status_code != httpx.codes.OK:
+            _raise_for_error_envelope(response)
+        body = response.json()
+        return body if isinstance(body, dict) else {}
+
     def create_provider(self, provider: ProviderRegistration) -> ProviderRecord:
         response = self._post(
             f"{self._bases.enrollments}/providers",
