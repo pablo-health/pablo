@@ -101,9 +101,26 @@ class ClaimTimeline(BaseModel):
 
     @property
     def patient_responsibility_cents(self) -> int:
-        """What the payer says the client owes, across every paid entry."""
-        return sum(
-            payment.patient_responsibility_cents or 0
+        """What the client owes, according to whoever adjudicated last.
+
+        Not a sum. Each payer reports only the responsibility it assigned
+        itself — a secondary never restates the primary's — so every entry
+        here is a complete statement of the balance after that payer
+        finished, and adding them together bills one session twice. A
+        secondary that pays off the primary's coinsurance assigns nothing,
+        and the answer is nothing.
+
+        Every adjudication counts, including a denial. A service the plan
+        does not cover is denied and the client owes the whole charge;
+        looking only at entries that moved money would report that they owe
+        nothing.
+        """
+        adjudications = [
+            payment
             for payment in self.payments
-            if payment.is_money
-        )
+            if payment.disposition in ("paid", "denied", "reversed")
+        ]
+        if not adjudications:
+            return 0
+        latest = max(adjudications, key=lambda payment: payment.processed_at)
+        return latest.patient_responsibility_cents or 0
