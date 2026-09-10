@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useRouter, useSearchParams } from "next/navigation"
+import { useAuth } from "@/lib/auth-context"
 import { SetupNav, SetupWizardShell, type SetupStepperStep } from "@/components/setup"
 import { CalendarConnectStep } from "./CalendarConnectStep"
 import { CalendarSessionsStep } from "./CalendarSessionsStep"
@@ -152,6 +153,7 @@ export function CalendarSetupWizard({
   const router = useRouter()
   const searchParams = useSearchParams()
   const queryClient = useQueryClient()
+  const { user, loading: authLoading } = useAuth()
 
   const [activeIndex, setActiveIndex] = useState(0)
   const [selection, setSelection] = useState<GoogleCalendarSelection>(DEFAULT_SELECTION)
@@ -255,6 +257,14 @@ export function CalendarSetupWizard({
 
   useEffect(() => {
     if (!code || exchangedCode.current === code) return
+    // Returning from Google is a full page load, and React runs a child's
+    // effects before its parents' — so this effect fires before the one in
+    // AuthProvider that initializes the auth SDK. Exchanging now sends a
+    // request with no Authorization header, and the 401 that comes back
+    // carries no error code to retry on. The code is single-use, so that
+    // one attempt spends it. Wait for auth to resolve; `user` is a
+    // dependency, so arriving late re-runs this and the exchange proceeds.
+    if (authLoading || !user) return
     exchangedCode.current = code
     let cancelled = false
 
@@ -305,7 +315,7 @@ export function CalendarSetupWizard({
     return () => {
       cancelled = true
     }
-  }, [code, state, redirectUri, returnPath, queryClient, router, runScan])
+  }, [code, state, redirectUri, returnPath, queryClient, router, runScan, authLoading, user])
 
   // Changing how events read on an already-connected calendar does not
   // need Google again — it is Pablo's own record of what to write, and
