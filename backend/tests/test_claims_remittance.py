@@ -11,6 +11,7 @@ overstated.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 from app.claims.clearinghouse import ClearinghouseUnavailableError
@@ -141,6 +142,62 @@ class TestDenied:
         assert posting.paid_cents == 8000
 
 
+class TestWhatTheClientOwesAcrossPayers:
+    """Each payer states the balance after it finished, so the last one wins.
+
+    A secondary never restates the primary's assignment — it reports only
+    what it assigned itself. Adding them together bills one session twice.
+    """
+
+    def test_the_latest_adjudication_states_the_balance(self) -> None:
+        timeline = _timeline(
+            _payment(disposition="paid", paid=12000, responsibility=3000, at=_EARLIER),
+            _payment(
+                disposition="paid",
+                paid=2000,
+                responsibility=1000,
+                at=_LATER,
+                payment_id="clp_2",
+            ),
+        )
+
+        posting = posting_for(timeline, charged_cents=CHARGED)
+
+        assert posting is not None
+        assert posting.patient_responsibility_cents == 1000, (
+            "the secondary assigned $10; summing both payers would say $40"
+        )
+        assert posting.paid_cents == 14000, "money paid does still add up"
+
+    def test_a_secondary_that_covers_the_coinsurance_leaves_nothing_owing(self) -> None:
+        timeline = _timeline(
+            _payment(disposition="paid", paid=12000, responsibility=3000, at=_EARLIER),
+            _payment(
+                disposition="paid",
+                paid=3000,
+                responsibility=0,
+                at=_LATER,
+                payment_id="clp_2",
+            ),
+        )
+
+        posting = posting_for(timeline, charged_cents=CHARGED)
+
+        assert posting is not None
+        assert posting.patient_responsibility_cents == 0
+
+    def test_a_denial_can_still_leave_the_client_owing_everything(self) -> None:
+        """A service the plan does not cover is denied, and the client owes
+        the charge. Counting only entries that moved money reported zero."""
+        timeline = _timeline(_payment(disposition="denied", paid=0, responsibility=CHARGED))
+
+        posting = posting_for(timeline, charged_cents=CHARGED)
+
+        assert posting is not None
+        assert posting.event == "deny"
+        assert posting.patient_responsibility_cents == CHARGED
+
+
 class TestReversal:
     def test_a_reversal_is_subtracted_from_the_total(self) -> None:
         timeline = _timeline(
@@ -210,14 +267,30 @@ class TestApplyingAPosting:
         kinds = [r.kind for r in harness.receipts.list_for_claim(claim.id)]
         assert kinds.count("adjudicated") == 1
 
-    def test_a_claim_already_closed_is_left_alone(self, harness) -> None:
-        """A second remittance on a settled claim is news, not a reason to fail."""
+    def test_a_settled_claim_can_be_adjudicated_again(self, harness) -> None:
+        """Because a second payer, or a takeback, really does arrive later.
+
+        A paid claim that a reversal reduces is partly paid, and the claim
+        has to say so. Leaving it alone was how a client kept owing a
+        balance their secondary had already covered.
+        """
         claim = harness.add(state="paid", total_charge_cents=CHARGED)
 
         stored, moved = apply_posting(harness.pipeline, claim, _paid_posting())
 
+        assert moved is True
+        assert stored.state == "partial"
+
+    def test_a_rejected_claim_is_left_alone(self, harness) -> None:
+        """A remittance for a claim that never reached a payer is news, not a
+        reason to fail the pass. The answer to a rejection is a corrected
+        claim of its own, not another event on this one."""
+        claim = harness.add(state="rejected", total_charge_cents=CHARGED)
+
+        stored, moved = apply_posting(harness.pipeline, claim, _paid_posting())
+
         assert moved is False
-        assert stored.state == "paid"
+        assert stored.state == "rejected"
 
     def test_a_full_payment_pays_the_claim(self, harness) -> None:
         claim = harness.add(state="payer_accepted", total_charge_cents=CHARGED)
@@ -254,7 +327,11 @@ class TestApplyingAPosting:
 
 
 class _Ledger:
-    """Just enough of the charge repository to see what was written."""
+    """Just enough of the charge repository to see what was written.
+
+    Reads back what it wrote, because the posting now asks: what it puts on a
+    client's ledger is the difference from what that claim already billed.
+    """
 
     def __init__(self) -> None:
         self.rows: list[dict] = []
@@ -262,6 +339,22 @@ class _Ledger:
     def add_ledger_row(self, **row):
         self.rows.append(row)
         return row
+
+    def list_charges(self, patient_id: str):
+        return [
+            SimpleNamespace(
+                amount_cents=row["amount_cents"],
+                claim_id=row.get("claim_id"),
+                kind=row["kind"],
+            )
+            for row in self.rows
+            if row["patient_id"] == patient_id
+        ]
+
+    @property
+    def total_billed(self) -> int:
+        """What the client is left owing across every row written."""
+        return sum(row["amount_cents"] for row in self.rows)
 
 
 class TestTheClientsShareReachesTheirLedger:
@@ -316,6 +409,91 @@ class TestTheClientsShareReachesTheirLedger:
         apply_posting(harness.pipeline, claim, posting, charges=ledger)
 
         assert ledger.rows[0]["amount_cents"] == CHARGED
+
+
+class TestASecondPayerDoesNotBillTheClientTwice:
+    """A claim with secondary coverage gets a remittance from each payer.
+
+    Each one states what the client owes *after that payer adjudicated* — the
+    standard has a secondary report only the responsibility it assigned
+    itself, never the primary's. So a remittance restates the balance, and
+    adding them together bills one session twice.
+    """
+
+    def _post(self, harness, claim, ledger, *, responsibility: int, entry: str):
+        timeline = _timeline(
+            _payment(
+                disposition="paid",
+                paid=CHARGED - responsibility,
+                responsibility=responsibility,
+                payment_id=entry,
+            )
+        )
+        posting = posting_for(timeline, charged_cents=CHARGED)
+        assert posting is not None
+        stored, _ = apply_posting(harness.pipeline, claim, posting, charges=ledger)
+        return stored
+
+    def test_a_secondary_that_pays_the_coinsurance_leaves_the_client_owing_nothing(
+        self, harness
+    ) -> None:
+        """The case that was silently wrong.
+
+        Primary assigns $30, secondary pays it and assigns nothing. The client
+        owes nothing — which means writing a credit, not leaving $30 standing.
+        """
+        claim = harness.add(state="payer_accepted", total_charge_cents=CHARGED)
+        ledger = _Ledger()
+
+        after_primary = self._post(harness, claim, ledger, responsibility=3000, entry="clp_1")
+        self._post(harness, after_primary, ledger, responsibility=0, entry="clp_2")
+
+        assert ledger.total_billed == 0
+        assert [row["amount_cents"] for row in ledger.rows] == [3000, -3000]
+
+    def test_a_secondary_that_assigns_less_leaves_only_its_own_share(self, harness) -> None:
+        """Primary says $30, secondary says $10. The client owes $10, not $40."""
+        claim = harness.add(state="payer_accepted", total_charge_cents=CHARGED)
+        ledger = _Ledger()
+
+        after_primary = self._post(harness, claim, ledger, responsibility=3000, entry="clp_1")
+        self._post(harness, after_primary, ledger, responsibility=1000, entry="clp_2")
+
+        assert ledger.total_billed == 1000
+
+    def test_a_secondary_that_assigns_more_bills_only_the_difference(self, harness) -> None:
+        claim = harness.add(state="payer_accepted", total_charge_cents=CHARGED)
+        ledger = _Ledger()
+
+        after_primary = self._post(harness, claim, ledger, responsibility=1000, entry="clp_1")
+        self._post(harness, after_primary, ledger, responsibility=3000, entry="clp_2")
+
+        assert ledger.total_billed == 3000
+        assert [row["amount_cents"] for row in ledger.rows] == [1000, 2000]
+
+    def test_a_remittance_that_changes_nothing_writes_nothing(self, harness) -> None:
+        """A second payer agreeing with the first is not a second bill."""
+        claim = harness.add(state="payer_accepted", total_charge_cents=CHARGED)
+        ledger = _Ledger()
+
+        after_primary = self._post(harness, claim, ledger, responsibility=3000, entry="clp_1")
+        self._post(harness, after_primary, ledger, responsibility=3000, entry="clp_2")
+
+        assert len(ledger.rows) == 1
+        assert ledger.total_billed == 3000
+
+    def test_another_claims_rows_are_not_counted_against_this_one(self, harness) -> None:
+        """The same client can have two claims open; each carries its own
+        balance and one must not offset the other."""
+        ledger = _Ledger()
+        first = harness.add(state="payer_accepted", total_charge_cents=CHARGED)
+        second = harness.add(state="payer_accepted", total_charge_cents=CHARGED)
+        assert first.patient_id == second.patient_id
+
+        self._post(harness, first, ledger, responsibility=3000, entry="clp_1")
+        self._post(harness, second, ledger, responsibility=2000, entry="clp_2")
+
+        assert ledger.total_billed == 5000
 
 
 class _Timelines:

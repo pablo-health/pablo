@@ -97,10 +97,28 @@ _TRANSITIONS: dict[tuple[str, str], ClaimState] = {
     ("stalled", "pay_partial"): "partial",
     ("stalled", "deny"): "denied",
     ("stalled", "reject"): "rejected",
+    # An adjudicated claim can be adjudicated again. A client with secondary
+    # coverage produces a remittance from each payer, and a payer can take
+    # money back or correct itself months later. Without these the second
+    # answer is dropped and the claim keeps reporting the first one — the
+    # client left owing a balance their secondary already covered.
+    #
+    # These do not make the claim un-adjudicated: it is not waiting on
+    # anybody, which is what ``TERMINAL_STATES`` is consulted for.
+    ("partial", "pay"): "paid",
+    ("partial", "pay_partial"): "partial",
+    ("paid", "pay"): "paid",
+    ("paid", "pay_partial"): "partial",
 }
 
-#: States nothing moves out of. ``rejected`` is terminal for this row — the
-#: answer to it is a corrected child claim, not another event here.
+#: States where the claim is no longer waiting on anybody. That is what
+#: callers actually ask about — the watchdog does not time these out and an
+#: acknowledgement does not reject them.
+#:
+#: It does not mean nothing can happen to them. A paid or partly paid claim
+#: can be adjudicated again by a second payer, or reversed; what it cannot do
+#: is go back to waiting. ``rejected`` is the strict one — the answer to it is
+#: a corrected child claim, not another event on this row.
 TERMINAL_STATES: frozenset[str] = frozenset({"paid", "partial", "denied", "rejected"})
 
 

@@ -135,6 +135,25 @@ def posting_for(timeline: ClaimTimeline, *, charged_cents: int) -> RemittancePos
     )
 
 
+#: The ledger row kind that carries what a payer said a client owes.
+PATIENT_RESPONSIBILITY_KIND = "patient_resp"
+
+
+def _patient_responsibility_billed(charges: PatientPaymentRepository, claim: Claim) -> int:
+    """How much of this claim has already been put on the client's ledger.
+
+    Read from the ledger rather than tracked on the claim, because the ledger
+    is where the answer actually lives — a row written by an earlier
+    remittance, or corrected by hand afterwards, both count. Summing a stored
+    figure instead would drift from the thing it is meant to describe.
+    """
+    return sum(
+        row.amount_cents
+        for row in charges.list_charges(claim.patient_id)
+        if row.claim_id == claim.id and row.kind == PATIENT_RESPONSIBILITY_KIND
+    )
+
+
 def apply_posting(
     pipeline: ClaimPipeline,
     claim: Claim,
@@ -150,10 +169,12 @@ def apply_posting(
     is cheap and will happen on a schedule, while double-posting money is a
     number a practice would have to unpick by hand.
 
-    A claim already in a terminal state is left alone rather than raising:
-    a payer that sends a second remittance for a claim we have already
-    closed is telling us something, but it is not a reason to fail the whole
-    polling pass.
+    An already-adjudicated claim can be adjudicated again — a second payer,
+    or a payer taking money back — and the revised answer is written the same
+    way the first was. A claim in a state the event has no transition for is
+    left alone rather than raising: a remittance for a claim that never
+    reached a payer is telling us something, but it is not a reason to fail
+    the whole polling pass.
     """
     # Scoped to the claim rather than the vendor's entry id alone. The
     # uniqueness constraint behind this spans the whole table, so an id the
@@ -196,24 +217,35 @@ def apply_posting(
         occurred_at=posting.adjudicated_at,
         touches_receipt_clock=True,
     )
-    if charges is not None and posting.patient_responsibility_cents > 0:
+    if charges is not None:
         # What the payer says the client owes becomes a row on the client's
         # own ledger. Without this the money stops at the claim: the practice
         # can see that a payer paid $80 of $150 and the client is never told
         # about the $20.
         #
+        # What is written is the DIFFERENCE from what this claim has already
+        # billed, not the amount itself, because a remittance states the
+        # balance rather than adding to it. A claim with secondary coverage
+        # gets a remittance from each payer, and each states what the client
+        # owes after that payer adjudicated — so adding them up bills one
+        # session twice. A secondary that pays off the primary's coinsurance
+        # produces a negative difference here, which is a credit and is
+        # exactly right.
+        #
         # Written inside the same branch that records the receipt, so the
-        # receipt's idempotency covers it too — a second read of the same
-        # remittance cannot bill a client twice.
-        charges.add_ledger_row(
-            patient_id=stored.patient_id,
-            kind="patient_resp",
-            amount_cents=posting.patient_responsibility_cents,
-            currency=DEFAULT_CHARGE_CURRENCY,
-            user_id=pipeline.principal_user_id,
-            claim_id=stored.id,
-            note=f"payer remittance {posting.source_id}",
-        )
+        # receipt's idempotency covers the ordinary single-payer case too.
+        already_billed = _patient_responsibility_billed(charges, stored)
+        difference = posting.patient_responsibility_cents - already_billed
+        if difference:
+            charges.add_ledger_row(
+                patient_id=stored.patient_id,
+                kind=PATIENT_RESPONSIBILITY_KIND,
+                amount_cents=difference,
+                currency=DEFAULT_CHARGE_CURRENCY,
+                user_id=pipeline.principal_user_id,
+                claim_id=stored.id,
+                note=f"payer remittance {posting.source_id}",
+            )
 
     logger.info(
         "remittance_posted claim_id=%s event=%s paid_cents=%d patient_resp_cents=%d",

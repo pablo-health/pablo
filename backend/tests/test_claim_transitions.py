@@ -44,6 +44,12 @@ _EXPECTED = {
     ("stalled", "pay_partial"): "partial",
     ("stalled", "deny"): "denied",
     ("stalled", "reject"): "rejected",
+    # An adjudicated claim can be adjudicated again: a second payer, or a
+    # payer taking money back months later.
+    ("partial", "pay"): "paid",
+    ("partial", "pay_partial"): "partial",
+    ("paid", "pay"): "paid",
+    ("paid", "pay_partial"): "partial",
 }
 
 
@@ -63,7 +69,25 @@ def test_every_state_event_pair_matches_the_table(state: str, event: str) -> Non
 
 @pytest.mark.parametrize("state", sorted(TERMINAL_STATES))
 @pytest.mark.parametrize("event", CLAIM_EVENTS)
-def test_terminal_states_take_no_event(state: str, event: str) -> None:
+def test_a_settled_claim_never_goes_back_to_waiting(state: str, event: str) -> None:
+    """What "terminal" actually protects.
+
+    Not "nothing can happen to it" — a second payer or a takeback really does
+    arrive later, and the claim has to be able to say so. What must never
+    happen is a settled claim returning to a state that waits on somebody:
+    the watchdog would start timing it out again and an acknowledgement could
+    reject a claim that has already been paid.
+    """
+    moved_to = next_state(state, event)
+
+    assert moved_to is None or moved_to in TERMINAL_STATES
+
+
+@pytest.mark.parametrize("state", sorted(TERMINAL_STATES - {"paid", "partial"}))
+@pytest.mark.parametrize("event", CLAIM_EVENTS)
+def test_a_denied_or_rejected_claim_takes_no_event_at_all(state: str, event: str) -> None:
+    """The answer to either is a corrected claim of its own, not another
+    event on this row."""
     assert next_state(state, event) is None
 
 
