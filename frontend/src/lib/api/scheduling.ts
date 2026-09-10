@@ -248,6 +248,10 @@ export interface GoogleCalendarConsentOptions {
 export interface GoogleCalendarStatus {
   connected: boolean
   calendar_id: string | null
+  /** A name to show instead of the id, when the id is not worth showing.
+   * Set for a Pablo-made calendar, whose id is an opaque hash; null for the
+   * therapist's own calendar, whose id is their email address. */
+  calendar_name: string | null
   last_synced_at: string | null
   write_target: CalendarWriteTarget | null
   /** How events will actually read — the stored choice, unless it is being

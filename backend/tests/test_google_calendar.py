@@ -497,6 +497,88 @@ class TestOAuthFlow:
         saved_doc = token_repo.save.call_args[0][0]
         assert saved_doc.calendar_id == "pablo-made@group.calendar.google.com"
 
+    @patch("app.services.google_calendar_service._build_calendar_service")
+    @patch("app.services.google_calendar_service._build_flow")
+    def test_reconnecting_a_different_account_does_not_inherit_its_calendar(
+        self,
+        mock_build_flow: Mock,
+        mock_build_svc: Mock,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        """A remembered id outlives the account it belongs to.
+
+        `handle_callback` runs on any completed connect, including one that
+        never disconnected first. Reusing the stored id blindly would point a
+        new account's connection at a calendar in the old account — writable
+        by neither, so every push afterwards fails. The reachability check is
+        what separates "same account, reuse it" from "different account".
+        """
+        mock_build_flow.return_value.credentials = _oauth_credentials()
+        token_repo.get.return_value = GoogleCalendarTokenDoc(
+            user_id="user-001",
+            encrypted_tokens="",
+            write_target="app_calendar",
+            calendar_id="made-for-the-old-account@group.calendar.google.com",
+        )
+
+        mock_service = MagicMock()
+        # The new account cannot see the old account's calendar.
+        mock_service.calendars().get().execute.side_effect = Exception("404 Not Found")
+        mock_service.calendars().insert().execute.return_value = {
+            "id": "made-for-the-new-account@group.calendar.google.com"
+        }
+        mock_build_svc.return_value = mock_service
+
+        calendar_service.handle_callback(
+            "user-001",
+            "auth-code",
+            "http://localhost/callback",
+            state=_state_for("user-001"),
+        )
+
+        saved_doc = token_repo.save.call_args[0][0]
+        assert saved_doc.calendar_id == "made-for-the-new-account@group.calendar.google.com"
+
+
+class TestStatusDisplayName:
+    """What settings shows for a connection, which is not always the id."""
+
+    def test_app_calendar_reports_a_readable_name(
+        self, calendar_service: GoogleCalendarService, token_repo: MagicMock
+    ) -> None:
+        """The app calendar's id is an opaque hash, so it needs a label."""
+        token_repo.get.return_value = GoogleCalendarTokenDoc(
+            user_id="user-001",
+            encrypted_tokens="",
+            write_target="app_calendar",
+            calendar_id="c2bd768f48f19c85@group.calendar.google.com",
+        )
+
+        status = calendar_service.get_sync_status("user-001")
+
+        assert status["calendar_name"] == "Pablo Sessions"
+
+    def test_primary_reports_no_name_so_the_address_shows(
+        self, calendar_service: GoogleCalendarService, token_repo: MagicMock
+    ) -> None:
+        """A primary connection's id is the therapist's own email address.
+
+        That is already the best label for it, so there is nothing to
+        override it with — the frontend falls back to the id.
+        """
+        token_repo.get.return_value = GoogleCalendarTokenDoc(
+            user_id="user-001",
+            encrypted_tokens="",
+            write_target="primary",
+            calendar_id="therapist@example.com",
+        )
+
+        status = calendar_service.get_sync_status("user-001")
+
+        assert status["calendar_name"] is None
+        assert status["calendar_id"] == "therapist@example.com"
+
 
 class TestCallbackStateValidation:
     """The callback only exchanges a code for the user who started the flow.
