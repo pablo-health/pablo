@@ -567,6 +567,51 @@ before it writes that person's reminder. The default is the real RLS arm;
 a test on a database without the GUC hands in a no-op."""
 
 
+def enrollment_request(
+    session: Session, payer_row_id: str, transaction_type: str
+) -> PayerEnrollmentRow | None:
+    """The practice's request with this payer for one transaction, if any."""
+    return next(
+        (
+            row
+            for row in list_enrollments(session, payer_row_id)
+            if row.transaction_type == transaction_type
+        ),
+        None,
+    )
+
+
+def refresh_enrollment(
+    session: Session,
+    client: ClearinghouseClient,
+    row: PayerEnrollmentRow,
+    *,
+    arm: PrincipalArmer = arm_current_user_id,
+) -> Enrollment:
+    """Read one request straight from the clearinghouse and record what it says.
+
+    :func:`refresh_enrollments` polls every open request off a listing, which
+    is the shape a nightly pass wants and the wrong one for a therapist who
+    has just answered a task and is looking at the row. This reads the single
+    request by its own id and carries the whole enrollment back — with its
+    tasks and documents, which the listing does not have.
+
+    Arms the session as the request's owner, since the reminder a status
+    change writes lands under that person's row policy, and **leaves it that
+    way**: a caller that goes on to write as somebody else has to arm itself
+    back. Does not commit.
+    """
+    enrollment = client.get_enrollment(row.vendor_request_id)
+    payer = session.get(PayerRow, row.payer_id)
+    if payer is None:
+        return enrollment
+    now = utc_now()
+    arm(session, row.requested_by_user_id)
+    if apply_vendor_status(session, row, enrollment, payer=payer, now=now):
+        _mirror_status(session, payer, now)
+    return enrollment
+
+
 def _listing_filters(session: Session, rows: Iterable[PayerEnrollmentRow]) -> EnrollmentFilters:
     """Narrow the vendor's listing to this practice's provider and the payers with open requests.
 

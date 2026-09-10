@@ -11,13 +11,15 @@ import type {
   CoverageResponse,
   CreateCoverageRequest,
   CreatePayerRequest,
+  EnrollmentDocumentUrlResponse,
+  EnrollmentTaskListResponse,
   PayerEnrollmentListResponse,
   PayerListResponse,
   PayerResponse,
   UpdateCoverageRequest,
   UpdatePayerRequest,
 } from "@/types/coverage"
-import { ApiError, del, get, patch, post } from "./client"
+import { ApiError, del, get, patch, post, postForm } from "./client"
 
 const PAYERS = "/api/payers"
 
@@ -53,6 +55,57 @@ export async function requestPayerEnrollments(
   token?: string,
 ): Promise<PayerEnrollmentListResponse> {
   return post<PayerEnrollmentListResponse>(`${PAYERS}/${payerRowId}/enrollments`, {}, token)
+}
+
+function enrollment(payerRowId: string, transactionType: string): string {
+  return `${PAYERS}/${payerRowId}/enrollments/${transactionType}`
+}
+
+/** What the payer is waiting on, read live from the clearinghouse. */
+export async function listEnrollmentTasks(
+  payerRowId: string,
+  transactionType: string,
+  token?: string,
+): Promise<EnrollmentTaskListResponse> {
+  return get<EnrollmentTaskListResponse>(`${enrollment(payerRowId, transactionType)}/tasks`, token)
+}
+
+/**
+ * Answer one task: the typed values as JSON, each PDF paired with the field
+ * key it answers. Whole or not at all — a half-answered task is refused
+ * before anything is sent.
+ */
+export async function answerEnrollmentTask(
+  payerRowId: string,
+  transactionType: string,
+  taskId: string,
+  answer: { values: Record<string, string>; documents: Record<string, File> },
+  token?: string,
+): Promise<EnrollmentTaskListResponse> {
+  const form = new FormData()
+  form.append("values", JSON.stringify(answer.values))
+  for (const [key, file] of Object.entries(answer.documents)) {
+    form.append("document_fields", key)
+    form.append("documents", file)
+  }
+  return postForm<EnrollmentTaskListResponse>(
+    `${enrollment(payerRowId, transactionType)}/tasks/${taskId}`,
+    form,
+    token,
+  )
+}
+
+/** A short-lived URL for one of the enrollment's PDFs, to open or download. */
+export async function getEnrollmentDocumentUrl(
+  payerRowId: string,
+  transactionType: string,
+  documentId: string,
+  token?: string,
+): Promise<EnrollmentDocumentUrlResponse> {
+  return get<EnrollmentDocumentUrlResponse>(
+    `${enrollment(payerRowId, transactionType)}/documents/${documentId}`,
+    token,
+  )
 }
 
 /**

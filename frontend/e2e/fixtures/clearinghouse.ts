@@ -18,6 +18,12 @@ export interface ReceivedRequest {
   json: unknown
   /** Set on claim submissions. */
   control_number: string | null
+  /**
+   * Set on a document upload instead of a body. The bytes are a signed
+   * practice document; the fake records that they arrived and how many, and
+   * keeps none of them.
+   */
+  bytes?: number
 }
 
 export interface WebhookDelivery {

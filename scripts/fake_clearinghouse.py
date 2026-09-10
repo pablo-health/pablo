@@ -33,6 +33,7 @@ Configuration is by environment: ``FAKE_CLEARINGHOUSE_FIXTURES`` (directory
 of recordings), ``FAKE_CLEARINGHOUSE_WEBHOOK_URL`` and
 ``FAKE_CLEARINGHOUSE_WEBHOOK_SECRET`` (where and how to sign deliveries),
 ``FAKE_CLEARINGHOUSE_PUBLIC_URL`` (the base written into artifact URLs),
+``FAKE_CLEARINGHOUSE_BROWSER_URL`` (the base for links a browser follows),
 ``FAKE_CLEARINGHOUSE_277_DELAY_SECONDS`` / ``FAKE_CLEARINGHOUSE_835_DELAY_SECONDS``.
 
 Webhook signing follows the Standard Webhooks scheme the vendor uses:
@@ -61,7 +62,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
 logger = logging.getLogger("fake_clearinghouse")
@@ -74,6 +75,11 @@ FIXTURES = Path(
     )
 )
 PUBLIC_URL = os.environ.get("FAKE_CLEARINGHOUSE_PUBLIC_URL", "http://localhost:8080").rstrip("/")
+#: Where a *browser* reaches this app. The vendor's upload URL is followed
+#: by our server and its download URL by the practice's browser, and in a
+#: container stack those are two different hostnames for the same port.
+#: Defaults to ``PUBLIC_URL`` so a single-host run needs no second setting.
+BROWSER_URL = os.environ.get("FAKE_CLEARINGHOUSE_BROWSER_URL", PUBLIC_URL).rstrip("/")
 WEBHOOK_URL = os.environ.get("FAKE_CLEARINGHOUSE_WEBHOOK_URL", "")
 WEBHOOK_SECRET = os.environ.get("FAKE_CLEARINGHOUSE_WEBHOOK_SECRET", "")
 DELAY_277_SECONDS = float(os.environ.get("FAKE_CLEARINGHOUSE_277_DELAY_SECONDS", "2"))
@@ -504,8 +510,16 @@ async def create_provider(request: Request) -> Any:
 
 @app.post(f"{ENROLLMENTS}/enrollments")
 async def create_enrollment(request: Request) -> Any:
+    """A request the payer is already waiting on the practice over.
+
+    A real one lands ``STEDI_ACTION_REQUIRED`` and only later grows a task,
+    on the payer's schedule — which is days, and nothing this harness can
+    wait for. So the enrollment starts where the interesting part begins:
+    open, with the task attached. Everything after this point is the real
+    lifecycle.
+    """
     await _record(request)
-    return _load("enrollment_create_enrollment_835.json")
+    return _enrollment_now()
 
 
 @app.get(f"{ENROLLMENTS}/enrollments")
@@ -532,6 +546,15 @@ async def list_enrollments(request: Request) -> Any:
 #: field and a PDF, which is the case that exercises everything.
 _TASK_ID = "task-e2e-0001"
 
+#: The blank form the task links to — on the enrollment before the practice
+#: has uploaded anything, which is how the vendor attaches a payer's form.
+_TEMPLATE_DOCUMENT_ID = "template-0001"
+
+#: The smallest thing a PDF reader will open, served for any download. The
+#: suite asserts that a document comes back at all; what is in it is the
+#: payer's business.
+_A_PDF = b"%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n"
+
 
 def _fake_task() -> dict[str, Any]:
     return {
@@ -548,7 +571,7 @@ def _fake_task() -> dict[str, Any]:
                 "links": [
                     {
                         "label": "Provider Agreement Template",
-                        "url": f"{ENROLLMENTS}/documents/template-0001/download",
+                        "url": f"{BROWSER_URL}/_fake/download/{_TEMPLATE_DOCUMENT_ID}",
                     }
                 ],
                 "fields": [
@@ -572,7 +595,9 @@ def _fake_task() -> dict[str, Any]:
 def _enrollment_now() -> dict[str, Any]:
     """The enrollment as it currently stands, tasks and documents included."""
     record: dict[str, Any] = _load("enrollment_create_enrollment_835.json")
-    record["status"] = "LIVE" if state.task_complete else "PROVIDER_ACTION_REQUIRED"
+    # Answering the task hands the request to the payer; it does not make
+    # it live. That is weeks away and nobody here is waiting for it.
+    record["status"] = "PROVISIONING" if state.task_complete else "PROVIDER_ACTION_REQUIRED"
     record["tasks"] = [_fake_task()]
     record["documents"] = list(state.documents.values())
     return record
@@ -622,10 +647,51 @@ async def receive_document(document_id: str, request: Request) -> Any:
         raise HTTPException(status_code=400, detail="only PDF documents are supported")
     document["status"] = "UPLOADED"
     document["size"] = len(body)
+    # Logged in the same shape as every other request, minus the body: these
+    # bytes are a signed practice document, and nothing here needs to hold
+    # them once the size and the fact of arrival are recorded.
     state.requests.append(
-        {"method": "PUT", "path": f"/_fake/upload/{document_id}", "bytes": len(body)}
+        {
+            "at": _now(),
+            "method": "PUT",
+            "path": f"/_fake/upload/{document_id}",
+            "query": dict(request.query_params),
+            "headers": {k.lower(): v for k, v in request.headers.items()},
+            "json": None,
+            "control_number": None,
+            "bytes": len(body),
+        }
     )
     return {"ok": True}
+
+
+@app.get(f"{ENROLLMENTS}/documents/{{document_id}}/download")
+async def download_document(document_id: str, request: Request) -> Any:
+    """A link to the bytes, not the bytes.
+
+    The vendor answers with a short-lived URL at its object store; the caller
+    follows it without an API key. Same shape here, pointing back at this app
+    under ``/_fake`` so nothing can come to depend on the download living on
+    a vendor path.
+    """
+    await _record(request)
+    if document_id not in state.documents and document_id != _TEMPLATE_DOCUMENT_ID:
+        raise HTTPException(status_code=404, detail="no such document")
+    return {"downloadUrl": f"{BROWSER_URL}/_fake/download/{document_id}"}
+
+
+@app.get("/_fake/download/{document_id}")
+async def serve_document(document_id: str) -> Response:
+    """Stand in for the vendor's object store on the way back."""
+    document = state.documents.get(document_id)
+    if document is None and document_id != _TEMPLATE_DOCUMENT_ID:
+        raise HTTPException(status_code=404, detail="no such document")
+    name = (document or {}).get("name") or "provider-agreement.pdf"
+    return Response(
+        content=_A_PDF,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{name}"'},
+    )
 
 
 @app.post(f"{ENROLLMENTS}/tasks/{{task_id}}")

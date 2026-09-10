@@ -59,6 +59,55 @@ export interface PayerEnrollmentListResponse {
   enrollment_status: EnrollmentStatus
 }
 
+/** What a task wants: text the practice types, or a PDF it uploads. */
+export type EnrollmentFieldType = "TEXT" | "DOCUMENT"
+
+export interface EnrollmentTaskField {
+  /** The clearinghouse's own key for the field; what an answer is filed under. */
+  key: string
+  label: string
+  field_type: EnrollmentFieldType
+  description: string | null
+}
+
+export interface EnrollmentTaskLink {
+  label: string
+  url: string
+}
+
+/**
+ * One thing the payer is waiting on, shaped as the form to fill in.
+ *
+ * `fields` empty means the task is the instructions themselves — done in a
+ * payer's portal or over the telephone — and answering it says the practice
+ * did that.
+ */
+export interface EnrollmentTaskResponse {
+  id: string
+  instructions: string | null
+  links: EnrollmentTaskLink[]
+  fields: EnrollmentTaskField[]
+}
+
+export type EnrollmentDocumentStatus = "PENDING" | "UPLOADED" | "FAILED"
+
+export interface EnrollmentDocumentResponse {
+  id: string
+  name: string | null
+  status: EnrollmentDocumentStatus
+}
+
+export interface EnrollmentTaskListResponse {
+  data: EnrollmentTaskResponse[]
+  status: EnrollmentRequestStatus
+  /** Every PDF on the enrollment, whichever side put it there. */
+  documents: EnrollmentDocumentResponse[]
+}
+
+export interface EnrollmentDocumentUrlResponse {
+  url: string
+}
+
 export interface CreatePayerRequest {
   name: string
   payer_id: string

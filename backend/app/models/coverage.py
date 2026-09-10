@@ -23,6 +23,10 @@ from ..db.models import (
     DEFAULT_CORRECTED_CLAIM_DAYS,
     DEFAULT_TIMELY_FILING_DAYS,
 )
+from .claims_transport import (  # noqa: TC001 — Pydantic resolves the field types at runtime
+    DocumentStatus,
+    EnrollmentFieldType,
+)
 from .eligibility import (
     EligibilitySummary,  # noqa: TC001 — Pydantic resolves the field type at runtime
 )
@@ -134,6 +138,72 @@ class PayerEnrollmentListResponse(BaseModel):
 
     data: list[PayerEnrollmentResponse]
     enrollment_status: EnrollmentStatus
+
+
+class EnrollmentTaskFieldResponse(BaseModel):
+    """One thing a task wants answered.
+
+    ``key`` is the clearinghouse's own identifier for the field and is what
+    an answer is filed under, so it is carried through untouched rather than
+    prettified. ``label`` is what the practice reads.
+    """
+
+    key: str
+    label: str
+    field_type: EnrollmentFieldType
+    description: str | None = None
+
+
+class EnrollmentTaskLinkResponse(BaseModel):
+    """A form or instruction sheet the task points at."""
+
+    label: str
+    url: str
+
+
+class EnrollmentTaskResponse(BaseModel):
+    """One open task, shaped as the form the practice fills in.
+
+    ``fields`` empty means the task is the instructions themselves — done in
+    a payer's portal or over the telephone — and answering it is the
+    practice's assertion that it did so.
+    """
+
+    id: str
+    instructions: str | None = None
+    links: list[EnrollmentTaskLinkResponse] = []
+    fields: list[EnrollmentTaskFieldResponse] = []
+
+
+class EnrollmentDocumentResponse(BaseModel):
+    """A PDF on the enrollment — uploaded by the practice or by the vendor."""
+
+    id: str
+    name: str | None = None
+    status: DocumentStatus
+
+
+class EnrollmentTaskListResponse(BaseModel):
+    """What the payer is waiting on, read live from the clearinghouse.
+
+    ``documents`` is every PDF on the enrollment, whichever side put it
+    there: the blank form the payer wants signed and the signed one sent
+    back both live here.
+    """
+
+    data: list[EnrollmentTaskResponse]
+    status: EnrollmentRequestStatus
+    documents: list[EnrollmentDocumentResponse] = []
+
+
+class EnrollmentDocumentUrlResponse(BaseModel):
+    """Where to fetch one of the enrollment's PDFs from.
+
+    Short-lived and issued by the clearinghouse's storage provider, so it is
+    handed to the browser to follow rather than proxied through here.
+    """
+
+    url: str
 
 
 # ---------------------------------------------------------------------------

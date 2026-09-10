@@ -6,6 +6,7 @@ import type {
   CoverageResponse,
   CreateCoverageRequest,
   CreatePayerRequest,
+  EnrollmentTaskListResponse,
   PayerEnrollmentListResponse,
   PayerListResponse,
   PayerResponse,
@@ -13,10 +14,12 @@ import type {
   UpdatePayerRequest,
 } from "@/types/coverage"
 import {
+  answerEnrollmentTask,
   createCoverage,
   createPayer,
   deactivateCoverage,
   fetchCoverage,
+  listEnrollmentTasks,
   listPayerEnrollments,
   listPayers,
   requestPayerEnrollments,
@@ -66,6 +69,47 @@ export function useRequestPayerEnrollments(token?: string) {
     mutationFn: ({ payerRowId }) => requestPayerEnrollments(payerRowId, token),
     // The payer row's overall status changes with its requests.
     invalidateKeys: ({ payerRowId }) => [
+      queryKeys.payers.enrollments(payerRowId),
+      queryKeys.payers.list(),
+    ],
+  })
+}
+
+/**
+ * What the payer is waiting on for one transaction — the form to fill in.
+ *
+ * Read live from the clearinghouse, so it is not cached for long: the answer
+ * changes when somebody at the payer's end acts, not when we do.
+ */
+export function useEnrollmentTasks(
+  payerRowId: string | undefined,
+  transactionType: string | undefined,
+  token?: string,
+) {
+  return useAuthQuery<EnrollmentTaskListResponse>({
+    queryKey: queryKeys.payers.enrollmentTasks(payerRowId ?? "", transactionType ?? ""),
+    queryFn: () => listEnrollmentTasks(payerRowId!, transactionType!, token),
+    enabled: !!payerRowId && !!transactionType,
+    staleTime: 0,
+  })
+}
+
+export function useAnswerEnrollmentTask(token?: string) {
+  return useAuthMutation<
+    EnrollmentTaskListResponse,
+    {
+      payerRowId: string
+      transactionType: string
+      taskId: string
+      values: Record<string, string>
+      documents: Record<string, File>
+    }
+  >({
+    mutationFn: ({ payerRowId, transactionType, taskId, values, documents }) =>
+      answerEnrollmentTask(payerRowId, transactionType, taskId, { values, documents }, token),
+    // Answering can move the request, and the request moves the payer row.
+    invalidateKeys: ({ payerRowId, transactionType }) => [
+      queryKeys.payers.enrollmentTasks(payerRowId, transactionType),
       queryKeys.payers.enrollments(payerRowId),
       queryKeys.payers.list(),
     ],

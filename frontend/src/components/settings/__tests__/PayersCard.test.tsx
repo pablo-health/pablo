@@ -15,13 +15,19 @@ import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 
 import { DEADLINE_HELP, ENROLLMENT_HELP, PayersCard } from "../PayersCard"
-import type { PayerEnrollmentListResponse, PayerResponse } from "@/types/coverage"
+import type {
+  EnrollmentTaskListResponse,
+  PayerEnrollmentListResponse,
+  PayerResponse,
+} from "@/types/coverage"
 
 const mockUsePayers = vi.fn()
 const mockUpdate = vi.fn()
 const mockCreate = vi.fn()
 const mockUseEnrollments = vi.fn()
 const mockRequestEnrollments = vi.fn()
+const mockUseTasks = vi.fn()
+const mockAnswerTask = vi.fn()
 
 vi.mock("@/hooks/useCoverage", () => ({
   usePayers: (...args: unknown[]) => mockUsePayers(...args),
@@ -33,6 +39,8 @@ vi.mock("@/hooks/useCoverage", () => ({
     isPending: false,
     error: null,
   }),
+  useEnrollmentTasks: (...args: unknown[]) => mockUseTasks(...args),
+  useAnswerEnrollmentTask: () => ({ mutate: mockAnswerTask, isPending: false, error: null }),
 }))
 
 const AETNA: PayerResponse = {
@@ -70,11 +78,38 @@ const ENROLLMENTS: PayerEnrollmentListResponse = {
   ],
 }
 
+const TASKS: EnrollmentTaskListResponse = {
+  status: "provider_action_required",
+  data: [
+    {
+      id: "task-1",
+      instructions: "Sign the EFT authorization form and upload the signed copy.",
+      links: [{ label: "EFT authorization form", url: "https://payer.example/eft.pdf" }],
+      fields: [
+        {
+          key: "medicaid_id",
+          label: "Medicaid provider id",
+          field_type: "TEXT",
+          description: null,
+        },
+        {
+          key: "signed_eft_form",
+          label: "Signed EFT authorization",
+          field_type: "DOCUMENT",
+          description: null,
+        },
+      ],
+    },
+  ],
+  documents: [],
+}
+
 describe("PayersCard", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockUsePayers.mockReturnValue({ data: { data: [AETNA], total: 1 } })
     mockUseEnrollments.mockReturnValue({ data: undefined })
+    mockUseTasks.mockReturnValue({ data: undefined, isLoading: false, error: null })
   })
 
   it("lists each payer with its filing window and enrollment status", () => {
@@ -113,6 +148,60 @@ describe("PayersCard", () => {
     ).toBeInTheDocument()
     expect(screen.getByText("Claims")).toBeInTheDocument()
     expect(screen.getByText("Live")).toBeInTheDocument()
+  })
+
+  it("asks for what the payer wants, on the request that is waiting", async () => {
+    mockUseEnrollments.mockReturnValue({ data: ENROLLMENTS })
+    mockUseTasks.mockReturnValue({ data: TASKS, isLoading: false, error: null })
+    const user = userEvent.setup()
+    render(<PayersCard />)
+
+    await user.click(screen.getByRole("button", { name: /Aetna/ }))
+
+    expect(screen.getByLabelText("Medicaid provider id")).toBeInTheDocument()
+    expect(screen.getByLabelText("Signed EFT authorization")).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "EFT authorization form" })).toHaveAttribute(
+      "href",
+      "https://payer.example/eft.pdf",
+    )
+    // Only the request that is waiting on the practice grows a form.
+    expect(mockUseTasks).toHaveBeenCalledWith("payer-1", "835")
+    expect(mockUseTasks).not.toHaveBeenCalledWith("payer-1", "837P")
+  })
+
+  it("will not send half an answer", async () => {
+    mockUseEnrollments.mockReturnValue({ data: ENROLLMENTS })
+    mockUseTasks.mockReturnValue({ data: TASKS, isLoading: false, error: null })
+    const user = userEvent.setup()
+    render(<PayersCard />)
+
+    await user.click(screen.getByRole("button", { name: /Aetna/ }))
+    expect(screen.getByRole("button", { name: "Send to the payer" })).toBeDisabled()
+
+    await user.type(screen.getByLabelText("Medicaid provider id"), "MD-4471")
+
+    expect(screen.getByRole("button", { name: "Send to the payer" })).toBeDisabled()
+  })
+
+  it("sends the typed answer and the PDF together", async () => {
+    mockUseEnrollments.mockReturnValue({ data: ENROLLMENTS })
+    mockUseTasks.mockReturnValue({ data: TASKS, isLoading: false, error: null })
+    const pdf = new File(["%PDF-1.7"], "eft.pdf", { type: "application/pdf" })
+    const user = userEvent.setup()
+    render(<PayersCard />)
+
+    await user.click(screen.getByRole("button", { name: /Aetna/ }))
+    await user.type(screen.getByLabelText("Medicaid provider id"), "MD-4471")
+    await user.upload(screen.getByLabelText("Signed EFT authorization"), pdf)
+    await user.click(screen.getByRole("button", { name: "Send to the payer" }))
+
+    expect(mockAnswerTask).toHaveBeenCalledWith({
+      payerRowId: "payer-1",
+      transactionType: "835",
+      taskId: "task-1",
+      values: { medicaid_id: "MD-4471" },
+      documents: { signed_eft_form: pdf },
+    })
   })
 
   it("enrolls with the payer from its row", async () => {

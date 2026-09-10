@@ -10,6 +10,11 @@ provider record, and one enrollment per request with a distinct vendor id
 so several requests can sit side by side. ``listing`` is whatever the test
 wants the next status poll to say.
 
+Answering a task is the one part that has to behave rather than replay: the
+fake keeps each enrollment it handed out, takes documents through the
+vendor's two steps, and refuses — as the vendor does — to complete a task
+against a document whose bytes never arrived.
+
 Shared by the unit suite and the Postgres integration suite.
 """
 
@@ -19,7 +24,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+from app.claims.clearinghouse import ClearinghouseError
 from app.models.claims_transport import (
+    DocumentDownload,
+    DocumentUpload,
     Enrollment,
     EnrollmentFilters,
     EnrollmentPage,
@@ -27,6 +35,7 @@ from app.models.claims_transport import (
     Payer,
     ProviderRecord,
     ProviderRegistration,
+    TaskCompletion,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures" / "clearinghouse"
@@ -80,6 +89,12 @@ class FakeClearinghouse:
         self.page_size: int | None = None
         self._support = transaction_support
         self._next_vendor_id = 0
+        #: Every enrollment this fake has handed out, by vendor id, as the
+        #: mutable dict a task answer changes. ``get_enrollment`` reads it,
+        #: so a completed task is visible on the next poll the way it is at
+        #: the vendor.
+        self.enrollments: dict[str, dict[str, Any]] = {}
+        self._next_document_id = 0
 
     # -- what a test reads back ------------------------------------------------
 
@@ -113,9 +128,10 @@ class FakeClearinghouse:
         [transaction] = [
             name for name, flag in enrollment.transactions.model_dump().items() if flag
         ]
-        return Enrollment.model_validate(
-            enrollment_fixture(vendor_id=f"enr-{self._next_vendor_id:04d}", transaction=transaction)
-        )
+        vendor_id = f"enr-{self._next_vendor_id:04d}"
+        record = enrollment_fixture(vendor_id=vendor_id, transaction=transaction)
+        self.enrollments[vendor_id] = record
+        return Enrollment.model_validate(record)
 
     def list_enrollments(self, filters: EnrollmentFilters) -> EnrollmentPage:
         self.calls.append(("list_enrollments", filters))
@@ -127,6 +143,88 @@ class FakeClearinghouse:
         return EnrollmentPage(
             items=items[start:end], nextPageToken=str(end) if end < len(items) else None
         )
+
+    # -- what the payer is waiting for -----------------------------------------
+
+    def wants_a_signed_form(self, vendor_id: str) -> dict[str, Any]:
+        """Put this request into "the payer needs something from you"."""
+        record = enrollment_fixture(vendor_id=vendor_id, status="PROVIDER_ACTION_REQUIRED")
+        self.enrollments[vendor_id] = record
+        return record
+
+    def _require_enrollment(self, enrollment_id: str) -> dict[str, Any]:
+        record = self.enrollments.get(enrollment_id)
+        if record is None:
+            msg = f"no such enrollment: {enrollment_id}"
+            raise ClearinghouseError(msg)
+        return record
+
+    def get_enrollment(self, enrollment_id: str) -> Enrollment:
+        self.calls.append(("get_enrollment", enrollment_id))
+        return Enrollment.model_validate(self._require_enrollment(enrollment_id))
+
+    def upload_enrollment_document(
+        self, enrollment_id: str, *, name: str, task_id: str
+    ) -> DocumentUpload:
+        self.calls.append(("upload_enrollment_document", (enrollment_id, name, task_id)))
+        record = self._require_enrollment(enrollment_id)
+        self._next_document_id += 1
+        document_id = f"doc-{self._next_document_id:04d}"
+        record.setdefault("documents", []).append(
+            {"id": document_id, "name": name, "status": "PENDING"}
+        )
+        return DocumentUpload(
+            enrollmentId=enrollment_id,
+            uploadUrl=f"https://uploads.test/{document_id}",
+            documentId=document_id,
+        )
+
+    def put_document(self, upload_url: str, content: bytes) -> None:
+        self.calls.append(("put_document", (upload_url, len(content))))
+        document_id = upload_url.rsplit("/", 1)[-1]
+        for record in self.enrollments.values():
+            for document in record.get("documents", []):
+                if document["id"] == document_id:
+                    document["status"] = "UPLOADED"
+                    return
+        msg = f"nothing is expecting {document_id}"
+        raise ClearinghouseError(msg)
+
+    def download_enrollment_document(self, document_id: str) -> DocumentDownload:
+        self.calls.append(("download_enrollment_document", document_id))
+        return DocumentDownload(downloadUrl=f"https://downloads.test/{document_id}?sig=abc")
+
+    def complete_enrollment_task(self, task_id: str, completion: TaskCompletion) -> None:
+        """Mark it done — refusing, as the vendor does, a document not yet taken."""
+        self.calls.append(("complete_enrollment_task", (task_id, completion)))
+        manual = completion.responseData.manualTask if completion.responseData else None
+        named = {
+            value.value.document.documentId
+            for value in (manual.values if manual else [])
+            if value.value.document is not None
+        }
+        for record in self.enrollments.values():
+            for task in record.get("tasks", []):
+                if task["id"] != task_id:
+                    continue
+                taken = {
+                    document["id"]
+                    for document in record.get("documents", [])
+                    if document["status"] == "UPLOADED"
+                }
+                if named - taken:
+                    msg = "document is not uploaded"
+                    raise ClearinghouseError(msg)
+                task["isComplete"] = True
+                if all(
+                    other["isComplete"]
+                    for other in record["tasks"]
+                    if other["responsibleParty"] == "PROVIDER"
+                ):
+                    record["status"] = "PROVISIONING"
+                return
+        msg = f"no such task: {task_id}"
+        raise ClearinghouseError(msg)
 
     # -- the rest of the protocol is never reached by enrollment ---------------
 
