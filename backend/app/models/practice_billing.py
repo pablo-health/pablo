@@ -37,6 +37,11 @@ class BillingProfileResponse(BaseModel):
     #: Run an eligibility check on its own when coverage lands at intake or is
     #: saved on the chart. Default on; off leaves the manual re-verify button.
     eligibility_auto_check: bool = True
+    #: May a clinician write off a balance as a courtesy waiver. Default off.
+    allow_courtesy_writeoffs: bool = False
+    #: Balance, in cents, at or under which a small-balance write-off is
+    #: allowed.
+    small_balance_cents: int = 500
 
 
 class UpdateBillingProfileRequest(BaseModel):
@@ -59,3 +64,5 @@ class UpdateBillingProfileRequest(BaseModel):
     phone: str | None = Field(None, max_length=50)
     contact_email: str | None = Field(None, max_length=255)
     eligibility_auto_check: bool | None = None
+    allow_courtesy_writeoffs: bool | None = None
+    small_balance_cents: int | None = Field(None, ge=0)

@@ -140,6 +140,21 @@ class CreateChargeRequest(BaseModel):
     kind: Literal["session", "copay"] = "session"
 
 
+class CreateWriteOffRequest(BaseModel):
+    """A practice-initiated write-off: money it has decided not to collect.
+
+    ``reason`` is checked at the route against ``app.db.models.WRITE_OFF_REASONS``
+    — the same set the CHECK constraint enforces — rather than encoded as a
+    ``Literal`` here, so there is one list to update rather than two that can
+    drift apart. ``courtesy`` and ``small_balance`` are further gated by
+    practice policy; ``hardship`` and ``error`` are not.
+    """
+
+    amount_cents: int = Field(gt=0, le=MAX_CHARGE_CENTS)
+    reason: str = Field(min_length=1, max_length=24)
+    note: str | None = Field(default=None, max_length=2000)
+
+
 class ChargeAmountResponse(BaseModel):
     """What a charge sent without an explicit amount would come to.
 
