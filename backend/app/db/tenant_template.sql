@@ -231,7 +231,7 @@ CREATE TABLE __TENANT_SCHEMA__.claim_events (
     detail jsonb NOT NULL,
     occurred_at timestamp with time zone NOT NULL,
     created_at timestamp with time zone NOT NULL,
-    CONSTRAINT ck_claim_events_kind CHECK (((kind)::text = ANY ((ARRAY['submitted'::character varying, 'ch_accepted'::character varying, 'payer_accepted'::character varying, 'rejected'::character varying, 'stalled'::character varying, 'acknowledged'::character varying, 'status_checked'::character varying, 'deadline_approaching'::character varying, 'deadline_missed'::character varying])::text[])))
+    CONSTRAINT ck_claim_events_kind CHECK (((kind)::text = ANY ((ARRAY['submitted'::character varying, 'ch_accepted'::character varying, 'payer_accepted'::character varying, 'rejected'::character varying, 'stalled'::character varying, 'acknowledged'::character varying, 'status_checked'::character varying, 'deadline_approaching'::character varying, 'deadline_missed'::character varying, 'adjudicated'::character varying])::text[])))
 );
 
 

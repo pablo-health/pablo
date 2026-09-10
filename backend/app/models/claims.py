@@ -222,6 +222,7 @@ ClaimReceiptKind = Literal[
     "status_checked",
     "deadline_approaching",
     "deadline_missed",
+    "adjudicated",
 ]
 
 

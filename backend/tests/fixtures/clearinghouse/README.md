@@ -23,6 +23,7 @@ appears in any fixture.
 | `eligibility_271_active.json` | a 271 for the vendor's documented mock "active coverage" member. Asking with `encounter.serviceTypeCodes: ["MH"]` returns this same body, byte-for-byte apart from ids (checked 2026-09-06), so one recording serves both the plan-level and the mental-health inquiry |
 | `eligibility_271_inactive.json` | a 271 for the vendor's documented mock "inactive coverage" member (`planStatus` code 6), asked with service type `MH` |
 | `eligibility_271_aaa_invalid_member_id.json` | HTTP 200 with no `planStatus` and a top-level `errors[]` carrying AAA 72, for a made-up member id the mock payer does not know |
+| `claim_timeline_paid_in_full.json` | one claim's whole life on the vendor's claim-lifecycle API: the submission, the clearinghouse's `RECEIVED` acknowledgement, and the test payer's 835 paying it in full. Captured 2026-09-09 from a claim filed through the vendor's *native* claim submission endpoint — the legacy submission path does not put claims on this API, so this fixture cannot be regenerated from the older lane. `backend/tests/test_claim_timeline_capture.py` replays it through the vendor SDK's own deserialiser |
 
 Regenerate with a test API key against the vendor's test payer; the shapes are
 stable across their dated API versions. The live suite under

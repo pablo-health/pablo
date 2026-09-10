@@ -61,6 +61,7 @@ from ..models.claims_transport import (
 from ..models.eligibility import (
     AaaError,
     CarveoutAdministrator,
+    EligibilityOutcome,
     EligibilityStatus,
     EligibilitySummary,
     EligibilityTrigger,
@@ -327,13 +328,20 @@ def _iso_date(yyyymmdd: str | None) -> str | None:
     return f"{yyyymmdd[:4]}-{yyyymmdd[4:6]}-{yyyymmdd[6:]}"
 
 
-def summarize_271(response: EligibilityResponse, *, checked_at: datetime) -> EligibilitySummary:
-    """Read a 271 down to the chart's answer. Pure: no I/O, no logging."""
+def outcome_from_271(response: EligibilityResponse) -> EligibilityOutcome:
+    """Read a 271 down to the chart's answer. Pure: no I/O, no logging.
+
+    The same outcome ``app.claims.sdk_eligibility`` produces from the vendor's
+    own eligibility API, so that a caller cannot tell which client answered.
+    The difference is where the reading happens: here the benefit lines carry
+    X12 ``EB01`` codes and this module sorts them out; there they arrive
+    already sorted by kind.
+    """
     payer_name = response.payer.name if response.payer else None
+    stored = response.model_dump(mode="json", exclude_none=True)
     if response.errors:
-        return EligibilitySummary(
+        return EligibilityOutcome(
             status="error",
-            checked_at=checked_at,
             payer_name=payer_name,
             aaa_errors=[
                 AaaError(
@@ -344,6 +352,7 @@ def summarize_271(response: EligibilityResponse, *, checked_at: datetime) -> Eli
                 )
                 for e in response.errors
             ],
+            stored=stored,
         )
 
     copay = _pick(response, _COPAYMENT, time_qualifier=_TIME_PER_VISIT) or _pick(
@@ -352,9 +361,8 @@ def summarize_271(response: EligibilityResponse, *, checked_at: datetime) -> Eli
     coinsurance = _pick(response, _COINSURANCE)
     deductible = _pick(response, _DEDUCTIBLE, time_qualifier=_TIME_REMAINING)
     plan_dates = response.planDateInformation
-    return EligibilitySummary(
+    return EligibilityOutcome(
         status=_status(response),
-        checked_at=checked_at,
         payer_name=payer_name,
         plan_name=_plan_name(response),
         plan_begin=_iso_date(plan_dates.planBegin) if plan_dates else None,
@@ -364,7 +372,13 @@ def summarize_271(response: EligibilityResponse, *, checked_at: datetime) -> Eli
         visit_limit=_visit_limit(response),
         requires_authorization=_requires_authorization(response),
         carveout_administrator=_carveout_administrator(response),
+        stored=stored,
     )
+
+
+def summarize_271(response: EligibilityResponse, *, checked_at: datetime) -> EligibilitySummary:
+    """That outcome, as of when it was asked."""
+    return outcome_from_271(response).at(checked_at)
 
 
 def summary_for_coverage(coverage: PatientCoverage) -> EligibilitySummary | None:

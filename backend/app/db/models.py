@@ -2301,6 +2301,11 @@ CLAIM_EVENT_KINDS: tuple[str, ...] = (
     "status_checked",
     "deadline_approaching",
     "deadline_missed",
+    # The payer said what it did with the claim. One kind rather than three,
+    # because paid / partially paid / denied is the claim's state and the
+    # state already records it; what the receipt adds is the amounts and the
+    # trace number behind that move.
+    "adjudicated",
 )
 
 
