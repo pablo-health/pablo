@@ -34,6 +34,7 @@ from ..calendar_providers.event_titles import (
     EventTitleStyle,
 )
 from ..calendar_providers.oauth_state import OAuthStateError
+from ..calendar_providers.pkce_store import PkceStoreUnavailableError
 from ..db import get_db_session, release_db_connection
 from ..models import (
     AuditAction,
@@ -1561,6 +1562,16 @@ def google_calendar_callback(
     except OAuthStateError as e:
         logger.warning("Google Calendar OAuth callback rejected an unusable state")
         raise BadRequestError("Invalid state") from e
+    except PkceStoreUnavailableError as e:
+        # Distinct from the catch-all below because the remedy is distinct:
+        # the authorization aged out or was already spent, and starting the
+        # connect again fixes it. Exchanging without the verifier is not an
+        # option — Google would reject it, and falling back would quietly
+        # drop PKCE from the flow.
+        logger.warning("Google Calendar OAuth callback had no PKCE verifier to present")
+        raise BadRequestError(
+            "This connection attempt expired — please try connecting again"
+        ) from e
     except Exception as e:
         logger.exception("Google Calendar OAuth callback failed")
         raise BadRequestError("OAuth callback failed") from e

@@ -66,6 +66,28 @@ def mint_state(key: bytes, user_id: str) -> str:
     return f"{body}.{_sign(key, body)}"
 
 
+def state_nonce(state: str) -> str:
+    """The nonce inside a state value, for keying per-round-trip storage.
+
+    Reads the payload without checking the signature, so a caller holding an
+    unverified value must ``verify_state`` first — this only names the key to
+    look under, it does not decide whether the value is trustworthy.
+
+    The nonce suits that job because it is unique per authorization request
+    and carries nothing about the user. Nothing secret may travel in state
+    itself: it is signed, not encrypted, and rides in URLs that reach access
+    logs, browser history and ``Referer`` headers. Anything worth protecting
+    is stored under this key instead of beside it.
+    """
+    body, _, _ = state.partition(".")
+    if not body:
+        raise OAuthStateError("malformed state")
+    try:
+        return str(json.loads(_b64decode(body))["n"])
+    except Exception as exc:
+        raise OAuthStateError("unreadable state") from exc
+
+
 def verify_state(
     key: bytes,
     state: str,
