@@ -12,6 +12,7 @@ from typing import Any
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from firebase_admin import auth as firebase_auth
+from firebase_admin import exceptions as firebase_exceptions
 
 from ..logging_config import tenant_id_var, user_id_var
 from ..models import User
@@ -208,6 +209,30 @@ def verify_firebase_token(token: str) -> dict[str, Any]:
                 "error": {
                     "code": "USER_NOT_FOUND",
                     "message": "User account no longer exists",
+                    "details": {},
+                }
+            },
+        ) from err
+    except (
+        firebase_exceptions.DeadlineExceededError,
+        firebase_exceptions.UnavailableError,
+    ) as err:
+        # The provider did not answer in time (``check_revoked=True`` makes
+        # this a network call). That says nothing about the token, so it must
+        # NOT surface as 401 — a 401 signs the caller out and sends them back
+        # through a sign-in that depends on the same unreachable provider.
+        # 503 is the honest answer, and it lets a client retry the request it
+        # already had a valid credential for.
+        logger.warning(
+            "Firebase ID token verification unavailable (%s)",
+            type(err).__name__,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": {
+                    "code": "AUTH_PROVIDER_UNAVAILABLE",
+                    "message": "Could not reach the authentication provider. Please retry.",
                     "details": {},
                 }
             },

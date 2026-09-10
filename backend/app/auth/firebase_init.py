@@ -28,9 +28,17 @@ def initialize_firebase_app() -> firebase_admin.App:
     settings = get_settings()
     project_id = settings.effective_firebase_project_id
 
-    options: dict[str, str] = {}
+    options: dict[str, str | int] = {}
     if project_id:
         options["projectId"] = project_id
+
+    # Token verification runs ``check_revoked=True``, so every authenticated
+    # request makes an Admin SDK round trip to the provider. Left at the SDK's
+    # 120s default, a provider stall blocks that call long past the point where
+    # anything useful can come back — see PABLO-pjdb, where it held requests for
+    # ~152s. Bounding it turns a hang into a prompt 503.
+    if settings.firebase_http_timeout_seconds > 0:
+        options["httpTimeout"] = settings.firebase_http_timeout_seconds
 
     if os.environ.get("FIREBASE_AUTH_EMULATOR_HOST"):
         # Emulator doesn't need real credentials

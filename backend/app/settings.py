@@ -689,6 +689,16 @@ class Settings(BaseSettings):
         default="",
         description="IAM Credentials generateAccessToken URL for the impersonated service account",
     )
+    # Bounds every Admin SDK HTTP call, which for token verification means the
+    # ``check_revoked=True`` round trip on the request hot path. The SDK's own
+    # default is 120s -- long enough that a provider stall reads as a hang
+    # rather than an error, and long enough for Postgres to reap a request's
+    # idle-in-transaction connection underneath it (PABLO-pjdb). Seconds; 0
+    # restores the SDK default.
+    firebase_http_timeout_seconds: int = Field(
+        default=10,
+        description="HTTP timeout for Firebase Admin SDK calls (0 = SDK default of 120s)",
+    )
 
     # Upload Settings
     max_upload_mb: int = Field(
