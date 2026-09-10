@@ -305,6 +305,13 @@ class AuditAction(StrEnum):
     # file that carries client ids and nothing else.
     BILLING_PERIOD_EXPORTED = "billing_period_exported"
 
+    # The financial report: aging, payer mix, collections rate and
+    # claim-to-payment lag over an explicit window, all computed on read
+    # from the ledger and claims. One row per read naming the window and
+    # the counts behind each section — ids and amounts only, never a payer
+    # mix keyed to a named client.
+    BILLING_REPORT_VIEWED = "billing_report_viewed"
+
 
 class ResourceType(StrEnum):
     """Resource types for audit logging."""
@@ -321,6 +328,7 @@ class ResourceType(StrEnum):
     CLAIM = "claim"
     CLAIM_EXPORT = "claim_export"
     BILLING_PERIOD_EXPORT = "billing_period_export"
+    BILLING_REPORT = "billing_report"
 
 
 # HIPAA § 164.316(b)(2)(i) — 6-year minimum retention. 7y = margin + matches
