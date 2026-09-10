@@ -55,6 +55,7 @@ from ..claims.fanout import (
 from ..claims.receipts import owned_by_principal
 from ..claims.remittance import post_remittances
 from ..claims.remittance_feed import FeedRemittanceDetails
+from ..claims.routing import record_claim_route
 from ..claims.sdk_timeline import SdkClaimTimelines
 from ..claims.status_worker import AWAITING_STATES, poll_acknowledgments
 from ..claims.submit_worker import submit_pending
@@ -116,6 +117,10 @@ def run_practice(
                 practice_user_ids=practice.user_ids,
                 commit=run.commit,
                 limit=max_per_tenant,
+                # This run knows which practice it is; the worker deliberately
+                # does not. Recording the pair here is what lets a webhook
+                # route by lookup later (PABLO-ffw8).
+                on_pending=lambda control: record_claim_route(control, practice.practice_id),
             )
             totals.update({f"submit_{k}": v for k, v in asdict(submitted).items()})
         if "status" in stages:

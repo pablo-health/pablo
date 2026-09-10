@@ -576,8 +576,8 @@ def tenant(
     return _Tenant(engine, tenant_schema, patient_id, coverage_ids)
 
 
-class TestWebhookFanOutOnPostgres:
-    """The webhook's fan-out, against real tenant sessions and real row policies.
+class TestWebhookRoutingOnPostgres:
+    """The webhook's routing, against a real index, real sessions, real policies.
 
     Every other test of :func:`app.claims.fanout.ingest_transaction_event`
     stubs ``tenant_db_session`` and both repositories, and hands
@@ -588,9 +588,10 @@ class TestWebhookFanOutOnPostgres:
     function returning an empty list, which in production is indistinguishable
     from a document that named no claim of ours.
 
-    So this asks the real question. The registry, the email-to-practice map,
-    the tenant session and the ``has_patient_access`` policy are all real;
-    only the vendor is a fake, and only for this practice.
+    So this asks the real question. ``platform.claim_routes``, the registry,
+    the email-to-practice map, the tenant session and the
+    ``has_patient_access`` policy are all real; only the vendor is a fake, and
+    only for this practice.
     """
 
     @pytest.fixture
@@ -677,6 +678,7 @@ class TestWebhookFanOutOnPostgres:
         that. It has to find A through the registry and the email map.
         """
         from app.claims import fanout  # noqa: PLC0415
+        from app.claims.routing import record_claim_route  # noqa: PLC0415
         from app.claims.webhooks import WebhookEvent  # noqa: PLC0415
         from tests.claims_pipeline_fakes import FakeClearinghouse  # noqa: PLC0415
 
@@ -687,6 +689,7 @@ class TestWebhookFanOutOnPostgres:
         )
 
         transaction = client.acknowledge("payer_accepted", created.control_number)
+        record_claim_route(created.control_number, registered_practice)
         monkeypatch.setattr(
             fanout,
             "clearinghouse_client_for_practice",
@@ -714,6 +717,7 @@ class TestWebhookFanOutOnPostgres:
     ) -> None:
         """An 835 reaches ``paid`` through the same fan-out, not only in a fake."""
         from app.claims import fanout  # noqa: PLC0415
+        from app.claims.routing import record_claim_route  # noqa: PLC0415
         from app.claims.webhooks import WebhookEvent  # noqa: PLC0415
         from tests.claims_pipeline_fakes import FakeClearinghouse  # noqa: PLC0415
 
@@ -729,6 +733,7 @@ class TestWebhookFanOutOnPostgres:
             "clearinghouse_client_for_practice",
             self._only_for(registered_practice, client),
         )
+        record_claim_route(created.control_number, registered_practice)
 
         outcome = fanout.ingest_transaction_event(
             WebhookEvent(
@@ -777,6 +782,37 @@ class TestWebhookFanOutOnPostgres:
         )
 
         assert outcome == "unmatched"
+
+    def test_the_index_answers_which_practice_filed_a_control_number(
+        self, registered_practice: str
+    ) -> None:
+        """The routing index round-trips, and refuses a second owner.
+
+        The primary key is doing real work here: two practices cannot both
+        claim one control number, so a generator collision (PABLO-z7te) is
+        refused at write time rather than resolved by whichever practice a
+        scan happened to reach first — which would have posted a payer's
+        money into the wrong practice's ledger.
+        """
+        from app.claims.routing import (  # noqa: PLC0415
+            practice_for_control_numbers,
+            record_claim_route,
+        )
+
+        control = f"RT{uuid.uuid4().hex[:8].upper()}"
+        record_claim_route(control, registered_practice)
+        assert practice_for_control_numbers([control]) == registered_practice
+        assert practice_for_control_numbers([control.lower()]) == registered_practice
+
+        record_claim_route(control, "some-other-practice")
+        assert practice_for_control_numbers([control]) == registered_practice
+
+    def test_the_index_says_nothing_about_a_control_number_it_never_saw(self) -> None:
+        """No row is "not indexed", and the receiver reads that as ``unmatched``."""
+        from app.claims.routing import practice_for_control_numbers  # noqa: PLC0415
+
+        assert practice_for_control_numbers([f"NX{uuid.uuid4().hex[:8].upper()}"]) is None
+        assert practice_for_control_numbers([]) is None
 
     def test_the_fan_out_asks_every_mapped_clinician(self, registered_practice: str) -> None:
         """``practice_user_ids`` returns the mapped clinicians, both of them.
