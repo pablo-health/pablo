@@ -1,0 +1,41 @@
+{
+  "items": [
+    {
+      "claimPaymentInformation": {
+        "id": "clp_01M249FY5CDE66R3N6313JSQ5F",
+        "statusCode": "PROCESSED_AS_PRIMARY",
+        "totalClaimChargeAmount": "150.00",
+        "claimPaymentAmount": "150.00",
+        "patientResponsibilityAmount": "0.00",
+        "checkOrEftTraceNumber": "01M249FR96JKG25K3T17VJ3AQQ",
+        "processedAt": "2026-09-09T23:54:08.317Z"
+      }
+    },
+    {
+      "claimAcknowledgment": {
+        "id": "ack_01M249FY4CG95GJHV0XHCJ4BQK",
+        "status": "RECEIVED",
+        "reportedBy": "CLEARINGHOUSE",
+        "sourceName": "STEDI INC",
+        "processedAt": "2026-09-09T23:54:08.317Z"
+      }
+    },
+    {
+      "professionalClaimSubmission": {
+        "id": "sbm_07FEHPZFP1BXH95Q8RAMK0C58T",
+        "stediPayerId": "FRCPB",
+        "patientControlNumber": "NATIVEC56E8F30",
+        "patientName": {
+          "firstName": "John",
+          "lastName": "Anon"
+        },
+        "totalClaimChargeAmount": "150.00",
+        "datesOfService": {
+          "start": "2026-09-01",
+          "end": "2026-09-01"
+        },
+        "processedAt": "2026-09-09T23:53:53.132Z"
+      }
+    }
+  ]
+}

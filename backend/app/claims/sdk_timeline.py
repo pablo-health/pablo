@@ -59,13 +59,26 @@ _DISPOSITIONS: dict[str, PaymentDisposition] = {
     "PREDETERMINATION_PRICING_ONLY": "estimate",
 }
 
-#: A 277CA's acknowledgement status, as the tracker's four words. A status
-#: this does not recognise reads as ``unknown``, which shows the claim as
-#: still in flight rather than inventing an outcome for it.
+#: A 277CA's acknowledgement status, as the tracker's four words. The vendor
+#: sends exactly these four; a status this does not recognise reads as
+#: ``unknown``, which shows the claim as still in flight rather than
+#: inventing an outcome for it.
+#:
+#: ``RECEIVED`` is the one worth naming: it means the clearinghouse or payer
+#: has the claim but has neither accepted nor rejected it. That is the
+#: ordinary first acknowledgement of a healthy claim, so reading it as
+#: anything but "still waiting" would put every claim we file into a state
+#: the tracker cannot explain.
+#:
+#: ``INVALID`` maps to ``unknown`` deliberately rather than by omission. It
+#: does not mean the claim is invalid — it means the vendor could not read
+#: the status category code the 277CA carried. Nobody has said anything
+#: about the claim yet, so neither do we.
 _OUTCOMES: dict[str, AcknowledgmentOutcome] = {
     "ACCEPTED": "accepted",
     "REJECTED": "rejected",
-    "PENDING": "pending",
+    "RECEIVED": "pending",
+    "INVALID": "unknown",
 }
 
 

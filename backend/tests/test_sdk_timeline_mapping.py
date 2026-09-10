@@ -143,7 +143,17 @@ class TestTheOtherEntries:
 
     @pytest.mark.parametrize(
         ("status", "outcome"),
-        [("ACCEPTED", "accepted"), ("REJECTED", "rejected"), ("PENDING", "pending")],
+        [
+            ("ACCEPTED", "accepted"),
+            ("REJECTED", "rejected"),
+            # The vendor has the claim and has not ruled on it — the ordinary
+            # first acknowledgement of a healthy claim.
+            ("RECEIVED", "pending"),
+            # Not "the claim is invalid": the vendor could not read the status
+            # category code the 277CA carried, so nobody has said anything
+            # about the claim yet.
+            ("INVALID", "unknown"),
+        ],
     )
     def test_an_acknowledgment_is_read(self, status: str, outcome: str) -> None:
         event = ClaimTimelineEventClaimAcknowledgment(
