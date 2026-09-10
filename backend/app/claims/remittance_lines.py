@@ -63,6 +63,15 @@ logger = logging.getLogger(__name__)
 #: needs to recognise — every other group is recorded and totalled nowhere.
 PATIENT_RESPONSIBILITY = "PR"
 
+#: ``CLP02`` for a claim the payer refused. The payer's own word for it, not
+#: a reading of the adjustment codes.
+DENIED = "4"
+
+#: ``CLP02`` for a payer taking back an earlier adjudication. Its amounts are
+#: the negation of what was posted before, and the standard exempts it from
+#: the patient-responsibility cross-check below.
+REVERSAL = "22"
+
 
 @dataclass(frozen=True, slots=True)
 class LinePosting:
@@ -89,10 +98,19 @@ def posting_for_line(
     adjustments: Sequence[Adjustment],
     *,
     allowed_cents: int | None = None,
+    denied: bool = False,
 ) -> LinePosting:
-    """One line's numbers, from what the payer paid, adjusted and allowed."""
+    """One line's numbers, from what the payer paid, adjusted and allowed.
+
+    ``denied`` is the payer's own claim status, not a reading of the
+    adjustment codes, and it settles what an absent allowed amount means.
+    The standard has payers omit the field rather than send a zero, so
+    "absent" covers two opposite situations: a payer that did not itemise,
+    and a payer that allowed nothing. On a refused claim it is the second,
+    and saying nothing there would report a blank where the answer is known.
+    """
     return LinePosting(
-        allowed_cents=allowed_cents,
+        allowed_cents=0 if allowed_cents is None and denied else allowed_cents,
         paid_cents=paid_cents,
         patient_responsibility_cents=_total(adjustments, PATIENT_RESPONSIBILITY),
         adjustments=[
@@ -112,13 +130,56 @@ def postings_for(remittance: RemittanceClaim) -> dict[str, LinePosting]:
     The control number is the practice's own, echoed back per line, which is
     what ties a payer's service line to the session it was billed for.
     """
+    denied = remittance.claim_status_code == DENIED
     return {
         line.line_control_number: posting_for_line(
-            line.paid_cents, line.adjustments, allowed_cents=line.allowed_cents
+            line.paid_cents,
+            line.adjustments,
+            allowed_cents=line.allowed_cents,
+            denied=denied,
         )
         for line in remittance.lines
         if line.line_control_number
     }
+
+
+def patient_responsibility_agrees(remittance: RemittanceClaim) -> bool:
+    """Does the payer's own total for the client match what we read line by line?
+
+    The strongest check available on the half of this that bills somebody,
+    and the only one that needs no payer to have shown us anything first.
+
+    A payer states the claim's patient-responsibility total once (``CLP05``)
+    and then itemises it across the service lines. Those are two independent
+    statements of the same number, so reading an adjustment into the wrong
+    group shows up here as a disagreement rather than as a client being
+    quietly billed the wrong amount. It fires on the very first real
+    remittance rather than waiting for anybody to reason about it.
+
+    Claim-level adjustments count towards the total the same way line-level
+    ones do — a payer may report the client's share at either level, and the
+    standard forbids reporting the same adjustment at both, so adding them is
+    not double counting.
+
+    A reversal is exempt. Its amounts negate an earlier adjudication and the
+    standard does not require the stated total to match the itemisation
+    there, so checking it would report a disagreement on a claim that is
+    behaving correctly.
+    """
+    if remittance.claim_status_code == REVERSAL:
+        return True
+    itemised = _total(remittance.adjustments, PATIENT_RESPONSIBILITY) + sum(
+        _total(line.adjustments, PATIENT_RESPONSIBILITY) for line in remittance.lines
+    )
+    if itemised == remittance.patient_responsibility_cents:
+        return True
+    logger.warning(
+        "remittance_patient_responsibility_disagrees control_number=%s stated=%d itemised=%d",
+        remittance.patient_control_number,
+        remittance.patient_responsibility_cents,
+        itemised,
+    )
+    return False
 
 
 def applied_to(lines: Sequence[ClaimLine], remittance: RemittanceClaim) -> list[ClaimLine]:

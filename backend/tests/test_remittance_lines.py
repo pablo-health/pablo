@@ -25,7 +25,12 @@ import json
 from pathlib import Path
 
 import pytest
-from app.claims.remittance_lines import applied_to, posting_for_line, postings_for
+from app.claims.remittance_lines import (
+    applied_to,
+    patient_responsibility_agrees,
+    posting_for_line,
+    postings_for,
+)
 from app.claims.responses import parse_835
 from app.models.claims_responses import Adjustment, RemittanceClaim, RemittanceLine
 
@@ -165,6 +170,100 @@ class TestWhatThePayerAllowed:
             "charge is not an allowance"
         )
         assert posting.patient_responsibility_cents == 9_000
+
+
+class TestAnAbsentAllowanceMeansTwoDifferentThings:
+    """The standard has payers omit the field rather than send a zero.
+
+    So "no allowed amount" covers both "the payer did not itemise" and "the
+    payer allowed nothing" — opposite statements. The payer's own claim
+    status settles which, and only for the case it actually settles.
+    """
+
+    def test_a_refused_claim_allowed_nothing(self) -> None:
+        posting = posting_for_line(0, [_adjustment("CO", "29", 15_000)], denied=True)
+
+        assert posting.allowed_cents == 0
+
+    def test_a_processed_claim_with_no_reported_allowance_says_nothing(self) -> None:
+        posting = posting_for_line(11_000, [_adjustment("CO", "45", 4_000)], denied=False)
+
+        assert posting.allowed_cents is None
+
+    def test_a_reported_allowance_wins_even_on_a_refused_claim(self) -> None:
+        """A payer that troubled to state a number is not second-guessed."""
+        posting = posting_for_line(0, [], allowed_cents=8_000, denied=True)
+
+        assert posting.allowed_cents == 8_000
+
+    def test_the_claims_own_status_decides_it(self) -> None:
+        """Read from ``CLP02``, which is the payer saying "denied" in its own
+        words — not our reading of which adjustment codes imply refusal."""
+        refused = _remittance(_line("CLM1L1", paid_cents=0)).model_copy(
+            update={"claim_status_code": "4"}
+        )
+
+        [posting] = postings_for(refused).values()
+
+        assert posting.allowed_cents == 0
+
+
+class TestThePayersOwnCrossCheck:
+    """``CLP05`` against the itemised ``PR``.
+
+    The payer states the client's total once and then itemises it. Two
+    independent statements of one number, so a mis-grouped adjustment shows
+    up as a disagreement instead of as a wrong bill.
+    """
+
+    def test_a_claim_whose_itemisation_matches_its_total_agrees(self) -> None:
+        remittance = _remittance(
+            _line("CLM1L1", paid_cents=12_000, adjustments=[_adjustment("PR", "2", 3_000)])
+        ).model_copy(update={"patient_responsibility_cents": 3_000})
+
+        assert patient_responsibility_agrees(remittance)
+
+    def test_a_mis_grouped_adjustment_is_caught(self, caplog: pytest.LogCaptureFixture) -> None:
+        """The failure this exists for: the payer says the client owes $30 and
+        our reading of the lines finds nothing, because the adjustment was
+        read as a contractual write-off."""
+        remittance = _remittance(
+            _line("CLM1L1", paid_cents=12_000, adjustments=[_adjustment("CO", "45", 3_000)])
+        ).model_copy(update={"patient_responsibility_cents": 3_000})
+
+        with caplog.at_level("WARNING"):
+            assert not patient_responsibility_agrees(remittance)
+
+        assert "remittance_patient_responsibility_disagrees" in caplog.text
+
+    def test_a_claim_level_share_counts_towards_the_total(self) -> None:
+        """A payer may report the client's share at claim level instead of on
+        the lines; that is still the client's share."""
+        remittance = _remittance(_line("CLM1L1", paid_cents=12_000)).model_copy(
+            update={
+                "adjustments": [_adjustment("PR", "1", 3_000)],
+                "patient_responsibility_cents": 3_000,
+            }
+        )
+
+        assert patient_responsibility_agrees(remittance)
+
+    def test_a_reversal_is_exempt(self) -> None:
+        """A takeback negates an earlier adjudication, and the standard does
+        not require the stated total to match the itemisation there. Checking
+        it anyway would report a disagreement on a claim behaving correctly.
+        """
+        reversal = _remittance(
+            _line("CLM1L1", paid_cents=-12_000, adjustments=[_adjustment("PR", "2", -3_000)])
+        ).model_copy(update={"claim_status_code": "22", "patient_responsibility_cents": 0})
+
+        assert patient_responsibility_agrees(reversal)
+
+    def test_the_captured_paid_in_full_remittance_agrees(self) -> None:
+        body = json.loads((_FIXTURES / "835_report_paid_in_full.json").read_text())
+        [remittance] = parse_835(body)
+
+        assert patient_responsibility_agrees(remittance.claims[0])
 
 
 class TestNothingIsQuietlyDiscarded:
