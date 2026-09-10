@@ -2,30 +2,19 @@
 
 """Where a practice's clearinghouse credentials come from.
 
-Filing a claim or checking eligibility needs one thing: an API key for the
-practice's own clearinghouse account. That is deployment configuration, so it
-is read through a small provider rather than baked into the adapter, the same
-way :mod:`app.payments.provider` resolves the Stripe secret key a practice
-charges cards with.
+Filing a claim or checking eligibility needs an API key for the practice's
+clearinghouse account. It is deployment configuration, read through a small
+provider rather than baked into the adapter, the same way
+:mod:`app.payments.provider` resolves the Stripe key.
 
-``mode`` is not a separate setting a deployment has to keep in sync — it is
-read off the key itself (a test key is answered by the vendor's test
-environment, a production key by the live one), so there is no way for the
-mode and the key to disagree.
+``mode`` is read off the key itself rather than kept as a separate setting, so
+the mode and the key cannot disagree.
 
-:class:`SettingsClearinghouseCredentialProvider` is the default and is what a
-bare deployment gets: the key configured as ``CLEARINGHOUSE_API_KEY``, plus
-the optional ``CLEARINGHOUSE_BASE_URL`` saying which server answers for it
-(unset, and it is the vendor's own). A deployment that needs something else
-— credentials fetched from a secret store per practice, a key that rotates
-on its own schedule — implements the protocol and installs it at startup
-with :func:`register_clearinghouse_credential_provider`.
-
-The registry is the same shape the rest of the codebase uses for this kind of
-configuration point (see ``app.payments.provider`` and
-``app.notes.registry``): a protocol, one implementation shipped here, and a
-process-global setter called once during startup rather than per request.
-Registration is a statement about the deployment, not about a request.
+:class:`SettingsClearinghouseCredentialProvider` is the default:
+``CLEARINGHOUSE_API_KEY`` plus the optional ``CLEARINGHOUSE_BASE_URL`` naming
+which server answers. A deployment that needs per-practice credentials or its
+own rotation implements the protocol and installs it at startup with
+:func:`register_clearinghouse_credential_provider`.
 """
 
 from __future__ import annotations
@@ -40,23 +29,13 @@ ClearinghouseMode = Literal["test", "production"]
 
 @dataclass(frozen=True, slots=True)
 class ClearinghouseCredentials:
-    """What one clearinghouse call needs to be made for a practice.
+    """What one clearinghouse call needs for a practice.
 
-    ``api_key`` authenticates the call, sent as the ``Authorization`` header.
-    It is kept out of the dataclass ``repr`` so a logged or traceback-printed
-    credentials object never carries the secret.
-
-    ``mode`` is inferred from the key by whoever resolves it, not chosen
-    separately — the vendor's test keys are answered by its test environment
-    and never touch a real payer, so there is no separate "test mode" flag to
-    forget to flip back.
-
-    ``base_url`` is the origin that answers the calls, and is ``None`` for
-    every deployment that talks to the vendor itself — which is all of them
-    bar a harness pointed at a stand-in. It rides here rather than on a
-    configuration path of its own because "which account" and "which server
-    answers for it" are one fact, not two that could disagree; the adapter
-    resolves it to the vendor's four API bases (``app.claims.stedi``).
+    ``api_key`` is kept out of ``repr`` so a logged or traceback-printed object
+    never carries the secret. ``mode`` is inferred from the key. ``base_url``
+    is the origin that answers, ``None`` for every deployment but a harness
+    pointed at a stand-in; it rides here because "which account" and "which
+    server" are one fact.
     """
 
     api_key: str = field(repr=False)
@@ -68,25 +47,19 @@ class ClearinghouseCredentialProvider(Protocol):
     """Resolves a practice to the credentials its clearinghouse calls are made with."""
 
     def get(self, practice_id: str | None) -> ClearinghouseCredentials | None:
-        """Return the credentials for ``practice_id``, or ``None``.
+        """The credentials for ``practice_id``, or ``None``.
 
-        ``None`` means this practice cannot file claims or check eligibility
-        right now — nothing is configured, or setup is unfinished. Callers
-        turn that into "not available", never into an error path that implies
-        the request itself was wrong.
-
-        ``practice_id`` is ``None`` on a deployment that runs a single
-        practice and therefore has no practice registry to key on.
+        ``None`` means claims are unavailable right now; callers turn it into
+        "not available", never an error implying the request was wrong.
+        ``practice_id`` is ``None`` on a deployment with no practice registry.
         """
         ...
 
 
 class SettingsClearinghouseCredentialProvider:
-    """Default provider: this deployment's own configured clearinghouse API key.
+    """Default provider: the deployment's own configured key.
 
-    ``practice_id`` is accepted and ignored: one deployment, one key, and
-    reading it per call rather than at import time means a redeployed key
-    takes effect without a code change.
+    Read per call so a redeployed key needs no code change.
     """
 
     def get(
@@ -104,14 +77,10 @@ class SettingsClearinghouseCredentialProvider:
         )
 
 
-#: The vendor's test API keys are ``test_``-prefixed; its production keys
-#: carry no prefix at all. Confirmed against a real test key from the
-#: vendor's dashboard on 2026-09-06 (the live suite under
-#: ``tests_integration/clearinghouse_live`` refuses to run unless the key it
-#: is handed classifies as ``test`` here). This is the only signal the
-#: deployment ever needs to check — there is deliberately no separate "which
-#: environment" setting to keep in sync with the key itself. If the vendor
-#: changes its key format this is the one place to update.
+#: The vendor's test keys are ``test_``-prefixed; production keys carry no
+#: prefix (confirmed against a real test key on 2026-09-06, and the live suite
+#: refuses to run unless its key classifies as ``test`` here). The one place
+#: to update if the vendor changes its key format.
 _TEST_KEY_PREFIX = "test_"
 
 
@@ -134,8 +103,7 @@ def register_clearinghouse_credential_provider(
 ) -> None:
     """Install the process-global provider, or pass ``None`` to restore the default.
 
-    Call once during startup, before the first request. Tests use the
-    ``None`` form to put the default back.
+    Call once during startup, before the first request.
     """
     _registry.provider = provider
 
