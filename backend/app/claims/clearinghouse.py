@@ -149,6 +149,14 @@ class ClearinghouseClient(Protocol):
         """
         ...
 
+    def get_remittance_report(self, transaction_id: str) -> dict[str, Any]:
+        """Fetch the 835 behind ``transaction_id`` as the vendor's JSON.
+
+        The claim-lifecycle API reports payment at claim level only, so this
+        is the one source of per-service-line adjudication.
+        """
+        ...
+
     def get_claim_acknowledgment(self, transaction_id: str) -> dict[str, Any]:
         """The 277CA behind an inbound ``277`` transaction, as the vendor's JSON.
 
