@@ -3,15 +3,20 @@
 """Reading a payer's service-line decisions onto a claim's own lines.
 
 Every case here is arithmetic about somebody's money, and the failure mode is
-never a crash — it is a number that looks plausible and is wrong. A
-contractual discount counted as patient responsibility bills a client for the
-practice's own network discount; the reverse silently writes off money the
-client owed.
+never a crash — it is a number that looks plausible and is wrong.
+
+Two different standards of proof are in play, and the tests are organised
+around the difference:
+
+* **What a client is billed** comes from the ``PR`` adjustments alone. That is
+  safe on definitional grounds rather than empirical ones: the CAS group codes
+  are normative, and a provider may bill a client only for adjustments
+  carrying ``PR``. No compliant payer can contradict it.
+* **What the payer allowed** is only ever what the payer reported. It is not
+  derived, because every plausible derivation is wrong somewhere real.
 
 The vendor's test payer pays every claim in full and adjusts nothing, so the
-remittances below are constructed. The group codes are the published X12
-meanings, not this vendor's invention, but the arithmetic is unproven against
-a real payer until the first one sends an 835.
+remittances below are constructed.
 """
 
 from __future__ import annotations
@@ -20,12 +25,7 @@ import json
 from pathlib import Path
 
 import pytest
-from app.claims.remittance_lines import (
-    LinePosting,
-    applied_to,
-    posting_for_line,
-    postings_for,
-)
+from app.claims.remittance_lines import applied_to, posting_for_line, postings_for
 from app.claims.responses import parse_835
 from app.models.claims_responses import Adjustment, RemittanceClaim, RemittanceLine
 
@@ -43,6 +43,7 @@ def _line(
     *,
     charge_cents: int = 15_000,
     paid_cents: int = 15_000,
+    allowed_cents: int | None = None,
     adjustments: list[Adjustment] | None = None,
 ) -> RemittanceLine:
     return RemittanceLine(
@@ -51,6 +52,7 @@ def _line(
         cpt="90837",
         charge_cents=charge_cents,
         paid_cents=paid_cents,
+        allowed_cents=allowed_cents,
         adjustments=adjustments or [],
     )
 
@@ -69,74 +71,108 @@ def _remittance(*lines: RemittanceLine) -> RemittanceClaim:
     )
 
 
-class TestWhoIsOutTheMoney:
-    """The group code decides, and getting it wrong moves real money."""
+class TestWhatTheClientIsBilled:
+    """Only ``PR`` moves money onto a client's ledger."""
 
     def test_a_contractual_discount_is_owed_by_nobody(self) -> None:
         """The practice agreed to it by joining the network. Billing a client
         for their insurer's negotiated discount is the single worst outcome
         this module can produce."""
-        posting = posting_for_line(15_000, 11_000, [_adjustment("CO", "45", 4_000)])
+        posting = posting_for_line(11_000, [_adjustment("CO", "45", 4_000)])
 
         assert posting.patient_responsibility_cents == 0
-        assert posting.allowed_cents == 11_000
 
     def test_patient_responsibility_is_owed_by_the_client(self) -> None:
-        posting = posting_for_line(15_000, 12_000, [_adjustment("PR", "2", 3_000)])
+        posting = posting_for_line(12_000, [_adjustment("PR", "2", 3_000)])
 
         assert posting.patient_responsibility_cents == 3_000
-        # No contractual write-off, so the payer allowed the whole charge.
-        assert posting.allowed_cents == 15_000
 
-    def test_the_two_are_added_up_separately(self) -> None:
-        """The ordinary in-network session: a discount the practice eats and
-        a coinsurance the client owes, on the same line."""
+    def test_a_discount_and_a_coinsurance_on_one_line_stay_separate(self) -> None:
+        """The ordinary in-network session."""
         posting = posting_for_line(
-            15_000,
-            8_000,
-            [_adjustment("CO", "45", 4_000), _adjustment("PR", "2", 3_000)],
+            8_000, [_adjustment("CO", "45", 4_000), _adjustment("PR", "2", 3_000)]
         )
 
-        assert posting.allowed_cents == 11_000
         assert posting.patient_responsibility_cents == 3_000
         assert posting.paid_cents == 8_000
 
     def test_several_client_owed_adjustments_are_summed(self) -> None:
         """Deductible and copay can both land on one line."""
         posting = posting_for_line(
-            15_000,
-            10_000,
-            [_adjustment("PR", "1", 3_000), _adjustment("PR", "3", 2_000)],
+            10_000, [_adjustment("PR", "1", 3_000), _adjustment("PR", "3", 2_000)]
         )
 
         assert posting.patient_responsibility_cents == 5_000
 
-    def test_an_adjustment_we_cannot_classify_lands_in_neither_total(self) -> None:
+    def test_an_adjustment_in_no_group_we_bill_from_is_not_billed(self) -> None:
         """``OA`` and ``PI`` are neither a network discount nor a client
-        balance. Guessing would either bill a client wrongly or write off
-        money quietly, so it is recorded and counted nowhere."""
-        posting = posting_for_line(15_000, 12_000, [_adjustment("OA", "23", 3_000)])
+        balance. Guessing would bill a client wrongly, so they are recorded
+        and counted nowhere."""
+        posting = posting_for_line(12_000, [_adjustment("OA", "23", 3_000)])
 
         assert posting.patient_responsibility_cents == 0
-        assert posting.allowed_cents == 15_000
         assert posting.adjustments == [
             {"group_code": "OA", "reason_code": "23", "amount_cents": 3_000}
         ]
 
-    @pytest.mark.parametrize("group", ["co", "Co", "cO"])
+    @pytest.mark.parametrize("group", ["pr", "Pr", "pR"])
     def test_the_group_code_is_read_regardless_of_case(self, group: str) -> None:
-        posting = posting_for_line(15_000, 11_000, [_adjustment(group, "45", 4_000)])
+        posting = posting_for_line(12_000, [_adjustment(group, "2", 3_000)])
+
+        assert posting.patient_responsibility_cents == 3_000
+
+    def test_the_whole_charge_going_to_deductible_is_owed_in_full(self) -> None:
+        """Paid nothing, and the client owes everything. The claim was
+        processed, not denied."""
+        posting = posting_for_line(0, [_adjustment("PR", "1", 15_000)])
+
+        assert posting.patient_responsibility_cents == 15_000
+        assert posting.paid_cents == 0
+
+
+class TestWhatThePayerAllowed:
+    """Reported or absent. Never derived.
+
+    Every plausible derivation from the adjustments is wrong somewhere real,
+    and the wrong answers are the quiet kind — a number in the right range
+    that misstates what a payer agreed a session was worth.
+    """
+
+    def test_the_reported_amount_is_used(self) -> None:
+        posting = posting_for_line(8_000, [_adjustment("CO", "45", 4_000)], allowed_cents=11_000)
 
         assert posting.allowed_cents == 11_000
+
+    def test_an_unreported_amount_stays_unreported(self) -> None:
+        """``None`` says "the payer did not tell us", which is true. A derived
+        stand-in would say something false and look identical."""
+        posting = posting_for_line(11_000, [_adjustment("CO", "45", 4_000)])
+
+        assert posting.allowed_cents is None
+
+    def test_an_out_of_network_write_off_is_not_read_as_a_full_allowance(self) -> None:
+        """The case that broke the old derivation.
+
+        Out of network the write-off arrives as ``PR45`` and there is no
+        contractual adjustment at all, so "charge less contractual" returned
+        the entire charge — reporting that the payer allowed $150 when it
+        allowed $60.
+        """
+        posting = posting_for_line(6_000, [_adjustment("PR", "45", 9_000)])
+
+        assert posting.allowed_cents is None, (
+            "with no reported allowed amount there is nothing to say; the "
+            "charge is not an allowance"
+        )
+        assert posting.patient_responsibility_cents == 9_000
 
 
 class TestNothingIsQuietlyDiscarded:
     def test_every_adjustment_is_kept_even_when_it_changes_no_total(self) -> None:
         """A biller appealing a line works from the reason codes. Keeping only
-        the ones we could classify would drop exactly the odd case somebody
-        is trying to understand."""
+        the ones we bill from would drop exactly the odd case somebody is
+        trying to understand."""
         posting = posting_for_line(
-            15_000,
             0,
             [
                 _adjustment("CO", "45", 4_000),
@@ -146,13 +182,6 @@ class TestNothingIsQuietlyDiscarded:
         )
 
         assert [a["reason_code"] for a in posting.adjustments] == ["45", "1", "23"]
-
-    def test_a_line_with_no_charge_reports_no_allowed_amount(self) -> None:
-        """Rather than zero, which would read as "the payer allowed nothing"
-        — a different and much worse statement than "we cannot say"."""
-        posting = posting_for_line(0, 0, [])
-
-        assert posting.allowed_cents is None
 
 
 class TestMatchingPayerLinesToOurOwn:
@@ -176,6 +205,7 @@ class TestMatchingPayerLinesToOurOwn:
             _line(
                 "CLM1L1",
                 paid_cents=8_000,
+                allowed_cents=11_000,
                 adjustments=[
                     _adjustment("CO", "45", 4_000),
                     _adjustment("PR", "2", 3_000),
@@ -246,7 +276,7 @@ class TestMatchingPayerLinesToOurOwn:
 class TestAgainstARealRemittance:
     """The one 835 that was actually captured: the test payer, paid in full."""
 
-    def test_a_claim_paid_in_full_allows_the_whole_charge_and_owes_nothing(self) -> None:
+    def test_a_claim_paid_in_full_owes_the_client_nothing(self) -> None:
         body = json.loads((_FIXTURES / "835_report_paid_in_full.json").read_text())
         [remittance] = parse_835(body)
         [paid] = remittance.claims
@@ -255,8 +285,14 @@ class TestAgainstARealRemittance:
 
         assert len(postings) == 1
         [posting] = postings.values()
-        assert isinstance(posting, LinePosting)
         assert posting.paid_cents == paid.total_charge_cents
-        assert posting.allowed_cents == paid.total_charge_cents
         assert posting.patient_responsibility_cents == 0
         assert posting.adjustments == []
+
+    def test_this_payer_reported_no_allowed_amount(self) -> None:
+        """Which is why deriving one was tempting. The capture proves the
+        field really is absent rather than merely unread."""
+        body = json.loads((_FIXTURES / "835_report_paid_in_full.json").read_text())
+        [remittance] = parse_835(body)
+
+        assert remittance.claims[0].lines[0].allowed_cents is None

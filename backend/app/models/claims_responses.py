@@ -138,6 +138,9 @@ class RemittanceLine(BaseModel):
     cpt: str
     charge_cents: int
     paid_cents: int
+    #: What the payer says the service was worth (``AMT*B6``), when it said.
+    #: Situational in the standard, so frequently absent.
+    allowed_cents: int | None = None
     adjustments: list[Adjustment]
 
 

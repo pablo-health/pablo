@@ -58,6 +58,17 @@ def _cents(obj: dict[str, Any], key: str, path: str) -> int:
     return value
 
 
+def _optional_cents(obj: dict[str, Any], key: str) -> int | None:
+    """An amount the payer may simply not have reported.
+
+    ``None`` for absent and for unparseable alike: both mean the same thing
+    to a caller — the payer did not tell us — and neither is worth failing a
+    whole remittance over.
+    """
+    raw = obj.get(key)
+    return None if raw is None else dollars_to_cents(raw)
+
+
 def parse_submission(data: dict[str, Any]) -> ClaimSubmissionResult:
     """Parse the synchronous 200 or 400 body from an 837 submission."""
     claim_reference = _require(data, "claimReference", "$")
@@ -149,6 +160,13 @@ def _parse_remittance_line(line: dict[str, Any], path: str) -> RemittanceLine:
         cpt=_require(service_payment, "adjudicatedProcedureCode", payment_path),
         charge_cents=_cents(service_payment, "lineItemChargeAmount", payment_path),
         paid_cents=_cents(service_payment, "lineItemProviderPaymentAmount", payment_path),
+        # What the payer says the service was worth (X12 ``AMT*B6``). It is
+        # situational — plenty of remittances leave it out — and there is no
+        # sound way to reconstruct it from the adjustments, so an absent one
+        # stays absent rather than becoming a guess.
+        allowed_cents=_optional_cents(
+            line.get("serviceSupplementalAmounts") or {}, "allowedActual"
+        ),
         adjustments=_flatten_adjustments(
             line.get("serviceAdjustments", []), f"{path}.serviceAdjustments"
         ),
