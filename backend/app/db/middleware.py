@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from . import (
@@ -186,26 +187,29 @@ class DatabaseSessionMiddleware(BaseHTTPMiddleware):
         session = get_session_factory()()
         _request_session.set(session)
 
-        # Verify the bearer token before any dependency runs, and before the
-        # schema is resolved: `get_patient_context` reads the stash to refuse
-        # clinician credentials on patient routes, and that guard must not
-        # depend on resolution having succeeded. See the function's docstring.
-        _verify_and_stash_clinician_identity(request)
+        # The prelude below verifies the credential against the identity
+        # provider (a network round trip, because `check_revoked=True`) and
+        # resolves the practice schema (a database query). Both are
+        # synchronous and blocking, and `dispatch` runs ON THE EVENT LOOP —
+        # so calling them inline stops the entire worker for as long as they
+        # take, not merely this request.
+        #
+        # That is not theoretical. On 2026-09-10 the provider stalled for
+        # ~152s; every in-flight request froze with it, the worker logged
+        # nothing at all for 62 of those seconds, and Postgres reaped the
+        # whole pool's idle-in-transaction connections underneath requests
+        # that were powerless to commit. They then woke onto dead sockets and
+        # returned 500. Running the prelude in a worker thread keeps one slow
+        # credential check to one slow request. (PABLO-pjdb)
+        schema, unresolved_reason = await run_in_threadpool(self._prepare, request, session)
 
-        # Resolve tenant schema from auth token before any dependencies run.
-        # This prevents race conditions where repo factories query the DB
-        # before get_tenant_context sets the schema.
-        schema = DEFAULT_PRACTICE_SCHEMA
-        unresolved_reason: str | None = None
-        resolved, reason = _resolve_schema_from_request(request)
-        if resolved:
-            schema = resolved
-        elif reason != UNRESOLVED_UNAUTHENTICATED:
-            # Public routes have no identity and read no practice data, so
-            # that case is ordinary and stays quiet — logging it would bury
-            # the cases worth reading.
-            unresolved_reason = reason
-        set_tenant_schema(session, schema)
+        # `set_tenant_schema` also stashes the schema in the
+        # `_current_tenant_schema` ContextVar, so the pool-checkout listener
+        # can re-arm `search_path` if a later operation grabs a fresh
+        # connection. `run_in_threadpool` gives the worker a COPY of this
+        # context, so that write died with the thread — re-apply it here, on
+        # the loop, where the rest of the request will actually read it.
+        _current_tenant_schema.set(schema)
 
         try:
             response = await call_next(request)
@@ -248,6 +252,40 @@ class DatabaseSessionMiddleware(BaseHTTPMiddleware):
             # after_begin listener, so a leaked slot reads as "a patient
             # is calling" on a request that has no patient at all.
             _current_patient_id.set(None)
+
+    @staticmethod
+    def _prepare(request: Request, session: Session) -> tuple[str, str | None]:
+        """Verify the caller, resolve their practice schema, and arm the session.
+
+        Runs in a worker thread (see ``dispatch``) because every step blocks:
+        token verification calls the identity provider, schema resolution
+        queries the database, and ``set_tenant_schema`` issues SQL.
+
+        Returns ``(schema, unresolved_reason)``. The reason is ``None`` when
+        the schema resolved, or when the request simply carried no credential
+        — public routes read no practice data, so that case is ordinary and
+        stays quiet; logging it would bury the cases worth reading.
+
+        Ordering here is load-bearing and must not be rearranged.
+        """
+        # Verify the bearer token before any dependency runs, and before the
+        # schema is resolved: `get_patient_context` reads the stash to refuse
+        # clinician credentials on patient routes, and that guard must not
+        # depend on resolution having succeeded. See the function's docstring.
+        _verify_and_stash_clinician_identity(request)
+
+        # Resolve tenant schema from auth token before any dependencies run.
+        # This prevents race conditions where repo factories query the DB
+        # before get_tenant_context sets the schema.
+        schema = DEFAULT_PRACTICE_SCHEMA
+        unresolved_reason: str | None = None
+        resolved, reason = _resolve_schema_from_request(request)
+        if resolved:
+            schema = resolved
+        elif reason != UNRESOLVED_UNAUTHENTICATED:
+            unresolved_reason = reason
+        set_tenant_schema(session, schema)
+        return schema, unresolved_reason
 
     @staticmethod
     def _assert_tenant_isolation(session: Session) -> None:
