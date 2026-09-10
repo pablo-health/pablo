@@ -158,10 +158,23 @@ def ingest_transaction_event(event: WebhookEvent) -> WebhookOutcome:
             continue
         if fetched_ack is not None:
             applied = _apply_in_practice(practice, fetched_ack, event.id)
-            return applied if applied is not None else outcome
-        fetched_remit = fetch_remittance(practice.client, transaction_id)
+            if applied is not None:
+                return applied
+            # No clinician of this practice can see the claim it names.
+            # Visibility is what decides here, not the account: a deployment
+            # may serve every practice from one clearinghouse account, so
+            # fetching the transaction proves nothing about who owns it.
+            continue
+        try:
+            fetched_remit = fetch_remittance(practice.client, transaction_id)
+        except ClearinghouseNotFoundError:
+            continue
         if fetched_remit is None:
-            return "ignored"
+            # Ours, but neither a 277CA nor an 835. Remember that we could
+            # read it at all — "ignored" is a better answer than "unmatched"
+            # — and still let another practice claim it.
+            outcome = "ignored"
+            continue
         applied = _apply_remittance_in_practice(practice, fetched_remit)
         if applied is not None:
             return applied

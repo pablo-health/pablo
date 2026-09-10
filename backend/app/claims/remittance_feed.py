@@ -26,7 +26,11 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from ..utcnow import utc_now
-from .clearinghouse import ClearinghouseError
+from .clearinghouse import (
+    ClearinghouseError,
+    ClearinghouseNotFoundError,
+    ClearinghouseReportUnreadableError,
+)
 from .responses import ParseError, parse_835
 
 if TYPE_CHECKING:
@@ -62,12 +66,19 @@ def fetch_remittance(client: ClearinghouseClient, transaction_id: str) -> Fetche
     :class:`FeedRemittanceDetails` above is the periodic pass's bulk read of
     a whole lookback window at once. Raises the adapter's typed errors the
     same way; a transaction another account owns is
-    :class:`~app.claims.clearinghouse.ClearinghouseNotFoundError`.
+    :class:`~app.claims.clearinghouse.ClearinghouseNotFoundError`, while a
+    transaction that IS ours whose 835 cannot be read is
+    :class:`~app.claims.clearinghouse.ClearinghouseReportUnreadableError`.
     """
     document = client.get_transaction(transaction_id)
     if document.direction != "INBOUND" or document.transaction_set != REMITTANCE_TRANSACTION_SET:
         return None
-    report = client.get_remittance_report(transaction_id)
+    try:
+        report = client.get_remittance_report(transaction_id)
+    except ClearinghouseNotFoundError as exc:
+        raise ClearinghouseReportUnreadableError(
+            f"no 835 report for transaction {transaction_id}"
+        ) from exc
     return FetchedRemittance(
         transaction_id=transaction_id,
         processed_at=_processed_at(document.processedAt),

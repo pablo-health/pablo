@@ -59,7 +59,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 
 from ..auth.route_security import truly_public
-from ..claims.clearinghouse import ClearinghouseRateLimitedError, ClearinghouseUnavailableError
+from ..claims.clearinghouse import (
+    ClearinghouseRateLimitedError,
+    ClearinghouseReportUnreadableError,
+    ClearinghouseUnavailableError,
+)
 from ..claims.fanout import ingest_transaction_event
 from ..claims.webhooks import (
     PING,
@@ -134,6 +138,20 @@ async def clearinghouse_webhook(
         )
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE, "could not fetch the transaction; please retry"
+        ) from None
+    except ClearinghouseReportUnreadableError as exc:
+        # The transaction is ours and its report is not readable. Loud on
+        # purpose: this is what a changed or mis-configured report endpoint
+        # looks like, and the alternative — reporting it as "unmatched" —
+        # is indistinguishable from "no claim of ours" and alerts nobody.
+        logger.error(
+            "clearinghouse_webhook_report_unreadable event=%s transaction=%s error=%s",
+            event.id,
+            event.transaction_id,
+            exc,
+        )
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, "could not read the report; please retry"
         ) from None
     logger.info(
         "clearinghouse_webhook_processed event=%s transaction=%s outcome=%s",

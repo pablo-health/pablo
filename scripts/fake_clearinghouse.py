@@ -153,6 +153,9 @@ _PR_REASON_NOT_COVERED = "96"
 _RECORDED_CONTROL_NUMBER = "88659891"
 _RECORDED_LINE_CONTROL_NUMBER = "886598911"
 _RECORDED_CORRELATION_ID = "01M1T7001FRW15MVE0SSW4FA7G"
+#: The 277CA was captured from a DIFFERENT live claim than the 835, so it
+#: carries its own trace number to substitute.
+_RECORDED_277_TRACE_NUMBER = "LIVE50D1D98E2364"
 
 _NAMESPACE = uuid.UUID("7f1c2a8e-0e5b-4d4a-9a9b-3c1f5e2d6b70")
 
@@ -499,11 +502,20 @@ def _build_transaction(control: str, kind: TransactionKind) -> dict[str, Any]:
 
 
 def _build_277_report(control: str) -> dict[str, Any]:
-    """The 277CA as JSON: the recorded acknowledgement for this claim."""
-    claim = state.claims.get(control, {})
-    report: dict[str, Any] = _load("837p_submission_success_test_payer.json")
-    _substitute_submission(report, claim, control)
-    report["transactionId"] = _transaction_id("277", control)
+    """The 277CA as JSON, from the recorded acknowledgement.
+
+    This used to load ``837p_submission_success_test_payer.json`` — the
+    SYNCHRONOUS submission accept, which is a different document entirely
+    (``claimReference``/``status``, where a 277CA report carries
+    ``meta``/``transactions``). ``parse_277`` found no transactions in it and
+    returned zero acknowledgements, so every acknowledgement the harness
+    delivered was reported as naming a claim nobody owned. PABLO-1qox.
+    """
+    report: dict[str, Any] = _deep_replace(
+        _load("277ca_report_clearinghouse_forwarded.json"),
+        {_RECORDED_277_TRACE_NUMBER: control},
+    )
+    report["meta"]["transactionId"] = _transaction_id("277", control)
     return report
 
 
@@ -753,8 +765,18 @@ async def claim_timeline(claim_id: str, request: Request) -> Any:
     return timeline
 
 
+@app.get(f"{CORE}/polling/transactions")
 @app.get(f"{CORE}/transactions")
 async def list_transactions(request: Request) -> Any:
+    """The transaction feed the pipeline's status pass reads.
+
+    Served on BOTH paths on purpose. The adapter polls
+    ``/polling/transactions`` (see ``app/claims/stedi.py``), and this harness
+    answered only ``/transactions`` — so every pass 404'd and read nothing,
+    which is why a claim sat at ``submitted`` with the acknowledgement
+    already waiting in the feed (PABLO-ukzm). Keeping the bare path too
+    because the recorded fixtures were captured against it.
+    """
     await _record(request)
     return {
         "items": [entry["document"] for entry in state.transactions.values()],
@@ -769,6 +791,30 @@ async def get_transaction(transaction_id: str, request: Request) -> Any:
     if entry is None:
         return _vendor_error(404, "NOT_FOUND", f"transaction {transaction_id} not found")
     return entry["document"]
+
+
+@app.get(f"{HEALTHCARE}/change/medicalnetwork/reports/v2/{{transaction_id}}/{{usage}}")
+async def get_report(transaction_id: str, usage: str, request: Request) -> Any:
+    """The 277CA or 835 as JSON, on the path the adapter actually asks for.
+
+    The adapter reads reports from the vendor's Change-compatibility report
+    endpoint (``.../reports/v2/{id}/277`` and ``.../835``), not from the
+    native transaction artifact below. This harness served only the latter,
+    so every report fetch 404'd — which the pipeline reported as a claim
+    nobody owned rather than as a document it could not read (PABLO-1qox).
+    """
+    await _record(request)
+    entry = state.transactions.get(transaction_id)
+    if entry is None:
+        return _vendor_error(404, "NOT_FOUND", f"transaction {transaction_id} not found")
+    # Answer only for the kind this transaction actually IS. Serving the
+    # stored report to whichever usage was asked for would let a caller ask
+    # a 277 transaction for its 835 and get one, which is the harness
+    # agreeing with a bug instead of catching it.
+    kind = entry["document"]["x12"]["metadata"]["transaction"]["transactionSetIdentifier"]
+    if usage != kind:
+        return _vendor_error(404, "NOT_FOUND", f"transaction {transaction_id} has no {usage}")
+    return entry["report"]
 
 
 @app.get(f"{CORE}/transactions/{{transaction_id}}/{{usage}}")
