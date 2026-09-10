@@ -80,6 +80,84 @@ _FREQUENCIES = {
 #: and never a wrong one.
 _IDEMPOTENCY_REUSE_MARKER = "idempotency-key was previously used"
 
+#: The vendor exception that means "this claim is wrong". Matched by name so
+#: this module does not import the SDK at module scope, in step with the
+#: rest of the vendor imports here.
+_INVALID_REQUEST = "InvalidRequestException"
+
+#: Stands in for a vendor code the native rejection does not carry, when the
+#: refusal names no field of its own either.
+_INVALID_REQUEST_CODE = "invalid_request"
+
+
+def rejection_from_validation(
+    exc: Exception, *, req: ClaimSubmissionRequest
+) -> ClaimSubmissionResult | None:
+    """A refused claim as a rejection, when the vendor said which fields.
+
+    ``None`` when the exception is not a field-level refusal, and the caller
+    should raise instead.
+
+    The vendor separates two things the old endpoint ran together. A claim
+    that is malformed is refused with a list of fields and JSON paths; a
+    claim that is well-formed but fails the clearinghouse's payer edits comes
+    back as a stored claim carrying rejections. Both mean the same thing to a
+    practice — this claim will not be paid until somebody fixes it — so both
+    reject the claim here rather than one of them stalling it.
+
+    Treating the first as a transport failure would be worse than merely
+    untidy: the claim would sit waiting for a retry that must fail
+    identically forever, and the field names the vendor just handed us —
+    by far the most useful thing anyone gets out of a rejection — would be
+    thrown away in favour of "the clearinghouse refused the request body".
+
+    The vendor refuses a claim two ways under one exception type, and both
+    are handled here. A JSON-schema failure carries a ``errors`` list of
+    fields and paths. A rule about the claim as a whole — "these two fields
+    are required when the insured is the patient" — carries no list at all,
+    only a sentence, so the sentence becomes the rejection's description.
+    The one refusal that is NOT about the claim is a reused idempotency key,
+    which is the caller's bookkeeping rather than a defect in the claim; it
+    is left to ``submission_error`` to raise.
+    """
+    from ..models.claims_transport import (  # noqa: PLC0415 — avoids an import cycle
+        ClaimSubmissionErrorDetail,
+        ClaimSubmissionResult,
+        SubmissionMeta,
+        SubmissionPayer,
+    )
+
+    message = str(getattr(exc, "message", "") or "")
+    if type(exc).__name__ != _INVALID_REQUEST or _IDEMPOTENCY_REUSE_MARKER in message.lower():
+        return None
+
+    failures = list(getattr(exc, "errors", None) or ())
+    details = [
+        ClaimSubmissionErrorDetail(
+            # The path into the claim is the most actionable thing here, and
+            # there is no vendor code to put in this slot, so it carries the
+            # field instead of a number nobody can look up.
+            code=str(getattr(failure, "path", "") or _INVALID_REQUEST_CODE),
+            description=str(getattr(failure, "message", "") or ""),
+            followupAction="",
+        )
+        for failure in failures
+    ] or [
+        ClaimSubmissionErrorDetail(
+            code=_INVALID_REQUEST_CODE, description=message, followupAction=""
+        )
+    ]
+    return ClaimSubmissionResult(
+        status="ERROR",
+        controlNumber=req.claimInformation.patientControlNumber,
+        tradingPartnerServiceId=req.tradingPartnerServiceId,
+        claimReference=None,
+        errors=details,
+        # Refused before it was stored, so there is no submission to name.
+        meta=SubmissionMeta(traceId=""),
+        payer=SubmissionPayer(payerName="", payerId=req.tradingPartnerServiceId),
+    )
+
 
 def submission_error(exc: Exception) -> Exception:
     """The typed error for a failed claim submission.
@@ -98,7 +176,7 @@ def submission_error(exc: Exception) -> Exception:
     return translate_sdk_error(exc)
 
 
-def _iso_date(compact: str) -> str:
+def _iso_date(compact: str | None) -> str | None:
     """``YYYYMMDD`` as ``YYYY-MM-DD``.
 
     Anything that is not eight digits is passed through untouched: this is a
@@ -106,18 +184,35 @@ def _iso_date(compact: str) -> str:
     malformed date with a message naming the field far better than a guess
     made here would.
     """
+    if compact is None:
+        return None
     if len(compact) != len("YYYYMMDD") or not compact.isdigit():
         return compact
     return f"{compact[:4]}-{compact[4:6]}-{compact[6:]}"
 
 
-def _address(models: Any, address: Address) -> Any:
+def _address(models: Any, address: Address | None) -> Any:
+    """The party's address, or nothing when the claim does not carry one.
+
+    A claim can reach here missing a field the wire model calls required —
+    the scrub's own tests build exactly that, deliberately. Sending it and
+    letting the vendor name the missing field beats raising here, where the
+    only thing we could say is that an attribute was absent.
+    """
+    if address is None:
+        return None
     return models.ProfessionalClaimSubmissionAddress(
         address_line1=address.address1,
         city=address.city,
         state=address.state,
         postal_code=address.postalCode,
     )
+
+
+def _gender(models: Any, letter: str | None) -> Any:
+    if letter is None:
+        return None
+    return models.ProfessionalClaimSubmissionGenderCode(_GENDERS.get(letter, "UNKNOWN"))
 
 
 def _contact(models: Any, contact: ContactInformation) -> Any:
@@ -147,10 +242,10 @@ def _insured(models: Any, subscriber: Subscriber) -> Any:
             models.ProfessionalClaimSubmissionPaymentResponsibilityLevelCode.PRIMARY
         ),
         member_id=subscriber.memberId,
-        address=_address(models, subscriber.address),
+        address=_address(models, getattr(subscriber, "address", None)),
         policy_or_group_number=subscriber.groupNumber,
-        date_of_birth=_iso_date(subscriber.dateOfBirth),
-        gender=models.ProfessionalClaimSubmissionGenderCode(_GENDERS[subscriber.gender]),
+        date_of_birth=_iso_date(getattr(subscriber, "dateOfBirth", None)),
+        gender=_gender(models, getattr(subscriber, "gender", None)),
     )
 
 
@@ -191,9 +286,14 @@ def _service_line(models: Any, line: ServiceLine, *, diagnoses: list[str]) -> An
         for pointer in service.compositeDiagnosisCodePointers.diagnosisCodePointers
         if (index := int(pointer)) and 1 <= index <= len(diagnoses)
     ]
+    # A session happens on a day, so the line carries a start and no end.
+    # The vendor takes a range here, and a range whose ends are equal is not
+    # the same statement in X12 — it becomes a range segment rather than a
+    # single service date, and what the payer's remittance echoes back
+    # changes with it.
     date = _iso_date(line.serviceDate)
     return models.ProfessionalClaimSubmissionServiceLine(
-        dates_of_service=models.ProfessionalClaimSubmissionDateRange(start=date, end=date),
+        dates_of_service=models.ProfessionalClaimSubmissionDateRange(start=date),
         procedure_code=models.ProfessionalClaimSubmissionProcedureCode(
             code=service.procedureCode, modifiers=list(service.procedureModifiers) or None
         ),

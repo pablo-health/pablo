@@ -105,13 +105,17 @@ class TestValuesThatWouldBeWrongRatherThanRejected:
     def test_dates_of_birth_become_iso(self) -> None:
         assert _submission().insured.date_of_birth == "2000-01-01"
 
-    def test_a_service_date_becomes_a_single_day_range(self) -> None:
-        """One session on one day: the vendor takes a range, and a range whose
-        end drifted from its start would bill for a span nobody attended."""
+    def test_a_service_date_stays_a_single_day(self) -> None:
+        """One session happens on one day.
+
+        The vendor takes a range here, and filling both ends in is not the
+        same statement: it becomes a range segment in X12 rather than a
+        service date, and the payer's remittance echoes it back differently.
+        """
         line = _submission().service_lines[0]
 
         assert line.dates_of_service.start == "2026-09-01"
-        assert line.dates_of_service.end == "2026-09-01"
+        assert line.dates_of_service.end is None
 
     def test_the_procedure_keeps_its_modifiers(self) -> None:
         line = _submission().service_lines[0]
