@@ -87,9 +87,13 @@ test.describe("answering a payer's enrollment task", () => {
     // What the payer is waiting for, as a form rather than a paragraph.
     await expect(page.getByText("Needs your action")).toBeVisible()
     await expect(page.getByLabel("Medicaid Provider Identifier")).toBeVisible()
+    // The blank form is hosted by the clearinghouse, so it is a button, not
+    // an anchor: a browser following that URL arrives without the account
+    // key and is refused.
     await expect(
-      page.getByRole("link", { name: "Provider Agreement Template" }),
+      page.getByRole("button", { name: "Provider Agreement Template" }),
     ).toBeVisible()
+    await expect(page.getByRole("link", { name: "Provider Agreement Template" })).toHaveCount(0)
 
     const send = page.getByRole("button", { name: "Send to the payer" })
     await expect(send).toBeDisabled()
@@ -166,6 +170,30 @@ test.describe("answering a payer's enrollment task", () => {
 
     const fetched = await request.get(url)
     expect(fetched.ok()).toBe(true)
+    expect((await fetched.body()).subarray(0, 5).toString()).toBe("%PDF-")
+  })
+
+  test("the payer's blank form is fetched with the account key", async ({
+    api,
+    signedInPage: page,
+    request,
+  }) => {
+    const name = await givePayerWaitingOnUs(api, "Stedi Template Link")
+
+    await page.goto("/dashboard/settings/insurance")
+    await page.getByRole("button", { name: new RegExp(name) }).click()
+
+    const [answer] = await Promise.all([
+      page.waitForResponse((r) => r.url().includes("/links/0")),
+      page.getByRole("button", { name: "Provider Agreement Template" }).click(),
+    ])
+    const { url } = (await answer.json()) as { url: string }
+
+    // The template link the task carries points at the clearinghouse's own
+    // API. What comes back is a different URL entirely — one the browser can
+    // fetch on its own.
+    expect(url).toContain("/_fake/download/template-0001")
+    const fetched = await request.get(url)
     expect((await fetched.body()).subarray(0, 5).toString()).toBe("%PDF-")
   })
 })

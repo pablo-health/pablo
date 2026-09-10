@@ -87,7 +87,10 @@ const TASKS: EnrollmentTaskListResponse = {
     {
       id: "task-1",
       instructions: "Sign the EFT authorization form and upload the signed copy.",
-      links: [{ label: "EFT authorization form", url: "https://payer.example/eft.pdf" }],
+      links: [
+        { label: "EFT authorization form", url: "https://payer.example/eft.pdf", resolvable: false },
+        { label: "Provider agreement", url: "https://ch.example/2024-09-01/documents/d1", resolvable: true },
+      ],
       fields: [
         {
           key: "medicaid_id",
@@ -169,10 +172,14 @@ describe("PayersCard", () => {
 
     expect(screen.getByLabelText("Medicaid provider id")).toBeInTheDocument()
     expect(screen.getByLabelText("Signed EFT authorization")).toBeInTheDocument()
+    // A link on the open web is an anchor the browser can just follow.
     expect(screen.getByRole("link", { name: "EFT authorization form" })).toHaveAttribute(
       "href",
       "https://payer.example/eft.pdf",
     )
+    // One the clearinghouse hosts is not — it needs a key the browser lacks.
+    expect(screen.getByRole("button", { name: "Provider agreement" })).toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: "Provider agreement" })).toBeNull()
     // Only the request that is waiting on the practice grows a form.
     expect(mockUseTasks).toHaveBeenCalledWith("payer-1", "835")
     expect(mockUseTasks).not.toHaveBeenCalledWith("payer-1", "837P")

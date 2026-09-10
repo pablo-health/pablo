@@ -47,7 +47,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from tests.enrollment_fakes import TEST_PAYER_ID, FakeClearinghouse
+from tests.enrollment_fakes import ENROLLMENTS_BASE, TEST_PAYER_ID, FakeClearinghouse
 from tests.sqlite_engine import sqlite_engine
 
 if TYPE_CHECKING:
@@ -145,6 +145,7 @@ def harness(engine: Engine) -> Iterator[dict[str, Any]]:
             "clearinghouse": clearinghouse,
             "tasks": f"/api/payers/{payer.id}/enrollments/835/tasks",
             "documents": f"/api/payers/{payer.id}/enrollments/835/documents",
+            "links": f"/api/payers/{payer.id}/enrollments/835/tasks/{_SIGNED_FORM_TASK}/links",
         }
     finally:
         session.close()
@@ -303,6 +304,53 @@ class TestAnsweringATask:
 
         assert response.status_code == 404
         assert len(harness["clearinghouse"].calls_named("complete_enrollment_task")) == 1
+
+
+class TestOpeningATaskLink:
+    """The task's link is the payer's blank form — sometimes ours to fetch."""
+
+    def _link(self, harness: dict[str, Any], url: str) -> None:
+        """Re-point the fixture task's one link at ``url``."""
+        record = harness["clearinghouse"].enrollments["enr-0001"]
+        record["tasks"][0]["definition"]["manualTask"]["links"][0]["url"] = url
+
+    def test_a_clearinghouse_link_is_marked_for_resolving(self, harness: dict[str, Any]) -> None:
+        self._link(harness, f"{ENROLLMENTS_BASE}/documents/tmpl-1")
+
+        response = harness["client"].get(harness["tasks"])
+
+        [link] = response.json()["data"][0]["links"]
+        assert link["resolvable"] is True
+
+    def test_a_link_on_the_open_web_is_not(self, harness: dict[str, Any]) -> None:
+        response = harness["client"].get(harness["tasks"])
+
+        [link] = response.json()["data"][0]["links"]
+        assert link["url"].startswith("https://example.com/")
+        assert link["resolvable"] is False
+
+    def test_resolving_hands_back_the_short_lived_url(self, harness: dict[str, Any]) -> None:
+        self._link(harness, f"{ENROLLMENTS_BASE}/documents/tmpl-1")
+
+        response = harness["client"].get(f"{harness['links']}/0")
+
+        assert response.status_code == 200, response.text
+        assert response.json()["url"] == "https://downloads.test/tmpl-1"
+
+    def test_a_link_on_the_open_web_is_not_resolved(self, harness: dict[str, Any]) -> None:
+        """The fixture's link is a payer's own website. The browser has it already."""
+        response = harness["client"].get(f"{harness['links']}/0")
+
+        assert response.status_code == 404
+        assert harness["clearinghouse"].calls_named("resolve_enrollment_link") == []
+
+    def test_an_index_the_task_does_not_have_is_404(self, harness: dict[str, Any]) -> None:
+        self._link(harness, f"{ENROLLMENTS_BASE}/documents/tmpl-1")
+
+        response = harness["client"].get(f"{harness['links']}/7")
+
+        assert response.status_code == 404
+        assert harness["clearinghouse"].calls_named("resolve_enrollment_link") == []
 
 
 class TestFetchingADocument:

@@ -155,10 +155,18 @@ class EnrollmentTaskFieldResponse(BaseModel):
 
 
 class EnrollmentTaskLinkResponse(BaseModel):
-    """A form or instruction sheet the task points at."""
+    """A form or instruction sheet the task points at.
+
+    ``resolvable`` marks a link the browser cannot follow on its own: it
+    points back at the clearinghouse's own API, which answers an
+    unauthenticated request with 403. Those are opened through
+    ``…/tasks/{id}/links/{index}``, which asks for a short-lived URL first.
+    An ordinary web link is followed directly and ``url`` is all it needs.
+    """
 
     label: str
     url: str
+    resolvable: bool = False
 
 
 class EnrollmentTaskResponse(BaseModel):

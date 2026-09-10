@@ -467,6 +467,7 @@ _PDF_MAGIC = b"%PDF-"
 _NO_ENROLLMENT = "No enrollment has been filed with this payer for that transaction."
 _TASK_NOT_OPEN = "That task is not waiting on this practice."
 _DOCUMENT_NOT_ON_ENROLLMENT = "No such document on this enrollment."
+_NO_LINK_TO_RESOLVE = "No clearinghouse-hosted link at that position on this task."
 _NOT_A_PDF = "The clearinghouse only takes PDFs."
 _DOCUMENT_TOO_BIG = "That document is too large to send. The limit is 10 MB."
 _NO_CLEARINGHOUSE = "No clearinghouse account is configured for this practice."
@@ -519,13 +520,17 @@ def _read_enrollment(
     return enrollment
 
 
-def _to_task_response(task: EnrollmentTask) -> EnrollmentTaskResponse:
+def _to_task_response(task: EnrollmentTask, client: ClearinghouseClient) -> EnrollmentTaskResponse:
     manual = task.definition.manualTask if task.definition else None
     return EnrollmentTaskResponse(
         id=task.id,
         instructions=manual.instructions if manual else None,
         links=[
-            EnrollmentTaskLinkResponse(label=link.label, url=link.url)
+            EnrollmentTaskLinkResponse(
+                label=link.label,
+                url=link.url,
+                resolvable=client.hosts_enrollment_documents(link.url),
+            )
             for link in (manual.links if manual else [])
         ],
         fields=[
@@ -540,9 +545,11 @@ def _to_task_response(task: EnrollmentTask) -> EnrollmentTaskResponse:
     )
 
 
-def _tasks_response(row: PayerEnrollmentRow, enrollment: Enrollment) -> EnrollmentTaskListResponse:
+def _tasks_response(
+    row: PayerEnrollmentRow, enrollment: Enrollment, client: ClearinghouseClient
+) -> EnrollmentTaskListResponse:
     return EnrollmentTaskListResponse(
-        data=[_to_task_response(task) for task in enrollment.open_tasks()],
+        data=[_to_task_response(task, client) for task in enrollment.open_tasks()],
         status=row.status,  # type: ignore[arg-type]  # CHECK-constrained column
         documents=[
             EnrollmentDocumentResponse(id=doc.id, name=doc.name, status=doc.status)
@@ -621,8 +628,9 @@ def get_enrollment_tasks(
     somebody looks at it.
     """
     row = _require_enrollment_row(session, payers, payer_row_id, transaction_type)
-    enrollment = _read_enrollment(session, _require_clearinghouse(client), row, ctx.user_id, arm)
-    return _tasks_response(row, enrollment)
+    reachable = _require_clearinghouse(client)
+    enrollment = _read_enrollment(session, reachable, row, ctx.user_id, arm)
+    return _tasks_response(row, enrollment, reachable)
 
 
 @payers_router.post(
@@ -688,7 +696,55 @@ def answer_enrollment_task(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=_CLEARINGHOUSE_REFUSED
         ) from exc
 
-    return _tasks_response(row, _read_enrollment(session, reachable, row, ctx.user_id, arm))
+    return _tasks_response(
+        row, _read_enrollment(session, reachable, row, ctx.user_id, arm), reachable
+    )
+
+
+@payers_router.get(
+    "/{payer_row_id}/enrollments/{transaction_type}/tasks/{task_id}/links/{link_index}",
+    response_model=EnrollmentDocumentUrlResponse,
+)
+def resolve_enrollment_task_link(
+    payer_row_id: str,
+    transaction_type: EnrollmentTransactionType,
+    task_id: str,
+    link_index: int,
+    payers: PayersRepo,
+    session: DbSession,
+    client: Clearinghouse,
+    arm: Armer,
+    ctx: TenantContext = Depends(get_tenant_context),
+) -> EnrollmentDocumentUrlResponse:
+    """Open a task link the clearinghouse hosts: the short-lived URL to fetch it from.
+
+    Addressed by position in the task's own list of links, and that is the
+    whole security argument: the URL is never taken from the caller, so no
+    request can make the account key go somewhere the clearinghouse did not
+    put in front of this practice. A link to the open web needs no help and
+    is not served here — the browser already has ``url``.
+    """
+    row = _require_enrollment_row(session, payers, payer_row_id, transaction_type)
+    reachable = _require_clearinghouse(client)
+    enrollment = _read_enrollment(session, reachable, row, ctx.user_id, arm)
+    task = next((item for item in enrollment.tasks if item.id == task_id), None)
+    manual = task.definition.manualTask if task and task.definition else None
+    links = manual.links if manual else []
+    if not 0 <= link_index < len(links) or not reachable.hosts_enrollment_documents(
+        links[link_index].url
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_NO_LINK_TO_RESOLVE)
+    try:
+        download = reachable.resolve_enrollment_link(links[link_index].url)
+    except ClearinghouseUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_CLEARINGHOUSE_BUSY
+        ) from exc
+    except ClearinghouseError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=_CLEARINGHOUSE_REFUSED
+        ) from exc
+    return EnrollmentDocumentUrlResponse(url=download.downloadUrl)
 
 
 @payers_router.get(

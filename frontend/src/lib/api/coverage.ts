@@ -110,6 +110,25 @@ export async function getEnrollmentDocumentUrl(
 }
 
 /**
+ * A short-lived URL for a task link the clearinghouse hosts.
+ *
+ * Addressed by the link's position in the task rather than by its URL: the
+ * server will not fetch a URL a caller hands it.
+ */
+export async function resolveEnrollmentTaskLink(
+  payerRowId: string,
+  transactionType: string,
+  taskId: string,
+  linkIndex: number,
+  token?: string,
+): Promise<EnrollmentDocumentUrlResponse> {
+  return get<EnrollmentDocumentUrlResponse>(
+    `${enrollment(payerRowId, transactionType)}/tasks/${taskId}/links/${linkIndex}`,
+    token,
+  )
+}
+
+/**
  * Check every open enrollment request across every payer in one pass.
  *
  * A press inside the server's throttle floor answers with the previous

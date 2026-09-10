@@ -24,9 +24,10 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useAnswerEnrollmentTask, useEnrollmentTasks } from "@/hooks/useCoverage"
-import { getEnrollmentDocumentUrl } from "@/lib/api/coverage"
+import { getEnrollmentDocumentUrl, resolveEnrollmentTaskLink } from "@/lib/api/coverage"
 import type {
   EnrollmentDocumentResponse,
+  EnrollmentTaskLink,
   EnrollmentTaskResponse,
   EnrollmentTransactionType,
 } from "@/types/coverage"
@@ -76,6 +77,54 @@ function DocumentRow({
   )
 }
 
+/**
+ * One thing the task points at — a payer's form, an instruction sheet.
+ *
+ * A link on the open web is an ordinary anchor. One the clearinghouse hosts
+ * cannot be: a browser following it arrives without an account key and is
+ * refused, so it is opened by asking us for a short-lived URL first.
+ */
+function TaskLink({
+  payerRowId,
+  transactionType,
+  taskId,
+  link,
+  index,
+}: Props & { taskId: string; link: EnrollmentTaskLink; index: number }) {
+  const [failed, setFailed] = useState(false)
+  const className = "block text-left text-[12.5px] text-foreground underline underline-offset-2"
+
+  if (!link.resolvable) {
+    return (
+      <a href={link.url} target="_blank" rel="noopener noreferrer" className={className}>
+        {link.label}
+      </a>
+    )
+  }
+
+  async function open() {
+    setFailed(false)
+    try {
+      const { url } = await resolveEnrollmentTaskLink(payerRowId, transactionType, taskId, index)
+      window.open(url, "_blank", "noopener,noreferrer")
+    } catch {
+      setFailed(true)
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      className={className}
+      data-testid={`enrollment-task-link-${taskId}-${index}`}
+      onClick={open}
+    >
+      {failed ? `${link.label} — try again` : link.label}
+    </button>
+  )
+}
+
+
 function TaskForm({
   payerRowId,
   transactionType,
@@ -95,16 +144,15 @@ function TaskForm({
       {task.instructions && (
         <p className="whitespace-pre-line text-[12.5px] text-foreground">{task.instructions}</p>
       )}
-      {task.links.map((link) => (
-        <a
+      {task.links.map((link, index) => (
+        <TaskLink
           key={link.url}
-          href={link.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="block text-[12.5px] text-foreground underline underline-offset-2"
-        >
-          {link.label}
-        </a>
+          payerRowId={payerRowId}
+          transactionType={transactionType}
+          taskId={task.id}
+          link={link}
+          index={index}
+        />
       ))}
       {task.fields.map((field) => (
         <div key={field.key} className="space-y-1">

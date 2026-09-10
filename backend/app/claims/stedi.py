@@ -505,6 +505,28 @@ class StediClearinghouseClient:
             _raise_for_error_envelope(response)
         return DocumentDownload.model_validate(response.json())
 
+    def hosts_enrollment_documents(self, url: str) -> bool:
+        """Matched against the *configured* base, not the vendor's public host.
+
+        The end-to-end harness serves the same API from somewhere else
+        entirely, and a hard-coded ``enrollments.us.stedi.com`` would make
+        every link there look external — which is exactly the case that
+        cannot then be tested.
+        """
+        return url.startswith(f"{self._bases.enrollments}/")
+
+    def resolve_enrollment_link(self, url: str) -> DocumentDownload:
+        if not self.hosts_enrollment_documents(url):
+            # The account key goes to the clearinghouse and nowhere else. The
+            # URL arrived inside a payer's task, which is not a place we
+            # control, so this is checked here as well as at the route.
+            msg = "refusing to send the account key to a host the clearinghouse does not own"
+            raise ClearinghouseError(msg)
+        response = self._get(url)
+        if response.status_code != httpx.codes.OK:
+            _raise_for_error_envelope(response)
+        return DocumentDownload.model_validate(response.json())
+
     def complete_enrollment_task(self, task_id: str, completion: TaskCompletion) -> None:
         response = self._post(
             f"{self._bases.enrollments}/tasks/{task_id}",

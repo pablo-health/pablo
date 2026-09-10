@@ -210,6 +210,28 @@ class ClearinghouseClient(Protocol):
         """A short-lived URL to fetch one of an enrollment's PDFs."""
         ...
 
+    def hosts_enrollment_documents(self, url: str) -> bool:
+        """Is this URL on the clearinghouse's own enrollment API?
+
+        A task's links are whatever the payer or the clearinghouse put there.
+        Some point at the open web — a payer's PDF on its own website, which
+        a browser fetches perfectly well. Others point back at the
+        clearinghouse's enrollment API, which answers a browser with 403,
+        because a browser has no account key. Telling them apart is what
+        decides whether a link can be followed or has to be resolved first.
+        """
+        ...
+
+    def resolve_enrollment_link(self, url: str) -> DocumentDownload:
+        """Follow a document URL the clearinghouse itself gave us, with the key.
+
+        Sends the account key to that exact URL, verbatim — the clearinghouse
+        handed it to us, so unlike :meth:`download_enrollment_document` there
+        is no path to construct and nothing to get wrong. What comes back is
+        the short-lived URL to fetch the file with, unauthenticated.
+        """
+        ...
+
     def complete_enrollment_task(self, task_id: str, completion: TaskCompletion) -> None:
         """Answer a task's fields and mark it done.
 

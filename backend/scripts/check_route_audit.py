@@ -238,6 +238,11 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("post", "/api/payers/{payer_row_id}/enrollments/{transaction_type}/tasks/{task_id}"),
         (
             "get",
+            "/api/payers/{payer_row_id}/enrollments/{transaction_type}"
+            "/tasks/{task_id}/links/{link_index}",
+        ),
+        (
+            "get",
             "/api/payers/{payer_row_id}/enrollments/{transaction_type}/documents/{document_id}",
         ),
         ("post", "/api/payers/enrollments/refresh"),  # practice-level poll; no patient data

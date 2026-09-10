@@ -73,6 +73,12 @@ export interface EnrollmentTaskField {
 export interface EnrollmentTaskLink {
   label: string
   url: string
+  /**
+   * True when the link points back at the clearinghouse's own API, which
+   * answers a browser with 403. Open those through
+   * `resolveEnrollmentTaskLink`; follow any other link directly.
+   */
+  resolvable: boolean
 }
 
 /**

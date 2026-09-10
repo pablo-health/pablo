@@ -571,7 +571,7 @@ def _fake_task() -> dict[str, Any]:
                 "links": [
                     {
                         "label": "Provider Agreement Template",
-                        "url": f"{BROWSER_URL}/_fake/download/{_TEMPLATE_DOCUMENT_ID}",
+                        "url": f"{PUBLIC_URL}{ENROLLMENTS}/documents/{_TEMPLATE_DOCUMENT_ID}",
                     }
                 ],
                 "fields": [
@@ -663,6 +663,21 @@ async def receive_document(document_id: str, request: Request) -> Any:
         }
     )
     return {"ok": True}
+
+
+@app.get(f"{ENROLLMENTS}/documents/{{document_id}}")
+async def document_link(document_id: str, request: Request) -> Any:
+    """What a task's own link answers when the key is presented.
+
+    The vendor puts these URLs inside a task, so a client follows one
+    verbatim rather than building a path. Answering with a link rather than
+    bytes is the vendor's shape, and is why a browser cannot simply be
+    pointed at the task link: this hop needs the account key.
+    """
+    await _record(request)
+    if document_id not in state.documents and document_id != _TEMPLATE_DOCUMENT_ID:
+        raise HTTPException(status_code=404, detail="no such document")
+    return {"downloadUrl": f"{BROWSER_URL}/_fake/download/{document_id}"}
 
 
 @app.get(f"{ENROLLMENTS}/documents/{{document_id}}/download")

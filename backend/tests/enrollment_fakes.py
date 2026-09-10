@@ -44,6 +44,10 @@ PROVIDER_ID = "01a0746f-25d4-78a0-bb43-0f95acd218c9"
 TEST_PAYER_ID = "STEDI"
 TEST_PAYER_STEDI_ID = "FRCPB"
 INSTRUCTIONS = "Sign the EFT authorization form and upload the signed copy."
+#: The base the fake claims to serve the enrollment API from. Task links
+#: under it are the clearinghouse's own and need the key; anything else is
+#: an ordinary web link.
+ENROLLMENTS_BASE = "https://enrollments.example.test/2024-09-01"
 
 
 def fixture(name: str) -> dict[str, Any]:
@@ -193,6 +197,16 @@ class FakeClearinghouse:
     def download_enrollment_document(self, document_id: str) -> DocumentDownload:
         self.calls.append(("download_enrollment_document", document_id))
         return DocumentDownload(downloadUrl=f"https://downloads.test/{document_id}?sig=abc")
+
+    def hosts_enrollment_documents(self, url: str) -> bool:
+        return url.startswith(f"{ENROLLMENTS_BASE}/")
+
+    def resolve_enrollment_link(self, url: str) -> DocumentDownload:
+        self.calls.append(("resolve_enrollment_link", url))
+        if not self.hosts_enrollment_documents(url):
+            msg = "not ours to fetch"
+            raise ClearinghouseError(msg)
+        return DocumentDownload(downloadUrl=f"https://downloads.test/{url.rsplit('/', 1)[-1]}")
 
     def complete_enrollment_task(self, task_id: str, completion: TaskCompletion) -> None:
         """Mark it done — refusing, as the vendor does, a document not yet taken."""
