@@ -12,6 +12,7 @@ import type {
   CreateCoverageRequest,
   CreatePayerRequest,
   PayerEnrollmentListResponse,
+  PayerEnrollmentRefreshResponse,
   PayerListResponse,
   PayerResponse,
   UpdateCoverageRequest,
@@ -53,6 +54,18 @@ export async function requestPayerEnrollments(
   token?: string,
 ): Promise<PayerEnrollmentListResponse> {
   return post<PayerEnrollmentListResponse>(`${PAYERS}/${payerRowId}/enrollments`, {}, token)
+}
+
+/**
+ * Check every open enrollment request across every payer in one pass.
+ *
+ * A press inside the server's throttle floor answers with the previous
+ * pass's result (``throttled: true``) instead of a fresh vendor call.
+ */
+export async function refreshPayerEnrollments(
+  token?: string,
+): Promise<PayerEnrollmentRefreshResponse> {
+  return post<PayerEnrollmentRefreshResponse>(`${PAYERS}/enrollments/refresh`, {}, token)
 }
 
 /**

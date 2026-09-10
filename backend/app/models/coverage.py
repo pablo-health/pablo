@@ -136,6 +136,19 @@ class PayerEnrollmentListResponse(BaseModel):
     enrollment_status: EnrollmentStatus
 
 
+class PayerEnrollmentRefreshResponse(BaseModel):
+    """What a practice-wide refresh pass answered.
+
+    ``throttled`` marks an answer handed back from the floor rather than a
+    pass that actually asked the clearinghouse — the count and time are the
+    previous pass's.
+    """
+
+    changed: int
+    checked_at: datetime
+    throttled: bool
+
+
 # ---------------------------------------------------------------------------
 # Coverage
 # ---------------------------------------------------------------------------

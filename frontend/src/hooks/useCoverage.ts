@@ -7,6 +7,7 @@ import type {
   CreateCoverageRequest,
   CreatePayerRequest,
   PayerEnrollmentListResponse,
+  PayerEnrollmentRefreshResponse,
   PayerListResponse,
   PayerResponse,
   UpdateCoverageRequest,
@@ -19,6 +20,7 @@ import {
   fetchCoverage,
   listPayerEnrollments,
   listPayers,
+  refreshPayerEnrollments,
   requestPayerEnrollments,
   updateCoverage,
   updatePayer,
@@ -69,6 +71,15 @@ export function useRequestPayerEnrollments(token?: string) {
       queryKeys.payers.enrollments(payerRowId),
       queryKeys.payers.list(),
     ],
+  })
+}
+
+/** The "check for updates" button: one pass across every payer's open requests. */
+export function useRefreshPayerEnrollments(token?: string) {
+  return useAuthMutation<PayerEnrollmentRefreshResponse, void>({
+    mutationFn: () => refreshPayerEnrollments(token),
+    // Any request could have moved, so every payer's status and detail may have too.
+    invalidateKeys: () => [queryKeys.payers.all],
   })
 }
 
