@@ -127,7 +127,14 @@ def load_submission_account(session: Session, practice_id: str | None) -> Submis
     )
 
 
-WebhookOutcome = Literal["moved", "recorded", "duplicate", "unmatched", "ignored"]
+WebhookOutcome = Literal[
+    "moved",
+    "recorded",
+    "duplicate",
+    "not_applicable",
+    "unmatched",
+    "ignored",
+]
 
 #: A webhook delivery is bounded by the vendor's response timeout; it
 #: cannot visit an unbounded registry.
@@ -223,7 +230,7 @@ def _apply_remittance_in_practice(
                 for remittance in fetched.remittances
                 for detail in remittance.claims
             ]
-        for wanted in ("moved", "duplicate"):
+        for wanted in ("moved", "duplicate", "not_applicable"):
             if wanted in outcomes:
                 return wanted
     return None

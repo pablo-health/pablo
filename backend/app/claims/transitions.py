@@ -84,6 +84,21 @@ _TRANSITIONS: dict[tuple[str, str], ClaimState] = {
     ("ch_accepted", "payer_accept"): "payer_accepted",
     ("ch_accepted", "reject"): "rejected",
     ("ch_accepted", "stall"): "stalled",
+    # Money can be the first thing a payer says. A 277CA is an
+    # acknowledgement; an 835 is the adjudication itself, and it is the
+    # stronger statement of the two — so a remittance must not be dropped
+    # merely because no payer acknowledgement was ever read. It routinely is
+    # not: the vendor's own test payer sends only a clearinghouse-sourced
+    # 277CA, and in production a payer may adjudicate before, or without, an
+    # acknowledgement we ever see. Without these rows the payment is logged
+    # as "not applicable" and the claim reports unpaid forever, which is real
+    # money stranded on a state machine's technicality (PABLO-1qox).
+    ("submitted", "pay"): "paid",
+    ("submitted", "pay_partial"): "partial",
+    ("submitted", "deny"): "denied",
+    ("ch_accepted", "pay"): "paid",
+    ("ch_accepted", "pay_partial"): "partial",
+    ("ch_accepted", "deny"): "denied",
     ("payer_accepted", "pay"): "paid",
     ("payer_accepted", "pay_partial"): "partial",
     ("payer_accepted", "deny"): "denied",
