@@ -10,7 +10,14 @@ one timer and an 835 on a second, each announced to the backend as a signed
 "transaction processed" webhook and readable afterwards from the transaction
 endpoints. Nothing here reaches the network except that webhook.
 
-Rules, all keyed on the claim's ``patientControlNumber``:
+Two claim submission endpoints are served, because the adapter is moving
+from one to the other one operation at a time. The compatibility shim
+(``POST {HEALTHCARE}/change/medicalnetwork/professionalclaims/v3/submission``)
+answers with the legacy envelope; the vendor's own claim API
+(``POST {CLAIMS}/professional-claim-submissions``), which is what the SDK
+adapter now calls, answers with ``{claimId, submissionId}`` or, for a
+rejection, ``{claimId, submissionId, errors: [{description}]}``. Both apply
+the same rules, keyed on the claim's ``patientControlNumber``:
 
 * ``REJ-DX…``   → the recorded diagnosis-specificity edit rejection (400)
 * ``REJ-PTR…``  → the recorded diagnosis-pointer edit rejection (400)
@@ -20,7 +27,8 @@ Rules, all keyed on the claim's ``patientControlNumber``:
   substituted so the remittance reads as paid in full for what was charged
 
 A submission's ``Idempotency-Key`` header is echoed on the response and a
-retry with the same key gets the same answer without starting new timers.
+retry with the same key gets the same answer without starting new timers; the
+same key against a changed request body is refused, as the vendor refuses it.
 Unknown request fields (a ``dependent``, say) are ignored, as the vendor
 would parse past them.
 
@@ -91,6 +99,7 @@ HEALTHCARE = "/2024-04-01"
 PAYERS = "/2024-04-01"
 CORE = "/2023-08-01"
 ENROLLMENTS = "/2024-09-01"
+CLAIMS = "/2025-03-07"
 
 #: Control-number prefix → the recorded 400 edit rejection it earns.
 REJECTIONS: dict[str, str] = {
@@ -156,6 +165,9 @@ class _State:
         self.claims: dict[str, dict[str, Any]] = {}
         #: Idempotency-Key → (status, body) of the submission it first produced
         self.replays: dict[str, tuple[int, dict[str, Any]]] = {}
+        #: Idempotency-Key → (the request body it was first used with, the
+        #: native response that body earned)
+        self.native_replays: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
         self.timers: set[asyncio.Task[None]] = set()
         #: The one enrollment task the harness offers, and its documents.
         self.task_complete: bool = False
@@ -175,6 +187,7 @@ class _State:
         self.task_complete = False
         self.task_values.clear()
         self.documents.clear()
+        self.native_replays.clear()
 
 
 state = _State()
@@ -291,6 +304,100 @@ async def submit_claim(request: Request) -> Any:
     if key:
         state.replays[key] = (status_code, result)
     return JSONResponse(result, status_code=status_code, headers=echo)
+
+
+def _native_service_lines_as_legacy(claim: dict[str, Any]) -> list[dict[str, Any]]:
+    """The native body's service lines, shaped the way the report builders
+    below already read a submitted claim's lines — so those builders need no
+    changes to serve a claim filed through either endpoint."""
+    lines = []
+    for line in claim.get("serviceLines", []):
+        procedure = line.get("procedureCode") or {}
+        lines.append(
+            {
+                "providerControlNumber": line.get("lineItemControlNumber"),
+                "serviceDate": (line.get("datesOfService") or {}).get("start"),
+                "professionalService": {
+                    "procedureCode": procedure.get("code"),
+                    "procedureModifiers": procedure.get("modifiers") or [],
+                    "lineItemChargeAmount": line.get("lineItemChargeAmount"),
+                    "serviceUnitCount": line.get("units"),
+                },
+            }
+        )
+    return lines
+
+
+def _legacy_shape_for_reports(claim: dict[str, Any]) -> dict[str, Any]:
+    """A native submission's charge and lines, in the legacy claim shape the
+    277CA/835 builders expect from ``state.claims``."""
+    billing = claim.get("billing") or {}
+    return {
+        "claimInformation": {
+            "claimChargeAmount": billing.get("totalCharge"),
+            "serviceLines": _native_service_lines_as_legacy(claim),
+        }
+    }
+
+
+@app.post(f"{CLAIMS}/professional-claim-submissions")
+async def submit_claim_native(request: Request) -> Any:
+    """The vendor's own claim API, which the SDK adapter files claims to.
+
+    Answers with the native shape (``claimId``/``submissionId``, and an
+    ``errors`` list for a rejection) rather than the compatibility shim's
+    envelope above. The claim id is stable for a control number across
+    resubmissions — the property the claim-lifecycle API keys everything
+    else on — while the submission id is fresh on every attempt, as the
+    vendor mints it.
+    """
+    raw = await request.body()
+    try:
+        claim = json.loads(raw) if raw else None
+    except ValueError:
+        claim = None
+    control = ""
+    if isinstance(claim, dict):
+        control = str((claim.get("billing") or {}).get("patientControlNumber") or "")
+    await _record(request, control_number=control or None)
+
+    if not isinstance(claim, dict) or not control:
+        return _vendor_error(
+            400, "InvalidRequestException", "billing.patientControlNumber is required"
+        )
+
+    # A keyed retry of the same body gets the answer the first attempt got
+    # and starts no new timers; the same key against a different body is
+    # refused exactly as the vendor refuses it — a client error naming the
+    # reused key, not a stored claim.
+    key = request.headers.get("idempotency-key", "")
+    if key:
+        replayed = state.native_replays.get(key)
+        if replayed is not None:
+            first_claim, first_result = replayed
+            if claim != first_claim:
+                return _vendor_error(
+                    400,
+                    "InvalidRequestException",
+                    "the idempotency-key was previously used with a different request",
+                )
+            return JSONResponse(first_result)
+
+    claim_id = _correlation_id(control)
+    rejection = next((f for p, f in REJECTIONS.items() if control.startswith(p)), None)
+    result: dict[str, Any] = {"claimId": claim_id, "submissionId": str(uuid.uuid4())}
+    if rejection is None:
+        state.claims[control] = _legacy_shape_for_reports(claim)
+        _schedule(control, "277", DELAY_277_SECONDS)
+        _schedule(control, "835", DELAY_835_SECONDS)
+    else:
+        result["errors"] = [
+            {"description": error["description"]} for error in _load(rejection)["errors"]
+        ]
+
+    if key:
+        state.native_replays[key] = (claim, result)
+    return JSONResponse(result)
 
 
 # --- the asynchronous half: 277CA, 835, webhooks ----------------------------
@@ -456,7 +563,16 @@ async def _deliver(control: str, kind: TransactionKind) -> dict[str, Any]:
             delivery["status"] = response.status_code
         except httpx.HTTPError as exc:
             delivery["error"] = str(exc)
-            logger.warning("webhook delivery failed kind=%s control=%s: %s", kind, control, exc)
+            # The class, not the message. An httpx error carries the request
+            # it failed on, and this request is a signed webhook — so the
+            # message can put the signing headers in the log. A test harness,
+            # but the same rule, and the scanner is right to flag it.
+            logger.warning(
+                "webhook delivery failed kind=%s control=%s error=%s",
+                kind,
+                control,
+                type(exc).__name__,
+            )
     state.webhooks.append(delivery)
     return delivery
 
