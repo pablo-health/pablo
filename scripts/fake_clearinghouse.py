@@ -32,6 +32,11 @@ same key against a changed request body is refused, as the vendor refuses it.
 Unknown request fields (a ``dependent``, say) are ignored, as the vendor
 would parse past them.
 
+The vendor's claim-lifecycle API is served too
+(``GET {CLAIMS}/claims/{id}/timeline``), answering from the recording of a
+real claim's whole life and trimmed to what has actually happened to the
+claim being asked about.
+
 Test hooks live under ``/_fake``: ``GET /_fake/received`` lists every request
 and webhook delivery since the last reset, ``POST /_fake/reset`` clears that
 log and cancels pending timers, ``POST /_fake/deliver`` fires a 277CA or 835
@@ -43,6 +48,12 @@ of recordings), ``FAKE_CLEARINGHOUSE_WEBHOOK_URL`` and
 ``FAKE_CLEARINGHOUSE_PUBLIC_URL`` (the base written into artifact URLs),
 ``FAKE_CLEARINGHOUSE_BROWSER_URL`` (the base for links a browser follows),
 ``FAKE_CLEARINGHOUSE_277_DELAY_SECONDS`` / ``FAKE_CLEARINGHOUSE_835_DELAY_SECONDS``.
+
+A delivered event carries the vendor's own event envelope — ``id``,
+``type``, and a ``resource`` naming the transaction — and NOT the transaction
+document itself. That is the vendor's design: the event is a pointer, and the
+reader fetches the transaction from the endpoints above. See
+``webhook_transaction_processed.json`` for the shape.
 
 Webhook signing follows the Standard Webhooks scheme the vendor uses:
 ``webhook-id``, ``webhook-timestamp`` and ``webhook-signature: v1,<base64>``
@@ -117,6 +128,10 @@ _RECORDED_CORRELATION_ID = "01M1T7001FRW15MVE0SSW4FA7G"
 
 _NAMESPACE = uuid.UUID("7f1c2a8e-0e5b-4d4a-9a9b-3c1f5e2d6b70")
 
+#: The account a webhook event says it came from. Synthetic, and matched
+#: to the recorded event fixture so the two read as one account.
+_ACCOUNT_ID = "11111111-2222-3333-4444-555555555555"
+
 TransactionKind = Literal["277", "835"]
 
 
@@ -143,6 +158,14 @@ def _correlation_id(control_number: str) -> str:
     """A stable, ULID-shaped vendor claim id for a control number."""
     digest = uuid.uuid5(_NAMESPACE, f"claim:{control_number}").hex.upper()
     return f"01E2E{digest[:21]}"
+
+
+def _control_for_claim_id(claim_id: str) -> str | None:
+    """The control number a vendor claim id belongs to, if this app minted it."""
+    return next(
+        (control for control in state.claims if _correlation_id(control) == claim_id),
+        None,
+    )
 
 
 def _transaction_id(kind: TransactionKind, control_number: str) -> str:
@@ -531,12 +554,22 @@ async def _deliver(control: str, kind: TransactionKind) -> dict[str, Any]:
     state.transactions[transaction_id] = {"document": document, "report": report}
 
     event_id = _event_id(kind, control)
+    # The vendor's webhook event, which is a POINTER and not the thing: an
+    # id, a type, and the resource it happened to. The reader fetches the
+    # transaction afterwards from the endpoints above. An earlier version of
+    # this harness posted an EventBridge-shaped envelope instead —
+    # ``source`` / ``detail-type`` / ``detail`` with the whole document
+    # inline — which the reader answered 400 for every delivery, and which
+    # nothing noticed because no test had ever driven a claim far enough to
+    # receive one (PABLO-1qox).
     event = {
         "id": event_id,
-        "source": "stedi.core",
-        "detail-type": "transaction.processed",
-        "time": _now(),
-        "detail": document,
+        "object": "v1.event",
+        "type": "transaction.processed",
+        "account": _ACCOUNT_ID,
+        "environment": "TEST",
+        "created": _now(),
+        "resource": {"id": transaction_id, "type": "transaction"},
     }
     body = json.dumps(event, separators=(",", ":")).encode()
     timestamp = int(time.time())
@@ -578,6 +611,47 @@ async def _deliver(control: str, kind: TransactionKind) -> dict[str, Any]:
 
 
 # --- transactions (polling + reports) ---------------------------------------
+
+
+@app.get(f"{CLAIMS}/claims/{{claim_id}}/timeline")
+async def claim_timeline(claim_id: str, request: Request) -> Any:
+    """One claim's whole life, from the recording of a real one.
+
+    ``claim_timeline_paid_in_full.json`` is a genuine capture — submission,
+    the clearinghouse's acknowledgement, and the payer's 835 paying in full —
+    so the shapes here are the vendor's own, discriminated union and all. The
+    ids and amounts are re-pointed at the claim being asked about; nothing
+    about the structure is invented.
+
+    Before this existed the SDK was handed a 404 body and failed to pick a
+    variant, which surfaced as a bare ``DiscriminatorError`` every time the
+    pipeline ran and told nobody which call had failed (PABLO-ukzm).
+    """
+    await _record(request)
+    control = _control_for_claim_id(claim_id)
+    if control is None:
+        return _vendor_error(404, "NOT_FOUND", "no claim with that id")
+    claim = state.claims.get(control, {})
+    lines = _line_control_numbers(claim, control)
+    timeline: dict[str, Any] = _deep_replace(
+        _load("claim_timeline_paid_in_full.json"),
+        {
+            _RECORDED_CONTROL_NUMBER: control,
+            _RECORDED_LINE_CONTROL_NUMBER: lines[0],
+            _RECORDED_CORRELATION_ID: claim_id,
+        },
+    )
+    # Only what has actually happened to this claim. The capture ends at
+    # paid; a claim the payer has not answered yet must not read as paid
+    # just because the recording did.
+    delivered = {entry["kind"] for entry in state.webhooks if entry["control_number"] == control}
+    allowed = {"professionalClaimSubmission"}
+    if "277" in delivered:
+        allowed.add("claimAcknowledgment")
+    if "835" in delivered:
+        allowed.add("claimPaymentInformation")
+    timeline["items"] = [item for item in timeline["items"] if next(iter(item), None) in allowed]
+    return timeline
 
 
 @app.get(f"{CORE}/transactions")

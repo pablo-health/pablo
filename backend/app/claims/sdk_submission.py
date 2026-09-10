@@ -173,7 +173,7 @@ def submission_error(exc: Exception) -> Exception:
     message = str(getattr(exc, "message", "") or "")
     if _IDEMPOTENCY_REUSE_MARKER in message.lower():
         return ClearinghouseRequestChangedError(message)
-    return translate_sdk_error(exc)
+    return translate_sdk_error(exc, operation="submit_claim")
 
 
 def _iso_date(compact: str | None) -> str | None:

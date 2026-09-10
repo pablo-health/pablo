@@ -167,7 +167,7 @@ class SdkClaimTimelines:
         except ClearinghouseError:
             raise
         except Exception as exc:
-            raise translate_sdk_error(exc) from exc
+            raise translate_sdk_error(exc, operation="get_claim_timeline") from exc
 
 
 async def fetch_timeline(client: Any, claim_id: str, *, max_pages: int = 20) -> ClaimTimeline:
