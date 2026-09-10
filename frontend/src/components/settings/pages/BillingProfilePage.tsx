@@ -8,6 +8,7 @@ import { BillingProfileCard } from "../BillingProfileCard"
 import { billingProfileGaps } from "../billingProfileGaps"
 import { RenderingProviderCard } from "../RenderingProviderCard"
 import { useSettingsUserStatus } from "../useSettingsPreferences"
+import { WaiverPolicyCard } from "../WaiverPolicyCard"
 
 /**
  * Billing > Practice profile.
@@ -42,6 +43,7 @@ export function BillingProfilePage() {
         }}
       />
       <RenderingProviderCard npiNumber={clinician.npi_number} taxonomyCode={clinician.taxonomy_code} />
+      <WaiverPolicyCard />
     </>
   )
 }

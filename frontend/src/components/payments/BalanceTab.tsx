@@ -18,7 +18,7 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { AlertCircle, Check, CreditCard, FileText } from "lucide-react"
+import { AlertCircle, Check, CreditCard, FileText, ReceiptText } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
@@ -38,6 +38,7 @@ import {
   usePatientCharges,
 } from "@/hooks/usePayments"
 import type { ChargeResponse, VisitBalanceResponse } from "@/types/payments"
+import { WriteOffDialog } from "./WriteOffDialog"
 
 interface BalanceTabProps {
   patientId: string
@@ -57,6 +58,7 @@ export function BalanceTab({ patientId }: BalanceTabProps) {
   const [failure, setFailure] = useState<string | null>(null)
   const [statementError, setStatementError] = useState<string | null>(null)
   const [downloading, setDownloading] = useState(false)
+  const [writeOffOpen, setWriteOffOpen] = useState(false)
 
   if (balance.isLoading) {
     return (
@@ -124,6 +126,12 @@ export function BalanceTab({ patientId }: BalanceTabProps) {
             <FileText className="mr-2 h-4 w-4" />
             {downloading ? "Preparing..." : "Statement"}
           </Button>
+          {!readOnly && owed > 0 && (
+            <Button variant="outline" onClick={() => setWriteOffOpen(true)}>
+              <ReceiptText className="mr-2 h-4 w-4" />
+              Write off
+            </Button>
+          )}
           {!readOnly && !cardsUnavailable && owed > 0 && (
             <Button
               onClick={handleCharge}
@@ -171,6 +179,15 @@ export function BalanceTab({ patientId }: BalanceTabProps) {
       )}
 
       <Ledger visits={balance.data.by_visit} charges={charges.data ?? []} />
+
+      {owed > 0 && (
+        <WriteOffDialog
+          patientId={patientId}
+          balanceCents={owed}
+          open={writeOffOpen}
+          onOpenChange={setWriteOffOpen}
+        />
+      )}
     </div>
   )
 }
