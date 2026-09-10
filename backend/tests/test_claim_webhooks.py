@@ -384,3 +384,32 @@ def test_a_document_that_is_not_a_277_is_ignored(practices: list[PipelineHarness
     )
 
     assert outcome == "ignored"
+
+
+def test_an_835_posts_the_remittance_immediately(practices: list[PipelineHarness]) -> None:
+    """A claim reads paid off the webhook alone — no pipeline pass involved."""
+    first, _ = practices
+    created = first.add(state="payer_accepted")
+    transaction = first.client.remit(created.control_number, paid_cents=created.total_charge_cents)
+
+    outcome = fanout.ingest_transaction_event(
+        WebhookEvent(id="evt-1", type="transaction.processed", transaction_id=transaction)
+    )
+
+    assert outcome == "moved"
+    posted = first.get(created.id)
+    assert posted.state == "paid"
+    assert posted.total_paid_cents == created.total_charge_cents
+
+
+def test_an_835_redelivery_posts_nothing_twice(practices: list[PipelineHarness]) -> None:
+    first, _ = practices
+    created = first.add(state="payer_accepted")
+    transaction = first.client.remit(created.control_number, paid_cents=created.total_charge_cents)
+    event = WebhookEvent(id="evt-1", type="transaction.processed", transaction_id=transaction)
+
+    assert fanout.ingest_transaction_event(event) == "moved"
+    assert fanout.ingest_transaction_event(event) == "duplicate"
+
+    assert first.get(created.id).total_paid_cents == created.total_charge_cents
+    assert len(first.receipts.list_for_claim(created.id)) == 1

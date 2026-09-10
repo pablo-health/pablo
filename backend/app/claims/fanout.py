@@ -34,6 +34,8 @@ from .clearinghouse import ClearinghouseNotFoundError
 from .credentials import get_clearinghouse_credential_provider
 from .enrollment import clearinghouse_client_for_practice
 from .receipts import ClaimPipeline
+from .remittance import apply_remittance
+from .remittance_feed import FetchedRemittance, fetch_remittance
 from .stedi import RECEIVER_NAME, SUBMITTER_IDENTIFICATION
 from .submit_worker import SubmissionAccount
 
@@ -137,9 +139,13 @@ def ingest_transaction_event(event: WebhookEvent) -> WebhookOutcome:
 
     The transaction is fetched through each practice's account in turn (an
     account that does not own it answers 404); the first practice whose
-    clinician can see the claim it names is the one that handles it. An
-    inbound document that is not a 277CA is ``ignored``. Vendor outages
-    propagate so the receiver can ask for a redelivery.
+    clinician can see the claim it names is the one that handles it. A
+    277CA moves the claim through the acknowledgment it carries; an 835
+    posts the remittance immediately rather than waiting for the pipeline's
+    next pass to notice it — apply_posting is idempotent on the vendor entry
+    id, so that pass still running later posts nothing twice. Any other
+    inbound document is ``ignored``. Vendor outages propagate so the
+    receiver can ask for a redelivery.
     """
     transaction_id = event.transaction_id
     if transaction_id is None:
@@ -147,12 +153,16 @@ def ingest_transaction_event(event: WebhookEvent) -> WebhookOutcome:
     outcome: WebhookOutcome = "unmatched"
     for practice in active_practices(max_tenants=_WEBHOOK_MAX_TENANTS):
         try:
-            fetched = fetch_acknowledgment(practice.client, transaction_id)
+            fetched_ack = fetch_acknowledgment(practice.client, transaction_id)
         except ClearinghouseNotFoundError:
             continue
-        if fetched is None:
+        if fetched_ack is not None:
+            applied = _apply_in_practice(practice, fetched_ack, event.id)
+            return applied if applied is not None else outcome
+        fetched_remit = fetch_remittance(practice.client, transaction_id)
+        if fetched_remit is None:
             return "ignored"
-        applied = _apply_in_practice(practice, fetched, event.id)
+        applied = _apply_remittance_in_practice(practice, fetched_remit)
         if applied is not None:
             return applied
     return outcome
@@ -174,6 +184,33 @@ def _apply_in_practice(
                 for outcome, _claim in apply_fetched(pipeline, fetched, vendor_event_id=event_id)
             ]
         for wanted in ("moved", "recorded", "duplicate"):
+            if wanted in outcomes:
+                return wanted
+    return None
+
+
+def _apply_remittance_in_practice(
+    practice: PracticeContext, fetched: FetchedRemittance
+) -> WebhookOutcome | None:
+    for user_id in practice.user_ids:
+        with tenant_db_session(practice.schema, user_id) as session:
+            pipeline = ClaimPipeline(
+                claims=PostgresClaimRepository(session),
+                receipts=PostgresClaimReceiptRepository(session),
+                session=session,
+                principal_user_id=user_id,
+            )
+            outcomes = [
+                apply_remittance(
+                    pipeline,
+                    detail,
+                    transaction_id=fetched.transaction_id,
+                    occurred_at=fetched.processed_at,
+                )[0]
+                for remittance in fetched.remittances
+                for detail in remittance.claims
+            ]
+        for wanted in ("moved", "duplicate"):
             if wanted in outcomes:
                 return wanted
     return None

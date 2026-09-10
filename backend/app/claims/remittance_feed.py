@@ -21,7 +21,8 @@ forty questions the first scan already had the answers to.
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from ..utcnow import utc_now
@@ -29,13 +30,50 @@ from .clearinghouse import ClearinghouseError
 from .responses import ParseError, parse_835
 
 if TYPE_CHECKING:
-    from ..models.claims_responses import RemittanceClaim
+    from ..models.claims_responses import Remittance, RemittanceClaim
     from .clearinghouse import ClearinghouseClient
 
 logger = logging.getLogger(__name__)
 
 #: The feed's transaction-set code for a remittance.
 REMITTANCE_TRANSACTION_SET = "835"
+
+
+def _processed_at(value: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+@dataclass(frozen=True)
+class FetchedRemittance:
+    """One inbound 835, parsed: which transaction it was and what it says."""
+
+    transaction_id: str
+    processed_at: datetime | None
+    remittances: list[Remittance]
+
+
+def fetch_remittance(client: ClearinghouseClient, transaction_id: str) -> FetchedRemittance | None:
+    """The parsed 835 behind ``transaction_id``, or ``None`` if it is not one.
+
+    The webhook's read of a single remittance the moment it arrives —
+    :class:`FeedRemittanceDetails` above is the periodic pass's bulk read of
+    a whole lookback window at once. Raises the adapter's typed errors the
+    same way; a transaction another account owns is
+    :class:`~app.claims.clearinghouse.ClearinghouseNotFoundError`.
+    """
+    document = client.get_transaction(transaction_id)
+    if document.direction != "INBOUND" or document.transaction_set != REMITTANCE_TRANSACTION_SET:
+        return None
+    report = client.get_remittance_report(transaction_id)
+    return FetchedRemittance(
+        transaction_id=transaction_id,
+        processed_at=_processed_at(document.processedAt),
+        remittances=parse_835(report),
+    )
+
 
 #: How far back a pass looks for remittances it has not read yet.
 #:

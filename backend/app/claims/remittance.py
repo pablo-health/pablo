@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 from ..db.models import DEFAULT_CHARGE_CURRENCY
 from .clearinghouse import ClearinghouseError
 from .receipts import record
-from .remittance_lines import applied_to
+from .remittance_lines import DENIED, applied_to
 from .transitions import advance, next_state
 
 if TYPE_CHECKING:
@@ -133,6 +133,62 @@ def posting_for(timeline: ClaimTimeline, *, charged_cents: int) -> RemittancePos
         adjudicated_at=adjudicated_at,
         source_id=latest.id,
     )
+
+
+def posting_from_detail(
+    detail: RemittanceClaim, *, adjudicated_at: datetime, source_id: str
+) -> RemittancePosting:
+    """A posting straight from one claim's 835 detail, for the webhook path.
+
+    ``posting_for`` reads a claim's whole timeline because the periodic pass
+    has nothing else; the webhook already has the remittance that just
+    arrived, so this classifies off the same CLP02 the line-by-line reading
+    in ``app.claims.remittance_lines`` uses rather than waiting to reconcile
+    against a separately-fetched timeline.
+    """
+    event: RemittanceEvent = (
+        "deny"
+        if detail.claim_status_code == DENIED
+        else "pay"
+        if detail.paid_cents >= detail.total_charge_cents > 0
+        else "pay_partial"
+    )
+    return RemittancePosting(
+        event=event,
+        paid_cents=detail.paid_cents,
+        patient_responsibility_cents=detail.patient_responsibility_cents,
+        trace_number=None,
+        adjudicated_at=adjudicated_at,
+        source_id=source_id,
+    )
+
+
+def apply_remittance(
+    pipeline: ClaimPipeline,
+    detail: RemittanceClaim,
+    *,
+    transaction_id: str,
+    occurred_at: datetime | None,
+) -> tuple[Literal["moved", "duplicate", "unmatched"], Claim | None]:
+    """Post one claim's 835 detail the moment the webhook delivers it.
+
+    The periodic pipeline reaches the same claim later through the vendor's
+    claim-timeline API, on its own schedule; this is the fast path, reading
+    the remittance itself instead of waiting. Both go through
+    :func:`apply_posting`, which is idempotent on the vendor entry id — here,
+    the transaction plus the claim it names — so whichever runs second
+    writes nothing.
+    """
+    claim = pipeline.claims.get_by_control_number(detail.patient_control_number)
+    if claim is None:
+        return "unmatched", None
+    posting = posting_from_detail(
+        detail,
+        adjudicated_at=occurred_at or pipeline.now(),
+        source_id=f"835:{transaction_id}:{detail.patient_control_number}",
+    )
+    _, moved = apply_posting(pipeline, claim, posting, detail=detail)
+    return ("moved" if moved else "duplicate"), claim
 
 
 #: The ledger row kind that carries what a payer said a client owes.
