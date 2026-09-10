@@ -61,7 +61,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 logger = logging.getLogger("fake_clearinghouse")
@@ -151,6 +151,11 @@ class _State:
         #: Idempotency-Key → (status, body) of the submission it first produced
         self.replays: dict[str, tuple[int, dict[str, Any]]] = {}
         self.timers: set[asyncio.Task[None]] = set()
+        #: The one enrollment task the harness offers, and its documents.
+        self.task_complete: bool = False
+        self.task_values: list[dict[str, Any]] = []
+        #: document id → the document as the enrollment reports it
+        self.documents: dict[str, dict[str, Any]] = {}
 
     def reset(self) -> None:
         for task in self.timers:
@@ -161,6 +166,9 @@ class _State:
         self.transactions.clear()
         self.claims.clear()
         self.replays.clear()
+        self.task_complete = False
+        self.task_values.clear()
+        self.documents.clear()
 
 
 state = _State()
@@ -503,7 +511,142 @@ async def create_enrollment(request: Request) -> Any:
 @app.get(f"{ENROLLMENTS}/enrollments")
 async def list_enrollments(request: Request) -> Any:
     await _record(request)
-    return {"items": [_load("enrollment_create_enrollment_835.json")], "nextPageToken": None}
+    return {"items": [_enrollment_now()], "nextPageToken": None}
+
+
+# --- enrollment tasks and their documents ----------------------------------
+#
+# The vendor refuses its enrollment API to test keys outright, so this is the
+# only place the task lifecycle can be driven at all. It is built to the
+# documented shapes rather than to a recording, and the interesting half is
+# the part a recording could not give us anyway: a task that starts open,
+# takes a PDF, and closes.
+#
+# The upload deliberately keeps the vendor's two-step shape. Asking for a
+# slot returns a pre-signed URL served by THIS app, and the bytes go there in
+# a second request that carries no API key — because the real one goes to the
+# vendor's object store, not its API, and code that assumed otherwise would
+# work here and fail in production.
+
+#: The one open task the harness offers, in the vendor's mixed shape: a text
+#: field and a PDF, which is the case that exercises everything.
+_TASK_ID = "task-e2e-0001"
+
+
+def _fake_task() -> dict[str, Any]:
+    return {
+        "id": _TASK_ID,
+        "responsibleParty": "PROVIDER",
+        "isComplete": state.task_complete,
+        "rank": 0,
+        "definition": {
+            "manualTask": {
+                "instructions": (
+                    "Provide your Medicaid Provider Identifier and upload the signed "
+                    "provider agreement."
+                ),
+                "links": [
+                    {
+                        "label": "Provider Agreement Template",
+                        "url": f"{ENROLLMENTS}/documents/template-0001/download",
+                    }
+                ],
+                "fields": [
+                    {
+                        "key": "MEDICAID_ID",
+                        "label": "Medicaid Provider Identifier",
+                        "fieldType": "TEXT",
+                    },
+                    {
+                        "key": "SIGNED_AGREEMENT",
+                        "label": "Signed Provider Agreement",
+                        "description": "The agreement, filled in and signed, as a PDF",
+                        "fieldType": "DOCUMENT",
+                    },
+                ],
+            }
+        },
+    }
+
+
+def _enrollment_now() -> dict[str, Any]:
+    """The enrollment as it currently stands, tasks and documents included."""
+    record: dict[str, Any] = _load("enrollment_create_enrollment_835.json")
+    record["status"] = "LIVE" if state.task_complete else "PROVIDER_ACTION_REQUIRED"
+    record["tasks"] = [_fake_task()]
+    record["documents"] = list(state.documents.values())
+    return record
+
+
+@app.get(f"{ENROLLMENTS}/enrollments/{{enrollment_id}}")
+async def get_enrollment(enrollment_id: str, request: Request) -> Any:
+    await _record(request)
+    record = _enrollment_now()
+    record["id"] = enrollment_id
+    return record
+
+
+@app.post(f"{ENROLLMENTS}/enrollments/{{enrollment_id}}/documents")
+async def upload_slot(enrollment_id: str, request: Request) -> Any:
+    body = await _record(request)
+    name = (body or {}).get("name") or "document.pdf"
+    document_id = f"doc-{len(state.documents) + 1:04d}"
+    # PENDING until the bytes actually arrive, exactly as the vendor reports
+    # it — so a client that completes a task too early fails here too.
+    state.documents[document_id] = {
+        "id": document_id,
+        "name": name,
+        "status": "PENDING",
+    }
+    return {
+        "enrollmentId": enrollment_id,
+        "uploadUrl": f"{PUBLIC_URL}/_fake/upload/{document_id}",
+        "documentId": document_id,
+    }
+
+
+@app.put("/_fake/upload/{document_id}")
+async def receive_document(document_id: str, request: Request) -> Any:
+    """Stand in for the vendor's object store.
+
+    Under ``/_fake`` on purpose: this is not one of the vendor's API paths,
+    and the real upload URL is a signed link somewhere else entirely. No
+    ``Authorization`` header is required or expected.
+    """
+    body = await request.body()
+    document = state.documents.get(document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="no such document")
+    if not body.startswith(b"%PDF"):
+        document["status"] = "FAILED"
+        raise HTTPException(status_code=400, detail="only PDF documents are supported")
+    document["status"] = "UPLOADED"
+    document["size"] = len(body)
+    state.requests.append(
+        {"method": "PUT", "path": f"/_fake/upload/{document_id}", "bytes": len(body)}
+    )
+    return {"ok": True}
+
+
+@app.post(f"{ENROLLMENTS}/tasks/{{task_id}}")
+async def complete_task(task_id: str, request: Request) -> Any:
+    body = await _record(request)
+    if task_id != _TASK_ID:
+        raise HTTPException(status_code=404, detail="no such task")
+    values = (((body or {}).get("responseData") or {}).get("manualTask") or {}).get("values") or []
+    # Refuse a completion that names a document we never finished taking —
+    # the failure this whole ordering exists to prevent.
+    for value in values:
+        reference = (value.get("value") or {}).get("document") or {}
+        document_id = reference.get("documentId")
+        if document_id is None:
+            continue
+        document = state.documents.get(document_id)
+        if document is None or document["status"] != "UPLOADED":
+            raise HTTPException(status_code=400, detail="document is not uploaded")
+    state.task_complete = bool((body or {}).get("completed", True))
+    state.task_values = list(values)
+    return {"ok": True}
 
 
 # --- test hooks ------------------------------------------------------------

@@ -683,13 +683,41 @@ class EnrollmentTaskLink(BaseModel):
     url: str
 
 
+#: What a task field wants. ``TEXT`` is a string the practice types — a
+#: Medicaid id, a bank account. ``DOCUMENT`` is a PDF it uploads.
+EnrollmentFieldType = Literal["TEXT", "DOCUMENT"]
+
+
+class EnrollmentTaskField(BaseModel):
+    """One thing a task wants before it can be completed.
+
+    ``key`` is the vendor's own identifier (``MEDICAID_ID``,
+    ``ENROLLMENT_FORM``) and is what a submitted value is filed under, so it
+    is carried through untouched rather than prettified.
+    """
+
+    model_config = _WIRE_MODEL_CONFIG
+
+    key: str
+    label: str
+    fieldType: EnrollmentFieldType
+    description: str | None = None
+
+
 class EnrollmentManualTask(BaseModel):
-    """What the vendor asks the practice to do by hand: instructions and links."""
+    """What the vendor asks the practice to do by hand.
+
+    ``fields`` empty means the whole task is the instructions — log into a
+    payer's portal, telephone a department — and completing it is an
+    assertion that the practice did so. When there are fields, every one of
+    them needs a value before the task can be completed.
+    """
 
     model_config = _WIRE_MODEL_CONFIG
 
     instructions: str | None = None
     links: list[EnrollmentTaskLink] = []
+    fields: list[EnrollmentTaskField] = []
 
 
 class EnrollmentTaskDefinition(BaseModel):
@@ -710,7 +738,21 @@ class EnrollmentTask(BaseModel):
     id: str
     responsibleParty: str
     isComplete: bool = False
+    #: The vendor's display order. Tasks are shown in it so a sequence the
+    #: payer intended ("sign this, then send that") is not scrambled.
+    rank: int = 0
     definition: EnrollmentTaskDefinition | None = None
+
+    @property
+    def fields(self) -> list[EnrollmentTaskField]:
+        """What this task wants, or nothing when it only wants an action."""
+        manual = self.definition.manualTask if self.definition else None
+        return manual.fields if manual else []
+
+    @property
+    def needs_the_practice(self) -> bool:
+        """Is this open, and ours to do?"""
+        return not self.isComplete and self.responsibleParty == "PROVIDER"
 
 
 class Enrollment(BaseModel):
@@ -732,6 +774,112 @@ class Enrollment(BaseModel):
     transactions: EnrollmentTransactions = EnrollmentTransactions()
     reason: str | None = None
     tasks: list[EnrollmentTask] = []
+    #: Every PDF on the request — what the practice uploaded and what the
+    #: vendor attached itself. Confirmed present on a real enrollment.
+    documents: list[EnrollmentDocument] = []
+
+    def open_tasks(self) -> list[EnrollmentTask]:
+        """The practice's outstanding tasks, in the order the vendor meant."""
+        return sorted(
+            (task for task in self.tasks if task.needs_the_practice),
+            key=lambda task: task.rank,
+        )
+
+    def document(self, document_id: str) -> EnrollmentDocument | None:
+        return next((doc for doc in self.documents if doc.id == document_id), None)
+
+
+#: A document's life at the vendor. ``PENDING`` until the bytes land,
+#: ``UPLOADED`` once they have, ``FAILED`` when they did not — and a task
+#: must not be completed against anything but ``UPLOADED``.
+DocumentStatus = Literal["PENDING", "UPLOADED", "FAILED"]
+
+
+class EnrollmentDocument(BaseModel):
+    """A PDF attached to an enrollment, by the practice or by the vendor."""
+
+    model_config = _WIRE_MODEL_CONFIG
+
+    id: str
+    name: str | None = None
+    status: DocumentStatus = "PENDING"
+    createdAt: str | None = None
+
+
+class DocumentUpload(BaseModel):
+    """Where to put a PDF, and what the vendor will call it afterwards.
+
+    ``uploadUrl`` is a pre-signed URL at the vendor's storage provider, not
+    at the vendor's API: it carries its own credentials in the query string,
+    takes no ``Authorization`` header, and expires after 24 hours.
+    """
+
+    model_config = _WIRE_MODEL_CONFIG
+
+    enrollmentId: str
+    uploadUrl: str
+    documentId: str
+
+
+class DocumentDownload(BaseModel):
+    """A short-lived URL the practice can fetch a PDF from."""
+
+    model_config = _WIRE_MODEL_CONFIG
+
+    downloadUrl: str
+
+
+class TaskDocumentRef(BaseModel):
+    model_config = _WIRE_MODEL_CONFIG
+
+    documentId: str
+
+
+class TaskFieldValue(BaseModel):
+    """One field's answer: a string, or a document already uploaded.
+
+    Exactly one of the two is set. The vendor discriminates on which key is
+    present rather than on a type tag.
+    """
+
+    model_config = _WIRE_MODEL_CONFIG
+
+    text: str | None = None
+    document: TaskDocumentRef | None = None
+
+
+class TaskFieldAnswer(BaseModel):
+    model_config = _WIRE_MODEL_CONFIG
+
+    key: str
+    value: TaskFieldValue
+
+
+class ManualTaskResponse(BaseModel):
+    model_config = _WIRE_MODEL_CONFIG
+
+    values: list[TaskFieldAnswer] = []
+
+
+class TaskResponseData(BaseModel):
+    model_config = _WIRE_MODEL_CONFIG
+
+    manualTask: ManualTaskResponse
+
+
+class TaskCompletion(BaseModel):
+    """What ``complete_enrollment_task`` sends.
+
+    ``responseData`` is left off entirely for a task with no fields — the
+    vendor takes ``completed`` alone there, and sending an empty values list
+    would be claiming to have answered nothing rather than claiming there
+    was nothing to answer.
+    """
+
+    model_config = _WIRE_MODEL_CONFIG
+
+    completed: bool = True
+    responseData: TaskResponseData | None = None
 
 
 class EnrollmentFilters(BaseModel):
