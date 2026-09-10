@@ -25,6 +25,24 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => searchParams,
 }))
 
+// Signed in and settled unless a test says otherwise — the state the wizard
+// runs in for every case except the boot race the exchange has to survive.
+const SIGNED_IN = {
+  user: { uid: "u1", email: "t@example.test", displayName: null, photoURL: null },
+  loading: false,
+}
+let authState: { user: { uid: string } | null; loading: boolean } = SIGNED_IN
+
+vi.mock("@/lib/auth-context", () => ({
+  useAuth: () => ({ ...authState, getIdToken: async () => "token" }),
+}))
+
+// Outer hooks run before the nested ones, so a test that wants the boot
+// race sets `authState` in its own body and this puts it back afterwards.
+beforeEach(() => {
+  authState = SIGNED_IN
+})
+
 const getStatus = vi.fn<() => Promise<GoogleCalendarStatus>>()
 const getConsentOptions = vi.fn<() => Promise<GoogleCalendarConsentOptions>>()
 const getAuthUrl = vi.fn()
@@ -478,6 +496,39 @@ describe("CalendarSetupWizard returning from Google", () => {
     await waitFor(() =>
       expect(routerReplace).toHaveBeenCalledWith("/dashboard/settings/calendar")
     )
+  })
+
+  it("waits for auth before spending the code, then spends it once auth arrives", async () => {
+    // Coming back from Google is a full page load, and this component's
+    // effects run before the auth provider's. Exchanging here would send an
+    // unauthenticated request, and the code only gets one attempt.
+    authState = { user: null, loading: true }
+    const { rerender } = renderWizard()
+
+    await waitFor(() => expect(getStatus).toHaveBeenCalled())
+    expect(completeConnect).not.toHaveBeenCalled()
+    // Scrubbing the code now would strip it before anyone could spend it.
+    expect(routerReplace).not.toHaveBeenCalled()
+
+    authState = SIGNED_IN
+    rerender(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <CalendarSetupWizard />
+      </QueryClientProvider>
+    )
+
+    await waitFor(() => expect(completeConnect).toHaveBeenCalledTimes(1))
+    expect(completeConnect.mock.calls[0][0]).toBe("auth-code")
+  })
+
+  it("leaves the code alone when auth settles signed out", async () => {
+    authState = { user: null, loading: false }
+
+    renderWizard()
+
+    await waitFor(() => expect(getStatus).toHaveBeenCalled())
+    expect(completeConnect).not.toHaveBeenCalled()
+    expect(routerReplace).not.toHaveBeenCalled()
   })
 
   it("completes an incremental import grant and finishes what 'Look at my week' started", async () => {
