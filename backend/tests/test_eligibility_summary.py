@@ -14,22 +14,39 @@ from __future__ import annotations
 import json
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from app.claims.eligibility import (
     BillingIdentity,
     EligibilityNotPossibleError,
+    _raise_enrollment_task_if_needed,
     build_270,
+    identity_matches_on_file,
+    next_retry_delay_seconds,
+    reject_disposition,
+    strip_card_issuer_prefix,
     summarize_271,
     summary_for_coverage,
+)
+from app.claims.events import (
+    ClaimEvent,
+    clear_claim_event_listeners,
+    compliance_reminder_listener,
+    register_claim_event_listener,
 )
 from app.models.claims_transport import (
     EligibilityBenefit,
     EligibilityRelatedEntity,
     EligibilityResponse,
+    EligibilitySubscriber,
 )
 from app.models.coverage import PatientCoverage, Payer
+from app.models.eligibility import AaaError, EligibilitySummary
 from app.models.patient import Patient
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "clearinghouse"
 _CHECKED_AT = datetime(2026, 9, 6, 15, 0, tzinfo=UTC)
@@ -343,3 +360,195 @@ class TestBuild270:
         assert inquiry.provider.organizationName is None
         assert inquiry.provider.firstName == "Sam"
         assert inquiry.provider.lastName == "Clinician"
+
+
+# ---------------------------------------------------------------------------
+# What an AAA rejection means
+# ---------------------------------------------------------------------------
+
+
+class TestRejectDisposition:
+    @pytest.mark.parametrize(
+        ("codes", "expected"),
+        [
+            (["42"], "retry_as_is"),
+            (["80"], "retry_as_is"),
+            (["79", "42"], "retry_as_is"),
+            (["79"], "stop_manual"),
+            (["75"], "fix_then_retry"),
+            (["72"], "fix_then_retry"),
+            (["73"], "fix_then_retry"),
+            (["65"], "fix_then_retry"),
+            (["67"], "fix_then_retry"),
+            (["56"], "fix_then_retry"),
+            (["57"], "fix_then_retry"),
+            (["58"], "fix_then_retry"),
+            (["41"], "stop_enrollment"),
+            (["43"], "stop_enrollment"),
+            (["51"], "stop_enrollment"),
+            (["99"], "stop_manual"),
+        ],
+    )
+    def test_each_listed_code_gets_its_disposition(self, codes: list[str], expected: str) -> None:
+        assert reject_disposition(codes) == expected
+
+    def test_an_http_429_retries_even_with_no_aaa_code_at_all(self) -> None:
+        assert reject_disposition([], http_status=429) == "retry_as_is"
+
+    def test_an_enrollment_gap_wins_over_a_retryable_code(self) -> None:
+        assert reject_disposition(["42", "43"]) == "stop_enrollment"
+
+    def test_a_lone_79_never_gets_a_retry_disposition(self) -> None:
+        assert reject_disposition(["79"]) != "retry_as_is"
+
+
+class TestRetryBounds:
+    def test_realtime_retries_immediately_within_the_two_minute_budget(self) -> None:
+        assert next_retry_delay_seconds(attempt=1, elapsed_seconds=0, realtime=True) == 0.0
+        assert next_retry_delay_seconds(attempt=5, elapsed_seconds=119, realtime=True) == 0.0
+
+    def test_realtime_gives_up_once_the_budget_is_spent(self) -> None:
+        assert next_retry_delay_seconds(attempt=6, elapsed_seconds=121, realtime=True) is None
+
+    def test_scheduled_backs_off_from_one_minute_capped_at_thirty(self) -> None:
+        assert next_retry_delay_seconds(attempt=1, elapsed_seconds=0, realtime=False) == 60.0
+        assert next_retry_delay_seconds(attempt=2, elapsed_seconds=0, realtime=False) == 120.0
+        assert next_retry_delay_seconds(attempt=3, elapsed_seconds=0, realtime=False) == 240.0
+        assert next_retry_delay_seconds(attempt=10, elapsed_seconds=0, realtime=False) == 1800.0
+
+
+class TestCardIssuerPrefix:
+    def test_strips_the_80840_prefix(self) -> None:
+        assert strip_card_issuer_prefix("80840123456789") == "123456789"
+
+    def test_leaves_a_member_id_without_the_prefix_alone(self) -> None:
+        assert strip_card_issuer_prefix("UHC123456") == "UHC123456"
+
+    def test_build_270_never_sends_a_member_id_with_the_prefix(self) -> None:
+        coverage = _coverage(member_id="80840UHC123456")
+
+        inquiry = build_270(coverage, _payer(), _patient(), _IDENTITY)
+
+        assert inquiry.subscriber.memberId == "UHC123456"
+
+
+class TestIdentityRelaxingRetrySafety:
+    """The safety guard for a 72/75 retry that drops the member id or varies
+    the name: the retry may relax how the client is described, but the
+    answer it comes back with must still be about that same client."""
+
+    def test_matching_demographics_are_accepted(self) -> None:
+        returned = EligibilitySubscriber(
+            memberId="anything", lastName="Doe", dateOfBirth="19710101"
+        )
+        assert identity_matches_on_file(returned, patient=_patient(), coverage=_coverage())
+
+    def test_a_mismatched_date_of_birth_is_never_accepted(self) -> None:
+        returned = EligibilitySubscriber(
+            memberId="anything", lastName="Doe", dateOfBirth="19800101"
+        )
+        assert not identity_matches_on_file(returned, patient=_patient(), coverage=_coverage())
+
+    def test_a_mismatched_name_is_never_accepted(self) -> None:
+        returned = EligibilitySubscriber(
+            memberId="anything", lastName="Smith", dateOfBirth="19710101"
+        )
+        assert not identity_matches_on_file(returned, patient=_patient(), coverage=_coverage())
+
+    def test_a_hyphen_or_case_difference_is_not_a_mismatch(self) -> None:
+        patient = _patient()
+        patient.last_name = "Anne-Marie"
+        returned = EligibilitySubscriber(
+            memberId="anything", lastName="annemarie", dateOfBirth="19710101"
+        )
+        assert identity_matches_on_file(returned, patient=patient, coverage=_coverage())
+
+    def test_a_payer_that_echoes_no_demographics_is_not_blocked(self) -> None:
+        returned = EligibilitySubscriber(memberId="anything")
+        assert identity_matches_on_file(returned, patient=_patient(), coverage=_coverage())
+
+    def test_a_dependents_retry_checks_the_subscriber_not_the_client(self) -> None:
+        coverage = _coverage(
+            subscriber_relationship="child",
+            subscriber_first_name="Parent",
+            subscriber_last_name="Doe",
+            subscriber_date_of_birth=date(1945, 5, 5),
+            subscriber_sex="M",
+        )
+        # Matches the dependent client, not the subscriber the retry is
+        # actually asking the payer to confirm — must not be accepted.
+        returned = EligibilitySubscriber(
+            memberId="anything", lastName="Doe", dateOfBirth="19710101"
+        )
+        assert not identity_matches_on_file(returned, patient=_patient(), coverage=coverage)
+
+
+@pytest.fixture
+def listeners() -> Iterator[None]:
+    """Start each test with no listeners; put the default back afterwards."""
+    clear_claim_event_listeners()
+    yield
+    clear_claim_event_listeners()
+    register_claim_event_listener(compliance_reminder_listener)
+
+
+@pytest.mark.usefixtures("listeners")
+class TestEnrollmentTask:
+    """41/43/51 mean the practice isn't enrolled with the payer; that is an
+    enrollment task raised through the claim-events surface, not a note
+    rendered to the clinician as a failed eligibility check."""
+
+    def _summary(self, code: str) -> EligibilitySummary:
+        return EligibilitySummary(
+            status="error",
+            checked_at=_CHECKED_AT,
+            aaa_errors=[AaaError(code=code, description="d", followup_action="f")],
+        )
+
+    def test_provider_not_enrolled_raises_a_claim_event(self) -> None:
+        events: list[ClaimEvent] = []
+        register_claim_event_listener(lambda _session, event: events.append(event))
+
+        _raise_enrollment_task_if_needed(
+            session=object(),
+            coverage=_coverage(),
+            payer=_payer(),
+            user_id="user-1",
+            summary=self._summary("43"),
+            checked_at=_CHECKED_AT,
+        )
+
+        assert len(events) == 1
+        assert events[0].kind == "enrollment_action_required"
+        assert events[0].control_number == "cov-1"
+        assert events[0].payer_id == "87726"
+
+    def test_a_retryable_code_does_not_raise_an_enrollment_task(self) -> None:
+        events: list[ClaimEvent] = []
+        register_claim_event_listener(lambda _session, event: events.append(event))
+
+        _raise_enrollment_task_if_needed(
+            session=object(),
+            coverage=_coverage(),
+            payer=_payer(),
+            user_id="user-1",
+            summary=self._summary("42"),
+            checked_at=_CHECKED_AT,
+        )
+
+        assert events == []
+
+    def test_no_session_means_no_event(self) -> None:
+        events: list[ClaimEvent] = []
+        register_claim_event_listener(lambda _session, event: events.append(event))
+
+        _raise_enrollment_task_if_needed(
+            session=None,
+            coverage=_coverage(),
+            payer=_payer(),
+            user_id="user-1",
+            summary=self._summary("43"),
+            checked_at=_CHECKED_AT,
+        )
+
+        assert events == []
