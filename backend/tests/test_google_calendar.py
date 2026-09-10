@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import base64
+import importlib
 import json
 import logging
 import os
@@ -111,6 +112,22 @@ def _oauth_credentials() -> MagicMock:
     credentials.client_id = "test-client-id"
     credentials.client_secret = "test-client-secret"
     return credentials
+
+
+class TestGoogleClientDependencies:
+    """The Google libraries are imported lazily, inside the functions that use
+    them, so an install missing one boots fine and fails much later — at the
+    moment a therapist finishes consenting. Every other test in this file
+    patches those functions out, so without this nothing imports the real
+    modules and a missing dependency reaches production unnoticed. That is
+    exactly how google-api-python-client went undeclared.
+    """
+
+    def test_the_oauth_flow_library_is_installed(self) -> None:
+        importlib.import_module("google_auth_oauthlib.flow")
+
+    def test_the_calendar_api_client_is_installed(self) -> None:
+        importlib.import_module("googleapiclient.discovery")
 
 
 # Token Encryption Tests
