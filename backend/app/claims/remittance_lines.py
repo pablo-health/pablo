@@ -23,18 +23,25 @@ decides who is out the money:
 * ``OA`` / ``PI`` other and payer-initiated: neither of the above, and not
   safe to guess at, so they are recorded and left out of both totals.
 
-``allowed_cents`` — what the payer agreed the service was worth — is the
-charge less the contractual write-off. It is not reported directly and has to
-be derived, which is why the derivation lives here in one place with the
-reasoning attached rather than inline at a call site.
+``allowed_cents`` — what the payer agreed the service was worth — is whatever
+the payer reported (``AMT*B6``) and nothing otherwise. It is deliberately not
+derived. The obvious formula, charge less the contractual write-off, is wrong
+in several ordinary cases: out of network the write-off arrives as ``PR45``
+with no ``CO`` at all, Medicare's sequestration (``CO253``) comes out of the
+payment rather than the allowed amount, a secondary payer's ``OA23`` carries
+the primary's numbers, and some payers price with ``PI`` where others use
+``CO``. Each of those returns a number that looks reasonable and is wrong, so
+an unreported allowed amount stays unreported.
+
+Only ``PR`` drives what a client is billed. That one is safe on definitional
+rather than empirical grounds — the group codes are normative, and a provider
+may bill a client only for adjustments carrying ``PR`` — which is why it is
+the number the ledger is written from and ``allowed`` is left informational.
 
 **A caveat worth keeping.** The clearinghouse's test payer pays every claim
 in full and adjusts nothing, so no captured remittance exercises the
-adjustment paths. The group-code meanings are the published X12 standard
-rather than anything read off this vendor, and the arithmetic below is tested
-against constructed remittances. The first real payer's 835 is the thing that
-confirms it; until then this is careful reading of a specification, not
-evidence.
+adjustment paths, and the arithmetic below is tested against constructed
+remittances. The first real payer's 835 is what confirms the rest.
 """
 
 from __future__ import annotations
@@ -51,10 +58,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: The discount the practice agreed to. Written off, owed by nobody.
-CONTRACTUAL = "CO"
-
-#: What the client owes: deductible, copay, coinsurance.
+#: What the client owes: deductible, copay, coinsurance. The one group code
+#: that moves money onto a client's ledger, and the only one this module
+#: needs to recognise — every other group is recorded and totalled nowhere.
 PATIENT_RESPONSIBILITY = "PR"
 
 
@@ -62,9 +68,8 @@ PATIENT_RESPONSIBILITY = "PR"
 class LinePosting:
     """What one service line's adjudication says to write."""
 
-    #: What the payer agreed the service was worth: the charge less the
-    #: contractual write-off. ``None`` when the line reported no charge to
-    #: derive it from.
+    #: What the payer said the service was worth, when it said. ``None``
+    #: means the payer did not report it — never a derived stand-in.
     allowed_cents: int | None
     paid_cents: int
     patient_responsibility_cents: int
@@ -80,12 +85,14 @@ def _total(adjustments: Iterable[Adjustment], group: str) -> int:
 
 
 def posting_for_line(
-    charge_cents: int, paid_cents: int, adjustments: Sequence[Adjustment]
+    paid_cents: int,
+    adjustments: Sequence[Adjustment],
+    *,
+    allowed_cents: int | None = None,
 ) -> LinePosting:
-    """One line's numbers, from what it charged, was paid, and was adjusted."""
-    contractual = _total(adjustments, CONTRACTUAL)
+    """One line's numbers, from what the payer paid, adjusted and allowed."""
     return LinePosting(
-        allowed_cents=charge_cents - contractual if charge_cents else None,
+        allowed_cents=allowed_cents,
         paid_cents=paid_cents,
         patient_responsibility_cents=_total(adjustments, PATIENT_RESPONSIBILITY),
         adjustments=[
@@ -107,7 +114,7 @@ def postings_for(remittance: RemittanceClaim) -> dict[str, LinePosting]:
     """
     return {
         line.line_control_number: posting_for_line(
-            line.charge_cents, line.paid_cents, line.adjustments
+            line.paid_cents, line.adjustments, allowed_cents=line.allowed_cents
         )
         for line in remittance.lines
         if line.line_control_number

@@ -139,7 +139,11 @@ def test_the_payer_says_what_it_did_with_each_service(live: LiveClient) -> None:
     )
     [posting] = postings.values()
     assert posting.paid_cents == _CHARGED_CENTS
-    assert posting.allowed_cents == _CHARGED_CENTS
+    # This payer reports no allowed amount, so we report none either. The
+    # temptation is to infer it from the charge and the adjustments; that
+    # inference is wrong out of network, under Medicare sequestration and on
+    # secondary claims, so an unreported allowance stays unreported.
+    assert posting.allowed_cents is None
     assert posting.patient_responsibility_cents == 0
 
 
