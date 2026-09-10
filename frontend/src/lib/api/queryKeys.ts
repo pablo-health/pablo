@@ -299,6 +299,8 @@ const baseQueryKeys = {
     all: ["billing"] as const,
     unbilledQueue: () => [...baseQueryKeys.billing.all, "unbilledQueue"] as const,
     balances: () => [...baseQueryKeys.billing.all, "balances"] as const,
+    report: (params: { from: string; to: string }) =>
+      [...baseQueryKeys.billing.all, "report", params] as const,
   },
 
   // Claims: the tracker and one claim's detail

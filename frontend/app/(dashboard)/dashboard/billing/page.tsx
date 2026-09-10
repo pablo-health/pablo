@@ -7,6 +7,7 @@ import { BillerExport } from "@/components/billing/BillerExport"
 import { BillingSetupGate } from "@/components/billing/BillingSetupGate"
 import { ClaimsSetupChecklist } from "@/components/billing/ClaimsSetupChecklist"
 import { ClaimsTracker } from "@/components/billing/claims/ClaimsTracker"
+import { ReportsView } from "@/components/billing/ReportsView"
 import { UnbilledQueue } from "@/components/billing/UnbilledQueue"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
@@ -39,6 +40,9 @@ export default function BillingPage() {
             <TabsTrigger value="remittances" data-testid="billing-tab-remittances">
               Remittances
             </TabsTrigger>
+            <TabsTrigger value="reports" data-testid="billing-tab-reports">
+              Reports
+            </TabsTrigger>
           </TabsList>
           <TabsContent value="unbilled" className="space-y-6">
             <UnbilledQueue />
@@ -60,6 +64,9 @@ export default function BillingPage() {
                 Payments and denials from payers land here once a claim is adjudicated.
               </p>
             </div>
+          </TabsContent>
+          <TabsContent value="reports">
+            <ReportsView />
           </TabsContent>
         </Tabs>
       </BillingSetupGate>

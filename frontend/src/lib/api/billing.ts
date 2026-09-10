@@ -9,6 +9,7 @@
  * declined is off the first and on the second.
  */
 
+import type { BillingReportResponse } from "@/types/billingReport"
 import type { UnbilledQueueResponse } from "@/types/billing"
 import type { BalancesResponse } from "@/types/payments"
 import { get } from "./client"
@@ -20,4 +21,14 @@ export async function fetchUnbilledQueue(token?: string): Promise<UnbilledQueueR
 /** Every client carrying a balance, oldest outstanding first. */
 export async function fetchBalances(token?: string): Promise<BalancesResponse> {
   return get<BalancesResponse>("/api/billing/balances", token)
+}
+
+/** Aging, payer mix, collections rate and claim-to-payment lag for a window. */
+export async function fetchBillingReport(
+  from: string,
+  to: string,
+  token?: string,
+): Promise<BillingReportResponse> {
+  const query = new URLSearchParams({ from, to })
+  return get<BillingReportResponse>(`/api/billing/report?${query.toString()}`, token)
 }
