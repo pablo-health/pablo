@@ -629,9 +629,7 @@ class TestWebhookFanOutOnPostgres:
             )
             for user_id, email in emails.items():
                 session.add(
-                    PlatformUserRow(
-                        id=user_id, email=email, name="Test Clinician", created_at=now
-                    )
+                    PlatformUserRow(id=user_id, email=email, name="Test Clinician", created_at=now)
                 )
                 session.add(
                     EmailTenantMappingRow(
