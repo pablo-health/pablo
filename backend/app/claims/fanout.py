@@ -127,7 +127,14 @@ def load_submission_account(session: Session, practice_id: str | None) -> Submis
     )
 
 
-WebhookOutcome = Literal["moved", "recorded", "duplicate", "unmatched", "ignored"]
+WebhookOutcome = Literal[
+    "moved",
+    "recorded",
+    "duplicate",
+    "not_applicable",
+    "unmatched",
+    "ignored",
+]
 
 #: A webhook delivery is bounded by the vendor's response timeout; it
 #: cannot visit an unbounded registry.
@@ -158,10 +165,23 @@ def ingest_transaction_event(event: WebhookEvent) -> WebhookOutcome:
             continue
         if fetched_ack is not None:
             applied = _apply_in_practice(practice, fetched_ack, event.id)
-            return applied if applied is not None else outcome
-        fetched_remit = fetch_remittance(practice.client, transaction_id)
+            if applied is not None:
+                return applied
+            # No clinician of this practice can see the claim it names.
+            # Visibility is what decides here, not the account: a deployment
+            # may serve every practice from one clearinghouse account, so
+            # fetching the transaction proves nothing about who owns it.
+            continue
+        try:
+            fetched_remit = fetch_remittance(practice.client, transaction_id)
+        except ClearinghouseNotFoundError:
+            continue
         if fetched_remit is None:
-            return "ignored"
+            # Ours, but neither a 277CA nor an 835. Remember that we could
+            # read it at all — "ignored" is a better answer than "unmatched"
+            # — and still let another practice claim it.
+            outcome = "ignored"
+            continue
         applied = _apply_remittance_in_practice(practice, fetched_remit)
         if applied is not None:
             return applied
@@ -210,7 +230,7 @@ def _apply_remittance_in_practice(
                 for remittance in fetched.remittances
                 for detail in remittance.claims
             ]
-        for wanted in ("moved", "duplicate"):
+        for wanted in ("moved", "duplicate", "not_applicable"):
             if wanted in outcomes:
                 return wanted
     return None

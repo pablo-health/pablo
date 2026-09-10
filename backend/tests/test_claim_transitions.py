@@ -30,9 +30,20 @@ _EXPECTED = {
     ("submitted", "payer_accept"): "payer_accepted",
     ("submitted", "reject"): "rejected",
     ("submitted", "stall"): "stalled",
+    # An 835 can be the first thing a payer says. It is the adjudication
+    # itself, and stronger than the acknowledgement that usually precedes
+    # it — so it must book from wherever the claim happens to be waiting.
+    # The vendor's test payer sends only a clearinghouse-sourced 277CA, and
+    # a real payer may adjudicate without one we ever read.
+    ("submitted", "pay"): "paid",
+    ("submitted", "pay_partial"): "partial",
+    ("submitted", "deny"): "denied",
     ("ch_accepted", "payer_accept"): "payer_accepted",
     ("ch_accepted", "reject"): "rejected",
     ("ch_accepted", "stall"): "stalled",
+    ("ch_accepted", "pay"): "paid",
+    ("ch_accepted", "pay_partial"): "partial",
+    ("ch_accepted", "deny"): "denied",
     ("payer_accepted", "pay"): "paid",
     ("payer_accepted", "pay_partial"): "partial",
     ("payer_accepted", "deny"): "denied",

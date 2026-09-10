@@ -169,7 +169,7 @@ def apply_remittance(
     *,
     transaction_id: str,
     occurred_at: datetime | None,
-) -> tuple[Literal["moved", "duplicate", "unmatched"], Claim | None]:
+) -> tuple[Literal["moved", "duplicate", "not_applicable", "unmatched"], Claim | None]:
     """Post one claim's 835 detail the moment the webhook delivers it.
 
     The periodic pipeline reaches the same claim later through the vendor's
@@ -188,7 +188,16 @@ def apply_remittance(
         source_id=f"835:{transaction_id}:{detail.patient_control_number}",
     )
     _, moved = apply_posting(pipeline, claim, posting, detail=detail)
-    return ("moved" if moved else "duplicate"), claim
+    if moved:
+        return "moved", claim
+    # apply_posting declines for two unrelated reasons and used to report
+    # both as "duplicate": the posting was already applied, or the claim is
+    # in a state this event has no transition for. The second is not a
+    # duplicate of anything — it is a payment we could not book — and calling
+    # it one hides it behind the outcome that means "nothing to do here".
+    if next_state(claim.state, posting.event) is None:
+        return "not_applicable", claim
+    return "duplicate", claim
 
 
 #: The ledger row kind that carries what a payer said a client owes.

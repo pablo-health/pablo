@@ -106,6 +106,20 @@ class ClearinghouseNotFoundError(ClearinghouseError):
     never produced, or one that belongs to a different account."""
 
 
+class ClearinghouseReportUnreadableError(ClearinghouseError):
+    """The transaction exists and is ours, but its report could not be read.
+
+    Distinct from :class:`ClearinghouseNotFoundError` on purpose. That one is
+    a statement about OWNERSHIP — "this account never produced this id" — and
+    callers act on it by moving on to the next account. This one says the
+    opposite: the transaction was found, and the document explaining it was
+    not. That is an integration failure (a report path the vendor no longer
+    serves, a document not yet materialised, a permission on the report and
+    not on the transaction), and moving on would file it under "no claim of
+    ours" and lose it.
+    """
+
+
 class ClearinghouseUnavailableError(ClearinghouseError):
     """The call could not be completed: a network failure, a timeout, or a
     5xx that survived the retry budget."""
