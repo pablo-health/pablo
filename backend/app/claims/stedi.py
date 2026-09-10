@@ -97,7 +97,12 @@ from .clearinghouse import (
     ClearinghouseValidationError,
 )
 from .sdk_runtime import run_on_sdk_loop
-from .sdk_submission import result_from_sdk, submission_error, to_sdk_submission
+from .sdk_submission import (
+    rejection_from_validation,
+    result_from_sdk,
+    submission_error,
+    to_sdk_submission,
+)
 from .stedi_sdk import client_for
 
 logger = logging.getLogger(__name__)
@@ -370,9 +375,15 @@ class StediClearinghouseClient:
         except ClearinghouseError:
             raise
         except Exception as exc:
-            raise submission_error(exc) from exc
-
-        result = result_from_sdk(output, req=req)
+            # A claim the vendor could not read is a rejection with field
+            # names on it, not a transport failure — see
+            # ``rejection_from_validation``.
+            rejected = rejection_from_validation(exc, req=req)
+            if rejected is None:
+                raise submission_error(exc) from exc
+            result = rejected
+        else:
+            result = result_from_sdk(output, req=req)
         logger.info(
             "clearinghouse_claim_submitted status=%s control_number=%s payer_id=%s",
             result.status,
