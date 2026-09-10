@@ -35,6 +35,11 @@ export interface WebhookDelivery {
   url: string
   /** The backend's response status, or null when the post never completed. */
   status: number | null
+  /**
+   * The exception class when the post never completed — the class, not the
+   * message: an httpx error carries the request it failed on, and that
+   * request is a signed webhook.
+   */
   error: string | null
 }
 

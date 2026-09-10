@@ -595,11 +595,14 @@ async def _deliver(control: str, kind: TransactionKind) -> dict[str, Any]:
                 response = await client.post(WEBHOOK_URL, content=body, headers=headers)
             delivery["status"] = response.status_code
         except httpx.HTTPError as exc:
-            delivery["error"] = str(exc)
-            # The class, not the message. An httpx error carries the request
-            # it failed on, and this request is a signed webhook — so the
-            # message can put the signing headers in the log. A test harness,
-            # but the same rule, and the scanner is right to flag it.
+            # The class, not the message, in both places. An httpx error
+            # carries the request it failed on, and this request is a signed
+            # webhook — so the message can put the signing headers into the
+            # log AND into /_fake/received, which hands the whole delivery
+            # record back to anyone who asks. A test harness, but the same
+            # rule, and the scanner was right to flag it. The class is all a
+            # test needs: it asserts that delivery failed, not how.
+            delivery["error"] = type(exc).__name__
             logger.warning(
                 "webhook delivery failed kind=%s control=%s error=%s",
                 kind,
