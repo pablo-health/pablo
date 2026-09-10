@@ -132,7 +132,9 @@ class RemittanceLine(BaseModel):
     """One service line's adjudication from an 835."""
 
     line_control_number: str
-    service_date: str
+    #: Absent when the claim was filed with a date range rather than a single
+    #: service date. The line's control number is what identifies it.
+    service_date: str | None = None
     cpt: str
     charge_cents: int
     paid_cents: int

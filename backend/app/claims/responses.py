@@ -140,7 +140,12 @@ def _parse_remittance_line(line: dict[str, Any], path: str) -> RemittanceLine:
     payment_path = f"{path}.servicePaymentInformation"
     return RemittanceLine(
         line_control_number=_require(line, "lineItemControlNumber", path),
-        service_date=_require(line, "serviceDate", path),
+        # Optional, because a payer really does leave it off: a claim filed
+        # with a date range rather than a single service date comes back
+        # without one. It identifies nothing — the line's own control number
+        # does that — so refusing the whole remittance over it would throw
+        # away the money detail for every claim in the same batch.
+        service_date=line.get("serviceDate"),
         cpt=_require(service_payment, "adjudicatedProcedureCode", payment_path),
         charge_cents=_cents(service_payment, "lineItemChargeAmount", payment_path),
         paid_cents=_cents(service_payment, "lineItemProviderPaymentAmount", payment_path),

@@ -28,11 +28,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from ..db.models import DEFAULT_CHARGE_CURRENCY
 from .clearinghouse import ClearinghouseError
 from .receipts import record
+from .remittance_lines import applied_to
 from .transitions import advance, next_state
 
 if TYPE_CHECKING:
@@ -40,6 +41,7 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from ..models.claims import Claim
+    from ..models.claims_responses import RemittanceClaim
     from ..models.claims_timeline import ClaimTimeline
     from ..repositories.patient_payment import PatientPaymentRepository
     from .receipts import ClaimPipeline
@@ -51,6 +53,19 @@ logger = logging.getLogger(__name__)
 #: ``app.claims.transitions``; every one of these is legal from both
 #: ``payer_accepted`` and ``stalled``.
 RemittanceEvent = Literal["pay", "pay_partial", "deny"]
+
+
+class RemittanceDetailSource(Protocol):
+    """Where a claim's service-line adjudication comes from.
+
+    Separate from the timeline because it comes from somewhere else and can
+    be absent: the vendor's claim API reports payment at claim level only, so
+    the per-line breakdown has to be read out of the 835 itself.
+    """
+
+    def detail_for(self, control_number: str) -> RemittanceClaim | None:
+        """The 835's entry for this claim, or ``None`` if it has not arrived."""
+        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +141,7 @@ def apply_posting(
     posting: RemittancePosting,
     *,
     charges: PatientPaymentRepository | None = None,
+    detail: RemittanceClaim | None = None,
 ) -> tuple[Claim, bool]:
     """Write a remittance onto a claim; the claim after, and whether it moved.
 
@@ -158,9 +174,14 @@ def apply_posting(
 
     now = pipeline.now()
     moved = advance(claim, posting.event, now=now)
-    stored = pipeline.claims.update(
-        moved.model_copy(update={"total_paid_cents": posting.paid_cents})
-    )
+    updates: dict[str, object] = {"total_paid_cents": posting.paid_cents}
+    if detail is not None:
+        # The claim total says a claim was paid $180 of $300; only the lines
+        # say whether that was two sessions with a deductible applied or one
+        # paid and one denied. Those are different conversations, so post the
+        # detail whenever the 835 was available to read.
+        updates["lines"] = applied_to(moved.lines, detail)
+    stored = pipeline.claims.update(moved.model_copy(update=updates))
     record(
         pipeline,
         stored,
@@ -210,6 +231,7 @@ def post_remittances(
     claims: Iterable[Claim],
     *,
     charges: PatientPaymentRepository | None = None,
+    details: RemittanceDetailSource | None = None,
 ) -> int:
     """Read each claim's timeline and post whatever the payer decided.
 
@@ -219,6 +241,12 @@ def post_remittances(
     still worth reading, and a claim that could not be read this time is read
     again on the next pass. A claim the clearinghouse has no id for was never
     filed through it and has no timeline to ask about.
+
+    ``details`` is the service-line half, read from the 835 itself. It is
+    optional and failing to read it never blocks the posting: knowing a claim
+    was paid is worth recording even when the breakdown could not be
+    fetched, and the alternative — refusing to post the money because the
+    detail was unavailable — would leave a paid claim looking unpaid.
     """
     moved = 0
     for claim in claims:
@@ -232,6 +260,12 @@ def post_remittances(
         posting = posting_for(timeline, charged_cents=claim.total_charge_cents)
         if posting is None:
             continue
-        _, did_move = apply_posting(pipeline, claim, posting, charges=charges)
+        detail = None
+        if details is not None:
+            try:
+                detail = details.detail_for(claim.control_number)
+            except ClearinghouseError:
+                logger.warning("remittance_detail_read_failed claim_id=%s", claim.id)
+        _, did_move = apply_posting(pipeline, claim, posting, charges=charges, detail=detail)
         moved += int(did_move)
     return moved

@@ -97,6 +97,52 @@ def test_a_filed_claim_can_be_found_again_and_pays(live: LiveClient) -> None:
     assert posting.trace_number, "money that moved must carry the trace that proves it"
 
 
+def test_the_payer_says_what_it_did_with_each_service(live: LiveClient) -> None:
+    """The half the claim API cannot answer.
+
+    A claim total says $180 of $300 was paid. Only the service lines say
+    whether that was two sessions with a deductible applied or one paid and
+    one denied — a conversation with the client versus a conversation with
+    the payer. This proves the 835 is reachable for a claim we filed and
+    lands on the line we billed.
+
+    The test payer pays in full and adjusts nothing, so what this can prove
+    is that the detail arrives and matches up. The contractual-versus-client
+    split is exercised in the unit suite against constructed remittances and
+    waits on a real payer.
+    """
+    from app.claims.remittance_feed import FeedRemittanceDetails  # noqa: PLC0415
+    from app.claims.remittance_lines import postings_for  # noqa: PLC0415
+    from app.models.claims_transport import ClaimSubmissionRequest  # noqa: PLC0415
+
+    control_number = fresh_control_number()
+    request = ClaimSubmissionRequest.model_validate(submission_body(control_number))
+    result = live.adapter.submit_claim(request, idempotency_key=fresh_idempotency_key())
+    assert result.status == "SUCCESS", [error.description for error in result.errors]
+
+    deadline = time.monotonic() + _ADJUDICATION_TIMEOUT_SECONDS
+    while True:
+        # A fresh source each time: the scan is cached for a pass on purpose,
+        # so re-asking the same one would answer from the first empty scan.
+        detail = FeedRemittanceDetails(live.adapter).detail_for(control_number)
+        if detail is not None:
+            break
+        assert time.monotonic() < deadline, (
+            f"no 835 for the claim within {_ADJUDICATION_TIMEOUT_SECONDS}s"
+        )
+        time.sleep(_POLL_INTERVAL_SECONDS)
+
+    postings = postings_for(detail)
+
+    assert list(postings) == [control_number + "L1"], (
+        "the payer's service line must carry back the line control number we billed under"
+    )
+    [posting] = postings.values()
+    assert posting.paid_cents == _CHARGED_CENTS
+    assert posting.allowed_cents == _CHARGED_CENTS
+    assert posting.patient_responsibility_cents == 0
+
+
 def test_the_same_key_files_one_claim_not_two(live: LiveClient) -> None:
     """The property the submission worker's retries depend on.
 
