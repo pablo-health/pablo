@@ -15,6 +15,12 @@ Practice-level, no client attached (not a PHI surface, same posture as
   with the payer for each electronic transaction.
 * ``POST /api/payers/{payer_row_id}/enrollments`` — the "Enroll with payer"
   button: file whatever the payer needs that is not on file yet.
+* ``POST /api/payers/enrollments/refresh`` — the "Check for updates" button:
+  one clearinghouse listing covers every open request the practice has, so
+  this answers for all payers at once rather than one at a time. Floored per
+  practice (``app.claims.enrollment.REFRESH_FLOOR_SECONDS``) — a press inside
+  the floor gets the previous pass's answer back instead of a second vendor
+  call.
 
 Putting a plan on file for a payer with no enrollments yet files them too,
 on the way through (``app.claims.enrollment.enroll_if_new``); that never
@@ -96,6 +102,7 @@ from ..claims.enrollment import (
     clearinghouse_client_for_practice,
     enroll_if_new,
     list_enrollments,
+    refresh_enrollments_throttled,
     request_enrollments,
 )
 from ..db import arm_current_user_id, get_db_session, set_tenant_schema
@@ -107,6 +114,7 @@ from ..models.coverage import (
     PatientCoverage,
     Payer,
     PayerEnrollmentListResponse,
+    PayerEnrollmentRefreshResponse,
     PayerEnrollmentResponse,
     PayerListResponse,
     PayerResponse,
@@ -369,6 +377,41 @@ def request_payer_enrollments(
             detail="The clearinghouse refused the enrollment request.",
         ) from exc
     return _enrollments_response(session, payers, payer_row_id)
+
+
+@payers_router.post("/enrollments/refresh", response_model=PayerEnrollmentRefreshResponse)
+def refresh_payer_enrollments(
+    session: DbSession,
+    client: Clearinghouse,
+    ctx: TenantContext = Depends(get_tenant_context),
+) -> PayerEnrollmentRefreshResponse:
+    """Check every open request in one listing; answer with how many changed.
+
+    Practice-scoped, not per payer: a listing already covers every payer the
+    practice has an open request with, so asking per payer would cost N
+    vendor calls to answer one question. Floored per practice — a press
+    inside the floor gets the previous pass's answer back, marked
+    ``throttled``, with no second vendor call.
+    """
+    if client is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No clearinghouse account is configured for this practice.",
+        )
+    try:
+        outcome = refresh_enrollments_throttled(session, client, practice_id=ctx.practice_id)
+    except ClearinghouseUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_CLEARINGHOUSE_BUSY
+        ) from exc
+    except ClearinghouseError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The clearinghouse refused the refresh.",
+        ) from exc
+    return PayerEnrollmentRefreshResponse(
+        changed=outcome.changed, checked_at=outcome.checked_at, throttled=outcome.throttled
+    )
 
 
 # ---------------------------------------------------------------------------
