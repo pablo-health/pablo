@@ -22,10 +22,12 @@ What it does
 
 For a transaction event the receiver fetches the transaction through each
 practice's own clearinghouse account (a transaction another account owns
-is a 404 there, and the next practice is tried), reads the 277CA behind it
-if that is what it is, and moves the claim it names — see
-:func:`app.claims.acknowledgments.apply_acknowledgment`. An 835 is
-acknowledged and left alone; remittance posting has its own path.
+is a 404 there, and the next practice is tried). A 277CA moves the claim
+it names — see :func:`app.claims.acknowledgments.apply_acknowledgment`. An
+835 posts the remittance right away instead of waiting for the pipeline's
+next pass — see :func:`app.claims.remittance.apply_remittance` — so a
+practice sees a claim as paid the moment the payer says so rather than up
+to a whole pipeline interval later.
 
 Idempotency
 -----------

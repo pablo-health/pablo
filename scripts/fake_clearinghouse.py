@@ -15,9 +15,19 @@ Rules, all keyed on the claim's ``patientControlNumber``:
 * ``REJ-DX…``   → the recorded diagnosis-specificity edit rejection (400)
 * ``REJ-PTR…``  → the recorded diagnosis-pointer edit rejection (400)
 * ``REJ-SUB…``  → the recorded subscriber-demographics edit rejection (400)
+* ``PART-…``    → accepted, then a 277CA and an 835 that pays part of each
+  line and assigns the rest to the client as patient responsibility (a CAS
+  adjustment, group ``PR``), with the claim total agreeing with what the
+  lines carry
+* ``DENY-…``    → accepted, then a 277CA and an 835 that denies the claim
+  and assigns the whole charge to the client
 * anything else → the recorded accept, then the 277CA and the 835 on their
   timers, with the claim's own control number, line numbers and amounts
   substituted so the remittance reads as paid in full for what was charged
+
+Every 835 rule starts from the recorded paid-in-full remittance and edits its
+amounts rather than building a new document, so a ``PART-`` or ``DENY-``
+claim gets the same shape the accept path already produces.
 
 A submission's ``Idempotency-Key`` header is echoed on the response and a
 retry with the same key gets the same answer without starting new timers.
@@ -57,6 +67,7 @@ import os
 import time
 import uuid
 from datetime import UTC, datetime
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any, Literal
 
@@ -92,6 +103,23 @@ REJECTIONS: dict[str, str] = {
     "REJ-PTR": "837p_submission_edit_rejected_dx_pointer.json",
     "REJ-SUB": "837p_submission_edit_rejected_subscriber_demographics.json",
 }
+
+#: Control-number prefixes that change what the 835 says rather than what
+#: the submission answers: both are accepted at submission time and only
+#: diverge from paid-in-full once the remittance is built.
+PARTIAL_PREFIX = "PART-"
+DENIAL_PREFIX = "DENY-"
+
+#: What a ``PART-`` claim pays of each line; the rest becomes the client's.
+_PARTIAL_PAID_FRACTION = Decimal("0.6")
+
+#: X12 CLP02 for a denied claim, and the CAS (``PR``) reason codes the fake
+#: writes for the client's share: a deductible on a partial payment, a plan
+#: exclusion on a denial.
+_DENIED_CLAIM_STATUS_CODE = "4"
+_PATIENT_RESPONSIBILITY_GROUP = "PR"
+_PR_REASON_DEDUCTIBLE = "1"
+_PR_REASON_NOT_COVERED = "96"
 
 #: Values the recordings carry for the one claim they were captured from.
 #: Substituted everywhere they appear so a document refers to the claim under
@@ -335,8 +363,23 @@ def _build_277_report(control: str) -> dict[str, Any]:
     return report
 
 
+def _line_split(charge: Decimal, control: str) -> tuple[Decimal, Decimal]:
+    """What one line pays and what it assigns the client, by the claim's fate."""
+    if control.startswith(DENIAL_PREFIX):
+        return Decimal("0.00"), charge
+    if control.startswith(PARTIAL_PREFIX):
+        paid = (charge * _PARTIAL_PAID_FRACTION).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        return paid, charge - paid
+    return charge, Decimal("0.00")
+
+
 def _build_835_report(control: str) -> dict[str, Any]:
-    """The 835 as JSON, paying the claim in full for what it charged."""
+    """The 835 as JSON: paid in full, paid in part, or denied, by the claim's own numbers.
+
+    The claim-level totals are summed from what the lines actually carry
+    rather than independently re-derived from the charge, so CLP05 always
+    agrees with the itemisation the parser checks it against.
+    """
     claim = state.claims.get(control, {})
     lines = _line_control_numbers(claim, control)
     report: dict[str, Any] = _deep_replace(
@@ -350,28 +393,65 @@ def _build_835_report(control: str) -> dict[str, Any]:
     report["meta"]["transactionId"] = _transaction_id("835", control)
 
     info = claim.get("claimInformation", {})
-    charge = str(info.get("claimChargeAmount") or "")
+    charge = info.get("claimChargeAmount")
     service_lines = info.get("serviceLines", [])
+    denied = control.startswith(DENIAL_PREFIX)
     for transaction in report.get("transactions", []):
-        if charge:
-            transaction["financialInformation"]["totalActualProviderPaymentAmount"] = charge
+        transaction_paid = Decimal("0.00")
         for detail in transaction.get("detailInfo", []):
             for payment in detail.get("paymentInfo", []):
-                if charge:
-                    payment["claimPaymentInfo"]["claimPaymentAmount"] = charge
-                    payment["claimPaymentInfo"]["totalClaimChargeAmount"] = charge
-                if service_lines:
-                    payment["serviceLines"] = [
-                        _paid_line(payment["serviceLines"][0], line, number)
+                claim_payment = payment["claimPaymentInfo"]
+                posted_lines = (
+                    [
+                        _paid_line(payment["serviceLines"][0], line, number, control)
                         for line, number in zip(service_lines, lines, strict=False)
                     ]
+                    if service_lines
+                    else []
+                )
+                if posted_lines:
+                    payment["serviceLines"] = posted_lines
+                    paid_total = sum(
+                        (
+                            Decimal(
+                                sl["servicePaymentInformation"]["lineItemProviderPaymentAmount"]
+                            )
+                            for sl in posted_lines
+                        ),
+                        Decimal("0.00"),
+                    )
+                    patient_total = sum(
+                        (
+                            Decimal(adjustment["adjustmentAmount1"])
+                            for sl in posted_lines
+                            for adjustment in sl.get("serviceAdjustments", [])
+                        ),
+                        Decimal("0.00"),
+                    )
+                elif charge:
+                    paid_total, patient_total = _line_split(Decimal(str(charge)), control)
+                else:
+                    paid_total = patient_total = Decimal("0.00")
+                if charge:
+                    claim_payment["claimPaymentAmount"] = str(paid_total)
+                    claim_payment["totalClaimChargeAmount"] = str(charge)
+                claim_payment["patientResponsibilityAmount"] = str(patient_total)
+                if denied:
+                    claim_payment["claimStatusCode"] = _DENIED_CLAIM_STATUS_CODE
+                transaction_paid += paid_total
+        transaction["financialInformation"]["totalActualProviderPaymentAmount"] = str(
+            transaction_paid
+        )
     return report
 
 
-def _paid_line(template: dict[str, Any], line: dict[str, Any], number: str) -> dict[str, Any]:
+def _paid_line(
+    template: dict[str, Any], line: dict[str, Any], number: str, control: str
+) -> dict[str, Any]:
     paid = copy.deepcopy(template)
     service = line.get("professionalService", {})
-    amount = str(service.get("lineItemChargeAmount") or "")
+    charge = Decimal(str(service.get("lineItemChargeAmount") or "0"))
+    paid_amount, patient_amount = _line_split(charge, control)
     paid["lineItemControlNumber"] = number
     if line.get("serviceDate"):
         paid["serviceDate"] = str(line["serviceDate"])
@@ -382,11 +462,22 @@ def _paid_line(template: dict[str, Any], line: dict[str, Any], number: str) -> d
     if "procedureModifiers" in service:
         payment["adjudicatedProcedureModifierCodes"] = list(service["procedureModifiers"])
         payment["submittedAdjudicatedProcedureModifierCodes"] = list(service["procedureModifiers"])
-    if amount:
-        payment["lineItemChargeAmount"] = amount
-        payment["lineItemProviderPaymentAmount"] = amount
+    if service.get("lineItemChargeAmount"):
+        payment["lineItemChargeAmount"] = str(charge)
+        payment["lineItemProviderPaymentAmount"] = str(paid_amount)
     if service.get("serviceUnitCount"):
         payment["unitsOfServicePaidCount"] = str(service["serviceUnitCount"])
+    if patient_amount:
+        reason = (
+            _PR_REASON_NOT_COVERED if control.startswith(DENIAL_PREFIX) else _PR_REASON_DEDUCTIBLE
+        )
+        paid["serviceAdjustments"] = [
+            {
+                "claimAdjustmentGroupCode": _PATIENT_RESPONSIBILITY_GROUP,
+                "adjustmentReasonCode1": reason,
+                "adjustmentAmount1": str(patient_amount),
+            }
+        ]
     return paid
 
 
