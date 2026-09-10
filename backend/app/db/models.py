@@ -880,6 +880,18 @@ class PracticeBillingProfileRow(Base):
     eligibility_auto_check: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="true"
     )
+    #: May a clinician write off a client's balance as a courtesy — a waiver
+    #: with no financial-hardship or billing-error basis behind it. Off by
+    #: default: a practice opts in before anyone can give money away this way.
+    allow_courtesy_writeoffs: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    #: The balance, in cents, at or under which a ``small_balance`` write-off
+    #: is allowed. Below the cost of chasing it, by the practice's own
+    #: judgment — not a discount, a threshold for not bothering to collect.
+    small_balance_cents: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=500, server_default="500"
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -888,6 +900,9 @@ class PracticeBillingProfileRow(Base):
         CheckConstraint("id = 1", name="ck_practice_billing_profile_singleton"),
         CheckConstraint(
             "tax_id_type IN ('ein', 'ssn')", name="ck_practice_billing_profile_tax_id_type"
+        ),
+        CheckConstraint(
+            "small_balance_cents >= 0", name="ck_practice_billing_profile_small_balance"
         ),
     )
 

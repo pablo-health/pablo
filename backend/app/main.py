@@ -68,6 +68,7 @@ from .routes import (
     patient_documents,
     patient_payments,
     patient_statements,
+    patient_write_offs,
     patients,
     payment_webhooks,
     practice_balances,
@@ -262,6 +263,7 @@ app.include_router(patient_documents.patient_documents_router)
 app.include_router(patient_documents.documents_router)
 app.include_router(patient_documents.internal_jobs_router)
 app.include_router(patient_payments.router)
+app.include_router(patient_write_offs.router)
 app.include_router(payment_webhooks.router)
 app.include_router(ehr_routes.route_router)
 app.include_router(ehr_routes.navigate_router)

@@ -9,11 +9,13 @@ import type {
   ChargeAmountResponse,
   ChargeResponse,
   CreateChargeRequest,
+  CreateWriteOffRequest,
 } from "@/types/payments"
 import {
   chargeBalance,
   completeCardSetup,
   createCharge,
+  createWriteOff,
   fetchCardOnFile,
   fetchChargeAmount,
   fetchPatientBalance,
@@ -138,6 +140,27 @@ export function useCreateCharge(token?: string) {
 export function useChargeBalance(token?: string) {
   return useAuthMutation<ChargeResponse, { patientId: string }>({
     mutationFn: ({ patientId }) => chargeBalance(patientId, token),
+    invalidateKeys: ({ patientId }) => [
+      queryKeys.payments.charges(patientId),
+      queryKeys.payments.balance(patientId),
+      queryKeys.billing.balances(),
+    ],
+  })
+}
+
+/**
+ * Write off part or all of a client's balance.
+ *
+ * Invalidates the ledger and the balance, exactly like a charge does — a
+ * write-off changes the same figures a payment would, just in the other
+ * direction.
+ */
+export function useCreateWriteOff(token?: string) {
+  return useAuthMutation<
+    ChargeResponse,
+    { patientId: string; data: CreateWriteOffRequest }
+  >({
+    mutationFn: ({ patientId, data }) => createWriteOff(patientId, data, token),
     invalidateKeys: ({ patientId }) => [
       queryKeys.payments.charges(patientId),
       queryKeys.payments.balance(patientId),

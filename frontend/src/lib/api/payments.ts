@@ -16,6 +16,7 @@ import type {
   ChargeAmountResponse,
   ChargeResponse,
   CreateChargeRequest,
+  CreateWriteOffRequest,
 } from "@/types/payments"
 import { ApiError, buildApiUrl, get, getAuthHeader, post } from "./client"
 
@@ -142,6 +143,22 @@ export async function chargeBalance(
   token?: string,
 ): Promise<ChargeResponse> {
   return post<ChargeResponse>(`/api/patients/${patientId}/charge-balance`, {}, token)
+}
+
+/**
+ * Write off part or all of a client's balance, with a stated reason.
+ *
+ * No amount default and no bulk form: a write-off is always one client, one
+ * amount, chosen deliberately. `courtesy` and `small_balance` can come back
+ * a 403 the caller has to explain — the practice's own policy, not this
+ * client's history, decided that.
+ */
+export async function createWriteOff(
+  patientId: string,
+  data: CreateWriteOffRequest,
+  token?: string,
+): Promise<ChargeResponse> {
+  return post<ChargeResponse>(`/api/patients/${patientId}/write-offs`, data, token)
 }
 
 /** The client's statement, as a PDF blob. */

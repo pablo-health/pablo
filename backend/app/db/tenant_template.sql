@@ -717,7 +717,10 @@ CREATE TABLE __TENANT_SCHEMA__.practice_billing_profile (
     eligibility_auto_check boolean DEFAULT true NOT NULL,
     contact_email character varying(255),
     clearinghouse_provider_id character varying(80),
+    allow_courtesy_writeoffs boolean DEFAULT false NOT NULL,
+    small_balance_cents integer DEFAULT 500 NOT NULL,
     CONSTRAINT ck_practice_billing_profile_singleton CHECK ((id = 1)),
+    CONSTRAINT ck_practice_billing_profile_small_balance CHECK ((small_balance_cents >= 0)),
     CONSTRAINT ck_practice_billing_profile_tax_id_type CHECK (((tax_id_type)::text = ANY ((ARRAY['ein'::character varying, 'ssn'::character varying])::text[])))
 );
 

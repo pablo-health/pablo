@@ -44,6 +44,8 @@ _WRITABLE_FIELDS: frozenset[str] = frozenset(
         "phone",
         "contact_email",
         "eligibility_auto_check",
+        "allow_courtesy_writeoffs",
+        "small_balance_cents",
     }
 )
 
@@ -51,9 +53,15 @@ _WRITABLE_FIELDS: frozenset[str] = frozenset(
 #: id for the provider record, which only the enrollment flow sets.
 _READABLE_FIELDS: frozenset[str] = _WRITABLE_FIELDS | {"clearinghouse_provider_id"}
 
-#: The one field with a default other than "unset": a practice that has never
-#: opened billing settings still gets its clients' plans checked at intake.
-_DEFAULTS: dict[str, object] = {"eligibility_auto_check": True}
+#: Fields with a default other than "unset": a practice that has never opened
+#: billing settings still gets its clients' plans checked at intake, courtesy
+#: waivers off, and the small-balance threshold at the same default the
+#: column carries.
+_DEFAULTS: dict[str, object] = {
+    "eligibility_auto_check": True,
+    "allow_courtesy_writeoffs": False,
+    "small_balance_cents": 500,
+}
 
 
 def _empty_profile() -> dict[str, object]:
