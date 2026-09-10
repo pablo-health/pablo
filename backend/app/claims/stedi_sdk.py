@@ -1,33 +1,21 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Constructing the vendor's own SDK client from a practice's credentials.
+"""Constructing the vendor's SDK client from a practice's credentials.
 
-The vendor publishes a generated SDK covering its current APIs — eligibility,
-professional claims, the claim lifecycle, and event destinations. The adapter
-in ``app.claims.stedi`` predates it and calls the vendor's older
-compatibility endpoints over ``httpx``; moving operation by operation onto the
-SDK is what this module exists for. It deliberately starts small: everything
-here is about *where* the SDK sends its calls and *who* it authenticates as,
-so that the first operation to move has somewhere to be constructed from.
+The adapter in ``app.claims.stedi`` predates the vendor's generated SDK and
+calls the older compatibility endpoints over ``httpx``; operations move onto
+the SDK one at a time, and this module is where the client they need comes
+from. The payer directory and enrollment stay on ``httpx`` because the SDK
+does not cover them.
 
-Two hosts' worth of operations stay on ``httpx`` for now — the payer directory
-and enrollment — because the SDK does not cover them.
+**Both async functions here must run on the SDK loop.** Constructing the
+SDK's ``Config`` eagerly builds an ``aiohttp.ClientSession``, which needs a
+running loop, so a client cannot be built at import time and shared with
+synchronous callers.
 
-**Both functions here must be called from a running event loop.** Constructing
-the SDK's ``Config`` eagerly builds its default transport, and that builds an
-``aiohttp.ClientSession``, which has no loop to attach to otherwise. So a
-client cannot be built once at import or dependency-injection time and reused
-by synchronous callers — it is constructed inside the async call that needs
-it, which is also why callers making several calls should hold one open rather
-than paying for a pool per request.
-
-``base_url``: a deployment that has to be answered by something other than the
-vendor (the end-to-end harness's stand-in clearinghouse) says so once, on the
-credentials, and both clients honour it. The SDK spells this ``endpoint_uri``
-and, like ``ApiBases.resolve``, it replaces the *origin only* — each operation
-keeps its own version path, which is why one stand-in can answer for every
-host. That equivalence is what
-``backend/tests/test_clearinghouse_base_url.py`` pins.
+``base_url`` replaces the origin only, like ``ApiBases.resolve``, so one
+stand-in (the end-to-end harness) can answer for every vendor host.
+``test_clearinghouse_base_url.py`` pins that equivalence.
 """
 
 from __future__ import annotations
@@ -47,10 +35,9 @@ _SHUTDOWN_TIMEOUT_SECONDS = 10.0
 
 
 def sdk_config(credentials: ClearinghouseCredentials) -> Config:
-    """The SDK configuration a practice's credentials describe.
+    """The SDK configuration for these credentials.
 
-    ``endpoint_uri`` is left unset for every real deployment, which is what
-    routes each operation to the vendor's own host for that API.
+    ``endpoint_uri`` stays unset for real deployments.
     """
     config = Config(api_key=credentials.api_key)
     if credentials.base_url:
@@ -59,31 +46,25 @@ def sdk_config(credentials: ClearinghouseCredentials) -> Config:
 
 
 def sdk_client(credentials: ClearinghouseCredentials) -> Stedi:
-    """An SDK client for this practice's account.
+    """An unshared client, for tests.
 
-    Prefer :func:`client_for` — a client holds a connection pool, and building
-    one per call throws away every keep-alive connection and leaks the session
-    behind it. This exists for tests that want an unshared client.
+    Prefer :func:`client_for`: a client holds a connection pool, and one per
+    call leaks the session behind it.
     """
     return Stedi(sdk_config(credentials))
 
 
-#: Clients live as long as the process, keyed by the credentials they
-#: authenticate with. Keyed rather than a single module-level client because
-#: ``SettingsClearinghouseCredentialProvider`` deliberately re-reads settings
-#: on every call, so that a redeployed API key takes effect without a code
-#: change; a bare singleton would pin the first key it ever saw and go on
-#: authenticating as it. Only ever touched from the SDK loop, which is
-#: single-threaded, so it needs no lock of its own.
+#: Process-lifetime clients keyed by credentials, because the default provider
+#: re-reads settings per call and a bare singleton would pin the first key it
+#: saw. Only touched from the single-threaded SDK loop, so no lock.
 _clients: dict[tuple[str, str | None], Stedi] = {}
 
 
 async def client_for(credentials: ClearinghouseCredentials) -> Stedi:
     """The shared client for these credentials, built on first use.
 
-    Must be awaited on the SDK loop (see :mod:`app.claims.sdk_runtime`): the
-    client cannot be constructed off a running loop at all, and one built on a
-    different loop could not be reused from this one.
+    Must be awaited on the SDK loop (:mod:`app.claims.sdk_runtime`); a client
+    built on another loop cannot be reused from this one.
     """
     key = (credentials.api_key, credentials.base_url)
     client = _clients.get(key)
@@ -103,12 +84,9 @@ async def close_clients() -> None:
 def shutdown_sdk() -> None:
     """Release everything this module owns. Call once on application shutdown.
 
-    Closing the clients before stopping the loop is the order that matters:
-    the sessions have to be closed *by* the loop they were opened on, and a
-    stopped loop cannot run the coroutine that closes them.
-
-    A deployment that never calls the clearinghouse never starts the loop, and
-    this must not start one just to stop it again.
+    Clients close before the loop stops because sessions must be closed by the
+    loop that opened them. A deployment that never started the loop must not
+    start one just to stop it.
     """
     if not sdk_loop_running():
         return
