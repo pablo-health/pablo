@@ -10,7 +10,9 @@
  * Each payer also shows where the practice stands with it for electronic
  * transactions: the enrollment requests filed through the clearinghouse and
  * what the payer is waiting on, with an "Enroll with payer" button for a
- * payer that has nothing on file yet.
+ * payer that has nothing on file yet. "Check for updates" polls every open
+ * request across every payer in one pass and says what changed, including
+ * nothing.
  */
 
 "use client"
@@ -26,6 +28,7 @@ import {
   useCreatePayer,
   usePayerEnrollments,
   usePayers,
+  useRefreshPayerEnrollments,
   useRequestPayerEnrollments,
   useUpdatePayer,
 } from "@/hooks/useCoverage"
@@ -236,6 +239,40 @@ function PayerRow({
   )
 }
 
+function refreshSummary(result: { changed: number; throttled: boolean; checked_at: string }) {
+  const when = new Date(result.checked_at).toLocaleString()
+  const prefix = result.throttled ? `Checked ${when}` : `Checked just now`
+  if (result.changed === 0) return `${prefix} — nothing has moved yet.`
+  const count = result.changed === 1 ? "1 enrollment" : `${result.changed} enrollments`
+  return `${prefix} — ${count} changed.`
+}
+
+function RefreshEnrollmentsControl() {
+  const refresh = useRefreshPayerEnrollments()
+  const error = refresh.error instanceof Error ? refresh.error.message : null
+
+  return (
+    <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/30 px-3 py-2.5">
+      <p className="text-[12.5px] text-muted-foreground">
+        {error
+          ? error
+          : refresh.data
+            ? refreshSummary(refresh.data)
+            : "Check your clearinghouse account for updates on open enrollments."}
+      </p>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        onClick={() => refresh.mutate()}
+        disabled={refresh.isPending}
+      >
+        Check for updates
+      </Button>
+    </div>
+  )
+}
+
 export function PayersCard() {
   const { data } = usePayers()
   const createPayer = useCreatePayer()
@@ -271,6 +308,7 @@ export function PayersCard() {
       flush
     >
       <div className="px-[22px] pt-1.5 pb-5">
+        <RefreshEnrollmentsControl />
         {payers.length === 0 && !adding && (
           <p className="py-3 text-sm text-muted-foreground">
             No payers yet. One is added the first time a client&apos;s coverage names it, or add one here.

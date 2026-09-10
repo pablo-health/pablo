@@ -38,8 +38,10 @@ from app.claims.enrollment import (
     derive_payer_status,
     ensure_provider_record,
     refresh_enrollments,
+    refresh_enrollments_throttled,
     request_enrollments,
     required_transactions,
+    reset_refresh_floor,
     sync_provider_record,
 )
 from app.claims.events import compliance_item_type
@@ -104,6 +106,13 @@ def _encryption_key(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _refresh_floor() -> Iterator[None]:
+    reset_refresh_floor()
+    yield
+    reset_refresh_floor()
 
 
 @pytest.fixture
@@ -667,3 +676,71 @@ class TestRefresh:
             assert refresh_enrollments(session, client, arm=_no_arm) == 0
 
         assert "payer_enrollment_status_unrecognised" in caplog.text
+
+
+class TestRefreshThrottle:
+    def _one_open_request(self, session: Session) -> tuple[FakeClearinghouse, PayerRow]:
+        _seed_profile(session)
+        payer = _seed_payer(session)
+        client = FakeClearinghouse()
+        request_enrollments(session, client, payer_row_id=payer.id, user_id=_USER_ID)
+        return client, payer
+
+    def test_first_press_runs_a_pass_and_reports_it(self, session: Session) -> None:
+        client, _payer = self._one_open_request(session)
+        client.listing = _listing_for(session, "LIVE", "835")
+
+        outcome = refresh_enrollments_throttled(
+            session, client, practice_id="practice-1", arm=_no_arm
+        )
+
+        assert outcome.changed == 1
+        assert outcome.throttled is False
+        assert len(client.calls_named("list_enrollments")) == 1
+        assert _rows(session)["835"].status == "live"
+
+    def test_a_second_press_inside_the_floor_reuses_the_answer(self, session: Session) -> None:
+        client, _payer = self._one_open_request(session)
+        client.listing = _listing_for(session, "LIVE", "835")
+        first = refresh_enrollments_throttled(
+            session, client, practice_id="practice-1", arm=_no_arm
+        )
+
+        second = refresh_enrollments_throttled(
+            session, client, practice_id="practice-1", arm=_no_arm
+        )
+
+        assert second.changed == first.changed
+        assert second.checked_at == first.checked_at
+        assert second.throttled is True
+        assert len(client.calls_named("list_enrollments")) == 1
+
+    def test_a_press_after_the_floor_runs_again(
+        self, session: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # PROVISIONING stays open, so the request is still there to poll on
+        # the second pass — otherwise "nothing left open" would explain the
+        # missing vendor call as well as the floor would.
+        client, _payer = self._one_open_request(session)
+        client.listing = _listing_for(session, "PROVISIONING", "835")
+        refresh_enrollments_throttled(session, client, practice_id="practice-1", arm=_no_arm)
+        monkeypatch.setattr(enrollment, "REFRESH_FLOOR_SECONDS", 0)
+
+        outcome = refresh_enrollments_throttled(
+            session, client, practice_id="practice-1", arm=_no_arm
+        )
+
+        assert outcome.throttled is False
+        assert len(client.calls_named("list_enrollments")) == 2
+
+    def test_the_floor_is_per_practice(self, session: Session) -> None:
+        client, _payer = self._one_open_request(session)
+        client.listing = _listing_for(session, "PROVISIONING", "835")
+        refresh_enrollments_throttled(session, client, practice_id="practice-1", arm=_no_arm)
+
+        outcome = refresh_enrollments_throttled(
+            session, client, practice_id="practice-2", arm=_no_arm
+        )
+
+        assert outcome.throttled is False
+        assert len(client.calls_named("list_enrollments")) == 2

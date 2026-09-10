@@ -28,6 +28,8 @@ const mockUseEnrollments = vi.fn()
 const mockRequestEnrollments = vi.fn()
 const mockUseTasks = vi.fn()
 const mockAnswerTask = vi.fn()
+const mockRefreshEnrollments = vi.fn()
+const mockUseRefreshEnrollments = vi.fn()
 
 vi.mock("@/hooks/useCoverage", () => ({
   usePayers: (...args: unknown[]) => mockUsePayers(...args),
@@ -41,6 +43,7 @@ vi.mock("@/hooks/useCoverage", () => ({
   }),
   useEnrollmentTasks: (...args: unknown[]) => mockUseTasks(...args),
   useAnswerEnrollmentTask: () => ({ mutate: mockAnswerTask, isPending: false, error: null }),
+  useRefreshPayerEnrollments: (...args: unknown[]) => mockUseRefreshEnrollments(...args),
 }))
 
 const AETNA: PayerResponse = {
@@ -110,6 +113,12 @@ describe("PayersCard", () => {
     mockUsePayers.mockReturnValue({ data: { data: [AETNA], total: 1 } })
     mockUseEnrollments.mockReturnValue({ data: undefined })
     mockUseTasks.mockReturnValue({ data: undefined, isLoading: false, error: null })
+    mockUseRefreshEnrollments.mockReturnValue({
+      mutate: mockRefreshEnrollments,
+      isPending: false,
+      error: null,
+      data: undefined,
+    })
   })
 
   it("lists each payer with its filing window and enrollment status", () => {
@@ -255,5 +264,38 @@ describe("PayersCard", () => {
       { name: "Cigna", payer_id: "62308" },
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     )
+  })
+
+  it("checks every payer's enrollments in one press", async () => {
+    const user = userEvent.setup()
+    render(<PayersCard />)
+
+    await user.click(screen.getByRole("button", { name: "Check for updates" }))
+
+    expect(mockRefreshEnrollments).toHaveBeenCalledWith()
+  })
+
+  it("says nothing has moved when a pass changes nothing", () => {
+    mockUseRefreshEnrollments.mockReturnValue({
+      mutate: mockRefreshEnrollments,
+      isPending: false,
+      error: null,
+      data: { changed: 0, checked_at: "2026-09-10T12:00:00Z", throttled: false },
+    })
+    render(<PayersCard />)
+
+    expect(screen.getByText(/nothing has moved yet/)).toBeInTheDocument()
+  })
+
+  it("reports how many enrollments changed", () => {
+    mockUseRefreshEnrollments.mockReturnValue({
+      mutate: mockRefreshEnrollments,
+      isPending: false,
+      error: null,
+      data: { changed: 2, checked_at: "2026-09-10T12:00:00Z", throttled: false },
+    })
+    render(<PayersCard />)
+
+    expect(screen.getByText(/2 enrollments changed/)).toBeInTheDocument()
   })
 })

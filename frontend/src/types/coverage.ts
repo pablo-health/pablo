@@ -108,6 +108,14 @@ export interface EnrollmentDocumentUrlResponse {
   url: string
 }
 
+/** What a practice-wide refresh pass answered. */
+export interface PayerEnrollmentRefreshResponse {
+  changed: number
+  checked_at: string
+  /** True when this is the previous pass's answer, inside the throttle floor. */
+  throttled: boolean
+}
+
 export interface CreatePayerRequest {
   name: string
   payer_id: string
