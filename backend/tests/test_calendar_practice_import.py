@@ -21,7 +21,6 @@ if TYPE_CHECKING:
 
 import pytest
 from app.calendar_providers.capabilities import CalendarCapability
-from app.calendar_providers.oauth_state import mint_state
 from app.calendar_providers.practice_import import (
     ACTIVE_WITHIN_DAYS,
     Cadence,
@@ -41,8 +40,9 @@ from app.services.google_calendar_service import (
     CalendarImportNotAuthorizedError,
     GoogleCalendarService,
 )
-from app.services.token_encryption import derive_subkey
 from app.settings import get_settings
+
+from tests.calendar_oauth_fakes import authorized_state
 
 # A fixed instant for the SCAN side, where every occurrence is deliberately in
 # the past and is only ever compared against an explicitly passed `now=`.
@@ -519,7 +519,7 @@ class TestScan:
                 "user-001",
                 "auth-code",
                 "http://localhost/callback",
-                state=mint_state(derive_subkey("google-calendar-oauth-state"), "user-001"),
+                state=authorized_state("user-001"),
                 capabilities=[CalendarCapability.IMPORT],
             )
 

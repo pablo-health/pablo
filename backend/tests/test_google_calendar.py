@@ -16,8 +16,15 @@ if TYPE_CHECKING:
     from collections.abc import Generator
 
 import pytest
+from app.calendar_providers import pkce_store
 from app.calendar_providers.capabilities import CalendarWriteTarget
-from app.calendar_providers.oauth_state import OAuthStateError, mint_state, verify_state
+from app.calendar_providers.oauth_state import (
+    OAuthStateError,
+    mint_state,
+    state_nonce,
+    verify_state,
+)
+from app.calendar_providers.pkce_store import PkceStoreUnavailableError
 from app.repositories.google_calendar_token import GoogleCalendarTokenDoc
 from app.scheduling_engine.models.appointment import Appointment
 from app.services.google_calendar_service import GoogleCalendarService, _build_flow
@@ -30,6 +37,8 @@ from app.services.token_encryption import (
     generate_encryption_key,
 )
 from app.settings import get_settings
+
+from tests.calendar_oauth_fakes import TEST_VERIFIER, FakePkceRedis, authorized_state
 
 # Fixtures
 
@@ -89,8 +98,8 @@ def _b64url(raw: bytes) -> str:
 
 
 def _state_for(user_id: str) -> str:
-    """A state value as get_auth_url would have minted for this user."""
-    return mint_state(derive_subkey("google-calendar-oauth-state"), user_id)
+    """A state value as get_auth_url would have left behind for this user."""
+    return authorized_state(user_id)
 
 
 def _oauth_credentials() -> MagicMock:
@@ -168,6 +177,114 @@ class TestTokenEncryption:
 
 
 # OAuth URL Generation Tests
+
+
+class TestPkceVerifier:
+    """The verifier has to outlive the request that generated it.
+
+    google_auth_oauthlib mints it inside authorization_url() and keeps it on
+    the Flow, which is gone by the time the exchange builds its own. Without
+    somewhere to put it, Google rejects every code with "Missing code
+    verifier" — which is what shipped until this was added.
+    """
+
+    @patch("app.services.google_calendar_service._build_flow")
+    def test_authorization_keeps_the_verifier_for_the_exchange(
+        self,
+        mock_build_flow: Mock,
+        calendar_service: GoogleCalendarService,
+        fake_pkce_redis: FakePkceRedis,
+    ) -> None:
+        mock_flow = MagicMock()
+        mock_flow.authorization_url.return_value = (
+            "https://accounts.google.com/o/oauth2/auth",
+            "s",
+        )
+        mock_flow.code_verifier = "verifier-from-google-lib"
+        mock_build_flow.return_value = mock_flow
+
+        calendar_service.get_auth_url("user-001", "http://localhost:3000/callback")
+
+        state = mock_flow.authorization_url.call_args.kwargs["state"]
+        assert (
+            fake_pkce_redis.values[f"gcal:pkce:{state_nonce(state)}"] == "verifier-from-google-lib"
+        )
+        # The verifier must not be reachable from the state itself, which is
+        # signed but not encrypted and travels in a URL.
+        assert "verifier-from-google-lib" not in state
+
+    @patch("app.services.google_calendar_service._build_calendar_service")
+    @patch("app.services.google_calendar_service._build_flow")
+    def test_exchange_presents_the_verifier_it_was_given(
+        self,
+        mock_build_flow: Mock,
+        mock_build_svc: Mock,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        mock_flow = MagicMock()
+        mock_flow.credentials = _oauth_credentials()
+        mock_build_flow.return_value = mock_flow
+        mock_build_svc.return_value.calendars().get().execute.return_value = {"id": "cal@x"}
+        token_repo.get_by_user_id.return_value = None
+
+        calendar_service.handle_callback(
+            "user-001", "auth-code", "http://x/cb", state=_state_for("user-001")
+        )
+
+        assert mock_flow.code_verifier == TEST_VERIFIER
+        mock_flow.fetch_token.assert_called_once_with(code="auth-code")
+
+    @patch("app.services.google_calendar_service._build_calendar_service")
+    @patch("app.services.google_calendar_service._build_flow")
+    def test_a_state_cannot_be_spent_twice(
+        self,
+        mock_build_flow: Mock,
+        mock_build_svc: Mock,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        mock_flow = MagicMock()
+        mock_flow.credentials = _oauth_credentials()
+        mock_build_flow.return_value = mock_flow
+        mock_build_svc.return_value.calendars().get().execute.return_value = {"id": "cal@x"}
+        token_repo.get_by_user_id.return_value = None
+        state = _state_for("user-001")
+
+        calendar_service.handle_callback("user-001", "auth-code", "http://x/cb", state=state)
+
+        # verify_state alone cannot catch this: it is stateless, so the same
+        # value stays valid for its whole 600s window. Taking the verifier is
+        # what makes the round trip single-use.
+        with pytest.raises(PkceStoreUnavailableError):
+            calendar_service.handle_callback("user-001", "auth-code", "http://x/cb", state=state)
+
+    @patch("app.services.google_calendar_service._build_flow")
+    def test_a_lost_verifier_stops_the_exchange_rather_than_dropping_pkce(
+        self,
+        mock_build_flow: Mock,
+        calendar_service: GoogleCalendarService,
+    ) -> None:
+        # An expired round trip, or a store that lost the value. Continuing
+        # without a verifier would be a silent downgrade, so it must not.
+        state = mint_state(derive_subkey("google-calendar-oauth-state"), "user-001")
+
+        with pytest.raises(PkceStoreUnavailableError):
+            calendar_service.handle_callback("user-001", "auth-code", "http://x/cb", state=state)
+
+        mock_build_flow.return_value.fetch_token.assert_not_called()
+
+    def test_no_store_is_an_error_not_a_flow_without_pkce(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # idle_session treats a missing Redis as "skip the check". Copying
+        # that here would drop PKCE with nothing in the logs to say so.
+        monkeypatch.setattr(pkce_store, "get_redis_client", lambda: None)
+
+        with pytest.raises(PkceStoreUnavailableError):
+            pkce_store.remember_verifier("nonce", "verifier")
+        with pytest.raises(PkceStoreUnavailableError):
+            pkce_store.take_verifier("nonce")
 
 
 class TestOAuthFlow:

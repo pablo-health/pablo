@@ -36,7 +36,8 @@ from ..calendar_providers.event_titles import (
     parse_style,
     summary_for,
 )
-from ..calendar_providers.oauth_state import mint_state, verify_state
+from ..calendar_providers.oauth_state import mint_state, state_nonce, verify_state
+from ..calendar_providers.pkce_store import remember_verifier, take_verifier
 from ..calendar_providers.practice_import import (
     DEFAULT_HORIZON_DAYS,
     DEFAULT_LOOKBACK_DAYS,
@@ -515,12 +516,18 @@ class GoogleCalendarService:
         incremental = bool(requested) and all(
             declarations[capability].incremental for capability in requested
         )
+        state = mint_state(derive_subkey(_STATE_PURPOSE), user_id)
         auth_url, _ = flow.authorization_url(
             access_type="offline",
             prompt="consent",
-            state=mint_state(derive_subkey(_STATE_PURPOSE), user_id),
+            state=state,
             include_granted_scopes="true" if incremental else "false",
         )
+        # authorization_url() generated a PKCE verifier and sent Google the
+        # challenge derived from it. It lives on this Flow, which does not
+        # outlive this request, so the exchange gets it from here instead —
+        # without it Google rejects the code as "Missing code verifier".
+        remember_verifier(state_nonce(state), flow.code_verifier)
         # HIPAA: log action without user-identifying details
         logger.info("Generated Google Calendar OAuth URL for authorization")
         return str(auth_url)
@@ -542,6 +549,10 @@ class GoogleCalendarService:
         only ever exchanged for the user the authorization was started by.
         """
         verify_state(derive_subkey(_STATE_PURPOSE), state, user_id)
+        # Taken only after the state verifies, and taken exactly once — so a
+        # replayed state finds nothing here even while it is still inside its
+        # own expiry window.
+        verifier = take_verifier(state_nonce(state))
         requested = self._resolve_request(capabilities)
         declarations = google_capabilities(write_target)
         scopes = scopes_for(declarations, requested)
@@ -551,6 +562,7 @@ class GoogleCalendarService:
             redirect_uri,
             scopes,
         )
+        flow.code_verifier = verifier
         flow.fetch_token(code=code)
         credentials = flow.credentials
 

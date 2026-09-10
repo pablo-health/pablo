@@ -63,6 +63,7 @@ from app.auth.service import (  # noqa: E402
     require_baa_acceptance,
     require_mfa,
 )
+from app.calendar_providers import pkce_store  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import User  # noqa: E402
 from app.repositories import (  # noqa: E402
@@ -126,6 +127,22 @@ from app.routes.sessions import (  # noqa: E402
 )
 from app.services import AuditService, MockEhrNavigationService, get_audit_service  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+
+from tests.calendar_oauth_fakes import FakePkceRedis  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def fake_pkce_redis(monkeypatch: pytest.MonkeyPatch) -> FakePkceRedis:
+    """Give every test a working PKCE verifier store.
+
+    Autouse because a calendar connect spans two requests that have to agree:
+    without a store the authorization half cannot keep the verifier it was
+    handed, and the exchange half has nothing to present to Google. Tests that
+    only touch one half still need it, since either half alone will raise.
+    """
+    redis = FakePkceRedis()
+    monkeypatch.setattr(pkce_store, "get_redis_client", lambda: redis)
+    return redis
 
 
 @pytest.fixture(autouse=True)
