@@ -67,6 +67,11 @@ PATIENT_RESPONSIBILITY = "PR"
 #: a reading of the adjustment codes.
 DENIED = "4"
 
+#: ``CLP02`` for a payer taking back an earlier adjudication. Its amounts are
+#: the negation of what was posted before, and the standard exempts it from
+#: the patient-responsibility cross-check below.
+REVERSAL = "22"
+
 
 @dataclass(frozen=True, slots=True)
 class LinePosting:
@@ -152,8 +157,17 @@ def patient_responsibility_agrees(remittance: RemittanceClaim) -> bool:
     remittance rather than waiting for anybody to reason about it.
 
     Claim-level adjustments count towards the total the same way line-level
-    ones do — a payer may report the client's share at either level.
+    ones do — a payer may report the client's share at either level, and the
+    standard forbids reporting the same adjustment at both, so adding them is
+    not double counting.
+
+    A reversal is exempt. Its amounts negate an earlier adjudication and the
+    standard does not require the stated total to match the itemisation
+    there, so checking it would report a disagreement on a claim that is
+    behaving correctly.
     """
+    if remittance.claim_status_code == REVERSAL:
+        return True
     itemised = _total(remittance.adjustments, PATIENT_RESPONSIBILITY) + sum(
         _total(line.adjustments, PATIENT_RESPONSIBILITY) for line in remittance.lines
     )

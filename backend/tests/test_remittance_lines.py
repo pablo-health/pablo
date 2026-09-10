@@ -248,6 +248,17 @@ class TestThePayersOwnCrossCheck:
 
         assert patient_responsibility_agrees(remittance)
 
+    def test_a_reversal_is_exempt(self) -> None:
+        """A takeback negates an earlier adjudication, and the standard does
+        not require the stated total to match the itemisation there. Checking
+        it anyway would report a disagreement on a claim behaving correctly.
+        """
+        reversal = _remittance(
+            _line("CLM1L1", paid_cents=-12_000, adjustments=[_adjustment("PR", "2", -3_000)])
+        ).model_copy(update={"claim_status_code": "22", "patient_responsibility_cents": 0})
+
+        assert patient_responsibility_agrees(reversal)
+
     def test_the_captured_paid_in_full_remittance_agrees(self) -> None:
         body = json.loads((_FIXTURES / "835_report_paid_in_full.json").read_text())
         [remittance] = parse_835(body)
