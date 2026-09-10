@@ -149,9 +149,16 @@ class RemittanceClaim(BaseModel):
 
     patient_control_number: str
     payer_claim_control_number: str
+    #: X12 ``CLP02``. ``1``/``2``/``3`` processed as primary/secondary/
+    #: tertiary, ``4`` denied, ``19`` to ``21`` forwarded to another payer,
+    #: ``22`` a reversal, ``25`` a predetermination.
     claim_status_code: str
     total_charge_cents: int
     paid_cents: int
+    #: The claim's covered charges (``AMT*AU``), when the payer reported
+    #: them. Not the allowed amount: covered excludes what the plan does not
+    #: cover but still includes the client's deductible.
+    covered_cents: int | None = None
     patient_responsibility_cents: int
     claim_frequency_code: str
     adjustments: list[Adjustment]

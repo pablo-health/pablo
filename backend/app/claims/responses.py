@@ -186,6 +186,15 @@ def _parse_remittance_claim(payment_info: dict[str, Any], path: str) -> Remittan
         claim_status_code=_require(claim_payment, "claimStatusCode", claim_path),
         total_charge_cents=_cents(claim_payment, "totalClaimChargeAmount", claim_path),
         paid_cents=_cents(claim_payment, "claimPaymentAmount", claim_path),
+        # The claim's covered charges (X12 ``AMT*AU``). Deliberately its own
+        # field rather than a stand-in for the allowed amount: covered
+        # excludes what the plan does not cover but still includes the
+        # client's deductible, so it answers a different question from
+        # ``allowed``, which is the payer's payment plus assigned patient
+        # responsibility. Treating one as the other would misstate both.
+        covered_cents=_optional_cents(
+            payment_info.get("claimSupplementalInformation") or {}, "coverageAmount"
+        ),
         patient_responsibility_cents=_cents(
             claim_payment, "patientResponsibilityAmount", claim_path
         ),
