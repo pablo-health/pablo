@@ -8,14 +8,17 @@
  * be serving an endpoint claims are no longer submitted to without anything
  * noticing.
  *
- * It stops at the clearinghouse, deliberately. Writing it further surfaced
- * two defects that were invisible until something drove the whole path
- * (PABLO-1qox, PABLO-ukzm): the receipts the clearinghouse posts back are
- * refused with a 400, and the pipeline's polling stage cannot read the
- * harness's answers. Asserting "paid" today would be asserting a bug. So the
- * spec proves what is true — the claim is built, scrubbed, filed, and
- * actually reaches the clearinghouse, once, on the endpoint it should — and
- * the rest lands with the fix.
+ * It now runs the whole way to paid. It used to stop at the clearinghouse,
+ * because writing it further surfaced defects that made "paid" unreachable:
+ * the harness answered none of the three paths the adapter calls, it served
+ * the submission accept where a 277CA report belongs, and money could not be
+ * booked from the state the claim was actually in (PABLO-1qox, PABLO-ukzm).
+ *
+ * Those are fixed, so the assertion that matters is here rather than in a
+ * bead: a payer's money reaches a claim, and the claim says so. This is the
+ * only test that crosses the pipeline, the database, the row policy and the
+ * browser at once, which is the combination every one of those defects hid
+ * behind.
  */
 
 import { expect, test } from "../fixtures/auth"
@@ -68,7 +71,7 @@ test.describe.serial("filing a claim", () => {
     await expect(page.getByTestId("review-and-file")).toBeDisabled()
     expect(await clearinghouse.submissions()).toHaveLength(0)
   })
-  test("a covered visit is scrubbed, filed, and reaches the clearinghouse once", async ({
+  test("a covered visit is scrubbed, filed, acknowledged, and paid", async ({
     api,
     signedInPage: page,
   }) => {
@@ -120,16 +123,34 @@ test.describe.serial("filing a claim", () => {
     // second claim for the same visit.
     expect(submission.headers["idempotency-key"]).toBeTruthy()
 
-    await expect
-      .poll(
-        async () => {
-          await page.reload()
-          await page.getByTestId("billing-tab-claims").click()
-          return (await claim.getAttribute("data-state")) ?? ""
-        },
-        { timeout: 60_000, intervals: [3_000] },
-      )
-      .toBe("submitted")
+    const stateNow = async () => {
+      await page.reload()
+      await page.getByTestId("billing-tab-claims").click()
+      return (await claim.getAttribute("data-state")) ?? ""
+    }
+
+    // The clearinghouse acknowledges, then the payer's 835 arrives, both on
+    // the harness's own timers and both delivered to the webhook. The
+    // therapist's screen is what is asserted, because that is where the
+    // answer has to appear — a claim that is paid in the database and still
+    // says "submitted" on the tracker has not told anybody anything.
+    //
+    // NO INTERMEDIATE STATE IS ASSERTED, including "submitted". The claim
+    // can be acknowledged before a poll ever observes it there, so asserting
+    // the rung makes the test fail on a fast answer — which is the good
+    // case. Whether the payer's own acknowledgement is seen at all is the
+    // payer's business too: the test payer sends only a clearinghouse-sourced
+    // 277CA, and an 835 books from wherever the claim is waiting.
+    await expect.poll(stateNow, { timeout: 180_000, intervals: [5_000] }).toBe("paid")
+
+    // And the money is the payer's, not a placeholder: what was charged is
+    // what came back, read from the API the client itself reads.
+    const claimId = await claim.getAttribute("data-claim-id")
+    const paid = await api.get<{ total_paid_cents: number; total_charge_cents: number }>(
+      `/api/claims/${claimId}`,
+    )
+    expect(paid.total_paid_cents).toBe(RATE_CENTS)
+    expect(paid.total_paid_cents).toBe(paid.total_charge_cents)
   })
 
 })
