@@ -22,7 +22,7 @@ export default defineConfig({
   testDir: "./specs",
   outputDir: "./test-results",
 
-  timeout: 60 * 1000,
+  timeout: 180 * 1000,
   expect: { timeout: 10 * 1000 },
 
   // One worker, specs in order: the fakes are deterministic but the stack's

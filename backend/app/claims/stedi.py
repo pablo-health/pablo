@@ -71,6 +71,8 @@ if TYPE_CHECKING:
 from ..models.claims_transport import (
     ClaimSubmissionRequest,
     ClaimSubmissionResult,
+    DocumentDownload,
+    DocumentUpload,
     EligibilityRequest,
     EligibilityResponse,
     Enrollment,
@@ -80,6 +82,7 @@ from ..models.claims_transport import (
     Payer,
     ProviderRecord,
     ProviderRegistration,
+    TaskCompletion,
     TransactionDocument,
     TransactionPage,
 )
@@ -152,6 +155,9 @@ DEFAULT_API_BASES = ApiBases(
 )
 
 _REQUEST_TIMEOUT_SECONDS = 20.0
+
+#: Uploading a PDF is a bigger body over a slower hop than an API call.
+_UPLOAD_TIMEOUT_SECONDS = 60.0
 
 #: Comfortably inside the vendor's accepted 10-100 range (below 10 is a 400).
 _DEFAULT_PAYER_SEARCH_PAGE_SIZE = 25
@@ -454,6 +460,81 @@ class StediClearinghouseClient:
         if response.status_code != httpx.codes.OK:
             _raise_for_error_envelope(response)
         return Enrollment.model_validate(response.json())
+
+    def get_enrollment(self, enrollment_id: str) -> Enrollment:
+        response = self._get(f"{self._bases.enrollments}/enrollments/{enrollment_id}")
+        if response.status_code != httpx.codes.OK:
+            _raise_for_error_envelope(response)
+        return Enrollment.model_validate(response.json())
+
+    def upload_enrollment_document(
+        self, enrollment_id: str, *, name: str, task_id: str
+    ) -> DocumentUpload:
+        response = self._post(
+            f"{self._bases.enrollments}/enrollments/{enrollment_id}/documents",
+            json={"name": name, "taskId": task_id},
+            idempotency=Idempotency.UNSAFE,
+        )
+        if response.status_code not in (httpx.codes.OK, httpx.codes.CREATED):
+            _raise_for_error_envelope(response)
+        return DocumentUpload.model_validate(response.json())
+
+    def put_document(self, upload_url: str, content: bytes) -> None:
+        """Write the PDF to the pre-signed URL the vendor handed back.
+
+        Not routed through ``_post``: this goes to the vendor's storage
+        provider rather than its API, so it carries no ``Authorization``
+        header — presenting one makes the signed request invalid — and it is
+        not addressed relative to the configured base URL.
+        """
+        response = self._client.put(
+            upload_url,
+            content=content,
+            headers={"Content-Type": "application/pdf"},
+            timeout=_UPLOAD_TIMEOUT_SECONDS,
+        )
+        if response.status_code not in (httpx.codes.OK, httpx.codes.NO_CONTENT):
+            logger.warning("clearinghouse_document_upload_failed status=%d", response.status_code)
+            raise ClearinghouseUnavailableError(
+                f"the document store refused the upload ({response.status_code})"
+            )
+
+    def download_enrollment_document(self, document_id: str) -> DocumentDownload:
+        response = self._get(f"{self._bases.enrollments}/documents/{document_id}/download")
+        if response.status_code != httpx.codes.OK:
+            _raise_for_error_envelope(response)
+        return DocumentDownload.model_validate(response.json())
+
+    def hosts_enrollment_documents(self, url: str) -> bool:
+        """Matched against the *configured* base, not the vendor's public host.
+
+        The end-to-end harness serves the same API from somewhere else
+        entirely, and a hard-coded ``enrollments.us.stedi.com`` would make
+        every link there look external — which is exactly the case that
+        cannot then be tested.
+        """
+        return url.startswith(f"{self._bases.enrollments}/")
+
+    def resolve_enrollment_link(self, url: str) -> DocumentDownload:
+        if not self.hosts_enrollment_documents(url):
+            # The account key goes to the clearinghouse and nowhere else. The
+            # URL arrived inside a payer's task, which is not a place we
+            # control, so this is checked here as well as at the route.
+            msg = "refusing to send the account key to a host the clearinghouse does not own"
+            raise ClearinghouseError(msg)
+        response = self._get(url)
+        if response.status_code != httpx.codes.OK:
+            _raise_for_error_envelope(response)
+        return DocumentDownload.model_validate(response.json())
+
+    def complete_enrollment_task(self, task_id: str, completion: TaskCompletion) -> None:
+        response = self._post(
+            f"{self._bases.enrollments}/tasks/{task_id}",
+            json=completion.model_dump(exclude_none=True),
+            idempotency=Idempotency.UNSAFE,
+        )
+        if response.status_code not in (httpx.codes.OK, httpx.codes.NO_CONTENT):
+            _raise_for_error_envelope(response)
 
     def list_enrollments(self, filters: EnrollmentFilters) -> EnrollmentPage:
         response = self._get(

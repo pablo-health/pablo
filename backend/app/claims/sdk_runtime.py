@@ -127,17 +127,27 @@ def shutdown_sdk_loop() -> None:
     _sdk_loop.close()
 
 
-def translate_sdk_error(exc: Exception) -> Exception:
-    """The vendor SDK's exception, as one of this package's own.
+#: What the SDK raises when it received an answer it could not turn into a
+#: model: a union whose variant it could not pick, or a field it could not
+#: coerce. Matched by name because the SDK does not export a common base for
+#: them, and a name that disappears in a future SDK simply falls through to
+#: the untranslated branch rather than breaking anything.
+_UNREADABLE_ANSWER_TYPES = frozenset(
+    {"DiscriminatorError", "DeserializeError", "ValidationError", "SerdeError"}
+)
 
-    Callers of ``ClearinghouseClient`` already handle the taxonomy in
-    ``app.claims.clearinghouse``; which client implementation raised is not
-    their business. Anything unrecognised becomes
-    :class:`ClearinghouseUnavailableError` rather than escaping as a vendor
-    type, so a caller's ``except ClearinghouseError`` cannot be silently
-    bypassed by an SDK exception nobody anticipated.
+
+def _is_unreadable_answer(exc: Exception) -> bool:
+    """Did the clearinghouse answer in a shape the SDK could not parse?"""
+    return type(exc).__name__ in _UNREADABLE_ANSWER_TYPES
+
+
+def _vendor_error(exc: Exception, message: str) -> Exception | None:
+    """The clearinghouse's own error responses, as this package's types.
+
+    ``None`` for anything that is not one of them, which the caller reports
+    as unavailable.
     """
-    message = str(exc)
     match exc:
         case sdk_models.InvalidRequestException() | sdk_models.ContentTooLargeException():
             return ClearinghouseValidationError(message)
@@ -152,9 +162,50 @@ def translate_sdk_error(exc: Exception) -> Exception:
                 message, retry_after=getattr(exc, "retry_after", None)
             )
         case _:
-            if not isinstance(exc, CallError):
-                # A transport failure is ordinary; anything else reaching here
-                # is a shape this translation has never seen, and the only
-                # record of it would otherwise be a generic "unavailable".
-                logger.warning("clearinghouse_sdk_error_untranslated type=%s", type(exc).__name__)
-            return ClearinghouseUnavailableError(message)
+            return None
+
+
+def translate_sdk_error(exc: Exception, *, operation: str | None = None) -> Exception:
+    """The vendor SDK's exception, as one of this package's own.
+
+    Callers of ``ClearinghouseClient`` already handle the taxonomy in
+    ``app.claims.clearinghouse``; which client implementation raised is not
+    their business. Anything unrecognised becomes
+    :class:`ClearinghouseUnavailableError` rather than escaping as a vendor
+    type, so a caller's ``except ClearinghouseError`` cannot be silently
+    bypassed by an SDK exception nobody anticipated.
+
+    ``operation`` names the call for the log. Without it a failure that has
+    nothing else to identify it — a body the SDK could not parse carries no
+    status, no url and no id — reads as a bare exception class and leaves
+    the next person guessing which of a dozen calls produced it.
+    """
+    message = str(exc)
+    if _is_unreadable_answer(exc):
+        # Checked before the vendor's own taxonomy, because this is not one
+        # of those: the call reached the clearinghouse and it answered — we
+        # could not read the answer. Not "unavailable" either, since retrying
+        # an unreadable answer produces the same unreadable answer, so it is
+        # reported as the shape problem it is.
+        logger.warning(
+            "clearinghouse_sdk_answer_unreadable operation=%s type=%s",
+            operation or "unknown",
+            type(exc).__name__,
+        )
+        return ClearinghouseValidationError(
+            f"the clearinghouse answered {operation or 'a call'} in a shape this "
+            f"version cannot read ({type(exc).__name__})"
+        )
+    translated = _vendor_error(exc, message)
+    if translated is not None:
+        return translated
+    if not isinstance(exc, CallError):
+        # A transport failure is ordinary; anything else reaching here is a
+        # shape this translation has never seen, and the only record of it
+        # would otherwise be a generic "unavailable".
+        logger.warning(
+            "clearinghouse_sdk_error_untranslated operation=%s type=%s",
+            operation or "unknown",
+            type(exc).__name__,
+        )
+    return ClearinghouseUnavailableError(message)

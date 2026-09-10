@@ -84,6 +84,11 @@ services:
       - SSL_CERT_FILE=/srv/mail-tls/cert.pem
       # The links the product mails point back at the browser's own origin.
       - APP_URL=http://localhost:${E2E_FRONTEND_PORT:-3000}
+      # Confirming a claim only marks it ready; the pipeline inside the API
+      # process is what actually sends it, and at the five-minute default no
+      # end-to-end test could ever watch a claim leave. One minute is the
+      # floor the setting allows.
+      - CLAIMS_PIPELINE_INTERVAL_MINUTES=1
       # Point claim submission and eligibility at the fake clearinghouse.
       # The key only has to be present; the fake never checks it.
       - CLEARINGHOUSE_API_KEY=test_e2e_not_a_real_key
@@ -188,6 +193,9 @@ services:
     environment:
       - FAKE_CLEARINGHOUSE_FIXTURES=/srv/fixtures
       - FAKE_CLEARINGHOUSE_PUBLIC_URL=http://fake-clearinghouse:8080
+      # A download link is followed by the practice's browser, which is on
+      # the host, not on this network.
+      - FAKE_CLEARINGHOUSE_BROWSER_URL=http://localhost:${E2E_CLEARINGHOUSE_PORT:-8080}
       - FAKE_CLEARINGHOUSE_WEBHOOK_URL=http://backend:8000/api/webhooks/clearinghouse
       - FAKE_CLEARINGHOUSE_WEBHOOK_SECRET=e2e-clearinghouse-webhook-shared-secret
     healthcheck:

@@ -62,11 +62,22 @@ line or an audit payload.
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from typing import TYPE_CHECKING, Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 from pydantic import BaseModel
 
 from ..auth.service import (
@@ -99,11 +110,21 @@ from ..claims.eligibility import (
 from ..claims.enrollment import (
     BillingProfileIncompleteError,
     PayerNotInDirectoryError,
+    PrincipalArmer,
     clearinghouse_client_for_practice,
     enroll_if_new,
+    enrollment_request,
     list_enrollments,
+    refresh_enrollment,
     refresh_enrollments_throttled,
     request_enrollments,
+)
+from ..claims.enrollment_tasks import (
+    Answer,
+    DocumentRejectedError,
+    MissingAnswerError,
+    Upload,
+    answer_task,
 )
 from ..db import arm_current_user_id, get_db_session, set_tenant_schema
 from ..models.audit import AuditAction, ResourceType
@@ -111,6 +132,13 @@ from ..models.coverage import (
     CoverageResponse,
     CreateCoverageRequest,
     CreatePayerRequest,
+    EnrollmentDocumentResponse,
+    EnrollmentDocumentUrlResponse,
+    EnrollmentTaskFieldResponse,
+    EnrollmentTaskLinkResponse,
+    EnrollmentTaskListResponse,
+    EnrollmentTaskResponse,
+    EnrollmentTransactionType,
     PatientCoverage,
     Payer,
     PayerEnrollmentListResponse,
@@ -143,6 +171,7 @@ if TYPE_CHECKING:
 
     from ..db.models import PayerEnrollmentRow
     from ..models import User
+    from ..models.claims_transport import Enrollment, EnrollmentTask
     from ..repositories.coverage import PatientCoverageRepository, PayerRepository
     from ..repositories.patient import PatientRepository
     from ..repositories.user import UserRepository
@@ -190,6 +219,16 @@ def get_clearinghouse_client(
     return clearinghouse_client_for_practice(ctx.practice_id)
 
 
+def get_principal_armer() -> PrincipalArmer:
+    """How a route arms the session as a principal other than the caller.
+
+    A dependency for the same reason the enrollment trigger is one: the
+    payer tests run on SQLite, which has no ``set_config``, so they hand in
+    a no-op. Production always gets the real GUC arm.
+    """
+    return arm_current_user_id
+
+
 def get_billing_identity(user: CurrentUser) -> BillingIdentity | None:
     """Who the 270 is asked as: the practice's billing NPI, else the clinician's."""
     return load_billing_identity(get_db_session(), user)
@@ -212,6 +251,7 @@ def get_enrollment_trigger(
 
 EnrollmentTrigger = Annotated["Callable[[str, str], None]", Depends(get_enrollment_trigger)]
 Clearinghouse = Annotated[ClearinghouseClient | None, Depends(get_clearinghouse_client)]
+Armer = Annotated["PrincipalArmer", Depends(get_principal_armer)]
 
 
 def _to_payer_response(payer: Payer) -> PayerResponse:
@@ -412,6 +452,340 @@ def refresh_payer_enrollments(
     return PayerEnrollmentRefreshResponse(
         changed=outcome.changed, checked_at=outcome.checked_at, throttled=outcome.throttled
     )
+
+
+# ---------------------------------------------------------------------------
+# What the payer is waiting for
+# ---------------------------------------------------------------------------
+
+#: The clearinghouse takes PDFs and nothing else. Both the type and the size
+#: are checked here, so a file it was always going to refuse is refused while
+#: the practice is still looking at the form rather than two requests later.
+MAX_ENROLLMENT_DOCUMENT_BYTES = 10 * 1024 * 1024
+_PDF_MAGIC = b"%PDF-"
+
+_NO_ENROLLMENT = "No enrollment has been filed with this payer for that transaction."
+_TASK_NOT_OPEN = "That task is not waiting on this practice."
+_DOCUMENT_NOT_ON_ENROLLMENT = "No such document on this enrollment."
+_NO_LINK_TO_RESOLVE = "No clearinghouse-hosted link at that position on this task."
+_NOT_A_PDF = "The clearinghouse only takes PDFs."
+_DOCUMENT_TOO_BIG = "That document is too large to send. The limit is 10 MB."
+_NO_CLEARINGHOUSE = "No clearinghouse account is configured for this practice."
+_CLEARINGHOUSE_REFUSED = "The clearinghouse would not answer about this enrollment."
+
+
+def _require_clearinghouse(client: ClearinghouseClient | None) -> ClearinghouseClient:
+    if client is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_NO_CLEARINGHOUSE
+        )
+    return client
+
+
+def _require_enrollment_row(
+    session: Session,
+    payers: PayerRepository,
+    payer_row_id: str,
+    transaction_type: str,
+) -> PayerEnrollmentRow:
+    payer = _require_payer(payers, payer_row_id)
+    row = enrollment_request(session, payer.id, transaction_type)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_NO_ENROLLMENT)
+    return row
+
+
+def _read_enrollment(
+    session: Session,
+    client: ClearinghouseClient,
+    row: PayerEnrollmentRow,
+    user_id: str,
+    arm: PrincipalArmer,
+) -> Enrollment:
+    """The enrollment as the clearinghouse has it now, with the row brought up to it."""
+    try:
+        enrollment = refresh_enrollment(session, client, row, arm=arm)
+    except ClearinghouseUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_CLEARINGHOUSE_BUSY
+        ) from exc
+    except ClearinghouseError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=_CLEARINGHOUSE_REFUSED
+        ) from exc
+    # The refresh arms the session as whoever filed the request, so that the
+    # reminder a status change writes lands under their row policy. Whoever is
+    # reading the tasks is somebody else as often as not; hand it back.
+    arm(session, user_id)
+    return enrollment
+
+
+def _to_task_response(task: EnrollmentTask, client: ClearinghouseClient) -> EnrollmentTaskResponse:
+    manual = task.definition.manualTask if task.definition else None
+    return EnrollmentTaskResponse(
+        id=task.id,
+        instructions=manual.instructions if manual else None,
+        links=[
+            EnrollmentTaskLinkResponse(
+                label=link.label,
+                url=link.url,
+                resolvable=client.hosts_enrollment_documents(link.url),
+            )
+            for link in (manual.links if manual else [])
+        ],
+        fields=[
+            EnrollmentTaskFieldResponse(
+                key=wanted.key,
+                label=wanted.label,
+                field_type=wanted.fieldType,
+                description=wanted.description,
+            )
+            for wanted in task.fields
+        ],
+    )
+
+
+def _tasks_response(
+    row: PayerEnrollmentRow, enrollment: Enrollment, client: ClearinghouseClient
+) -> EnrollmentTaskListResponse:
+    return EnrollmentTaskListResponse(
+        data=[_to_task_response(task, client) for task in enrollment.open_tasks()],
+        status=row.status,  # type: ignore[arg-type]  # CHECK-constrained column
+        documents=[
+            EnrollmentDocumentResponse(id=doc.id, name=doc.name, status=doc.status)
+            for doc in enrollment.documents
+        ],
+    )
+
+
+def _typed_answers(values: str) -> dict[str, str]:
+    """The JSON object of typed answers that rode alongside the files."""
+    try:
+        parsed = json.loads(values or "{}")
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="The typed answers were not readable.",
+        ) from exc
+    if not isinstance(parsed, dict) or not all(
+        isinstance(key, str) and isinstance(value, str) for key, value in parsed.items()
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Every typed answer has to be a piece of text.",
+        )
+    return parsed
+
+
+def _uploads(keys: list[str] | None, files: list[UploadFile] | None) -> dict[str, Upload]:
+    """Pair each PDF with the field it answers, reading it no further than the limit.
+
+    The pairing is positional because the keys belong to the payer, not to
+    us: they cannot be declared as named parts ahead of time.
+    """
+    keys = keys or []
+    files = files or []
+    if len(keys) != len(files):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Every uploaded document needs to say which field it answers.",
+        )
+    uploads: dict[str, Upload] = {}
+    for key, upload in zip(keys, files, strict=True):
+        content = upload.file.read(MAX_ENROLLMENT_DOCUMENT_BYTES + 1)
+        if len(content) > MAX_ENROLLMENT_DOCUMENT_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail=_DOCUMENT_TOO_BIG,
+            )
+        if not content.startswith(_PDF_MAGIC):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_NOT_A_PDF
+            )
+        uploads[key] = Upload(filename=upload.filename or f"{key}.pdf", content=content)
+    return uploads
+
+
+@payers_router.get(
+    "/{payer_row_id}/enrollments/{transaction_type}/tasks",
+    response_model=EnrollmentTaskListResponse,
+)
+def get_enrollment_tasks(
+    payer_row_id: str,
+    transaction_type: EnrollmentTransactionType,
+    payers: PayersRepo,
+    session: DbSession,
+    client: Clearinghouse,
+    arm: Armer,
+    ctx: TenantContext = Depends(get_tenant_context),
+) -> EnrollmentTaskListResponse:
+    """What the payer is still waiting on, read from the clearinghouse.
+
+    Read live rather than from the row, because what a task *wants* — its
+    fields, and therefore the form the practice fills in — is only ever on
+    the clearinghouse's copy. Reading also records the status it reports, so
+    a request that has moved on its own stops showing as blocked the moment
+    somebody looks at it.
+    """
+    row = _require_enrollment_row(session, payers, payer_row_id, transaction_type)
+    reachable = _require_clearinghouse(client)
+    enrollment = _read_enrollment(session, reachable, row, ctx.user_id, arm)
+    return _tasks_response(row, enrollment, reachable)
+
+
+@payers_router.post(
+    "/{payer_row_id}/enrollments/{transaction_type}/tasks/{task_id}",
+    response_model=EnrollmentTaskListResponse,
+)
+def answer_enrollment_task(
+    payer_row_id: str,
+    transaction_type: EnrollmentTransactionType,
+    task_id: str,
+    payers: PayersRepo,
+    session: DbSession,
+    client: Clearinghouse,
+    arm: Armer,
+    values: Annotated[str, Form()] = "{}",
+    document_fields: Annotated[list[str] | None, Form()] = None,
+    documents: Annotated[list[UploadFile] | None, File()] = None,
+    ctx: TenantContext = Depends(get_tenant_context),
+) -> EnrollmentTaskListResponse:
+    """Answer one task and mark it done, without a clearinghouse login.
+
+    Multipart, because half of an answer is files. ``values`` is a JSON
+    object of the typed answers under the task's own field keys;
+    ``document_fields`` and ``documents`` are parallel lists pairing a field
+    key with the PDF that answers it.
+
+    Answers whole or not at all. A missing field is refused before a byte is
+    sent (422), and a document the clearinghouse could not take leaves the
+    task open (502) rather than completing it against a file that is not
+    there.
+    """
+    row = _require_enrollment_row(session, payers, payer_row_id, transaction_type)
+    reachable = _require_clearinghouse(client)
+    text = _typed_answers(values)
+    uploads = _uploads(document_fields, documents)
+
+    enrollment = _read_enrollment(session, reachable, row, ctx.user_id, arm)
+    task = next(
+        (item for item in enrollment.tasks if item.id == task_id and item.needs_the_practice),
+        None,
+    )
+    if task is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_TASK_NOT_OPEN)
+
+    try:
+        answer_task(reachable, enrollment, task, Answer(text=text, documents=uploads))
+    except MissingAnswerError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="The payer still needs: " + ", ".join(exc.keys),
+        ) from exc
+    except DocumentRejectedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The clearinghouse could not take the document. The task is still open.",
+        ) from exc
+    except ClearinghouseUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_CLEARINGHOUSE_BUSY
+        ) from exc
+    except ClearinghouseError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=_CLEARINGHOUSE_REFUSED
+        ) from exc
+
+    return _tasks_response(
+        row, _read_enrollment(session, reachable, row, ctx.user_id, arm), reachable
+    )
+
+
+@payers_router.get(
+    "/{payer_row_id}/enrollments/{transaction_type}/tasks/{task_id}/links/{link_index}",
+    response_model=EnrollmentDocumentUrlResponse,
+)
+def resolve_enrollment_task_link(
+    payer_row_id: str,
+    transaction_type: EnrollmentTransactionType,
+    task_id: str,
+    link_index: int,
+    payers: PayersRepo,
+    session: DbSession,
+    client: Clearinghouse,
+    arm: Armer,
+    ctx: TenantContext = Depends(get_tenant_context),
+) -> EnrollmentDocumentUrlResponse:
+    """Open a task link the clearinghouse hosts: the short-lived URL to fetch it from.
+
+    Addressed by position in the task's own list of links, and that is the
+    whole security argument: the URL is never taken from the caller, so no
+    request can make the account key go somewhere the clearinghouse did not
+    put in front of this practice. A link to the open web needs no help and
+    is not served here — the browser already has ``url``.
+    """
+    row = _require_enrollment_row(session, payers, payer_row_id, transaction_type)
+    reachable = _require_clearinghouse(client)
+    enrollment = _read_enrollment(session, reachable, row, ctx.user_id, arm)
+    task = next((item for item in enrollment.tasks if item.id == task_id), None)
+    manual = task.definition.manualTask if task and task.definition else None
+    links = manual.links if manual else []
+    if not 0 <= link_index < len(links) or not reachable.hosts_enrollment_documents(
+        links[link_index].url
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_NO_LINK_TO_RESOLVE)
+    try:
+        download = reachable.resolve_enrollment_link(links[link_index].url)
+    except ClearinghouseUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_CLEARINGHOUSE_BUSY
+        ) from exc
+    except ClearinghouseError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=_CLEARINGHOUSE_REFUSED
+        ) from exc
+    return EnrollmentDocumentUrlResponse(url=download.downloadUrl)
+
+
+@payers_router.get(
+    "/{payer_row_id}/enrollments/{transaction_type}/documents/{document_id}",
+    response_model=EnrollmentDocumentUrlResponse,
+)
+def get_enrollment_document_url(
+    payer_row_id: str,
+    transaction_type: EnrollmentTransactionType,
+    document_id: str,
+    payers: PayersRepo,
+    session: DbSession,
+    client: Clearinghouse,
+    arm: Armer,
+    ctx: TenantContext = Depends(get_tenant_context),
+) -> EnrollmentDocumentUrlResponse:
+    """Where to fetch one of this enrollment's PDFs — the form to sign, or the signed one back.
+
+    The document has to be on *this* practice's enrollment before a URL is
+    handed out: the vendor's document ids are global, and a bare
+    ``GET /documents/{id}`` would be an invitation to guess at another
+    practice's paperwork.
+    """
+    row = _require_enrollment_row(session, payers, payer_row_id, transaction_type)
+    reachable = _require_clearinghouse(client)
+    enrollment = _read_enrollment(session, reachable, row, ctx.user_id, arm)
+    if enrollment.document(document_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=_DOCUMENT_NOT_ON_ENROLLMENT
+        )
+    try:
+        download = reachable.download_enrollment_document(document_id)
+    except ClearinghouseUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_CLEARINGHOUSE_BUSY
+        ) from exc
+    except ClearinghouseError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=_CLEARINGHOUSE_REFUSED
+        ) from exc
+    return EnrollmentDocumentUrlResponse(url=download.downloadUrl)
 
 
 # ---------------------------------------------------------------------------

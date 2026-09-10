@@ -22,6 +22,7 @@ import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { EnrollmentTaskForm } from "@/components/settings/EnrollmentTaskForm"
 import { SettingsCard } from "@/components/settings/ui"
 import {
   useCreatePayer,
@@ -68,6 +69,19 @@ const TRANSACTION_LABELS: Record<EnrollmentTransactionType, string> = {
   "835": "Remittance",
 }
 
+/**
+ * The statuses a request can still move out of. While it is in one of these
+ * the clearinghouse has something to show about it — what it is waiting for,
+ * and what has been sent — and that panel stays. `live`, `rejected` and
+ * `canceled` are finished; there is nothing left to ask.
+ */
+const IN_FLIGHT: EnrollmentRequestStatus[] = [
+  "draft",
+  "stedi_action_required",
+  "provider_action_required",
+  "provisioning",
+]
+
 const REQUEST_STATUS_LABELS: Record<EnrollmentRequestStatus, string> = {
   draft: "Draft",
   stedi_action_required: "Submitted",
@@ -78,7 +92,13 @@ const REQUEST_STATUS_LABELS: Record<EnrollmentRequestStatus, string> = {
   canceled: "Canceled",
 }
 
-function EnrollmentRequestRow({ request }: { request: PayerEnrollmentResponse }) {
+function EnrollmentRequestRow({
+  payerRowId,
+  request,
+}: {
+  payerRowId: string
+  request: PayerEnrollmentResponse
+}) {
   const needsAction = request.status === "provider_action_required"
   return (
     <li className="py-1.5">
@@ -88,10 +108,16 @@ function EnrollmentRequestRow({ request }: { request: PayerEnrollmentResponse })
           {REQUEST_STATUS_LABELS[request.status]}
         </span>
       </div>
+      {/* The payer's ask, verbatim, above the form that answers it: the row
+          carries the clearinghouse's note about why, which no task field
+          has anywhere to put. */}
       {request.instructions && (
         <p className="mt-1 whitespace-pre-line text-[12.5px] text-muted-foreground">
           {request.instructions}
         </p>
+      )}
+      {IN_FLIGHT.includes(request.status) && (
+        <EnrollmentTaskForm payerRowId={payerRowId} transactionType={request.transaction_type} />
       )}
     </li>
   )
@@ -122,7 +148,7 @@ function PayerEnrollments({ payer }: { payer: PayerResponse }) {
       {requests.length > 0 && (
         <ul className="m-0 list-none divide-y divide-border p-0">
           {requests.map((r) => (
-            <EnrollmentRequestRow key={r.transaction_type} request={r} />
+            <EnrollmentRequestRow key={r.transaction_type} payerRowId={payer.id} request={r} />
           ))}
         </ul>
       )}

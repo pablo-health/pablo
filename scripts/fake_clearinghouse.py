@@ -10,7 +10,14 @@ one timer and an 835 on a second, each announced to the backend as a signed
 "transaction processed" webhook and readable afterwards from the transaction
 endpoints. Nothing here reaches the network except that webhook.
 
-Rules, all keyed on the claim's ``patientControlNumber``:
+Two claim submission endpoints are served, because the adapter is moving
+from one to the other one operation at a time. The compatibility shim
+(``POST {HEALTHCARE}/change/medicalnetwork/professionalclaims/v3/submission``)
+answers with the legacy envelope; the vendor's own claim API
+(``POST {CLAIMS}/professional-claim-submissions``), which is what the SDK
+adapter now calls, answers with ``{claimId, submissionId}`` or, for a
+rejection, ``{claimId, submissionId, errors: [{description}]}``. Both apply
+the same rules, keyed on the claim's ``patientControlNumber``:
 
 * ``REJ-DX…``   → the recorded diagnosis-specificity edit rejection (400)
 * ``REJ-PTR…``  → the recorded diagnosis-pointer edit rejection (400)
@@ -30,9 +37,15 @@ amounts rather than building a new document, so a ``PART-`` or ``DENY-``
 claim gets the same shape the accept path already produces.
 
 A submission's ``Idempotency-Key`` header is echoed on the response and a
-retry with the same key gets the same answer without starting new timers.
+retry with the same key gets the same answer without starting new timers; the
+same key against a changed request body is refused, as the vendor refuses it.
 Unknown request fields (a ``dependent``, say) are ignored, as the vendor
 would parse past them.
+
+The vendor's claim-lifecycle API is served too
+(``GET {CLAIMS}/claims/{id}/timeline``), answering from the recording of a
+real claim's whole life and trimmed to what has actually happened to the
+claim being asked about.
 
 Test hooks live under ``/_fake``: ``GET /_fake/received`` lists every request
 and webhook delivery since the last reset, ``POST /_fake/reset`` clears that
@@ -43,7 +56,14 @@ Configuration is by environment: ``FAKE_CLEARINGHOUSE_FIXTURES`` (directory
 of recordings), ``FAKE_CLEARINGHOUSE_WEBHOOK_URL`` and
 ``FAKE_CLEARINGHOUSE_WEBHOOK_SECRET`` (where and how to sign deliveries),
 ``FAKE_CLEARINGHOUSE_PUBLIC_URL`` (the base written into artifact URLs),
+``FAKE_CLEARINGHOUSE_BROWSER_URL`` (the base for links a browser follows),
 ``FAKE_CLEARINGHOUSE_277_DELAY_SECONDS`` / ``FAKE_CLEARINGHOUSE_835_DELAY_SECONDS``.
+
+A delivered event carries the vendor's own event envelope — ``id``,
+``type``, and a ``resource`` naming the transaction — and NOT the transaction
+document itself. That is the vendor's design: the event is a pointer, and the
+reader fetches the transaction from the endpoints above. See
+``webhook_transaction_processed.json`` for the shape.
 
 Webhook signing follows the Standard Webhooks scheme the vendor uses:
 ``webhook-id``, ``webhook-timestamp`` and ``webhook-signature: v1,<base64>``
@@ -72,7 +92,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
 logger = logging.getLogger("fake_clearinghouse")
@@ -85,6 +105,11 @@ FIXTURES = Path(
     )
 )
 PUBLIC_URL = os.environ.get("FAKE_CLEARINGHOUSE_PUBLIC_URL", "http://localhost:8080").rstrip("/")
+#: Where a *browser* reaches this app. The vendor's upload URL is followed
+#: by our server and its download URL by the practice's browser, and in a
+#: container stack those are two different hostnames for the same port.
+#: Defaults to ``PUBLIC_URL`` so a single-host run needs no second setting.
+BROWSER_URL = os.environ.get("FAKE_CLEARINGHOUSE_BROWSER_URL", PUBLIC_URL).rstrip("/")
 WEBHOOK_URL = os.environ.get("FAKE_CLEARINGHOUSE_WEBHOOK_URL", "")
 WEBHOOK_SECRET = os.environ.get("FAKE_CLEARINGHOUSE_WEBHOOK_SECRET", "")
 DELAY_277_SECONDS = float(os.environ.get("FAKE_CLEARINGHOUSE_277_DELAY_SECONDS", "2"))
@@ -96,6 +121,7 @@ HEALTHCARE = "/2024-04-01"
 PAYERS = "/2024-04-01"
 CORE = "/2023-08-01"
 ENROLLMENTS = "/2024-09-01"
+CLAIMS = "/2025-03-07"
 
 #: Control-number prefix → the recorded 400 edit rejection it earns.
 REJECTIONS: dict[str, str] = {
@@ -130,6 +156,10 @@ _RECORDED_CORRELATION_ID = "01M1T7001FRW15MVE0SSW4FA7G"
 
 _NAMESPACE = uuid.UUID("7f1c2a8e-0e5b-4d4a-9a9b-3c1f5e2d6b70")
 
+#: The account a webhook event says it came from. Synthetic, and matched
+#: to the recorded event fixture so the two read as one account.
+_ACCOUNT_ID = "11111111-2222-3333-4444-555555555555"
+
 TransactionKind = Literal["277", "835"]
 
 
@@ -158,6 +188,14 @@ def _correlation_id(control_number: str) -> str:
     return f"01E2E{digest[:21]}"
 
 
+def _control_for_claim_id(claim_id: str) -> str | None:
+    """The control number a vendor claim id belongs to, if this app minted it."""
+    return next(
+        (control for control in state.claims if _correlation_id(control) == claim_id),
+        None,
+    )
+
+
 def _transaction_id(kind: TransactionKind, control_number: str) -> str:
     return str(uuid.uuid5(_NAMESPACE, f"{kind}:{control_number}"))
 
@@ -178,7 +216,15 @@ class _State:
         self.claims: dict[str, dict[str, Any]] = {}
         #: Idempotency-Key → (status, body) of the submission it first produced
         self.replays: dict[str, tuple[int, dict[str, Any]]] = {}
+        #: Idempotency-Key → (the request body it was first used with, the
+        #: native response that body earned)
+        self.native_replays: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
         self.timers: set[asyncio.Task[None]] = set()
+        #: The one enrollment task the harness offers, and its documents.
+        self.task_complete: bool = False
+        self.task_values: list[dict[str, Any]] = []
+        #: document id → the document as the enrollment reports it
+        self.documents: dict[str, dict[str, Any]] = {}
 
     def reset(self) -> None:
         for task in self.timers:
@@ -189,6 +235,10 @@ class _State:
         self.transactions.clear()
         self.claims.clear()
         self.replays.clear()
+        self.task_complete = False
+        self.task_values.clear()
+        self.documents.clear()
+        self.native_replays.clear()
 
 
 state = _State()
@@ -305,6 +355,100 @@ async def submit_claim(request: Request) -> Any:
     if key:
         state.replays[key] = (status_code, result)
     return JSONResponse(result, status_code=status_code, headers=echo)
+
+
+def _native_service_lines_as_legacy(claim: dict[str, Any]) -> list[dict[str, Any]]:
+    """The native body's service lines, shaped the way the report builders
+    below already read a submitted claim's lines — so those builders need no
+    changes to serve a claim filed through either endpoint."""
+    lines = []
+    for line in claim.get("serviceLines", []):
+        procedure = line.get("procedureCode") or {}
+        lines.append(
+            {
+                "providerControlNumber": line.get("lineItemControlNumber"),
+                "serviceDate": (line.get("datesOfService") or {}).get("start"),
+                "professionalService": {
+                    "procedureCode": procedure.get("code"),
+                    "procedureModifiers": procedure.get("modifiers") or [],
+                    "lineItemChargeAmount": line.get("lineItemChargeAmount"),
+                    "serviceUnitCount": line.get("units"),
+                },
+            }
+        )
+    return lines
+
+
+def _legacy_shape_for_reports(claim: dict[str, Any]) -> dict[str, Any]:
+    """A native submission's charge and lines, in the legacy claim shape the
+    277CA/835 builders expect from ``state.claims``."""
+    billing = claim.get("billing") or {}
+    return {
+        "claimInformation": {
+            "claimChargeAmount": billing.get("totalCharge"),
+            "serviceLines": _native_service_lines_as_legacy(claim),
+        }
+    }
+
+
+@app.post(f"{CLAIMS}/professional-claim-submissions")
+async def submit_claim_native(request: Request) -> Any:
+    """The vendor's own claim API, which the SDK adapter files claims to.
+
+    Answers with the native shape (``claimId``/``submissionId``, and an
+    ``errors`` list for a rejection) rather than the compatibility shim's
+    envelope above. The claim id is stable for a control number across
+    resubmissions — the property the claim-lifecycle API keys everything
+    else on — while the submission id is fresh on every attempt, as the
+    vendor mints it.
+    """
+    raw = await request.body()
+    try:
+        claim = json.loads(raw) if raw else None
+    except ValueError:
+        claim = None
+    control = ""
+    if isinstance(claim, dict):
+        control = str((claim.get("billing") or {}).get("patientControlNumber") or "")
+    await _record(request, control_number=control or None)
+
+    if not isinstance(claim, dict) or not control:
+        return _vendor_error(
+            400, "InvalidRequestException", "billing.patientControlNumber is required"
+        )
+
+    # A keyed retry of the same body gets the answer the first attempt got
+    # and starts no new timers; the same key against a different body is
+    # refused exactly as the vendor refuses it — a client error naming the
+    # reused key, not a stored claim.
+    key = request.headers.get("idempotency-key", "")
+    if key:
+        replayed = state.native_replays.get(key)
+        if replayed is not None:
+            first_claim, first_result = replayed
+            if claim != first_claim:
+                return _vendor_error(
+                    400,
+                    "InvalidRequestException",
+                    "the idempotency-key was previously used with a different request",
+                )
+            return JSONResponse(first_result)
+
+    claim_id = _correlation_id(control)
+    rejection = next((f for p, f in REJECTIONS.items() if control.startswith(p)), None)
+    result: dict[str, Any] = {"claimId": claim_id, "submissionId": str(uuid.uuid4())}
+    if rejection is None:
+        state.claims[control] = _legacy_shape_for_reports(claim)
+        _schedule(control, "277", DELAY_277_SECONDS)
+        _schedule(control, "835", DELAY_835_SECONDS)
+    else:
+        result["errors"] = [
+            {"description": error["description"]} for error in _load(rejection)["errors"]
+        ]
+
+    if key:
+        state.native_replays[key] = (claim, result)
+    return JSONResponse(result)
 
 
 # --- the asynchronous half: 277CA, 835, webhooks ----------------------------
@@ -501,12 +645,22 @@ async def _deliver(control: str, kind: TransactionKind) -> dict[str, Any]:
     state.transactions[transaction_id] = {"document": document, "report": report}
 
     event_id = _event_id(kind, control)
+    # The vendor's webhook event, which is a POINTER and not the thing: an
+    # id, a type, and the resource it happened to. The reader fetches the
+    # transaction afterwards from the endpoints above. An earlier version of
+    # this harness posted an EventBridge-shaped envelope instead —
+    # ``source`` / ``detail-type`` / ``detail`` with the whole document
+    # inline — which the reader answered 400 for every delivery, and which
+    # nothing noticed because no test had ever driven a claim far enough to
+    # receive one (PABLO-1qox).
     event = {
         "id": event_id,
-        "source": "stedi.core",
-        "detail-type": "transaction.processed",
-        "time": _now(),
-        "detail": document,
+        "object": "v1.event",
+        "type": "transaction.processed",
+        "account": _ACCOUNT_ID,
+        "environment": "TEST",
+        "created": _now(),
+        "resource": {"id": transaction_id, "type": "transaction"},
     }
     body = json.dumps(event, separators=(",", ":")).encode()
     timestamp = int(time.time())
@@ -532,13 +686,71 @@ async def _deliver(control: str, kind: TransactionKind) -> dict[str, Any]:
                 response = await client.post(WEBHOOK_URL, content=body, headers=headers)
             delivery["status"] = response.status_code
         except httpx.HTTPError as exc:
-            delivery["error"] = str(exc)
-            logger.warning("webhook delivery failed kind=%s control=%s: %s", kind, control, exc)
+            # The class, not the message, in both places. An httpx error
+            # carries the request it failed on, and this request is a signed
+            # webhook — so the message can put the signing headers into the
+            # log AND into /_fake/received, which hands the whole delivery
+            # record back to anyone who asks. A test harness, but the same
+            # rule, and the scanner was right to flag it. The class is all a
+            # test needs: it asserts that delivery failed, not how.
+            delivery["error"] = type(exc).__name__
+            # Keyed by event id, not by control number. The event id is what
+            # the reader logs on its own side, so the two correlate; the
+            # control number carries a patient's claim identity, is already
+            # on the delivery record for a test to read, and would be in a
+            # log line for no one's benefit.
+            logger.warning(
+                "webhook delivery failed kind=%s event=%s error=%s",
+                kind,
+                event_id,
+                type(exc).__name__,
+            )
     state.webhooks.append(delivery)
     return delivery
 
 
 # --- transactions (polling + reports) ---------------------------------------
+
+
+@app.get(f"{CLAIMS}/claims/{{claim_id}}/timeline")
+async def claim_timeline(claim_id: str, request: Request) -> Any:
+    """One claim's whole life, from the recording of a real one.
+
+    ``claim_timeline_paid_in_full.json`` is a genuine capture — submission,
+    the clearinghouse's acknowledgement, and the payer's 835 paying in full —
+    so the shapes here are the vendor's own, discriminated union and all. The
+    ids and amounts are re-pointed at the claim being asked about; nothing
+    about the structure is invented.
+
+    Before this existed the SDK was handed a 404 body and failed to pick a
+    variant, which surfaced as a bare ``DiscriminatorError`` every time the
+    pipeline ran and told nobody which call had failed (PABLO-ukzm).
+    """
+    await _record(request)
+    control = _control_for_claim_id(claim_id)
+    if control is None:
+        return _vendor_error(404, "NOT_FOUND", "no claim with that id")
+    claim = state.claims.get(control, {})
+    lines = _line_control_numbers(claim, control)
+    timeline: dict[str, Any] = _deep_replace(
+        _load("claim_timeline_paid_in_full.json"),
+        {
+            _RECORDED_CONTROL_NUMBER: control,
+            _RECORDED_LINE_CONTROL_NUMBER: lines[0],
+            _RECORDED_CORRELATION_ID: claim_id,
+        },
+    )
+    # Only what has actually happened to this claim. The capture ends at
+    # paid; a claim the payer has not answered yet must not read as paid
+    # just because the recording did.
+    delivered = {entry["kind"] for entry in state.webhooks if entry["control_number"] == control}
+    allowed = {"professionalClaimSubmission"}
+    if "277" in delivered:
+        allowed.add("claimAcknowledgment")
+    if "835" in delivered:
+        allowed.add("claimPaymentInformation")
+    timeline["items"] = [item for item in timeline["items"] if next(iter(item), None) in allowed]
+    return timeline
 
 
 @app.get(f"{CORE}/transactions")
@@ -587,14 +799,224 @@ async def create_provider(request: Request) -> Any:
 
 @app.post(f"{ENROLLMENTS}/enrollments")
 async def create_enrollment(request: Request) -> Any:
+    """A request the payer is already waiting on the practice over.
+
+    A real one lands ``STEDI_ACTION_REQUIRED`` and only later grows a task,
+    on the payer's schedule — which is days, and nothing this harness can
+    wait for. So the enrollment starts where the interesting part begins:
+    open, with the task attached. Everything after this point is the real
+    lifecycle.
+    """
     await _record(request)
-    return _load("enrollment_create_enrollment_835.json")
+    return _enrollment_now()
 
 
 @app.get(f"{ENROLLMENTS}/enrollments")
 async def list_enrollments(request: Request) -> Any:
     await _record(request)
-    return {"items": [_load("enrollment_create_enrollment_835.json")], "nextPageToken": None}
+    return {"items": [_enrollment_now()], "nextPageToken": None}
+
+
+# --- enrollment tasks and their documents ----------------------------------
+#
+# The vendor refuses its enrollment API to test keys outright, so this is the
+# only place the task lifecycle can be driven at all. It is built to the
+# documented shapes rather than to a recording, and the interesting half is
+# the part a recording could not give us anyway: a task that starts open,
+# takes a PDF, and closes.
+#
+# The upload deliberately keeps the vendor's two-step shape. Asking for a
+# slot returns a pre-signed URL served by THIS app, and the bytes go there in
+# a second request that carries no API key — because the real one goes to the
+# vendor's object store, not its API, and code that assumed otherwise would
+# work here and fail in production.
+
+#: The one open task the harness offers, in the vendor's mixed shape: a text
+#: field and a PDF, which is the case that exercises everything.
+_TASK_ID = "task-e2e-0001"
+
+#: The blank form the task links to — on the enrollment before the practice
+#: has uploaded anything, which is how the vendor attaches a payer's form.
+_TEMPLATE_DOCUMENT_ID = "template-0001"
+
+#: The smallest thing a PDF reader will open, served for any download. The
+#: suite asserts that a document comes back at all; what is in it is the
+#: payer's business.
+_A_PDF = b"%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n"
+
+
+def _fake_task() -> dict[str, Any]:
+    return {
+        "id": _TASK_ID,
+        "responsibleParty": "PROVIDER",
+        "isComplete": state.task_complete,
+        "rank": 0,
+        "definition": {
+            "manualTask": {
+                "instructions": (
+                    "Provide your Medicaid Provider Identifier and upload the signed "
+                    "provider agreement."
+                ),
+                "links": [
+                    {
+                        "label": "Provider Agreement Template",
+                        "url": f"{PUBLIC_URL}{ENROLLMENTS}/documents/{_TEMPLATE_DOCUMENT_ID}",
+                    }
+                ],
+                "fields": [
+                    {
+                        "key": "MEDICAID_ID",
+                        "label": "Medicaid Provider Identifier",
+                        "fieldType": "TEXT",
+                    },
+                    {
+                        "key": "SIGNED_AGREEMENT",
+                        "label": "Signed Provider Agreement",
+                        "description": "The agreement, filled in and signed, as a PDF",
+                        "fieldType": "DOCUMENT",
+                    },
+                ],
+            }
+        },
+    }
+
+
+def _enrollment_now() -> dict[str, Any]:
+    """The enrollment as it currently stands, tasks and documents included."""
+    record: dict[str, Any] = _load("enrollment_create_enrollment_835.json")
+    # Answering the task hands the request to the payer; it does not make
+    # it live. That is weeks away and nobody here is waiting for it.
+    record["status"] = "PROVISIONING" if state.task_complete else "PROVIDER_ACTION_REQUIRED"
+    record["tasks"] = [_fake_task()]
+    record["documents"] = list(state.documents.values())
+    return record
+
+
+@app.get(f"{ENROLLMENTS}/enrollments/{{enrollment_id}}")
+async def get_enrollment(enrollment_id: str, request: Request) -> Any:
+    await _record(request)
+    record = _enrollment_now()
+    record["id"] = enrollment_id
+    return record
+
+
+@app.post(f"{ENROLLMENTS}/enrollments/{{enrollment_id}}/documents")
+async def upload_slot(enrollment_id: str, request: Request) -> Any:
+    body = await _record(request)
+    name = (body or {}).get("name") or "document.pdf"
+    document_id = f"doc-{len(state.documents) + 1:04d}"
+    # PENDING until the bytes actually arrive, exactly as the vendor reports
+    # it — so a client that completes a task too early fails here too.
+    state.documents[document_id] = {
+        "id": document_id,
+        "name": name,
+        "status": "PENDING",
+    }
+    return {
+        "enrollmentId": enrollment_id,
+        "uploadUrl": f"{PUBLIC_URL}/_fake/upload/{document_id}",
+        "documentId": document_id,
+    }
+
+
+@app.put("/_fake/upload/{document_id}")
+async def receive_document(document_id: str, request: Request) -> Any:
+    """Stand in for the vendor's object store.
+
+    Under ``/_fake`` on purpose: this is not one of the vendor's API paths,
+    and the real upload URL is a signed link somewhere else entirely. No
+    ``Authorization`` header is required or expected.
+    """
+    body = await request.body()
+    document = state.documents.get(document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="no such document")
+    if not body.startswith(b"%PDF"):
+        document["status"] = "FAILED"
+        raise HTTPException(status_code=400, detail="only PDF documents are supported")
+    document["status"] = "UPLOADED"
+    document["size"] = len(body)
+    # Logged in the same shape as every other request, minus the body: these
+    # bytes are a signed practice document, and nothing here needs to hold
+    # them once the size and the fact of arrival are recorded.
+    state.requests.append(
+        {
+            "at": _now(),
+            "method": "PUT",
+            "path": f"/_fake/upload/{document_id}",
+            "query": dict(request.query_params),
+            "headers": {k.lower(): v for k, v in request.headers.items()},
+            "json": None,
+            "control_number": None,
+            "bytes": len(body),
+        }
+    )
+    return {"ok": True}
+
+
+@app.get(f"{ENROLLMENTS}/documents/{{document_id}}")
+async def document_link(document_id: str, request: Request) -> Any:
+    """What a task's own link answers when the key is presented.
+
+    The vendor puts these URLs inside a task, so a client follows one
+    verbatim rather than building a path. Answering with a link rather than
+    bytes is the vendor's shape, and is why a browser cannot simply be
+    pointed at the task link: this hop needs the account key.
+    """
+    await _record(request)
+    if document_id not in state.documents and document_id != _TEMPLATE_DOCUMENT_ID:
+        raise HTTPException(status_code=404, detail="no such document")
+    return {"downloadUrl": f"{BROWSER_URL}/_fake/download/{document_id}"}
+
+
+@app.get(f"{ENROLLMENTS}/documents/{{document_id}}/download")
+async def download_document(document_id: str, request: Request) -> Any:
+    """A link to the bytes, not the bytes.
+
+    The vendor answers with a short-lived URL at its object store; the caller
+    follows it without an API key. Same shape here, pointing back at this app
+    under ``/_fake`` so nothing can come to depend on the download living on
+    a vendor path.
+    """
+    await _record(request)
+    if document_id not in state.documents and document_id != _TEMPLATE_DOCUMENT_ID:
+        raise HTTPException(status_code=404, detail="no such document")
+    return {"downloadUrl": f"{BROWSER_URL}/_fake/download/{document_id}"}
+
+
+@app.get("/_fake/download/{document_id}")
+async def serve_document(document_id: str) -> Response:
+    """Stand in for the vendor's object store on the way back."""
+    document = state.documents.get(document_id)
+    if document is None and document_id != _TEMPLATE_DOCUMENT_ID:
+        raise HTTPException(status_code=404, detail="no such document")
+    name = (document or {}).get("name") or "provider-agreement.pdf"
+    return Response(
+        content=_A_PDF,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{name}"'},
+    )
+
+
+@app.post(f"{ENROLLMENTS}/tasks/{{task_id}}")
+async def complete_task(task_id: str, request: Request) -> Any:
+    body = await _record(request)
+    if task_id != _TASK_ID:
+        raise HTTPException(status_code=404, detail="no such task")
+    values = (((body or {}).get("responseData") or {}).get("manualTask") or {}).get("values") or []
+    # Refuse a completion that names a document we never finished taking —
+    # the failure this whole ordering exists to prevent.
+    for value in values:
+        reference = (value.get("value") or {}).get("document") or {}
+        document_id = reference.get("documentId")
+        if document_id is None:
+            continue
+        document = state.documents.get(document_id)
+        if document is None or document["status"] != "UPLOADED":
+            raise HTTPException(status_code=400, detail="document is not uploaded")
+    state.task_complete = bool((body or {}).get("completed", True))
+    state.task_values = list(values)
+    return {"ok": True}
 
 
 # --- test hooks ------------------------------------------------------------

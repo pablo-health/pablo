@@ -19,6 +19,8 @@ if TYPE_CHECKING:
     from ..models.claims_transport import (
         ClaimSubmissionRequest,
         ClaimSubmissionResult,
+        DocumentDownload,
+        DocumentUpload,
         EligibilityRequest,
         EligibilityResponse,
         Enrollment,
@@ -28,6 +30,7 @@ if TYPE_CHECKING:
         Payer,
         ProviderRecord,
         ProviderRegistration,
+        TaskCompletion,
         TransactionDocument,
         TransactionPage,
     )
@@ -171,6 +174,72 @@ class ClearinghouseClient(Protocol):
 
     def create_enrollment(self, enrollment: EnrollmentRequest) -> Enrollment:
         """Enroll a provider for a transaction (e.g. claim payment/835) with a payer."""
+        ...
+
+    def get_enrollment(self, enrollment_id: str) -> Enrollment:
+        """One enrollment in full, with its tasks and documents.
+
+        The listing carries enough to show a status; only this carries the
+        task fields and the document statuses a task is completed against.
+        """
+        ...
+
+    def upload_enrollment_document(
+        self, enrollment_id: str, *, name: str, task_id: str
+    ) -> DocumentUpload:
+        """Ask where to put a PDF for a task, and what it will be called.
+
+        Does not send the file. The returned ``uploadUrl`` is pre-signed at
+        the vendor's storage provider and is written to with
+        :meth:`put_document`.
+        """
+        ...
+
+    def put_document(self, upload_url: str, content: bytes) -> None:
+        """Write a PDF to a pre-signed URL.
+
+        Deliberately its own method rather than folded into the upload: this
+        request goes to the vendor's storage provider, not its API. It
+        carries no API key — the signature is in the URL — and it must not
+        be pointed at the configured base URL. PDF only; the vendor accepts
+        nothing else today.
+        """
+        ...
+
+    def download_enrollment_document(self, document_id: str) -> DocumentDownload:
+        """A short-lived URL to fetch one of an enrollment's PDFs."""
+        ...
+
+    def hosts_enrollment_documents(self, url: str) -> bool:
+        """Is this URL on the clearinghouse's own enrollment API?
+
+        A task's links are whatever the payer or the clearinghouse put there.
+        Some point at the open web — a payer's PDF on its own website, which
+        a browser fetches perfectly well. Others point back at the
+        clearinghouse's enrollment API, which answers a browser with 403,
+        because a browser has no account key. Telling them apart is what
+        decides whether a link can be followed or has to be resolved first.
+        """
+        ...
+
+    def resolve_enrollment_link(self, url: str) -> DocumentDownload:
+        """Follow a document URL the clearinghouse itself gave us, with the key.
+
+        Sends the account key to that exact URL, verbatim — the clearinghouse
+        handed it to us, so unlike :meth:`download_enrollment_document` there
+        is no path to construct and nothing to get wrong. What comes back is
+        the short-lived URL to fetch the file with, unauthenticated.
+        """
+        ...
+
+    def complete_enrollment_task(self, task_id: str, completion: TaskCompletion) -> None:
+        """Answer a task's fields and mark it done.
+
+        Addressed by task, not by enrollment — the vendor puts this on
+        ``/tasks/{id}``. Completing it is what lets the enrollment move, so
+        a task with a document field must not be completed until that
+        document reads ``UPLOADED``.
+        """
         ...
 
     def list_enrollments(self, filters: EnrollmentFilters) -> EnrollmentPage:
