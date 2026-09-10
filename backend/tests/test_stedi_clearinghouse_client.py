@@ -36,6 +36,9 @@ from app.models.claims_transport import (
     EnrollmentPayerRef,
     EnrollmentProviderRef,
     EnrollmentRequest,
+    EnrollmentTaskDocumentRef,
+    EnrollmentTaskFieldValue,
+    EnrollmentTaskValue,
     EnrollmentTransactions,
     ProviderContact,
     ProviderRegistration,
@@ -354,6 +357,136 @@ class TestListEnrollments:
 
         assert page.nextPageToken == "tok-2"
         assert page.totalCount == 2
+
+
+class TestGetEnrollment:
+    def test_returns_the_enrollment_with_its_tasks_and_documents(self) -> None:
+        fixture = _fixture("enrollment_provider_action_required.json")
+
+        enrollment_id = "01a0746f-2edf-75c0-a780-555b1231c789"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == f"/2024-09-01/enrollments/{enrollment_id}"
+            return _json_response(fixture)
+
+        client = _client_for(handler)
+
+        enrollment = client.get_enrollment(enrollment_id)
+
+        [document_task, stedi_task] = enrollment.tasks
+        assert document_task.definition is not None
+        assert document_task.definition.manualTask is not None
+        [field] = document_task.definition.manualTask.fields
+        assert field.key == "signed_eft_form"
+        assert field.fieldType == "DOCUMENT"
+        assert stedi_task.definition is not None
+        assert stedi_task.definition.manualTask is not None
+        assert stedi_task.definition.manualTask.fields == []
+
+
+class TestEnrollmentDocuments:
+    def test_upload_enrollment_document_returns_the_upload_url_and_id(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert (
+                request.url.path
+                == "/2024-09-01/enrollments/01a0746f-2edf-75c0-a780-555b1231c789/documents"
+            )
+            assert json.loads(request.content) == {
+                "name": "signed_eft_form.pdf",
+                "taskId": "task-1",
+            }
+            return _json_response(
+                {"uploadUrl": "https://s3.example.test/upload", "documentId": "doc-1"}
+            )
+
+        client = _client_for(handler)
+
+        upload = client.upload_enrollment_document(
+            "01a0746f-2edf-75c0-a780-555b1231c789", name="signed_eft_form.pdf", task_id="task-1"
+        )
+
+        assert upload.uploadUrl == "https://s3.example.test/upload"
+        assert upload.documentId == "doc-1"
+
+    def test_put_document_bytes_sends_no_vendor_key(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert str(request.url) == "https://s3.example.test/upload"
+            assert "authorization" not in request.headers
+            assert request.headers["content-type"] == "application/pdf"
+            assert request.content == b"%PDF-1.4 fake"
+            return httpx.Response(200)
+
+        client = _client_for(handler)
+
+        client.put_document_bytes("https://s3.example.test/upload", b"%PDF-1.4 fake")
+
+    def test_put_document_bytes_raises_on_a_non_2xx_answer(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(500)
+
+        client = _client_for(handler)
+
+        with pytest.raises(ClearinghouseUnavailableError):
+            client.put_document_bytes("https://s3.example.test/upload", b"%PDF-1.4 fake")
+
+
+class TestUpdateEnrollmentTask:
+    def test_a_task_with_fields_posts_completed_and_the_values(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == "/2024-09-01/tasks/task-1"
+            assert json.loads(request.content) == {
+                "completed": True,
+                "responseData": {
+                    "manualTask": {
+                        "values": [
+                            {
+                                "key": "signed_eft_form",
+                                "value": {"document": {"documentId": "doc-1"}},
+                            }
+                        ]
+                    }
+                },
+            }
+            return _json_response({})
+
+        client = _client_for(handler)
+
+        client.update_enrollment_task(
+            "task-1",
+            values=[
+                EnrollmentTaskValue(
+                    key="signed_eft_form",
+                    value=EnrollmentTaskFieldValue(
+                        document=EnrollmentTaskDocumentRef(documentId="doc-1")
+                    ),
+                )
+            ],
+        )
+
+    def test_a_task_with_no_fields_posts_completed_only(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert json.loads(request.content) == {"completed": True}
+            return _json_response({})
+
+        client = _client_for(handler)
+
+        client.update_enrollment_task("task-2", values=[])
+
+
+class TestResolveDocumentDownload:
+    def test_returns_the_pre_signed_download_url(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert str(request.url) == "https://enrollments.us.stedi.com/2024-09-01/documents/doc-1"
+            assert request.headers["authorization"] == "Key key_test_fixture"
+            return _json_response({"downloadUrl": "https://s3.example.test/download"})
+
+        client = _client_for(handler)
+
+        url = client.resolve_document_download(
+            "https://enrollments.us.stedi.com/2024-09-01/documents/doc-1"
+        )
+
+        assert url == "https://s3.example.test/download"
 
 
 class TestErrorMapping:

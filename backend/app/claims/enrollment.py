@@ -39,6 +39,7 @@ statuses. The instructions text is stored and shown, never logged.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -58,6 +59,9 @@ from ..models.claims_transport import (
     EnrollmentPayerRef,
     EnrollmentProviderRef,
     EnrollmentRequest,
+    EnrollmentTaskDocumentRef,
+    EnrollmentTaskFieldValue,
+    EnrollmentTaskValue,
     EnrollmentTransactions,
     ProviderContact,
     ProviderRegistration,
@@ -76,7 +80,12 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session
 
-    from ..models.claims_transport import Enrollment, Payer
+    from ..models.claims_transport import (
+        Enrollment,
+        EnrollmentDocumentStatus,
+        EnrollmentTask,
+        Payer,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -275,6 +284,30 @@ def list_enrollments(session: Session, payer_row_id: str) -> list[PayerEnrollmen
     return sorted(rows, key=lambda row: order[row.transaction_type])
 
 
+def get_enrollment_row(
+    session: Session, payer_row_id: str, transaction_type: str
+) -> PayerEnrollmentRow | None:
+    """The enrollment request on file for one payer and transaction type, if any."""
+    return session.execute(
+        select(PayerEnrollmentRow).where(
+            PayerEnrollmentRow.payer_id == payer_row_id,
+            PayerEnrollmentRow.transaction_type == transaction_type,
+        )
+    ).scalar_one_or_none()
+
+
+#: A task link starting with this is a Stedi-hosted document: an
+#: authenticated GET to the link itself returns a pre-signed download URL,
+#: rather than the PDF directly. Anything else is an external resource the
+#: UI links out to as-is.
+STEDI_DOCUMENT_URL_PREFIX = "https://enrollments.us.stedi.com/"
+
+
+def is_stedi_document_link(url: str) -> bool:
+    """Whether ``url`` needs the two-hop Stedi download rather than a plain link."""
+    return url.startswith(STEDI_DOCUMENT_URL_PREFIX)
+
+
 def _directory_entry(client: ClearinghouseClient, payer_id: str) -> Payer | None:
     wanted = payer_id.strip().upper()
     for hit in client.search_payers(payer_id):
@@ -434,8 +467,12 @@ def _status(vendor_status: str) -> str | None:
 def _instructions(enrollment: Enrollment) -> str | None:
     """What the clearinghouse wants the practice to do, as one block of text.
 
-    The open tasks assigned to the provider, each with its links, then the
-    vendor's ``reason`` note when there is one.
+    The open tasks assigned to the provider, then the vendor's ``reason``
+    note when there is one. A task with fields is something to fill in on
+    Pablo's own enrollment screen, so the reminder points there instead of
+    listing the vendor's raw links; a task with none is a link-out to
+    wherever the payer wants it done (a portal, a phone call), and its links
+    are shown as given.
     """
     parts: list[str] = []
     for task in enrollment.tasks:
@@ -446,7 +483,10 @@ def _instructions(enrollment: Enrollment) -> str | None:
             continue
         if manual.instructions:
             parts.append(manual.instructions.strip())
-        parts.extend(f"{link.label}: {link.url}" for link in manual.links)
+        if manual.fields:
+            parts.append("Complete this in Pablo, under Settings > Payers.")
+        else:
+            parts.extend(f"{link.label}: {link.url}" for link in manual.links)
     if enrollment.reason:
         parts.append(enrollment.reason.strip())
     return "\n".join(parts) or None
@@ -659,3 +699,150 @@ def refresh_enrollments(
     for payer in touched.values():
         _mirror_status(session, payer, now)
     return changed
+
+
+# --- Completing a provider task -----------------------------------------------
+
+
+class EnrollmentTaskNotFoundError(Exception):
+    """No task with this id exists on the enrollment."""
+
+    def __init__(self, task_id: str) -> None:
+        super().__init__(f"task {task_id!r} not found")
+        self.task_id = task_id
+
+
+class EnrollmentTaskFieldsMissingError(Exception):
+    """The submission left out a value for one or more of the task's fields."""
+
+    def __init__(self, missing: tuple[str, ...]) -> None:
+        super().__init__(f"missing values for: {', '.join(missing)}")
+        self.missing = missing
+
+
+class EnrollmentDocumentFailedError(Exception):
+    """The vendor rejected an uploaded document."""
+
+    def __init__(self, field_key: str) -> None:
+        super().__init__(f"document upload failed for field {field_key!r}")
+        self.field_key = field_key
+
+
+class EnrollmentDocumentPendingError(Exception):
+    """An uploaded document had not reached ``UPLOADED`` or ``FAILED`` within the poll budget."""
+
+    def __init__(self, field_key: str) -> None:
+        super().__init__(f"document still pending for field {field_key!r}")
+        self.field_key = field_key
+
+
+#: How long the document-status poll waits, and how many times, before
+#: giving up. The vendor says a document usually settles in under ten
+#: seconds.
+DOCUMENT_POLL_ATTEMPTS = 10
+DOCUMENT_POLL_INTERVAL_SECONDS = 1.0
+
+
+def _task(enrollment: Enrollment, task_id: str) -> EnrollmentTask:
+    for task in enrollment.tasks:
+        if task.id == task_id:
+            return task
+    raise EnrollmentTaskNotFoundError(task_id)
+
+
+def _wait_for_document(
+    client: ClearinghouseClient,
+    enrollment_id: str,
+    document_id: str,
+    *,
+    sleep: Callable[[float], None],
+) -> EnrollmentDocumentStatus:
+    """Poll the enrollment until ``document_id`` leaves ``PENDING``.
+
+    Returns whatever status was last seen, ``PENDING`` included if the poll
+    budget ran out before the vendor settled it.
+    """
+    status: EnrollmentDocumentStatus = "PENDING"
+    for _ in range(DOCUMENT_POLL_ATTEMPTS):
+        enrollment = client.get_enrollment(enrollment_id)
+        document = next((d for d in enrollment.documents if d.id == document_id), None)
+        if document is not None:
+            status = document.status
+        if status != "PENDING":
+            return status
+        sleep(DOCUMENT_POLL_INTERVAL_SECONDS)
+    return status
+
+
+def complete_enrollment_task(  # noqa: PLR0913 — session/client plus one field per task value kind
+    session: Session,
+    client: ClearinghouseClient,
+    row: PayerEnrollmentRow,
+    *,
+    task_id: str,
+    field_values: Mapping[str, str | bytes],
+    now: datetime | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+) -> Enrollment:
+    """Complete one PROVIDER task: upload any documents, then post its values.
+
+    ``field_values`` carries a string for a ``TEXT`` field and raw PDF bytes
+    for a ``DOCUMENT`` field, keyed by the field's ``key``. A task with no
+    fields (follow the instructions somewhere else) takes an empty mapping
+    and is completed with no values at all.
+
+    Raises :class:`EnrollmentTaskFieldsMissingError` when a field is left
+    out, and :class:`EnrollmentDocumentFailedError` /
+    :class:`EnrollmentDocumentPendingError` when an uploaded document does
+    not reach ``UPLOADED``. Refreshes ``row`` from the enrollment the vendor
+    reports right after completion, so the practice sees it move on without
+    waiting for the next scheduled poll. Does not commit.
+    """
+    now = now or utc_now()
+    payer = session.get(PayerRow, row.payer_id)
+    assert payer is not None  # noqa: S101 — row.payer_id is a foreign key to this same table
+    enrollment = client.get_enrollment(row.vendor_request_id)
+    task = _task(enrollment, task_id)
+    fields = (
+        task.definition.manualTask.fields
+        if task.definition is not None and task.definition.manualTask is not None
+        else []
+    )
+    missing = tuple(field.key for field in fields if field.key not in field_values)
+    if missing:
+        raise EnrollmentTaskFieldsMissingError(missing)
+
+    values: list[EnrollmentTaskValue] = []
+    for field in fields:
+        raw = field_values[field.key]
+        if field.fieldType == "DOCUMENT":
+            content = raw if isinstance(raw, bytes) else str(raw).encode()
+            upload = client.upload_enrollment_document(
+                row.vendor_request_id, name=f"{field.key}.pdf", task_id=task_id
+            )
+            client.put_document_bytes(upload.uploadUrl, content)
+            status = _wait_for_document(
+                client, row.vendor_request_id, upload.documentId, sleep=sleep
+            )
+            if status == "FAILED":
+                raise EnrollmentDocumentFailedError(field.key)
+            if status == "PENDING":
+                raise EnrollmentDocumentPendingError(field.key)
+            values.append(
+                EnrollmentTaskValue(
+                    key=field.key,
+                    value=EnrollmentTaskFieldValue(
+                        document=EnrollmentTaskDocumentRef(documentId=upload.documentId)
+                    ),
+                )
+            )
+        else:
+            text = raw.decode() if isinstance(raw, bytes) else str(raw)
+            values.append(
+                EnrollmentTaskValue(key=field.key, value=EnrollmentTaskFieldValue(text=text))
+            )
+
+    client.update_enrollment_task(task_id, values=values)
+    refreshed = client.get_enrollment(row.vendor_request_id)
+    apply_vendor_status(session, row, refreshed, payer=payer, now=now)
+    return refreshed

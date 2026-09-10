@@ -136,6 +136,65 @@ class PayerEnrollmentListResponse(BaseModel):
     enrollment_status: EnrollmentStatus
 
 
+EnrollmentTaskFieldType = Literal["TEXT", "DOCUMENT"]
+EnrollmentLinkKind = Literal["stedi_document", "external"]
+EnrollmentDocumentStatus = Literal["PENDING", "UPLOADED", "FAILED"]
+
+
+class EnrollmentTaskFieldResponse(BaseModel):
+    """One field the task's form collects: a string, or a PDF upload."""
+
+    key: str
+    label: str
+    description: str | None = None
+    field_type: EnrollmentTaskFieldType
+
+
+class EnrollmentTaskLinkResponse(BaseModel):
+    """One reference on a task. ``kind`` tells the client how to open it.
+
+    ``stedi_document`` needs the two-hop download call before it can be
+    fetched (a plain link gives the browser a 401); ``external`` is a
+    normal href.
+    """
+
+    label: str
+    url: str
+    kind: EnrollmentLinkKind
+
+
+class EnrollmentDocumentResponse(BaseModel):
+    id: str
+    name: str
+    task_id: str | None = None
+    status: EnrollmentDocumentStatus
+
+
+class EnrollmentTaskResponse(BaseModel):
+    """One task on an enrollment, as the completion screen renders it."""
+
+    id: str
+    responsible_party: str
+    is_complete: bool
+    instructions: str | None = None
+    links: list[EnrollmentTaskLinkResponse] = []
+    fields: list[EnrollmentTaskFieldResponse] = []
+
+
+class EnrollmentDetailResponse(BaseModel):
+    """One enrollment's tasks and documents, read fresh from the clearinghouse."""
+
+    reason: str | None = None
+    tasks: list[EnrollmentTaskResponse]
+    documents: list[EnrollmentDocumentResponse]
+
+
+class EnrollmentLinkDownloadResponse(BaseModel):
+    """Hop one of a Stedi document link: the pre-signed URL to fetch it from."""
+
+    url: str
+
+
 # ---------------------------------------------------------------------------
 # Coverage
 # ---------------------------------------------------------------------------

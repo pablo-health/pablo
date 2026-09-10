@@ -22,9 +22,11 @@ if TYPE_CHECKING:
         EligibilityRequest,
         EligibilityResponse,
         Enrollment,
+        EnrollmentDocumentUpload,
         EnrollmentFilters,
         EnrollmentPage,
         EnrollmentRequest,
+        EnrollmentTaskValue,
         Payer,
         ProviderRecord,
         ProviderRegistration,
@@ -178,5 +180,47 @@ class ClearinghouseClient(Protocol):
 
         The page's ``nextPageToken`` goes back as ``filters.pageToken`` to
         read the next; the caller pages, this call does not.
+        """
+        ...
+
+    def get_enrollment(self, enrollment_id: str) -> Enrollment:
+        """Retrieve one enrollment, with its tasks and documents."""
+        ...
+
+    def upload_enrollment_document(
+        self, enrollment_id: str, *, name: str, task_id: str
+    ) -> EnrollmentDocumentUpload:
+        """Start a document upload, returning where to PUT the bytes.
+
+        The returned ``uploadUrl`` is a pre-signed S3 URL, not a clearinghouse
+        endpoint — hand it to ``put_document_bytes``, not another call here.
+        """
+        ...
+
+    def put_document_bytes(self, upload_url: str, content: bytes) -> None:
+        """PUT a PDF's bytes to a pre-signed URL from ``upload_enrollment_document``.
+
+        Its own seam because this request does not go to the clearinghouse
+        at all — it goes straight to the storage the vendor handed back, with
+        no API key on it.
+        """
+        ...
+
+    def update_enrollment_task(self, task_id: str, *, values: list[EnrollmentTaskValue]) -> None:
+        """Mark one manual task complete, quoting a value for each of its fields.
+
+        ``values`` is empty for a task with no fields (instructions to follow
+        elsewhere); otherwise it must carry exactly one value per field the
+        task's definition lists.
+        """
+        ...
+
+    def resolve_document_download(self, url: str) -> str:
+        """Hop one of fetching a Stedi-hosted document: the pre-signed URL to fetch it from.
+
+        ``url`` is a full ``enrollments.us.stedi.com`` URL as the vendor gave
+        it (a task link, typically) — this sends the account's key to that
+        URL and returns the pre-signed download URL its JSON answers with.
+        Fetching that second URL, unauthenticated, is the caller's job.
         """
         ...

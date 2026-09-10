@@ -74,9 +74,12 @@ from ..models.claims_transport import (
     EligibilityRequest,
     EligibilityResponse,
     Enrollment,
+    EnrollmentDocumentRequest,
+    EnrollmentDocumentUpload,
     EnrollmentFilters,
     EnrollmentPage,
     EnrollmentRequest,
+    EnrollmentTaskValue,
     Payer,
     ProviderRecord,
     ProviderRegistration,
@@ -462,3 +465,60 @@ class StediClearinghouseClient:
         if response.status_code != httpx.codes.OK:
             _raise_for_error_envelope(response)
         return EnrollmentPage.model_validate(response.json())
+
+    def get_enrollment(self, enrollment_id: str) -> Enrollment:
+        response = self._get(f"{self._bases.enrollments}/enrollments/{enrollment_id}")
+        if response.status_code != httpx.codes.OK:
+            _raise_for_error_envelope(response)
+        return Enrollment.model_validate(response.json())
+
+    def upload_enrollment_document(
+        self, enrollment_id: str, *, name: str, task_id: str
+    ) -> EnrollmentDocumentUpload:
+        request = EnrollmentDocumentRequest(name=name, taskId=task_id)
+        response = self._post(
+            f"{self._bases.enrollments}/enrollments/{enrollment_id}/documents",
+            json=request.model_dump(exclude_none=True),
+            idempotency=Idempotency.UNSAFE,
+        )
+        if response.status_code != httpx.codes.OK:
+            _raise_for_error_envelope(response)
+        return EnrollmentDocumentUpload.model_validate(response.json())
+
+    def put_document_bytes(self, upload_url: str, content: bytes) -> None:
+        """PUT straight to the pre-signed URL, not the clearinghouse's API.
+
+        No ``Authorization`` header — the vendor's key has no business at
+        this URL, and the pre-signed URL is what authorizes the write.
+        """
+        response = self._send(
+            lambda: self._client.put(
+                upload_url, content=content, headers={"Content-Type": "application/pdf"}
+            ),
+            idempotency=Idempotency.SAFE,
+            url=upload_url,
+        )
+        if response.status_code not in (httpx.codes.OK, httpx.codes.NO_CONTENT):
+            raise ClearinghouseUnavailableError(
+                f"document upload to storage failed: {response.status_code}"
+            )
+
+    def update_enrollment_task(self, task_id: str, *, values: list[EnrollmentTaskValue]) -> None:
+        body: dict[str, Any] = {"completed": True}
+        if values:
+            body["responseData"] = {
+                "manualTask": {"values": [value.model_dump(exclude_none=True) for value in values]}
+            }
+        response = self._post(
+            f"{self._bases.enrollments}/tasks/{task_id}",
+            json=body,
+            idempotency=Idempotency.UNSAFE,
+        )
+        if response.status_code != httpx.codes.OK:
+            _raise_for_error_envelope(response)
+
+    def resolve_document_download(self, url: str) -> str:
+        response = self._get(url)
+        if response.status_code != httpx.codes.OK:
+            _raise_for_error_envelope(response)
+        return str(response.json()["downloadUrl"])

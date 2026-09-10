@@ -11,13 +11,15 @@ import type {
   CoverageResponse,
   CreateCoverageRequest,
   CreatePayerRequest,
+  EnrollmentDetailResponse,
+  EnrollmentTransactionType,
   PayerEnrollmentListResponse,
   PayerListResponse,
   PayerResponse,
   UpdateCoverageRequest,
   UpdatePayerRequest,
 } from "@/types/coverage"
-import { ApiError, del, get, patch, post } from "./client"
+import { ApiError, del, get, patch, post, postForm } from "./client"
 
 const PAYERS = "/api/payers"
 
@@ -53,6 +55,54 @@ export async function requestPayerEnrollments(
   token?: string,
 ): Promise<PayerEnrollmentListResponse> {
   return post<PayerEnrollmentListResponse>(`${PAYERS}/${payerRowId}/enrollments`, {}, token)
+}
+
+/** The enrollment's tasks and documents, read fresh from the clearinghouse. */
+export async function fetchEnrollmentDetail(
+  payerRowId: string,
+  transactionType: EnrollmentTransactionType,
+  token?: string,
+): Promise<EnrollmentDetailResponse> {
+  return get<EnrollmentDetailResponse>(
+    `${PAYERS}/${payerRowId}/enrollments/${transactionType}/detail`,
+    token,
+  )
+}
+
+/** Hop one of opening a Stedi-hosted task link: the pre-signed URL to fetch. */
+export async function resolveEnrollmentTaskLink(
+  payerRowId: string,
+  transactionType: EnrollmentTransactionType,
+  taskId: string,
+  linkIndex: number,
+  token?: string,
+): Promise<{ url: string }> {
+  return get<{ url: string }>(
+    `${PAYERS}/${payerRowId}/enrollments/${transactionType}/tasks/${taskId}/links/${linkIndex}`,
+    token,
+  )
+}
+
+/**
+ * Complete an open PROVIDER task: a string per TEXT field, a PDF file per
+ * DOCUMENT field, both keyed by the field's key.
+ */
+export async function completeEnrollmentTask(
+  payerRowId: string,
+  transactionType: EnrollmentTransactionType,
+  taskId: string,
+  fieldValues: Record<string, string | File>,
+  token?: string,
+): Promise<EnrollmentDetailResponse> {
+  const form = new FormData()
+  for (const [key, value] of Object.entries(fieldValues)) {
+    form.append(key, value)
+  }
+  return postForm<EnrollmentDetailResponse>(
+    `${PAYERS}/${payerRowId}/enrollments/${transactionType}/tasks/${taskId}/complete`,
+    form,
+    token,
+  )
 }
 
 /**

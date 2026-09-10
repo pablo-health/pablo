@@ -34,7 +34,10 @@ import pytest
 from app.claims import enrollment
 from app.claims.enrollment import (
     BillingProfileIncompleteError,
+    EnrollmentDocumentFailedError,
+    EnrollmentTaskFieldsMissingError,
     PayerNotInDirectoryError,
+    complete_enrollment_task,
     derive_payer_status,
     ensure_provider_record,
     refresh_enrollments,
@@ -484,8 +487,8 @@ class TestActionRequired:
         assert row.status == "provider_action_required"
         assert row.instructions is not None
         assert INSTRUCTIONS in row.instructions
-        assert "EFT authorization form: https://example.com" in row.instructions
-        assert "signed EFT authorization" in row.instructions
+        assert "Complete this in Pablo, under Settings > Payers." in row.instructions
+        assert "https://example.com" not in row.instructions  # the task has fields; no raw link-out
         assert "Forward the signed form" not in row.instructions  # the vendor's own task
         [reminder] = _reminders(session)
         assert reminder.user_id == _USER_ID
@@ -667,3 +670,102 @@ class TestRefresh:
             assert refresh_enrollments(session, client, arm=_no_arm) == 0
 
         assert "payer_enrollment_status_unrecognised" in caplog.text
+
+
+# --- completing a provider task -----------------------------------------------
+
+_DOCUMENT_TASK_ID = "01a0a1b2-3c4d-7e5f-8a6b-7c8d9e0f1a2b"
+_EMPTY_TASK_ID = "01a0a1b2-3c4d-7e5f-8a6b-7c8d9e0f1a2c"
+
+
+class TestCompleteEnrollmentTask:
+    def _open(self, session: Session) -> tuple[PayerEnrollmentRow, FakeClearinghouse]:
+        _seed_profile(session)
+        payer = _seed_payer(session)
+        client = FakeClearinghouse()
+        request_enrollments(session, client, payer_row_id=payer.id, user_id=_USER_ID)
+        client.listing = _listing_for(session, "PROVIDER_ACTION_REQUIRED", "835")
+        refresh_enrollments(session, client, arm=_no_arm)
+        return _rows(session)["835"], client
+
+    def test_a_document_field_is_uploaded_and_the_task_completed(self, session: Session) -> None:
+        row, client = self._open(session)
+
+        enrollment = complete_enrollment_task(
+            session,
+            client,
+            row,
+            task_id=_DOCUMENT_TASK_ID,
+            field_values={"signed_eft_form": b"%PDF-1.4 fake"},
+            sleep=lambda _seconds: None,
+        )
+
+        assert isinstance(enrollment, Enrollment)
+        [upload] = client.calls_named("upload_enrollment_document")
+        assert upload == (row.vendor_request_id, "signed_eft_form.pdf", _DOCUMENT_TASK_ID)
+        assert len(client.calls_named("put_document_bytes")) == 1
+        [(task_id, values)] = client.calls_named("update_enrollment_task")
+        assert task_id == _DOCUMENT_TASK_ID
+        [value] = values
+        assert value.key == "signed_eft_form"
+        assert value.value.document is not None
+        completed_task = next(
+            t
+            for t in client.get_enrollment(row.vendor_request_id).tasks
+            if t.id == _DOCUMENT_TASK_ID
+        )
+        assert completed_task.isComplete is True
+
+    def test_a_task_with_no_fields_is_completed_with_no_values(self, session: Session) -> None:
+        row, client = self._open(session)
+
+        complete_enrollment_task(
+            session, client, row, task_id=_EMPTY_TASK_ID, field_values={}, sleep=lambda _s: None
+        )
+
+        [(task_id, values)] = client.calls_named("update_enrollment_task")
+        assert task_id == _EMPTY_TASK_ID
+        assert values == []
+        assert len(client.calls_named("upload_enrollment_document")) == 0
+
+    def test_a_missing_field_is_rejected_before_any_vendor_call(self, session: Session) -> None:
+        row, client = self._open(session)
+
+        with pytest.raises(EnrollmentTaskFieldsMissingError) as exc_info:
+            complete_enrollment_task(
+                session, client, row, task_id=_DOCUMENT_TASK_ID, field_values={}
+            )
+
+        assert exc_info.value.missing == ("signed_eft_form",)
+        assert client.calls_named("upload_enrollment_document") == []
+        assert client.calls_named("update_enrollment_task") == []
+
+    def test_a_failed_document_stops_the_task_from_completing(self, session: Session) -> None:
+        row, client = self._open(session)
+        client.document_status_after_upload = "FAILED"
+
+        with pytest.raises(EnrollmentDocumentFailedError) as exc_info:
+            complete_enrollment_task(
+                session,
+                client,
+                row,
+                task_id=_DOCUMENT_TASK_ID,
+                field_values={"signed_eft_form": b"%PDF-1.4 fake"},
+                sleep=lambda _seconds: None,
+            )
+
+        assert exc_info.value.field_key == "signed_eft_form"
+        assert client.calls_named("update_enrollment_task") == []
+
+    def test_completing_re_reads_the_enrollment_instead_of_waiting_for_the_daily_poll(
+        self, session: Session
+    ) -> None:
+        row, client = self._open(session)
+
+        complete_enrollment_task(
+            session, client, row, task_id=_EMPTY_TASK_ID, field_values={}, sleep=lambda _s: None
+        )
+
+        # Once to read the task's fields, once more after completion to pick
+        # up whatever the vendor now says — never the daily refresh job.
+        assert len(client.calls_named("get_enrollment")) == 2

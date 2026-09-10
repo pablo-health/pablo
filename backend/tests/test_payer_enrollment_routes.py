@@ -56,7 +56,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from tests.enrollment_fakes import TEST_PAYER_ID, FakeClearinghouse
+from tests.enrollment_fakes import TEST_PAYER_ID, FakeClearinghouse, enrollment_fixture
 from tests.sqlite_engine import sqlite_engine
 
 if TYPE_CHECKING:
@@ -224,6 +224,149 @@ class TestListEnrollments:
         response = client.get(f"/api/payers/{payer.id}/enrollments")
 
         assert [r["transaction_type"] for r in response.json()["data"]] == ["835"]
+
+
+_DOCUMENT_TASK_ID = "01a0a1b2-3c4d-7e5f-8a6b-7c8d9e0f1a2b"
+_EMPTY_TASK_ID = "01a0a1b2-3c4d-7e5f-8a6b-7c8d9e0f1a2c"
+
+
+def _file_enrollment(payer_harness: dict[str, Any]) -> str:
+    """File the payer's 835 enrollment and return its vendor request id."""
+    _complete_profile(payer_harness["session"])
+    payer = payer_harness["payer"]
+    response = payer_harness["client"].post(f"/api/payers/{payer.id}/enrollments")
+    vendor_request_id: str = response.json()["data"][0]["vendor_request_id"]
+    return vendor_request_id
+
+
+class TestEnrollmentTaskDetail:
+    def test_renders_fields_and_tells_link_kinds_apart(self, payer_harness: dict[str, Any]) -> None:
+        vendor_request_id = _file_enrollment(payer_harness)
+        data = enrollment_fixture(vendor_id=vendor_request_id, status="PROVIDER_ACTION_REQUIRED")
+        data["tasks"][0]["definition"]["manualTask"]["links"].append(
+            {
+                "label": "Stedi-hosted template",
+                "url": "https://enrollments.us.stedi.com/2024-09-01/documents/doc-9",
+            }
+        )
+        payer_harness["clearinghouse"].listing = [data]
+        payer = payer_harness["payer"]
+
+        response = payer_harness["client"].get(f"/api/payers/{payer.id}/enrollments/835/detail")
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        [document_task, stedi_task] = body["tasks"]
+        assert document_task["id"] == _DOCUMENT_TASK_ID
+        [field] = document_task["fields"]
+        assert field == {
+            "key": "signed_eft_form",
+            "label": "Signed EFT authorization",
+            "description": None,
+            "field_type": "DOCUMENT",
+        }
+        kinds = {link["url"]: link["kind"] for link in document_task["links"]}
+        assert kinds["https://example.com/payer/eft-authorization.pdf"] == "external"
+        assert kinds["https://enrollments.us.stedi.com/2024-09-01/documents/doc-9"] == (
+            "stedi_document"
+        )
+        assert stedi_task["fields"] == []
+
+    def test_unknown_transaction_is_404(self, payer_harness: dict[str, Any]) -> None:
+        payer = payer_harness["payer"]
+
+        response = payer_harness["client"].get(f"/api/payers/{payer.id}/enrollments/835/detail")
+
+        assert response.status_code == 404
+
+
+class TestResolveEnrollmentTaskLink:
+    def test_resolves_a_stedi_document_link(self, payer_harness: dict[str, Any]) -> None:
+        vendor_request_id = _file_enrollment(payer_harness)
+        data = enrollment_fixture(vendor_id=vendor_request_id, status="PROVIDER_ACTION_REQUIRED")
+        data["tasks"][0]["definition"]["manualTask"]["links"][0]["url"] = (
+            "https://enrollments.us.stedi.com/2024-09-01/documents/doc-9"
+        )
+        payer_harness["clearinghouse"].listing = [data]
+        payer = payer_harness["payer"]
+
+        response = payer_harness["client"].get(
+            f"/api/payers/{payer.id}/enrollments/835/tasks/{_DOCUMENT_TASK_ID}/links/0"
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["url"].endswith("?presigned=1")
+
+    def test_an_external_link_is_not_resolved(self, payer_harness: dict[str, Any]) -> None:
+        vendor_request_id = _file_enrollment(payer_harness)
+        payer_harness["clearinghouse"].listing = [
+            enrollment_fixture(vendor_id=vendor_request_id, status="PROVIDER_ACTION_REQUIRED")
+        ]
+        payer = payer_harness["payer"]
+
+        response = payer_harness["client"].get(
+            f"/api/payers/{payer.id}/enrollments/835/tasks/{_DOCUMENT_TASK_ID}/links/0"
+        )
+
+        assert response.status_code == 404
+
+
+class TestCompleteEnrollmentTask:
+    def test_uploads_a_pdf_and_completes_the_task(self, payer_harness: dict[str, Any]) -> None:
+        vendor_request_id = _file_enrollment(payer_harness)
+        payer_harness["clearinghouse"].listing = [
+            enrollment_fixture(vendor_id=vendor_request_id, status="PROVIDER_ACTION_REQUIRED")
+        ]
+        payer = payer_harness["payer"]
+
+        response = payer_harness["client"].post(
+            f"/api/payers/{payer.id}/enrollments/835/tasks/{_DOCUMENT_TASK_ID}/complete",
+            files={"signed_eft_form": ("form.pdf", b"%PDF-1.4 fake", "application/pdf")},
+        )
+
+        assert response.status_code == 200, response.text
+        completed = next(t for t in response.json()["tasks"] if t["id"] == _DOCUMENT_TASK_ID)
+        assert completed["is_complete"] is True
+
+    def test_a_task_with_no_fields_needs_no_upload(self, payer_harness: dict[str, Any]) -> None:
+        vendor_request_id = _file_enrollment(payer_harness)
+        payer_harness["clearinghouse"].listing = [
+            enrollment_fixture(vendor_id=vendor_request_id, status="PROVIDER_ACTION_REQUIRED")
+        ]
+        payer = payer_harness["payer"]
+
+        response = payer_harness["client"].post(
+            f"/api/payers/{payer.id}/enrollments/835/tasks/{_EMPTY_TASK_ID}/complete"
+        )
+
+        assert response.status_code == 200, response.text
+
+    def test_a_non_pdf_file_is_rejected(self, payer_harness: dict[str, Any]) -> None:
+        vendor_request_id = _file_enrollment(payer_harness)
+        payer_harness["clearinghouse"].listing = [
+            enrollment_fixture(vendor_id=vendor_request_id, status="PROVIDER_ACTION_REQUIRED")
+        ]
+        payer = payer_harness["payer"]
+
+        response = payer_harness["client"].post(
+            f"/api/payers/{payer.id}/enrollments/835/tasks/{_DOCUMENT_TASK_ID}/complete",
+            files={"signed_eft_form": ("form.txt", b"not a pdf", "text/plain")},
+        )
+
+        assert response.status_code == 422
+
+    def test_a_missing_field_is_rejected(self, payer_harness: dict[str, Any]) -> None:
+        vendor_request_id = _file_enrollment(payer_harness)
+        payer_harness["clearinghouse"].listing = [
+            enrollment_fixture(vendor_id=vendor_request_id, status="PROVIDER_ACTION_REQUIRED")
+        ]
+        payer = payer_harness["payer"]
+
+        response = payer_harness["client"].post(
+            f"/api/payers/{payer.id}/enrollments/835/tasks/{_DOCUMENT_TASK_ID}/complete"
+        )
+
+        assert response.status_code == 422
 
 
 # --- the coverage-save trigger, over in-memory repositories ----------------------

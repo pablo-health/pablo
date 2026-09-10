@@ -59,6 +59,46 @@ export interface PayerEnrollmentListResponse {
   enrollment_status: EnrollmentStatus
 }
 
+export type EnrollmentTaskFieldType = "TEXT" | "DOCUMENT"
+export type EnrollmentLinkKind = "stedi_document" | "external"
+export type EnrollmentDocumentStatus = "PENDING" | "UPLOADED" | "FAILED"
+
+export interface EnrollmentTaskField {
+  key: string
+  label: string
+  description: string | null
+  field_type: EnrollmentTaskFieldType
+}
+
+export interface EnrollmentTaskLink {
+  label: string
+  url: string
+  kind: EnrollmentLinkKind
+}
+
+export interface EnrollmentDocument {
+  id: string
+  name: string
+  task_id: string | null
+  status: EnrollmentDocumentStatus
+}
+
+/** One task on an enrollment, as the completion screen renders it. */
+export interface EnrollmentTask {
+  id: string
+  responsible_party: string
+  is_complete: boolean
+  instructions: string | null
+  links: EnrollmentTaskLink[]
+  fields: EnrollmentTaskField[]
+}
+
+export interface EnrollmentDetailResponse {
+  reason: string | null
+  tasks: EnrollmentTask[]
+  documents: EnrollmentDocument[]
+}
+
 export interface CreatePayerRequest {
   name: string
   payer_id: string

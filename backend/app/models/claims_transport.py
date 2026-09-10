@@ -683,13 +683,36 @@ class EnrollmentTaskLink(BaseModel):
     url: str
 
 
+class EnrollmentTaskField(BaseModel):
+    """One field a manual task's form collects.
+
+    ``fieldType`` is ``TEXT`` (a string) or ``DOCUMENT`` (a PDF upload,
+    completed by quoting the ``documentId`` a document upload returned). A
+    task with no fields at all is not a form — it is instructions to follow
+    somewhere else, completed with ``{"completed": true}`` and nothing else.
+    """
+
+    model_config = _WIRE_MODEL_CONFIG
+
+    key: str
+    label: str
+    description: str | None = None
+    fieldType: Literal["TEXT", "DOCUMENT"]
+
+
 class EnrollmentManualTask(BaseModel):
-    """What the vendor asks the practice to do by hand: instructions and links."""
+    """What the vendor asks the practice to do by hand.
+
+    ``instructions`` and ``links`` are prose and references; ``fields`` is
+    the machine-actionable half — present exactly when this task can be
+    completed as a form rather than a link-out.
+    """
 
     model_config = _WIRE_MODEL_CONFIG
 
     instructions: str | None = None
     links: list[EnrollmentTaskLink] = []
+    fields: list[EnrollmentTaskField] = []
 
 
 class EnrollmentTaskDefinition(BaseModel):
@@ -703,6 +726,7 @@ class EnrollmentTask(BaseModel):
 
     ``responsibleParty`` is ``PROVIDER`` when the practice has to act (sign a
     form, attest, upload a document) and ``STEDI`` when the vendor does.
+    ``rank`` is the vendor's display order among an enrollment's tasks.
     """
 
     model_config = _WIRE_MODEL_CONFIG
@@ -710,15 +734,45 @@ class EnrollmentTask(BaseModel):
     id: str
     responsibleParty: str
     isComplete: bool = False
+    rank: int | None = None
     definition: EnrollmentTaskDefinition | None = None
+
+
+#: A document's transfer state: uploaded and waiting, safely usable, or
+#: rejected by the vendor. ``FAILED`` is a real outcome, not a transient one.
+EnrollmentDocumentStatus = Literal["PENDING", "UPLOADED", "FAILED"]
+
+
+class EnrollmentDocument(BaseModel):
+    """One document attached to an enrollment, uploaded against a task."""
+
+    model_config = _WIRE_MODEL_CONFIG
+
+    id: str
+    name: str
+    taskId: str | None = None
+    status: EnrollmentDocumentStatus
+
+
+class EnrollmentHistoryEntry(BaseModel):
+    """One row of an enrollment's status trail."""
+
+    model_config = _WIRE_MODEL_CONFIG
+
+    type: str
+    previousStatus: str | None = None
+    newStatus: str | None = None
+    changedBy: str | None = None
+    changedAt: str | None = None
 
 
 class Enrollment(BaseModel):
     """A transaction enrollment's current state, as the vendor reports it.
 
     ``reason`` is the vendor's note on why a request is still provisioning
-    or was rejected; ``tasks`` is what it wants done. Both are payer-facing
-    prose about the practice, never about a patient.
+    or was rejected; ``tasks`` is what it wants done; ``documents`` is what
+    has been uploaded against those tasks. All are payer-facing prose or
+    practice records, never about a patient.
     """
 
     model_config = _WIRE_MODEL_CONFIG
@@ -732,6 +786,53 @@ class Enrollment(BaseModel):
     transactions: EnrollmentTransactions = EnrollmentTransactions()
     reason: str | None = None
     tasks: list[EnrollmentTask] = []
+    documents: list[EnrollmentDocument] = []
+    history: list[EnrollmentHistoryEntry] = []
+
+
+class EnrollmentDocumentRequest(BaseModel):
+    """What ``upload_enrollment_document`` sends to start an upload."""
+
+    model_config = _WIRE_MODEL_CONFIG
+
+    name: str
+    taskId: str
+
+
+class EnrollmentDocumentUpload(BaseModel):
+    """The vendor's answer to a document upload request.
+
+    ``uploadUrl`` is a pre-signed S3 URL (expires in 24h) the bytes are PUT
+    to directly — it does not go through the clearinghouse's own API and
+    does not carry its API key.
+    """
+
+    model_config = _WIRE_MODEL_CONFIG
+
+    uploadUrl: str
+    documentId: str
+
+
+class EnrollmentTaskDocumentRef(BaseModel):
+    model_config = _WIRE_MODEL_CONFIG
+
+    documentId: str
+
+
+class EnrollmentTaskFieldValue(BaseModel):
+    """One field's answer: text, or a reference to an uploaded document."""
+
+    model_config = _WIRE_MODEL_CONFIG
+
+    text: str | None = None
+    document: EnrollmentTaskDocumentRef | None = None
+
+
+class EnrollmentTaskValue(BaseModel):
+    model_config = _WIRE_MODEL_CONFIG
+
+    key: str
+    value: EnrollmentTaskFieldValue
 
 
 class EnrollmentFilters(BaseModel):

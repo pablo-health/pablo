@@ -20,6 +20,7 @@ import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { EnrollmentTaskPanel } from "@/components/settings/EnrollmentTaskForm"
 import { SettingsCard } from "@/components/settings/ui"
 import {
   useCreatePayer,
@@ -75,7 +76,13 @@ const REQUEST_STATUS_LABELS: Record<EnrollmentRequestStatus, string> = {
   canceled: "Canceled",
 }
 
-function EnrollmentRequestRow({ request }: { request: PayerEnrollmentResponse }) {
+function EnrollmentRequestRow({
+  request,
+  payerRowId,
+}: {
+  request: PayerEnrollmentResponse
+  payerRowId: string
+}) {
   const needsAction = request.status === "provider_action_required"
   return (
     <li className="py-1.5">
@@ -89,6 +96,9 @@ function EnrollmentRequestRow({ request }: { request: PayerEnrollmentResponse })
         <p className="mt-1 whitespace-pre-line text-[12.5px] text-muted-foreground">
           {request.instructions}
         </p>
+      )}
+      {needsAction && (
+        <EnrollmentTaskPanel payerRowId={payerRowId} transactionType={request.transaction_type} />
       )}
     </li>
   )
@@ -119,7 +129,7 @@ function PayerEnrollments({ payer }: { payer: PayerResponse }) {
       {requests.length > 0 && (
         <ul className="m-0 list-none divide-y divide-border p-0">
           {requests.map((r) => (
-            <EnrollmentRequestRow key={r.transaction_type} request={r} />
+            <EnrollmentRequestRow key={r.transaction_type} request={r} payerRowId={payer.id} />
           ))}
         </ul>
       )}

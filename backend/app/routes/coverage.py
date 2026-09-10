@@ -62,6 +62,7 @@ from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
+from starlette.datastructures import UploadFile
 
 from ..auth.service import (
     TenantContext,
@@ -92,9 +93,16 @@ from ..claims.eligibility import (
 )
 from ..claims.enrollment import (
     BillingProfileIncompleteError,
+    EnrollmentDocumentFailedError,
+    EnrollmentDocumentPendingError,
+    EnrollmentTaskFieldsMissingError,
+    EnrollmentTaskNotFoundError,
     PayerNotInDirectoryError,
     clearinghouse_client_for_practice,
+    complete_enrollment_task,
     enroll_if_new,
+    get_enrollment_row,
+    is_stedi_document_link,
     list_enrollments,
     request_enrollments,
 )
@@ -104,6 +112,12 @@ from ..models.coverage import (
     CoverageResponse,
     CreateCoverageRequest,
     CreatePayerRequest,
+    EnrollmentDetailResponse,
+    EnrollmentDocumentResponse,
+    EnrollmentLinkDownloadResponse,
+    EnrollmentTaskFieldResponse,
+    EnrollmentTaskLinkResponse,
+    EnrollmentTaskResponse,
     PatientCoverage,
     Payer,
     PayerEnrollmentListResponse,
@@ -135,6 +149,7 @@ if TYPE_CHECKING:
 
     from ..db.models import PayerEnrollmentRow
     from ..models import User
+    from ..models.claims_transport import Enrollment, EnrollmentTask
     from ..repositories.coverage import PatientCoverageRepository, PayerRepository
     from ..repositories.patient import PatientRepository
     from ..repositories.user import UserRepository
@@ -369,6 +384,199 @@ def request_payer_enrollments(
             detail="The clearinghouse refused the enrollment request.",
         ) from exc
     return _enrollments_response(session, payers, payer_row_id)
+
+
+def _no_clearinghouse() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="No clearinghouse account is configured for this practice.",
+    )
+
+
+def _require_open_enrollment(
+    session: Session, payers: PayerRepository, payer_row_id: str, transaction_type: str
+) -> tuple[Payer, PayerEnrollmentRow]:
+    payer = _require_payer(payers, payer_row_id)
+    row = get_enrollment_row(session, payer.id, transaction_type)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No enrollment request on file for this transaction.",
+        )
+    return payer, row
+
+
+def _to_task_response(task: EnrollmentTask) -> EnrollmentTaskResponse:
+    manual = task.definition.manualTask if task.definition is not None else None
+    return EnrollmentTaskResponse(
+        id=task.id,
+        responsible_party=task.responsibleParty,
+        is_complete=task.isComplete,
+        instructions=manual.instructions if manual is not None else None,
+        links=[
+            EnrollmentTaskLinkResponse(
+                label=link.label,
+                url=link.url,
+                kind="stedi_document" if is_stedi_document_link(link.url) else "external",
+            )
+            for link in (manual.links if manual is not None else [])
+        ],
+        fields=[
+            EnrollmentTaskFieldResponse(
+                key=field.key,
+                label=field.label,
+                description=field.description,
+                field_type=field.fieldType,
+            )
+            for field in (manual.fields if manual is not None else [])
+        ],
+    )
+
+
+def _to_detail_response(enrollment: Enrollment) -> EnrollmentDetailResponse:
+    return EnrollmentDetailResponse(
+        reason=enrollment.reason,
+        tasks=[_to_task_response(task) for task in enrollment.tasks],
+        documents=[
+            EnrollmentDocumentResponse(
+                id=document.id, name=document.name, task_id=document.taskId, status=document.status
+            )
+            for document in enrollment.documents
+        ],
+    )
+
+
+@payers_router.get(
+    "/{payer_row_id}/enrollments/{transaction_type}/detail", response_model=EnrollmentDetailResponse
+)
+def get_enrollment_detail(
+    payer_row_id: str,
+    transaction_type: str,
+    payers: PayersRepo,
+    session: DbSession,
+    client: Clearinghouse,
+    _ctx: TenantContext = Depends(get_tenant_context),
+) -> EnrollmentDetailResponse:
+    """The enrollment's tasks and documents, read fresh from the clearinghouse.
+
+    This is what the completion form renders from: a task's fields, its
+    instructions, its links, and any document already uploaded against it.
+    """
+    _payer, row = _require_open_enrollment(session, payers, payer_row_id, transaction_type)
+    if client is None:
+        raise _no_clearinghouse()
+    try:
+        enrollment = client.get_enrollment(row.vendor_request_id)
+    except ClearinghouseUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The clearinghouse could not be reached. Try again later.",
+        ) from exc
+    return _to_detail_response(enrollment)
+
+
+@payers_router.get(
+    "/{payer_row_id}/enrollments/{transaction_type}/tasks/{task_id}/links/{link_index}",
+    response_model=EnrollmentLinkDownloadResponse,
+)
+def resolve_enrollment_task_link(
+    payer_row_id: str,
+    transaction_type: str,
+    task_id: str,
+    link_index: int,
+    payers: PayersRepo,
+    session: DbSession,
+    client: Clearinghouse,
+    _ctx: TenantContext = Depends(get_tenant_context),
+) -> EnrollmentLinkDownloadResponse:
+    """Hop one of opening a Stedi-hosted task link: the pre-signed URL to fetch."""
+    _payer, row = _require_open_enrollment(session, payers, payer_row_id, transaction_type)
+    if client is None:
+        raise _no_clearinghouse()
+    enrollment = client.get_enrollment(row.vendor_request_id)
+    task = next((t for t in enrollment.tasks if t.id == task_id), None)
+    manual = (
+        task.definition.manualTask if task is not None and task.definition is not None else None
+    )
+    links = manual.links if manual is not None else []
+    valid_index = 0 <= link_index < len(links)
+    if not valid_index or not is_stedi_document_link(links[link_index].url):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="No Stedi document link at that index."
+        )
+    download_url = client.resolve_document_download(links[link_index].url)
+    return EnrollmentLinkDownloadResponse(url=download_url)
+
+
+@payers_router.post(
+    "/{payer_row_id}/enrollments/{transaction_type}/tasks/{task_id}/complete",
+    response_model=EnrollmentDetailResponse,
+)
+async def complete_enrollment_task_route(
+    payer_row_id: str,
+    transaction_type: str,
+    task_id: str,
+    request: Request,
+    payers: PayersRepo,
+    session: DbSession,
+    client: Clearinghouse,
+    _ctx: TenantContext = Depends(get_tenant_context),
+) -> EnrollmentDetailResponse:
+    """Complete an open PROVIDER task: upload any PDFs, then post every field's value.
+
+    The form is multipart: a string per ``TEXT`` field, a PDF file per
+    ``DOCUMENT`` field, both keyed by the field's key. Never logs a field's
+    value or a document's bytes.
+    """
+    _payer, row = _require_open_enrollment(session, payers, payer_row_id, transaction_type)
+    if client is None:
+        raise _no_clearinghouse()
+
+    form = await request.form()
+    field_values: dict[str, str | bytes] = {}
+    for key, value in form.multi_items():
+        # ``Request.form()`` hands back Starlette's own ``UploadFile``, not
+        # the ``fastapi`` subclass ``File(...)`` parameters get — checking
+        # against the fastapi one here would silently never match.
+        if isinstance(value, UploadFile):
+            if value.content_type != "application/pdf":
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=f"{key}: only a PDF file can be uploaded.",
+                )
+            field_values[key] = await value.read()
+        else:
+            field_values[key] = str(value)
+
+    try:
+        enrollment = complete_enrollment_task(
+            session, client, row, task_id=task_id, field_values=field_values
+        )
+    except EnrollmentTaskNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Task not found."
+        ) from exc
+    except EnrollmentTaskFieldsMissingError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Missing a value for: {', '.join(exc.missing)}.",
+        ) from exc
+    except EnrollmentDocumentFailedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"{exc.field_key}: the clearinghouse rejected the uploaded document.",
+        ) from exc
+    except EnrollmentDocumentPendingError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail=f"{exc.field_key}: the document is still processing. Try again shortly.",
+        ) from exc
+    except ClearinghouseUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The clearinghouse could not be reached. Try again later.",
+        ) from exc
+    return _to_detail_response(enrollment)
 
 
 # ---------------------------------------------------------------------------

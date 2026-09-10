@@ -21,9 +21,11 @@ from typing import Any
 
 from app.models.claims_transport import (
     Enrollment,
+    EnrollmentDocumentUpload,
     EnrollmentFilters,
     EnrollmentPage,
     EnrollmentRequest,
+    EnrollmentTaskValue,
     Payer,
     ProviderRecord,
     ProviderRegistration,
@@ -80,6 +82,11 @@ class FakeClearinghouse:
         self.page_size: int | None = None
         self._support = transaction_support
         self._next_vendor_id = 0
+        self._next_document_id = 0
+        self._documents: dict[str, dict[str, dict[str, Any]]] = {}
+        #: What ``put_document_bytes`` leaves a document's status as, for a
+        #: test that wants to see the ``FAILED`` outcome instead.
+        self.document_status_after_upload = "UPLOADED"
 
     # -- what a test reads back ------------------------------------------------
 
@@ -127,6 +134,50 @@ class FakeClearinghouse:
         return EnrollmentPage(
             items=items[start:end], nextPageToken=str(end) if end < len(items) else None
         )
+
+    def get_enrollment(self, enrollment_id: str) -> Enrollment:
+        self.calls.append(("get_enrollment", enrollment_id))
+        for item in self.listing:
+            if item.get("id") == enrollment_id:
+                data = dict(item)
+                data["documents"] = list(self._documents.get(enrollment_id, {}).values())
+                return Enrollment.model_validate(data)
+        msg = f"no fixture enrollment for id {enrollment_id!r}"
+        raise LookupError(msg)
+
+    def upload_enrollment_document(
+        self, enrollment_id: str, *, name: str, task_id: str
+    ) -> EnrollmentDocumentUpload:
+        self.calls.append(("upload_enrollment_document", (enrollment_id, name, task_id)))
+        self._next_document_id += 1
+        document_id = f"doc-{self._next_document_id:04d}"
+        self._documents.setdefault(enrollment_id, {})[document_id] = {
+            "id": document_id,
+            "name": name,
+            "taskId": task_id,
+            "status": "PENDING",
+        }
+        return EnrollmentDocumentUpload(
+            uploadUrl=f"https://s3.example.test/{document_id}", documentId=document_id
+        )
+
+    def put_document_bytes(self, upload_url: str, content: bytes) -> None:
+        self.calls.append(("put_document_bytes", upload_url))
+        document_id = upload_url.rsplit("/", 1)[-1]
+        for documents in self._documents.values():
+            if document_id in documents:
+                documents[document_id]["status"] = self.document_status_after_upload
+
+    def update_enrollment_task(self, task_id: str, *, values: list[EnrollmentTaskValue]) -> None:
+        self.calls.append(("update_enrollment_task", (task_id, values)))
+        for item in self.listing:
+            for task in item.get("tasks", []):
+                if task.get("id") == task_id:
+                    task["isComplete"] = True
+
+    def resolve_document_download(self, url: str) -> str:
+        self.calls.append(("resolve_document_download", url))
+        return f"{url}?presigned=1"
 
     # -- the rest of the protocol is never reached by enrollment ---------------
 

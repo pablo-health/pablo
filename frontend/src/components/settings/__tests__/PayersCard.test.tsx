@@ -33,6 +33,8 @@ vi.mock("@/hooks/useCoverage", () => ({
     isPending: false,
     error: null,
   }),
+  useEnrollmentDetail: () => ({ data: undefined, isLoading: false }),
+  useCompleteEnrollmentTask: () => ({ mutate: vi.fn(), isPending: false, error: null }),
 }))
 
 const AETNA: PayerResponse = {

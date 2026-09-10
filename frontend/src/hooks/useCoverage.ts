@@ -6,6 +6,8 @@ import type {
   CoverageResponse,
   CreateCoverageRequest,
   CreatePayerRequest,
+  EnrollmentDetailResponse,
+  EnrollmentTransactionType,
   PayerEnrollmentListResponse,
   PayerListResponse,
   PayerResponse,
@@ -13,10 +15,12 @@ import type {
   UpdatePayerRequest,
 } from "@/types/coverage"
 import {
+  completeEnrollmentTask,
   createCoverage,
   createPayer,
   deactivateCoverage,
   fetchCoverage,
+  fetchEnrollmentDetail,
   listPayerEnrollments,
   listPayers,
   requestPayerEnrollments,
@@ -66,6 +70,40 @@ export function useRequestPayerEnrollments(token?: string) {
     mutationFn: ({ payerRowId }) => requestPayerEnrollments(payerRowId, token),
     // The payer row's overall status changes with its requests.
     invalidateKeys: ({ payerRowId }) => [
+      queryKeys.payers.enrollments(payerRowId),
+      queryKeys.payers.list(),
+    ],
+  })
+}
+
+/** An open task's fields, instructions and links, read fresh from the
+ * clearinghouse. Fetched when the completion form is open. */
+export function useEnrollmentDetail(
+  payerRowId: string | undefined,
+  transactionType: EnrollmentTransactionType | undefined,
+  token?: string,
+) {
+  return useAuthQuery<EnrollmentDetailResponse>({
+    queryKey: queryKeys.payers.enrollmentDetail(payerRowId ?? "", transactionType ?? ""),
+    queryFn: () => fetchEnrollmentDetail(payerRowId!, transactionType!, token),
+    enabled: !!payerRowId && !!transactionType,
+  })
+}
+
+export function useCompleteEnrollmentTask(token?: string) {
+  return useAuthMutation<
+    EnrollmentDetailResponse,
+    {
+      payerRowId: string
+      transactionType: EnrollmentTransactionType
+      taskId: string
+      fieldValues: Record<string, string | File>
+    }
+  >({
+    mutationFn: ({ payerRowId, transactionType, taskId, fieldValues }) =>
+      completeEnrollmentTask(payerRowId, transactionType, taskId, fieldValues, token),
+    invalidateKeys: ({ payerRowId, transactionType }) => [
+      queryKeys.payers.enrollmentDetail(payerRowId, transactionType),
       queryKeys.payers.enrollments(payerRowId),
       queryKeys.payers.list(),
     ],
