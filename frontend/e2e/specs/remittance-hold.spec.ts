@@ -1,32 +1,19 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 /**
- * A payer's numbers disagree, so the client is not billed — and a therapist
- * settles it.
+ * A payer's numbers disagree, the client is not billed, a therapist settles it.
  *
- * The unit tests cover the arithmetic and the repositories. This is the only
- * place the whole loop is driven at once: the pipeline reads the remittance,
- * the check refuses it, the database holds the row under the tenant's policy,
- * the panel puts it in front of the clinician who owns the claim, and their
- * answer writes the ledger row that was withheld. Every one of those is a
- * seam a unit test cannot cross.
+ * The only place the whole loop runs at once: pipeline, check, row policy,
+ * panel, and the answer writing the withheld ledger row. Unit tests cannot
+ * cross those seams.
  *
- * It is also the cheapest place this can ever be tested. The local stack's
- * fake clearinghouse manufactures the self-contradicting 835 on request, so
- * a case no real payer has ever sent us — and that the vendor's test payer
- * cannot produce, because it only ever pays in full — is a few lines here
- * rather than a deployment and a wait.
+ * The payer states a patient-responsibility total and itemises the same
+ * money as a contractual write-off. Everything else balances, so exactly one
+ * check fires.
  *
- * What the payer contradicts itself about: it states a patient-responsibility
- * total for the claim, and itemises the same money across the service lines
- * as a contractual write-off. Two statements about who owes it, and they
- * disagree. Everything else in the document balances, so exactly one check
- * fires and the hold names one reason.
- *
- * Serial, and resetting: the fake's reset cancels queued receipts, so a spec
- * that resets mid-run would cancel an acknowledgement another spec is waiting
- * for. It also clears the armed outcome, which this spec must not leave
- * behind — every claim filed after it would come back contradicting itself.
+ * Serial and resetting: reset cancels queued receipts another spec may be
+ * waiting for, and it clears the armed outcome — which this spec must not
+ * leave behind, or every later claim comes back contradicting itself.
  */
 
 import { expect, test } from "../fixtures/auth"

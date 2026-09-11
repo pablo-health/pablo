@@ -41,29 +41,20 @@ Every 835 rule starts from the recorded paid-in-full remittance and edits its
 amounts rather than building a new document, so a ``PART-`` or ``DENY-``
 claim gets the same shape the accept path already produces.
 
-Which rule applies is decided in ONE place, :func:`_outcome_for`, in this
-order: a per-claim override, then the control number's prefix, then a
-default armed for the whole run, then paid-in-full.
+One place decides which rule applies, :func:`_outcome_for`: a per-claim
+override, then the control number's prefix, then a default armed for the
+run, then paid-in-full.
 
-The overrides exist because a browser test cannot reach the prefixes at all:
-a claim filed through the app gets a server-generated control number. It
-arms ``POST /_fake/outcome`` with no control number BEFORE filing — the 835
-follows five seconds after submission, and a test that waited to learn the
-number would be racing that timer. Overrides are recorded on the state
-rather than passed down a call, so a timer-fired 835 and one forced through
-``/_fake/deliver`` can never say different things about the same claim.
+The overrides exist because a browser test cannot reach the prefixes — a
+claim filed through the app gets a server-generated control number. Arm
+``POST /_fake/outcome`` BEFORE filing; the 835 follows five seconds after
+submission. Overrides live on the state, so a timer-fired 835 and a forced
+one cannot disagree about the same claim. A prefix beats an armed default.
 
-A prefix beats the armed default, so a spec that armed one outcome and then
-deliberately filed a ``DENY-`` claim gets the denial it asked for.
-
-A WARNING about the ``NOSUM-`` rule, because there is a way to produce the
-same symptom by accident and the two must not be confused. The sibling fake
-used by unit tests (``tests/claims_pipeline_fakes.py`` ``remittance_report``)
-overrides claim-level amounts but not line-level ones, so any caller passing
-a paid amount other than the recorded one gets a self-inconsistent remittance
-without meaning to. The disagreement here is deliberate, is built by moving
-one adjustment's group code, and is written so a reader can see that it was
-on purpose.
+WARNING on ``NOSUM-``: the sibling fake in ``tests/claims_pipeline_fakes.py``
+overrides claim-level amounts but not line-level ones, so it produces the
+same symptom BY ACCIDENT. The disagreement here is deliberate and is one
+adjustment's group code.
 
 A submission's ``Idempotency-Key`` header is echoed on the response and a
 retry with the same key gets the same answer without starting new timers; the
@@ -721,13 +712,10 @@ def _paid_line(
         payment["unitsOfServicePaidCount"] = str(service["serviceUnitCount"])
     if patient_amount:
         # THE DELIBERATE DISAGREEMENT, and the only line that makes one.
-        #
-        # On a `disagreeing` claim the leftover is itemised as a contractual
-        # write-off — money nobody owes — while the claim header still states
-        # it as the client's share. The line still balances (charge = paid +
-        # adjustment) and so does the claim, so the engine's arithmetic
-        # checks pass and only the CLP05-vs-itemisation cross-check fires.
-        # That is on purpose: one hold, one reason, nothing ambiguous.
+        # A `disagreeing` claim itemises the leftover as a contractual
+        # write-off while the header still states it as the client's share.
+        # Line and claim both still balance, so only the CLP05 cross-check
+        # fires: one hold, one reason.
         group, reason = (
             (_CONTRACTUAL_GROUP, _CO_REASON_FEE_SCHEDULE)
             if outcome == "disagreeing"
