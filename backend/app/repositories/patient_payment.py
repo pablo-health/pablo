@@ -22,6 +22,21 @@ if TYPE_CHECKING:
     from ..models.payments import CardOnFile, PatientCharge
 
 
+class PaymentAlreadyInFlightError(Exception):
+    """A balance payment for this client is already on its way to the processor.
+
+    Raised by :meth:`PatientPaymentRepository.stage_charge` when the database
+    refuses a second pending ``payment`` row for one client. The route checks
+    for this before staging and answers 409; this is the same answer arriving
+    from the only place that can be certain of it, for the two requests that
+    both read the ledger before either wrote.
+
+    A domain error rather than the driver's ``IntegrityError``: what the
+    caller has to decide is "somebody else is already collecting", and that
+    question should not require knowing which index fired.
+    """
+
+
 class PatientPaymentRepository(ABC):
     """Reads and writes for one practice's card-on-file and charge ledger."""
 

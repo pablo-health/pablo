@@ -17,11 +17,18 @@ import uuid
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from ...db.models import PatientChargeRow, PatientPaymentMethodRow
 from ...models.payments import CardOnFile, PatientCharge
 from ...utcnow import utc_now
-from ..patient_payment import PatientPaymentRepository
+from ..patient_payment import PatientPaymentRepository, PaymentAlreadyInFlightError
+
+#: The unique partial index that refuses a second pending balance payment for
+#: one client. Matched on the driver's message rather than assuming every
+#: IntegrityError from this insert is that one — a future constraint on this
+#: table must not be silently reported as "already collecting".
+_ONE_PENDING_PAYMENT = "ux_patient_charges_one_pending_payment"
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -164,7 +171,17 @@ class PostgresPatientPaymentRepository(PatientPaymentRepository):
             created_at=utc_now(),
         )
         self._session.add(row)
-        self._session.flush()
+        try:
+            # Inside a savepoint so a refusal leaves the session usable: the
+            # caller answers 409 and the request ends, but a poisoned session
+            # would take the audit write and anything else on it down with a
+            # far less obvious error.
+            with self._session.begin_nested():
+                self._session.flush()
+        except IntegrityError as exc:
+            if _ONE_PENDING_PAYMENT in str(exc.orig):
+                raise PaymentAlreadyInFlightError(patient_id) from exc
+            raise
         return _to_charge(row)
 
     def record_settlement(self, charge_id: str, *, settled_by_charge_id: str) -> None:

@@ -1873,6 +1873,31 @@ class PatientChargeRow(Base):
             unique=True,
             postgresql_where=text("stripe_payment_intent_id IS NOT NULL"),
         ),
+        # At most one balance payment in flight per client, and the database
+        # is what says so.
+        #
+        # The route checks first, and that check is not enough on its own: it
+        # reads the ledger and then inserts, so two requests can both read
+        # before either has written. A staged row is ``pending``, and
+        # ``pending`` is deliberately not counted as collected — so while the
+        # first request is at the processor the balance still reads as owed,
+        # and the second charges the card again for the whole of it. What the
+        # client has then is two charges and a refund somebody has to notice.
+        #
+        # ``kind = 'payment'`` only. Every other kind is a BILL rather than a
+        # collection, and a client can legitimately have any number of those
+        # outstanding at once; constraining them would refuse a second
+        # session charge for no reason.
+        #
+        # ``status = 'pending'`` only, so a terminal row never blocks. A
+        # decline is final and retrying is a fresh charge a clinician asked
+        # for.
+        Index(
+            "ux_patient_charges_one_pending_payment",
+            "patient_id",
+            unique=True,
+            postgresql_where=text("kind = 'payment' AND status = 'pending'"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(128), primary_key=True)

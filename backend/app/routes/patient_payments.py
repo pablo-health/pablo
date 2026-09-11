@@ -92,6 +92,7 @@ from ..repositories import (
     get_patient_payment_repository,
     get_patient_repository,
 )
+from ..repositories.patient_payment import PaymentAlreadyInFlightError
 from ..scheduling_engine.services.rate_resolver import resolve_rate_cents
 from ..services import AuditService, get_audit_service
 
@@ -785,10 +786,7 @@ def charge_balance(
 
     ledger = payments.list_charges(patient_id)
     if _payment_already_in_flight(ledger):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="A payment for this client is already being processed.",
-        )
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_PAYMENT_IN_FLIGHT)
 
     amount_cents = patient_balance(ledger).balance_cents
     if amount_cents <= 0:
@@ -803,14 +801,23 @@ def charge_balance(
             detail="The balance is too large to charge in one go.",
         )
 
-    charge = payments.stage_charge(
-        patient_id=patient_id,
-        appointment_id=None,
-        amount_cents=amount_cents,
-        currency=DEFAULT_CHARGE_CURRENCY,
-        user_id=user.id,
-        kind="payment",
-    )
+    try:
+        charge = payments.stage_charge(
+            patient_id=patient_id,
+            appointment_id=None,
+            amount_cents=amount_cents,
+            currency=DEFAULT_CHARGE_CURRENCY,
+            user_id=user.id,
+            kind="payment",
+        )
+    except PaymentAlreadyInFlightError as exc:
+        # The check above is a read followed by an insert, so two requests can
+        # both pass it. This is the same refusal arriving from the only place
+        # that can be certain — and it is the same 409, because from the
+        # clinician's side nothing different happened.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=_PAYMENT_IN_FLIGHT
+        ) from exc
     audit.log(
         AuditAction.PATIENT_CHARGE_CREATED,
         user,
@@ -835,6 +842,13 @@ def charge_balance(
     return _to_charge_response(settled)
 
 
+#: Said by the pre-check and by the database constraint behind it. One
+#: string, because a clinician who double-clicked should not get two
+#: different accounts of what happened depending on how close the two
+#: requests landed.
+_PAYMENT_IN_FLIGHT = "A payment for this client is already being processed."
+
+
 def _payment_already_in_flight(ledger: list[PatientCharge]) -> bool:
     """Is a balance payment for this client already on its way to the processor?
 
@@ -850,12 +864,17 @@ def _payment_already_in_flight(ledger: list[PatientCharge]) -> bool:
 
     This closes the window a double-click actually produces: the first request
     commits its ``pending`` row before contacting the processor, so the second
-    one sees it. It is NOT airtight — two requests can both read the ledger
-    before either has inserted, and this check will pass for both. Making it
-    airtight needs the database to enforce it, as a unique partial index over
-    (patient_id) where kind = 'payment' and status = 'pending'. That is a
-    migration and belongs in its own change rather than being smuggled in
-    behind a route.
+    one sees it.
+
+    It is not airtight on its own, and is no longer asked to be — two requests
+    can both read the ledger before either has inserted, and this check passes
+    for both. The unique partial index ``ux_patient_charges_one_pending_payment``
+    is what makes the refusal true; the caller turns the resulting
+    :class:`~app.repositories.patient_payment.PaymentAlreadyInFlightError` into
+    the same 409. This check stays because it answers the ordinary case — a
+    clinician clicking twice a second apart — without a round trip to a
+    constraint violation, and because it reads as the rule rather than as a
+    consequence of one.
 
     A ``failed`` row does not block anything: a decline is terminal, and
     retrying is a fresh charge the clinician asks for.
