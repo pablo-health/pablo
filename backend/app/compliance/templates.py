@@ -545,6 +545,23 @@ _TEMPLATES: tuple[ComplianceTemplate, ...] = (
         severity="critical",
     ),
     ComplianceTemplate(
+        item_type="claim_remittance_held",
+        label="Remittance does not add up",
+        description=(
+            "A payer stated the client's share twice and the two statements disagree, so "
+            "the client has not been billed. Read the remittance, then bill the stated "
+            "amount or waive it."
+        ),
+        cadence_days=None,
+        reminder_windows=(7, 3, 0),
+        multi_instance=True,
+        min_edition="core",
+        # Above the unmatched-remittance entry: that one is money nobody has
+        # posted yet, this one is a client whose balance has stopped moving.
+        sort_order=365,
+        severity="critical",
+    ),
+    ComplianceTemplate(
         item_type="claim_unmatched_remittance",
         label="Unmatched remittance",
         description="A payment arrived that could not be matched to a claim. Post it by hand.",

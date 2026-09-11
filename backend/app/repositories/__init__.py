@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from .postgres.compliance_document import PostgresComplianceDocumentRepository
     from .postgres.compliance_item import PostgresComplianceItemRepository
     from .postgres.supervision import PostgresSupervisionRepository
+    from .remittance_hold import RemittanceHoldRepository
 
 from .allowlist import (
     AllowlistRepository,
@@ -164,6 +165,13 @@ def get_claim_receipt_repository() -> ClaimReceiptRepository:
     from .postgres.claim_receipts import PostgresClaimReceiptRepository
 
     return PostgresClaimReceiptRepository(_get_pg_session())
+
+
+def get_remittance_hold_repository() -> RemittanceHoldRepository:
+    """Get the remittance-hold repository instance."""
+    from .postgres.remittance_hold import PostgresRemittanceHoldRepository
+
+    return PostgresRemittanceHoldRepository(_get_pg_session())
 
 
 def get_session_repository() -> TherapySessionRepository:

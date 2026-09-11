@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 from ..db.models import DEFAULT_CHARGE_CURRENCY
 from . import holds
 from .clearinghouse import ClearinghouseError
-from .receipts import record
+from .receipts import announce, record
 from .remittance_lines import DENIED, applied_to, disagreement_in
 from .transitions import advance, next_state
 
@@ -202,7 +202,10 @@ def apply_remittance(
 
 
 #: The ledger row kind that carries what a payer said a client owes.
-PATIENT_RESPONSIBILITY_KIND = "patient_resp"
+#: Defined in :mod:`app.claims.holds` — the settle path writes the same row
+#: this path withholds — and re-exported here, where callers already look
+#: for it.
+PATIENT_RESPONSIBILITY_KIND = holds.PATIENT_RESPONSIBILITY_KIND
 
 
 def patient_responsibility_billed(charges: PatientPaymentRepository, claim: Claim) -> int:
@@ -293,7 +296,7 @@ def apply_posting(
     if detail is not None:
         disagreement = disagreement_in(detail)
         if disagreement is not None:
-            holds.record(
+            stored_hold = holds.record(
                 pipeline.holds,
                 holds.hold_for(
                     stored,
@@ -304,6 +307,18 @@ def apply_posting(
                     now=now,
                 ),
             )
+            if stored_hold is not None:
+                # A hold nobody meets is a client whose balance quietly
+                # stopped being billed, so it goes in front of the
+                # clinician who owns the claim as work — through the same
+                # reminder surface a rejection or a denial uses, rather
+                # than a notification channel of its own.
+                #
+                # Only on a hold that was actually written. Announcing a
+                # duplicate would put a second reminder in front of
+                # somebody for a disagreement they have already been told
+                # about.
+                announce(pipeline, stored, "remittance_held")
 
     if charges is not None:
         # What the payer says the client owes becomes a row on the client's

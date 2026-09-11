@@ -32,15 +32,23 @@ import logging
 import uuid
 from typing import TYPE_CHECKING
 
-from ..models.claims_holds import RemittanceHold
+from ..db.models import DEFAULT_CHARGE_CURRENCY
+from ..models.claims_holds import FINDINGS_THAT_BILL, RemittanceHold
 
 if TYPE_CHECKING:
     from datetime import datetime
 
     from ..models.claims import Claim
+    from ..models.claims_holds import HoldFinding
     from ..models.claims_responses import RemittanceClaim
+    from ..repositories.patient_payment import PatientPaymentRepository
     from ..repositories.remittance_hold import RemittanceHoldRepository
     from .remittance_lines import Disagreement
+
+#: The ledger row kind that carries what a payer said a client owes.
+#: Defined here rather than imported from :mod:`app.claims.remittance`,
+#: which imports this module.
+PATIENT_RESPONSIBILITY_KIND = "patient_resp"
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +150,63 @@ def record(
         stored.computed_cents,
     )
     return stored
+
+
+def settle(  # noqa: PLR0913 — the decision and everything it needs to write
+    holds: RemittanceHoldRepository,
+    hold: RemittanceHold,
+    *,
+    finding: HoldFinding,
+    charges: PatientPaymentRepository | None,
+    already_billed: int,
+    user_id: str,
+    now: datetime,
+) -> RemittanceHold | None:
+    """Close a hold the way a person decided, and write what that implies.
+
+    ``bill_as_stated`` writes the ledger row that was withheld — the
+    difference between what the payer says the client owes and what this
+    claim has already billed, computed now rather than read from a stored
+    copy. Every other finding writes nothing.
+
+    Returns the resolved hold, or ``None`` when there is no such hold for
+    this principal to resolve.
+
+    **Both answers stay available for the whole life of a hold.** Nothing
+    here consults the age of the hold, whether it was acknowledged, or
+    whether anybody else has looked at it. A practice holds the client
+    relationship and the authority over that balance; making them wait on
+    somebody else to act on it would be the software overreaching.
+
+    The ledger row is written BEFORE the hold is resolved, so a failure
+    leaves the hold open rather than leaving it closed with no bill behind
+    it. Of the two ways to be wrong, "the practice has to click again" is
+    much better than "the client was never billed and the record says they
+    were".
+    """
+    if finding in FINDINGS_THAT_BILL:
+        if charges is None:
+            msg = "cannot bill a held remittance without a charge ledger"
+            raise ValueError(msg)
+        difference = withheld_cents(hold, already_billed=already_billed)
+        if difference:
+            charges.add_ledger_row(
+                patient_id=hold.patient_id,
+                kind=PATIENT_RESPONSIBILITY_KIND,
+                amount_cents=difference,
+                currency=DEFAULT_CHARGE_CURRENCY,
+                user_id=user_id,
+                claim_id=hold.claim_id,
+                note=f"payer remittance {hold.posting_key}",
+            )
+    resolved = holds.resolve(hold.id, finding=finding, user_id=user_id, at=now)
+    if resolved is not None:
+        logger.info(
+            "remittance_hold_resolved hold_id=%s finding=%s",
+            resolved.id,
+            resolved.finding,
+        )
+    return resolved
 
 
 def withheld_cents(hold: RemittanceHold, *, already_billed: int) -> int:

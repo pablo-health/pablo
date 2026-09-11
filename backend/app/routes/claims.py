@@ -66,6 +66,12 @@ from ..claims.assembly import (
     build_void_claim,
 )
 from ..claims.deadlines import deadlines_for
+from ..claims.events import resolve_compliance_reminder
+from ..claims.holds import (
+    PATIENT_RESPONSIBILITY_KIND,
+    settle,
+    withheld_cents,
+)
 from ..claims.scrub import scrub
 from ..claims.tracker import next_action_for
 from ..claims.transitions import ClaimNotValidError, advance
@@ -86,6 +92,13 @@ from ..models.claims import (
     FindingResponse,
     ValidateClaimResponse,
 )
+from ..models.claims_holds import (
+    FINDINGS_THAT_BILL,
+    RemittanceHold,
+    RemittanceHoldListResponse,
+    RemittanceHoldResponse,
+    ResolveHoldRequest,
+)
 from ..repositories import (
     get_appointment_repository,
     get_appointment_type_repository,
@@ -93,8 +106,10 @@ from ..repositories import (
     get_claim_repository,
     get_clinician_profile_repository,
     get_patient_coverage_repository,
+    get_patient_payment_repository,
     get_patient_repository,
     get_payer_repository,
+    get_remittance_hold_repository,
     get_user_repository,
 )
 from ..services import AuditService, get_audit_service
@@ -115,6 +130,8 @@ if TYPE_CHECKING:
     from ..repositories.clinician_profile import ClinicianProfileRepository
     from ..repositories.coverage import PatientCoverageRepository, PayerRepository
     from ..repositories.patient import PatientRepository
+    from ..repositories.patient_payment import PatientPaymentRepository
+    from ..repositories.remittance_hold import RemittanceHoldRepository
     from ..repositories.user import UserRepository
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
     from ..scheduling_engine.repositories.appointment_type import AppointmentTypeRepository
@@ -147,9 +164,12 @@ ClinicianProfilesRepo = Annotated[
     "ClinicianProfileRepository", Depends(get_clinician_profile_repository)
 ]
 UsersRepo = Annotated["UserRepository", Depends(get_user_repository)]
+HoldsRepo = Annotated["RemittanceHoldRepository", Depends(get_remittance_hold_repository)]
+ChargesRepo = Annotated["PatientPaymentRepository", Depends(get_patient_payment_repository)]
 BillingProfile = Annotated["Mapping[str, object]", Depends(get_billing_profile_loader)]
 
 _CLAIM_NOT_FOUND = "Claim not found."
+_HOLD_NOT_FOUND = "Remittance hold not found."
 _CLIENT_NOT_FOUND = "Client not found."
 
 
@@ -441,6 +461,193 @@ def list_claims(
     return ClaimTrackerResponse(data=data, total=len(data))
 
 
+# ---------------------------------------------------------------------------
+# Remittance holds: a client bill the engine refused to write
+# ---------------------------------------------------------------------------
+
+
+def _require_hold(
+    holds: HoldsRepo, patients: PatientRepository, hold_id: str, user_id: str
+) -> tuple[RemittanceHold, Patient]:
+    """404 for an absent hold, and for one whose client the caller cannot see.
+
+    The row policy already hides another clinician's holds, so the first
+    lookup usually answers. The client read is the same belt-and-braces
+    the claim routes use, and it is 404 rather than 403 for the same
+    reason: whether a hold exists on somebody else's client is itself
+    something this caller has no business learning.
+    """
+    hold = holds.get(hold_id)
+    if hold is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_HOLD_NOT_FOUND)
+    patient = patients.get(hold.patient_id, user_id)
+    if patient is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_HOLD_NOT_FOUND)
+    return hold, patient
+
+
+def _to_hold_response(hold: RemittanceHold) -> RemittanceHoldResponse:
+    return RemittanceHoldResponse(
+        id=hold.id,
+        claim_id=hold.claim_id,
+        control_number=hold.control_number,
+        state=hold.state,
+        reason=hold.reason,
+        stated_cents=hold.stated_cents,
+        computed_cents=hold.computed_cents,
+        delta_cents=hold.delta_cents,
+        patient_responsibility_cents=hold.patient_responsibility_cents,
+        line_control_number=hold.line_control_number,
+        codes=hold.codes,
+        line_count=hold.line_count,
+        payer_name=hold.payer_name,
+        detected_at=hold.detected_at,
+        acknowledged_at=hold.acknowledged_at,
+        resolved_at=hold.resolved_at,
+        finding=hold.finding,
+    )
+
+
+@router.get("/holds", response_model=RemittanceHoldListResponse)
+def list_remittance_holds(
+    request: Request,
+    user: CurrentUser,
+    holds: HoldsRepo,
+    audit: AuditService = Depends(get_audit_service),
+) -> RemittanceHoldListResponse:
+    """Every remittance still withholding one of this clinician's client bills."""
+    data = [_to_hold_response(hold) for hold in holds.list_open()]
+    audit.log(
+        AuditAction.CLAIM_REMITTANCE_HOLDS_LISTED,
+        user,
+        request,
+        resource_type=ResourceType.CLAIM,
+        resource_id="holds",
+        changes={"hold_ids": [hold.id for hold in data], "count": len(data)},
+    )
+    return RemittanceHoldListResponse(data=data, total=len(data))
+
+
+@router.post("/holds/{hold_id}/acknowledge", response_model=RemittanceHoldResponse)
+def acknowledge_remittance_hold(
+    hold_id: str,
+    request: Request,
+    user: CurrentUser,
+    holds: HoldsRepo,
+    patients: PatientsRepo,
+    audit: AuditService = Depends(get_audit_service),
+) -> RemittanceHoldResponse:
+    """Say the disagreement has been seen. The hold stays open.
+
+    Separate from resolving on purpose: reading a remittance and deciding
+    what to bill are different acts, often days apart, and collapsing them
+    would make "I have looked at this" cost a client a bill.
+
+    Audited, and not only because the route reads a claim. It is a named
+    person asserting they have seen a specific client's held balance, which
+    is the fact that silences the short re-notification tier — so if that
+    balance is still unbilled months later, the record says who knew.
+    """
+    hold, patient = _require_hold(holds, patients, hold_id, user.id)
+    acknowledged = holds.acknowledge(hold.id, at=utc_now())
+    if acknowledged is None:  # pragma: no cover — _require_hold just read it
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_HOLD_NOT_FOUND)
+    audit.log(
+        AuditAction.CLAIM_REMITTANCE_HOLD_ACKNOWLEDGED,
+        user,
+        request,
+        resource_type=ResourceType.CLAIM,
+        resource_id=hold.claim_id,
+        patient=patient,
+        changes={
+            "hold_id": hold.id,
+            "claim_id": hold.claim_id,
+            "control_number": hold.control_number,
+            "reason": hold.reason,
+        },
+    )
+    return _to_hold_response(acknowledged)
+
+
+@router.post("/holds/{hold_id}/resolve", response_model=RemittanceHoldResponse)
+def resolve_remittance_hold(
+    hold_id: str,
+    body: ResolveHoldRequest,
+    request: Request,
+    user: CurrentUser,
+    holds: HoldsRepo,
+    patients: PatientsRepo,
+    charges: ChargesRepo,
+    audit: AuditService = Depends(get_audit_service),
+) -> RemittanceHoldResponse:
+    """Bill the client what the payer stated, or waive it.
+
+    Both answers are available for the whole life of the hold — never
+    disabled, never gated on acknowledging first, never waiting on anybody
+    outside the practice. The practice holds the client relationship and
+    the authority over that balance.
+
+    ``bill_as_stated`` writes exactly the ledger row that was withheld,
+    recomputed against the ledger now rather than read from a stored copy.
+    ``waived`` writes none. A hold somebody already resolved is returned
+    as it stands: the first decision is the decision, and the second
+    caller is a double-click or a second tab.
+    """
+    hold, patient = _require_hold(holds, patients, hold_id, user.id)
+    if not hold.is_open:
+        return _to_hold_response(hold)
+    already_billed = sum(
+        row.amount_cents
+        for row in charges.list_charges(hold.patient_id)
+        if row.claim_id == hold.claim_id and row.kind == PATIENT_RESPONSIBILITY_KIND
+    )
+    written = (
+        withheld_cents(hold, already_billed=already_billed)
+        if body.finding in FINDINGS_THAT_BILL
+        else 0
+    )
+    resolved = settle(
+        holds,
+        hold,
+        finding=body.finding,
+        charges=charges,
+        already_billed=already_billed,
+        user_id=user.id,
+        now=utc_now(),
+    )
+    if resolved is None:  # pragma: no cover — _require_hold just read it
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_HOLD_NOT_FOUND)
+    resolve_compliance_reminder(
+        get_db_session(),
+        kind="remittance_held",
+        control_number=hold.control_number,
+        user_id=user.id,
+    )
+    audit.log(
+        AuditAction.CLAIM_REMITTANCE_HOLD_RESOLVED,
+        user,
+        request,
+        resource_type=ResourceType.CLAIM,
+        resource_id=hold.claim_id,
+        patient=patient,
+        changes={
+            "hold_id": hold.id,
+            "claim_id": hold.claim_id,
+            "control_number": hold.control_number,
+            "reason": hold.reason,
+            "finding": body.finding,
+            "billed_cents": written,
+        },
+    )
+    return _to_hold_response(resolved)
+
+
+# These sit ABOVE ``GET /{claim_id}`` on purpose. FastAPI matches routes in
+# registration order, so a literal path declared after a single-segment
+# parameter never gets a look in: ``/api/claims/holds`` would arrive at
+# ``get_claim`` as ``claim_id="holds"`` and answer 404. Moving either block
+# past the other silently breaks this surface, and nothing but a route test
+# would notice.
 @router.get("/{claim_id}", response_model=ClaimDetailResponse)
 def get_claim(
     claim_id: str,

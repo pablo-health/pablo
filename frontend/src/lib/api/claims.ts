@@ -21,6 +21,15 @@ import {
   type ClaimResponse,
   type ClaimTrackerFilters,
   type ClaimTrackerResponse,
+  type RemittanceHoldFinding,
+  type RemittanceHold,
+  type RemittanceHoldListResponse,
+  type RemittanceHoldFinding,
+  type RemittanceHold,
+  type RemittanceHoldListResponse,
+  type RemittanceHoldFinding,
+  type RemittanceHold,
+  type RemittanceHoldListResponse,
   type ValidateClaimResponse,
 } from "@/types/claims"
 import { ApiError, get, getBlob, post } from "./client"
@@ -119,4 +128,85 @@ export function blockedClaimsFrom(error: unknown): ClaimExportFinding[] | null {
   if (!(error instanceof ApiError) || error.code !== CLAIM_EXPORT_BLOCKED) return null
   const claims = error.details?.claims
   return Array.isArray(claims) ? (claims as ClaimExportFinding[]) : []
+}
+
+/** Every remittance still withholding one of this clinician's client bills. */
+export async function listRemittanceHolds(token?: string): Promise<RemittanceHoldListResponse> {
+  return get<RemittanceHoldListResponse>(`${CLAIMS}/holds`, token)
+}
+
+/** Say the disagreement has been seen. The hold stays open and nothing is billed. */
+export async function acknowledgeRemittanceHold(
+  holdId: string,
+  token?: string,
+): Promise<RemittanceHold> {
+  return post<RemittanceHold>(`${CLAIMS}/holds/${holdId}/acknowledge`, {}, token)
+}
+
+/**
+ * Bill the client what the payer stated, or waive it.
+ *
+ * Both answers are accepted for the whole life of the hold — there is no
+ * order to follow and nothing to acknowledge first.
+ */
+export async function resolveRemittanceHold(
+  holdId: string,
+  finding: RemittanceHoldFinding,
+  token?: string,
+): Promise<RemittanceHold> {
+  return post<RemittanceHold>(`${CLAIMS}/holds/${holdId}/resolve`, { finding }, token)
+}
+
+/** Every remittance still withholding one of this clinician's client bills. */
+export async function listRemittanceHolds(token?: string): Promise<RemittanceHoldListResponse> {
+  return get<RemittanceHoldListResponse>(`${CLAIMS}/holds`, token)
+}
+
+/** Say the disagreement has been seen. The hold stays open and nothing is billed. */
+export async function acknowledgeRemittanceHold(
+  holdId: string,
+  token?: string,
+): Promise<RemittanceHold> {
+  return post<RemittanceHold>(`${CLAIMS}/holds/${holdId}/acknowledge`, {}, token)
+}
+
+/**
+ * Bill the client what the payer stated, or waive it.
+ *
+ * Both answers are accepted for the whole life of the hold — there is no
+ * order to follow and nothing to acknowledge first.
+ */
+export async function resolveRemittanceHold(
+  holdId: string,
+  finding: RemittanceHoldFinding,
+  token?: string,
+): Promise<RemittanceHold> {
+  return post<RemittanceHold>(`${CLAIMS}/holds/${holdId}/resolve`, { finding }, token)
+}
+
+/** Every remittance still withholding one of this clinician's client bills. */
+export async function listRemittanceHolds(token?: string): Promise<RemittanceHoldListResponse> {
+  return get<RemittanceHoldListResponse>(`${CLAIMS}/holds`, token)
+}
+
+/** Say the disagreement has been seen. The hold stays open and nothing is billed. */
+export async function acknowledgeRemittanceHold(
+  holdId: string,
+  token?: string,
+): Promise<RemittanceHold> {
+  return post<RemittanceHold>(`${CLAIMS}/holds/${holdId}/acknowledge`, {}, token)
+}
+
+/**
+ * Bill the client what the payer stated, or waive it.
+ *
+ * Both answers are accepted for the whole life of the hold — there is no
+ * order to follow and nothing to acknowledge first.
+ */
+export async function resolveRemittanceHold(
+  holdId: string,
+  finding: RemittanceHoldFinding,
+  token?: string,
+): Promise<RemittanceHold> {
+  return post<RemittanceHold>(`${CLAIMS}/holds/${holdId}/resolve`, { finding }, token)
 }
