@@ -18,6 +18,12 @@ export interface ReceivedRequest {
   json: unknown
   /** Set on claim submissions. */
   control_number: string | null
+  /**
+   * Set on a document upload instead of a body. The bytes are a signed
+   * practice document; the fake records that they arrived and how many, and
+   * keeps none of them.
+   */
+  bytes?: number
 }
 
 export interface WebhookDelivery {
@@ -29,6 +35,11 @@ export interface WebhookDelivery {
   url: string
   /** The backend's response status, or null when the post never completed. */
   status: number | null
+  /**
+   * The exception class when the post never completed — the class, not the
+   * message: an httpx error carries the request it failed on, and that
+   * request is a signed webhook.
+   */
   error: string | null
 }
 
@@ -56,12 +67,21 @@ export const clearinghouse = {
     return call<ReceivedLog>("GET", "/_fake/received")
   },
 
-  /** Claim submissions, optionally for one control number. */
+  /**
+   * Claim submissions, optionally for one control number.
+   *
+   * Matches both paths on purpose. Submission moved to the vendor's native
+   * endpoint (`/professional-claim-submissions`) and the older compatibility
+   * path (`/professionalclaims/v3/submission`) is still served, so a spec
+   * that asked about only one of them would answer "nothing was sent" for a
+   * claim that was.
+   */
   async submissions(controlNumber?: string): Promise<ReceivedRequest[]> {
     const log = await this.received()
     return log.requests.filter(
       (r) =>
-        r.path.endsWith("/professionalclaims/v3/submission") &&
+        (r.path.endsWith("/professional-claim-submissions") ||
+          r.path.endsWith("/professionalclaims/v3/submission")) &&
         (controlNumber === undefined || r.control_number === controlNumber),
     )
   },

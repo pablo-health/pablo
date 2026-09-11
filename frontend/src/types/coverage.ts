@@ -59,6 +59,69 @@ export interface PayerEnrollmentListResponse {
   enrollment_status: EnrollmentStatus
 }
 
+/** What a task wants: text the practice types, or a PDF it uploads. */
+export type EnrollmentFieldType = "TEXT" | "DOCUMENT"
+
+export interface EnrollmentTaskField {
+  /** The clearinghouse's own key for the field; what an answer is filed under. */
+  key: string
+  label: string
+  field_type: EnrollmentFieldType
+  description: string | null
+}
+
+export interface EnrollmentTaskLink {
+  label: string
+  url: string
+  /**
+   * True when the link points back at the clearinghouse's own API, which
+   * answers a browser with 403. Open those through
+   * `resolveEnrollmentTaskLink`; follow any other link directly.
+   */
+  resolvable: boolean
+}
+
+/**
+ * One thing the payer is waiting on, shaped as the form to fill in.
+ *
+ * `fields` empty means the task is the instructions themselves — done in a
+ * payer's portal or over the telephone — and answering it says the practice
+ * did that.
+ */
+export interface EnrollmentTaskResponse {
+  id: string
+  instructions: string | null
+  links: EnrollmentTaskLink[]
+  fields: EnrollmentTaskField[]
+}
+
+export type EnrollmentDocumentStatus = "PENDING" | "UPLOADED" | "FAILED"
+
+export interface EnrollmentDocumentResponse {
+  id: string
+  name: string | null
+  status: EnrollmentDocumentStatus
+}
+
+export interface EnrollmentTaskListResponse {
+  data: EnrollmentTaskResponse[]
+  status: EnrollmentRequestStatus
+  /** Every PDF on the enrollment, whichever side put it there. */
+  documents: EnrollmentDocumentResponse[]
+}
+
+export interface EnrollmentDocumentUrlResponse {
+  url: string
+}
+
+/** What a practice-wide refresh pass answered. */
+export interface PayerEnrollmentRefreshResponse {
+  changed: number
+  checked_at: string
+  /** True when this is the previous pass's answer, inside the throttle floor. */
+  throttled: boolean
+}
+
 export interface CreatePayerRequest {
   name: string
   payer_id: string

@@ -44,7 +44,7 @@ import logging
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from ..db.models import ClinicianProfileRow
 from ..models.audit import ACTOR_TYPE_CLINICIAN, ACTOR_TYPE_SYSTEM
@@ -72,6 +72,7 @@ from ..services.coverage_intake import UNKNOWN_PAYER_ID
 from ..services.practice_billing_profile import load_billing_profile
 from ..utcnow import utc_now
 from .clearinghouse import ClearinghouseError
+from .events import ClaimEvent, ClaimEventDetail, CodeRef, emit
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -390,6 +391,146 @@ def summary_for_coverage(coverage: PatientCoverage) -> EligibilitySummary | None
 
 
 # ---------------------------------------------------------------------------
+# What an AAA rejection means
+# ---------------------------------------------------------------------------
+
+#: What to do about an AAA rejection: retry the same request, fix something
+#: about it first, or stop for a person (or an enrollment) because no retry
+#: changes the answer.
+RejectDisposition = Literal["retry_as_is", "fix_then_retry", "stop_enrollment", "stop_manual"]
+
+HTTP_TOO_MANY_REQUESTS = 429
+
+#: 42 "unable to respond at current time", 80 "no response received /
+#: transaction terminated" — the payer or the gateway in front of it is
+#: down. Nothing about the request is wrong, so the same 270 is worth
+#: sending again once it comes back.
+_RETRY_AS_IS_CODES = frozenset({"42", "80"})
+
+#: 79 "invalid or missing entity identification number" doubles as "unknown
+#: or unconfigured payer id" when it arrives alone. Riding alongside 42 it
+#: is the gateway's own way of saying "try again" — see _RETRY_AS_IS_CODES,
+#: checked first — but alone it means the payer id on file is wrong, and no
+#: amount of retrying fixes a payer id.
+_UNCONFIGURED_PAYER_CODE = "79"
+
+#: 75 subscriber not found, 72 invalid/missing member id, 73 name mismatch,
+#: 65/67 date-of-birth and other required-field format problems, 56/57/58
+#: missing required fields — every one of these is a request that a
+#: different member id, name, or date shape could get past.
+_FIX_THEN_RETRY_CODES = frozenset({"75", "72", "73", "65", "67", "56", "57", "58"})
+
+#: 41 provider not eligible, 43 / 51 provider not on file with this payer —
+#: the practice itself has no enrollment with the payer being asked. No
+#: retry, and no fix to the request, changes that; only an enrollment does.
+_ENROLLMENT_CODES = frozenset({"41", "43", "51"})
+
+
+def reject_disposition(
+    codes: Iterable[str], *, http_status: int | None = None
+) -> RejectDisposition:
+    """What to do about the AAA codes (and/or HTTP status) a check came back with.
+
+    Order matters: an enrollment gap always wins — retrying or fixing the
+    request is pointless when the practice isn't enrolled with the payer at
+    all. Next the transport-is-down codes, an HTTP 429 counted the same way
+    since a rate limit means the same thing. Then 79 riding alone: an
+    unconfigured payer id nobody can retry into working. Then everything a
+    changed request could clear. A code this table has never seen stops
+    rather than guessing.
+    """
+    code_set = set(codes)
+    if code_set & _ENROLLMENT_CODES:
+        return "stop_enrollment"
+    if http_status == HTTP_TOO_MANY_REQUESTS or code_set & _RETRY_AS_IS_CODES:
+        return "retry_as_is"
+    if _UNCONFIGURED_PAYER_CODE in code_set:
+        return "stop_manual"
+    if code_set & _FIX_THEN_RETRY_CODES:
+        return "fix_then_retry"
+    return "stop_manual"
+
+
+#: Real-time retry-as-is budget: keep retrying immediately while a
+#: clinician is waiting on the button, then give up rather than hang.
+REALTIME_RETRY_BUDGET_SECONDS = 120.0
+
+#: Scheduled retry-as-is backoff: doubling from one minute, capped at
+#: thirty — a payer outage that takes an hour to clear should not be
+#: hammered every sixty seconds in the meantime.
+SCHEDULED_RETRY_INITIAL_SECONDS = 60.0
+SCHEDULED_RETRY_MAX_SECONDS = 1800.0
+
+
+def next_retry_delay_seconds(
+    *, attempt: int, elapsed_seconds: float, realtime: bool
+) -> float | None:
+    """Seconds before the next ``retry_as_is`` attempt, or ``None`` to stop.
+
+    ``attempt`` counts attempts already made (1 after the first failure).
+    A real-time check retries immediately until ``elapsed_seconds`` passes
+    the budget, then gives up. A scheduled check backs off exponentially
+    with no fixed end here — the queue's own attempt limit is what
+    eventually stops it, this only shapes the spacing.
+    """
+    if realtime:
+        return 0.0 if elapsed_seconds < REALTIME_RETRY_BUDGET_SECONDS else None
+    delay = SCHEDULED_RETRY_INITIAL_SECONDS * (2.0 ** max(attempt - 1, 0))
+    return min(delay, SCHEDULED_RETRY_MAX_SECONDS)
+
+
+#: Printed on most US health plan cards ahead of the payer's own member id
+#: (the HIPAA-assigned issuer identifier for health plans). Payers reject a
+#: member id that still carries it rather than stripping it themselves.
+_CARD_ISSUER_PREFIX = "80840"
+
+
+def strip_card_issuer_prefix(member_id: str) -> str:
+    """``member_id`` without a leading card-issuer prefix, if it has one."""
+    stripped = member_id.strip()
+    if stripped.startswith(_CARD_ISSUER_PREFIX) and len(stripped) > len(_CARD_ISSUER_PREFIX):
+        return stripped[len(_CARD_ISSUER_PREFIX) :]
+    return stripped
+
+
+def _normalize_name(name: str) -> str:
+    """Loose enough to look past a hyphen, an apostrophe, or case."""
+    return "".join(ch for ch in name.casefold() if ch.isalnum())
+
+
+def identity_matches_on_file(
+    returned: EligibilitySubscriber, *, patient: Patient, coverage: PatientCoverage
+) -> bool:
+    """Whether a relaxed retry's answer is still about the client on file.
+
+    An identity-relaxing retry (dropping the member id for a 72, trying a
+    name variant for a 75) exists to get past a payer's typo-intolerant
+    matching — never to accept whichever record the payer happens to
+    return instead. On an explicit disagreement between what the payer
+    echoed back and what is on file — a date of birth that does not match,
+    or a name that does not resemble it — the answer must not be
+    auto-accepted; it goes to a person instead of into the chart. A payer
+    that echoes no demographics at all is not evidence either way and does
+    not by itself block acceptance.
+    """
+    expected_last_name: str | None
+    if coverage.subscriber_relationship == "self":
+        expected_last_name = patient.last_name
+        expected_dob = _wire_date(patient.date_of_birth)
+    else:
+        expected_last_name = coverage.subscriber_last_name
+        expected_dob = _wire_date(coverage.subscriber_date_of_birth)
+
+    if returned.dateOfBirth and expected_dob and returned.dateOfBirth != expected_dob:
+        return False
+    return not (
+        returned.lastName
+        and expected_last_name
+        and _normalize_name(returned.lastName) != _normalize_name(expected_last_name)
+    )
+
+
+# ---------------------------------------------------------------------------
 # Building a 270
 # ---------------------------------------------------------------------------
 
@@ -466,7 +607,7 @@ def build_270(
 
     if coverage.subscriber_relationship == "self":
         subscriber = EligibilitySubscriber(
-            memberId=coverage.member_id,
+            memberId=strip_card_issuer_prefix(coverage.member_id),
             firstName=patient.first_name,
             lastName=patient.last_name,
             dateOfBirth=_wire_date(patient.date_of_birth),
@@ -476,7 +617,7 @@ def build_270(
         dependents: list[EligibilityDependent] | None = None
     else:
         subscriber = EligibilitySubscriber(
-            memberId=coverage.member_id,
+            memberId=strip_card_issuer_prefix(coverage.member_id),
             firstName=coverage.subscriber_first_name,
             lastName=coverage.subscriber_last_name,
             dateOfBirth=_wire_date(coverage.subscriber_date_of_birth),
@@ -509,13 +650,20 @@ def build_270(
 @dataclass
 class EligibilityDeps:
     """Everything one check needs, handed in so the route, the queued job
-    and the tests assemble it their own way."""
+    and the tests assemble it their own way.
+
+    ``session`` is optional and only used to raise the enrollment claim
+    event on a ``stop_enrollment`` disposition (see
+    :func:`reject_disposition`); a caller that leaves it unset simply does
+    not get that event, the same as before this existed.
+    """
 
     client: ClearinghouseClient | None
     identity: BillingIdentity | None
     coverage: PatientCoverageRepository
     payers: PayerRepository
     patients: PatientRepository
+    session: Session | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -543,6 +691,65 @@ class EligibilityCheckFailedError(Exception):
         self.cause = cause
         self.coverage = coverage
         self.patient = patient
+
+
+def _enrollment_required_event(
+    coverage: PatientCoverage,
+    payer: Payer,
+    user_id: str,
+    aaa_errors: list[AaaError],
+    occurred_at: datetime,
+) -> ClaimEvent:
+    """The claim event a ``stop_enrollment`` AAA rejection raises.
+
+    An eligibility check has no claim, so ``claim_id`` and
+    ``control_number`` are synthesized the way ``app.claims.enrollment``
+    does for its own enrollment events: enough for a person to find the
+    coverage, nothing from the 271 itself.
+    """
+    return ClaimEvent(
+        kind="enrollment_action_required",
+        control_number=coverage.id,
+        claim_id=f"{payer.payer_id}:eligibility",
+        user_id=user_id,
+        payer_id=payer.payer_id,
+        payer_name=payer.name,
+        state=aaa_errors[0].code,
+        occurred_at=occurred_at,
+        detail=ClaimEventDetail(
+            codes=tuple(
+                CodeRef(system="edit", code=e.code, description=e.description) for e in aaa_errors
+            )
+        ),
+    )
+
+
+def _raise_enrollment_task_if_needed(  # noqa: PLR0913 — the event's fields, keyword-only
+    *,
+    session: Session | None,
+    coverage: PatientCoverage,
+    payer: Payer,
+    user_id: str,
+    summary: EligibilitySummary,
+    checked_at: datetime,
+) -> None:
+    """Route a provider-enrollment AAA rejection to the enrollment surface.
+
+    41/43/51 are not "eligibility failed" — the practice isn't enrolled
+    with this payer, and that is a task for whoever manages enrollments,
+    not a note on the clinician's coverage card. When ``session`` is given,
+    that task is the same claim-events surface ``app.claims.enrollment``
+    already uses for a payer's own enrollment refusals.
+    """
+    if session is None or not summary.aaa_errors:
+        return
+    codes = [e.code for e in summary.aaa_errors]
+    if reject_disposition(codes) != "stop_enrollment":
+        return
+    emit(
+        session,
+        _enrollment_required_event(coverage, payer, user_id, summary.aaa_errors, checked_at),
+    )
 
 
 def run_eligibility(coverage_id: str, user: User, deps: EligibilityDeps) -> EligibilityCheck:
@@ -598,6 +805,14 @@ def run_eligibility(coverage_id: str, user: User, deps: EligibilityDeps) -> Elig
         coverage.id,
         inquiry.tradingPartnerServiceId,
         summary.status,
+    )
+    _raise_enrollment_task_if_needed(
+        session=deps.session,
+        coverage=stored,
+        payer=payer,
+        user_id=user.id,
+        summary=summary,
+        checked_at=checked_at,
     )
     return EligibilityCheck(summary=summary, coverage=stored, payer=payer, patient=patient)
 

@@ -7,11 +7,11 @@ import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
+import { useAppointmentTypes } from "@/hooks/useAppointmentTypes"
 import { useUpdateBookingLink } from "@/hooks/useBookingLinks"
 import { ApiError } from "@/lib/api/client"
 import type { BookingLink, UpdateBookingLinkRequest } from "@/types/bookingLinks"
-
-const LENGTH_ERROR = "Length must be between 5 and 480 minutes."
+import { AppointmentTypeSelect } from "./AppointmentTypeSelect"
 
 function errorMessage(err: unknown): string {
   if (err instanceof ApiError) return err.message
@@ -28,29 +28,23 @@ export function BookingLinkEditForm({
   onSaved: () => void
 }) {
   const updateMutation = useUpdateBookingLink()
+  const { data: typesData } = useAppointmentTypes()
+  const types = typesData?.data ?? []
   const [hostName, setHostName] = useState(link.host_name)
   const [title, setTitle] = useState(link.title)
   const [description, setDescription] = useState(link.description ?? "")
-  const [durationMinutes, setDurationMinutes] = useState(String(link.duration_minutes))
-  const [lengthError, setLengthError] = useState<string | null>(null)
+  const [appointmentTypeId, setAppointmentTypeId] = useState(link.appointment_type_id)
   const [serverError, setServerError] = useState<string | null>(null)
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setServerError(null)
 
-    const duration = Number(durationMinutes)
-    if (!Number.isInteger(duration) || duration < 5 || duration > 480) {
-      setLengthError(LENGTH_ERROR)
-      return
-    }
-    setLengthError(null)
-
     const data: UpdateBookingLinkRequest = {}
     if (hostName.trim() !== link.host_name) data.host_name = hostName.trim()
     if (title.trim() !== link.title) data.title = title.trim()
     if (description !== (link.description ?? "")) data.description = description
-    if (duration !== link.duration_minutes) data.duration_minutes = duration
+    if (appointmentTypeId !== link.appointment_type_id) data.appointment_type_id = appointmentTypeId
 
     updateMutation.mutate(
       { linkId: link.id, data },
@@ -73,11 +67,6 @@ export function BookingLinkEditForm({
           Slugs can&apos;t be changed. Deactivate this link and create a new one if you
           need a different address.
         </p>
-      </div>
-
-      <div className="grid gap-2">
-        <Label>Session type</Label>
-        <p className="text-sm text-neutral-900">{link.session_type}</p>
       </div>
 
       <div className="grid gap-2">
@@ -109,21 +98,12 @@ export function BookingLinkEditForm({
         />
       </div>
 
-      <div className="grid gap-2">
-        <Label htmlFor="edit-link-duration">Length (minutes)</Label>
-        <Input
-          id="edit-link-duration"
-          type="number"
-          value={durationMinutes}
-          onChange={(e) => setDurationMinutes(e.target.value)}
-          className="w-24"
-        />
-        {lengthError && (
-          <p role="alert" className="text-sm text-red-600">
-            {lengthError}
-          </p>
-        )}
-      </div>
+      <AppointmentTypeSelect
+        id="edit-link-appointment-type"
+        types={types}
+        value={appointmentTypeId}
+        onChange={setAppointmentTypeId}
+      />
 
       {serverError && (
         <p role="alert" className="text-sm text-red-600">

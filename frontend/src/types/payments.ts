@@ -102,6 +102,21 @@ export type ChargeKind =
  */
 export type ChargeableKind = Extract<ChargeKind, "session" | "copay">
 
+/**
+ * Why a practice stopped trying to collect. Mirrors
+ * `app.db.models.WRITE_OFF_REASONS` — the fixed set the CHECK constraint
+ * enforces. `courtesy` and `small_balance` are further gated by practice
+ * policy on the billing profile; `hardship` and `error` are not.
+ */
+export type WriteOffReason = "hardship" | "small_balance" | "courtesy" | "error"
+
+/** A practice-initiated write-off: money it has decided not to collect. */
+export interface CreateWriteOffRequest {
+  amount_cents: number
+  reason: WriteOffReason
+  note?: string
+}
+
 /** One visit's line of the balance. */
 export interface VisitBalanceResponse {
   /** `null` for the rows that hang off no visit, on one trailing line. */

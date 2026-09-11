@@ -239,6 +239,11 @@ class AuditAction(StrEnum):
     # financial fact about a named person — so the preview is audited like
     # any other read of the record, separately from the charge itself.
     PATIENT_CHARGE_AMOUNT_VIEWED = "patient_charge_amount_viewed"
+    # A write-off is a clinician deciding not to collect money a client owes.
+    # The `changes` payload carries the ledger row id, the reason, the
+    # amount and the claim ids the balance was standing against — never a
+    # diagnosis or a payer's member id.
+    PATIENT_WRITE_OFF_CREATED = "patient_write_off_created"
 
     # Coverage on file. A client's plan — payer, member id, subscriber — is
     # protected health information about a named person, so reading or
@@ -305,6 +310,13 @@ class AuditAction(StrEnum):
     # file that carries client ids and nothing else.
     BILLING_PERIOD_EXPORTED = "billing_period_exported"
 
+    # The financial report: aging, payer mix, collections rate and
+    # claim-to-payment lag over an explicit window, all computed on read
+    # from the ledger and claims. One row per read naming the window and
+    # the counts behind each section — ids and amounts only, never a payer
+    # mix keyed to a named client.
+    BILLING_REPORT_VIEWED = "billing_report_viewed"
+
 
 class ResourceType(StrEnum):
     """Resource types for audit logging."""
@@ -321,6 +333,7 @@ class ResourceType(StrEnum):
     CLAIM = "claim"
     CLAIM_EXPORT = "claim_export"
     BILLING_PERIOD_EXPORT = "billing_period_export"
+    BILLING_REPORT = "billing_report"
 
 
 # HIPAA § 164.316(b)(2)(i) — 6-year minimum retention. 7y = margin + matches

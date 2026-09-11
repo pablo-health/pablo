@@ -37,7 +37,23 @@ data, existing appointments, or anything beyond "these times are open."
 
 `platform.booking_links` — a **platform** table, not a per-tenant one,
 because slug resolution must happen *before* a tenant schema can be
-selected. It stores no PHI: slug, owner, display copy, duration.
+selected. It stores no PHI: slug, owner, display copy, and the id of
+the appointment type it books. Length is the type's, not the link's.
+
+**A link books one appointment type, and the type's switches decide
+who may book it.** A stranger holding a link is a new client by
+definition, so the link takes a booking only when every switch that
+governs a new client self-booking that type is on: the practice's
+`self_book_new`, and the type's `audience` (`new` or `both`),
+`self_bookable` and `offerable`. All of them default closed. The two
+readers of that answer share one function
+(`scheduling_engine/services/booking_link_gate.py`) so they can never
+disagree: the public surface returns the same 404 an unknown slug gets,
+and the owner's list carries `bookable` plus a plain-language
+`not_bookable_reason`, because the most likely outcome of a silent
+refusal is a therapist sending a dead link and never learning why. A
+type that is deleted after the link was made closes the link the same
+way rather than erroring.
 
 | column           | type         | notes                                        |
 |------------------|--------------|----------------------------------------------|
@@ -48,8 +64,7 @@ selected. It stores no PHI: slug, owner, display copy, duration.
 | host_name        | VARCHAR(255) | public display name, set explicitly by the owner |
 | title            | VARCHAR(255) | e.g. "Intro call", "Initial consultation"    |
 | description      | TEXT NULL    | shown on the public page                     |
-| duration_minutes | INTEGER      | 5–480                                        |
-| session_type     | VARCHAR(20)  | `individual` (default) / `couples` / `group` |
+| appointment_type_id | UUID      | required; the type this link books. No FK — `appointment_types` is per-tenant and this table is not — so it is validated against the owner's own types on write and resolved again after the tenant is known |
 | is_active        | BOOLEAN      | inactive links 404 publicly but stay listed for the owner |
 | created_at / updated_at | TIMESTAMPTZ |                                       |
 | deleted_at       | TIMESTAMPTZ NULL | tombstone; the slug stays claimed    |
@@ -328,12 +343,13 @@ download — is `BookingConfirmedCard`, shared with the instant-booking
 path on the page above so the two surfaces never drift.
 
 Owners manage links through authed CRUD at `/api/booking-links`
-(create, list, update copy/duration, activate/deactivate, delete).
-Settings → Booking links is the dashboard surface for this: a list of
-links with copy/activate/deactivate/edit/delete actions, an inline
-form for creating a link, and an inline form for editing host name,
-title, description, and length (the slug and session type are fixed
-once a link is created). Deleting a link opens a dialog explaining
+(create, list, update copy/type, activate/deactivate, delete).
+Settings → Scheduling → Booking links is the dashboard surface for
+this: a list of links with copy/activate/deactivate/edit/delete
+actions, an inline form for creating a link, and an inline form for
+editing host name, title, description, and the appointment type (the
+slug is fixed once a link is created). A row whose link cannot take
+bookings says why. Deleting a link opens a dialog explaining
 that its slug stays reserved for good and offering to deactivate
 instead.
 

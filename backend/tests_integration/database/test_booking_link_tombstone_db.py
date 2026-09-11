@@ -70,8 +70,8 @@ def _link(*, slug: str, user_id: str) -> BookingLink:
         host_name="Test Therapist",
         title="Intro call",
         description="A get-to-know-you call.",
-        duration_minutes=30,
-        session_type="individual",
+        # Any id: the tombstone semantics never resolve the type.
+        appointment_type_id=str(uuid.uuid4()),
         is_active=True,
         created_at=now,
         updated_at=now,

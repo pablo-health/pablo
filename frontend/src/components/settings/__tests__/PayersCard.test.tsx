@@ -15,13 +15,21 @@ import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 
 import { DEADLINE_HELP, ENROLLMENT_HELP, PayersCard } from "../PayersCard"
-import type { PayerEnrollmentListResponse, PayerResponse } from "@/types/coverage"
+import type {
+  EnrollmentTaskListResponse,
+  PayerEnrollmentListResponse,
+  PayerResponse,
+} from "@/types/coverage"
 
 const mockUsePayers = vi.fn()
 const mockUpdate = vi.fn()
 const mockCreate = vi.fn()
 const mockUseEnrollments = vi.fn()
 const mockRequestEnrollments = vi.fn()
+const mockUseTasks = vi.fn()
+const mockAnswerTask = vi.fn()
+const mockRefreshEnrollments = vi.fn()
+const mockUseRefreshEnrollments = vi.fn()
 
 vi.mock("@/hooks/useCoverage", () => ({
   usePayers: (...args: unknown[]) => mockUsePayers(...args),
@@ -33,6 +41,9 @@ vi.mock("@/hooks/useCoverage", () => ({
     isPending: false,
     error: null,
   }),
+  useEnrollmentTasks: (...args: unknown[]) => mockUseTasks(...args),
+  useAnswerEnrollmentTask: () => ({ mutate: mockAnswerTask, isPending: false, error: null }),
+  useRefreshPayerEnrollments: (...args: unknown[]) => mockUseRefreshEnrollments(...args),
 }))
 
 const AETNA: PayerResponse = {
@@ -70,11 +81,47 @@ const ENROLLMENTS: PayerEnrollmentListResponse = {
   ],
 }
 
+const TASKS: EnrollmentTaskListResponse = {
+  status: "provider_action_required",
+  data: [
+    {
+      id: "task-1",
+      instructions: "Sign the EFT authorization form and upload the signed copy.",
+      links: [
+        { label: "EFT authorization form", url: "https://payer.example/eft.pdf", resolvable: false },
+        { label: "Provider agreement", url: "https://ch.example/2024-09-01/documents/d1", resolvable: true },
+      ],
+      fields: [
+        {
+          key: "medicaid_id",
+          label: "Medicaid provider id",
+          field_type: "TEXT",
+          description: null,
+        },
+        {
+          key: "signed_eft_form",
+          label: "Signed EFT authorization",
+          field_type: "DOCUMENT",
+          description: null,
+        },
+      ],
+    },
+  ],
+  documents: [],
+}
+
 describe("PayersCard", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockUsePayers.mockReturnValue({ data: { data: [AETNA], total: 1 } })
     mockUseEnrollments.mockReturnValue({ data: undefined })
+    mockUseTasks.mockReturnValue({ data: undefined, isLoading: false, error: null })
+    mockUseRefreshEnrollments.mockReturnValue({
+      mutate: mockRefreshEnrollments,
+      isPending: false,
+      error: null,
+      data: undefined,
+    })
   })
 
   it("lists each payer with its filing window and enrollment status", () => {
@@ -113,6 +160,64 @@ describe("PayersCard", () => {
     ).toBeInTheDocument()
     expect(screen.getByText("Claims")).toBeInTheDocument()
     expect(screen.getByText("Live")).toBeInTheDocument()
+  })
+
+  it("asks for what the payer wants, on the request that is waiting", async () => {
+    mockUseEnrollments.mockReturnValue({ data: ENROLLMENTS })
+    mockUseTasks.mockReturnValue({ data: TASKS, isLoading: false, error: null })
+    const user = userEvent.setup()
+    render(<PayersCard />)
+
+    await user.click(screen.getByRole("button", { name: /Aetna/ }))
+
+    expect(screen.getByLabelText("Medicaid provider id")).toBeInTheDocument()
+    expect(screen.getByLabelText("Signed EFT authorization")).toBeInTheDocument()
+    // A link on the open web is an anchor the browser can just follow.
+    expect(screen.getByRole("link", { name: "EFT authorization form" })).toHaveAttribute(
+      "href",
+      "https://payer.example/eft.pdf",
+    )
+    // One the clearinghouse hosts is not — it needs a key the browser lacks.
+    expect(screen.getByRole("button", { name: "Provider agreement" })).toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: "Provider agreement" })).toBeNull()
+    // Only the request that is waiting on the practice grows a form.
+    expect(mockUseTasks).toHaveBeenCalledWith("payer-1", "835")
+    expect(mockUseTasks).not.toHaveBeenCalledWith("payer-1", "837P")
+  })
+
+  it("will not send half an answer", async () => {
+    mockUseEnrollments.mockReturnValue({ data: ENROLLMENTS })
+    mockUseTasks.mockReturnValue({ data: TASKS, isLoading: false, error: null })
+    const user = userEvent.setup()
+    render(<PayersCard />)
+
+    await user.click(screen.getByRole("button", { name: /Aetna/ }))
+    expect(screen.getByRole("button", { name: "Send to the payer" })).toBeDisabled()
+
+    await user.type(screen.getByLabelText("Medicaid provider id"), "MD-4471")
+
+    expect(screen.getByRole("button", { name: "Send to the payer" })).toBeDisabled()
+  })
+
+  it("sends the typed answer and the PDF together", async () => {
+    mockUseEnrollments.mockReturnValue({ data: ENROLLMENTS })
+    mockUseTasks.mockReturnValue({ data: TASKS, isLoading: false, error: null })
+    const pdf = new File(["%PDF-1.7"], "eft.pdf", { type: "application/pdf" })
+    const user = userEvent.setup()
+    render(<PayersCard />)
+
+    await user.click(screen.getByRole("button", { name: /Aetna/ }))
+    await user.type(screen.getByLabelText("Medicaid provider id"), "MD-4471")
+    await user.upload(screen.getByLabelText("Signed EFT authorization"), pdf)
+    await user.click(screen.getByRole("button", { name: "Send to the payer" }))
+
+    expect(mockAnswerTask).toHaveBeenCalledWith({
+      payerRowId: "payer-1",
+      transactionType: "835",
+      taskId: "task-1",
+      values: { medicaid_id: "MD-4471" },
+      documents: { signed_eft_form: pdf },
+    })
   })
 
   it("enrolls with the payer from its row", async () => {
@@ -166,5 +271,38 @@ describe("PayersCard", () => {
       { name: "Cigna", payer_id: "62308" },
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     )
+  })
+
+  it("checks every payer's enrollments in one press", async () => {
+    const user = userEvent.setup()
+    render(<PayersCard />)
+
+    await user.click(screen.getByRole("button", { name: "Check for updates" }))
+
+    expect(mockRefreshEnrollments).toHaveBeenCalledWith()
+  })
+
+  it("says nothing has moved when a pass changes nothing", () => {
+    mockUseRefreshEnrollments.mockReturnValue({
+      mutate: mockRefreshEnrollments,
+      isPending: false,
+      error: null,
+      data: { changed: 0, checked_at: "2026-09-10T12:00:00Z", throttled: false },
+    })
+    render(<PayersCard />)
+
+    expect(screen.getByText(/nothing has moved yet/)).toBeInTheDocument()
+  })
+
+  it("reports how many enrollments changed", () => {
+    mockUseRefreshEnrollments.mockReturnValue({
+      mutate: mockRefreshEnrollments,
+      isPending: false,
+      error: null,
+      data: { changed: 2, checked_at: "2026-09-10T12:00:00Z", throttled: false },
+    })
+    render(<PayersCard />)
+
+    expect(screen.getByText(/2 enrollments changed/)).toBeInTheDocument()
   })
 })

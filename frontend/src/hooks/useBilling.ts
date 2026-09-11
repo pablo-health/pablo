@@ -2,8 +2,9 @@
 
 "use client"
 
-import { fetchBalances, fetchUnbilledQueue } from "@/lib/api/billing"
+import { fetchBalances, fetchBillingReport, fetchUnbilledQueue } from "@/lib/api/billing"
 import { queryKeys } from "@/lib/api/queryKeys"
+import type { BillingReportResponse } from "@/types/billingReport"
 import type { UnbilledQueueResponse } from "@/types/billing"
 import type { BalancesResponse } from "@/types/payments"
 import { useAuthQuery } from "./useAuthQuery"
@@ -20,5 +21,13 @@ export function useBalances(token?: string) {
   return useAuthQuery<BalancesResponse>({
     queryKey: queryKeys.billing.balances(),
     queryFn: () => fetchBalances(token),
+  })
+}
+
+/** Aging, payer mix, collections rate and claim-to-payment lag for a window. */
+export function useBillingReport(from: string, to: string, token?: string) {
+  return useAuthQuery<BillingReportResponse>({
+    queryKey: queryKeys.billing.report({ from, to }),
+    queryFn: () => fetchBillingReport(from, to, token),
   })
 }

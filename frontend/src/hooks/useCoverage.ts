@@ -6,19 +6,24 @@ import type {
   CoverageResponse,
   CreateCoverageRequest,
   CreatePayerRequest,
+  EnrollmentTaskListResponse,
   PayerEnrollmentListResponse,
+  PayerEnrollmentRefreshResponse,
   PayerListResponse,
   PayerResponse,
   UpdateCoverageRequest,
   UpdatePayerRequest,
 } from "@/types/coverage"
 import {
+  answerEnrollmentTask,
   createCoverage,
   createPayer,
   deactivateCoverage,
   fetchCoverage,
+  listEnrollmentTasks,
   listPayerEnrollments,
   listPayers,
+  refreshPayerEnrollments,
   requestPayerEnrollments,
   updateCoverage,
   updatePayer,
@@ -69,6 +74,56 @@ export function useRequestPayerEnrollments(token?: string) {
       queryKeys.payers.enrollments(payerRowId),
       queryKeys.payers.list(),
     ],
+  })
+}
+
+/**
+ * What the payer is waiting on for one transaction — the form to fill in.
+ *
+ * Read live from the clearinghouse, so it is not cached for long: the answer
+ * changes when somebody at the payer's end acts, not when we do.
+ */
+export function useEnrollmentTasks(
+  payerRowId: string | undefined,
+  transactionType: string | undefined,
+  token?: string,
+) {
+  return useAuthQuery<EnrollmentTaskListResponse>({
+    queryKey: queryKeys.payers.enrollmentTasks(payerRowId ?? "", transactionType ?? ""),
+    queryFn: () => listEnrollmentTasks(payerRowId!, transactionType!, token),
+    enabled: !!payerRowId && !!transactionType,
+    staleTime: 0,
+  })
+}
+
+export function useAnswerEnrollmentTask(token?: string) {
+  return useAuthMutation<
+    EnrollmentTaskListResponse,
+    {
+      payerRowId: string
+      transactionType: string
+      taskId: string
+      values: Record<string, string>
+      documents: Record<string, File>
+    }
+  >({
+    mutationFn: ({ payerRowId, transactionType, taskId, values, documents }) =>
+      answerEnrollmentTask(payerRowId, transactionType, taskId, { values, documents }, token),
+    // Answering can move the request, and the request moves the payer row.
+    invalidateKeys: ({ payerRowId, transactionType }) => [
+      queryKeys.payers.enrollmentTasks(payerRowId, transactionType),
+      queryKeys.payers.enrollments(payerRowId),
+      queryKeys.payers.list(),
+    ],
+  })
+}
+
+/** The "check for updates" button: one pass across every payer's open requests. */
+export function useRefreshPayerEnrollments(token?: string) {
+  return useAuthMutation<PayerEnrollmentRefreshResponse, void>({
+    mutationFn: () => refreshPayerEnrollments(token),
+    // Any request could have moved, so every payer's status and detail may have too.
+    invalidateKeys: () => [queryKeys.payers.all],
   })
 }
 

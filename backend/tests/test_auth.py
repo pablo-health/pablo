@@ -29,6 +29,7 @@ from app.repositories import (
 from fastapi import HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
 from firebase_admin import auth as firebase_auth
+from firebase_admin import exceptions as firebase_exceptions
 
 VERIFY_PATCH = "app.auth.service.firebase_auth.verify_id_token"
 
@@ -68,6 +69,38 @@ class TestVerifyFirebaseToken:
 
             assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
             assert exc_info.value.detail["error"]["code"] == "TOKEN_EXPIRED"  # type: ignore[index]
+
+    def test_provider_timeout_is_503_not_401(self) -> None:
+        """A provider that did not answer says nothing about the token.
+
+        ``check_revoked=True`` makes verification a network call, so a stall
+        there is an availability failure, not an authentication one. Answering
+        401 would sign the caller out and send them back through a sign-in
+        that depends on the same unreachable provider (PABLO-pjdb).
+        """
+        with patch(VERIFY_PATCH) as mock_verify:
+            mock_verify.side_effect = firebase_exceptions.DeadlineExceededError(
+                "Timed out while making an API call", cause=None
+            )
+
+            with pytest.raises(HTTPException) as exc_info:
+                verify_firebase_token("perfectly-good-token")
+
+            assert exc_info.value.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+            assert exc_info.value.detail["error"]["code"] == "AUTH_PROVIDER_UNAVAILABLE"  # type: ignore[index]
+
+    def test_provider_unreachable_is_503_not_401(self) -> None:
+        """Same reasoning as the timeout case, for a refused connection."""
+        with patch(VERIFY_PATCH) as mock_verify:
+            mock_verify.side_effect = firebase_exceptions.UnavailableError(
+                "Failed to establish a connection", cause=None
+            )
+
+            with pytest.raises(HTTPException) as exc_info:
+                verify_firebase_token("perfectly-good-token")
+
+            assert exc_info.value.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+            assert exc_info.value.detail["error"]["code"] == "AUTH_PROVIDER_UNAVAILABLE"  # type: ignore[index]
 
     def test_invalid_token(self) -> None:
         with patch(VERIFY_PATCH) as mock_verify:

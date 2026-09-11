@@ -10,7 +10,9 @@
  * Each payer also shows where the practice stands with it for electronic
  * transactions: the enrollment requests filed through the clearinghouse and
  * what the payer is waiting on, with an "Enroll with payer" button for a
- * payer that has nothing on file yet.
+ * payer that has nothing on file yet. "Check for updates" polls every open
+ * request across every payer in one pass and says what changed, including
+ * nothing.
  */
 
 "use client"
@@ -20,11 +22,13 @@ import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { EnrollmentTaskForm } from "@/components/settings/EnrollmentTaskForm"
 import { SettingsCard } from "@/components/settings/ui"
 import {
   useCreatePayer,
   usePayerEnrollments,
   usePayers,
+  useRefreshPayerEnrollments,
   useRequestPayerEnrollments,
   useUpdatePayer,
 } from "@/hooks/useCoverage"
@@ -65,6 +69,19 @@ const TRANSACTION_LABELS: Record<EnrollmentTransactionType, string> = {
   "835": "Remittance",
 }
 
+/**
+ * The statuses a request can still move out of. While it is in one of these
+ * the clearinghouse has something to show about it — what it is waiting for,
+ * and what has been sent — and that panel stays. `live`, `rejected` and
+ * `canceled` are finished; there is nothing left to ask.
+ */
+const IN_FLIGHT: EnrollmentRequestStatus[] = [
+  "draft",
+  "stedi_action_required",
+  "provider_action_required",
+  "provisioning",
+]
+
 const REQUEST_STATUS_LABELS: Record<EnrollmentRequestStatus, string> = {
   draft: "Draft",
   stedi_action_required: "Submitted",
@@ -75,7 +92,13 @@ const REQUEST_STATUS_LABELS: Record<EnrollmentRequestStatus, string> = {
   canceled: "Canceled",
 }
 
-function EnrollmentRequestRow({ request }: { request: PayerEnrollmentResponse }) {
+function EnrollmentRequestRow({
+  payerRowId,
+  request,
+}: {
+  payerRowId: string
+  request: PayerEnrollmentResponse
+}) {
   const needsAction = request.status === "provider_action_required"
   return (
     <li className="py-1.5">
@@ -85,10 +108,16 @@ function EnrollmentRequestRow({ request }: { request: PayerEnrollmentResponse })
           {REQUEST_STATUS_LABELS[request.status]}
         </span>
       </div>
+      {/* The payer's ask, verbatim, above the form that answers it: the row
+          carries the clearinghouse's note about why, which no task field
+          has anywhere to put. */}
       {request.instructions && (
         <p className="mt-1 whitespace-pre-line text-[12.5px] text-muted-foreground">
           {request.instructions}
         </p>
+      )}
+      {IN_FLIGHT.includes(request.status) && (
+        <EnrollmentTaskForm payerRowId={payerRowId} transactionType={request.transaction_type} />
       )}
     </li>
   )
@@ -119,7 +148,7 @@ function PayerEnrollments({ payer }: { payer: PayerResponse }) {
       {requests.length > 0 && (
         <ul className="m-0 list-none divide-y divide-border p-0">
           {requests.map((r) => (
-            <EnrollmentRequestRow key={r.transaction_type} request={r} />
+            <EnrollmentRequestRow key={r.transaction_type} payerRowId={payer.id} request={r} />
           ))}
         </ul>
       )}
@@ -210,6 +239,40 @@ function PayerRow({
   )
 }
 
+function refreshSummary(result: { changed: number; throttled: boolean; checked_at: string }) {
+  const when = new Date(result.checked_at).toLocaleString()
+  const prefix = result.throttled ? `Checked ${when}` : `Checked just now`
+  if (result.changed === 0) return `${prefix} — nothing has moved yet.`
+  const count = result.changed === 1 ? "1 enrollment" : `${result.changed} enrollments`
+  return `${prefix} — ${count} changed.`
+}
+
+function RefreshEnrollmentsControl() {
+  const refresh = useRefreshPayerEnrollments()
+  const error = refresh.error instanceof Error ? refresh.error.message : null
+
+  return (
+    <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/30 px-3 py-2.5">
+      <p className="text-[12.5px] text-muted-foreground">
+        {error
+          ? error
+          : refresh.data
+            ? refreshSummary(refresh.data)
+            : "Check your clearinghouse account for updates on open enrollments."}
+      </p>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        onClick={() => refresh.mutate()}
+        disabled={refresh.isPending}
+      >
+        Check for updates
+      </Button>
+    </div>
+  )
+}
+
 export function PayersCard() {
   const { data } = usePayers()
   const createPayer = useCreatePayer()
@@ -245,6 +308,7 @@ export function PayersCard() {
       flush
     >
       <div className="px-[22px] pt-1.5 pb-5">
+        <RefreshEnrollmentsControl />
         {payers.length === 0 && !adding && (
           <p className="py-3 text-sm text-muted-foreground">
             No payers yet. One is added the first time a client&apos;s coverage names it, or add one here.

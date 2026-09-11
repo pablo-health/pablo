@@ -44,6 +44,7 @@ from .routes import (
     auth,
     billing_export,
     billing_queue,
+    billing_report,
     booking_links,
     calendar_import,
     chat,
@@ -67,6 +68,7 @@ from .routes import (
     patient_documents,
     patient_payments,
     patient_statements,
+    patient_write_offs,
     patients,
     payment_webhooks,
     practice_balances,
@@ -244,6 +246,7 @@ app.include_router(patient_statements.router)
 app.include_router(billing_queue.router)
 app.include_router(practice_balances.router)
 app.include_router(billing_export.router)
+app.include_router(billing_report.router)
 app.include_router(scheduling.router)
 # Runs as the patient, not as a clinician — see the module docstring.
 app.include_router(patient_appointments.router)
@@ -260,6 +263,7 @@ app.include_router(patient_documents.patient_documents_router)
 app.include_router(patient_documents.documents_router)
 app.include_router(patient_documents.internal_jobs_router)
 app.include_router(patient_payments.router)
+app.include_router(patient_write_offs.router)
 app.include_router(payment_webhooks.router)
 app.include_router(ehr_routes.route_router)
 app.include_router(ehr_routes.navigate_router)

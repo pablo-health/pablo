@@ -24,14 +24,18 @@ from datetime import UTC, date, timedelta
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from ..repositories.booking_link import BookingLinkRepository
     from ..repositories.coverage import PatientCoverageRepository, PayerRepository
     from ..repositories.google_calendar_token import GoogleCalendarTokenRepository
     from ..repositories.patient import PatientRepository
     from ..repositories.user import UserRepository
     from ..scheduling_engine.models.appointment import Appointment
+    from ..scheduling_engine.models.appointment_type import AppointmentType
     from ..scheduling_engine.models.conflict import TimeSlot
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
+    from ..scheduling_engine.repositories.appointment_type import AppointmentTypeRepository
     from ..scheduling_engine.repositories.availability_rule import AvailabilityRuleRepository
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, Query, Request, status
@@ -70,10 +74,13 @@ from ..repositories import (
     get_payer_repository,
     get_user_repository,
 )
+from ..repositories import get_appointment_type_repository as _appt_type_repo_factory
 from ..scheduling_engine.exceptions import AppointmentConflictError, InvalidAppointmentError
 from ..scheduling_engine.models.appointment import AppointmentStatus
 from ..scheduling_engine.services.availability import AvailabilityEngine
+from ..scheduling_engine.services.booking_link_gate import assess_link
 from ..scheduling_engine.services.scheduling import SchedulingService
+from ..scheduling_engine.services.scheduling_policy import current_policy_or_defaults
 from ..services import AuditService, get_audit_service
 from ..services.captcha import CaptchaVerifier, get_captcha_verifier
 from ..services.coverage_intake import record_intake_coverage
@@ -109,10 +116,17 @@ _LINK_NOT_FOUND = "This booking link does not exist or is no longer available."
 
 @dataclass
 class PublicBookingContext:
-    """A resolved booking link with its owner, tenant-armed and ready."""
+    """A resolved booking link with its owner and type, tenant-armed and ready.
+
+    ``appointment_type`` is the type the link books, already checked as
+    bookable by a new client: everything a booking needs from it (length,
+    the name the appointment is booked under) is read from here, never from
+    the link.
+    """
 
     link: BookingLink
     owner: User
+    appointment_type: AppointmentType
 
 
 @dataclass
@@ -186,17 +200,42 @@ def _carry_coverage_to_existing_chart(
         repos.coverage.update(typed.model_copy(update={"active": False}))
 
 
+def get_public_appointment_type_repository() -> AppointmentTypeRepository:
+    """The appointment types of whichever practice the request has entered.
+
+    Resolved before ``get_public_booking_context`` selects the tenant schema,
+    but it holds the same request session that selection scopes, so the
+    lookup it performs afterwards lands in the right practice. A single
+    override point for tests, like every other public dependency.
+    """
+    return _appt_type_repo_factory()
+
+
+def get_public_policy_loader() -> Callable[[], dict[str, object]]:
+    """A loader for the practice scheduling policy, called AFTER tenant entry.
+
+    Returned as a callable rather than a value on purpose: as a dependency
+    this would run before ``get_public_booking_context`` has pointed the
+    session at the link's practice, and read the wrong practice's policy.
+    """
+    return current_policy_or_defaults
+
+
 def get_public_booking_context(
     slug: str,
     link_repo: BookingLinkRepository = Depends(get_booking_link_repository),
     user_repo: UserRepository = Depends(get_user_repository),
+    type_repo: AppointmentTypeRepository = Depends(get_public_appointment_type_repository),
+    load_policy: Callable[[], dict[str, object]] = Depends(get_public_policy_loader),
 ) -> PublicBookingContext:
     """Resolve a slug and enter its practice context.
 
     Missing, inactive, and misconfigured links are an identical 404 —
-    the public surface offers no oracle for "exists but off". After
-    this dependency runs, the request session is scoped to the owning
-    practice's schema with RLS armed as the link's owner.
+    the public surface offers no oracle for "exists but off". So is a
+    link whose type or practice does not let a new client book it: the
+    owner is told why in their own settings; a stranger is told nothing.
+    After this dependency runs, the request session is scoped to the
+    owning practice's schema with RLS armed as the link's owner.
     """
     link = link_repo.get_by_slug(slug)
     if link is None or not link.is_active:
@@ -224,7 +263,14 @@ def get_public_booking_context(
         raise NotFoundError(_LINK_NOT_FOUND)
     if owner.status == "disabled" or link.practice_is_active is False:
         raise NotFoundError(_LINK_NOT_FOUND)
-    return PublicBookingContext(link=link, owner=owner)
+
+    # The practice and its type get the last word, and both are read only
+    # now that the session is inside the link's practice. Every reason a
+    # link is closed collapses to the same 404 a missing slug gets.
+    appointment_type = type_repo.get(link.appointment_type_id, link.user_id)
+    if appointment_type is None or not assess_link(appointment_type, load_policy()).bookable:
+        raise NotFoundError(_LINK_NOT_FOUND)
+    return PublicBookingContext(link=link, owner=owner, appointment_type=appointment_type)
 
 
 def get_public_availability_engine(
@@ -396,7 +442,7 @@ def get_public_booking_link(
         host_name=ctx.link.host_name,
         title=ctx.link.title,
         description=ctx.link.description,
-        duration_minutes=ctx.link.duration_minutes,
+        duration_minutes=ctx.appointment_type.duration_minutes,
         captcha_site_key=verifier.site_key,
     )
 
@@ -417,11 +463,13 @@ def get_public_free_slots(
     convention (the ``Z`` suffix is cosmetic — see the design doc).
     """
     parsed = _parse_booking_date(date_param)
-    result = engine.get_free_slots(ctx.link.user_id, parsed.isoformat(), ctx.link.duration_minutes)
+    result = engine.get_free_slots(
+        ctx.link.user_id, parsed.isoformat(), ctx.appointment_type.duration_minutes
+    )
     slots = _public_slots(result.slots)
     return FreeSlotsResponse(
         date=parsed.isoformat(),
-        duration_minutes=ctx.link.duration_minutes,
+        duration_minutes=ctx.appointment_type.duration_minutes,
         slots=[TimeSlotResponse(start=s.start, end=s.end) for s in slots],
         total=len(slots),
         configured=result.configured,
@@ -548,7 +596,8 @@ def _confirmation_email(
         kind="booking_confirmation",
         text=(
             f"{ctx.link.host_name} is holding {ctx.link.title} for you on "
-            f"{slot.start[:10]} at {slot.start[11:16]}, {ctx.link.duration_minutes} minutes.\n\n"
+            f"{slot.start[:10]} at {slot.start[11:16]}, "
+            f"{ctx.appointment_type.duration_minutes} minutes.\n\n"
             f"Confirm this booking: {confirm_url}\n\n"
             f"This hold expires in {HOLD_TTL_MINUTES} minutes."
         ),
@@ -608,8 +657,9 @@ def _place_hold(
                 "title": ctx.link.title,
                 "start_at": slot.start,
                 "end_at": slot.end,
-                "duration_minutes": ctx.link.duration_minutes,
-                "session_type": ctx.link.session_type,
+                "duration_minutes": ctx.appointment_type.duration_minutes,
+                "session_type": ctx.appointment_type.name,
+                "appointment_type_id": ctx.appointment_type.id,
                 "notes": "\n".join(note_lines),
                 "status": "pending",
                 "pending_expires_at": now + timedelta(minutes=HOLD_TTL_MINUTES),
@@ -645,7 +695,7 @@ def _place_hold(
         title=ctx.link.title,
         start_at=slot.start,
         end_at=slot.end,
-        duration_minutes=ctx.link.duration_minutes,
+        duration_minutes=ctx.appointment_type.duration_minutes,
         status="pending_confirmation",
         manage_url=_manage_url(ctx, token),
     )
@@ -689,7 +739,9 @@ def create_public_booking(
     date_str = request.start_at[:10]
     _parse_booking_date(date_str)
 
-    result = engine.get_free_slots(ctx.link.user_id, date_str, ctx.link.duration_minutes)
+    result = engine.get_free_slots(
+        ctx.link.user_id, date_str, ctx.appointment_type.duration_minutes
+    )
     slot = next((s for s in _public_slots(result.slots) if s.start == request.start_at), None)
     if slot is None:
         raise ConflictError(_SLOT_NO_LONGER_AVAILABLE)
@@ -722,8 +774,9 @@ def create_public_booking(
                 "title": ctx.link.title,
                 "start_at": slot.start,
                 "end_at": slot.end,
-                "duration_minutes": ctx.link.duration_minutes,
-                "session_type": ctx.link.session_type,
+                "duration_minutes": ctx.appointment_type.duration_minutes,
+                "session_type": ctx.appointment_type.name,
+                "appointment_type_id": ctx.appointment_type.id,
                 "notes": "\n".join(note_lines),
             },
         )
@@ -755,7 +808,7 @@ def create_public_booking(
         title=ctx.link.title,
         start_at=slot.start,
         end_at=slot.end,
-        duration_minutes=ctx.link.duration_minutes,
+        duration_minutes=ctx.appointment_type.duration_minutes,
         status="confirmed",
     )
 
@@ -778,7 +831,7 @@ def _confirmation_from_appointment(
         title=ctx.link.title,
         start_at=_slot_start_iso(appt),
         end_at=appt.end_at.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        duration_minutes=ctx.link.duration_minutes,
+        duration_minutes=ctx.appointment_type.duration_minutes,
         status="confirmed",
         manage_url=_manage_url(ctx, token),
     )
@@ -930,7 +983,9 @@ def confirm_public_booking(
         # clinician-cancelled hold has its hash cleared and would never
         # have matched the lookup above.
         result = engine.get_free_slots(
-            ctx.link.user_id, appt.start_at.date().isoformat(), ctx.link.duration_minutes
+            ctx.link.user_id,
+            appt.start_at.date().isoformat(),
+            ctx.appointment_type.duration_minutes,
         )
         still_free = any(s.start == _slot_start_iso(appt) for s in _public_slots(result.slots))
         restored = patient_repo.restore(appt.patient_id, ctx.link.user_id) if still_free else None
@@ -1005,7 +1060,7 @@ def get_managed_booking(
         host_name=ctx.link.host_name,
         start_at=_slot_start_iso(appt),
         end_at=appt.end_at.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        duration_minutes=ctx.link.duration_minutes,
+        duration_minutes=ctx.appointment_type.duration_minutes,
         status=appt.status,
     )
 

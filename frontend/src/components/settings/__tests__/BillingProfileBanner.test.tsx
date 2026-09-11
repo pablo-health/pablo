@@ -27,6 +27,8 @@ function profile(overrides: Partial<BillingProfileResponse> = {}): BillingProfil
     contact_email: "billing@example.com",
     clearinghouse_provider_id: null,
     eligibility_auto_check: true,
+    allow_courtesy_writeoffs: false,
+    small_balance_cents: 500,
     ...overrides,
   }
 }

@@ -22,10 +22,12 @@ What it does
 
 For a transaction event the receiver fetches the transaction through each
 practice's own clearinghouse account (a transaction another account owns
-is a 404 there, and the next practice is tried), reads the 277CA behind it
-if that is what it is, and moves the claim it names — see
-:func:`app.claims.acknowledgments.apply_acknowledgment`. An 835 is
-acknowledged and left alone; remittance posting has its own path.
+is a 404 there, and the next practice is tried). A 277CA moves the claim
+it names — see :func:`app.claims.acknowledgments.apply_acknowledgment`. An
+835 posts the remittance right away instead of waiting for the pipeline's
+next pass — see :func:`app.claims.remittance.apply_remittance` — so a
+practice sees a claim as paid the moment the payer says so rather than up
+to a whole pipeline interval later.
 
 Idempotency
 -----------
@@ -57,7 +59,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 
 from ..auth.route_security import truly_public
-from ..claims.clearinghouse import ClearinghouseRateLimitedError, ClearinghouseUnavailableError
+from ..claims.clearinghouse import (
+    ClearinghouseRateLimitedError,
+    ClearinghouseReportUnreadableError,
+    ClearinghouseUnavailableError,
+)
 from ..claims.fanout import ingest_transaction_event
 from ..claims.webhooks import (
     PING,
@@ -132,6 +138,20 @@ async def clearinghouse_webhook(
         )
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE, "could not fetch the transaction; please retry"
+        ) from None
+    except ClearinghouseReportUnreadableError as exc:
+        # The transaction is ours and its report is not readable. Loud on
+        # purpose: this is what a changed or mis-configured report endpoint
+        # looks like, and the alternative — reporting it as "unmatched" —
+        # is indistinguishable from "no claim of ours" and alerts nobody.
+        logger.error(
+            "clearinghouse_webhook_report_unreadable event=%s transaction=%s error=%s",
+            event.id,
+            event.transaction_id,
+            exc,
+        )
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, "could not read the report; please retry"
         ) from None
     logger.info(
         "clearinghouse_webhook_processed event=%s transaction=%s outcome=%s",

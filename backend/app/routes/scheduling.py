@@ -1386,7 +1386,7 @@ def set_google_calendar_event_titling(
         raise NotFoundError("Google Calendar not connected")
 
     if style is EventTitleStyle.FULL:
-        # Evidence, not a preference: who said it, when, and which account
+        # Evidence, not a preference: who said it, when, and which calendar
         # it covered. It outlives the connection deliberately — a later
         # disconnect does not unsay it.
         audit.log(
@@ -1396,7 +1396,14 @@ def set_google_calendar_event_titling(
             resource_type=ResourceType.APPOINTMENT,
             resource_id=attested_account or "unknown",
             changes={
+                # Named "account" before either write target existed, and kept
+                # so rows written then still answer the same query. What it
+                # holds is the calendar id: the therapist's own address for a
+                # primary connection, an opaque Pablo-made calendar for the
+                # other. `write_target` is what tells the two apart, so a
+                # reader never has to guess which kind of thing this is.
                 "calendar_account": attested_account,
+                "write_target": status_info.get("write_target"),
                 "event_titling": style.value,
                 "previous_event_titling": previous.value,
                 # Both the version and the wording it stands for, so the

@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 
 import { BalanceTab } from "../BalanceTab"
@@ -29,6 +29,7 @@ const mockUsePatientCharges = vi.fn()
 const mockUsePatientCard = vi.fn()
 const mockChargeBalance = vi.fn()
 const mockFetchStatement = vi.fn()
+const mockCreateWriteOff = vi.fn()
 
 vi.mock("@/hooks/usePayments", () => ({
   usePatientBalance: (...args: unknown[]) => mockUsePatientBalance(...args),
@@ -36,6 +37,10 @@ vi.mock("@/hooks/usePayments", () => ({
   usePatientCard: (...args: unknown[]) => mockUsePatientCard(...args),
   useChargeBalance: () => ({
     mutateAsync: mockChargeBalance,
+    isPending: false,
+  }),
+  useCreateWriteOff: () => ({
+    mutate: mockCreateWriteOff,
     isPending: false,
   }),
 }))
@@ -266,6 +271,48 @@ describe("BalanceTab", () => {
       expect(screen.getByTestId("balance-total")).toHaveTextContent("Owes $40.00")
       expect(screen.queryByRole("button", { name: /Charge balance/ })).not.toBeInTheDocument()
       expect(screen.queryByText(/No card on file/)).not.toBeInTheDocument()
+    })
+  })
+
+  describe("writing off a balance", () => {
+    it("offers the action only when something is owed", () => {
+      setup({ balanceData: balance({ owed_cents: 6200, balance_cents: 6200 }) })
+
+      expect(screen.getByRole("button", { name: /Write off/ })).toBeInTheDocument()
+    })
+
+    it("is not offered on a settled account", () => {
+      setup()
+
+      expect(screen.queryByRole("button", { name: /Write off/ })).not.toBeInTheDocument()
+    })
+
+    it("opens the dialog pre-filled with the current balance", async () => {
+      setup({ balanceData: balance({ owed_cents: 6200, balance_cents: 6200 }) })
+
+      await userEvent.click(screen.getByRole("button", { name: /Write off/ }))
+
+      expect(screen.getByRole("dialog", { name: "Write off balance" })).toBeInTheDocument()
+      expect(screen.getByLabelText("Amount")).toHaveValue("62.00")
+    })
+
+    it("submits the chosen amount and reason", async () => {
+      mockCreateWriteOff.mockImplementation((_vars, options) => options?.onSuccess?.())
+      setup({ balanceData: balance({ owed_cents: 6200, balance_cents: 6200 }) })
+
+      await userEvent.click(screen.getByRole("button", { name: /Write off/ }))
+      const dialog = screen.getByRole("dialog", { name: "Write off balance" })
+      await userEvent.click(within(dialog).getByRole("combobox", { name: "Reason" }))
+      await userEvent.click(screen.getByRole("option", { name: "Financial hardship" }))
+      await userEvent.click(within(dialog).getByRole("button", { name: "Write off" }))
+
+      expect(mockCreateWriteOff).toHaveBeenCalledWith(
+        {
+          patientId: "patient-1",
+          data: { amount_cents: 6200, reason: "hardship", note: undefined },
+        },
+        expect.anything(),
+      )
     })
   })
 

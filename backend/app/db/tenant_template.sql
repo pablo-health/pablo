@@ -717,7 +717,10 @@ CREATE TABLE __TENANT_SCHEMA__.practice_billing_profile (
     eligibility_auto_check boolean DEFAULT true NOT NULL,
     contact_email character varying(255),
     clearinghouse_provider_id character varying(80),
+    allow_courtesy_writeoffs boolean DEFAULT false NOT NULL,
+    small_balance_cents integer DEFAULT 500 NOT NULL,
     CONSTRAINT ck_practice_billing_profile_singleton CHECK ((id = 1)),
+    CONSTRAINT ck_practice_billing_profile_small_balance CHECK ((small_balance_cents >= 0)),
     CONSTRAINT ck_practice_billing_profile_tax_id_type CHECK (((tax_id_type)::text = ANY ((ARRAY['ein'::character varying, 'ssn'::character varying])::text[])))
 );
 
@@ -829,6 +832,36 @@ CREATE TABLE __TENANT_SCHEMA__.prescriptions (
     deleted_at timestamp with time zone,
     CONSTRAINT ck_prescriptions_drug_class CHECK (((drug_class)::text = ANY ((ARRAY['opioid'::character varying, 'stimulant'::character varying, 'benzodiazepine'::character varying, 'buprenorphine'::character varying, 'other'::character varying])::text[]))),
     CONSTRAINT ck_prescriptions_schedule CHECK (((schedule)::text = ANY ((ARRAY['II'::character varying, 'III'::character varying, 'IV'::character varying, 'V'::character varying, 'none'::character varying])::text[])))
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.remittance_holds (
+    id uuid NOT NULL,
+    claim_id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    control_number character varying(30) NOT NULL,
+    posting_key character varying(255) NOT NULL,
+    state character varying(16) DEFAULT 'open'::character varying NOT NULL,
+    reason character varying(32) NOT NULL,
+    stated_cents integer NOT NULL,
+    computed_cents integer NOT NULL,
+    patient_responsibility_cents integer NOT NULL,
+    line_control_number character varying(30),
+    codes jsonb DEFAULT '[]'::jsonb NOT NULL,
+    line_count integer DEFAULT 0 NOT NULL,
+    payer_name character varying(255),
+    detected_at timestamp with time zone NOT NULL,
+    acknowledged_at timestamp with time zone,
+    resolved_at timestamp with time zone,
+    resolved_by_user_id character varying(128),
+    finding character varying(24),
+    CONSTRAINT ck_remittance_holds_finding CHECK (((finding IS NULL) OR ((finding)::text = ANY ((ARRAY['bill_as_stated'::character varying, 'waived'::character varying, 'parse_error'::character varying, 'payer_inconsistent'::character varying])::text[])))),
+    CONSTRAINT ck_remittance_holds_finding_state CHECK ((((state)::text = 'resolved'::text) = (finding IS NOT NULL))),
+    CONSTRAINT ck_remittance_holds_line_reason CHECK ((((reason)::text = 'line_balance'::text) = (line_control_number IS NOT NULL))),
+    CONSTRAINT ck_remittance_holds_reason CHECK (((reason)::text = ANY ((ARRAY['patient_responsibility'::character varying, 'line_balance'::character varying, 'claim_balance'::character varying])::text[]))),
+    CONSTRAINT ck_remittance_holds_resolved_at_state CHECK ((((state)::text = 'resolved'::text) = (resolved_at IS NOT NULL))),
+    CONSTRAINT ck_remittance_holds_state CHECK (((state)::text = ANY ((ARRAY['open'::character varying, 'acknowledged'::character varying, 'resolved'::character varying])::text[])))
 );
 
 
@@ -1135,6 +1168,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.prescriptions
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.remittance_holds
+    ADD CONSTRAINT remittance_holds_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.scheduling_policy
     ADD CONSTRAINT scheduling_policy_pkey PRIMARY KEY (id);
 
@@ -1182,6 +1220,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.claim_lines
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.claims
     ADD CONSTRAINT ux_claims_control_number UNIQUE (control_number);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.remittance_holds
+    ADD CONSTRAINT ux_remittance_holds_posting_key UNIQUE (posting_key);
 
 
 
@@ -1473,6 +1516,18 @@ CREATE INDEX ix_prescriptions_patient_id ON __TENANT_SCHEMA__.prescriptions USIN
 
 
 
+CREATE INDEX ix_remittance_holds_claim_id ON __TENANT_SCHEMA__.remittance_holds USING btree (claim_id);
+
+
+
+CREATE INDEX ix_remittance_holds_open ON __TENANT_SCHEMA__.remittance_holds USING btree (state, detected_at) WHERE ((state)::text <> 'resolved'::text);
+
+
+
+CREATE INDEX ix_remittance_holds_patient_id ON __TENANT_SCHEMA__.remittance_holds USING btree (patient_id);
+
+
+
 CREATE INDEX ix_supervision_hours_supervision_relationship_id ON __TENANT_SCHEMA__.supervision_hours USING btree (supervision_relationship_id);
 
 
@@ -1733,6 +1788,16 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.prescriptions
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.prescriptions
     ADD CONSTRAINT prescriptions_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.remittance_holds
+    ADD CONSTRAINT remittance_holds_claim_id_fkey FOREIGN KEY (claim_id) REFERENCES __TENANT_SCHEMA__.claims(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.remittance_holds
+    ADD CONSTRAINT remittance_holds_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
 
 
 

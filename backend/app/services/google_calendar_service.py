@@ -576,7 +576,7 @@ class GoogleCalendarService:
 
         encrypted = encrypt_tokens(token_data)
 
-        calendar_id = self._resolve_calendar_id(credentials, write_target)
+        calendar_id = self._resolve_calendar_id(credentials, write_target, user_id)
         granted = self._granted_after(user_id, requested, declarations)
 
         now = _now()
@@ -752,6 +752,7 @@ class GoogleCalendarService:
             return {
                 "connected": False,
                 "calendar_id": None,
+                "calendar_name": None,
                 "last_synced_at": None,
                 "write_target": None,
                 "event_titling": None,
@@ -760,6 +761,15 @@ class GoogleCalendarService:
         return {
             "connected": True,
             "calendar_id": token_doc.calendar_id,
+            # Only the app calendar needs one: its id is an opaque
+            # ...@group.calendar.google.com hash that means nothing to the
+            # therapist reading it. A primary connection's id is their own
+            # email address, which is already the best label for it.
+            "calendar_name": (
+                _APP_CALENDAR_SUMMARY
+                if token_doc.write_target == CalendarWriteTarget.APP_CALENDAR.value
+                else None
+            ),
             "last_synced_at": token_doc.last_synced_at,
             "write_target": token_doc.write_target,
             "event_titling": self._effective_style(token_doc).value,
@@ -1166,11 +1176,12 @@ class GoogleCalendarService:
         self,
         credentials: Credentials,
         write_target: CalendarWriteTarget,
+        user_id: str,
     ) -> str:
         """Find the calendar this connection writes to, creating it if it's ours."""
         if write_target is CalendarWriteTarget.PRIMARY:
             return self._get_primary_calendar_id(credentials)
-        return self._get_or_create_app_calendar_id(credentials)
+        return self._get_or_create_app_calendar_id(credentials, user_id)
 
     def _get_primary_calendar_id(self, credentials: Credentials) -> str:
         """Get the user's primary Google Calendar ID."""
@@ -1178,20 +1189,46 @@ class GoogleCalendarService:
         calendar = service.calendars().get(calendarId="primary").execute()
         return calendar.get("id", "primary")  # type: ignore[no-any-return]
 
-    def _get_or_create_app_calendar_id(self, credentials: Credentials) -> str:
+    def _get_or_create_app_calendar_id(self, credentials: Credentials, user_id: str) -> str:
         """Get the calendar Pablo owns on this account, creating it once.
 
-        Under the app-calendar grant the calendar list only contains
-        calendars this app created, so matching on the summary cannot pick
-        up one of the therapist's own. Reconnecting finds the existing
-        calendar rather than leaving a second one behind.
+        Reconnecting finds the existing calendar rather than leaving a second
+        one behind — but it finds it in our own token record, not by asking
+        for a list. The app-calendar grant is a single scope,
+        ``calendar.app.created``, and Google refuses ``calendarList.list``
+        under it: this used to open with that call, so the connect could never
+        finish. Its identity is already ours to remember, so remember it.
+
+        A remembered id still has to be checked, because the record outlives
+        the account that id belongs to. ``handle_callback`` runs whenever a
+        connect completes, including one that never disconnected first, so a
+        therapist reconnecting a DIFFERENT Google account would otherwise
+        inherit a calendar living in the previous one — credentials that
+        cannot write there, and a push that fails on every appointment after.
+        ``calendars().get`` answers that, and doubles as the existence check
+        for a calendar deleted on Google's side.
+
+        Any error from that check means create a new one. Being wrong in that
+        direction leaves a stray calendar; being wrong in the other silently
+        points a connection at somebody else's.
         """
         service = _build_calendar_service(credentials)
-        listed = service.calendarList().list().execute()
-        for entry in listed.get("items", []):
-            if entry.get("summary") == _APP_CALENDAR_SUMMARY and entry.get("id"):
+
+        stored = self._token_repo.get(user_id)
+        if (
+            stored is not None
+            and stored.calendar_id
+            and stored.write_target == CalendarWriteTarget.APP_CALENDAR.value
+        ):
+            try:
+                service.calendars().get(calendarId=stored.calendar_id).execute()
+            except Exception:
+                # Deleted, or owned by an account these credentials do not
+                # speak for. Either way the remembered id is not usable now.
+                logger.info("Stored Pablo-owned calendar is unreachable; creating a new one")
+            else:
                 logger.info("Reusing the existing Pablo-owned Google calendar")
-                return str(entry["id"])
+                return stored.calendar_id
 
         created = service.calendars().insert(body={"summary": _APP_CALENDAR_SUMMARY}).execute()
         calendar_id = created.get("id")

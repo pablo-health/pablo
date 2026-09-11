@@ -26,6 +26,10 @@ export interface BillingProfileResponse {
   clearinghouse_provider_id: string | null
   /** Run an eligibility check on its own whenever coverage lands. */
   eligibility_auto_check: boolean
+  /** May a clinician write off a balance as a courtesy waiver. Default off. */
+  allow_courtesy_writeoffs: boolean
+  /** Balance, in cents, at or under which a small-balance write-off is allowed. */
+  small_balance_cents: number
 }
 
 export interface UpdateBillingProfileRequest {
@@ -42,4 +46,6 @@ export interface UpdateBillingProfileRequest {
   phone?: string | null
   contact_email?: string | null
   eligibility_auto_check?: boolean
+  allow_courtesy_writeoffs?: boolean
+  small_balance_cents?: number
 }

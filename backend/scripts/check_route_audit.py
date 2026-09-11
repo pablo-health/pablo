@@ -231,6 +231,21 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # and statuses, plus the clearinghouse's instructions to the practice.
         ("get", "/api/payers/{payer_row_id}/enrollments"),  # practice-level; no patient data
         ("post", "/api/payers/{payer_row_id}/enrollments"),  # files enrollments; no patient data
+        # Answering what the payer wants before it will take the practice's
+        # claims: a signed EFT authorization, a Medicaid id, a voided cheque.
+        # Practice paperwork — a tax id and a signature — and no client on it.
+        ("get", "/api/payers/{payer_row_id}/enrollments/{transaction_type}/tasks"),
+        ("post", "/api/payers/{payer_row_id}/enrollments/{transaction_type}/tasks/{task_id}"),
+        (
+            "get",
+            "/api/payers/{payer_row_id}/enrollments/{transaction_type}"
+            "/tasks/{task_id}/links/{link_index}",
+        ),
+        (
+            "get",
+            "/api/payers/{payer_row_id}/enrollments/{transaction_type}/documents/{document_id}",
+        ),
+        ("post", "/api/payers/enrollments/refresh"),  # practice-level poll; no patient data
         ("get", "/api/appointment-types"),  # practice-level fee defaults, no client
         ("post", "/api/appointment-types"),  # creates an appointment type
         ("patch", "/api/appointment-types/{appointment_type_id}"),  # updates an appointment type

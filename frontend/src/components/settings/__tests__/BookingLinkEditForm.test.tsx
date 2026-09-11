@@ -6,6 +6,7 @@ import userEvent from "@testing-library/user-event"
 import { BookingLinkEditForm } from "../BookingLinkEditForm"
 import { ApiError } from "@/lib/api/client"
 import type { BookingLink } from "@/types/bookingLinks"
+import type { AppointmentTypeResponse } from "@/types/scheduling"
 
 const mutateUpdate = vi.fn()
 let updateOnError: ((err: unknown) => void) | null = null
@@ -23,6 +24,38 @@ vi.mock("@/hooks/useBookingLinks", () => ({
   }),
 }))
 
+function makeType(overrides: Partial<AppointmentTypeResponse> = {}): AppointmentTypeResponse {
+  return {
+    id: "type_intake",
+    user_id: "user_1",
+    name: "Intake",
+    default_fee_cents: null,
+    duration_minutes: 30,
+    audience: "new",
+    min_notice_hours: null,
+    earliest_offer_business_days: 1,
+    horizon: 10,
+    horizon_unit: "business",
+    self_bookable: true,
+    offerable: true,
+    created_at: null,
+    updated_at: null,
+    ...overrides,
+  }
+}
+
+vi.mock("@/hooks/useAppointmentTypes", () => ({
+  useAppointmentTypes: () => ({
+    data: {
+      data: [makeType(), makeType({ id: "type_followup", name: "Follow-up", duration_minutes: 50 })],
+      total: 2,
+      migrated: false,
+    },
+    isLoading: false,
+    error: null,
+  }),
+}))
+
 function makeLink(overrides: Partial<BookingLink> = {}): BookingLink {
   return {
     id: "link_1",
@@ -30,8 +63,11 @@ function makeLink(overrides: Partial<BookingLink> = {}): BookingLink {
     host_name: "Dr. Roe",
     title: "Intro call",
     description: null,
+    appointment_type_id: "type_intake",
+    appointment_type_name: "Intake",
     duration_minutes: 30,
-    session_type: "individual",
+    bookable: true,
+    not_bookable_reason: null,
     is_active: true,
     created_at: "2026-08-01T00:00:00Z",
     updated_at: "2026-08-01T00:00:00Z",
@@ -71,6 +107,13 @@ describe("BookingLinkEditForm", () => {
     })
   })
 
+  it("shows the current appointment type and offers no length field", () => {
+    render(<BookingLinkEditForm link={makeLink()} onCancel={vi.fn()} onSaved={vi.fn()} />)
+
+    expect(screen.getByLabelText("Appointment type")).toHaveTextContent("Intake · 30 min")
+    expect(screen.queryByLabelText("Length (minutes)")).not.toBeInTheDocument()
+  })
+
   it("cancels without calling the mutation", async () => {
     const onCancel = vi.fn()
     render(<BookingLinkEditForm link={makeLink()} onCancel={onCancel} onSaved={vi.fn()} />)
@@ -80,20 +123,6 @@ describe("BookingLinkEditForm", () => {
 
     expect(onCancel).toHaveBeenCalled()
     expect(mutateUpdate).not.toHaveBeenCalled()
-  })
-
-  it("blocks submit on an out-of-range length", async () => {
-    render(<BookingLinkEditForm link={makeLink()} onCancel={vi.fn()} onSaved={vi.fn()} />)
-    const user = userEvent.setup()
-
-    await user.clear(screen.getByLabelText("Length (minutes)"))
-    await user.type(screen.getByLabelText("Length (minutes)"), "3")
-    await user.click(screen.getByRole("button", { name: "Save" }))
-
-    expect(mutateUpdate).not.toHaveBeenCalled()
-    expect(
-      screen.getByText("Length must be between 5 and 480 minutes.")
-    ).toBeInTheDocument()
   })
 
   it("renders a server error from the mutation in a role=alert element", async () => {

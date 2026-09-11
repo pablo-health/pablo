@@ -44,17 +44,24 @@ from app.db.provisioning import create_practice_schema
 from app.models.patient import Patient
 from app.repositories import (
     get_appointment_repository,
+    get_appointment_type_repository,
     get_availability_rule_repository,
     get_booking_link_repository,
     get_user_repository,
 )
 from app.repositories.postgres.appointment import PostgresAppointmentRepository
+from app.repositories.postgres.appointment_type import PostgresAppointmentTypeRepository
 from app.repositories.postgres.availability_rule import PostgresAvailabilityRuleRepository
 from app.repositories.postgres.patient import PostgresPatientRepository
-from app.routes.public_booking import get_public_booking_context
+from app.routes.public_booking import PublicBookingContext, get_public_booking_context
+from app.scheduling_engine.models.appointment_type import AppointmentType
 from app.scheduling_engine.models.availability import AvailabilityRule, EnforcementLevel, RuleType
 from app.scheduling_engine.services.availability import AvailabilityEngine
 from app.scheduling_engine.services.scheduling import SchedulingService
+from app.scheduling_engine.services.scheduling_policy import (
+    current_policy_or_defaults,
+    update_policy,
+)
 from app.settings import get_settings
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
@@ -91,6 +98,35 @@ _SLUG_ORPHAN = f"slug-orphan-{_SUFFIX}"
 # A fixed future weekday (well within MAX_ADVANCE_DAYS) so the working-hours
 # rule and the free-slots query always agree on which day of week it is.
 _BOOKING_DATE = (datetime.now(UTC) + timedelta(days=3)).date()
+
+
+# Each owner's one bookable type, seeded in that owner's own schema: a link
+# resolves its type only after the tenant is known, which is the property
+# under test here.
+_TYPE_BY_OWNER = {_OWNER_A: str(uuid.uuid4()), _OWNER_B: str(uuid.uuid4())}
+
+
+def _bookable_type(owner_id: str) -> AppointmentType:
+    return AppointmentType(
+        id=_TYPE_BY_OWNER[owner_id],
+        user_id=owner_id,
+        name="Consultation",
+        duration_minutes=30,
+        audience="new",
+        self_bookable=True,
+        offerable=True,
+    )
+
+
+def _resolve(slug: str, link_repo: object, user_repo: object) -> PublicBookingContext:
+    """Resolve a slug the way the route does, with the real tenant-scoped deps."""
+    return get_public_booking_context(
+        slug,
+        link_repo=link_repo,  # type: ignore[arg-type]
+        user_repo=user_repo,  # type: ignore[arg-type]
+        type_repo=get_appointment_type_repository(),
+        load_policy=current_policy_or_defaults,
+    )
 
 
 def _now() -> datetime:
@@ -194,8 +230,7 @@ def two_practices(engine):
                     practice_id=practice_id,
                     host_name="Test Host",
                     title="Consultation",
-                    duration_minutes=30,
-                    session_type="individual",
+                    appointment_type_id=_TYPE_BY_OWNER[owner_id],
                     is_active=True,
                     created_at=_now(),
                     updated_at=_now(),
@@ -212,8 +247,7 @@ def two_practices(engine):
                 practice_id=None,
                 host_name="Orphan Host",
                 title="Consultation",
-                duration_minutes=30,
-                session_type="individual",
+                appointment_type_id=_TYPE_BY_OWNER[_OWNER_A],
                 is_active=True,
                 created_at=_now(),
                 updated_at=_now(),
@@ -231,6 +265,10 @@ def two_practices(engine):
             PostgresAvailabilityRuleRepository(tenant_session).create(
                 _make_working_hours_rule(owner_id)
             )
+            # A link only resolves when its type and the practice both allow a
+            # new client to self-book, so each practice gets both switches on.
+            PostgresAppointmentTypeRepository(tenant_session).create(_bookable_type(owner_id))
+            update_policy(tenant_session, {"self_book_new": True})
         tenant_session.commit()
     finally:
         tenant_session.close()
@@ -341,7 +379,7 @@ class TestSchemaRouting:
         link_repo = get_booking_link_repository()
         user_repo = get_user_repository()
 
-        ctx = get_public_booking_context(_SLUG_A, link_repo=link_repo, user_repo=user_repo)
+        ctx = _resolve(_SLUG_A, link_repo, user_repo)
 
         assert ctx.link.practice_schema == SCHEMA_A
         assert ctx.owner.id == _OWNER_A
@@ -354,7 +392,7 @@ class TestSchemaRouting:
         link_repo = get_booking_link_repository()
         user_repo = get_user_repository()
 
-        get_public_booking_context(_SLUG_A, link_repo=link_repo, user_repo=user_repo)
+        _resolve(_SLUG_A, link_repo, user_repo)
 
         armed = pg_session.execute(
             text("SELECT current_setting('app.current_user_id', true)")
@@ -366,7 +404,7 @@ class TestSchemaRouting:
         user_repo = get_user_repository()
 
         with pytest.raises(NotFoundError):
-            get_public_booking_context(_SLUG_ORPHAN, link_repo=link_repo, user_repo=user_repo)
+            _resolve(_SLUG_ORPHAN, link_repo, user_repo)
 
 
 class TestFreeSlotsScoping:
@@ -392,13 +430,13 @@ class TestFreeSlotsScoping:
 
         link_repo = get_booking_link_repository()
         user_repo = get_user_repository()
-        ctx = get_public_booking_context(_SLUG_A, link_repo=link_repo, user_repo=user_repo)
+        ctx = _resolve(_SLUG_A, link_repo, user_repo)
 
         engine_svc = AvailabilityEngine(
             get_availability_rule_repository(), get_appointment_repository()
         )
         result = engine_svc.get_free_slots(
-            ctx.link.user_id, _BOOKING_DATE.isoformat(), ctx.link.duration_minutes
+            ctx.link.user_id, _BOOKING_DATE.isoformat(), ctx.appointment_type.duration_minutes
         )
 
         assert result.configured is True
@@ -415,7 +453,7 @@ class TestBookingWritePlacement:
     def test_booking_writes_land_only_in_owning_schema(self, engine, pg_session):
         link_repo = get_booking_link_repository()
         user_repo = get_user_repository()
-        ctx = get_public_booking_context(_SLUG_A, link_repo=link_repo, user_repo=user_repo)
+        ctx = _resolve(_SLUG_A, link_repo, user_repo)
         writer = ctx.link.user_id
 
         before_a_appts = _appointment_count(engine, SCHEMA_A, writer)
@@ -426,7 +464,7 @@ class TestBookingWritePlacement:
         start_at = datetime.combine(_BOOKING_DATE, datetime.min.time(), tzinfo=UTC) + timedelta(
             hours=14
         )
-        _book_instant(pg_session, ctx.link.user_id, start_at, ctx.link.duration_minutes)
+        _book_instant(pg_session, ctx.link.user_id, start_at, ctx.appointment_type.duration_minutes)
 
         assert _appointment_count(engine, SCHEMA_A, writer) == before_a_appts + 1
         assert _appointment_count(engine, SCHEMA_B, writer) == before_b_appts

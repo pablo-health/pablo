@@ -104,6 +104,13 @@ def _encryption_key(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     get_settings.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def _refresh_floor() -> Iterator[None]:
+    enrollment.reset_refresh_floor()
+    yield
+    enrollment.reset_refresh_floor()
+
+
 # --- the payer endpoints, over SQLite ------------------------------------------
 
 
@@ -224,6 +231,82 @@ class TestListEnrollments:
         response = client.get(f"/api/payers/{payer.id}/enrollments")
 
         assert [r["transaction_type"] for r in response.json()["data"]] == ["835"]
+
+
+class TestRefreshEnrollmentsRoute:
+    """The route's own job: pick a client, map the outcome, map the errors.
+
+    The throttle and vendor-listing mechanics belong to
+    ``refresh_enrollments_throttled`` itself (``TestRefreshThrottle`` in
+    ``test_payer_enrollment.py``, over SQLite with a no-op RLS arm); the real
+    ``arm_current_user_id`` issues a Postgres-only ``set_config`` call, so
+    this route is exercised here with that function replaced.
+    """
+
+    def test_reports_the_outcome_and_arms_by_practice(
+        self, payer_harness: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen: list[str | None] = []
+
+        def fake_refresh(
+            session: Session,
+            client: Any,
+            *,
+            practice_id: str | None,
+        ) -> enrollment.RefreshOutcome:
+            seen.append(practice_id)
+            return enrollment.RefreshOutcome(
+                changed=3, checked_at=datetime(2026, 9, 10, 12, 0, tzinfo=UTC), throttled=False
+            )
+
+        monkeypatch.setattr(coverage_routes, "refresh_enrollments_throttled", fake_refresh)
+
+        response = payer_harness["client"].post("/api/payers/enrollments/refresh")
+
+        assert response.status_code == 200, response.text
+        assert response.json() == {
+            "changed": 3,
+            "checked_at": "2026-09-10T12:00:00Z",
+            "throttled": False,
+        }
+        assert seen == ["practice-1"]
+
+    def test_a_throttled_answer_still_reports_true(
+        self, payer_harness: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            coverage_routes,
+            "refresh_enrollments_throttled",
+            lambda *_args, **_kwargs: enrollment.RefreshOutcome(
+                changed=0, checked_at=datetime(2026, 9, 10, 12, 0, tzinfo=UTC), throttled=True
+            ),
+        )
+
+        response = payer_harness["client"].post("/api/payers/enrollments/refresh")
+
+        assert response.status_code == 200
+        assert response.json()["throttled"] is True
+
+    def test_no_clearinghouse_is_503(self, payer_harness: dict[str, Any]) -> None:
+        enrollment.register_clearinghouse_client_factory(lambda _practice_id: None)
+
+        response = payer_harness["client"].post("/api/payers/enrollments/refresh")
+
+        assert response.status_code == 503
+
+    def test_a_vendor_refusal_is_502(
+        self, payer_harness: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def fake_refresh(
+            session: Session, client: Any, *, practice_id: str | None
+        ) -> enrollment.RefreshOutcome:
+            raise enrollment.ClearinghouseError("nope")
+
+        monkeypatch.setattr(coverage_routes, "refresh_enrollments_throttled", fake_refresh)
+
+        response = payer_harness["client"].post("/api/payers/enrollments/refresh")
+
+        assert response.status_code == 502
 
 
 # --- the coverage-save trigger, over in-memory repositories ----------------------

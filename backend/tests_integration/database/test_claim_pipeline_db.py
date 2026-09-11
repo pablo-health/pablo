@@ -528,3 +528,309 @@ class TestAcknowledgementsOnPostgres:
             and created.control_number in (r.notes or "")
         ]
         assert len(mine) == 1
+
+
+class _Tenant:
+    """The three fixtures a claim always needs, as one handle.
+
+    Purely to keep these signatures readable — a claim needs a schema, a
+    client and a coverage, and naming them one at a time in every test says
+    nothing the type does not.
+    """
+
+    def __init__(
+        self,
+        engine: Engine,
+        schema: str,
+        patient_id: str,
+        coverage_ids: tuple[str, str],
+    ) -> None:
+        self._engine = engine
+        self._schema = schema
+        self._patient_id = patient_id
+        self._coverage_ids = coverage_ids
+
+    def claim(self, **overrides: Any) -> Any:
+        scoped = _TenantSession(self._engine, self._schema, _CLINICIAN_A)
+        try:
+            return _validated_claim(scoped, self._patient_id, self._coverage_ids, **overrides)
+        finally:
+            scoped.close()
+
+    def reload(self, claim_id: str) -> Any:
+        """The claim as its owning clinician sees it now."""
+        scoped = _TenantSession(self._engine, self._schema, _CLINICIAN_A)
+        try:
+            return _pipeline(scoped, _CLINICIAN_A).claims.get(claim_id)
+        finally:
+            scoped.close()
+
+
+@pytest.fixture
+def tenant(
+    engine: Engine,
+    tenant_schema: str,
+    patient_id: str,
+    coverage_ids: tuple[str, str],
+) -> _Tenant:
+    return _Tenant(engine, tenant_schema, patient_id, coverage_ids)
+
+
+class TestWebhookRoutingOnPostgres:
+    """The webhook's routing, against a real index, real sessions, real policies.
+
+    Every other test of :func:`app.claims.fanout.ingest_transaction_event`
+    stubs ``tenant_db_session`` and both repositories, and hands
+    ``PracticeContext`` a ready-made ``user_ids`` list. That leaves the step
+    that decides **who gets asked whether they can see this claim**
+    — :func:`app.claims.fanout.practice_user_ids`, and the row policy it
+    feeds — exercised by nothing: the unit suite stays green with that
+    function returning an empty list, which in production is indistinguishable
+    from a document that named no claim of ours.
+
+    So this asks the real question. ``platform.claim_routes``, the registry,
+    the email-to-practice map, the tenant session and the
+    ``has_patient_access`` policy are all real; only the vendor is a fake, and
+    only for this practice.
+    """
+
+    @pytest.fixture
+    def registered_practice(self, engine: Engine, tenant_schema: str) -> Iterator[str]:
+        """The practice on the platform registry, with both clinicians mapped to it.
+
+        Written through the ORM rather than raw INSERTs so that a column
+        added to ``practices`` with a Python-side default does not break this
+        fixture — the models own those defaults, and a test that restates
+        them goes stale silently.
+        """
+        from app.db.platform_models import (  # noqa: PLC0415
+            EmailTenantMappingRow,
+            PlatformUserRow,
+            PracticeRow,
+        )
+        from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+
+        practice_id = f"prac-{uuid.uuid4().hex[:8]}"
+        now = datetime.now(UTC)
+        emails = {
+            _CLINICIAN_A: f"a-{uuid.uuid4().hex[:8]}@example.test",
+            _CLINICIAN_B: f"b-{uuid.uuid4().hex[:8]}@example.test",
+        }
+        with OrmSession(bind=engine) as session:
+            session.add(
+                PracticeRow(
+                    id=practice_id,
+                    name="Fan-out Test Practice",
+                    schema_name=tenant_schema,
+                    owner_email=emails[_CLINICIAN_A],
+                    owner_user_id=_CLINICIAN_A,
+                    is_active=True,
+                    created_at=now,
+                )
+            )
+            for user_id, email in emails.items():
+                session.add(
+                    PlatformUserRow(id=user_id, email=email, name="Test Clinician", created_at=now)
+                )
+                session.add(
+                    EmailTenantMappingRow(
+                        email=email,
+                        tenant_id=practice_id,
+                        practice_id=practice_id,
+                        created_at=now,
+                    )
+                )
+            session.commit()
+
+        yield practice_id
+
+        with OrmSession(bind=engine) as session:
+            for email in emails.values():
+                session.query(EmailTenantMappingRow).filter_by(email=email).delete()
+            for user_id in emails:
+                session.query(PlatformUserRow).filter_by(id=user_id).delete()
+            session.query(PracticeRow).filter_by(id=practice_id).delete()
+            session.commit()
+
+    @staticmethod
+    def _the_account(client: Any) -> Any:
+        """A ``clearinghouse_client_for_practice`` standing in for THE account.
+
+        The receiver asks for the deployment's account, not a practice's, and
+        passes ``None`` to say so — the default credential provider resolves
+        one key and ignores which practice is asking. So this answers whatever
+        it is handed: modelling per-practice accounts here would make the
+        account look like what separates two practices' claims, when it is the
+        routing index that does.
+        """
+
+        def resolve(_wanted: str | None) -> Any:
+            return client
+
+        return resolve
+
+    def test_an_acknowledgment_finds_the_clinician_who_owns_the_claim(
+        self,
+        tenant: _Tenant,
+        registered_practice: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The fan-out asks real clinicians, and one of them can see the claim.
+
+        This is the test the unit suite could not be: the claim belongs to
+        clinician A under the row policy, and nothing here tells the fan-out
+        that. It has to find A through the registry and the email map.
+        """
+        from app.claims import fanout  # noqa: PLC0415
+        from app.claims.routing import record_claim_route  # noqa: PLC0415
+        from app.claims.webhooks import WebhookEvent  # noqa: PLC0415
+        from tests.claims_pipeline_fakes import FakeClearinghouse  # noqa: PLC0415
+
+        client = FakeClearinghouse()
+        created = tenant.claim(
+            state="submitted",
+            submitted_at=datetime.now(UTC) - timedelta(hours=1),
+        )
+
+        transaction = client.acknowledge("payer_accepted", created.control_number)
+        record_claim_route(created.control_number, registered_practice, _CLINICIAN_A)
+        monkeypatch.setattr(
+            fanout,
+            "clearinghouse_client_for_practice",
+            self._the_account(client),
+        )
+
+        outcome = fanout.ingest_transaction_event(
+            WebhookEvent(
+                id="evt-fanout-1",
+                type="transaction.processed",
+                transaction_id=transaction,
+            )
+        )
+
+        assert outcome == "moved"
+        saved = tenant.reload(created.id)
+        assert saved is not None
+        assert saved.state == "payer_accepted"
+
+    def test_a_remittance_posts_under_the_owning_clinicians_policy(
+        self,
+        tenant: _Tenant,
+        registered_practice: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An 835 reaches ``paid`` through the same fan-out, not only in a fake."""
+        from app.claims import fanout  # noqa: PLC0415
+        from app.claims.routing import record_claim_route  # noqa: PLC0415
+        from app.claims.webhooks import WebhookEvent  # noqa: PLC0415
+        from tests.claims_pipeline_fakes import FakeClearinghouse  # noqa: PLC0415
+
+        client = FakeClearinghouse()
+        created = tenant.claim(
+            state="payer_accepted",
+            submitted_at=datetime.now(UTC) - timedelta(days=2),
+        )
+
+        transaction = client.remit(created.control_number, paid_cents=created.total_charge_cents)
+        monkeypatch.setattr(
+            fanout,
+            "clearinghouse_client_for_practice",
+            self._the_account(client),
+        )
+        record_claim_route(created.control_number, registered_practice, _CLINICIAN_A)
+
+        outcome = fanout.ingest_transaction_event(
+            WebhookEvent(
+                id="evt-fanout-2",
+                type="transaction.processed",
+                transaction_id=transaction,
+            )
+        )
+
+        assert outcome == "moved"
+        saved = tenant.reload(created.id)
+        assert saved is not None
+        assert saved.state == "paid"
+        assert saved.total_paid_cents == created.total_charge_cents
+
+    @pytest.mark.usefixtures("registered_practice")
+    def test_a_control_number_we_never_filed_is_unmatched(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A document naming a claim we never filed is ``unmatched``, correctly.
+
+        The counterpart to the two above, and it pins the meaning of the word.
+        ``unmatched`` used to be ambiguous — it was equally the answer when the
+        claim was ours but its practice sat past the scan's bound, which is how
+        a real incident stayed invisible. With routing it has one meaning: no
+        row in ``platform.claim_routes``, so this deployment never filed it.
+        """
+        from app.claims import fanout  # noqa: PLC0415
+        from app.claims.webhooks import WebhookEvent  # noqa: PLC0415
+        from tests.claims_pipeline_fakes import FakeClearinghouse  # noqa: PLC0415
+
+        client = FakeClearinghouse()
+        transaction = client.acknowledge("payer_accepted", "NOBODYSCLAIM01")
+        monkeypatch.setattr(
+            fanout,
+            "clearinghouse_client_for_practice",
+            self._the_account(client),
+        )
+
+        outcome = fanout.ingest_transaction_event(
+            WebhookEvent(
+                id="evt-fanout-3",
+                type="transaction.processed",
+                transaction_id=transaction,
+            )
+        )
+
+        assert outcome == "unmatched"
+
+    def test_the_index_answers_which_practice_filed_a_control_number(
+        self, registered_practice: str
+    ) -> None:
+        """The routing index round-trips, and refuses a second owner.
+
+        The primary key is doing real work here: two practices cannot both
+        claim one control number, so a generator collision (PABLO-z7te) is
+        refused at write time rather than resolved by whichever practice a
+        scan happened to reach first — which would have posted a payer's
+        money into the wrong practice's ledger.
+        """
+        from app.claims.routing import (  # noqa: PLC0415
+            record_claim_route,
+            route_for_control_numbers,
+        )
+
+        control = f"RT{uuid.uuid4().hex[:8].upper()}"
+        record_claim_route(control, registered_practice, _CLINICIAN_A)
+
+        route = route_for_control_numbers([control])
+        assert route is not None
+        assert (route.practice_id, route.user_id) == (registered_practice, _CLINICIAN_A)
+        # The schema comes from ``platform.practices``, joined in the same read.
+        assert route.schema.startswith("practice_")
+        assert route_for_control_numbers([control.lower()]) == route
+
+        record_claim_route(control, "some-other-practice", _CLINICIAN_B)
+        assert route_for_control_numbers([control]) == route
+
+    def test_the_index_says_nothing_about_a_control_number_it_never_saw(self) -> None:
+        """No row is "not indexed", and the receiver reads that as ``unmatched``."""
+        from app.claims.routing import route_for_control_numbers  # noqa: PLC0415
+
+        assert route_for_control_numbers([f"NX{uuid.uuid4().hex[:8].upper()}"]) is None
+        assert route_for_control_numbers([]) is None
+
+    def test_the_fan_out_asks_every_mapped_clinician(self, registered_practice: str) -> None:
+        """``practice_user_ids`` returns the mapped clinicians, both of them.
+
+        Named separately because it is the assertion whose absence let the
+        incident through: with this function returning ``[]`` the whole unit
+        suite still passes, and every delivery reports ``unmatched``.
+        """
+        from app.claims.fanout import practice_user_ids  # noqa: PLC0415
+
+        assert set(practice_user_ids(registered_practice)) == {_CLINICIAN_A, _CLINICIAN_B}

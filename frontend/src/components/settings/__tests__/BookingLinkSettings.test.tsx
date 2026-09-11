@@ -7,6 +7,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { BookingLinkSettings } from "../BookingLinkSettings"
 import { ApiError } from "@/lib/api/client"
 import type { BookingLink } from "@/types/bookingLinks"
+import type { AppointmentTypeResponse } from "@/types/scheduling"
 
 const mockWriteText = vi.fn().mockResolvedValue(undefined)
 Object.defineProperty(navigator, "clipboard", {
@@ -23,6 +24,7 @@ let linksData: BookingLink[] = []
 let listLoading = false
 let listErrored = false
 let createOnError: ((err: unknown) => void) | null = null
+let typesData: AppointmentTypeResponse[] = []
 
 vi.mock("@/hooks/useBookingLinks", () => ({
   useBookingLinks: () => ({
@@ -41,6 +43,34 @@ vi.mock("@/hooks/useBookingLinks", () => ({
   useDeleteBookingLink: () => ({ mutate: mutateDelete, isPending: false }),
 }))
 
+vi.mock("@/hooks/useAppointmentTypes", () => ({
+  useAppointmentTypes: () => ({
+    data: { data: typesData, total: typesData.length, migrated: false },
+    isLoading: false,
+    error: null,
+  }),
+}))
+
+function makeType(overrides: Partial<AppointmentTypeResponse> = {}): AppointmentTypeResponse {
+  return {
+    id: "type_intake",
+    user_id: "user_1",
+    name: "Intake",
+    default_fee_cents: null,
+    duration_minutes: 30,
+    audience: "new",
+    min_notice_hours: null,
+    earliest_offer_business_days: 1,
+    horizon: 10,
+    horizon_unit: "business",
+    self_bookable: true,
+    offerable: true,
+    created_at: null,
+    updated_at: null,
+    ...overrides,
+  }
+}
+
 function makeLink(overrides: Partial<BookingLink> = {}): BookingLink {
   return {
     id: "link_1",
@@ -48,8 +78,11 @@ function makeLink(overrides: Partial<BookingLink> = {}): BookingLink {
     host_name: "Dr. Roe",
     title: "Intro call",
     description: null,
+    appointment_type_id: "type_intake",
+    appointment_type_name: "Intake",
     duration_minutes: 30,
-    session_type: "individual",
+    bookable: true,
+    not_bookable_reason: null,
     is_active: true,
     created_at: "2026-08-01T00:00:00Z",
     updated_at: "2026-08-01T00:00:00Z",
@@ -75,17 +108,19 @@ describe("BookingLinkSettings", () => {
     listLoading = false
     listErrored = false
     createOnError = null
+    typesData = [makeType()]
   })
 
-  it("renders one row per link", () => {
+  it("renders one row per link, named by its appointment type", () => {
     linksData = [
       makeLink(),
       makeLink({
         id: "link_2",
         slug: "follow-up",
         title: "Follow-up",
+        appointment_type_id: "type_followup",
+        appointment_type_name: "Follow-up session",
         duration_minutes: 60,
-        session_type: "couples",
         is_active: false,
       }),
     ]
@@ -93,9 +128,38 @@ describe("BookingLinkSettings", () => {
 
     expect(screen.getByText("Intro call")).toBeInTheDocument()
     expect(screen.getByText("/book/intro-call")).toBeInTheDocument()
-    expect(screen.getByText("30 min · individual")).toBeInTheDocument()
+    expect(screen.getByText("30 min · Intake")).toBeInTheDocument()
+    expect(screen.getByText("60 min · Follow-up session")).toBeInTheDocument()
     expect(screen.getByText("Active")).toBeInTheDocument()
     expect(screen.getByText("Inactive")).toBeInTheDocument()
+  })
+
+  it("tells the owner why a link cannot take bookings", () => {
+    linksData = [
+      makeLink({
+        bookable: false,
+        not_bookable_reason: "This appointment type is not marked as bookable by clients.",
+      }),
+    ]
+    renderWithClient()
+
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "Not bookable yet: This appointment type is not marked as bookable by clients."
+    )
+  })
+
+  it("says so when the link's appointment type has been deleted", () => {
+    linksData = [
+      makeLink({
+        appointment_type_name: null,
+        duration_minutes: null,
+        bookable: false,
+        not_bookable_reason: "The appointment type this link books no longer exists.",
+      }),
+    ]
+    renderWithClient()
+
+    expect(screen.getByText("Appointment type deleted")).toBeInTheDocument()
   })
 
   it("shows an empty state and a loading skeleton", () => {
@@ -175,7 +239,7 @@ describe("BookingLinkSettings", () => {
     expect(screen.getByText("/book/intro-call")).toBeInTheDocument()
   })
 
-  it("submits a valid create request", async () => {
+  it("submits a valid create request booking the first appointment type", async () => {
     renderWithClient()
     const user = userEvent.setup()
 
@@ -189,9 +253,23 @@ describe("BookingLinkSettings", () => {
       slug: "intro-call",
       host_name: "Dr. Roe",
       title: "Intro call",
-      duration_minutes: 50,
-      session_type: "individual",
+      appointment_type_id: "type_intake",
     })
+  })
+
+  it("cannot create a link until the practice has an appointment type", async () => {
+    typesData = []
+    renderWithClient()
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole("button", { name: "New booking link" }))
+
+    expect(
+      screen.getByText(
+        "Create an appointment type under Scheduling first. A booking link books one type."
+      )
+    ).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Create link" })).toBeDisabled()
   })
 
   it("surfaces the server's own message on a 409 slug conflict", async () => {

@@ -42,6 +42,7 @@ from app.models.coverage import Payer
 from app.repositories.claim_receipts import InMemoryClaimReceiptRepository
 from app.repositories.claims import InMemoryClaimRepository
 from app.repositories.coverage import InMemoryPayerRepository
+from app.repositories.remittance_hold import InMemoryRemittanceHoldRepository
 
 from tests.claims_fixtures import BUILT_AT, PAYER_ROW_ID, USER_ID, claim, line
 
@@ -149,6 +150,39 @@ def acknowledgment_report(
     return report
 
 
+def inbound_835(
+    *, transaction_id: str | None = None, processed_at: datetime = NOW
+) -> dict[str, Any]:
+    items = fixture("polling_transactions_277_and_835.json")["items"]
+    document = copy.deepcopy(
+        next(
+            item
+            for item in items
+            if item["direction"] == "INBOUND"
+            and item["x12"]["metadata"]["transaction"]["transactionSetIdentifier"] == "835"
+        )
+    )
+    document["transactionId"] = transaction_id or str(uuid.uuid4())
+    document["processedAt"] = _stamp(processed_at)
+    return document
+
+
+def remittance_report(
+    control_number: str,
+    *,
+    paid_cents: int,
+    patient_responsibility_cents: int = 0,
+    status_code: str = "1",
+) -> dict[str, Any]:
+    report = fixture("835_report_paid_in_full.json")
+    claim_payment = report["transactions"][0]["detailInfo"][0]["paymentInfo"][0]["claimPaymentInfo"]
+    claim_payment["patientControlNumber"] = control_number
+    claim_payment["claimStatusCode"] = status_code
+    claim_payment["claimPaymentAmount"] = f"{paid_cents / 100:.2f}"
+    claim_payment["patientResponsibilityAmount"] = f"{patient_responsibility_cents / 100:.2f}"
+    return report
+
+
 class FakeClearinghouse:
     """The pipeline's half of the clearinghouse protocol, answered from fixtures.
 
@@ -191,6 +225,28 @@ class FakeClearinghouse:
         )
         return transaction
 
+    def remit(
+        self,
+        control_number: str,
+        *,
+        paid_cents: int,
+        patient_responsibility_cents: int = 0,
+        status_code: str = "1",
+        transaction_id: str | None = None,
+        processed_at: datetime = NOW,
+    ) -> str:
+        """An inbound 835 for this claim lands in the feed."""
+        document = inbound_835(transaction_id=transaction_id, processed_at=processed_at)
+        transaction = str(document["transactionId"])
+        self.feed.append(document)
+        self.reports[transaction] = remittance_report(
+            control_number,
+            paid_cents=paid_cents,
+            patient_responsibility_cents=patient_responsibility_cents,
+            status_code=status_code,
+        )
+        return transaction
+
     # -- ClearinghouseClient ---------------------------------------------------
 
     def submit_claim(
@@ -226,6 +282,10 @@ class FakeClearinghouse:
         raise ClearinghouseNotFoundError("Transaction not found")
 
     def get_claim_acknowledgment(self, transaction_id: str) -> dict[str, Any]:
+        self.report_reads += 1
+        return copy.deepcopy(self.reports[transaction_id])
+
+    def get_remittance_report(self, transaction_id: str) -> dict[str, Any]:
         self.report_reads += 1
         return copy.deepcopy(self.reports[transaction_id])
 
@@ -270,6 +330,7 @@ class PipelineHarness:
     claims: InMemoryClaimRepository
     receipts: InMemoryClaimReceiptRepository
     payers: InMemoryPayerRepository
+    holds: InMemoryRemittanceHoldRepository
     listener: RecordingListener
     commits: list[str] = field(default_factory=list)
     account: SubmissionAccount = ACCOUNT
@@ -312,6 +373,7 @@ def make_harness(*, now: datetime = NOW, principal: str = USER_ID) -> PipelineHa
     claims = InMemoryClaimRepository()
     receipts = InMemoryClaimReceiptRepository()
     payers = InMemoryPayerRepository()
+    holds = InMemoryRemittanceHoldRepository()
     payers.create(TEST_PAYER)
     pipeline = ClaimPipeline(
         claims=claims,
@@ -319,6 +381,7 @@ def make_harness(*, now: datetime = NOW, principal: str = USER_ID) -> PipelineHa
         session=cast("Session", object()),
         principal_user_id=principal,
         now=lambda: now,
+        holds=holds,
     )
     return PipelineHarness(
         pipeline=pipeline,
@@ -326,6 +389,7 @@ def make_harness(*, now: datetime = NOW, principal: str = USER_ID) -> PipelineHa
         claims=claims,
         receipts=receipts,
         payers=payers,
+        holds=holds,
         listener=listener,
     )
 

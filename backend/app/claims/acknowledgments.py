@@ -31,6 +31,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 
 from ..models.claims import SubmissionFinding
+from .clearinghouse import ClearinghouseNotFoundError, ClearinghouseReportUnreadableError
 from .events import CodeRef
 from .receipts import codes_detail, move, record, reject
 from .responses import parse_277
@@ -77,6 +78,9 @@ def fetch_acknowledgment(
 
     Raises the adapter's typed errors — a transaction another account
     owns is :class:`~app.claims.clearinghouse.ClearinghouseNotFoundError`.
+    A transaction that IS ours whose report cannot be read is
+    :class:`~app.claims.clearinghouse.ClearinghouseReportUnreadableError`,
+    because those two mean opposite things to the caller.
     """
     document = client.get_transaction(transaction_id)
     if (
@@ -84,7 +88,12 @@ def fetch_acknowledgment(
         or document.transaction_set != ACKNOWLEDGMENT_TRANSACTION_SET
     ):
         return None
-    report = client.get_claim_acknowledgment(transaction_id)
+    try:
+        report = client.get_claim_acknowledgment(transaction_id)
+    except ClearinghouseNotFoundError as exc:
+        raise ClearinghouseReportUnreadableError(
+            f"no 277 report for transaction {transaction_id}"
+        ) from exc
     return FetchedAcknowledgment(
         transaction_id=transaction_id,
         processed_at=_processed_at(document.processedAt),

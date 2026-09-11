@@ -18,7 +18,9 @@ Three things live here:
   the set into ``payers.enrollment_status``.
 * :func:`refresh_enrollments` — polls the clearinghouse for every open
   request and records what changed. Bounded, and run per tenant by the
-  daily job in ``app.jobs.payer_enrollment_refresh``.
+  daily job in ``app.jobs.payer_enrollment_refresh``, or on demand through
+  :func:`refresh_enrollments_throttled`, which the practice's own "refresh"
+  button calls behind a per-practice floor.
 
 A request that lands in ``provider_action_required`` is something a person
 must do — sign a form, attest, upload a document. That is raised as an
@@ -39,8 +41,10 @@ statuses. The instructions text is stored and shown, never logged.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from threading import Lock
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
@@ -567,6 +571,51 @@ before it writes that person's reminder. The default is the real RLS arm;
 a test on a database without the GUC hands in a no-op."""
 
 
+def enrollment_request(
+    session: Session, payer_row_id: str, transaction_type: str
+) -> PayerEnrollmentRow | None:
+    """The practice's request with this payer for one transaction, if any."""
+    return next(
+        (
+            row
+            for row in list_enrollments(session, payer_row_id)
+            if row.transaction_type == transaction_type
+        ),
+        None,
+    )
+
+
+def refresh_enrollment(
+    session: Session,
+    client: ClearinghouseClient,
+    row: PayerEnrollmentRow,
+    *,
+    arm: PrincipalArmer = arm_current_user_id,
+) -> Enrollment:
+    """Read one request straight from the clearinghouse and record what it says.
+
+    :func:`refresh_enrollments` polls every open request off a listing, which
+    is the shape a nightly pass wants and the wrong one for a therapist who
+    has just answered a task and is looking at the row. This reads the single
+    request by its own id and carries the whole enrollment back — with its
+    tasks and documents, which the listing does not have.
+
+    Arms the session as the request's owner, since the reminder a status
+    change writes lands under that person's row policy, and **leaves it that
+    way**: a caller that goes on to write as somebody else has to arm itself
+    back. Does not commit.
+    """
+    enrollment = client.get_enrollment(row.vendor_request_id)
+    payer = session.get(PayerRow, row.payer_id)
+    if payer is None:
+        return enrollment
+    now = utc_now()
+    arm(session, row.requested_by_user_id)
+    if apply_vendor_status(session, row, enrollment, payer=payer, now=now):
+        _mirror_status(session, payer, now)
+    return enrollment
+
+
 def _listing_filters(session: Session, rows: Iterable[PayerEnrollmentRow]) -> EnrollmentFilters:
     """Narrow the vendor's listing to this practice's provider and the payers with open requests.
 
@@ -659,3 +708,63 @@ def refresh_enrollments(
     for payer in touched.values():
         _mirror_status(session, payer, now)
     return changed
+
+
+# --- The on-demand refresh, floored per practice ----------------------------------
+
+#: How long a refresh pass's answer stands before a practice can ask for a
+#: fresh one. The vendor moves in days; this only stops a doubled click or an
+#: impatient reload from costing a second vendor call.
+REFRESH_FLOOR_SECONDS = 60
+
+
+@dataclass(frozen=True)
+class RefreshOutcome:
+    """What a refresh pass (or the floor standing in for one) answers with."""
+
+    changed: int
+    checked_at: datetime
+    #: True when this is the previous pass's answer, handed back because the
+    #: floor had not yet passed — no vendor call was made for it.
+    throttled: bool
+
+
+_refresh_floor_lock = Lock()
+#: Practice id (or ``""`` in single-practice mode) to the wall-clock time of
+#: its last completed pass and what that pass answered.
+_last_refresh: dict[str, tuple[float, RefreshOutcome]] = {}
+
+
+def refresh_enrollments_throttled(
+    session: Session,
+    client: ClearinghouseClient,
+    *,
+    practice_id: str | None,
+    arm: PrincipalArmer = arm_current_user_id,
+) -> RefreshOutcome:
+    """:func:`refresh_enrollments`, floored so repeated presses reuse the last answer.
+
+    A call inside :data:`REFRESH_FLOOR_SECONDS` of this practice's last one
+    gets that pass's outcome back, marked ``throttled``, and never reaches
+    the clearinghouse or the session. Does not commit — same contract as
+    :func:`refresh_enrollments`; the caller owns the transaction for a pass
+    that actually ran.
+    """
+    key = practice_id or ""
+    wall_now = time.monotonic()
+    with _refresh_floor_lock:
+        cached = _last_refresh.get(key)
+    if cached is not None and wall_now - cached[0] < REFRESH_FLOOR_SECONDS:
+        return replace(cached[1], throttled=True)
+
+    changed = refresh_enrollments(session, client, arm=arm)
+    outcome = RefreshOutcome(changed=changed, checked_at=utc_now(), throttled=False)
+    with _refresh_floor_lock:
+        _last_refresh[key] = (wall_now, outcome)
+    return outcome
+
+
+def reset_refresh_floor() -> None:
+    """Clear every practice's refresh floor. Used by tests."""
+    with _refresh_floor_lock:
+        _last_refresh.clear()

@@ -34,8 +34,7 @@ def _row_to_link(row: BookingLinkRow) -> BookingLink:
         host_name=row.host_name,
         title=row.title,
         description=row.description,
-        duration_minutes=row.duration_minutes,
-        session_type=row.session_type,
+        appointment_type_id=row.appointment_type_id,
         is_active=row.is_active,
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -97,8 +96,7 @@ class PostgresBookingLinkRepository(BookingLinkRepository):
             host_name=link.host_name,
             title=link.title,
             description=link.description,
-            duration_minutes=link.duration_minutes,
-            session_type=link.session_type,
+            appointment_type_id=link.appointment_type_id,
             is_active=link.is_active,
             created_at=link.created_at,
             updated_at=link.updated_at,
@@ -130,7 +128,7 @@ class PostgresBookingLinkRepository(BookingLinkRepository):
         row.host_name = link.host_name
         row.title = link.title
         row.description = link.description
-        row.duration_minutes = link.duration_minutes
+        row.appointment_type_id = link.appointment_type_id
         row.is_active = link.is_active
         row.updated_at = utc_now()
         self._session.flush()

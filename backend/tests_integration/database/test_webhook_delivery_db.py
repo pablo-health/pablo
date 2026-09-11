@@ -452,9 +452,17 @@ def claims(practices: Practices) -> Iterator[ClaimRig]:
     from app.routes import claim_webhooks  # noqa: PLC0415
     from tests.claims_pipeline_fakes import FakeClearinghouse  # noqa: PLC0415
 
+    # ONE account, as the deployment has: the credential provider resolves the
+    # deployment's own key without regard to which practice is asking, and the
+    # receiver reads through it with no practice in hand at all (``None``).
+    # Giving each practice its own fake would model a topology that does not
+    # exist and would quietly make the account, rather than the routing index,
+    # look like what separates two practices' claims.
+    account = FakeClearinghouse()
     vendors = {
-        practices.a.practice_id: FakeClearinghouse(),
-        practices.b.practice_id: FakeClearinghouse(),
+        None: account,
+        practices.a.practice_id: account,
+        practices.b.practice_id: account,
     }
     with pytest.MonkeyPatch.context() as mp:
         settings = _ClearinghouseSettings()
@@ -507,9 +515,20 @@ def _seed_submitted_claim(engine: Engine, practice: Practice, control_number: st
 
 
 def _add_claim(session: Any, practice: Practice, control_number: str) -> str:
-    """Insert a submitted claim into the open session; the caller commits."""
+    """Insert a submitted claim into the open session; the caller commits.
+
+    Also records the routing index row, because that is what filing does: the
+    receiver finds a claim's practice by looking the control number up in
+    ``platform.claim_routes``, and a claim with no row there is one the
+    receiver has no way to place. Written on its own connection and committed
+    immediately — deliberately, and faithfully, since production writes it
+    alongside the outbox's pending marker, BEFORE the claim's state moves.
+    """
+    from app.claims.routing import record_claim_route  # noqa: PLC0415
     from app.repositories.postgres.claims import PostgresClaimRepository  # noqa: PLC0415
     from tests.claims_fixtures import billing_snapshot, claim, line  # noqa: PLC0415
+
+    record_claim_route(control_number, practice.practice_id, practice.clinician)
 
     claim_id = str(uuid.uuid4())
     now = datetime.now(UTC)
@@ -1051,17 +1070,22 @@ class TestClaimSignature:
 
 
 class TestClaimTenancy:
-    def test_a_delivery_moves_only_the_practice_whose_account_holds_it(
+    def test_a_delivery_moves_only_the_practice_that_filed_the_claim(
         self, engine: Engine, practices: Practices, claims: ClaimRig
     ) -> None:
-        """Control numbers are unique inside a practice, not across the
-        deployment. Two practices holding the same one is the shape that would
-        let an acknowledgement move the wrong claim; the account that owns the
-        transaction is what decides."""
-        control = _control_number()
-        claim_a = _seed_submitted_claim(engine, practices.a, control)
-        claim_b = _seed_submitted_claim(engine, practices.b, control)
-        transaction = claims.vendors[practices.b.practice_id].acknowledge("payer_accepted", control)
+        """An acknowledgement must never move another practice's claim.
+
+        Two practices, two live claims, one delivery. What decides is the
+        routing index: the practice that filed this control number is the only
+        one opened, so the other practice's claim is not merely left alone, it
+        is never looked at.
+        """
+        control_a, control_b = _control_number(), _control_number()
+        claim_a = _seed_submitted_claim(engine, practices.a, control_a)
+        claim_b = _seed_submitted_claim(engine, practices.b, control_b)
+        transaction = claims.vendors[practices.b.practice_id].acknowledge(
+            "payer_accepted", control_b
+        )
 
         response = _deliver_claim(claims, _claim_body(f"evt_{uuid.uuid4().hex}", transaction))
 
@@ -1070,6 +1094,37 @@ class TestClaimTenancy:
         assert _claim_event_count(engine, practices.b, claim_b) == 1
         assert _claim_state(engine, practices.a, claim_a) == "submitted"
         assert _claim_event_count(engine, practices.a, claim_a) == 0
+
+    def test_one_control_number_cannot_be_owned_by_two_practices(
+        self, practices: Practices
+    ) -> None:
+        """The index is keyed globally, and the first filer keeps the number.
+
+        Routing by control number needs it to identify a claim across the whole
+        deployment, not just inside a practice. Production earns that: a control
+        number is the build instant in base32 followed by six random Crockford
+        characters, so two practices collide only by drawing the same six inside
+        the same second (see ``app.claims.assembly.new_control_number``).
+
+        Should it ever happen anyway, the primary key decides it once, at write
+        time, rather than leaving it to whichever practice a search reached
+        first. The loser's row is refused and logged, not silently overwritten —
+        an overwrite would send the FIRST practice's remittance to the second
+        practice's ledger.
+        """
+        from app.claims.routing import (  # noqa: PLC0415
+            record_claim_route,
+            route_for_control_numbers,
+        )
+
+        control = _control_number()
+        record_claim_route(control, practices.a.practice_id, practices.a.clinician)
+        record_claim_route(control, practices.b.practice_id, practices.b.clinician)
+
+        route = route_for_control_numbers([control])
+        assert route is not None
+        assert route.practice_id == practices.a.practice_id
+        assert route.user_id == practices.a.clinician
 
 
 def _claim_events_in(engine: Engine, practice: Practice) -> int:

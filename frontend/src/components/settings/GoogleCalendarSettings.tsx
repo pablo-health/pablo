@@ -35,7 +35,7 @@ export function GoogleCalendarSettings() {
             <>
               <p className="flex items-center gap-2 font-medium text-neutral-900">
                 <Check className="h-4 w-4 text-secondary-600" />
-                {status.calendar_id ?? "Connected"}
+                {status.calendar_name ?? status.calendar_id ?? "Connected"}
               </p>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 {status.write_target === "primary"

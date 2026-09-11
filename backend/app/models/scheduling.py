@@ -441,6 +441,15 @@ class GoogleCalendarStatusResponse(BaseModel):
 
     connected: bool
     calendar_id: str | None = None
+    calendar_name: str | None = Field(
+        default=None,
+        description=(
+            "A name to show instead of the id, when the id is not worth "
+            "showing. Set for a Pablo-made calendar, whose id is an opaque "
+            "hash; absent for the therapist's own calendar, whose id is "
+            "their email address and reads better than any label"
+        ),
+    )
     last_synced_at: datetime | None = None
     write_target: str | None = None
     event_titling: str | None = Field(
