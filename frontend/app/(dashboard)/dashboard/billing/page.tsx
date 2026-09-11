@@ -27,10 +27,9 @@ export default function BillingPage() {
           the queue, with the nav still around it, instead of sending the
           clinician to a settings page to come back later. */}
       <BillingSetupGate>
-        {/* Above the tabs, not inside one. A payer's numbers disagreed and a
-            real client has stopped being billed — noticing that should not
-            depend on the therapist having picked the right tab. It renders
-            nothing at all when nothing is held, which is almost always. */}
+        {/* Above the tabs: noticing that a client stopped being billed
+            should not depend on picking the right tab. Renders nothing when
+            nothing is held, which is almost always. */}
         <RemittanceHolds />
         <Tabs defaultValue="unbilled">
           <TabsList>

@@ -2,33 +2,19 @@
 
 """Asserting an 835 accounts for its own numbers before believing any of them.
 
-An 835 is a balanced transaction: the adjustments must account for the whole
-gap between what was charged and what was paid, at the line and at the
-claim, and the client's share must be stated and itemised to the same
-figure. Those identities are guaranteed by the standard (TR3 005010X221A1
-§1.10.2, SNIP level 3) rather than by any particular payer's care, which is
-exactly what makes a failure worth acting on: it means our parse is wrong or
-the payer's file is, and either way the amounts are not ones to bill a real
-person from.
+The balancing identities are guaranteed by the standard (TR3 005010X221A1
+§1.10.2), so a failure means our parse is wrong or the payer's file is.
 
-**A caveat that shapes every fixture below, and it is the important one.**
-No captured 835 carrying real adjustments exists to test against. The
-vendor's test payer pays every claim in full and adjusts nothing; no
-complete, unambiguously public-domain 835 with a service-line ``CO-45``
-appears to exist. So every adjusting remittance here is authored, and an
-authored fixture can only ever confirm the model of the format that wrote
-it — the failure mode this codebase has already paid for once
-(``docs/internal``, the log-enrichment drift).
+CAVEAT, and it shapes every fixture here: no captured 835 with real
+adjustments exists. The test payer pays in full; no public-domain 835 with a
+service-line ``CO-45`` appears to exist. So every adjusting remittance below
+is AUTHORED, and an authored fixture only ever confirms the model that wrote
+it.
 
-:class:`TestTheDefinitionAgreesWithTheCode` is the mitigation and the reason
-this file is worth more than its unit tests. It generates remittances from a
-domain model of how adjudication actually works — fee schedule, deductible
-remaining, coinsurance, copay, out of network, sequestration — renders each
-one, and asserts both that the invariants hold AND that the patient
-responsibility we would post equals what the model says the client owes. The
-model is an independent statement of the rule; the parser is our code; the
-round trip is where the disagreement shows up. It is not a capture, and it
-does not replace one. The first real hold is the capture.
+:class:`TestTheDefinitionAgreesWithTheCode` is the mitigation: it generates
+remittances from an independent domain model of adjudication and asserts the
+posted patient responsibility matches what the plan says. Not a capture, and
+no substitute for one — the first real hold is the capture.
 """
 
 from __future__ import annotations
@@ -71,12 +57,7 @@ def _claim(
     total_charge_cents: int | None = None,
     paid_cents: int | None = None,
 ) -> RemittanceClaim:
-    """A remittance that balances unless a caller deliberately unbalances it.
-
-    The defaults derive the claim totals from the lines, so a test that does
-    nothing special gets a compliant document and a test that breaks one
-    identity breaks exactly the one it names.
-    """
+    """A remittance that balances unless a caller deliberately unbalances it."""
     claim_adjustments = claim_adjustments or []
     charged = (
         total_charge_cents
@@ -137,11 +118,8 @@ class TestADocumentThatAccountsForItself:
         assert disagreement_in(remittance) is None
 
     def test_a_reversal_balances_with_every_amount_negated(self) -> None:
-        """The balancing identities are signed, so a takeback balances too.
-
-        Only the patient-responsibility cross-check is exempt on a reversal
-        (X12 RFI #2548). The arithmetic is not exempt from itself.
-        """
+        """Signed, so a takeback balances too. Only the ``PR`` cross-check is
+        exempt on a reversal (X12 RFI #2548)."""
         reversal = _claim(
             _line(
                 charge_cents=-15_000,
@@ -168,12 +146,7 @@ class TestADocumentThatAccountsForItself:
         assert disagreement_in(remittance) is None
 
     def test_an_unclassifiable_group_still_accounts_for_the_gap(self) -> None:
-        """``OA`` and ``PI`` are counted by neither total and by the balance.
-
-        That is the point of summing every group: an adjustment we decline
-        to classify still has to be somewhere, and one we dropped is exactly
-        the gap these identities exist to notice.
-        """
+        """An adjustment we decline to classify still has to be somewhere."""
         remittance = _claim(
             _line(
                 charge_cents=15_000,
@@ -222,12 +195,7 @@ class TestALineThatDoesNotAccountForItself:
         assert found.line_control_number == "L2"
 
     def test_a_line_overpaid_relative_to_its_charge_is_caught(self) -> None:
-        """The identity is an equality, not a ceiling.
-
-        A payer paying more than the line was charged is as much a reason to
-        stop and look as one paying less, and a check written as ``<=``
-        would wave it through.
-        """
+        """An equality, not a ceiling — a ``<=`` check would wave this through."""
         remittance = _claim(
             _line(charge_cents=10_000, paid_cents=12_000),
             paid_cents=12_000,
@@ -242,11 +210,8 @@ class TestALineThatDoesNotAccountForItself:
 
 class TestAClaimThatDoesNotAccountForItself:
     def test_a_claim_total_the_lines_do_not_explain_is_caught(self) -> None:
-        """Every line balances and the claim still does not.
-
-        This is the case a line-only check misses: the lines are internally
-        consistent, and the claim header disagrees with all of them at once.
-        """
+        """The case a line-only check misses: every line balances, the header
+        disagrees with all of them."""
         remittance = _claim(
             _line(charge_cents=15_000, paid_cents=15_000),
             paid_cents=12_000,
@@ -272,12 +237,7 @@ class TestAClaimThatDoesNotAccountForItself:
 
 class TestWhichDisagreementIsReported:
     def test_the_clients_share_is_named_first_when_more_than_one_fails(self) -> None:
-        """A document can fail every check at once.
-
-        Patient responsibility is reported because it is the one that speaks
-        directly about the number that bills a client — which is what the
-        practice is being asked to decide about.
-        """
+        """When several fail, report the one that speaks about the client's bill."""
         remittance = _claim(
             _line(charge_cents=15_000, paid_cents=8_000),
             paid_cents=8_000,
@@ -305,12 +265,7 @@ class TestWhichDisagreementIsReported:
         assert "reason=line_balance" in caplog.text
 
     def test_the_old_boolean_still_answers_only_about_the_clients_share(self) -> None:
-        """``patient_responsibility_agrees`` predates the other two checks.
-
-        A line that does not balance is a real disagreement and this
-        function must still say nothing about it, because callers use it to
-        ask one specific question.
-        """
+        """It answers one narrow question and must stay silent about the rest."""
         remittance = _claim(
             _line(charge_cents=15_000, paid_cents=8_000),
             paid_cents=8_000,
@@ -327,23 +282,16 @@ class TestWhichDisagreementIsReported:
 
 
 class Adjudication:
-    """How a plan would actually settle one visit, worked out from first principles.
+    """How a plan settles one visit, worked out from first principles.
 
-    Written deliberately WITHOUT reference to the parser: it starts from
-    what a plan document says (a fee schedule, a deductible balance, a
-    coinsurance rate, a copay, whether the provider is in network, whether
-    sequestration applies) and works out who owes what. The renderer below
-    turns that into the 835 a payer would send.
+    Written WITHOUT reference to the parser, so the test asserts two
+    independent statements agree rather than asserting the code agrees with
+    a fixture that shares its beliefs.
 
-    So the test asserts two independent things agree — the definition and
-    the code — rather than asserting the code agrees with a fixture written
-    by somebody holding the same belief the code encodes.
-
-    The out-of-network arm matters more than it looks: there the write-off
-    arrives as ``PR-45`` with no ``CO`` at all, so the client owes MORE than
-    the allowed amount. Any check written as "patient responsibility cannot
-    exceed the allowed amount" passes every in-network case and is wrong
-    here, which is why the model generates it.
+    The out-of-network arm matters: the write-off arrives as ``PR-45`` with
+    no ``CO``, so the client owes MORE than the allowed amount. Any check
+    written as "PR cannot exceed allowed" passes in network and is wrong
+    here.
     """
 
     def __init__(
@@ -474,11 +422,7 @@ class TestTheDefinitionAgreesWithTheCode:
         assert remittance.patient_responsibility_cents == model.client_owes_cents
 
     def test_the_out_of_network_case_really_does_exceed_the_allowed_amount(self) -> None:
-        """Proof the sweep above contains the case that breaks the easy rule.
-
-        Without this, an out-of-network arm that silently never triggered
-        would leave the sweep looking thorough and testing nothing unusual.
-        """
+        """Proof the sweep contains the case that breaks the easy rule."""
         model = Adjudication(
             charge_cents=20_000,
             allowed_cents=9_000,
@@ -496,11 +440,7 @@ class TestTheDefinitionAgreesWithTheCode:
         assert disagreement_in(model.to_remittance()) is None
 
     def test_sequestration_never_reaches_the_client(self) -> None:
-        """``CO-253`` comes out of the payment, not out of what a client owes.
-
-        A parser that treated every reduction as the client's would bill
-        this person 2% of the plan's share on top of their own.
-        """
+        """``CO-253`` comes out of the payment, never off the client."""
         without = Adjudication(
             charge_cents=15_000,
             allowed_cents=12_000,
@@ -564,12 +504,7 @@ class TestASuspiciousCodePairing:
         assert "remittance_suspicious_code_pairing" in caplog.text
 
     def test_a_suspicious_pairing_alone_does_not_hold_the_bill(self) -> None:
-        """The check that gates a client's bill is the arithmetic.
-
-        This document is odd and adds up. Holding it would stop a practice
-        billing over a code combination nobody has catalogued, which is a
-        check that fires on novelty rather than on error.
-        """
+        """Odd, and it adds up. Novelty is not error."""
         remittance = _claim(
             _line(
                 charge_cents=15_000,
@@ -600,12 +535,7 @@ class TestASuspiciousCodePairing:
         assert "remittance_suspicious_code_pairing" not in caplog.text
 
     def test_the_normative_table_is_not_vendored_and_says_so(self) -> None:
-        """Guards the scope claim in the module docstring.
-
-        The CAQH CORE Rule 360 table is the normative source and is not in
-        this repo. If somebody later imports it, this test failing is the
-        prompt to rewrite the docstring rather than leave it lying.
-        """
-        assert "NOT vendored here" in pairing.__doc__
+        """Guards the scope claim: CORE Rule 360 is not vendored here."""
+        assert "not vendored" in pairing.__doc__
         assert set(CARC) > pairing.PATIENT_ONLY_REASONS
         assert set(CARC) > pairing.NEVER_PATIENT_REASONS

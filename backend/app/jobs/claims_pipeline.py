@@ -108,25 +108,16 @@ def run_practice(
     details = FeedRemittanceDetails(practice.client) if timelines is not None else None
 
     def work(run: TenantRun, user_id: str) -> None:
-        # Each stage commits before the next begins. The stages are sequential
-        # and independent, but they used to share one transaction, so a failure
-        # in a LATER stage discarded what an EARLIER one had already done — and
-        # for the submit stage that is not a lost update, it is a lie: the claim
-        # is with the payer, and the database says it is still `validated`.
+        # Each stage commits before the next begins. They used to share one
+        # transaction, so a failure in a LATER stage discarded an EARLIER
+        # one's work — and for submit that is not a lost update but a lie:
+        # the claim is with the payer and the database says `validated`.
         #
-        # What that produced, every five minutes forever (PABLO-02vb): submit
-        # minted an idempotency marker and committed it (deliberately — the
-        # marker must be durable before the vendor call), then move() set the
-        # claim `submitted` WITHOUT committing; poll_acknowledgments raised on a
-        # lock timeout; for_each_clinician rolled the session back. The marker
-        # survived and the transition did not, so the next run reconciled the
-        # same claim out of the feed, moved it again, and lost it again. The
-        # counters gave it away by being identical on every pass. A practice in
-        # that state cannot file anything at all.
-        #
-        # The lock timeout was only the trigger. ANY exception from a later
-        # stage did this, which is why the fix is the transaction boundary
-        # rather than the lock.
+        # PABLO-02vb: submit committed its idempotency marker, move() set
+        # `submitted` without committing, a later stage raised, the session
+        # rolled back. Marker survived, transition did not, so every run
+        # re-reconciled the same claim forever. Any later-stage exception did
+        # it, which is why the fix is the transaction boundary.
         if account is not None:
             submitted = submit_pending(
                 run.pipeline,
@@ -136,10 +127,9 @@ def run_practice(
                 practice_user_ids=practice.user_ids,
                 commit=run.commit,
                 limit=max_per_tenant,
-                # This run knows which practice and which clinician it is; the
-                # worker deliberately knows neither. Recording them here is
-                # what lets a webhook resolve a claim straight to its tenant
-                # and its row policy, with no search (PABLO-ffw8).
+                # The worker deliberately knows neither; recording them here
+                # lets a webhook resolve a claim straight to its tenant with
+                # no search (PABLO-ffw8).
                 on_pending=lambda control: record_claim_route(
                     control, practice.practice_id, user_id
                 ),

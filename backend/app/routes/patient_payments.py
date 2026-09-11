@@ -2,50 +2,42 @@
 
 """Self-pay card payments: keep a client's card on file and charge it.
 
-A practice charges its own clients with its own Stripe account. Nothing here
-holds money on anyone's behalf, and no card number ever reaches this process:
-the browser posts the card straight to Stripe against the SetupIntent this
-module returns, and what comes back and gets stored is an opaque payment-method
-id plus the brand, last four digits and expiry the UI renders.
+A practice charges its own clients with its own Stripe account. No card
+number reaches this process: the browser posts the card straight to Stripe
+against the SetupIntent this module returns, and what comes back is an opaque
+payment-method id plus brand, last four and expiry.
 
 Routes
 ------
 
-* ``POST /api/patients/{patient_id}/payment-method/setup`` — mint (or reuse)
-  the client's Stripe customer and return a SetupIntent client secret for
-  Stripe.js to confirm in the browser.
-* ``POST /api/patients/{patient_id}/payment-method`` — complete setup: read the
-  confirmed SetupIntent back from Stripe and store what actually got attached.
-* ``GET /api/patients/{patient_id}/payment-method`` — what is on file, so the
-  charge button knows whether to enable itself.
-* ``GET /api/patients/{patient_id}/charge-amount`` — what a charge would come
-  to, so the clinician sees the figure before authorising it rather than after.
-* ``POST /api/patients/{patient_id}/charges`` — charge the card on file. One
-  click, one charge: there is no scheduler, nothing charges on session
-  completion, and a decline is never retried automatically. A covered
-  client's copay is the same route with ``kind="copay"`` — the same card,
-  the same ledger, a row that says what it was for.
-* ``POST /api/patients/{patient_id}/charge-balance`` — charge the card for
-  everything the client owes, and stamp the bills it cleared with its id.
-* ``GET /api/patients/{patient_id}/charges`` — the ledger for one client.
-* ``GET /api/patients/{patient_id}/balance`` — what the ledger adds up to.
+* ``POST .../payment-method/setup`` — mint or reuse the Stripe customer,
+  return a SetupIntent client secret for Stripe.js.
+* ``POST .../payment-method`` — read the confirmed SetupIntent back and store
+  what actually got attached.
+* ``GET  .../payment-method`` — what is on file.
+* ``GET  .../charge-amount`` — what a charge would come to, so the clinician
+  sees the figure before authorising it.
+* ``POST .../charges`` — charge the card. One click, one charge: no
+  scheduler, nothing fires on session completion, no automatic retry. A
+  copay is the same route with ``kind="copay"``.
+* ``POST .../charge-balance`` — charge everything owed, stamping the bills it
+  cleared with its id.
+* ``GET  .../charges`` / ``GET .../balance`` — the ledger, and its total.
 
-Write-before-money ordering (the load-bearing bit)
---------------------------------------------------
+Write-before-money ordering (load-bearing)
+------------------------------------------
 
-The charge route commits twice before a cent can move, and both matter:
+Two commits before a cent moves:
 
-1. The ledger row is written ``pending`` and committed before Stripe is called
-   at all, so an attempt that dies mid-flight still leaves a row saying "we
-   tried" for a human to reconcile. Calling Stripe first and writing on success
-   would lose exactly the cases somebody needs to look at.
-2. The PaymentIntent is created **unconfirmed**, its id is stamped onto that
-   row and committed, and only then is the intent confirmed. The extra round
-   trip buys one guarantee: every PaymentIntent that could possibly have moved
-   money is one already written down. Confirming inside the create call would
-   let a timeout leave Stripe holding a completed payment whose id was never
-   learned, and a ledger row stuck at ``pending`` with nothing linking it to
-   the money.
+1. The ledger row is written ``pending`` and committed BEFORE Stripe is
+   called, so an attempt that dies mid-flight still leaves a row saying "we
+   tried". Calling Stripe first would lose exactly the cases somebody needs
+   to look at.
+2. The PaymentIntent is created **unconfirmed**, its id stamped on that row
+   and committed, and only then confirmed. The extra round trip buys one
+   guarantee: every PaymentIntent that could have moved money is already
+   written down. Confirming inside create would let a timeout leave Stripe
+   holding a completed payment whose id was never learned.
 
 A decline is terminal — the row stays ``failed`` with the decline code in
 ``status_detail``, and retrying is a fresh, explicit charge.
@@ -53,18 +45,15 @@ A decline is terminal — the row stays ``failed`` with the decline code in
 Access
 ------
 
-The client must be one the caller can see. That is decided by reading them
-through the request's tenant-scoped repository: a client in another practice's
-schema is not there at all, and one this clinician holds no grant on is hidden
-by the row policy. Either way the answer is **404, never 403** — a 403 would
-confirm the id exists.
+The client must be one the caller can see, decided by reading them through
+the request's tenant-scoped repository. Either way the answer is **404, never
+403** — a 403 would confirm the id exists.
 
-What crosses to Stripe is an amount and opaque ids. The customer object carries
-the client id so a human can match a Stripe customer to a chart; the
-PaymentIntent carries the ledger row id, the acting clinician and the practice,
-which is what lets the webhook tell this application's charges apart from the
-ones the practice raises in its own Stripe dashboard. Clinical content never
-crosses, and the log lines here carry opaque ids and amounts — never a name.
+What crosses to Stripe is an amount and opaque ids. The customer carries the
+client id so a human can match it to a chart; the PaymentIntent carries the
+ledger row id, clinician and practice, which is what lets the webhook tell
+our charges from the ones the practice raises in its own dashboard. No
+clinical content, and no names in the logs.
 """
 
 from __future__ import annotations

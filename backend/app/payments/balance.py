@@ -2,49 +2,39 @@
 
 """What a client owes, computed from the charge ledger and stored nowhere.
 
-A balance is arithmetic over rows, not a column. Storing it would create a
-second source of truth that drifts the first time a webhook lands out of
-order, a refund arrives, or a remittance is posted twice — and the drift is
-invisible, because a stored number always looks like an answer. Computing it
-means the ledger is the only thing that can be wrong, and the ledger is the
-thing an auditor reads anyway.
+A balance is arithmetic over rows, not a column. A stored one drifts the
+first time a webhook lands out of order or a remittance posts twice, and the
+drift is invisible because a stored number always looks like an answer.
 
 The rules, once, here:
 
-* **Owed** is what the client was billed for, whether or not it has been
-  paid: ``session`` rows (the full-rate visit charge) and ``patient_resp``
-  rows (what the payer said the client owes after adjudication). A bill stays
-  a bill; a payment CANCELS it rather than erasing it.
+* **Owed** — ``session`` (the full-rate visit charge) and ``patient_resp``
+  (what the payer says the client owes). A bill stays a bill; a payment
+  CANCELS it rather than erasing it.
 
-  That distinction is the whole design, and getting it backwards is the bug
-  this module had first. If a paid bill stopped being owed, a ``session`` row
-  — which is both the bill and its own payment attempt — would lose its owed
-  side the moment it succeeded while keeping its collected side, and every
-  client who had paid would read as being owed a refund. Keeping both sides
-  makes a paid session net to exactly zero, which is what it is.
-* **Collected** is money that actually arrived: ``session``, ``copay`` and
-  ``payment`` rows in a status where the practice is holding the funds. A
-  ``refunded``, ``failed`` or ``dispute_lost`` row collected nothing; a
-  ``disputed`` row is money the practice is holding but may lose, and it
-  counts as collected until the dispute resolves, which is what
-  ``dispute_lost`` is for.
-* ``payment`` exists so that money can be collected against a bill somebody
-  else raised. A ``session`` charge cannot do that job: it is itself a bill,
-  so using one to settle a ``patient_resp`` would re-bill the very amount it
-  was paying off.
-* **Written off** is ``write_off`` rows. They reduce the balance without
-  anyone paying.
-* ``contractual_adjustment`` is owed by nobody — a participating practice
-  agreed not to bill it — so it never touches the balance. It is summarised
-  separately because the client's statement has to explain where the rest of
-  the practice's rate went.
-* ``credit`` is money held on the client's behalf. It reduces the balance and
-  can take it negative, which is the point: a negative balance is a refund the
-  practice owes, and rendering it as zero would hide that.
+  Getting that backwards is the bug this module had first. If a paid bill
+  stopped being owed, a ``session`` row — both the bill and its own payment
+  attempt — would lose its owed side on success while keeping its collected
+  side, and every client who had paid would read as owed a refund. Keeping
+  both sides makes a paid session net to zero.
+* **Collected** — ``session``, ``copay`` and ``payment`` rows in a status
+  where the practice holds the funds. ``refunded``, ``failed`` and
+  ``dispute_lost`` collected nothing; ``disputed`` is money held but at risk
+  and counts as collected until it resolves.
+* ``payment`` exists so money can be collected against a bill somebody else
+  raised. A ``session`` charge cannot: it is itself a bill, so settling a
+  ``patient_resp`` with one would re-bill the amount it was paying off.
+* **Written off** — ``write_off`` rows reduce the balance with nobody paying.
+* ``contractual_adjustment`` is owed by nobody and never touches the balance.
+  Summarised separately so a statement can explain where the rest of the
+  practice's rate went.
+* ``credit`` reduces the balance and may take it negative — that is the
+  point. A negative balance is a refund the practice owes; rendering it as
+  zero would hide that.
 
-Every amount in the ledger is a positive magnitude (the table enforces it);
-sign is applied here, by kind, so no reader anywhere else has to remember
-which kinds are negative.
+Ledger amounts are positive magnitudes (the table enforces it); sign is
+applied here, by kind, so no reader elsewhere has to remember which are
+negative.
 """
 
 from __future__ import annotations

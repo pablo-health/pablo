@@ -2,26 +2,19 @@
 
 """Deciding what a payer's remittance did to a claim.
 
-A claim sits at ``payer_accepted`` until the payer says what it did with it.
-This reads a claim's timeline and works out which of the three answers came
-back — paid in full, adjudicated for less than the charge, or denied — along
-with the amounts that go on the claim.
+A claim sits at ``payer_accepted`` until the payer answers: paid in full,
+adjudicated for less, or denied.
 
-Pure: no I/O, no logging, no database. The posting itself, and the state
-transition it drives, are the caller's.
+``posting_for`` and ``posting_from_detail`` are pure readings of a timeline
+or an 835; ``apply_posting`` is the one that writes.
 
-Two readings are worth being explicit about, because a tracker that gets
-either one wrong tells a practice something false about its own money.
+Two readings a tracker must not get wrong:
 
-**Adjudicated for zero is not a denial.** A payer that applies the whole
-charge to the client's deductible has processed the claim and paid nothing;
-the money is now owed by the client rather than refused. That is reported as
-partial, not denied, so the balance lands on the client and the claim is not
-filed away as a loss to appeal.
-
-**Nothing to post is not the same as denied.** A timeline carrying only a
-predetermination, or a claim forwarded to another payer, has no adjudication
-in it at all. The claim stays where it is and waits.
+* **Adjudicated for zero is not a denial.** A charge applied entirely to the
+  deductible was processed, not refused — reported partial, so the balance
+  lands on the client instead of the claim being filed away to appeal.
+* **Nothing to post is not denied either.** A predetermination, or a claim
+  forwarded to another payer, carries no adjudication. The claim waits.
 """
 
 from __future__ import annotations
@@ -286,12 +279,9 @@ def apply_posting(
         occurred_at=posting.adjudicated_at,
         touches_receipt_clock=True,
     )
-    # Does the remittance account for its own numbers? Asked whenever the
-    # 835 was available to read, and asked BEFORE and INDEPENDENTLY of
-    # whether this caller writes to the client's ledger — the webhook path
-    # passes no ``charges`` but is usually the first to see the document,
-    # and a hold nobody raised because the wrong path got there first is a
-    # hold that never happens.
+    # Asked independently of whether this caller writes to the ledger: the
+    # webhook path passes no ``charges`` but usually sees the document
+    # first, and a hold it skipped is a hold that never happens.
     disagreement = None
     if detail is not None:
         disagreement = disagreement_in(detail)
@@ -308,43 +298,21 @@ def apply_posting(
                 ),
             )
             if stored_hold is not None:
-                # A hold nobody meets is a client whose balance quietly
-                # stopped being billed, so it goes in front of the
-                # clinician who owns the claim as work — through the same
-                # reminder surface a rejection or a denial uses, rather
-                # than a notification channel of its own.
-                #
-                # Only on a hold that was actually written. Announcing a
-                # duplicate would put a second reminder in front of
-                # somebody for a disagreement they have already been told
-                # about.
+                # Through the reminder surface a rejection or denial
+                # already uses. Only on a hold that was actually written —
+                # a duplicate would nag about a disagreement somebody has
+                # already been told about.
                 announce(pipeline, stored, "remittance_held")
 
     if charges is not None:
-        # What the payer says the client owes becomes a row on the client's
-        # own ledger. Without this the money stops at the claim: the practice
-        # can see that a payer paid $80 of $150 and the client is never told
-        # about the $20.
+        # The DIFFERENCE from what this claim already billed, not the
+        # amount itself: a remittance states the balance rather than adding
+        # to it, so summing a primary and a secondary would bill one session
+        # twice. Negative is a credit — a secondary clearing the primary's
+        # coinsurance.
         #
-        # What is written is the DIFFERENCE from what this claim has already
-        # billed, not the amount itself, because a remittance states the
-        # balance rather than adding to it. A claim with secondary coverage
-        # gets a remittance from each payer, and each states what the client
-        # owes after that payer adjudicated — so adding them up bills one
-        # session twice. A secondary that pays off the primary's coinsurance
-        # produces a negative difference here, which is a credit and is
-        # exactly right.
-        #
-        # Written inside the same branch that records the receipt, so the
-        # receipt's idempotency covers the ordinary single-payer case too.
-        #
-        # Not written at all when the remittance contradicts itself. That is
-        # the one thing a hold changes: the payer's payment above still
-        # posted, the claim still moved, the receipt still says adjudicated
-        # — but a real person is not billed a figure this engine's own
-        # arithmetic cannot corroborate. A practice settles it themselves
-        # (``app.claims.holds``); nothing here ever decides for them, and
-        # nothing releases it with time.
+        # Skipped entirely when the remittance contradicts itself. That is
+        # the only thing a hold changes; everything above it still posted.
         already_billed = patient_responsibility_billed(charges, stored)
         difference = posting.patient_responsibility_cents - already_billed
         if disagreement is not None:

@@ -351,35 +351,26 @@ def apply_charge_outcome(  # noqa: PLR0913 — keyword-only outcome fields, not 
 ) -> ChargeApply:
     """Update the practice's ledger row for ``payment_intent_id``.
 
-    The schema is bound explicitly, since there is no request and therefore no
-    middleware to do it, and ``app.current_user_id`` is armed from the event's
-    metadata so the row's access policy admits the write.
+    The schema is bound explicitly (no request, so no middleware) and
+    ``app.current_user_id`` is armed from the event metadata so the row policy
+    admits the write.
 
-    **The event-supplied user id is a lookup key that gets verified against our
-    own row, never an authority.** It cannot select which row is touched: the
-    row is pinned by the PaymentIntent id the processor signed, inside a schema
-    resolved from the practice id the processor signed. What the armed id *can*
-    do is fail to satisfy the row policy, in which case nothing is visible and
-    the outcome is ``NOT_FOUND``. So the UPDATE returns ``created_by_user_id``
-    and the caller compares it against what was armed: on a mismatch the write
-    still stands and the event is still recorded — the ledger outcome is
-    correct either way and a retry would change nothing — but it is logged as
-    something to alert on.
+    **The event-supplied user id is a lookup key, never an authority.** It
+    cannot choose the row: that is pinned by the PaymentIntent id and the
+    practice id the processor signed. It can only fail the row policy, giving
+    ``NOT_FOUND``. The UPDATE returns ``created_by_user_id`` and the caller
+    compares it: a mismatch still writes and still records — the ledger is
+    correct either way — but is logged to alert on.
 
-    That check costs nothing today, because this path writes no audit rows and
-    nothing stamps an actor from session state. It exists because the
-    route-audit guardrail pushes anything touching a client's chart toward
-    mandatory auditing, and a future audit write here would otherwise silently
-    attribute the action to whatever the event claimed. This makes that change
-    safe by construction rather than by luck.
+    That comparison costs nothing today (this path writes no audit rows). It
+    exists so a future audit write here cannot silently attribute the action
+    to whatever the event claimed.
 
-    The current status is read ``FOR UPDATE`` before writing rather than
-    inferring everything from the UPDATE's row count. Zero rows updated has two
-    completely different meanings — "there is no such row" (an anomaly, since
-    the event carried our metadata) and "the status guard refused a stale
-    transition" (correct, and must not be retried) — and a row count cannot
-    tell them apart. ``FOR UPDATE`` makes the check-then-act atomic, so a
-    concurrent redelivery cannot slip between the two statements.
+    Status is read ``FOR UPDATE`` before writing, because zero rows updated
+    has two meanings a row count cannot separate: no such row (an anomaly —
+    the event carried our metadata) and the status guard refusing a stale
+    transition (correct, must not retry). ``FOR UPDATE`` also stops a
+    concurrent redelivery slipping between the check and the act.
 
     ``fee_cents``/``net_cents`` are written through ``COALESCE`` against the
     row's current value rather than overwritten outright: most events that
