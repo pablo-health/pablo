@@ -108,6 +108,25 @@ def run_practice(
     details = FeedRemittanceDetails(practice.client) if timelines is not None else None
 
     def work(run: TenantRun, user_id: str) -> None:
+        # Each stage commits before the next begins. The stages are sequential
+        # and independent, but they used to share one transaction, so a failure
+        # in a LATER stage discarded what an EARLIER one had already done — and
+        # for the submit stage that is not a lost update, it is a lie: the claim
+        # is with the payer, and the database says it is still `validated`.
+        #
+        # What that produced, every five minutes forever (PABLO-02vb): submit
+        # minted an idempotency marker and committed it (deliberately — the
+        # marker must be durable before the vendor call), then move() set the
+        # claim `submitted` WITHOUT committing; poll_acknowledgments raised on a
+        # lock timeout; for_each_clinician rolled the session back. The marker
+        # survived and the transition did not, so the next run reconciled the
+        # same claim out of the feed, moved it again, and lost it again. The
+        # counters gave it away by being identical on every pass. A practice in
+        # that state cannot file anything at all.
+        #
+        # The lock timeout was only the trigger. ANY exception from a later
+        # stage did this, which is why the fix is the transaction boundary
+        # rather than the lock.
         if account is not None:
             submitted = submit_pending(
                 run.pipeline,
@@ -126,6 +145,7 @@ def run_practice(
                 ),
             )
             totals.update({f"submit_{k}": v for k, v in asdict(submitted).items()})
+            run.commit()
         if "status" in stages:
             polled = poll_acknowledgments(
                 run.pipeline,
@@ -134,6 +154,7 @@ def run_practice(
                 limit=max_per_tenant,
             )
             totals.update({f"status_{k}": v for k, v in asdict(polled).items()})
+            run.commit()
         if timelines is not None:
             # After the acknowledgement pass, so a claim the payer accepted
             # in this same run can be paid in it too rather than waiting a
@@ -149,6 +170,7 @@ def run_practice(
             totals["remit_posted"] += post_remittances(
                 run.pipeline, timelines, waiting, details=details
             )
+            run.commit()
         if "watchdog" in stages:
             watched = run_watchdog(
                 run.pipeline,
@@ -157,6 +179,7 @@ def run_practice(
                 limit=max_per_tenant,
             )
             totals.update({f"watchdog_{k}": v for k, v in asdict(watched).items()})
+            run.commit()
 
     totals["clinicians"] = for_each_clinician(practice, work)
     return totals
