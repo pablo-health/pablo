@@ -7,6 +7,7 @@ import { BillerExport } from "@/components/billing/BillerExport"
 import { BillingSetupGate } from "@/components/billing/BillingSetupGate"
 import { ClaimsSetupChecklist } from "@/components/billing/ClaimsSetupChecklist"
 import { ClaimsTracker } from "@/components/billing/claims/ClaimsTracker"
+import { RemittanceHolds } from "@/components/billing/claims/RemittanceHolds"
 import { ReportsView } from "@/components/billing/ReportsView"
 import { UnbilledQueue } from "@/components/billing/UnbilledQueue"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -26,6 +27,11 @@ export default function BillingPage() {
           the queue, with the nav still around it, instead of sending the
           clinician to a settings page to come back later. */}
       <BillingSetupGate>
+        {/* Above the tabs, not inside one. A payer's numbers disagreed and a
+            real client has stopped being billed — noticing that should not
+            depend on the therapist having picked the right tab. It renders
+            nothing at all when nothing is held, which is almost always. */}
+        <RemittanceHolds />
         <Tabs defaultValue="unbilled">
           <TabsList>
             <TabsTrigger value="unbilled" data-testid="billing-tab-unbilled">
