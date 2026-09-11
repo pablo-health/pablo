@@ -582,10 +582,10 @@ class BookingLinkRow(PlatformBase):
     """A clinician's public booking link (see docs/design/public-booking.md).
 
     Platform-scoped because slug resolution must happen before a tenant
-    schema can be selected. Stores no PHI: slug, owner, display copy,
-    duration. ``practice_id`` is NULL in single-schema deployments.
-    Inactive links 404 on the public surface but stay listed for the
-    owner.
+    schema can be selected. Stores no PHI: slug, owner, display copy, and
+    the id of the appointment type it books. ``practice_id`` is NULL in
+    single-schema deployments. Inactive links 404 on the public surface
+    but stay listed for the owner.
     """
 
     __tablename__ = "booking_links"
@@ -612,16 +612,18 @@ class BookingLinkRow(PlatformBase):
     host_name: Mapped[str] = mapped_column(String(255), nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
-    duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
-    #: The appointment type this link books, by NAME rather than by id.
+    #: The appointment type this link books, by id. Required: a link with
+    #: no type is a link nothing can gate.
     #:
     #: ``appointment_types`` is per-tenant and this table is platform-scoped
     #: (see the class docstring: a public slug must resolve before a tenant
     #: schema can be selected). A platform table cannot hold a foreign key
-    #: into one of N tenant schemas, so this stays a string. Resolve it to a
-    #: real type after the tenant is known, and treat a name that no longer
-    #: matches as a link that needs attention rather than a hard error.
-    session_type: Mapped[str] = mapped_column(String(20), nullable=False, default="individual")
+    #: into one of N tenant schemas, so this is a plain value, validated
+    #: against the owner's own types when the link is written and resolved
+    #: again after the tenant is known. A type that has since been deleted
+    #: makes the link non-bookable rather than a hard error. Length is not
+    #: stored here at all; the type is the one place it lives.
+    appointment_type_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -637,13 +639,7 @@ class BookingLinkRow(PlatformBase):
     # above, forever, for every caller including the original owner.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    __table_args__ = (  # type: ignore[assignment]  # tuple form for CheckConstraint, same as PracticeRow
-        CheckConstraint(
-            "duration_minutes BETWEEN 5 AND 480",
-            name="ck_booking_links_duration",
-        ),
-        {"schema": PLATFORM_SCHEMA},
-    )
+    __table_args__ = {"schema": PLATFORM_SCHEMA}
 
 
 class ProcessedPaymentEventRow(PlatformBase):
