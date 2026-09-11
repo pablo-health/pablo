@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 
 from ..db.models import DEFAULT_CHARGE_CURRENCY
 from ..models.claims_holds import FINDINGS_THAT_BILL, RemittanceHold
+from .hold_receiver import hand_over
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -176,6 +177,10 @@ def settle(  # noqa: PLR0913 — the decision and everything it needs to write
             resolved.id,
             resolved.finding,
         )
+        # A receiver following this hold learns how it ended without having
+        # to poll for it. No remittance is handed over: the engine keeps no
+        # second copy, and by now the document is long out of hand.
+        hand_over(resolved, "resolved")
     return resolved
 
 

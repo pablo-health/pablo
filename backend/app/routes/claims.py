@@ -67,6 +67,7 @@ from ..claims.assembly import (
 )
 from ..claims.deadlines import deadlines_for
 from ..claims.events import resolve_compliance_reminder
+from ..claims.hold_receiver import hand_over
 from ..claims.holds import (
     PATIENT_RESPONSIBILITY_KIND,
     settle,
@@ -552,6 +553,7 @@ def acknowledge_remittance_hold(
     acknowledged = holds.acknowledge(hold.id, at=utc_now())
     if acknowledged is None:  # pragma: no cover — _require_hold just read it
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_HOLD_NOT_FOUND)
+    hand_over(acknowledged, "acknowledged")
     audit.log(
         AuditAction.CLAIM_REMITTANCE_HOLD_ACKNOWLEDGED,
         user,

@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 from ..db.models import DEFAULT_CHARGE_CURRENCY
 from . import holds
 from .clearinghouse import ClearinghouseError
+from .hold_receiver import hand_over
 from .receipts import announce, record
 from .remittance_lines import DENIED, applied_to, disagreement_in
 from .transitions import advance, next_state
@@ -298,6 +299,10 @@ def apply_posting(
                 ),
             )
             if stored_hold is not None:
+                # Offered to whatever the deployment registered to look
+                # into it, with the remittance the parser had in hand.
+                # Never raises.
+                hand_over(stored_hold, "raised", remittance=detail)
                 # Through the reminder surface a rejection or denial
                 # already uses. Only on a hold that was actually written —
                 # a duplicate would nag about a disagreement somebody has
