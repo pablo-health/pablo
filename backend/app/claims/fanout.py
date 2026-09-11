@@ -27,6 +27,7 @@ from ..db.tenant_session import tenant_db_session
 from ..repositories.postgres.claim_receipts import PostgresClaimReceiptRepository
 from ..repositories.postgres.claims import PostgresClaimRepository
 from ..repositories.postgres.coverage import PostgresPayerRepository
+from ..repositories.postgres.remittance_hold import PostgresRemittanceHoldRepository
 from ..services.practice_billing_profile import SINGLETON_ID
 from ..services.token_encryption import decrypt_tokens
 from .acknowledgments import FetchedAcknowledgment, apply_fetched, fetch_acknowledgment
@@ -254,6 +255,7 @@ def _pipeline_for(route: ClaimRoute, session: Session) -> ClaimPipeline:
         receipts=PostgresClaimReceiptRepository(session),
         session=session,
         principal_user_id=route.user_id,
+        holds=PostgresRemittanceHoldRepository(session),
     )
 
 
@@ -308,6 +310,7 @@ def for_each_clinician(practice: PracticeContext, work: Callable[[TenantRun, str
                         receipts=PostgresClaimReceiptRepository(session),
                         session=session,
                         principal_user_id=user_id,
+                        holds=PostgresRemittanceHoldRepository(session),
                     ),
                     payers=PostgresPayerRepository(session),
                     commit=session.commit,

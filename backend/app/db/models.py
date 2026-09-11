@@ -2438,3 +2438,131 @@ class ClaimLineRow(Base):
     patient_resp_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
     adjustments: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+#: Which of the 835's self-statements failed. See
+#: ``app.models.claims_holds.HoldReason``, which is the definition; these
+#: are here only so the check constraint can name the same set.
+REMITTANCE_HOLD_REASONS: tuple[str, ...] = (
+    "patient_responsibility",
+    "line_balance",
+    "claim_balance",
+)
+
+#: The states a remittance hold moves through. Named here so the check
+#: constraint and the domain model's ``HoldState`` cannot drift apart
+#: silently — ``app.models.claims_holds`` is the one that defines them.
+REMITTANCE_HOLD_STATES: tuple[str, ...] = ("open", "acknowledged", "resolved")
+
+#: How a hold ended. See ``app.models.claims_holds.HoldFinding``.
+REMITTANCE_HOLD_FINDINGS: tuple[str, ...] = (
+    "bill_as_stated",
+    "waived",
+    "parse_error",
+    "payer_inconsistent",
+)
+
+
+class RemittanceHoldRow(Base):
+    """A remittance whose two statements of the client's share disagree.
+
+    An 835 states the claim's patient-responsibility total (``CLP05``) and
+    then itemises the same figure across the service lines as ``PR``-group
+    adjustments. When those two disagree the engine posts what the payer
+    paid, withholds the client's ledger row, and writes one of these
+    instead of billing a real person a number it cannot corroborate.
+
+    Carries ``patient_id`` and no ``user_id``, so ``enable_rls_on_schema``
+    attaches the standard ``has_patient_access`` policy and the clinician
+    who owns the claim is the one who sees the hold.
+
+    ``posting_key`` is the key the posting path already dedupes receipts on
+    — the claim id and the vendor entry that carried the adjudication —
+    and it is unique here for the same reason it is there: a remittance
+    delivered twice is one event, and a second hold would put the same
+    disagreement in front of a person twice.
+
+    No column holds clinical content. ``codes`` is CARC/RARC pairs, which
+    are numbers from a public list; the amounts are money the payer
+    reported; there is no name, no date of service and no diagnosis.
+    """
+
+    __tablename__ = "remittance_holds"
+    __table_args__ = (
+        CheckConstraint(
+            f"state IN ({_sql_in_list(REMITTANCE_HOLD_STATES)})",
+            name="ck_remittance_holds_state",
+        ),
+        CheckConstraint(
+            f"reason IN ({_sql_in_list(REMITTANCE_HOLD_REASONS)})",
+            name="ck_remittance_holds_reason",
+        ),
+        # A line-level disagreement names its line; the two claim-level
+        # reasons have no line to name. Without this a reader cannot tell
+        # "the whole claim disagrees" from "we forgot to record which line".
+        CheckConstraint(
+            "(reason = 'line_balance') = (line_control_number IS NOT NULL)",
+            name="ck_remittance_holds_line_reason",
+        ),
+        CheckConstraint(
+            f"finding IS NULL OR finding IN ({_sql_in_list(REMITTANCE_HOLD_FINDINGS)})",
+            name="ck_remittance_holds_finding",
+        ),
+        # A resolved hold says how it ended and when; an unresolved one says
+        # neither. Both halves matter: a resolution with no finding is the
+        # row nobody can account for, and a finding on an open hold means
+        # somebody decided without the state following.
+        CheckConstraint(
+            "(state = 'resolved') = (resolved_at IS NOT NULL)",
+            name="ck_remittance_holds_resolved_at_state",
+        ),
+        CheckConstraint(
+            "(state = 'resolved') = (finding IS NOT NULL)",
+            name="ck_remittance_holds_finding_state",
+        ),
+        UniqueConstraint("posting_key", name="ux_remittance_holds_posting_key"),
+        # The tick reads "every hold still withholding a row", and the
+        # resolved ones are the majority in the long run. Partial, so the
+        # index stays the size of the work rather than the size of history.
+        Index(
+            "ix_remittance_holds_open",
+            "state",
+            "detected_at",
+            postgresql_where=text("state <> 'resolved'"),
+        ),
+        Index("ix_remittance_holds_claim_id", "claim_id"),
+        Index("ix_remittance_holds_patient_id", "patient_id"),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    claim_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("claims.id", ondelete="CASCADE"), nullable=False
+    )
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("patients.id", ondelete="CASCADE"), nullable=False
+    )
+    control_number: Mapped[str] = mapped_column(String(30), nullable=False)
+    posting_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="open")
+    reason: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    stated_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    computed_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    # What the payer says the client owes for this claim in total, NOT the
+    # row that was withheld: the row is the difference from what the ledger
+    # already carries, and that is a number whose home is the ledger. Signed
+    # on purpose — a secondary payer paying off the primary's coinsurance
+    # leaves a credit rather than a charge.
+    patient_responsibility_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    line_control_number: Mapped[str | None] = mapped_column(String(30), nullable=True)
+
+    codes: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    line_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    payer_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_by_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    finding: Mapped[str | None] = mapped_column(String(24), nullable=True)

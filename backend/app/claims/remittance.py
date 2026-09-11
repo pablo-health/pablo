@@ -31,9 +31,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from ..db.models import DEFAULT_CHARGE_CURRENCY
+from . import holds
 from .clearinghouse import ClearinghouseError
 from .receipts import record
-from .remittance_lines import DENIED, applied_to
+from .remittance_lines import DENIED, applied_to, disagreement_in
 from .transitions import advance, next_state
 
 if TYPE_CHECKING:
@@ -204,7 +205,7 @@ def apply_remittance(
 PATIENT_RESPONSIBILITY_KIND = "patient_resp"
 
 
-def _patient_responsibility_billed(charges: PatientPaymentRepository, claim: Claim) -> int:
+def patient_responsibility_billed(charges: PatientPaymentRepository, claim: Claim) -> int:
     """How much of this claim has already been put on the client's ledger.
 
     Read from the ledger rather than tracked on the claim, because the ledger
@@ -282,6 +283,28 @@ def apply_posting(
         occurred_at=posting.adjudicated_at,
         touches_receipt_clock=True,
     )
+    # Does the remittance account for its own numbers? Asked whenever the
+    # 835 was available to read, and asked BEFORE and INDEPENDENTLY of
+    # whether this caller writes to the client's ledger — the webhook path
+    # passes no ``charges`` but is usually the first to see the document,
+    # and a hold nobody raised because the wrong path got there first is a
+    # hold that never happens.
+    disagreement = None
+    if detail is not None:
+        disagreement = disagreement_in(detail)
+        if disagreement is not None:
+            holds.record(
+                pipeline.holds,
+                holds.hold_for(
+                    stored,
+                    detail,
+                    disagreement,
+                    patient_responsibility_cents=posting.patient_responsibility_cents,
+                    posting_key=event_key,
+                    now=now,
+                ),
+            )
+
     if charges is not None:
         # What the payer says the client owes becomes a row on the client's
         # own ledger. Without this the money stops at the claim: the practice
@@ -299,9 +322,24 @@ def apply_posting(
         #
         # Written inside the same branch that records the receipt, so the
         # receipt's idempotency covers the ordinary single-payer case too.
-        already_billed = _patient_responsibility_billed(charges, stored)
+        #
+        # Not written at all when the remittance contradicts itself. That is
+        # the one thing a hold changes: the payer's payment above still
+        # posted, the claim still moved, the receipt still says adjudicated
+        # — but a real person is not billed a figure this engine's own
+        # arithmetic cannot corroborate. A practice settles it themselves
+        # (``app.claims.holds``); nothing here ever decides for them, and
+        # nothing releases it with time.
+        already_billed = patient_responsibility_billed(charges, stored)
         difference = posting.patient_responsibility_cents - already_billed
-        if difference:
+        if disagreement is not None:
+            logger.info(
+                "remittance_ledger_withheld claim_id=%s reason=%s amount_cents=%d",
+                stored.id,
+                disagreement.reason,
+                difference,
+            )
+        elif difference:
             charges.add_ledger_row(
                 patient_id=stored.patient_id,
                 kind=PATIENT_RESPONSIBILITY_KIND,

@@ -42,6 +42,7 @@ from app.models.coverage import Payer
 from app.repositories.claim_receipts import InMemoryClaimReceiptRepository
 from app.repositories.claims import InMemoryClaimRepository
 from app.repositories.coverage import InMemoryPayerRepository
+from app.repositories.remittance_hold import InMemoryRemittanceHoldRepository
 
 from tests.claims_fixtures import BUILT_AT, PAYER_ROW_ID, USER_ID, claim, line
 
@@ -329,6 +330,7 @@ class PipelineHarness:
     claims: InMemoryClaimRepository
     receipts: InMemoryClaimReceiptRepository
     payers: InMemoryPayerRepository
+    holds: InMemoryRemittanceHoldRepository
     listener: RecordingListener
     commits: list[str] = field(default_factory=list)
     account: SubmissionAccount = ACCOUNT
@@ -371,6 +373,7 @@ def make_harness(*, now: datetime = NOW, principal: str = USER_ID) -> PipelineHa
     claims = InMemoryClaimRepository()
     receipts = InMemoryClaimReceiptRepository()
     payers = InMemoryPayerRepository()
+    holds = InMemoryRemittanceHoldRepository()
     payers.create(TEST_PAYER)
     pipeline = ClaimPipeline(
         claims=claims,
@@ -378,6 +381,7 @@ def make_harness(*, now: datetime = NOW, principal: str = USER_ID) -> PipelineHa
         session=cast("Session", object()),
         principal_user_id=principal,
         now=lambda: now,
+        holds=holds,
     )
     return PipelineHarness(
         pipeline=pipeline,
@@ -385,6 +389,7 @@ def make_harness(*, now: datetime = NOW, principal: str = USER_ID) -> PipelineHa
         claims=claims,
         receipts=receipts,
         payers=payers,
+        holds=holds,
         listener=listener,
     )
 
