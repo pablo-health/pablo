@@ -4,7 +4,9 @@
 
 A booking link is a clinician-created public slug through which a client
 can book an appointment directly (docs/design/public-booking.md). The
-record itself carries no PHI — slug, owner, display copy, duration.
+record itself carries no PHI — slug, owner, display copy, and the
+appointment type it books. Length comes from the type; the link does not
+carry a second answer to that question.
 """
 
 from __future__ import annotations
@@ -12,11 +14,15 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, EmailStr, Field
 
 from .coverage import IntakeCoverage  # noqa: TC001 — Pydantic resolves the field type at runtime
+
+if TYPE_CHECKING:
+    from ..scheduling_engine.models.appointment_type import AppointmentType
+    from ..scheduling_engine.services.booking_link_gate import LinkBookability
 
 SLUG_PATTERN = r"^[a-z0-9][a-z0-9-]{2,63}$"
 _SLUG_RE = re.compile(SLUG_PATTERN)
@@ -59,8 +65,13 @@ class BookingLink:
     host_name: str
     title: str
     description: str | None
-    duration_minutes: int
-    session_type: str
+    # The appointment type this link books. ``appointment_types`` is a
+    # per-practice table and this record is platform-scoped, so this is the
+    # type's id held as a value, validated against the owner's own types
+    # when the link is written and resolved again after the practice is
+    # known on the public path. A type that has since been deleted makes
+    # the link non-bookable rather than an error.
+    appointment_type_id: str
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -92,40 +103,62 @@ class CreateBookingLinkRequest(BaseModel):
     host_name: str = Field(..., min_length=1, max_length=255)
     title: str = Field(..., min_length=1, max_length=255)
     description: str | None = Field(None, max_length=2000)
-    duration_minutes: int = Field(..., ge=5, le=480)
-    session_type: str = Field("individual", pattern="^(individual|couples|group)$")
+    #: Required. A link with no type would be a link nothing can gate, so
+    #: there is no untyped shape to fall back to.
+    appointment_type_id: str = Field(..., min_length=1, max_length=64)
 
 
 class UpdateBookingLinkRequest(BaseModel):
     host_name: str | None = Field(None, min_length=1, max_length=255)
     title: str | None = Field(None, min_length=1, max_length=255)
     description: str | None = Field(None, max_length=2000)
-    duration_minutes: int | None = Field(None, ge=5, le=480)
+    appointment_type_id: str | None = Field(None, min_length=1, max_length=64)
     is_active: bool | None = None
 
 
 class BookingLinkResponse(BaseModel):
+    """The owner's view of a link, with whether it can actually take a booking.
+
+    ``bookable`` and ``not_bookable_reason`` are computed, not stored: they
+    answer the question at read time against the type and the practice
+    policy as they stand. The public surface never sees either — a booker
+    gets an identical "not found" for every reason a link is closed.
+    """
+
     id: str
     slug: str
     host_name: str
     title: str
     description: str | None
-    duration_minutes: int
-    session_type: str
+    appointment_type_id: str
+    #: Display fields resolved from the type; ``None`` when the type is gone.
+    appointment_type_name: str | None
+    duration_minutes: int | None
+    bookable: bool
+    not_bookable_reason: str | None
     is_active: bool
     created_at: datetime
     updated_at: datetime
 
     @classmethod
-    def from_link(cls, link: BookingLink) -> BookingLinkResponse:
+    def from_link(
+        cls,
+        link: BookingLink,
+        *,
+        appointment_type: AppointmentType | None,
+        bookability: LinkBookability,
+    ) -> BookingLinkResponse:
         return cls(
             id=link.id,
             slug=link.slug,
             host_name=link.host_name,
             title=link.title,
             description=link.description,
-            duration_minutes=link.duration_minutes,
-            session_type=link.session_type,
+            appointment_type_id=link.appointment_type_id,
+            appointment_type_name=appointment_type.name if appointment_type else None,
+            duration_minutes=appointment_type.duration_minutes if appointment_type else None,
+            bookable=bookability.bookable,
+            not_bookable_reason=bookability.reason,
             is_active=link.is_active,
             created_at=link.created_at,
             updated_at=link.updated_at,

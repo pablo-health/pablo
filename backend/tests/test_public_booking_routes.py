@@ -53,26 +53,44 @@ from app.repositories.coverage import (
 )
 from app.repositories.patient import InMemoryPatientRepository
 from app.routes import public_booking as public_booking_module
-from app.routes.booking_links import get_link_repository
+from app.routes.booking_links import (
+    get_link_repository,
+    get_link_scheduling_policy,
+    get_link_type_repository,
+)
 from app.routes.public_booking import (
     CoverageRepos,
     get_public_appointment_repository,
+    get_public_appointment_type_repository,
     get_public_availability_engine,
     get_public_coverage_repos,
     get_public_gcal_service,
+    get_public_policy_loader,
     get_public_scheduling_service,
 )
 from app.routes.public_booking import (
     router as public_router,
 )
 from app.scheduling_engine.models.appointment import Appointment
+from app.scheduling_engine.models.appointment_type import AppointmentType
 from app.scheduling_engine.models.availability import AvailabilityRule, RuleType
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
+from app.scheduling_engine.repositories.appointment_type import (
+    InMemoryAppointmentTypeRepository,
+)
 from app.scheduling_engine.repositories.availability_rule import (
     InMemoryAvailabilityRuleRepository,
 )
 from app.scheduling_engine.services.availability import AvailabilityEngine
+from app.scheduling_engine.services.booking_link_gate import (
+    REASON_EXISTING_ONLY,
+    REASON_NOT_OFFERABLE,
+    REASON_NOT_SELF_BOOKABLE,
+    REASON_PRACTICE_CLOSED,
+    REASON_TYPE_MISSING,
+)
 from app.scheduling_engine.services.scheduling import SchedulingService
+from app.scheduling_engine.services.scheduling_policy import DEFAULTS
 from app.services import get_audit_service
 from app.services.audit_service import AuditService
 from app.services.captcha import CaptchaVerifier, NoneCaptchaVerifier, get_captcha_verifier
@@ -91,13 +109,36 @@ from sqlalchemy.exc import IntegrityError
 
 OWNER_ID = "test-user-123"
 
+# The type every link in this file books unless a test says otherwise: for
+# new clients, self-bookable, offered — every switch open, 30 minutes long.
+TYPE_ID = "type-intro-call"
+
+
+def _appointment_type(**overrides: Any) -> AppointmentType:
+    fields: dict[str, Any] = {
+        "id": TYPE_ID,
+        "user_id": OWNER_ID,
+        "name": "Intro call",
+        "duration_minutes": 30,
+        "audience": "new",
+        "self_bookable": True,
+        "offerable": True,
+    }
+    fields.update(overrides)
+    return AppointmentType(**fields)
+
+
+def _open_policy() -> dict[str, object]:
+    """The practice switch on; everything else at its strict default."""
+    return {**DEFAULTS, "self_book_new": True}
+
 
 def _link(
     *,
     slug: str = "intro-call",
     user_id: str = OWNER_ID,
     is_active: bool = True,
-    duration_minutes: int = 30,
+    appointment_type_id: str = TYPE_ID,
     require_email_confirmation: bool = True,
     practice_edition: str | None = None,
     practice_is_active: bool | None = None,
@@ -111,8 +152,7 @@ def _link(
         host_name="Test Therapist",
         title="Intro call",
         description="A get-to-know-you call.",
-        duration_minutes=duration_minutes,
-        session_type="individual",
+        appointment_type_id=appointment_type_id,
         is_active=is_active,
         created_at=now,
         updated_at=now,
@@ -244,6 +284,9 @@ def _public_app(
     appt_repo = InMemoryAppointmentRepository()
     rule_repo = InMemoryAvailabilityRuleRepository()
     patient_repo = InMemoryPatientRepository()
+    type_repo = InMemoryAppointmentTypeRepository()
+    type_repo.create(_appointment_type())
+    policy = _open_policy()
     queued_checks: list[tuple[str, str, str]] = []
     coverage_repos = CoverageRepos(
         payers=InMemoryPayerRepository(),
@@ -273,6 +316,9 @@ def _public_app(
     )
     app.dependency_overrides[get_public_scheduling_service] = lambda: SchedulingService(appt_repo)
     app.dependency_overrides[get_public_appointment_repository] = lambda: appt_repo
+    app.dependency_overrides[get_public_appointment_type_repository] = lambda: type_repo
+    # The loader dependency returns a callable; the override must too.
+    app.dependency_overrides[get_public_policy_loader] = lambda: lambda: policy
     app.dependency_overrides[get_patient_repository] = lambda: patient_repo
     app.dependency_overrides[get_public_coverage_repos] = lambda: coverage_repos
     app.dependency_overrides[get_public_gcal_service] = lambda: gcal
@@ -286,6 +332,8 @@ def _public_app(
     client.coverage_repos = coverage_repos  # type: ignore[attr-defined]  # test-only stash
     client.queued_checks = queued_checks  # type: ignore[attr-defined]  # test-only stash
     client.appt_repo = appt_repo  # type: ignore[attr-defined]  # test-only stash
+    client.type_repo = type_repo  # type: ignore[attr-defined]  # test-only stash
+    client.policy = policy  # type: ignore[attr-defined]  # test-only stash, mutate in place
     client.audit = fake_audit  # type: ignore[attr-defined]  # test-only stash
     client.email = fake_email  # type: ignore[attr-defined]  # test-only stash
     client.gcal = gcal  # type: ignore[attr-defined]  # test-only stash
@@ -1477,7 +1525,8 @@ def test_token_is_bound_to_its_link(link_repo: InMemoryBookingLinkRepository) ->
     date_str = _bookable_date()
     client.rule_repo.create(_working_hours_rule(date_str))
     link_repo.create(_link(slug="link-a", user_id=OWNER_ID))
-    link_repo.create(_link(slug="link-b", user_id=other_owner.id))
+    client.type_repo.create(_appointment_type(id="type-other", user_id=other_owner.id))
+    link_repo.create(_link(slug="link-b", user_id=other_owner.id, appointment_type_id="type-other"))
 
     _resp, token = _hold(client, "link-a", f"{date_str}T09:00:00Z")
     appt = next(iter(client.appt_repo._appointments.values()))
@@ -1530,7 +1579,8 @@ def test_manage_refuses_every_invalid_reason_with_the_identical_body(
     date_str = _bookable_date()
     client.rule_repo.create(_working_hours_rule(date_str))
     link_repo.create(_link(slug="link-a", user_id=OWNER_ID))
-    link_repo.create(_link(slug="link-b", user_id=other_owner.id))
+    client.type_repo.create(_appointment_type(id="type-other", user_id=other_owner.id))
+    link_repo.create(_link(slug="link-b", user_id=other_owner.id, appointment_type_id="type-other"))
 
     baseline = client.post(
         "/api/public/booking-links/link-a/manage", json={"token": "never-issued-token"}
@@ -1844,16 +1894,25 @@ def test_public_routes_absent_when_flag_off(client: Any) -> None:
 
 @pytest.fixture
 def managed_client(client: Any, link_repo: InMemoryBookingLinkRepository) -> Any:
+    type_repo = InMemoryAppointmentTypeRepository()
+    type_repo.create(_appointment_type())
+    policy = _open_policy()
     real_app.dependency_overrides[get_link_repository] = lambda: link_repo
+    real_app.dependency_overrides[get_link_type_repository] = lambda: type_repo
+    real_app.dependency_overrides[get_link_scheduling_policy] = lambda: policy
+    client.type_repo = type_repo  # type: ignore[attr-defined]  # test-only stash
+    client.policy = policy  # type: ignore[attr-defined]  # test-only stash, mutate in place
     return client
 
 
-def _create_link_payload(slug: str = "intro-call") -> dict[str, Any]:
+def _create_link_payload(
+    slug: str = "intro-call", appointment_type_id: str = TYPE_ID
+) -> dict[str, Any]:
     return {
         "slug": slug,
         "host_name": "Test Therapist",
         "title": "Intro call",
-        "duration_minutes": 30,
+        "appointment_type_id": appointment_type_id,
     }
 
 
@@ -2317,3 +2376,156 @@ def test_confirmed_hold_never_replaces_the_existing_charts_coverage(
     assert kept is not None
     assert kept.id == on_file.id
     assert kept.member_id == "ON-FILE"
+
+
+# ------------------------------------------------- the appointment type gates
+
+
+def _not_found_body(public_client: Any) -> dict[str, Any]:
+    """What an unknown slug returns — the one answer every closed link must match."""
+    resp = public_client.get("/api/public/booking-links/no-such-link")
+    assert resp.status_code == 404
+    return resp.json()
+
+
+@pytest.mark.parametrize(
+    ("close", "reason"),
+    [
+        (lambda c: c.policy.update({"self_book_new": False}), REASON_PRACTICE_CLOSED),
+        (
+            lambda c: c.type_repo.update(_appointment_type(audience="existing")),
+            REASON_EXISTING_ONLY,
+        ),
+        (
+            lambda c: c.type_repo.update(_appointment_type(self_bookable=False)),
+            REASON_NOT_SELF_BOOKABLE,
+        ),
+        (lambda c: c.type_repo.update(_appointment_type(offerable=False)), REASON_NOT_OFFERABLE),
+        (lambda c: c.type_repo.delete(TYPE_ID, OWNER_ID), REASON_TYPE_MISSING),
+    ],
+    ids=[
+        "practice-switch-off",
+        "existing-clients-only",
+        "not-self-bookable",
+        "not-offered",
+        "type-deleted",
+    ],
+)
+def test_each_closed_switch_hides_the_link_from_the_public(
+    public_client: Any,
+    link_repo: InMemoryBookingLinkRepository,
+    close: Any,
+    reason: str,
+) -> None:
+    """Each switch is enforced on its own, and a booker cannot tell which one bit."""
+    link_repo.create(_link())
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+    assert public_client.get("/api/public/booking-links/intro-call").status_code == 200
+
+    close(public_client)
+
+    card = public_client.get("/api/public/booking-links/intro-call")
+    assert card.status_code == 404
+    assert card.json() == _not_found_body(public_client)
+    slots = public_client.get(f"/api/public/booking-links/intro-call/slots?date={date_str}")
+    assert slots.status_code == 404
+    booked = _book(public_client, "intro-call", f"{date_str}T09:00:00Z")
+    assert booked.status_code == 404
+    assert reason not in card.text  # the owner's reason never reaches the public surface
+
+
+def test_a_booking_is_made_under_the_links_type(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    link_repo.create(_link(require_email_confirmation=False))
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+
+    resp = _book(public_client, "intro-call", f"{date_str}T09:00:00Z")
+    assert resp.status_code == 201
+    assert resp.json()["duration_minutes"] == 30
+
+    appt = next(iter(public_client.appt_repo._appointments.values()))
+    assert appt.appointment_type_id == TYPE_ID
+    assert appt.session_type == "Intro call"
+    assert appt.duration_minutes == 30
+
+
+def test_the_card_length_follows_the_type_not_the_link(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    link_repo.create(_link())
+    public_client.type_repo.update(_appointment_type(duration_minutes=45))
+    resp = public_client.get("/api/public/booking-links/intro-call")
+    assert resp.status_code == 200
+    assert resp.json()["duration_minutes"] == 45
+
+
+# --------------------------------------------- management: the type on a link
+
+
+def test_owner_sees_why_a_link_cannot_take_bookings(managed_client: Any) -> None:
+    created = managed_client.post("/api/booking-links", json=_create_link_payload())
+    assert created.status_code == 201
+    body = created.json()
+    assert body["appointment_type_id"] == TYPE_ID
+    assert body["appointment_type_name"] == "Intro call"
+    assert body["duration_minutes"] == 30
+    assert body["bookable"] is True
+    assert body["not_bookable_reason"] is None
+
+    managed_client.policy["self_book_new"] = False
+    listed = managed_client.get("/api/booking-links").json()["data"][0]
+    assert listed["bookable"] is False
+    assert listed["not_bookable_reason"] == REASON_PRACTICE_CLOSED
+
+    managed_client.policy["self_book_new"] = True
+    managed_client.type_repo.update(_appointment_type(self_bookable=False))
+    listed = managed_client.get("/api/booking-links").json()["data"][0]
+    assert listed["not_bookable_reason"] == REASON_NOT_SELF_BOOKABLE
+
+
+def test_a_link_cannot_book_a_type_that_is_not_the_owners(managed_client: Any) -> None:
+    managed_client.type_repo.create(_appointment_type(id="someone-elses", user_id="other-user"))
+
+    for type_id in ("someone-elses", "does-not-exist"):
+        resp = managed_client.post(
+            "/api/booking-links", json=_create_link_payload(appointment_type_id=type_id)
+        )
+        assert resp.status_code == 400
+        assert "appointment types" in resp.json()["error"]["message"]
+
+    missing = {**_create_link_payload()}
+    del missing["appointment_type_id"]
+    assert managed_client.post("/api/booking-links", json=missing).status_code == 422
+
+
+def test_owner_can_move_a_link_to_another_type(managed_client: Any) -> None:
+    managed_client.type_repo.create(
+        _appointment_type(id="type-followup", name="Follow-up", duration_minutes=50)
+    )
+    link_id = managed_client.post("/api/booking-links", json=_create_link_payload()).json()["id"]
+
+    moved = managed_client.patch(
+        f"/api/booking-links/{link_id}", json={"appointment_type_id": "type-followup"}
+    )
+    assert moved.status_code == 200
+    assert moved.json()["appointment_type_name"] == "Follow-up"
+    assert moved.json()["duration_minutes"] == 50
+
+    refused = managed_client.patch(
+        f"/api/booking-links/{link_id}", json={"appointment_type_id": "does-not-exist"}
+    )
+    assert refused.status_code == 400
+
+
+def test_a_deleted_type_leaves_the_link_listed_but_closed(managed_client: Any) -> None:
+    managed_client.post("/api/booking-links", json=_create_link_payload())
+    managed_client.type_repo.delete(TYPE_ID, OWNER_ID)
+
+    listed = managed_client.get("/api/booking-links").json()["data"][0]
+    assert listed["appointment_type_name"] is None
+    assert listed["duration_minutes"] is None
+    assert listed["bookable"] is False
+    assert listed["not_bookable_reason"] == REASON_TYPE_MISSING
