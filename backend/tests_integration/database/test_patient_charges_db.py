@@ -445,6 +445,121 @@ def claim_id(engine: Engine, tenant_schema: str, patient_a: str) -> str:
         _current_user_id.reset(uid_token)
 
 
+class TestOnePendingPaymentPerClient:
+    """The index that stops a double-click charging a card twice.
+
+    The route checks the ledger and then inserts, so two requests can both
+    pass the check. Only the database can refuse the second, and only a real
+    engine can prove it does — a partial unique index is exactly the kind of
+    DDL an in-process fake cannot have an opinion about.
+
+    Every rejection asserts the index BY NAME. "Something failed" would pass
+    just as happily if a different rule fired, and a row refused by the wrong
+    rule is a rule that is not doing its job.
+    """
+
+    def test_a_second_pending_payment_for_one_client_is_refused(
+        self, armed_conn: Connection, patient_a: str
+    ) -> None:
+        """The bug: the client is charged twice and the practice owes a refund."""
+        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+
+        armed_conn.execute(
+            _INSERT_CHARGE, _charge_params(patient_a, kind="payment", status="pending")
+        )
+
+        with pytest.raises(IntegrityError) as exc:
+            armed_conn.execute(
+                _INSERT_CHARGE, _charge_params(patient_a, kind="payment", status="pending")
+            )
+        assert "ux_patient_charges_one_pending_payment" in str(exc.value)
+
+    def test_one_pending_payment_is_accepted(self, armed_conn: Connection, patient_a: str) -> None:
+        """Control. Without it the refusal above could be refusing everything."""
+        params = _charge_params(patient_a, kind="payment", status="pending")
+        armed_conn.execute(_INSERT_CHARGE, params)
+        stored = armed_conn.execute(
+            text("SELECT kind, status FROM patient_charges WHERE id = :id"),
+            {"id": params["id"]},
+        ).one()
+        assert stored == ("payment", "pending")
+
+    def test_another_client_may_still_have_one(
+        self, engine: Engine, tenant_schema: str, armed_conn: Connection, patient_a: str
+    ) -> None:
+        """Scoped to the client, not to the practice.
+
+        An index that forgot ``patient_id`` would stop a clinician collecting
+        from one client because an unrelated client's payment was in flight —
+        a whole practice serialised behind one card.
+
+        The second client is seeded for the SAME clinician on purpose.
+        ``patient_b`` belongs to clinician B, and a connection armed as A
+        cannot write to it at all: that refusal is the row policy doing its
+        job, and it would make this test pass without the index existing.
+        """
+        also_mine = _seed_patient(engine, tenant_schema, _CLINICIAN_A, "Secondly")
+
+        armed_conn.execute(
+            _INSERT_CHARGE, _charge_params(patient_a, kind="payment", status="pending")
+        )
+        armed_conn.execute(
+            _INSERT_CHARGE, _charge_params(also_mine, kind="payment", status="pending")
+        )
+
+    @pytest.mark.parametrize("status", ["succeeded", "failed"])
+    def test_a_finished_payment_does_not_block_a_new_attempt(
+        self, armed_conn: Connection, patient_a: str, status: str
+    ) -> None:
+        """A decline is terminal and retrying is a fresh charge a clinician asked
+        for; a settled payment is history. An index that watched every
+        ``payment`` row would let one client be collected from exactly once,
+        ever."""
+        armed_conn.execute(_INSERT_CHARGE, _charge_params(patient_a, kind="payment", status=status))
+        armed_conn.execute(
+            _INSERT_CHARGE, _charge_params(patient_a, kind="payment", status="pending")
+        )
+
+    @pytest.mark.parametrize("kind", [k for k in _CHARGE_KINDS if k != "payment"])
+    def test_other_kinds_are_not_constrained(
+        self, armed_conn: Connection, patient_a: str, kind: str
+    ) -> None:
+        """Every other kind is a BILL rather than a collection.
+
+        A client may legitimately have any number outstanding — two sessions
+        in a week, a session and the patient responsibility from a remittance
+        — and an index that caught them would refuse the second for no
+        reason. Parametrised over the real list so a kind added later is
+        covered without anybody remembering to.
+        """
+        reason = "hardship" if kind == "write_off" else None
+        for _ in range(2):
+            armed_conn.execute(
+                _INSERT_CHARGE,
+                _charge_params(patient_a, kind=kind, status="pending", write_off_reason=reason),
+            )
+
+    def test_a_pending_payment_frees_the_client_once_it_settles(
+        self, armed_conn: Connection, patient_a: str
+    ) -> None:
+        """The ordinary life of the constraint, not just its refusal.
+
+        A client whose payment succeeded must be collectable again — the index
+        is a lock held for the length of one attempt, and a test that only
+        ever proved it refuses would be satisfied by one that never lets go.
+        """
+        first = _charge_params(patient_a, kind="payment", status="pending")
+        armed_conn.execute(_INSERT_CHARGE, first)
+        armed_conn.execute(
+            text("UPDATE patient_charges SET status = 'succeeded' WHERE id = :id"),
+            {"id": first["id"]},
+        )
+
+        armed_conn.execute(
+            _INSERT_CHARGE, _charge_params(patient_a, kind="payment", status="pending")
+        )
+
+
 class TestClaimForeignKey:
     """``claim_id`` points at a real claim, and a deleted claim never takes money with it."""
 

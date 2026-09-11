@@ -1576,6 +1576,10 @@ CREATE UNIQUE INDEX ux_notes_session_id ON __TENANT_SCHEMA__.notes USING btree (
 
 
 
+CREATE UNIQUE INDEX ux_patient_charges_one_pending_payment ON __TENANT_SCHEMA__.patient_charges USING btree (patient_id) WHERE (((kind)::text = 'payment'::text) AND ((status)::text = 'pending'::text));
+
+
+
 CREATE UNIQUE INDEX ux_patient_charges_payment_intent ON __TENANT_SCHEMA__.patient_charges USING btree (stripe_payment_intent_id) WHERE (stripe_payment_intent_id IS NOT NULL);
 
 

@@ -50,6 +50,7 @@ from app.repositories import (
     get_patient_repository,
 )
 from app.repositories.audit import InMemoryAuditRepository
+from app.repositories.patient_payment import PaymentAlreadyInFlightError
 from app.routes import patient_payments
 from app.scheduling_engine.models.appointment import Appointment
 from app.scheduling_engine.models.appointment_type import AppointmentType
@@ -1550,6 +1551,58 @@ class TestChargeBalance:
         # time, which is the whole point.
         assert [row.id for row in payments.charges] == ["resp-1", "in-flight"]
         assert seen == []
+
+    def test_the_constraint_firing_is_a_409_and_not_a_500(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The other half of the double-click, where the pre-check cannot help.
+
+        Two requests can both read the ledger before either has inserted, so
+        both pass the in-flight check and the database refuses the second.
+        That refusal has to reach the clinician as the same conflict, not as
+        a crash: a 500 here reads as "the system is broken" when what actually
+        happened is "somebody is already collecting", and it is the answer a
+        retrying client would get at exactly the wrong moment.
+        """
+        payments = self._ledger(self._row(id="resp-1"))
+        client = _client(payments, _FakePatients())
+        seen = _charge_transport(monkeypatch, 200, {"id": _PI_ID, "status": "succeeded"})
+
+        def refuse(**_kwargs: Any) -> PatientCharge:
+            raise PaymentAlreadyInFlightError(_PATIENT_ID)
+
+        monkeypatch.setattr(payments, "stage_charge", refuse)
+
+        response = self._post(client)
+
+        assert response.status_code == 409
+        # And the card was never touched, which is what the 409 is protecting.
+        assert seen == []
+
+    def test_both_refusals_tell_the_clinician_the_same_thing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Whether the pre-check or the constraint caught it is an accident of
+        timing, and a clinician who double-clicked should not get two
+        different accounts of what happened depending on how close the two
+        requests landed."""
+        from_check = self._ledger(
+            self._row(id="resp-1"),
+            self._row(id="in-flight", kind="payment", status="pending"),
+        )
+        _charge_transport(monkeypatch, 200, {"id": _PI_ID, "status": "succeeded"})
+        checked = self._post(_client(from_check, _FakePatients()))
+
+        from_db = self._ledger(self._row(id="resp-1"))
+
+        def refuse(**_kwargs: Any) -> PatientCharge:
+            raise PaymentAlreadyInFlightError(_PATIENT_ID)
+
+        monkeypatch.setattr(from_db, "stage_charge", refuse)
+        constrained = self._post(_client(from_db, _FakePatients()))
+
+        assert checked.status_code == constrained.status_code == 409
+        assert checked.json()["detail"] == constrained.json()["detail"]
 
     def test_a_pending_session_charge_does_not_block_a_payment(
         self, monkeypatch: pytest.MonkeyPatch
