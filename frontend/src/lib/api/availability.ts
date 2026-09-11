@@ -9,6 +9,8 @@
 import type {
   AvailabilityRule,
   AvailabilityRuleListResponse,
+  CheckConflictsRequest,
+  CheckConflictsResponse,
   CreateAvailabilityRuleRequest,
   FreeSlotsResponse,
   ParseAvailabilityRulesRequest,
@@ -60,4 +62,16 @@ export async function parseAvailabilityRules(
   token?: string
 ): Promise<ParseAvailabilityRulesResponse> {
   return post<ParseAvailabilityRulesResponse>("/api/availability/rules/parse", data, token)
+}
+
+/**
+ * Check a proposed booking window against the clinician's availability
+ * rules. The authoritative answer is the one the write path gives, so this
+ * is asked once at save time rather than as the therapist types.
+ */
+export async function checkConflicts(
+  data: CheckConflictsRequest,
+  token?: string
+): Promise<CheckConflictsResponse> {
+  return post<CheckConflictsResponse>("/api/availability/check", data, token)
 }

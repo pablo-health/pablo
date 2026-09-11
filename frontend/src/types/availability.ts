@@ -72,6 +72,31 @@ export interface ParseAvailabilityRulesResponse {
   existing_conflicting_rules: AvailabilityRule[]
 }
 
+/**
+ * A single rule a proposed booking window runs into. Mirrors
+ * ConflictResponse in backend/app/models/scheduling.py — rule type and
+ * enforcement level plus the engine's message, with no rule params.
+ */
+export interface ConflictResponse {
+  rule_type: RuleType
+  enforcement: EnforcementLevel
+  message: string
+}
+
+export interface CheckConflictsRequest {
+  start_at: string
+  end_at: string
+}
+
+export interface CheckConflictsResponse {
+  conflicts: ConflictResponse[]
+  has_hard_conflicts: boolean
+  // False when the practice has no availability rules at all — an empty
+  // `conflicts` list otherwise reads identically whether nothing is set up
+  // or the window is genuinely clear.
+  configured: boolean
+}
+
 export interface TimeSlot {
   start: string
   end: string

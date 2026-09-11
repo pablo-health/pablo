@@ -56,6 +56,12 @@ export interface CreateAppointmentRequest {
   video_platform?: string | null
   notes?: string | null
   note_type?: string
+  /**
+   * The clinician has been shown the conflicting availability rules and
+   * confirmed they want this booking anyway. Omitted means no: a hard rule
+   * still refuses the booking.
+   */
+  rule_override?: boolean
 }
 
 export interface CreateRecurringAppointmentRequest {
@@ -73,6 +79,12 @@ export interface CreateRecurringAppointmentRequest {
   timezone: string
   end_date?: string | null
   count?: number | null
+  /**
+   * The clinician has been shown the conflicting availability rules and
+   * confirmed they want this booking anyway. Omitted means no: a hard rule
+   * still refuses the booking.
+   */
+  rule_override?: boolean
 }
 
 export interface UpdateAppointmentRequest {
@@ -87,6 +99,12 @@ export interface UpdateAppointmentRequest {
   notes?: string | null
   note_type?: string
   status?: AppointmentStatus
+  /**
+   * The clinician has been shown the conflicting availability rules and
+   * confirmed they want this booking anyway. Omitted means no: a hard rule
+   * still refuses the booking.
+   */
+  rule_override?: boolean
 }
 
 /**

@@ -24,7 +24,10 @@ import {
   useCancelAppointmentSeries,
 } from "@/hooks/useAppointments"
 import { useNoteTypes } from "@/hooks/useNoteTypes"
+import { useCheckConflicts } from "@/hooks/useAvailability"
 import { AvailabilitySlotPicker } from "./AvailabilitySlotPicker"
+import { RuleOverrideDialog } from "./RuleOverrideDialog"
+import type { ConflictResponse } from "@/types/availability"
 import type {
   AppointmentResponse,
   RecurrenceFrequency,
@@ -328,6 +331,11 @@ function AppointmentForm({
   const cancelMutation = useCancelAppointment()
   const editSeriesMutation = useEditAppointmentSeries()
   const cancelSeriesMutation = useCancelAppointmentSeries()
+  const checkConflictsMutation = useCheckConflicts()
+
+  // Non-empty while the therapist is being asked about the rules this
+  // window runs into. Nothing is written until they answer.
+  const [pendingConflicts, setPendingConflicts] = useState<ConflictResponse[]>([])
 
   const isEditing = !!appointment
   const isRecurring = !!appointment?.recurring_appointment_id
@@ -418,9 +426,10 @@ function AppointmentForm({
     createMutation.isPending ||
     createRecurringMutation.isPending ||
     updateMutation.isPending ||
-    editSeriesMutation.isPending
+    editSeriesMutation.isPending ||
+    checkConflictsMutation.isPending
 
-  const handleSubmit = () => {
+  const save = (ruleOverride: boolean) => {
     const videoPlatform = appointment?.video_platform ?? preferences?.default_video_platform ?? null
     const payload = {
       patient_id: patientId,
@@ -433,6 +442,7 @@ function AppointmentForm({
       video_platform: videoPlatform,
       notes: notes || null,
       note_type: noteType,
+      rule_override: ruleOverride,
     }
     if (isEditing && appointment) {
       if (isRecurring && scope === "series") {
@@ -477,6 +487,29 @@ function AppointmentForm({
     createMutation.mutate(payload, { onSuccess: onClose })
   }
 
+  // The save-time engine check is the only authoritative answer — the slot
+  // picker and the shaded grid are approximations of it. A check that fails
+  // outright doesn't block the booking: the write path asks the same
+  // question, and its refusal is the one that gets surfaced.
+  const handleSubmit = async () => {
+    let conflicts: ConflictResponse[] = []
+    try {
+      const result = await checkConflictsMutation.mutateAsync({
+        start_at: start.toISOString(),
+        end_at: end.toISOString(),
+      })
+      conflicts = result.conflicts
+    } catch {
+      save(false)
+      return
+    }
+    if (conflicts.length === 0) {
+      save(false)
+      return
+    }
+    setPendingConflicts(conflicts)
+  }
+
   const handleCancelAppt = () => {
     if (!appointment) return
     if (isRecurring && scope === "series") {
@@ -490,6 +523,16 @@ function AppointmentForm({
 
   return (
     <>
+      <RuleOverrideDialog
+        open={pendingConflicts.length > 0}
+        conflicts={pendingConflicts}
+        recurring={!isEditing && repeat !== "none"}
+        onOverride={() => {
+          setPendingConflicts([])
+          save(true)
+        }}
+        onCancel={() => setPendingConflicts([])}
+      />
       {/* Header */}
       <div
         className="flex items-center justify-between px-[22px] pb-3.5 pt-[18px]"
@@ -953,7 +996,7 @@ function AppointmentForm({
         <button
           type="button"
           disabled={!canSave || isSubmitting}
-          onClick={handleSubmit}
+          onClick={() => void handleSubmit()}
           className="cursor-pointer rounded-full border-none px-[22px] py-[9px] text-[13.5px] font-bold disabled:cursor-not-allowed disabled:opacity-50"
           style={{ backgroundColor: "var(--ed-cta-bg)", color: "var(--ed-cta-fg)" }}
         >

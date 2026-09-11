@@ -17,6 +17,9 @@ const {
   mockEditSeries,
   mockCancelSeries,
   mockUsePatientList,
+  mockCheckConflicts,
+  mockDeleteRule,
+  mockUpdateRule,
 } = vi.hoisted(() => ({
   mockCreate: vi.fn(),
   mockCreateRecurring: vi.fn(),
@@ -25,6 +28,9 @@ const {
   mockEditSeries: vi.fn(),
   mockCancelSeries: vi.fn(),
   mockUsePatientList: vi.fn(),
+  mockCheckConflicts: vi.fn(),
+  mockDeleteRule: vi.fn(),
+  mockUpdateRule: vi.fn(),
 }))
 
 // p3 only turns up once a search is in flight, standing in for a patient
@@ -46,6 +52,17 @@ vi.mock("@/hooks/useAppointments", () => ({
   useCancelAppointment: () => ({ mutate: mockCancel, isPending: false }),
   useEditAppointmentSeries: () => ({ mutate: mockEditSeries, isPending: false }),
   useCancelAppointmentSeries: () => ({ mutate: mockCancelSeries, isPending: false }),
+}))
+
+// The slot picker asks for free slots; the save path asks the same engine
+// about the one window the therapist actually chose. Both run through this
+// module, and the rule mutations are here so a test can assert the override
+// path never reaches one.
+vi.mock("@/hooks/useAvailability", () => ({
+  useFreeSlots: () => ({ data: undefined, isLoading: false }),
+  useCheckConflicts: () => ({ mutateAsync: mockCheckConflicts, isPending: false }),
+  useDeleteAvailabilityRule: () => ({ mutate: mockDeleteRule, isPending: false }),
+  useUpdateAvailabilityRule: () => ({ mutate: mockUpdateRule, isPending: false }),
 }))
 
 vi.mock("@/hooks/useNoteTypes", () => ({
@@ -119,8 +136,35 @@ function createWrapper() {
   return Wrapper
 }
 
+const NO_CONFLICTS = { conflicts: [], has_hard_conflicts: false, configured: true }
+
+const HARD_FRIDAY = {
+  conflicts: [
+    {
+      rule_type: "block_day_of_week" as const,
+      enforcement: "hard" as const,
+      message: "Day of week 4 is blocked",
+    },
+  ],
+  has_hard_conflicts: true,
+  configured: true,
+}
+
+const SOFT_FRIDAY = {
+  conflicts: [
+    {
+      rule_type: "block_day_of_week" as const,
+      enforcement: "soft" as const,
+      message: "Day of week 4 is blocked",
+    },
+  ],
+  has_hard_conflicts: false,
+  configured: true,
+}
+
 describe("AppointmentModal", () => {
   beforeEach(() => {
+    mockCheckConflicts.mockResolvedValue(NO_CONFLICTS)
     mockUsePatientList.mockImplementation((params?: PatientListParams) => {
       const search = params?.search?.toLowerCase()
       if (search) {
@@ -583,5 +627,171 @@ describe("AppointmentModal", () => {
       expect(mockCancelSeries).toHaveBeenCalledWith("a2", expect.anything())
       expect(mockCancel).not.toHaveBeenCalled()
     })
+  })
+})
+
+describe("AppointmentModal — booking past an availability rule", () => {
+  beforeEach(() => {
+    mockCheckConflicts.mockResolvedValue(NO_CONFLICTS)
+    mockUsePatientList.mockImplementation(() => ({
+      data: { data: ALL_PATIENTS.slice(0, 2), total: 2, page: 1, page_size: 2 },
+    }))
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+  })
+
+  async function selectPatient(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByRole("combobox", { name: /patient/i }))
+    await user.click(screen.getByRole("option", { name: /Doe, Jane/i }))
+  }
+
+  it("checks the chosen window once per save attempt", async () => {
+    const user = userEvent.setup()
+    render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+    await selectPatient(user)
+
+    await user.click(screen.getByRole("button", { name: "Schedule" }))
+
+    await waitFor(() => expect(mockCheckConflicts).toHaveBeenCalledTimes(1))
+    expect(mockCheckConflicts.mock.calls[0][0]).toHaveProperty("start_at")
+  })
+
+  it("saves straight away when the window is clear", async () => {
+    const user = userEvent.setup()
+    render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+    await selectPatient(user)
+
+    await user.click(screen.getByRole("button", { name: "Schedule" }))
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(1))
+    expect(mockCreate.mock.calls[0][0]).toMatchObject({ rule_override: false })
+    expect(screen.queryByRole("button", { name: "Override this event" })).not.toBeInTheDocument()
+  })
+
+  it("asks before saving when a hard rule covers the window", async () => {
+    const user = userEvent.setup()
+    mockCheckConflicts.mockResolvedValue(HARD_FRIDAY)
+    render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+    await selectPatient(user)
+
+    await user.click(screen.getByRole("button", { name: "Schedule" }))
+
+    await waitFor(() => {
+      expect(screen.getByText("You've blocked that day of the week.")).toBeInTheDocument()
+    })
+    expect(mockCreate).not.toHaveBeenCalled()
+  })
+
+  it("asks the same question for a soft rule rather than warning afterwards", async () => {
+    const user = userEvent.setup()
+    mockCheckConflicts.mockResolvedValue(SOFT_FRIDAY)
+    render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+    await selectPatient(user)
+
+    await user.click(screen.getByRole("button", { name: "Schedule" }))
+
+    await waitFor(() => {
+      expect(screen.getByText("You usually don't book that day of the week.")).toBeInTheDocument()
+    })
+    expect(mockCreate).not.toHaveBeenCalled()
+  })
+
+  it("saves with the override once the therapist confirms", async () => {
+    const user = userEvent.setup()
+    mockCheckConflicts.mockResolvedValue(HARD_FRIDAY)
+    render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+    await selectPatient(user)
+    await user.click(screen.getByRole("button", { name: "Schedule" }))
+    await screen.findByRole("button", { name: "Override this event" })
+
+    await user.click(screen.getByRole("button", { name: "Override this event" }))
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(1))
+    expect(mockCreate.mock.calls[0][0]).toMatchObject({
+      patient_id: "p1",
+      rule_override: true,
+    })
+  })
+
+  it("writes nothing on cancel and keeps the form as it was", async () => {
+    const user = userEvent.setup()
+    mockCheckConflicts.mockResolvedValue(HARD_FRIDAY)
+    const onClose = vi.fn()
+    render(<AppointmentModal open onClose={onClose} />, { wrapper: createWrapper() })
+    await selectPatient(user)
+    await user.click(screen.getByRole("button", { name: "60 min" }))
+    await user.click(screen.getByRole("button", { name: "Schedule" }))
+    const dialogCancel = await screen.findByRole("button", { name: "Cancel" })
+
+    await user.click(dialogCancel)
+
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Override this event" })).not.toBeInTheDocument()
+    })
+    expect(mockCreate).not.toHaveBeenCalled()
+    expect(mockCreateRecurring).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.getByText("Jane Doe — Individual")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "60 min" })).toHaveAttribute("aria-pressed", "true")
+  })
+
+  it("asks about the whole series when the booking repeats", async () => {
+    const user = userEvent.setup()
+    mockCheckConflicts.mockResolvedValue(HARD_FRIDAY)
+    render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+    await selectPatient(user)
+    await user.click(screen.getByRole("radio", { name: "Weekly" }))
+
+    await user.click(screen.getByRole("button", { name: "Schedule" }))
+
+    const confirm = await screen.findByRole("button", { name: "Override this series" })
+    await user.click(confirm)
+
+    await waitFor(() => expect(mockCreateRecurring).toHaveBeenCalledTimes(1))
+    expect(mockCreateRecurring.mock.calls[0][0]).toMatchObject({ rule_override: true })
+  })
+
+  it("asks before rescheduling onto a covered window", async () => {
+    const user = userEvent.setup()
+    mockCheckConflicts.mockResolvedValue(HARD_FRIDAY)
+    render(<AppointmentModal open onClose={vi.fn()} appointment={baseAppointment} />, {
+      wrapper: createWrapper(),
+    })
+
+    await user.click(screen.getByRole("button", { name: "Save changes" }))
+    const confirm = await screen.findByRole("button", { name: "Override this event" })
+    await user.click(confirm)
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(1))
+    expect(mockUpdate.mock.calls[0][0].data).toMatchObject({ rule_override: true })
+  })
+
+  it("never reaches a rule mutation from the save path", async () => {
+    const user = userEvent.setup()
+    mockCheckConflicts.mockResolvedValue(HARD_FRIDAY)
+    render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+    await selectPatient(user)
+    await user.click(screen.getByRole("button", { name: "Schedule" }))
+    const confirm = await screen.findByRole("button", { name: "Override this event" })
+
+    await user.click(confirm)
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(1))
+    expect(mockDeleteRule).not.toHaveBeenCalled()
+    expect(mockUpdateRule).not.toHaveBeenCalled()
+  })
+
+  it("lets the save through when the pre-check itself fails", async () => {
+    const user = userEvent.setup()
+    mockCheckConflicts.mockRejectedValue(new Error("network"))
+    render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+    await selectPatient(user)
+
+    await user.click(screen.getByRole("button", { name: "Schedule" }))
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(1))
+    expect(mockCreate.mock.calls[0][0]).toMatchObject({ rule_override: false })
   })
 })
