@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from ..models.claims import Claim, ClaimReceiptKind
     from ..repositories.claim_receipts import ClaimReceiptRepository
     from ..repositories.claims import ClaimRepository
+    from ..repositories.remittance_hold import RemittanceHoldRepository
     from .events import DeadlineKind
     from .transitions import ClaimEvent as Transition
 
@@ -60,6 +61,12 @@ class ClaimPipeline:
     session: Session
     principal_user_id: str
     now: Callable[[], datetime] = field(default=utc_now)
+    #: Where a remittance that contradicts itself is written down. Optional
+    #: because most of the pipeline never raises one, and because the
+    #: withholding it records must not depend on it: a posting path with no
+    #: hold repository still refuses to bill the client, it just logs that
+    #: it could not write the refusal down. See :mod:`app.claims.holds`.
+    holds: RemittanceHoldRepository | None = None
 
 
 def owned_by_principal(

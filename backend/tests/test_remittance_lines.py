@@ -223,24 +223,34 @@ class TestThePayersOwnCrossCheck:
 
         assert patient_responsibility_agrees(remittance)
 
-    def test_a_mis_grouped_adjustment_is_caught(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_a_mis_grouped_adjustment_is_caught(self) -> None:
         """The failure this exists for: the payer says the client owes $30 and
         our reading of the lines finds nothing, because the adjustment was
-        read as a contractual write-off."""
+        read as a contractual write-off.
+
+        The log line moved to ``disagreement_in``, which is the function the
+        posting path calls and the one that decides a hold; this predicate
+        answers one narrow question and says nothing. See
+        ``test_remittance_balance.py`` for the logging.
+        """
         remittance = _remittance(
             _line("CLM1L1", paid_cents=12_000, adjustments=[_adjustment("CO", "45", 3_000)])
         ).model_copy(update={"patient_responsibility_cents": 3_000})
 
-        with caplog.at_level("WARNING"):
-            assert not patient_responsibility_agrees(remittance)
-
-        assert "remittance_patient_responsibility_disagrees" in caplog.text
+        assert not patient_responsibility_agrees(remittance)
 
     def test_a_claim_level_share_counts_towards_the_total(self) -> None:
         """A payer may report the client's share at claim level instead of on
-        the lines; that is still the client's share."""
-        remittance = _remittance(_line("CLM1L1", paid_cents=12_000)).model_copy(
+        the lines; that is still the client's share.
+
+        The line is paid in full at line level and the claim pays less after
+        a claim-level adjustment, which is the shape a compliant payer sends
+        — a claim-level CAS explains the claim's gap, and a line's gap can
+        only be explained by a CAS on that line.
+        """
+        remittance = _remittance(_line("CLM1L1", paid_cents=15_000)).model_copy(
             update={
+                "paid_cents": 12_000,
                 "adjustments": [_adjustment("PR", "1", 3_000)],
                 "patient_responsibility_cents": 3_000,
             }
@@ -252,9 +262,18 @@ class TestThePayersOwnCrossCheck:
         """A takeback negates an earlier adjudication, and the standard does
         not require the stated total to match the itemisation there. Checking
         it anyway would report a disagreement on a claim behaving correctly.
+
+        Every amount is negated, the charge included: a reversal that negated
+        only what was paid would not be a reversal of anything, and would not
+        balance.
         """
         reversal = _remittance(
-            _line("CLM1L1", paid_cents=-12_000, adjustments=[_adjustment("PR", "2", -3_000)])
+            _line(
+                "CLM1L1",
+                charge_cents=-15_000,
+                paid_cents=-12_000,
+                adjustments=[_adjustment("PR", "2", -3_000)],
+            )
         ).model_copy(update={"claim_status_code": "22", "patient_responsibility_cents": 0})
 
         assert patient_responsibility_agrees(reversal)

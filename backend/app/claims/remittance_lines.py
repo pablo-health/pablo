@@ -50,10 +50,13 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from .codes.pairing import mispaired
+
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Callable, Iterable, Sequence
 
     from ..models.claims import ClaimLine
+    from ..models.claims_holds import HoldReason
     from ..models.claims_responses import Adjustment, RemittanceClaim
 
 logger = logging.getLogger(__name__)
@@ -143,6 +146,38 @@ def postings_for(remittance: RemittanceClaim) -> dict[str, LinePosting]:
     }
 
 
+@dataclass(frozen=True, slots=True)
+class Disagreement:
+    """One way this remittance's own numbers fail to account for each other.
+
+    ``stated`` is what the payer asserted directly; ``computed`` is the same
+    figure worked out from the rest of the document. They are kept apart,
+    rather than reduced to a delta, because which side is which is the first
+    thing anybody reading the disagreement needs.
+    """
+
+    reason: HoldReason
+    stated_cents: int
+    computed_cents: int
+    #: The service line at fault, on ``line_balance`` only.
+    line_control_number: str | None = None
+
+    @property
+    def delta_cents(self) -> int:
+        return self.stated_cents - self.computed_cents
+
+
+def _signed_total(adjustments: Iterable[Adjustment]) -> int:
+    """Every adjustment, all group codes, summed as the payer signed them.
+
+    The balancing identities count all six CAS triplets of every group,
+    which is the whole point of them: an adjustment we could not classify
+    still has to be accounted for somewhere, and one we dropped is exactly
+    the gap these checks exist to notice.
+    """
+    return sum(a.amount_cents for a in adjustments)
+
+
 def patient_responsibility_agrees(remittance: RemittanceClaim) -> bool:
     """Does the payer's own total for the client match what we read line by line?
 
@@ -166,20 +201,143 @@ def patient_responsibility_agrees(remittance: RemittanceClaim) -> bool:
     there, so checking it would report a disagreement on a claim that is
     behaving correctly.
     """
+    return _patient_responsibility(remittance) is None
+
+
+def _patient_responsibility(remittance: RemittanceClaim) -> Disagreement | None:
+    """``CLP05`` against the ``PR`` itemisation. X12 RFI #2548."""
     if remittance.claim_status_code == REVERSAL:
-        return True
+        return None
     itemised = _total(remittance.adjustments, PATIENT_RESPONSIBILITY) + sum(
         _total(line.adjustments, PATIENT_RESPONSIBILITY) for line in remittance.lines
     )
     if itemised == remittance.patient_responsibility_cents:
-        return True
-    logger.warning(
-        "remittance_patient_responsibility_disagrees control_number=%s stated=%d itemised=%d",
-        remittance.patient_control_number,
-        remittance.patient_responsibility_cents,
-        itemised,
+        return None
+    return Disagreement(
+        reason="patient_responsibility",
+        stated_cents=remittance.patient_responsibility_cents,
+        computed_cents=itemised,
     )
-    return False
+
+
+def _line_balance(remittance: RemittanceClaim) -> Disagreement | None:
+    """Each line's ``SVC02`` against ``SVC03`` plus every adjustment on it.
+
+    TR3 005010X221A1 section 1.10.2, the service-line balancing identity.
+    The first line that fails is the one reported: the practice's decision
+    is the same whichever line it was, and a document that has already told
+    us not to trust it does not become more trustworthy by enumerating how
+    many ways.
+    """
+    for line in remittance.lines:
+        computed = line.paid_cents + _signed_total(line.adjustments)
+        if computed != line.charge_cents:
+            return Disagreement(
+                reason="line_balance",
+                stated_cents=line.charge_cents,
+                computed_cents=computed,
+                line_control_number=line.line_control_number,
+            )
+    return None
+
+
+def _claim_balance(remittance: RemittanceClaim) -> Disagreement | None:
+    """``CLP03`` against ``CLP04`` plus every adjustment on the claim.
+
+    TR3 005010X221A1 section 1.10.2, the claim balancing identity. Claim-
+    level and line-level adjustments are added together: the standard
+    forbids reporting the same adjustment at both levels, so the sum is the
+    claim's whole explanation of the gap between charged and paid.
+    """
+    adjustments = _signed_total(remittance.adjustments) + sum(
+        _signed_total(line.adjustments) for line in remittance.lines
+    )
+    computed = remittance.paid_cents + adjustments
+    if computed == remittance.total_charge_cents:
+        return None
+    return Disagreement(
+        reason="claim_balance",
+        stated_cents=remittance.total_charge_cents,
+        computed_cents=computed,
+    )
+
+
+#: The hard checks, in the order a disagreement is reported in. Patient
+#: responsibility comes first deliberately: it is the one that speaks
+#: directly about the number that bills a client, so when a remittance
+#: fails more than one check that is the one worth naming.
+#:
+#: Not here, and not faked: the transaction identity
+#: ``BPR02 = sum(CLP04) - sum(PLB)``. Nothing in this engine parses ``PLB``
+#: provider-level adjustments — no model, no field, no parser branch — so a
+#: sum computed without them would be wrong on exactly the remittances the
+#: check exists to catch, and would report a disagreement on a payer that
+#: had done nothing wrong. A check that fires falsely on the normal case
+#: gets switched off, which is worse than not having written it.
+_CHECKS: tuple[Callable[[RemittanceClaim], Disagreement | None], ...] = (
+    _patient_responsibility,
+    _line_balance,
+    _claim_balance,
+)
+
+
+def _warn_about_pairings(remittance: RemittanceClaim) -> None:
+    """Say so when an adjustment's group contradicts its own reason code.
+
+    Soft on purpose: see :mod:`app.claims.codes.pairing`. A ``PR-253`` is
+    either a payer bug or a parse bug and is worth a person's attention,
+    but an unfamiliar pairing is not a reason to stop billing.
+    """
+    suspicious = mispaired(
+        [*remittance.adjustments, *(a for line in remittance.lines for a in line.adjustments)]
+    )
+    for group, reason in suspicious:
+        logger.warning(
+            "remittance_suspicious_code_pairing control_number=%s group=%s reason=%s",
+            remittance.patient_control_number,
+            group,
+            reason,
+        )
+
+
+def disagreement_in(remittance: RemittanceClaim) -> Disagreement | None:
+    """The first way this remittance fails to account for its own numbers.
+
+    ``None`` means every identity the engine can check held, which is the
+    ordinary case and the only one from which a client may be billed.
+
+    An 835 is a balanced transaction: what was charged, what was paid and
+    what was adjusted must account for each other at the line and at the
+    claim, and the client's share must be stated and itemised to the same
+    figure. Those are guaranteed by the standard rather than by any
+    particular payer's care, which is what makes a failure worth acting on
+    — it means our parse is wrong or the payer's file is, and either way
+    the amounts on it are not ones to bill a real person from.
+
+    Logged at WARNING on failure. A disagreement is an expected business
+    event rather than an error: something has to be decided by a person,
+    and nothing is broken.
+
+    A suspicious CARC/group pairing is reported alongside and never
+    returned. It is evidence that somebody should read the document, not
+    evidence that a number is wrong, and the arithmetic is what decides
+    whether a client can be billed.
+    """
+    _warn_about_pairings(remittance)
+    for check in _CHECKS:
+        found = check(remittance)
+        if found is not None:
+            logger.warning(
+                "remittance_disagrees reason=%s control_number=%s "
+                "line_control_number=%s stated=%d computed=%d",
+                found.reason,
+                remittance.patient_control_number,
+                found.line_control_number,
+                found.stated_cents,
+                found.computed_cents,
+            )
+            return found
+    return None
 
 
 def applied_to(lines: Sequence[ClaimLine], remittance: RemittanceClaim) -> list[ClaimLine]:
