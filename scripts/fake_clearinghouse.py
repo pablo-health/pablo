@@ -28,6 +28,11 @@ the same rules, keyed on the claim's ``patientControlNumber``:
   lines carry
 * ``DENY-…``    → accepted, then a 277CA and an 835 that denies the claim
   and assigns the whole charge to the client
+* ``NOSUM-…``   → accepted, then a 277CA and an 835 that CONTRADICTS ITSELF:
+  the claim states a patient-responsibility total and the service lines
+  itemise the same money as a contractual write-off, so ``CLP05`` and the
+  ``PR`` adjustments disagree. Everything else about the document balances,
+  so the engine's other checks pass and exactly one of them fires
 * anything else → the recorded accept, then the 277CA and the 835 on their
   timers, with the claim's own control number, line numbers and amounts
   substituted so the remittance reads as paid in full for what was charged
@@ -35,6 +40,30 @@ the same rules, keyed on the claim's ``patientControlNumber``:
 Every 835 rule starts from the recorded paid-in-full remittance and edits its
 amounts rather than building a new document, so a ``PART-`` or ``DENY-``
 claim gets the same shape the accept path already produces.
+
+Which rule applies is decided in ONE place, :func:`_outcome_for`, in this
+order: a per-claim override, then the control number's prefix, then a
+default armed for the whole run, then paid-in-full.
+
+The overrides exist because a browser test cannot reach the prefixes at all:
+a claim filed through the app gets a server-generated control number. It
+arms ``POST /_fake/outcome`` with no control number BEFORE filing — the 835
+follows five seconds after submission, and a test that waited to learn the
+number would be racing that timer. Overrides are recorded on the state
+rather than passed down a call, so a timer-fired 835 and one forced through
+``/_fake/deliver`` can never say different things about the same claim.
+
+A prefix beats the armed default, so a spec that armed one outcome and then
+deliberately filed a ``DENY-`` claim gets the denial it asked for.
+
+A WARNING about the ``NOSUM-`` rule, because there is a way to produce the
+same symptom by accident and the two must not be confused. The sibling fake
+used by unit tests (``tests/claims_pipeline_fakes.py`` ``remittance_report``)
+overrides claim-level amounts but not line-level ones, so any caller passing
+a paid amount other than the recorded one gets a self-inconsistent remittance
+without meaning to. The disagreement here is deliberate, is built by moving
+one adjustment's group code, and is written so a reader can see that it was
+on purpose.
 
 A submission's ``Idempotency-Key`` header is echoed on the response and a
 retry with the same key gets the same answer without starting new timers; the
@@ -135,6 +164,21 @@ REJECTIONS: dict[str, str] = {
 #: diverge from paid-in-full once the remittance is built.
 PARTIAL_PREFIX = "PART-"
 DENIAL_PREFIX = "DENY-"
+DISAGREEMENT_PREFIX = "NOSUM-"
+
+#: What an 835 says about a claim. Named once so the prefix rules, the
+#: ``/_fake/deliver`` override and the document builder cannot drift apart.
+Outcome = Literal["paid", "partial", "denied", "disagreeing"]
+
+OUTCOMES: tuple[str, ...] = ("paid", "partial", "denied", "disagreeing")
+
+#: Prefix → outcome, longest-lived mechanism first. Order is irrelevant:
+#: the prefixes do not overlap.
+_PREFIX_OUTCOMES: dict[str, Outcome] = {
+    DENIAL_PREFIX: "denied",
+    PARTIAL_PREFIX: "partial",
+    DISAGREEMENT_PREFIX: "disagreeing",
+}
 
 #: What a ``PART-`` claim pays of each line; the rest becomes the client's.
 _PARTIAL_PAID_FRACTION = Decimal("0.6")
@@ -144,6 +188,14 @@ _PARTIAL_PAID_FRACTION = Decimal("0.6")
 #: exclusion on a denial.
 _DENIED_CLAIM_STATUS_CODE = "4"
 _PATIENT_RESPONSIBILITY_GROUP = "PR"
+
+#: The group a ``NOSUM-`` claim itemises the client's share under instead.
+#: ``CO`` is a contractual write-off — money nobody owes — so a claim that
+#: states a patient-responsibility total and itemises it as ``CO`` has said
+#: two different things about the same money. That is the whole trick, and
+#: it is one constant rather than a second document builder.
+_CONTRACTUAL_GROUP = "CO"
+_CO_REASON_FEE_SCHEDULE = "45"
 _PR_REASON_DEDUCTIBLE = "1"
 _PR_REASON_NOT_COVERED = "96"
 
@@ -228,6 +280,17 @@ class _State:
         self.task_values: list[dict[str, Any]] = []
         #: document id → the document as the enrollment reports it
         self.documents: dict[str, dict[str, Any]] = {}
+        #: control number → the outcome a test forced, overriding the prefix.
+        #: Recorded rather than passed through, so a timer-fired 835 and one
+        #: forced through ``/_fake/deliver`` cannot disagree about the same
+        #: claim.
+        self.outcomes: dict[str, str] = {}
+        #: The outcome every claim gets unless its own prefix or an explicit
+        #: per-claim override says otherwise. Armed BEFORE filing, because a
+        #: claim filed through the app gets its control number from the
+        #: server and the 835 follows five seconds later — a test that waited
+        #: to learn the number would be racing the timer.
+        self.default_outcome: str | None = None
 
     def reset(self) -> None:
         for task in self.timers:
@@ -242,6 +305,8 @@ class _State:
         self.task_values.clear()
         self.documents.clear()
         self.native_replays.clear()
+        self.outcomes.clear()
+        self.default_outcome = None
 
 
 state = _State()
@@ -519,11 +584,36 @@ def _build_277_report(control: str) -> dict[str, Any]:
     return report
 
 
-def _line_split(charge: Decimal, control: str) -> tuple[Decimal, Decimal]:
-    """What one line pays and what it assigns the client, by the claim's fate."""
-    if control.startswith(DENIAL_PREFIX):
+def _outcome_for(control: str) -> Outcome:
+    """What this claim's 835 says. The single decision, read by everything.
+
+    A forced outcome wins over the prefix so a browser test can reach these
+    rules at all: a claim filed through the app gets a server-generated
+    control number and cannot be given one.
+    """
+    forced = state.outcomes.get(control)
+    if forced in OUTCOMES:
+        return forced  # type: ignore[return-value]
+    for prefix, outcome in _PREFIX_OUTCOMES.items():
+        if control.startswith(prefix):
+            return outcome
+    # A prefix beats the default: a spec that armed one outcome for the run
+    # and then deliberately filed a ``DENY-`` claim means the ``DENY-``.
+    if state.default_outcome in OUTCOMES:
+        return state.default_outcome  # type: ignore[return-value]
+    return "paid"
+
+
+def _line_split(charge: Decimal, outcome: Outcome) -> tuple[Decimal, Decimal]:
+    """What one line pays, and what is left over for an adjustment to explain.
+
+    The second figure is NOT "what the client owes" — which group code it is
+    written under is the caller's business, and on a ``disagreeing`` claim it
+    is deliberately written under two different ones.
+    """
+    if outcome == "denied":
         return Decimal("0.00"), charge
-    if control.startswith(PARTIAL_PREFIX):
+    if outcome in ("partial", "disagreeing"):
         paid = (charge * _PARTIAL_PAID_FRACTION).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         return paid, charge - paid
     return charge, Decimal("0.00")
@@ -551,7 +641,8 @@ def _build_835_report(control: str) -> dict[str, Any]:
     info = claim.get("claimInformation", {})
     charge = info.get("claimChargeAmount")
     service_lines = info.get("serviceLines", [])
-    denied = control.startswith(DENIAL_PREFIX)
+    outcome = _outcome_for(control)
+    denied = outcome == "denied"
     for transaction in report.get("transactions", []):
         transaction_paid = Decimal("0.00")
         for detail in transaction.get("detailInfo", []):
@@ -559,7 +650,7 @@ def _build_835_report(control: str) -> dict[str, Any]:
                 claim_payment = payment["claimPaymentInfo"]
                 posted_lines = (
                     [
-                        _paid_line(payment["serviceLines"][0], line, number, control)
+                        _paid_line(payment["serviceLines"][0], line, number, outcome)
                         for line, number in zip(service_lines, lines, strict=False)
                     ]
                     if service_lines
@@ -576,6 +667,11 @@ def _build_835_report(control: str) -> dict[str, Any]:
                         ),
                         Decimal("0.00"),
                     )
+                    # Every adjustment on the line, whatever group it was
+                    # written under. On a `disagreeing` claim the lines wrote
+                    # it as CO and the claim still states it here as the
+                    # client's — which is the contradiction, stated in one
+                    # place and visible as one line of code.
                     patient_total = sum(
                         (
                             Decimal(adjustment["adjustmentAmount1"])
@@ -585,7 +681,7 @@ def _build_835_report(control: str) -> dict[str, Any]:
                         Decimal("0.00"),
                     )
                 elif charge:
-                    paid_total, patient_total = _line_split(Decimal(str(charge)), control)
+                    paid_total, patient_total = _line_split(Decimal(str(charge)), outcome)
                 else:
                     paid_total = patient_total = Decimal("0.00")
                 if charge:
@@ -602,12 +698,12 @@ def _build_835_report(control: str) -> dict[str, Any]:
 
 
 def _paid_line(
-    template: dict[str, Any], line: dict[str, Any], number: str, control: str
+    template: dict[str, Any], line: dict[str, Any], number: str, outcome: Outcome
 ) -> dict[str, Any]:
     paid = copy.deepcopy(template)
     service = line.get("professionalService", {})
     charge = Decimal(str(service.get("lineItemChargeAmount") or "0"))
-    paid_amount, patient_amount = _line_split(charge, control)
+    paid_amount, patient_amount = _line_split(charge, outcome)
     paid["lineItemControlNumber"] = number
     if line.get("serviceDate"):
         paid["serviceDate"] = str(line["serviceDate"])
@@ -624,12 +720,25 @@ def _paid_line(
     if service.get("serviceUnitCount"):
         payment["unitsOfServicePaidCount"] = str(service["serviceUnitCount"])
     if patient_amount:
-        reason = (
-            _PR_REASON_NOT_COVERED if control.startswith(DENIAL_PREFIX) else _PR_REASON_DEDUCTIBLE
+        # THE DELIBERATE DISAGREEMENT, and the only line that makes one.
+        #
+        # On a `disagreeing` claim the leftover is itemised as a contractual
+        # write-off — money nobody owes — while the claim header still states
+        # it as the client's share. The line still balances (charge = paid +
+        # adjustment) and so does the claim, so the engine's arithmetic
+        # checks pass and only the CLP05-vs-itemisation cross-check fires.
+        # That is on purpose: one hold, one reason, nothing ambiguous.
+        group, reason = (
+            (_CONTRACTUAL_GROUP, _CO_REASON_FEE_SCHEDULE)
+            if outcome == "disagreeing"
+            else (
+                _PATIENT_RESPONSIBILITY_GROUP,
+                _PR_REASON_NOT_COVERED if outcome == "denied" else _PR_REASON_DEDUCTIBLE,
+            )
         )
         paid["serviceAdjustments"] = [
             {
-                "claimAdjustmentGroupCode": _PATIENT_RESPONSIBILITY_GROUP,
+                "claimAdjustmentGroupCode": group,
                 "adjustmentReasonCode1": reason,
                 "adjustmentAmount1": str(patient_amount),
             }
@@ -1083,14 +1192,44 @@ async def reset() -> Any:
     return {"ok": True}
 
 
+@app.post("/_fake/outcome")
+async def set_outcome(request: Request) -> Any:
+    """Arm what the next 835s will say, before any claim has been filed.
+
+    With ``control_number`` it arms one claim; without, it arms every claim
+    that has no prefix of its own. Cleared by ``/_fake/reset``.
+    """
+    body = await request.json()
+    outcome = body.get("outcome")
+    if outcome is not None and outcome not in OUTCOMES:
+        return JSONResponse({"error": f"outcome must be one of {OUTCOMES}"}, status_code=400)
+    control = body.get("control_number")
+    if control:
+        if outcome is None:
+            state.outcomes.pop(str(control), None)
+        else:
+            state.outcomes[str(control)] = outcome
+    else:
+        state.default_outcome = outcome
+    return {"ok": True, "outcome": outcome, "control_number": control}
+
+
 @app.post("/_fake/deliver")
 async def deliver(request: Request) -> Any:
     """Fire the 277CA or 835 for a control number now instead of on its timer."""
     body = await request.json()
     control = str(body.get("control_number") or "")
     kind = str(body.get("kind") or "")
+    outcome = body.get("outcome")
     if not control or kind not in ("277", "835"):
         return JSONResponse(
             {"error": "control_number and kind (277 or 835) are required"}, status_code=400
         )
+    if outcome is not None:
+        if outcome not in OUTCOMES:
+            return JSONResponse({"error": f"outcome must be one of {OUTCOMES}"}, status_code=400)
+        # Recorded rather than passed down: a claim's fate is a fact about the
+        # claim, and a forced 835 must not say something different from one
+        # the timer fires for the same claim a moment later.
+        state.outcomes[control] = outcome
     return await _deliver(control, "277" if kind == "277" else "835")
