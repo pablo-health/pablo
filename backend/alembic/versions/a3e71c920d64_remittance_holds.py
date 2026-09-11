@@ -23,8 +23,14 @@ pairs (numbers from a public list), a control number, and the states and
 timestamps of somebody deciding.
 
 Revision ID: a3e71c920d64
-Revises: c4e8b1f7a2d9
+Revises: a7d3e9f14c62
 Create Date: 2026-09-11
+
+Re-pointed after the fact. This revision and ``a7d3e9f14c62`` were both cut
+off ``c4e8b1f7a2d9`` while the other was in flight, and both landed — which
+git merges without a murmur and alembic then refuses as two heads. Landing
+order is chain order, so this one chains after the revision that merged
+first.
 """
 
 from __future__ import annotations
@@ -39,7 +45,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 revision: str = "a3e71c920d64"
-down_revision: str | Sequence[str] | None = "c4e8b1f7a2d9"
+down_revision: str | Sequence[str] | None = "a7d3e9f14c62"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
