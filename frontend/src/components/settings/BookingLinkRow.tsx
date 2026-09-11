@@ -71,8 +71,15 @@ export function LinkRow({
             {url}
           </p>
           <p className="text-xs text-neutral-500">
-            {link.duration_minutes} min · {link.session_type}
+            {link.appointment_type_name === null
+              ? "Appointment type deleted"
+              : `${link.duration_minutes} min · ${link.appointment_type_name}`}
           </p>
+          {!link.bookable && link.not_bookable_reason && (
+            <p role="note" className="text-xs text-amber-700">
+              Not bookable yet: {link.not_bookable_reason}
+            </p>
+          )}
         </div>
         <span
           className={`shrink-0 rounded-full px-2 py-1 text-xs font-medium ${

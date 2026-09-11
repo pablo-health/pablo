@@ -679,14 +679,15 @@ class AppointmentTypeRow(Base):
 
     ``appointments.appointment_type_id`` references this table, so renaming a
     type no longer orphans the appointments booked under it. Two places
-    deliberately still hold a plain string instead:
+    deliberately differ:
 
     * ``appointments.session_type`` — kept as the name the appointment was
       booked under, so history reads correctly after a rename.
-    * ``booking_links.session_type`` — that table is PLATFORM-scoped, because
-      a public slug has to resolve before any tenant schema can be selected.
-      A platform table cannot hold a foreign key into one of N per-tenant
-      schemas, so this one cannot be converted and should not be attempted.
+    * ``booking_links.appointment_type_id`` — holds this table's id as a
+      plain value with no foreign key, because that table is PLATFORM-scoped
+      (a public slug has to resolve before any tenant schema can be selected)
+      and a platform table cannot hold a foreign key into one of N per-tenant
+      schemas. It is validated in the application instead.
     """
 
     __tablename__ = "appointment_types"

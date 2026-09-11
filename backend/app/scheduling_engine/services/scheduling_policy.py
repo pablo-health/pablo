@@ -13,9 +13,10 @@ answer to "may a patient book?" in that state is no. So the defaults here are
 uniformly off or strict, and are returned rather than written: reading a policy
 never creates one.
 
-Storing policy is all this does. Enforcing it when something is actually booked
-is separate and not yet built, so do not read a call to ``load_policy`` as
-proof that a rule is being applied anywhere.
+Storing policy is most of what this does. The one place it is enforced today
+is ``booking_link_gate``, which reads ``self_book_new`` before a stranger may
+book through a public link; do not read a call to ``load_policy`` elsewhere as
+proof that a rule is being applied.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ import copy
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from ...db import get_db_session
 from ...db.models import SchedulingPolicyRow
 
 if TYPE_CHECKING:
@@ -74,6 +76,21 @@ def load_policy(session: Session) -> dict[str, object]:
     """
     row = session.get(SchedulingPolicyRow, SINGLETON_ID)
     return _to_dict(row) if row is not None else copy.deepcopy(DEFAULTS)
+
+
+def current_policy_or_defaults() -> dict[str, object]:
+    """The policy for the request's current practice, or the strict defaults.
+
+    Reads through the request-scoped session, which the caller must already
+    have pointed at the right practice. In-memory mode (unit tests, DB-less
+    dev) has no request session at all; there the answer is the defaults,
+    which is the fail-closed reading of "nothing configured".
+    """
+    try:
+        session = get_db_session()
+    except RuntimeError:
+        return copy.deepcopy(DEFAULTS)
+    return load_policy(session)
 
 
 def update_policy(session: Session, patch: dict[str, object]) -> dict[str, object]:

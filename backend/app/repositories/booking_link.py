@@ -56,7 +56,7 @@ class BookingLinkRepository(ABC):
 
     @abstractmethod
     def update(self, link: BookingLink) -> BookingLink:
-        """Persist mutable fields (display copy, duration, active state)."""
+        """Persist mutable fields (display copy, appointment type, active state)."""
 
     @abstractmethod
     def delete(self, link_id: str, user_id: str) -> bool:

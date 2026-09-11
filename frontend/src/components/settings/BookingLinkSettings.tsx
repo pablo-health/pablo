@@ -7,18 +7,13 @@ import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
+import { useAppointmentTypes } from "@/hooks/useAppointmentTypes"
 import { useBookingLinks, useCreateBookingLink } from "@/hooks/useBookingLinks"
 import { ApiError } from "@/lib/api/client"
-import { SESSION_TYPES, SLUG_PATTERN } from "@/types/bookingLinks"
+import { SLUG_PATTERN } from "@/types/bookingLinks"
 import type { BookingLink, CreateBookingLinkRequest } from "@/types/bookingLinks"
+import { AppointmentTypeSelect } from "./AppointmentTypeSelect"
 import { LinkRow } from "./BookingLinkRow"
 import { DeleteBookingLinkDialog } from "./DeleteBookingLinkDialog"
 
@@ -33,14 +28,19 @@ function errorMessage(err: unknown): string {
 
 function CreateLinkForm({ onCancel, onCreated }: { onCancel: () => void; onCreated: () => void }) {
   const createMutation = useCreateBookingLink()
+  const { data: typesData } = useAppointmentTypes()
+  const types = typesData?.data ?? []
   const [slug, setSlug] = useState("")
   const [hostName, setHostName] = useState("")
   const [title, setTitle] = useState("")
   const [description, setDescription] = useState("")
-  const [durationMinutes, setDurationMinutes] = useState("50")
-  const [sessionType, setSessionType] = useState<string>(SESSION_TYPES[0])
+  const [appointmentTypeId, setAppointmentTypeId] = useState<string | null>(null)
   const [slugError, setSlugError] = useState<string | null>(null)
   const [serverError, setServerError] = useState<string | null>(null)
+
+  // The first type is the default until the person picks one, so a practice
+  // with a single type never has to touch the control.
+  const selectedTypeId = appointmentTypeId ?? types[0]?.id ?? null
 
   function handleSlugChange(value: string) {
     setSlug(value.toLowerCase())
@@ -52,7 +52,7 @@ function CreateLinkForm({ onCancel, onCreated }: { onCancel: () => void; onCreat
     e.preventDefault()
     setServerError(null)
 
-    if (!hostName.trim() || !title.trim()) return
+    if (!hostName.trim() || !title.trim() || !selectedTypeId) return
 
     if (!SLUG_PATTERN.test(slug)) {
       setSlugError(SLUG_ERROR)
@@ -64,8 +64,7 @@ function CreateLinkForm({ onCancel, onCreated }: { onCancel: () => void; onCreat
       slug,
       host_name: hostName.trim(),
       title: title.trim(),
-      duration_minutes: Number(durationMinutes),
-      session_type: sessionType,
+      appointment_type_id: selectedTypeId,
     }
     if (description.trim()) data.description = description.trim()
 
@@ -126,38 +125,19 @@ function CreateLinkForm({ onCancel, onCreated }: { onCancel: () => void; onCreat
         />
       </div>
 
-      <div className="flex flex-wrap items-end gap-4">
-        <div className="grid gap-2">
-          <Label htmlFor="link-duration">Length (minutes)</Label>
-          <Input
-            id="link-duration"
-            type="number"
-            min={5}
-            max={480}
-            value={durationMinutes}
-            onChange={(e) => setDurationMinutes(e.target.value)}
-            className="w-24"
-          />
-        </div>
-        <div className="grid gap-2">
-          <Label htmlFor="link-session-type">Session type</Label>
-          <Select value={sessionType} onValueChange={setSessionType}>
-            <SelectTrigger id="link-session-type" className="w-40">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {SESSION_TYPES.map((type) => (
-                <SelectItem key={type} value={type}>
-                  {type}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
+      <AppointmentTypeSelect
+        id="link-appointment-type"
+        types={types}
+        value={selectedTypeId}
+        onChange={setAppointmentTypeId}
+      />
 
       <div className="flex gap-2">
-        <Button type="submit" size="sm" disabled={createMutation.isPending}>
+        <Button
+          type="submit"
+          size="sm"
+          disabled={createMutation.isPending || selectedTypeId === null}
+        >
           {createMutation.isPending ? "Creating..." : "Create link"}
         </Button>
         <Button type="button" size="sm" variant="outline" onClick={onCancel}>

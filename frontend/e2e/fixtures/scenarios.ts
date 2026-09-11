@@ -233,26 +233,81 @@ export async function giveWorkingHours(
   })
 }
 
+export interface AppointmentType {
+  id: string
+  name: string
+  duration_minutes: number
+  audience: "new" | "existing" | "both"
+  self_bookable: boolean
+  offerable: boolean
+}
+
+export interface AppointmentTypeSeed {
+  name?: string
+  duration_minutes?: number
+  audience?: AppointmentType["audience"]
+  self_bookable?: boolean
+  offerable?: boolean
+}
+
+/**
+ * An appointment type a stranger may book: for new clients, self-bookable,
+ * offered. Every switch defaults to the open position here because this is
+ * the fixture for "a link that works"; pass a closed switch to test a gate.
+ */
+export async function giveBookableType(
+  api: ApiClient,
+  seed: AppointmentTypeSeed = {},
+): Promise<AppointmentType> {
+  return api.post<AppointmentType>("/api/appointment-types", {
+    name: `Intake call ${next()}`,
+    duration_minutes: 50,
+    audience: "new",
+    self_bookable: true,
+    offerable: true,
+    ...seed,
+  })
+}
+
+/**
+ * The practice-wide switch. Off by default for every practice, so a spec
+ * that books through a link must turn it on first, and a spec that wants
+ * the closed state passes `false`.
+ */
+export async function letNewClientsSelfBook(api: ApiClient, allowed = true): Promise<void> {
+  await api.patch("/api/scheduling/policy", { self_book_new: allowed })
+}
+
 export interface BookingLink {
   id: string
   slug: string
   host_name: string
   title: string
-  duration_minutes: number
+  appointment_type_id: string
+  appointment_type_name: string | null
+  duration_minutes: number | null
+  bookable: boolean
+  not_bookable_reason: string | null
   is_active: boolean
 }
 
+/**
+ * A booking link that a stranger can book through, end to end: its own
+ * open appointment type and the practice switch on. Pass `appointment_type_id`
+ * to point it at a type you built yourself.
+ */
 export async function giveBookingLink(
   api: ApiClient,
-  seed: Partial<{ slug: string; host_name: string; title: string; duration_minutes: number }> = {},
+  seed: Partial<{ slug: string; host_name: string; title: string; appointment_type_id: string }> = {},
 ): Promise<BookingLink> {
+  const appointment_type_id = seed.appointment_type_id ?? (await giveBookableType(api)).id
+  await letNewClientsSelfBook(api)
   return api.post<BookingLink>("/api/booking-links", {
     slug: `e2e-${next()}`,
     host_name: "E2E Clinician",
     title: "Intake call",
-    duration_minutes: 50,
-    session_type: "individual",
     ...seed,
+    appointment_type_id,
   })
 }
 
