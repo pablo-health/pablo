@@ -2,15 +2,13 @@
 
 """The seam that hands a held remittance to whoever will investigate it.
 
-Almost every test here is a variation on one claim: **the engine's
-behaviour does not depend on the receiver.** A receiver that raises, or was
-never registered, must leave the client unbilled, the hold open, the
-practice asked and the posting written — exactly as if it had worked.
+Almost every test here is one claim: the engine's behaviour does not depend
+on the receiver. One that raises, or was never registered, must leave the
+client unbilled, the hold open and the posting written.
 
 That is the opposite of the usual advice about swallowing exceptions, and
-it is right here for a specific reason: by the time this is called the
-safe decision has already been made and written down. The receiver is an
-observer. If it breaks, the investigation is delayed and nothing else is.
+right here because the safe decision is already made and recorded by the
+time this runs.
 """
 
 from __future__ import annotations
