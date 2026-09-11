@@ -3,11 +3,14 @@
 "use client"
 
 import {
+  acknowledgeRemittanceHold,
   buildClaimFromSession,
   checkClaimStatus,
   correctClaim,
   fetchClaim,
   listClaims,
+  listRemittanceHolds,
+  resolveRemittanceHold,
   validateClaim,
   voidClaim,
 } from "@/lib/api/claims"
@@ -18,6 +21,9 @@ import type {
   ClaimResponse,
   ClaimTrackerFilters,
   ClaimTrackerResponse,
+  RemittanceHold,
+  RemittanceHoldFinding,
+  RemittanceHoldListResponse,
   ValidateClaimResponse,
 } from "@/types/claims"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
@@ -84,5 +90,35 @@ export function useCheckClaimStatus(token?: string) {
       queryClient.setQueryData(queryKeys.claims.detail(claim.id), claim)
     },
     invalidateKeys: [queryKeys.claims.lists()],
+  })
+}
+
+/** Remittances whose own numbers disagreed, so a client bill is waiting. */
+export function useRemittanceHolds(token?: string) {
+  return useAuthQuery<RemittanceHoldListResponse>({
+    queryKey: queryKeys.claims.holds(),
+    queryFn: () => listRemittanceHolds(token),
+  })
+}
+
+/**
+ * Bill the client what the payer stated, or waive it.
+ *
+ * Invalidates the billing keys as well as the claims ones: billing it as
+ * stated writes a row on the client's ledger, and a balance shown stale
+ * after the therapist just decided it is the one number they will check.
+ */
+export function useResolveRemittanceHold(token?: string) {
+  return useAuthMutation<RemittanceHold, { holdId: string; finding: RemittanceHoldFinding }>({
+    mutationFn: ({ holdId, finding }) => resolveRemittanceHold(holdId, finding, token),
+    invalidateKeys: [queryKeys.claims.all, queryKeys.billing.all],
+  })
+}
+
+/** Say it has been seen. Nothing is billed and the hold stays open. */
+export function useAcknowledgeRemittanceHold(token?: string) {
+  return useAuthMutation<RemittanceHold, { holdId: string }>({
+    mutationFn: ({ holdId }) => acknowledgeRemittanceHold(holdId, token),
+    invalidateKeys: [queryKeys.claims.holds()],
   })
 }

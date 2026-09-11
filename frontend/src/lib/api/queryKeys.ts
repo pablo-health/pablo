@@ -312,6 +312,7 @@ const baseQueryKeys = {
     list: (filters?: ClaimTrackerFilters) => [...baseQueryKeys.claims.lists(), filters] as const,
     details: () => [...baseQueryKeys.claims.all, "detail"] as const,
     detail: (claimId: string) => [...baseQueryKeys.claims.details(), claimId] as const,
+    holds: () => [...baseQueryKeys.claims.all, "holds"] as const,
   },
 
   // Booking link query keys

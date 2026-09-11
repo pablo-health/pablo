@@ -175,3 +175,54 @@ class RemittanceHold(BaseModel):
         disagreement is not somebody deciding what to bill.
         """
         return self.state != "resolved"
+
+
+# ---------------------------------------------------------------------------
+# API shapes
+# ---------------------------------------------------------------------------
+
+
+class RemittanceHoldResponse(BaseModel):
+    """One hold as the practice sees it.
+
+    Carries the two figures that disagree and what the payer says the
+    client owes, because a person deciding whether to bill it needs to see
+    the size of the doubt. It does NOT carry the withheld ledger amount:
+    that is the difference against a ledger that may have moved since, and
+    is recomputed at the moment the practice chooses to bill.
+    """
+
+    id: str
+    claim_id: str
+    control_number: str
+    state: HoldState
+    reason: HoldReason
+    stated_cents: int
+    computed_cents: int
+    delta_cents: int
+    patient_responsibility_cents: int
+    line_control_number: str | None = None
+    codes: list[dict[str, str]] = Field(default_factory=list)
+    line_count: int = 0
+    payer_name: str | None = None
+    detected_at: datetime
+    acknowledged_at: datetime | None = None
+    resolved_at: datetime | None = None
+    finding: HoldFinding | None = None
+
+
+class RemittanceHoldListResponse(BaseModel):
+    data: list[RemittanceHoldResponse]
+    total: int
+
+
+class ResolveHoldRequest(BaseModel):
+    """How the practice decided.
+
+    Both answers are always accepted while the hold is open. Nothing here
+    takes a reason, a confirmation flag or an acknowledgement first: a
+    practice acting on its own client's balance should not have to satisfy
+    the software before the software will let it.
+    """
+
+    finding: HoldFinding

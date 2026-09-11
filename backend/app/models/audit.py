@@ -269,6 +269,15 @@ class AuditAction(StrEnum):
     CLAIM_CORRECTED = "claim_corrected"
     CLAIM_VOIDED = "claim_voided"
     PATIENT_CLAIMS_VIEWED = "patient_claims_viewed"
+    # A remittance whose own numbers disagreed, and what the practice
+    # decided to do about the client's bill. The resolution row is the
+    # record that a person — named — chose to bill a client an amount the
+    # engine had refused to bill them, or chose not to bill it at all. The
+    # `changes` payload carries the hold id, the claim, the finding, and
+    # the amount written to the ledger; never a name or a diagnosis.
+    CLAIM_REMITTANCE_HOLDS_LISTED = "claim_remittance_holds_listed"
+    CLAIM_REMITTANCE_HOLD_ACKNOWLEDGED = "claim_remittance_hold_acknowledged"
+    CLAIM_REMITTANCE_HOLD_RESOLVED = "claim_remittance_hold_resolved"
     # The tracker: every claim the clinician can see, in one read. One row
     # naming the claims it listed (ids and control numbers), like the CSV
     # export does.

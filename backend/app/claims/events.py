@@ -57,6 +57,7 @@ ClaimEventKind = Literal[
     "deadline_missed",
     "enrollment_action_required",
     "unmatched_remittance",
+    "remittance_held",
     "paid",
 ]
 
@@ -199,6 +200,7 @@ _KIND_PHRASES: dict[ClaimEventKind, str] = {
     "deadline_missed": "{deadline} deadline missed with {payer}",
     "enrollment_action_required": "enrollment action needed for {payer}",
     "unmatched_remittance": "unmatched remittance from {payer}",
+    "remittance_held": "remittance from {payer} does not add up — client not billed",
     "paid": "paid by {payer}",
 }
 
