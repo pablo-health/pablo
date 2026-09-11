@@ -38,6 +38,7 @@ from app.routes import payment_webhooks
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
+from sqlalchemy.dialects import postgresql
 
 # Deliberately not shaped like a real signing secret: these are only ever fed
 # to hmac.new(), so any bytes do, and a fixture imitating a credential would be
@@ -143,6 +144,22 @@ class _FakePlatformSession:
     def add(self, row: Any) -> None:
         self.added.append(row)
         self.processed_ids.add(row.event_id)
+
+    def execute(self, statement: Any) -> None:
+        """The dedupe write, which is an INSERT ... ON CONFLICT DO NOTHING.
+
+        Modelled on what the database does rather than on what the ORM would:
+        an event already recorded is dropped silently. A fake that accepted
+        every insert would let the duplicate case pass whether or not the
+        conflict clause was ever written, which is the one thing these tests
+        are here to notice.
+        """
+        params = statement.compile(dialect=postgresql.dialect()).params
+        event_id = params["event_id"]
+        if event_id in self.processed_ids:
+            return
+        self.added.append(SimpleNamespace(**params))
+        self.processed_ids.add(event_id)
 
     def commit(self) -> None:
         self.commits += 1

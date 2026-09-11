@@ -407,6 +407,23 @@ def _charges(engine: Engine, practice: Practice, payment_intent_id: str) -> list
         )
 
 
+def _processed_event_row(engine: Engine, event_id: str) -> Any:
+    """The whole dedupe row, ``processed_at`` included.
+
+    ``_processed_events`` reads two columns, which is enough to count rows and
+    not enough to notice an ``ON CONFLICT DO UPDATE`` quietly rewriting the
+    moment the event was handled.
+    """
+    with engine.connect() as conn:
+        return conn.execute(
+            text(
+                "SELECT event_type, practice_id, event_created_at, processed_at "
+                "FROM platform.processed_payment_events WHERE event_id = :e"
+            ),
+            {"e": event_id},
+        ).one()
+
+
 def _processed_events(engine: Engine, event_id: str) -> list[Any]:
     with engine.connect() as conn:
         return list(
@@ -644,8 +661,15 @@ class TestPaymentIdempotence:
         self, engine: Engine, practices: Practices, payments: TestClient
     ) -> None:
         """The dedupe key is enforced by the database, not only by the read that
-        precedes the write."""
-        from app.payments.reconcile import record_processed_event  # noqa: PLC0415
+        precedes the write.
+
+        Asserted with a RAW insert rather than through
+        ``record_processed_event``, which now tolerates the conflict on
+        purpose. Going through the writer would prove only that the writer is
+        quiet — a writer that did nothing at all would pass — and the thing
+        worth knowing is that the table itself would refuse a second row
+        whatever wrote it.
+        """
         from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
 
         payment_intent = f"pi_{uuid.uuid4().hex}"
@@ -658,14 +682,51 @@ class TestPaymentIdempotence:
             ),
         )
 
-        with pytest.raises(IntegrityError):
-            record_processed_event(
-                event_id=event_id,
-                event_type="payment_intent.succeeded",
-                practice_id=practices.a.practice_id,
-                created=None,
+        with pytest.raises(IntegrityError), engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO platform.processed_payment_events "
+                    "(event_id, event_type, practice_id, processed_at) "
+                    "VALUES (:e, 'payment_intent.succeeded', :p, now())"
+                ),
+                {"e": event_id, "p": practices.a.practice_id},
             )
         assert len(_processed_events(engine, event_id)) == 1
+
+    def test_recording_an_event_twice_is_quiet_and_keeps_the_first_row(
+        self, engine: Engine, practices: Practices, payments: TestClient
+    ) -> None:
+        """The writer's side of the same fact.
+
+        A second delivery that lost the race has nothing left to do, so
+        recording is a no-op rather than an error. The first row must survive
+        it untouched — ``DO NOTHING`` and ``DO UPDATE`` are one word apart,
+        and the second would rewrite ``processed_at`` to the moment of a
+        duplicate that changed nothing, quietly moving the timestamp anybody
+        reconciling would reason from.
+        """
+        from app.payments.reconcile import record_processed_event  # noqa: PLC0415
+
+        payment_intent = f"pi_{uuid.uuid4().hex}"
+        charge_id = _seed_charge(engine, practices.a, payment_intent)
+        event_id = f"evt_{uuid.uuid4().hex}"
+        _deliver_payment(
+            payments,
+            _payment_body(
+                event_id, "payment_intent.succeeded", _ours(payment_intent, practices.a, charge_id)
+            ),
+        )
+        before = _processed_event_row(engine, event_id)
+
+        record_processed_event(
+            event_id=event_id,
+            event_type="payment_intent.succeeded",
+            practice_id=practices.a.practice_id,
+            created=None,
+        )
+
+        assert len(_processed_events(engine, event_id)) == 1
+        assert _processed_event_row(engine, event_id) == before
 
     def test_two_simultaneous_deliveries_of_one_event_move_the_row_once(
         self, engine: Engine, practices: Practices, payment_app: FastAPI
@@ -676,15 +737,18 @@ class TestPaymentIdempotence:
         database can show — is that ``SELECT … FOR UPDATE`` lets exactly one of
         them move the row, and the primary key lets exactly one record it.
 
-        Observed on Postgres: the ledger comes out right, and the delivery that
-        loses the race answers **500**, because ``record_processed_event`` inserts
-        the dedupe row unconditionally and the primary key raises
-        ``UniqueViolation`` on the second insert. That is a self-healing 5xx —
-        the processor redelivers, ``event_already_processed`` now sees the row,
-        and the retry is a clean 200 — so it costs an unhandled-exception log and
-        a retry rather than a wrong ledger. The assertions below are on the
-        invariants, deliberately not on that status, so they neither bless the
-        500 nor break when the insert learns to tolerate the conflict."""
+        This test used to assert only those invariants, and said so: the
+        delivery that lost the race answered **500**, because
+        ``record_processed_event`` inserted the dedupe row unconditionally and
+        the primary key raised ``UniqueViolation``. It was self-healing — the
+        processor redelivers, the dedupe read now sees the row, the retry is a
+        clean 200 — so it cost an unhandled-exception log and a wasted
+        redelivery rather than a wrong ledger.
+
+        The insert now tolerates the conflict, so the status is asserted too.
+        **This is the assertion that would have failed before the fix**, and
+        it is what stops the 500 coming back: the invariants below passed
+        perfectly well while it was happening."""
         payment_intent = f"pi_{uuid.uuid4().hex}"
         charge_id = _seed_charge(engine, practices.a, payment_intent)
         event_id = f"evt_{uuid.uuid4().hex}"
@@ -712,7 +776,10 @@ class TestPaymentIdempotence:
         assert len(rows) == 1
         assert rows[0].status == "succeeded"
         assert len(_processed_events(engine, event_id)) == 1
-        assert statuses.count(200) >= 1, f"neither delivery was acknowledged: {statuses}"
+        # Both, not "at least one". The loser has nothing left to do — the
+        # winner applied the outcome and recorded the event — so it has
+        # nothing to report but success.
+        assert statuses == [200, 200], f"a delivery that lost the race did not succeed: {statuses}"
 
 
 class TestPaymentOrdering:
