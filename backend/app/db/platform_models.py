@@ -155,11 +155,18 @@ class ClaimRouteRow(PlatformBase):
     also lives outside the practice schemas for the same reason. Anything more
     belongs in the tenant.
 
-    The primary key is the point as much as the lookup is: two practices
-    cannot both claim one control number, so a collision is refused at write
-    time rather than resolved by whichever practice the old scan happened to
-    visit first — which would have posted a payer's money to the wrong
-    practice.
+    It names the CLINICIAN as well as the practice, because the practice alone
+    does not finish the job. Claims are row-policied: a tenant session sees a
+    clinician's claims only when it is armed as that clinician, so a receiver
+    that knew only the practice still had to open a session per clinician and
+    ask each in turn whether the claim was theirs — a scan inside the tenant,
+    replacing the scan across tenants. Filing knows exactly whose claim it is;
+    recording it turns the last search into a lookup too.
+
+    The primary key is the point as much as the lookup is: two practices cannot
+    both claim one control number, so a collision is refused at write time
+    rather than resolved by whichever practice a search happened to visit first
+    — which would have posted a payer's money to the wrong practice.
     """
 
     __tablename__ = "claim_routes"
@@ -167,6 +174,7 @@ class ClaimRouteRow(PlatformBase):
 
     control_number: Mapped[str] = mapped_column(String(17), primary_key=True)
     practice_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(String(128), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 

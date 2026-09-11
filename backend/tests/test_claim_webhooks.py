@@ -322,7 +322,6 @@ def practices(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[PipelineHarness]
         for i, harness in enumerate(harnesses)
     ]
     by_schema = dict(zip([c.schema for c in contexts], harnesses, strict=True))
-    by_practice = {c.practice_id: c for c in contexts}
     current: dict[str, PipelineHarness] = {}
     OPENED.clear()
 
@@ -334,15 +333,20 @@ def practices(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[PipelineHarness]
         current["harness"] = harness
         yield object()
 
-    def practice_for_control_numbers(numbers: Collection[str]) -> str | None:
+    def route_for_control_numbers(numbers: Collection[str]) -> Any | None:
+        from app.claims.routing import ClaimRoute  # noqa: PLC0415
+
         for context, harness in zip(contexts, harnesses, strict=True):
             if any(harness.claims.get_by_control_number(n) is not None for n in numbers):
-                return context.practice_id
+                return ClaimRoute(
+                    practice_id=context.practice_id or "",
+                    user_id=harness.pipeline.principal_user_id,
+                    schema=context.schema,
+                )
         return None
 
     monkeypatch.setattr(fanout, "_routing_client", lambda: harnesses[0].client)
-    monkeypatch.setattr(fanout, "practice_for_control_numbers", practice_for_control_numbers)
-    monkeypatch.setattr(fanout, "_practice_context", by_practice.get)
+    monkeypatch.setattr(fanout, "route_for_control_numbers", route_for_control_numbers)
     monkeypatch.setattr(fanout, "tenant_db_session", tenant_db_session)
     monkeypatch.setattr(fanout, "PostgresClaimRepository", lambda _s: current["harness"].claims)
     monkeypatch.setattr(

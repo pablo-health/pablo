@@ -653,15 +653,19 @@ class TestWebhookRoutingOnPostgres:
             session.commit()
 
     @staticmethod
-    def _only_for(practice_id: str, client: Any) -> Any:
-        """A ``clearinghouse_client_for_practice`` that answers for one practice.
+    def _the_account(client: Any) -> Any:
+        """A ``clearinghouse_client_for_practice`` standing in for THE account.
 
-        Other practices on the registry answer ``None`` and are skipped, so a
-        deployment's template row cannot borrow this test's vendor.
+        The receiver asks for the deployment's account, not a practice's, and
+        passes ``None`` to say so — the default credential provider resolves
+        one key and ignores which practice is asking. So this answers whatever
+        it is handed: modelling per-practice accounts here would make the
+        account look like what separates two practices' claims, when it is the
+        routing index that does.
         """
 
-        def resolve(wanted: str | None) -> Any:
-            return client if wanted == practice_id else None
+        def resolve(_wanted: str | None) -> Any:
+            return client
 
         return resolve
 
@@ -689,11 +693,11 @@ class TestWebhookRoutingOnPostgres:
         )
 
         transaction = client.acknowledge("payer_accepted", created.control_number)
-        record_claim_route(created.control_number, registered_practice)
+        record_claim_route(created.control_number, registered_practice, _CLINICIAN_A)
         monkeypatch.setattr(
             fanout,
             "clearinghouse_client_for_practice",
-            self._only_for(registered_practice, client),
+            self._the_account(client),
         )
 
         outcome = fanout.ingest_transaction_event(
@@ -731,9 +735,9 @@ class TestWebhookRoutingOnPostgres:
         monkeypatch.setattr(
             fanout,
             "clearinghouse_client_for_practice",
-            self._only_for(registered_practice, client),
+            self._the_account(client),
         )
-        record_claim_route(created.control_number, registered_practice)
+        record_claim_route(created.control_number, registered_practice, _CLINICIAN_A)
 
         outcome = fanout.ingest_transaction_event(
             WebhookEvent(
@@ -749,17 +753,18 @@ class TestWebhookRoutingOnPostgres:
         assert saved.state == "paid"
         assert saved.total_paid_cents == created.total_charge_cents
 
-    def test_unmatched_means_nobody_could_see_it_not_that_nobody_was_asked(
+    @pytest.mark.usefixtures("registered_practice")
+    def test_a_control_number_we_never_filed_is_unmatched(
         self,
-        registered_practice: str,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """A claim no mapped clinician owns is ``unmatched`` — and that is correct.
+        """A document naming a claim we never filed is ``unmatched``, correctly.
 
-        The counterpart to the two above: it pins the meaning of the outcome
-        the production incident reported. Here the row policy really does hide
-        the claim from everyone asked, so ``unmatched`` is the truth rather
-        than a symptom of an empty user list.
+        The counterpart to the two above, and it pins the meaning of the word.
+        ``unmatched`` used to be ambiguous — it was equally the answer when the
+        claim was ours but its practice sat past the scan's bound, which is how
+        a real incident stayed invisible. With routing it has one meaning: no
+        row in ``platform.claim_routes``, so this deployment never filed it.
         """
         from app.claims import fanout  # noqa: PLC0415
         from app.claims.webhooks import WebhookEvent  # noqa: PLC0415
@@ -770,7 +775,7 @@ class TestWebhookRoutingOnPostgres:
         monkeypatch.setattr(
             fanout,
             "clearinghouse_client_for_practice",
-            self._only_for(registered_practice, client),
+            self._the_account(client),
         )
 
         outcome = fanout.ingest_transaction_event(
@@ -795,24 +800,29 @@ class TestWebhookRoutingOnPostgres:
         money into the wrong practice's ledger.
         """
         from app.claims.routing import (  # noqa: PLC0415
-            practice_for_control_numbers,
             record_claim_route,
+            route_for_control_numbers,
         )
 
         control = f"RT{uuid.uuid4().hex[:8].upper()}"
-        record_claim_route(control, registered_practice)
-        assert practice_for_control_numbers([control]) == registered_practice
-        assert practice_for_control_numbers([control.lower()]) == registered_practice
+        record_claim_route(control, registered_practice, _CLINICIAN_A)
 
-        record_claim_route(control, "some-other-practice")
-        assert practice_for_control_numbers([control]) == registered_practice
+        route = route_for_control_numbers([control])
+        assert route is not None
+        assert (route.practice_id, route.user_id) == (registered_practice, _CLINICIAN_A)
+        # The schema comes from ``platform.practices``, joined in the same read.
+        assert route.schema.startswith("practice_")
+        assert route_for_control_numbers([control.lower()]) == route
+
+        record_claim_route(control, "some-other-practice", _CLINICIAN_B)
+        assert route_for_control_numbers([control]) == route
 
     def test_the_index_says_nothing_about_a_control_number_it_never_saw(self) -> None:
         """No row is "not indexed", and the receiver reads that as ``unmatched``."""
-        from app.claims.routing import practice_for_control_numbers  # noqa: PLC0415
+        from app.claims.routing import route_for_control_numbers  # noqa: PLC0415
 
-        assert practice_for_control_numbers([f"NX{uuid.uuid4().hex[:8].upper()}"]) is None
-        assert practice_for_control_numbers([]) is None
+        assert route_for_control_numbers([f"NX{uuid.uuid4().hex[:8].upper()}"]) is None
+        assert route_for_control_numbers([]) is None
 
     def test_the_fan_out_asks_every_mapped_clinician(self, registered_practice: str) -> None:
         """``practice_user_ids`` returns the mapped clinicians, both of them.

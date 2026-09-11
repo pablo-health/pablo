@@ -47,6 +47,7 @@ def upgrade() -> None:
         CREATE TABLE IF NOT EXISTS platform.claim_routes (
             control_number VARCHAR(17) NOT NULL PRIMARY KEY,
             practice_id VARCHAR(128) NOT NULL,
+            user_id VARCHAR(128) NOT NULL,
             created_at TIMESTAMP WITH TIME ZONE NOT NULL
         );
         """
