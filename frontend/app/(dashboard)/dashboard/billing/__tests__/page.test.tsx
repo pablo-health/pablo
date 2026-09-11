@@ -19,6 +19,9 @@ vi.mock("@/components/billing/UnbilledQueue", () => ({
 vi.mock("@/components/billing/BillerExport", () => ({
   BillerExport: () => <div data-testid="biller-export" />,
 }))
+vi.mock("@/components/billing/claims/RemittanceHolds", () => ({
+  RemittanceHolds: () => <div data-testid="remittance-holds" />,
+}))
 vi.mock("@/components/billing/claims/ClaimsTracker", () => ({
   ClaimsTracker: () => <div data-testid="claims-tracker" />,
 }))
@@ -52,3 +55,17 @@ describe("BillingPage", () => {
     expect(screen.getByTestId("biller-export")).toBeInTheDocument()
   })
 })
+
+describe("a client whose bill is held", () => {
+  it("is surfaced without the therapist having to pick the right tab", () => {
+    // The panel renders nothing when nothing is held, so placing it above
+    // the tabs costs an empty node on almost every day — and on the day it
+    // matters, a client has stopped being billed and nobody has to have
+    // gone looking.
+    render(<BillingPage />)
+
+    expect(screen.getByTestId("remittance-holds")).toBeInTheDocument()
+    expect(screen.queryByTestId("claims-tracker")).not.toBeInTheDocument()
+  })
+})
+
