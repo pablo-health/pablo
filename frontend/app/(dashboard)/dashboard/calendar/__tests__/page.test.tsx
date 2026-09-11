@@ -20,8 +20,13 @@ vi.mock("@/hooks/usePreferences", () => ({
   usePreferences: () => ({ data: preferencesState.data }),
   useSavePreferences: () => ({ mutate: savePreferences, isPending: false }),
 }))
+// Mutable so a test can put the practice on either side of the "no
+// availability rules at all" gate.
+const rulesState = vi.hoisted(() => ({
+  data: undefined as { data: unknown[]; total: number } | undefined,
+}))
 vi.mock("@/hooks/useAvailability", () => ({
-  useAvailabilityRules: () => ({ data: { data: [], total: 0 } }),
+  useAvailabilityRules: () => ({ data: rulesState.data }),
 }))
 
 vi.mock("@/lib/auth-context", () => ({
@@ -46,22 +51,42 @@ vi.mock("@/components/calendar/editorial", () => ({
 vi.mock("@/components/calendar/AppointmentModal", () => ({
   AppointmentModal: () => null,
 }))
+vi.mock("@/components/calendar/connect/CalendarHoursStep", () => ({
+  CalendarHoursStep: ({ onSaved, onSkip }: { onSaved: () => void; onSkip: () => void }) => (
+    <div data-testid="calendar-hours-step">
+      <button onClick={onSaved}>Save hours</button>
+      <button onClick={onSkip}>Skip hours</button>
+    </div>
+  ),
+}))
 vi.mock("@/components/calendar/connect/CalendarSetupWizard", () => ({
   CalendarSetupWizard: ({
     returnPath,
     onFinishLater,
     onDone,
+    withHoursStep,
   }: {
     returnPath?: string
     onFinishLater?: () => void
     onDone?: () => void
+    withHoursStep?: boolean
   }) => (
-    <div data-testid="calendar-setup-wizard" data-return-path={returnPath}>
+    <div
+      data-testid="calendar-setup-wizard"
+      data-return-path={returnPath}
+      data-with-hours-step={String(Boolean(withHoursStep))}
+    >
       <button onClick={onFinishLater}>Finish later</button>
       <button onClick={onDone}>Done</button>
     </div>
   ),
 }))
+
+const WORKING_HOURS_RULE = {
+  id: "rule-1",
+  rule_type: "working_hours",
+  params: { day_of_week: 0, start: "09:00", end: "17:00" },
+}
 
 const PREFERENCES = {
   default_video_platform: "zoom",
@@ -81,6 +106,7 @@ describe("CalendarPage first visit", () => {
     vi.clearAllMocks()
     runtimeConfig.googleCalendarEnabled = true
     preferencesState.data = { ...PREFERENCES }
+    rulesState.data = { data: [WORKING_HOURS_RULE], total: 1 }
   })
 
   it("opens on the setup wizard until it has been finished or waved away", () => {
@@ -144,5 +170,93 @@ describe("CalendarPage first visit", () => {
 
     expect(screen.queryByTestId("calendar-setup-wizard")).not.toBeInTheDocument()
     expect(screen.queryByTestId("editorial-calendar")).not.toBeInTheDocument()
+  })
+
+  it("waits for the rule list before deciding, rather than flashing a step", () => {
+    rulesState.data = undefined
+
+    render(<CalendarPage />)
+
+    expect(screen.queryByTestId("calendar-hours-step")).not.toBeInTheDocument()
+    expect(screen.queryByTestId("calendar-setup-wizard")).not.toBeInTheDocument()
+    expect(screen.queryByTestId("editorial-calendar")).not.toBeInTheDocument()
+  })
+})
+
+describe("CalendarPage hours capture", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    runtimeConfig.googleCalendarEnabled = false
+    preferencesState.data = { ...PREFERENCES, calendar_setup_complete: true }
+    rulesState.data = { data: [], total: 0 }
+  })
+
+  it("opens on the hours capture when the practice has no availability rules", () => {
+    render(<CalendarPage />)
+
+    expect(screen.getByTestId("calendar-hours-step")).toBeInTheDocument()
+    expect(screen.queryByTestId("editorial-calendar")).not.toBeInTheDocument()
+  })
+
+  it("never shows it once any rule exists", () => {
+    rulesState.data = { data: [WORKING_HOURS_RULE], total: 1 }
+
+    render(<CalendarPage />)
+
+    expect(screen.queryByTestId("calendar-hours-step")).not.toBeInTheDocument()
+    expect(screen.getByTestId("editorial-calendar")).toBeInTheDocument()
+  })
+
+  it("asks for hours even on a deployment with no Google Calendar at all", () => {
+    runtimeConfig.googleCalendarEnabled = false
+
+    render(<CalendarPage />)
+
+    expect(screen.getByTestId("calendar-hours-step")).toBeInTheDocument()
+  })
+
+  it("hands the hours step to the wizard as its first step when Google setup is also due", () => {
+    runtimeConfig.googleCalendarEnabled = true
+    preferencesState.data = { ...PREFERENCES }
+
+    render(<CalendarPage />)
+
+    expect(screen.getByTestId("calendar-setup-wizard")).toHaveAttribute(
+      "data-with-hours-step",
+      "true"
+    )
+    expect(screen.queryByTestId("calendar-hours-step")).not.toBeInTheDocument()
+  })
+
+  it("leaves the wizard's own gate alone when the practice already has rules", () => {
+    runtimeConfig.googleCalendarEnabled = true
+    preferencesState.data = { ...PREFERENCES }
+    rulesState.data = { data: [WORKING_HOURS_RULE], total: 1 }
+
+    render(<CalendarPage />)
+
+    expect(screen.getByTestId("calendar-setup-wizard")).toHaveAttribute(
+      "data-with-hours-step",
+      "false"
+    )
+  })
+
+  it("skipping shows the calendar without recording anything", async () => {
+    const user = userEvent.setup()
+    render(<CalendarPage />)
+
+    await user.click(screen.getByRole("button", { name: "Skip hours" }))
+
+    expect(screen.getByTestId("editorial-calendar")).toBeInTheDocument()
+    expect(savePreferences).not.toHaveBeenCalled()
+  })
+
+  it("saving does not mark the Google setup complete either", async () => {
+    const user = userEvent.setup()
+    render(<CalendarPage />)
+
+    await user.click(screen.getByRole("button", { name: "Save hours" }))
+
+    expect(savePreferences).not.toHaveBeenCalled()
   })
 })

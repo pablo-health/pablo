@@ -4,6 +4,7 @@
 
 import { Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { AppointmentModal } from "@/components/calendar/AppointmentModal"
+import { CalendarHoursStep } from "@/components/calendar/connect/CalendarHoursStep"
 import { CalendarSetupWizard } from "@/components/calendar/connect/CalendarSetupWizard"
 import {
   EditorialCalendar,
@@ -60,9 +61,24 @@ export default function CalendarPage() {
   // "connected" would unmount the wizard at its second step. Someone who
   // connected from Settings before this existed walks it once, sees
   // "connected" on the first step, and is done.
-  const setupSettled = !googleCalendarEnabled || preferences !== undefined
+  const setupSettled =
+    (!googleCalendarEnabled || preferences !== undefined) && availabilityRules !== undefined
   const showWizard =
     googleCalendarEnabled && preferences !== undefined && !preferences.calendar_setup_complete
+
+  // A practice with no availability rule at all is asked for its general
+  // hours before anything else: an empty calendar is the one screen where
+  // the absence is self-evident, and until some hours exist Pablo cannot
+  // offer a time, remind anyone, or let a client book. The gate is the
+  // rules alone — nothing to do with Google, and answering it is not an
+  // answer to the wizard's own gate. Either answer quiets it for this
+  // visit: saving because the rules it asked for now exist (this also
+  // covers the beat before the list refetches), skipping because there is
+  // no "asked already" to record and re-asking an empty calendar next
+  // visit is the right nag.
+  const [hoursAnswered, setHoursAnswered] = useState(false)
+  const showHoursStep =
+    availabilityRules !== undefined && availabilityRules.data.length === 0 && !hoursAnswered
 
   // Either way out of the wizard — finished or "later" — is an answer;
   // Settings keeps its own door back in.
@@ -185,6 +201,19 @@ export default function CalendarPage() {
     )
   }
 
+  // Without the Google wizard around it, the hours capture is the
+  // first-run state on its own.
+  if (showHoursStep && !showWizard) {
+    return (
+      <div className="max-w-3xl">
+        <CalendarHoursStep
+          onSaved={() => setHoursAnswered(true)}
+          onSkip={() => setHoursAnswered(true)}
+        />
+      </div>
+    )
+  }
+
   if (showWizard) {
     return (
       <div className="max-w-3xl">
@@ -195,6 +224,7 @@ export default function CalendarPage() {
             returnPath={CALENDAR_PATH}
             onFinishLater={markSetupComplete}
             onDone={markSetupComplete}
+            withHoursStep={showHoursStep}
           />
         </Suspense>
       </div>
