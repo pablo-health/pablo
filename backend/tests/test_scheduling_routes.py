@@ -1635,3 +1635,222 @@ def test_consent_options_carry_each_choices_promise(client: TestClient) -> None:
 
     assert "googleapis.com" not in response.text
     assert "calendar.readonly" not in response.text
+
+
+# --- Rule override: the clinician is asked, not refused -------------------
+#
+# Booking by hand into a window a rule covers used to be a dead end — the
+# only way through was to go and delete the rule. ``rule_override`` is the
+# clinician saying, after being shown what they'd be crossing, that they
+# want this one booking anyway. It is opt-in: nothing below changes for a
+# caller that doesn't send it.
+
+
+def _block_wednesday(client: TestClient, enforcement: str = "hard") -> None:
+    """Block 2026-04-15 (a Wednesday), the day ``_create_payload`` books."""
+    response = client.post(
+        "/api/availability/rules",
+        json={
+            "rule_type": "block_day_of_week",
+            "enforcement": enforcement,
+            "params": {"day_of_week": 2},
+        },
+    )
+    assert response.status_code == 201, response.text
+
+
+def _recurring_payload(**overrides: Any) -> dict[str, Any]:
+    payload = _create_payload(frequency="weekly", timezone="UTC", count=3)
+    payload.update(overrides)
+    return payload
+
+
+def test_create_appointment_hard_conflict_without_override_still_refuses(
+    write_client: TestClient,
+) -> None:
+    """Sending the flag explicitly false is the same as not sending it."""
+    _block_wednesday(write_client)
+
+    response = write_client.post("/api/appointments", json=_create_payload(rule_override=False))
+
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["details"]["violations"]
+
+
+def test_create_appointment_with_override_books_and_warns(
+    write_client: TestClient,
+) -> None:
+    """The same request the clinician just confirmed writes the appointment,
+    and the rule it crossed comes back as a warning rather than a refusal."""
+    _block_wednesday(write_client)
+
+    response = write_client.post("/api/appointments", json=_create_payload(rule_override=True))
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert len(body["warnings"]) == 1
+    assert "blocked" in body["warnings"][0].lower()
+
+
+def test_create_appointment_with_override_reports_every_conflict(
+    write_client: TestClient,
+) -> None:
+    """One window commonly trips several rules at once. An override returns
+    all of them — hard and soft alike — so nothing is quietly dropped."""
+    _block_wednesday(write_client)
+    soft = write_client.post(
+        "/api/availability/rules",
+        json={
+            "rule_type": "block_specific_dates",
+            "enforcement": "soft",
+            "params": {"dates": ["2026-04-15"]},
+        },
+    )
+    assert soft.status_code == 201, soft.text
+
+    response = write_client.post("/api/appointments", json=_create_payload(rule_override=True))
+
+    assert response.status_code == 201, response.text
+    assert len(response.json()["warnings"]) == 2
+
+
+def test_create_appointment_soft_conflict_without_override_is_unchanged(
+    write_client: TestClient,
+) -> None:
+    """A soft rule has always created-and-warned. It still does."""
+    _block_wednesday(write_client, enforcement="soft")
+
+    response = write_client.post("/api/appointments", json=_create_payload())
+
+    assert response.status_code == 201, response.text
+    assert len(response.json()["warnings"]) == 1
+
+
+def test_create_appointment_override_records_rule_types_on_the_audit_trail(
+    write_client: TestClient,
+) -> None:
+    """What was crossed is recorded — rule types and enforcement levels only,
+    with nothing that identifies the patient."""
+    _block_wednesday(write_client)
+    audit = MagicMock()
+    app.dependency_overrides[get_audit_service] = lambda: audit
+
+    response = write_client.post("/api/appointments", json=_create_payload(rule_override=True))
+
+    assert response.status_code == 201, response.text
+    _, kwargs = audit.log_appointment_action.call_args
+    assert kwargs["changes"] == {
+        "overridden_rules": [{"rule_type": "block_day_of_week", "enforcement": "hard"}]
+    }
+
+
+def test_create_appointment_without_override_records_no_rule_types(
+    write_client: TestClient,
+) -> None:
+    """An ordinary booking's audit entry is exactly what it was before."""
+    audit = MagicMock()
+    app.dependency_overrides[get_audit_service] = lambda: audit
+
+    response = write_client.post("/api/appointments", json=_create_payload())
+
+    assert response.status_code == 201, response.text
+    _, kwargs = audit.log_appointment_action.call_args
+    assert kwargs["changes"] is None
+
+
+def test_update_appointment_with_override_moves_onto_a_blocked_day(
+    write_client: TestClient,
+) -> None:
+    """Rescheduling is asked the same question as booking."""
+    created = write_client.post("/api/appointments", json=_create_payload())
+    assert created.status_code == 201, created.text
+    appt_id = created.json()["id"]
+
+    rule_response = write_client.post(
+        "/api/availability/rules",
+        json={
+            "rule_type": "block_day_of_week",
+            "enforcement": "hard",
+            "params": {"day_of_week": 3},  # 2026-04-16 is a Thursday
+        },
+    )
+    assert rule_response.status_code == 201, rule_response.text
+
+    response = write_client.patch(
+        f"/api/appointments/{appt_id}",
+        json={
+            "start_at": "2026-04-16T14:00:00Z",
+            "end_at": "2026-04-16T14:50:00Z",
+            "rule_override": True,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert len(response.json()["warnings"]) == 1
+
+
+def test_create_recurring_without_override_aborts_on_one_conflict(
+    write_client: TestClient,
+) -> None:
+    """A series is all-or-nothing: one blocked occurrence refuses the whole
+    thing and leaves the calendar untouched."""
+    rule_response = write_client.post(
+        "/api/availability/rules",
+        json={
+            "rule_type": "block_specific_dates",
+            "enforcement": "hard",
+            "params": {"dates": ["2026-04-22"]},  # the second of three weeks
+        },
+    )
+    assert rule_response.status_code == 201, rule_response.text
+
+    response = write_client.post("/api/appointments/recurring", json=_recurring_payload())
+
+    assert response.status_code == 422, response.text
+    listed = write_client.get(
+        "/api/appointments",
+        params={"start": "2026-04-01T00:00:00Z", "end": "2026-05-31T00:00:00Z"},
+    )
+    assert listed.json()["total"] == 0
+
+
+def test_create_recurring_with_override_books_the_whole_series(
+    write_client: TestClient,
+) -> None:
+    """All-or-nothing cuts both ways — confirmed, the series books in full."""
+    rule_response = write_client.post(
+        "/api/availability/rules",
+        json={
+            "rule_type": "block_specific_dates",
+            "enforcement": "hard",
+            "params": {"dates": ["2026-04-22"]},
+        },
+    )
+    assert rule_response.status_code == 201, rule_response.text
+
+    response = write_client.post(
+        "/api/appointments/recurring", json=_recurring_payload(rule_override=True)
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["total"] == 3
+
+
+def test_create_recurring_override_records_each_rule_type_once(
+    write_client: TestClient,
+) -> None:
+    """Every occurrence is checked against the same rules; the audit trail
+    names each crossed rule once rather than once per week."""
+    _block_wednesday(write_client)
+    audit = MagicMock()
+    app.dependency_overrides[get_audit_service] = lambda: audit
+
+    response = write_client.post(
+        "/api/appointments/recurring", json=_recurring_payload(rule_override=True)
+    )
+
+    assert response.status_code == 201, response.text
+    _, kwargs = audit.log_appointment_action.call_args
+    assert kwargs["changes"]["overridden_rules"] == [
+        {"rule_type": "block_day_of_week", "enforcement": "hard"}
+    ]

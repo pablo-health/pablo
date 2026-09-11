@@ -28,6 +28,7 @@ from ..models.availability import EnforcementLevel
 from .recurrence import RecurrenceGenerator
 
 if TYPE_CHECKING:
+    from ..models.conflict import Conflict
     from ..repositories.appointment import AppointmentRepository
     from .availability import AvailabilityEngine
 
@@ -85,6 +86,11 @@ class SchedulingService:
         # this right after, before making any further calls on this service,
         # to surface soft-rule warnings alongside the written appointment.
         self.rule_warnings: list[str] = []
+        # Populated the same way, with the rules an explicit override pushed
+        # past: {"rule_type", "enforcement"} per suppressed hard conflict, in
+        # first-seen order and de-duplicated. Empty unless the caller asked
+        # for an override AND a hard rule would otherwise have refused.
+        self.overridden_rules: list[dict[str, str]] = []
 
     def _check_availability_rules(
         self,
@@ -92,6 +98,8 @@ class SchedulingService:
         start_dt: datetime,
         end_dt: datetime,
         tz: tzinfo = UTC,
+        *,
+        rule_override: bool = False,
     ) -> list[str]:
         """Evaluate availability rules against a proposed booking window.
 
@@ -104,14 +112,38 @@ class SchedulingService:
         configured no rules. A hard-enforcement violation refuses the
         booking; soft violations are returned as warning messages for the
         caller to surface rather than silently vanishing.
+
+        ``rule_override`` is the clinician saying, after being shown the
+        conflicting rules, that they want this booking anyway. Nothing is
+        refused: every conflict — hard as well as soft — comes back as a
+        warning message, and the hard ones are also recorded on
+        ``overridden_rules`` so the caller can note what was pushed past.
         """
         if self._availability_engine is None:
             return []
         result = self._availability_engine.check_conflicts(user_id, start_dt, end_dt, tz=tz)
-        hard = [c.message for c in result.conflicts if c.enforcement == EnforcementLevel.HARD]
-        if hard:
-            raise RuleViolationError(hard)
+        hard = [c for c in result.conflicts if c.enforcement == EnforcementLevel.HARD]
+        if hard and not rule_override:
+            raise RuleViolationError([c.message for c in hard])
+        if rule_override:
+            self._record_overrides(hard)
+            return [c.message for c in result.conflicts]
         return [c.message for c in result.conflicts if c.enforcement == EnforcementLevel.SOFT]
+
+    def _record_overrides(self, hard: list[Conflict]) -> None:
+        """Note the hard rules an override pushed past, without duplicates.
+
+        A recurring series checks every occurrence against the same rules, so
+        without the de-duplication the same rule type would be recorded once
+        per week of the series.
+        """
+        for conflict in hard:
+            entry = {
+                "rule_type": conflict.rule.rule_type,
+                "enforcement": str(conflict.enforcement),
+            }
+            if entry not in self.overridden_rules:
+                self.overridden_rules.append(entry)
 
     def _reject_if_overlapping(
         self,
@@ -172,6 +204,7 @@ class SchedulingService:
         *,
         data: dict[str, str | int | datetime | None],
         tz: tzinfo = UTC,
+        rule_override: bool = False,
     ) -> Appointment:
         """Create a single appointment.
 
@@ -206,7 +239,10 @@ class SchedulingService:
         pending_expires_at = self._pending_expiry(status, data.get("pending_expires_at"))
 
         self._reject_if_overlapping(user_id, start_dt, end_dt)
-        self.rule_warnings = self._check_availability_rules(user_id, start_dt, end_dt, tz)
+        self.overridden_rules = []
+        self.rule_warnings = self._check_availability_rules(
+            user_id, start_dt, end_dt, tz, rule_override=rule_override
+        )
 
         now = _now()
         appointment = Appointment(
@@ -255,6 +291,7 @@ class SchedulingService:
         user_id: str,
         *,
         tz: tzinfo = UTC,
+        rule_override: bool = False,
         **updates: str | int | bool | datetime | None,
     ) -> Appointment:
         """Update fields on an existing appointment.
@@ -303,6 +340,7 @@ class SchedulingService:
         # session_id with no time fields at all and must never see a 409 or
         # 422 here.
         self.rule_warnings = []
+        self.overridden_rules = []
         if {"start_at", "end_at", "duration_minutes"} & updates.keys():
             appointment.start_at = _as_datetime(appointment.start_at, tz)
             appointment.end_at = _as_datetime(appointment.end_at, tz)
@@ -313,7 +351,11 @@ class SchedulingService:
                 exclude_appointment_id=appointment_id,
             )
             self.rule_warnings = self._check_availability_rules(
-                user_id, appointment.start_at, appointment.end_at, tz
+                user_id,
+                appointment.start_at,
+                appointment.end_at,
+                tz,
+                rule_override=rule_override,
             )
 
         appointment.updated_at = _now()
@@ -486,6 +528,7 @@ class SchedulingService:
         self._reject_if_overlapping(
             user_id, start_dt, end_dt, exclude_appointment_id=appointment_id
         )
+        self.overridden_rules = []
         self.rule_warnings = self._check_availability_rules(user_id, start_dt, end_dt, tz)
 
         now = _now()
@@ -598,6 +641,7 @@ class SchedulingService:
         data: dict[str, str | int | datetime | None],
         recurrence: dict[str, str | int | None],
         tz: tzinfo = UTC,
+        rule_override: bool = False,
     ) -> list[Appointment]:
         """Create a recurring appointment series using fan-out pattern.
 
@@ -660,6 +704,7 @@ class SchedulingService:
         # here leaves the calendar untouched instead of half-booked.
         appointments: list[Appointment] = []
         warnings: list[str] = []
+        self.overridden_rules = []
         for idx, occ_start in enumerate(occurrences):
             occ_end = occ_start + appt_duration
             # RecurrenceGenerator returns naive-UTC datetimes; the repo's
@@ -672,7 +717,13 @@ class SchedulingService:
             occ_end_aware = occ_end.replace(tzinfo=UTC) if occ_end.tzinfo is None else occ_end
             self._reject_if_overlapping(user_id, occ_start_aware, occ_end_aware)
             warnings.extend(
-                self._check_availability_rules(user_id, occ_start_aware, occ_end_aware, tz)
+                self._check_availability_rules(
+                    user_id,
+                    occ_start_aware,
+                    occ_end_aware,
+                    tz,
+                    rule_override=rule_override,
+                )
             )
             appt = Appointment(
                 id=master_id if idx == 0 else str(uuid.uuid4()),

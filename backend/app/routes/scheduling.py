@@ -8,7 +8,7 @@ import logging
 import uuid
 from collections.abc import Collection, Sequence
 from datetime import UTC, datetime, tzinfo
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -330,6 +330,16 @@ def _push_cancellation_to_google(
         logger.exception("Failed to delete Google Calendar event")
 
 
+def _override_record(overridden: list[dict[str, str]]) -> dict[str, Any] | None:
+    """Audit ``changes`` noting which rules an override pushed past.
+
+    ``None`` when nothing was overridden, so an ordinary booking's audit
+    entry is byte-for-byte what it was before. Carries rule types and
+    enforcement levels only — never a patient, a time, or a rule's params.
+    """
+    return {"overridden_rules": overridden} if overridden else None
+
+
 def _patient_name_map(
     patient_repo: PatientRepository,
     user_id: str,
@@ -413,12 +423,14 @@ def create_appointment(
 ) -> AppointmentResponse:
     """Create a new appointment."""
     data = request.model_dump()
+    rule_override = bool(data.pop("rule_override", False))
     _apply_appointment_type(data, user_id=user.id, type_repo=type_repo)
     try:
         appt = service.create_appointment(
             user.id,
             data=data,
             tz=tz,
+            rule_override=rule_override,
         )
     except InvalidAppointmentError as e:
         raise BadRequestError(str(e)) from e
@@ -429,12 +441,14 @@ def create_appointment(
     # Captured before any further service calls (Google sync below issues its
     # own update_appointment for linking, which resets rule_warnings).
     warnings = service.rule_warnings
+    overridden = service.overridden_rules
     audit.log_appointment_action(
         AuditAction.APPOINTMENT_CREATED,
         user,
         http_request,
         appt.id,
         patient_id=appt.patient_id,
+        changes=_override_record(overridden),
     )
     appt = _sync_appointment_to_google(service, gcal_service, user, appt)
     return _to_response(
@@ -528,9 +542,13 @@ def update_appointment(
     tz: tzinfo = Depends(get_owner_timezone),
 ) -> AppointmentResponse:
     """Update an appointment."""
-    updates = {k: v for k, v in request.model_dump().items() if v is not None}
+    payload = request.model_dump()
+    rule_override = bool(payload.pop("rule_override", False))
+    updates = {k: v for k, v in payload.items() if v is not None}
     try:
-        appt = service.update_appointment(appointment_id, user.id, tz=tz, **updates)
+        appt = service.update_appointment(
+            appointment_id, user.id, tz=tz, rule_override=rule_override, **updates
+        )
     except AppointmentNotFoundError as e:
         raise NotFoundError(str(e)) from e
     except InvalidAppointmentError as e:
@@ -548,7 +566,10 @@ def update_appointment(
         http_request,
         appt.id,
         patient_id=appt.patient_id,
-        changes={"changed_fields": sorted(updates.keys())},
+        changes={
+            "changed_fields": sorted(updates.keys()),
+            **(_override_record(service.overridden_rules) or {}),
+        },
     )
     appt = _sync_appointment_to_google(service, gcal_service, user, appt)
     return _to_response(
@@ -716,7 +737,9 @@ def create_recurring_appointment(
     try:
         appointments = service.create_recurring(
             user.id,
-            data=request.model_dump(exclude={"frequency", "timezone", "end_date", "count"}),
+            data=request.model_dump(
+                exclude={"frequency", "timezone", "end_date", "count", "rule_override"}
+            ),
             recurrence={
                 "frequency": request.frequency,
                 "timezone": request.timezone,
@@ -724,6 +747,7 @@ def create_recurring_appointment(
                 "count": request.count,
             },
             tz=tz,
+            rule_override=request.rule_override,
         )
     except (InvalidAppointmentError, InvalidRecurrenceError) as e:
         raise BadRequestError(str(e)) from e
@@ -738,7 +762,11 @@ def create_recurring_appointment(
         http_request,
         first_appt_id,
         patient_id=appointments[0].patient_id if appointments else None,
-        changes={"occurrence_count": len(appointments), "frequency": request.frequency},
+        changes={
+            "occurrence_count": len(appointments),
+            "frequency": request.frequency,
+            **(_override_record(service.overridden_rules) or {}),
+        },
     )
     names = _patient_name_map(patient_repo, user.id, appointments)
     return AppointmentListResponse(

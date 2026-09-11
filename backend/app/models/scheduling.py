@@ -74,6 +74,11 @@ class CreateAppointmentRequest(BaseModel):
     video_platform: str | None = None
     notes: str | None = None
     note_type: str | None = None
+    #: The clinician has been shown the conflicting availability rules and
+    #: confirmed they want this booking anyway. Defaults to False, so a
+    #: caller that says nothing gets exactly today's behaviour: a hard rule
+    #: still refuses the booking.
+    rule_override: bool = False
 
 
 class CreateRecurringAppointmentRequest(BaseModel):
@@ -93,6 +98,11 @@ class CreateRecurringAppointmentRequest(BaseModel):
     timezone: str  # IANA timezone e.g. "America/New_York"
     end_date: str | None = None  # YYYY-MM-DD
     count: int | None = Field(default=None, ge=1, le=104)
+    #: The clinician has been shown the conflicting availability rules and
+    #: confirmed they want this booking anyway. Defaults to False, so a
+    #: caller that says nothing gets exactly today's behaviour: a hard rule
+    #: still refuses the booking.
+    rule_override: bool = False
 
 
 class EditSeriesRequest(BaseModel):
@@ -128,6 +138,11 @@ class UpdateAppointmentRequest(VisitCodingFields):
     notes: str | None = None
     note_type: str | None = None
     status: AppointmentStatus | None = None
+    #: The clinician has been shown the conflicting availability rules and
+    #: confirmed they want this booking anyway. Defaults to False, so a
+    #: caller that says nothing gets exactly today's behaviour: a hard rule
+    #: still refuses the booking.
+    rule_override: bool = False
 
 
 class AppointmentResponse(BaseModel):
