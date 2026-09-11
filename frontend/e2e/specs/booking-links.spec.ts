@@ -104,8 +104,10 @@ test.describe("Booking link gates", () => {
     await page.getByLabel("Title").fill("Consultation")
 
     // The form asks for a type, never for a length: the type answers that.
+    // The scheduling page carries its own "Appointment type" controls, so the
+    // create form's picker is addressed by its id rather than its label.
     await expect(page.getByLabel("Length (minutes)")).toHaveCount(0)
-    await page.getByLabel("Appointment type").click()
+    await page.locator("#link-appointment-type").click()
     await page.getByRole("option", { name: `${type.name} · 20 min` }).click()
     await page.getByRole("button", { name: "Create link" }).click()
 
