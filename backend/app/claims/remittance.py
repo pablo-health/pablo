@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 from ..db.models import DEFAULT_CHARGE_CURRENCY
 from . import holds
 from .clearinghouse import ClearinghouseError
+from .hold_receiver import hand_over
 from .receipts import announce, record
 from .remittance_lines import DENIED, applied_to, disagreement_in
 from .transitions import advance, next_state
@@ -308,6 +309,12 @@ def apply_posting(
                 ),
             )
             if stored_hold is not None:
+                # Offered to whatever the deployment registered to look into
+                # it, with the remittance the parser had in hand — the other
+                # half of the comparison somebody investigating has to make,
+                # and the half that is nowhere else. Never raises; the
+                # engine's behaviour does not depend on the answer.
+                hand_over(stored_hold, "raised", remittance=detail)
                 # A hold nobody meets is a client whose balance quietly
                 # stopped being billed, so it goes in front of the
                 # clinician who owns the claim as work — through the same
