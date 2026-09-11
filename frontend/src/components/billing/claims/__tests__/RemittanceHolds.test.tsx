@@ -3,11 +3,9 @@
 /**
  * The therapist's side of a held remittance.
  *
- * The assertions that matter most are about what is never true: neither
- * answer is ever disabled, nothing has to be acknowledged first, and no
- * screen presents the payer's figure as settled. Each of those would put
- * the software between a practice and its own client's balance, and each
- * would be an easy thing to introduce while tidying the component.
+ * The assertions that matter are about what is never true: neither answer is
+ * disabled, nothing needs acknowledging first. Both are easy to introduce by
+ * accident while tidying the component.
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest"

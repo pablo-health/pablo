@@ -2,100 +2,66 @@
 
 """Card-processor webhook receiver — charge outcomes.
 
-The charge route (``app.routes.patient_payments``) writes its ledger row and
-updates it from the synchronous PaymentIntent response, so on the happy path
-this endpoint is a confirmation. It exists for the three cases that response
-cannot cover:
+The charge route updates its ledger row from the synchronous PaymentIntent
+response, so on the happy path this is a confirmation. It exists for what
+that response cannot cover:
 
-* ``payment_intent.succeeded`` — a charge that completed after our HTTP call
-  gave up (a timeout, a redeploy mid-flight). The ledger row is still
-  ``pending`` and only Stripe knows it went through.
-* ``payment_intent.payment_failed`` — the same in the other direction, with the
-  decline code the practice needs to see.
-* ``charge.refunded`` — a refund the practice issued in its own Stripe
-  dashboard. This application deliberately does not initiate refunds; the
-  practice already has a full dashboard for that, and re-implementing it here
-  would be a second, worse refund UI. So this event is the only way the ledger
-  learns about one. Any refund, partial or full, flips the row to ``refunded``;
-  the exact amounts live at the processor.
-* ``charge.dispute.created`` / ``charge.dispute.closed`` — a chargeback the
-  cardholder's bank raised. A dispute is not a refund: nothing has moved yet,
-  so the row moves to ``disputed`` rather than ``refunded``, and closing it
-  resolves to ``succeeded`` (won — the practice keeps the money) or
-  ``dispute_lost`` (it does not). This application does not handle dispute
-  evidence or deadlines; Stripe's own dashboard stays authoritative for that,
-  and this receiver only keeps the ledger's status honest.
+* ``payment_intent.succeeded`` — completed after our HTTP call gave up. The
+  row is still ``pending`` and only Stripe knows.
+* ``payment_intent.payment_failed`` — same, with the decline code.
+* ``charge.refunded`` — a refund the practice issued in its own dashboard.
+  This app never initiates refunds, so this event is the only way the ledger
+  learns of one. Partial or full both flip the row to ``refunded``; exact
+  amounts live at the processor.
+* ``charge.dispute.created`` / ``charge.dispute.closed`` — a chargeback. Not
+  a refund: nothing has moved, so the row goes ``disputed``, and closing
+  resolves to ``succeeded`` (won) or ``dispute_lost``. Evidence and
+  deadlines stay Stripe's; this only keeps the status honest.
 
-Fees, alongside the same events
---------------------------------
+**Fees.** ``succeeded`` and ``refunded`` carry the balance transaction when
+the endpoint is configured to expand it, and ``fee``/``net`` are read off it.
+Both stay NULL until then — some payment methods settle the balance
+transaction after the charge, so ``succeeded`` with an unknown fee is real
+and is never treated as a zero fee.
 
-``payment_intent.succeeded`` and ``charge.refunded`` also carry the charge's
-balance transaction when the webhook endpoint is configured to expand it, and
-this receiver reads ``fee``/``net`` off it onto the ledger row. Both stay
-``NULL`` until then — some payment methods settle their balance transaction
-after the charge itself succeeds, so a charge can be genuinely ``succeeded``
-with its fee still unknown, and that is never treated as a zero fee.
+**Auth.** Stripe signs the raw body; :func:`app.payments.reconcile.verify_signature`
+compares the HMAC in constant time before the body is parsed. Missing or bad
+signature is 401, a non-object body is 400. Everything else is 200 — Stripe
+retries non-2xx, and a retry loop over an unhandleable event eventually gets
+the endpoint disabled, taking the real charges down with it.
 
-Authentication
---------------
+**Idempotency.** Handled events are recorded in
+``platform.processed_payment_events`` so a redelivery short-circuits before
+any practice schema is touched.
 
-Stripe signs the raw request body. :func:`app.payments.reconcile.verify_signature`
-recomputes the HMAC and compares it in constant time, before the body is parsed
-or otherwise touched. Missing or invalid signature is ``401``; a body that is
-not a JSON object is ``400``. Everything else answers ``200``, including events
-this deployment ignores — Stripe treats a non-2xx as retryable, and a retry
-loop over an unhandleable event helps nobody and eventually gets the endpoint
-disabled, which would stop the real charges reconciling too.
+Recording an event promises Stripe may stop redelivering, and redelivery is
+this endpoint's only retry. So the row is written when the ledger moved
+(APPLIED), when the status guard correctly refused a stale delivery (STALE —
+a retry could only refuse again), and when the charge was never ours
+(FOREIGN — no redelivery changes that).
 
-Idempotency, and the one thing not recorded
--------------------------------------------
+NOT_FOUND is the one case deliberately left unrecorded: the event carried our
+metadata, so the charge IS ours, and the ledger write still matched nothing.
+Stripe holds a completed payment while the ledger says ``pending`` and the
+practice concludes it was not paid. So: no dedupe row, 503 to buy another
+redelivery, and ``charge_unreconciled`` at error level to alert on.
 
-Handled events are recorded in ``platform.processed_payment_events``, so a
-redelivery short-circuits before any practice schema is touched.
+**Is the charge ours?** Usually not. A practice takes money outside this app
+— manual charges, payment links, invoices — and every one emits
+``payment_intent.succeeded`` on the same account. Ordinary traffic, and it
+must cost a 200.
 
-**The dedupe row is written only when the event was actually handled.**
-Recording an event is a promise that Stripe may stop redelivering it, and that
-redelivery is the only retry this endpoint has. So the row is written for: the
-ledger moved (``APPLIED``); a stale delivery the status guard correctly refused
-(``STALE``, since a retry could only produce the same refusal); and a charge
-that was never this application's (``FOREIGN``, which no redelivery could
-change).
+The discriminator is our own metadata: the charge route stamps the ledger row
+id, clinician and practice onto every PaymentIntent, and Stripe copies that
+onto the Charge. That includes ``charge.refunded``, which delivers a Charge
+rather than a PaymentIntent — verified against Stripe test mode to carry the
+metadata verbatim. No metadata means the practice's own charge: record, 200.
 
-The one case NOT recorded is ``NOT_FOUND``: the event carried our own metadata,
-so the charge *is* ours, and the ledger write still matched nothing. That is a
-money-visible anomaly and a silent one by nature — Stripe holds a completed
-payment while the ledger says ``pending``, and the practice concludes it was
-not paid. So the event is left unrecorded, the endpoint answers ``503`` to buy
-another redelivery, and ``charge_unreconciled`` is logged at error level as the
-marker to alert on.
+Disputes are the exception. The bank raises them, so Stripe never populates a
+Dispute's own ``metadata``; see ``app.payments.reconcile.event_metadata``.
 
-Is this charge even ours?
--------------------------
-
-Most events on a practice's Stripe account are not. The practice has a real
-Stripe dashboard and will routinely take money outside this application —
-manual charges, payment links, invoices — and every one of those emits
-``payment_intent.succeeded`` on the same account. That is ordinary traffic, not
-an anomaly, and it must cost a ``200``.
-
-The discriminator is our own metadata. ``app.routes.patient_payments`` stamps
-the ledger row id, the acting clinician and the practice onto every
-PaymentIntent it creates, and Stripe copies PaymentIntent metadata onto the
-charge it creates, so every handled event type carries it back whenever the
-charge is ours. That includes ``charge.refunded``, which is the case the whole
-refund path rests on and the one that is not obvious from the event shape: it
-delivers a Charge, not a PaymentIntent, and its ``data.object.metadata`` was
-checked against Stripe test mode to carry the PaymentIntent's metadata
-verbatim. No metadata therefore means the practice's own charge: record it
-and 200.
-
-A dispute is the one exception. It is raised by the cardholder's bank, not by
-a call this application makes, so Stripe never populates a Dispute's own
-``metadata`` field — see ``app.payments.reconcile.event_metadata`` for where
-the discriminator moves to instead for those two event types.
-
-Logs here carry the event id, our own charge id and a status token. Never a
-client identifier, never an amount, never a name.
+Logs carry the event id, our charge id and a status token. Never a client
+identifier, an amount, or a name.
 """
 
 from __future__ import annotations

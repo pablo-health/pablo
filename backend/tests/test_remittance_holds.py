@@ -2,17 +2,13 @@
 
 """Refusing to bill a client from a remittance that contradicts itself.
 
-The bug these cover is not a crash. It is a real person receiving a bill for
-an amount the engine's own arithmetic says is wrong, and nobody finding out
-— which is why almost every assertion below is about something that did
-*not* happen.
+The bug is not a crash — it is a real person billed an amount our own
+arithmetic says is wrong. So most assertions here are about what did NOT
+happen.
 
-The shape to hold on to: a hold changes exactly one thing. The payer's
-payment still posts, the claim still moves, the receipt still says
-adjudicated. Only the row on the client's ledger is withheld. Tests that
-assert the withholding without also asserting the posting would pass on an
-implementation that simply dropped the remittance, which would be a worse
-bug than the one being fixed.
+A hold changes exactly one thing: the client's ledger row. Asserting the
+withholding without also asserting the payment posted would pass on an
+implementation that just dropped the remittance.
 """
 
 from __future__ import annotations
@@ -125,13 +121,7 @@ def _posting(paid: int = 12_000, responsibility: int = 3_000):
 
 class TestADisagreeingRemittanceDoesNotBillTheClient:
     def test_the_payment_posts_and_the_ledger_row_does_not(self, harness) -> None:
-        """The whole point, in one test.
-
-        The payer's $120 is a fact — it landed in the practice's account,
-        and refusing to record it would only make a paid claim look unpaid.
-        What is in doubt is the client's $30, because the payer stated it
-        and then itemised something else.
-        """
+        """The payer's $120 is a fact. The client's $30 is what is in doubt."""
         claim = harness.add(state="payer_accepted", total_charge_cents=CHARGED)
         ledger = _Ledger()
         # Itemised as a contractual write-off; stated as the client's.
@@ -192,12 +182,8 @@ class TestADisagreeingRemittanceDoesNotBillTheClient:
         assert hold.payer_name == claim.subscriber_snapshot.payer_name
 
     def test_a_line_that_does_not_balance_also_holds_the_bill(self, harness) -> None:
-        """Not only the patient-responsibility check gates the ledger.
-
-        A line whose adjustments do not account for its own gap is a
-        document we cannot read, and its ``PR`` figure is no more
-        trustworthy for having been added up correctly.
-        """
+        """A line that does not account for its own gap makes its ``PR``
+        figure no more trustworthy for adding up."""
         claim = harness.add(state="payer_accepted", total_charge_cents=CHARGED)
         ledger = _Ledger()
         detail = _detail(
@@ -246,12 +232,8 @@ class TestTheAgreeingPathIsUnchanged:
         assert harness.holds.list_open() == []
 
     def test_a_posting_with_no_835_to_read_behaves_as_before(self, harness) -> None:
-        """No itemisation means no cross-check, not a hold.
-
-        The timeline path can post a claim the 835 was never fetched for.
-        Holding every one of those would stop billing on a gap in our own
-        plumbing, which is a different problem and not this one's to solve.
-        """
+        """No itemisation means no cross-check, not a hold — holding these
+        would stop billing over a gap in our own plumbing."""
         claim = harness.add(state="payer_accepted", total_charge_cents=CHARGED)
         ledger = _Ledger()
 
@@ -317,11 +299,7 @@ class TestTheSameRemittanceTwice:
 
 class TestWithholdingDoesNotDependOnRecording:
     def test_a_pipeline_with_no_hold_repository_still_refuses_to_bill(self, harness) -> None:
-        """The safety property must not be conditional on its own backstop.
-
-        A deployment that never configured a hold repository is exactly the
-        one where a quietly-wrong bill would go unnoticed longest.
-        """
+        """The safety property must not be conditional on its own backstop."""
         harness.pipeline.holds = None
         claim = harness.add(state="payer_accepted", total_charge_cents=CHARGED)
         ledger = _Ledger()
@@ -354,13 +332,7 @@ class TestWithholdingDoesNotDependOnRecording:
 
 class TestTheHoldIsRaisedEvenWhenThisCallerCannotBill:
     def test_the_webhook_path_raises_the_hold_it_found(self, harness) -> None:
-        """The webhook passes no ledger and is usually first to see the 835.
-
-        If the check only ran where a ledger row was about to be written,
-        the path that actually holds the document would never raise a hold,
-        and the path that raises holds would already have been deduped out
-        by the receipt ledger.
-        """
+        """The webhook passes no ledger but usually sees the 835 first."""
         claim = harness.add(state="payer_accepted", total_charge_cents=CHARGED)
         detail = _detail(
             claim.control_number,
@@ -375,16 +347,14 @@ class TestTheHoldIsRaisedEvenWhenThisCallerCannotBill:
 
 class TestWhatTheHoldRemembers:
     def test_the_withheld_row_is_computed_against_the_ledger_not_stored(self) -> None:
-        """A stored "we withheld $30" goes stale the moment anything else
-        touches the ledger; the difference is what actually gets written."""
+        """A stored figure goes stale; the difference is what gets written."""
         hold = _a_hold(patient_responsibility_cents=3_000)
 
         assert withheld_cents(hold, already_billed=0) == 3_000
         assert withheld_cents(hold, already_billed=1_000) == 2_000
 
     def test_a_secondary_payer_leaves_a_credit_rather_than_a_charge(self) -> None:
-        """Negative is correct here and must not be clamped: the primary
-        billed the client and the secondary paid it off."""
+        """Negative is a credit and must not be clamped."""
         hold = _a_hold(patient_responsibility_cents=0)
 
         assert withheld_cents(hold, already_billed=3_000) == -3_000
@@ -465,7 +435,7 @@ class TestTheRepositoryRefusesADuplicate:
         assert again.resolved_by_user_id == "u1"
 
     def test_nothing_releases_a_hold_but_a_decision(self) -> None:
-        """There is no timeout, no expiry and no auto-approve to call."""
+        """No timeout, no expiry, no auto-approve."""
         repo = InMemoryRemittanceHoldRepository()
         repo.add(_a_hold())
 

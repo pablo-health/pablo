@@ -2,14 +2,11 @@
 
 """Data access for remittance holds: the client bills the engine refused to write.
 
-Rides the caller's transaction like the claim repositories — flushed, never
-committed — so a hold and the receipt for the same remittance commit or roll
-back together. A hold that survived a posting that did not would be a
-withheld bill nobody withheld.
+Flushed, never committed, so a hold and its posting's receipt commit or roll
+back together.
 
-Only two writes exist and both are deliberate: raising a hold, and a person
-deciding how it ends. Nothing here releases a hold on its own, because time
-passing is not evidence that a self-contradicting remittance was right.
+Two writes only: raising a hold, and a person deciding how it ends. Nothing
+here releases one on its own.
 """
 
 from __future__ import annotations
@@ -30,18 +27,15 @@ class RemittanceHoldRepository(ABC):
     def add(self, hold: RemittanceHold) -> RemittanceHold:
         """Record a hold. Flushed, not committed.
 
-        Raises :class:`ValueError` when a hold with the same
-        ``posting_key`` already exists — the same remittance delivered
-        twice is one disagreement, not two.
+        Raises :class:`ValueError` on a duplicate ``posting_key`` — one
+        remittance delivered twice is one disagreement.
         """
 
     @abstractmethod
     def get(self, hold_id: str) -> RemittanceHold | None:
         """One hold by id, or ``None`` if this principal cannot see it.
 
-        A hold the row policy hides is indistinguishable from one that was
-        never written, and deliberately so: a clinician who does not own
-        the claim has no business learning that a hold exists on it.
+        Hidden and absent are indistinguishable on purpose.
         """
 
     @abstractmethod
@@ -52,9 +46,7 @@ class RemittanceHoldRepository(ABC):
     def open_for_claim(self, claim_id: str) -> RemittanceHold | None:
         """The claim's unresolved hold, if it has one.
 
-        Asked before raising a new one. A claim can be adjudicated more
-        than once — a secondary payer, a reversal — and a second
-        disagreement while the first is still open is the same
+        A second disagreement while the first is open is the same
         conversation with the practice, not a new one.
         """
 
@@ -62,17 +54,15 @@ class RemittanceHoldRepository(ABC):
     def list_open(self, *, limit: int | None = None) -> list[RemittanceHold]:
         """Every hold still withholding a ledger row, oldest first.
 
-        ``acknowledged`` holds are included: somebody saying they have seen
-        a disagreement is not somebody deciding what to bill.
+        Includes ``acknowledged``.
         """
 
     @abstractmethod
     def acknowledge(self, hold_id: str, *, at: datetime) -> RemittanceHold | None:
-        """Mark the hold seen, leaving it open. ``None`` if there is no such hold.
+        """Mark the hold seen, leaving it open. ``None`` if there is none.
 
-        Idempotent: acknowledging an already-acknowledged hold keeps the
-        first timestamp, because the question it answers is "when did
-        somebody first see this", and a resolved hold is left alone.
+        Idempotent — keeps the FIRST timestamp, and leaves a resolved hold
+        alone.
         """
 
     @abstractmethod
@@ -86,9 +76,7 @@ class RemittanceHoldRepository(ABC):
     ) -> RemittanceHold | None:
         """Close the hold with how it ended and who ended it.
 
-        Returns ``None`` when there is no such hold, and leaves an
-        already-resolved hold exactly as it was rather than overwriting the
-        first decision with a second.
+        An already-resolved hold keeps its first decision.
         """
 
 

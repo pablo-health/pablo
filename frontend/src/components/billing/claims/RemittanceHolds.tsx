@@ -3,22 +3,14 @@
 /**
  * Remittances whose own numbers disagreed, and the two answers to them.
  *
- * A payer states the client's share of a claim twice and the two statements
- * came out different, so the client was not billed. This is where the
- * therapist meets that and settles it.
+ * Three things here are deliberate and easy to undo by accident:
  *
- * Three things about the design are deliberate and easy to undo by accident:
- *
- * 1. **Both answers are always live.** Neither button is disabled, greyed
- *    out, hidden behind an acknowledgement, or made to wait on anybody
- *    outside the practice. The practice holds the client relationship and
- *    the authority over that balance.
- * 2. **The two figures are shown side by side, not as a delta.** Which side
- *    is which is the whole question — "the payer says $30, the lines say
- *    $0" is actionable and "off by $30" is not.
- * 3. **No amount is presented as the answer.** The stated figure is
- *    labelled as the payer's claim about it, because the entire point of
- *    the hold is that we cannot corroborate it.
+ * 1. Both answers stay live — never disabled, never behind an
+ *    acknowledgement, never waiting on anyone outside the practice.
+ * 2. Two figures side by side, not a delta. "The payer says $30, the lines
+ *    say $0" is actionable; "off by $30" is not.
+ * 3. No amount is presented as the answer — the stated figure is labelled
+ *    as the payer's claim, because the point is we cannot corroborate it.
  */
 
 "use client"
@@ -160,9 +152,8 @@ export function RemittanceHolds() {
   const holds = data?.data ?? []
 
   if (isLoading) return <Skeleton className="h-32 w-full" />
-  // Nothing held is the ordinary state and needs no card of its own; an
-  // empty "no problems" panel on every billing screen forever is noise that
-  // teaches people to skip the place the real thing will appear.
+  // Nothing held is the ordinary state. A permanent "no problems" panel is
+  // noise that teaches people to skip where the real thing will appear.
   if (holds.length === 0) return null
 
   return (

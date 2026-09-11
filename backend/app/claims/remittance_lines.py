@@ -2,46 +2,31 @@
 
 """What a payer decided about each service on a claim.
 
-A claim-level remittance says a claim charged at $300 was paid $180. It
-cannot say whether the payer allowed both sessions and applied a deductible,
-or paid one in full and denied the other. Those are different conversations —
-one with the client about a balance, one with the payer about an appeal — and
-a practice cannot tell them apart from the claim total.
+A claim total says $300 charged, $180 paid. It cannot say whether both
+sessions were allowed with a deductible applied, or one paid and one denied
+— a balance conversation and an appeal conversation. The 835's service-line
+loops carry that, and this reads it onto the claim's lines.
 
-The 835's service-line loops carry that detail, and this reads it onto the
-claim's own lines.
+Each adjustment carries an X12 group code, and the group decides who is out
+the money:
 
-**Where the numbers come from.** Each line reports what was charged and what
-was paid, plus adjustments explaining the gap. Every adjustment carries a
-group code — the X12 standard's, not the vendor's — and the group is what
-decides who is out the money:
+* ``CO`` contractual: the network discount. Nobody owes it.
+* ``PR`` patient responsibility: deductible, copay, coinsurance.
+* ``OA`` / ``PI`` other and payer-initiated: recorded, counted in neither
+  total, not safe to guess at.
 
-* ``CO`` contractual obligation: the discount the practice agreed to by
-  joining the network. Nobody owes it; it is written off.
-* ``PR`` patient responsibility: deductible, copay, coinsurance. The client
-  owes it.
-* ``OA`` / ``PI`` other and payer-initiated: neither of the above, and not
-  safe to guess at, so they are recorded and left out of both totals.
+Only ``PR`` bills a client, and that is definitional rather than empirical:
+a provider may bill a client only for ``PR``.
 
-``allowed_cents`` — what the payer agreed the service was worth — is whatever
-the payer reported (``AMT*B6``) and nothing otherwise. It is deliberately not
-derived. The obvious formula, charge less the contractual write-off, is wrong
-in several ordinary cases: out of network the write-off arrives as ``PR45``
-with no ``CO`` at all, Medicare's sequestration (``CO253``) comes out of the
-payment rather than the allowed amount, a secondary payer's ``OA23`` carries
-the primary's numbers, and some payers price with ``PI`` where others use
-``CO``. Each of those returns a number that looks reasonable and is wrong, so
+``allowed_cents`` is whatever the payer reported (``AMT*B6``) and nothing
+otherwise. "Charge less contractual" is wrong out of network (the write-off
+is ``PR45``, no ``CO``), under sequestration (``CO253`` comes out of the
+payment), on secondary claims (``OA23`` carries the primary's numbers), and
+for payers that price with ``PI``. Each returns a plausible wrong number, so
 an unreported allowed amount stays unreported.
 
-Only ``PR`` drives what a client is billed. That one is safe on definitional
-rather than empirical grounds — the group codes are normative, and a provider
-may bill a client only for adjustments carrying ``PR`` — which is why it is
-the number the ledger is written from and ``allowed`` is left informational.
-
-**A caveat worth keeping.** The clearinghouse's test payer pays every claim
-in full and adjusts nothing, so no captured remittance exercises the
-adjustment paths, and the arithmetic below is tested against constructed
-remittances. The first real payer's 835 is what confirms the rest.
+Caveat: the test payer pays in full and adjusts nothing, so every adjusting
+remittance below is constructed. The first real 835 confirms the rest.
 """
 
 from __future__ import annotations
@@ -150,10 +135,8 @@ def postings_for(remittance: RemittanceClaim) -> dict[str, LinePosting]:
 class Disagreement:
     """One way this remittance's own numbers fail to account for each other.
 
-    ``stated`` is what the payer asserted directly; ``computed`` is the same
-    figure worked out from the rest of the document. They are kept apart,
-    rather than reduced to a delta, because which side is which is the first
-    thing anybody reading the disagreement needs.
+    Kept as two figures rather than a delta: which side is which is the
+    first thing a reader needs.
     """
 
     reason: HoldReason
@@ -170,10 +153,9 @@ class Disagreement:
 def _signed_total(adjustments: Iterable[Adjustment]) -> int:
     """Every adjustment, all group codes, summed as the payer signed them.
 
-    The balancing identities count all six CAS triplets of every group,
-    which is the whole point of them: an adjustment we could not classify
-    still has to be accounted for somewhere, and one we dropped is exactly
-    the gap these checks exist to notice.
+    All six CAS triplets of every group: an adjustment we could not classify
+    still has to be accounted for, and one we dropped is the gap these
+    checks exist to notice.
     """
     return sum(a.amount_cents for a in adjustments)
 
@@ -181,25 +163,16 @@ def _signed_total(adjustments: Iterable[Adjustment]) -> int:
 def patient_responsibility_agrees(remittance: RemittanceClaim) -> bool:
     """Does the payer's own total for the client match what we read line by line?
 
-    The strongest check available on the half of this that bills somebody,
-    and the only one that needs no payer to have shown us anything first.
+    ``CLP05`` and the ``PR`` itemisation are two independent statements of
+    one number, so an adjustment read into the wrong group shows up as a
+    disagreement rather than as a wrong bill.
 
-    A payer states the claim's patient-responsibility total once (``CLP05``)
-    and then itemises it across the service lines. Those are two independent
-    statements of the same number, so reading an adjustment into the wrong
-    group shows up here as a disagreement rather than as a client being
-    quietly billed the wrong amount. It fires on the very first real
-    remittance rather than waiting for anybody to reason about it.
+    Claim-level adjustments count the same as line-level ones: the standard
+    forbids reporting one adjustment at both levels, so adding them is not
+    double counting.
 
-    Claim-level adjustments count towards the total the same way line-level
-    ones do — a payer may report the client's share at either level, and the
-    standard forbids reporting the same adjustment at both, so adding them is
-    not double counting.
-
-    A reversal is exempt. Its amounts negate an earlier adjudication and the
-    standard does not require the stated total to match the itemisation
-    there, so checking it would report a disagreement on a claim that is
-    behaving correctly.
+    Reversals are exempt — their amounts negate an earlier adjudication and
+    the standard does not require the totals to match there.
     """
     return _patient_responsibility(remittance) is None
 
@@ -223,11 +196,8 @@ def _patient_responsibility(remittance: RemittanceClaim) -> Disagreement | None:
 def _line_balance(remittance: RemittanceClaim) -> Disagreement | None:
     """Each line's ``SVC02`` against ``SVC03`` plus every adjustment on it.
 
-    TR3 005010X221A1 section 1.10.2, the service-line balancing identity.
-    The first line that fails is the one reported: the practice's decision
-    is the same whichever line it was, and a document that has already told
-    us not to trust it does not become more trustworthy by enumerating how
-    many ways.
+    TR3 005010X221A1 §1.10.2. The first failing line is the one reported —
+    the practice's decision is the same whichever it was.
     """
     for line in remittance.lines:
         computed = line.paid_cents + _signed_total(line.adjustments)
@@ -244,10 +214,8 @@ def _line_balance(remittance: RemittanceClaim) -> Disagreement | None:
 def _claim_balance(remittance: RemittanceClaim) -> Disagreement | None:
     """``CLP03`` against ``CLP04`` plus every adjustment on the claim.
 
-    TR3 005010X221A1 section 1.10.2, the claim balancing identity. Claim-
-    level and line-level adjustments are added together: the standard
-    forbids reporting the same adjustment at both levels, so the sum is the
-    claim's whole explanation of the gap between charged and paid.
+    TR3 005010X221A1 §1.10.2. Claim-level and line-level adjustments add
+    together — one adjustment may not appear at both levels.
     """
     adjustments = _signed_total(remittance.adjustments) + sum(
         _signed_total(line.adjustments) for line in remittance.lines
@@ -262,18 +230,12 @@ def _claim_balance(remittance: RemittanceClaim) -> Disagreement | None:
     )
 
 
-#: The hard checks, in the order a disagreement is reported in. Patient
-#: responsibility comes first deliberately: it is the one that speaks
-#: directly about the number that bills a client, so when a remittance
-#: fails more than one check that is the one worth naming.
+#: In report order. Patient responsibility first: it speaks directly about
+#: the number that bills a client.
 #:
-#: Not here, and not faked: the transaction identity
-#: ``BPR02 = sum(CLP04) - sum(PLB)``. Nothing in this engine parses ``PLB``
-#: provider-level adjustments — no model, no field, no parser branch — so a
-#: sum computed without them would be wrong on exactly the remittances the
-#: check exists to catch, and would report a disagreement on a payer that
-#: had done nothing wrong. A check that fires falsely on the normal case
-#: gets switched off, which is worse than not having written it.
+#: Not here, and deliberately not faked: ``BPR02 = sum(CLP04) - sum(PLB)``.
+#: Nothing parses ``PLB``, so that sum would be wrong on exactly the
+#: remittances the check exists to catch.
 _CHECKS: tuple[Callable[[RemittanceClaim], Disagreement | None], ...] = (
     _patient_responsibility,
     _line_balance,
@@ -284,9 +246,7 @@ _CHECKS: tuple[Callable[[RemittanceClaim], Disagreement | None], ...] = (
 def _warn_about_pairings(remittance: RemittanceClaim) -> None:
     """Say so when an adjustment's group contradicts its own reason code.
 
-    Soft on purpose: see :mod:`app.claims.codes.pairing`. A ``PR-253`` is
-    either a payer bug or a parse bug and is worth a person's attention,
-    but an unfamiliar pairing is not a reason to stop billing.
+    Soft on purpose — see :mod:`app.claims.codes.pairing`.
     """
     suspicious = mispaired(
         [*remittance.adjustments, *(a for line in remittance.lines for a in line.adjustments)]
@@ -303,25 +263,15 @@ def _warn_about_pairings(remittance: RemittanceClaim) -> None:
 def disagreement_in(remittance: RemittanceClaim) -> Disagreement | None:
     """The first way this remittance fails to account for its own numbers.
 
-    ``None`` means every identity the engine can check held, which is the
-    ordinary case and the only one from which a client may be billed.
+    ``None`` means every identity held — the ordinary case, and the only one
+    a client may be billed from. A failure means our parse is wrong or the
+    payer's file is; either way the amounts are not ones to bill from.
 
-    An 835 is a balanced transaction: what was charged, what was paid and
-    what was adjusted must account for each other at the line and at the
-    claim, and the client's share must be stated and itemised to the same
-    figure. Those are guaranteed by the standard rather than by any
-    particular payer's care, which is what makes a failure worth acting on
-    — it means our parse is wrong or the payer's file is, and either way
-    the amounts on it are not ones to bill a real person from.
-
-    Logged at WARNING on failure. A disagreement is an expected business
-    event rather than an error: something has to be decided by a person,
-    and nothing is broken.
+    WARNING, not ERROR: a disagreement is an expected business event that
+    needs a person, not a broken system.
 
     A suspicious CARC/group pairing is reported alongside and never
-    returned. It is evidence that somebody should read the document, not
-    evidence that a number is wrong, and the arithmetic is what decides
-    whether a client can be billed.
+    returned — it is a reason to read the document, not a wrong number.
     """
     _warn_about_pairings(remittance)
     for check in _CHECKS:

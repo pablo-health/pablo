@@ -2,28 +2,16 @@
 
 """Refusing to bill a client from a remittance that contradicts itself.
 
-:mod:`app.claims.remittance_lines` works out *whether* an 835's own numbers
-account for each other. This is what the posting path does about it: raise a
-hold, withhold the client's ledger row, and leave the payer's payment
-exactly where it was.
+:mod:`app.claims.remittance_lines` decides whether an 835's numbers account
+for each other; this is what the posting path does about it.
 
-**Only the client's bill is held.** The payer's money is a fact — it landed
-in the practice's account, and refusing to record it would not un-happen it,
-it would only make a paid claim look unpaid and send somebody chasing a
-payer who has already paid. What is in doubt is the *split*: how much of
-the gap between charged and paid the client owes. So the certain half posts
-and the uncertain half waits for a person.
+Only the client's bill is held — the payer's payment, the state advance and
+the receipt all post. What is in doubt is the split, not the money that
+arrived.
 
-**Nothing releases a hold but a person.** There is no timeout and no
-auto-approve. Time passing is not evidence that a self-contradicting
-remittance was right, and a hold that expires quietly into a bill is the
-failure this whole module exists to prevent.
-
-**The withholding does not depend on the recording.** A deployment with no
-hold repository configured still withholds the row; it just logs that it
-could not write the hold down. The safety property is the point, and making
-it conditional on a backstop being present is how a safety property turns
-into a preference.
+Nothing releases a hold but a person: no timeout, no auto-approve. And the
+withholding does not depend on the recording — a deployment with no hold
+repository still refuses to bill, and says so.
 """
 
 from __future__ import annotations
@@ -45,9 +33,8 @@ if TYPE_CHECKING:
     from ..repositories.remittance_hold import RemittanceHoldRepository
     from .remittance_lines import Disagreement
 
-#: The ledger row kind that carries what a payer said a client owes.
-#: Defined here rather than imported from :mod:`app.claims.remittance`,
-#: which imports this module.
+#: Lives here rather than in :mod:`app.claims.remittance`, which imports
+#: this module.
 PATIENT_RESPONSIBILITY_KIND = "patient_resp"
 
 logger = logging.getLogger(__name__)
@@ -56,10 +43,9 @@ logger = logging.getLogger(__name__)
 def codes_of(remittance: RemittanceClaim) -> list[dict[str, str]]:
     """Every adjustment code on the claim, claim level then line level.
 
-    Codes only — the group and the reason — in the order the payer sent
-    them. A CARC is a number from a public list and says nothing about a
-    person, which is what makes it the one part of a remittance safe to
-    carry onto a surface that must not hold clinical detail.
+    Codes only. A CARC is a number from a public list, so it is the one part
+    of a remittance safe to carry onto a surface that must not hold clinical
+    detail.
     """
     on_lines = (a for line in remittance.lines for a in line.adjustments)
     return [
@@ -79,14 +65,10 @@ def hold_for(  # noqa: PLR0913 — the hold's own shape, keyword-only
 ) -> RemittanceHold:
     """The hold this disagreement calls for, unsaved.
 
-    Pure, so the shape of a hold can be asserted without a database.
-
-    The payer's name is read off the claim's own subscriber snapshot rather
-    than looked up: the snapshot is what the claim was filed against, so it
-    names the payer that produced this remittance even if the practice has
-    since renamed or replaced the ``payers`` row. Nothing else is taken
-    from the snapshot — it also holds a named person's details, and none of
-    them belong on a hold.
+    The payer's name comes off the claim's subscriber snapshot, so it names
+    the payer the claim was filed against even if the ``payers`` row has
+    since changed. Nothing else is taken from the snapshot — the rest of it
+    is a named person's details.
     """
     return RemittanceHold(
         id=str(uuid.uuid4()),
@@ -113,15 +95,12 @@ def record(
 ) -> RemittanceHold | None:
     """Write the hold down, or say plainly that it could not be.
 
-    Returns the stored hold, or ``None`` when there was nowhere to store it
-    or the same posting had already been held. Neither outcome changes what
-    the caller does about the ledger row: the row stays withheld either
-    way.
+    ``None`` when there was nowhere to store it, or the posting was already
+    held. Neither changes what the caller does: the ledger row stays
+    withheld either way.
 
-    The duplicate case is the ordinary one on a redelivered remittance and
-    is logged at INFO, not WARNING — a payer or a vendor sending the same
-    835 twice is expected behaviour, and a warning that fires on expected
-    behaviour teaches a reader to skip warnings.
+    A duplicate is INFO, not WARNING — a redelivered 835 is expected, and
+    warnings that fire on expected things get skipped.
     """
     if holds is None:
         logger.warning(
@@ -164,25 +143,16 @@ def settle(  # noqa: PLR0913 — the decision and everything it needs to write
 ) -> RemittanceHold | None:
     """Close a hold the way a person decided, and write what that implies.
 
-    ``bill_as_stated`` writes the ledger row that was withheld — the
-    difference between what the payer says the client owes and what this
-    claim has already billed, computed now rather than read from a stored
-    copy. Every other finding writes nothing.
+    ``bill_as_stated`` writes the withheld ledger row — the difference
+    against the ledger now, not a figure stored when the hold was raised.
+    Every other finding writes nothing.
 
-    Returns the resolved hold, or ``None`` when there is no such hold for
-    this principal to resolve.
+    Both answers stay available for the whole life of a hold: nothing here
+    consults its age, its acknowledgement, or anyone else.
 
-    **Both answers stay available for the whole life of a hold.** Nothing
-    here consults the age of the hold, whether it was acknowledged, or
-    whether anybody else has looked at it. A practice holds the client
-    relationship and the authority over that balance; making them wait on
-    somebody else to act on it would be the software overreaching.
-
-    The ledger row is written BEFORE the hold is resolved, so a failure
-    leaves the hold open rather than leaving it closed with no bill behind
-    it. Of the two ways to be wrong, "the practice has to click again" is
-    much better than "the client was never billed and the record says they
-    were".
+    The ledger row is written BEFORE the hold resolves, so a failure leaves
+    the hold open. "Click again" beats "never billed, and the record says
+    they were".
     """
     if finding in FINDINGS_THAT_BILL:
         if charges is None:
@@ -212,16 +182,11 @@ def settle(  # noqa: PLR0913 — the decision and everything it needs to write
 def withheld_cents(hold: RemittanceHold, *, already_billed: int) -> int:
     """The ledger row this hold is withholding, as of right now.
 
-    Computed rather than stored, and computed against the ledger, because
-    the ledger is where the answer lives: a remittance states the client's
-    balance rather than adding to it, so the row is the difference from
-    what this claim has already billed. A secondary payer that paid off the
-    primary's coinsurance makes that difference negative, which is a credit
-    and is exactly right.
+    A remittance states the client's balance rather than adding to it, so
+    the row is the difference from what this claim already billed. Negative
+    is a credit — a secondary payer clearing the primary's coinsurance.
 
-    ``already_billed`` comes from
-    :func:`app.claims.remittance.patient_responsibility_billed`, which reads
-    the ledger. Kept as an argument rather than read here so this stays
-    pure and the caller keeps one ledger read per posting.
+    ``already_billed`` is passed in so this stays pure and the caller keeps
+    one ledger read per posting.
     """
     return hold.patient_responsibility_cents - already_billed
