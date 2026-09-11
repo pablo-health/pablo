@@ -36,12 +36,12 @@ import { SetupStepHead } from "@/components/setup"
 import {
   DEFAULT_WORKING_HOURS,
   WorkingHoursGrid,
-  describeWorkingHours,
   isCompleteSelection,
   selectionFromRules,
   workingHoursRules,
   type WorkingHoursSelection,
 } from "@/components/availability/WorkingHoursGrid"
+import { echoLines, timezoneOptions, type EchoLine } from "./hoursCapture"
 import { useCreateAvailabilityRule, useParseAvailabilityRules } from "@/hooks/useAvailability"
 import { detectBrowserTimezone, usePreferences, useSavePreferences } from "@/hooks/usePreferences"
 import type {
@@ -75,66 +75,6 @@ const SAVE_ERROR = "Those hours could not be saved. Nothing was changed — try 
 
 const SKIP_CONSEQUENCE =
   "Until Pablo knows your hours it cannot offer times to a client, send session reminders, or let anyone book themselves."
-
-/** A short, common list for the deployments (and test runtimes) where the
- * browser cannot enumerate zones itself. */
-const FALLBACK_TIMEZONES = [
-  "America/New_York",
-  "America/Chicago",
-  "America/Denver",
-  "America/Phoenix",
-  "America/Los_Angeles",
-  "America/Anchorage",
-  "Pacific/Honolulu",
-  "Europe/London",
-  "UTC",
-]
-
-function timezoneOptions(current: string): string[] {
-  const supported =
-    typeof Intl.supportedValuesOf === "function" ? Intl.supportedValuesOf("timeZone") : []
-  const zones = supported.length > 0 ? [...supported] : [...FALLBACK_TIMEZONES]
-  return zones.includes(current) ? zones : [current, ...zones]
-}
-
-/** One confirmable line of the echo, and the proposals it stands for. */
-interface EchoLine {
-  text: string
-  indexes: number[]
-}
-
-/**
- * Plain-language lines for a parse. Working-hours proposals sharing a
- * start/end collapse into one sentence ("Monday to Thursday, 09:00 to
- * 17:00"); every other rule keeps the parser's own summary. Grouping by
- * range rather than all together keeps the echo exact when a day has
- * different hours from the rest.
- */
-export function echoLines(proposals: readonly ProposedAvailabilityRule[]): EchoLine[] {
-  const byRange = new Map<string, number[]>()
-  const others: EchoLine[] = []
-
-  proposals.forEach((proposal, index) => {
-    if (proposal.rule_type !== "working_hours") {
-      others.push({ text: proposal.human_summary, indexes: [index] })
-      return
-    }
-    const key = `${String(proposal.params.start)}-${String(proposal.params.end)}`
-    const group = byRange.get(key)
-    if (group) group.push(index)
-    else byRange.set(key, [index])
-  })
-
-  const hours = [...byRange.values()].map((indexes) => {
-    const selection = selectionFromRules(indexes.map((index) => proposals[index]))
-    return {
-      text: selection ? describeWorkingHours(selection) : proposals[indexes[0]].human_summary,
-      indexes,
-    }
-  })
-
-  return [...hours, ...others]
-}
 
 interface CalendarHoursStepProps {
   /** Rules were created — the host moves on (to Google, or the calendar). */
@@ -248,11 +188,7 @@ export function CalendarHoursStep({ onSaved, onSkip }: CalendarHoursStepProps) {
   const timezoneField = (
     <div className="grid gap-2">
       <Label htmlFor="hours-timezone">Times are in</Label>
-      <Select
-        value={chosenTimezone}
-        onValueChange={setTimezone}
-        disabled={saving}
-      >
+      <Select value={chosenTimezone} onValueChange={setTimezone} disabled={saving}>
         <SelectTrigger id="hours-timezone" className="w-72">
           <SelectValue />
         </SelectTrigger>
