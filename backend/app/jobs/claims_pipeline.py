@@ -52,6 +52,7 @@ from ..claims.fanout import (
     for_each_clinician,
     load_submission_account,
 )
+from ..claims.hold_emission import emit_heartbeat, emit_open
 from ..claims.receipts import owned_by_principal
 from ..claims.remittance import post_remittances
 from ..claims.remittance_feed import FeedRemittanceDetails
@@ -185,6 +186,12 @@ def run_practice(
                 charges=run.charges,
             )
             run.commit()
+        # NOT gated on a stage, deliberately. The heartbeat's whole job is
+        # to let a reader tell "no client bills are held" apart from "the
+        # tick is dead", and a run that skipped the scan would report zero
+        # while having looked at nothing. It is one indexed read against a
+        # partial index over unresolved rows, so scanning always is cheap.
+        totals["holds_open"] += emit_open(run.pipeline.holds, now=run.pipeline.now())
         if "watchdog" in stages:
             watched = run_watchdog(
                 run.pipeline,
@@ -207,9 +214,16 @@ def run_pipeline(
 ) -> Counter[str]:
     """Run ``stages`` across every practice with a clearinghouse; returns the counts."""
     totals: Counter[str] = Counter()
-    for practice in active_practices(max_tenants=max_tenants):
-        totals["practices"] += 1
-        totals.update(run_practice(practice, stages, max_per_tenant=max_per_tenant))
+    try:
+        for practice in active_practices(max_tenants=max_tenants):
+            totals["practices"] += 1
+            totals.update(run_practice(practice, stages, max_per_tenant=max_per_tenant))
+    finally:
+        # Exactly one per run, in a finally, because the line a reader
+        # watches for is worth more when the run went badly than when it
+        # went well. A run that died halfway still says what it had found
+        # by then; a run that says nothing means the tick itself is gone.
+        emit_heartbeat(totals["holds_open"])
     logger.info("claims_pipeline_done %s", " ".join(f"{k}={v}" for k, v in sorted(totals.items())))
     return totals
 
