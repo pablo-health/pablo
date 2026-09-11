@@ -8,6 +8,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { SetupNav, SetupWizardShell, type SetupStepperStep } from "@/components/setup"
 import { CalendarConnectStep } from "./CalendarConnectStep"
+import { CalendarHoursStep } from "./CalendarHoursStep"
 import { CalendarSessionsStep } from "./CalendarSessionsStep"
 import { CalendarClientsStep } from "./CalendarClientsStep"
 import { CalendarReviewStep } from "./CalendarReviewStep"
@@ -28,16 +29,16 @@ import {
   type ImportProposal,
 } from "@/lib/api/scheduling"
 
-const STEPS: SetupStepperStep[] = [
+const GOOGLE_STEPS: SetupStepperStep[] = [
   { id: "connect", label: "Connect" },
   { id: "sessions", label: "Sessions" },
   { id: "clients", label: "Your clients" },
   { id: "review", label: "Review" },
 ]
 
-const CONNECT_INDEX = 0
-const CLIENTS_INDEX = 2
-const REVIEW_INDEX = 3
+/** Prepended when the practice has no availability rules yet — see
+ * `withHoursStep`. */
+const HOURS_STEP: SetupStepperStep = { id: "hours", label: "Your hours" }
 
 const DEFAULT_SELECTION: GoogleCalendarSelection = {
   write_target: "app_calendar",
@@ -143,17 +144,34 @@ interface CalendarSetupWizardProps {
    * or the import confirmed. Defaults to leaving for Settings (or the
    * Calendar, after an import). */
   onDone?: () => void
+  /** Puts the working-hours capture in front of Connect. The host passes
+   * this when the practice has no availability rules at all: connecting a
+   * calendar before any rule exists syncs free/busy into a frame that does
+   * not exist yet, and leaves a practice that finishes here still unable to
+   * offer a time. Finishing or skipping it only advances the wizard — it is
+   * not an answer to the Google steps' own gate. */
+  withHoursStep?: boolean
 }
 
 export function CalendarSetupWizard({
   returnPath = CALENDAR_SETUP_PATH,
   onFinishLater,
   onDone,
+  withHoursStep = false,
 }: CalendarSetupWizardProps = {}) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const queryClient = useQueryClient()
   const { user, loading: authLoading } = useAuth()
+
+  const steps = withHoursStep ? [HOURS_STEP, ...GOOGLE_STEPS] : GOOGLE_STEPS
+  // Every Google step sits one further along when the hours step is in
+  // front of them.
+  const stepOffset = withHoursStep ? 1 : 0
+  const connectIndex = stepOffset
+  const sessionsIndex = stepOffset + 1
+  const clientsIndex = stepOffset + 2
+  const reviewIndex = stepOffset + 3
 
   const [activeIndex, setActiveIndex] = useState(0)
   const [selection, setSelection] = useState<GoogleCalendarSelection>(DEFAULT_SELECTION)
@@ -278,7 +296,7 @@ export function CalendarSetupWizard({
         .then(() => {
           if (cancelled) return
           queryClient.invalidateQueries({ queryKey: ["google-calendar"] })
-          setActiveIndex(CLIENTS_INDEX)
+          setActiveIndex(clientsIndex)
           return runScan()
         })
         .catch((err: unknown) => {
@@ -301,7 +319,7 @@ export function CalendarSetupWizard({
       .then(() => {
         if (cancelled) return
         queryClient.invalidateQueries({ queryKey: ["google-calendar"] })
-        setActiveIndex(1)
+        setActiveIndex(sessionsIndex)
       })
       .catch((err: unknown) => {
         if (!cancelled) setError(message(err, "Google did not finish connecting."))
@@ -315,7 +333,19 @@ export function CalendarSetupWizard({
     return () => {
       cancelled = true
     }
-  }, [code, state, redirectUri, returnPath, queryClient, router, runScan, authLoading, user])
+  }, [
+    code,
+    state,
+    redirectUri,
+    returnPath,
+    queryClient,
+    router,
+    runScan,
+    authLoading,
+    user,
+    clientsIndex,
+    sessionsIndex,
+  ])
 
   // Changing how events read on an already-connected calendar does not
   // need Google again — it is Pablo's own record of what to write, and
@@ -393,27 +423,30 @@ export function CalendarSetupWizard({
   }, [proposal, checked])
 
   const titlingSettled = selection.event_titling !== "full" || attested
-  const isLastStep = activeIndex === STEPS.length - 1
-  const onReviewStep = activeIndex === REVIEW_INDEX
+  const isLastStep = activeIndex === steps.length - 1
+  const onReviewStep = activeIndex === reviewIndex
+  // The hours step owns its own buttons, and "Finish later" there would
+  // answer the Google steps' gate for a question that was not asked.
+  const onHoursStep = withHoursStep && activeIndex === 0
 
   return (
     <SetupWizardShell
-      steps={STEPS}
+      steps={steps}
       activeIndex={activeIndex}
       onJump={setActiveIndex}
       reachable={() => true}
       title="Google Calendar"
       lede="Put the sessions you book in Pablo onto your calendar."
-      onFinishLater={onReviewStep ? undefined : finishLater}
+      onFinishLater={onReviewStep || onHoursStep ? undefined : finishLater}
       footer={
-        onReviewStep ? null : (
+        onReviewStep || onHoursStep ? null : (
           <SetupNav
             onBack={activeIndex > 0 ? () => setActiveIndex(activeIndex - 1) : undefined}
             onContinue={() => (isLastStep ? finishWizard() : setActiveIndex(activeIndex + 1))}
             canContinue={
-              activeIndex === CONNECT_INDEX
+              activeIndex === connectIndex
                 ? true
-                : activeIndex === CLIENTS_INDEX
+                : activeIndex === clientsIndex
                   ? proposal !== null
                   : // Full names are the therapist's disclosure to make, so
                     // this step doesn't move on until they've said the
@@ -425,7 +458,12 @@ export function CalendarSetupWizard({
         )
       }
     >
-      {activeIndex === 0 ? (
+      {onHoursStep ? (
+        <CalendarHoursStep
+          onSaved={() => setActiveIndex(connectIndex)}
+          onSkip={() => setActiveIndex(connectIndex)}
+        />
+      ) : activeIndex === connectIndex ? (
         <CalendarConnectStep
           status={status}
           selectionSummary={describeSelection(selection)}
@@ -435,7 +473,7 @@ export function CalendarSetupWizard({
           onConnect={startConnect}
           onDisconnect={handleDisconnect}
         />
-      ) : activeIndex === 1 ? (
+      ) : activeIndex === sessionsIndex ? (
         <CalendarSessionsStep
           status={status}
           options={options}
@@ -447,7 +485,7 @@ export function CalendarSetupWizard({
           attested={attested}
           onAttestedChange={setAttested}
         />
-      ) : activeIndex === CLIENTS_INDEX ? (
+      ) : activeIndex === clientsIndex ? (
         <CalendarClientsStep
           busyWindows={busyWindows}
           proposal={proposal}
@@ -463,8 +501,8 @@ export function CalendarSetupWizard({
           onToggle={handleToggleSeries}
           expanded={expanded}
           onToggleExpanded={() => setExpanded((value) => !value)}
-          onBack={() => setActiveIndex(CLIENTS_INDEX)}
-          onReviewAgain={() => setActiveIndex(CLIENTS_INDEX)}
+          onBack={() => setActiveIndex(clientsIndex)}
+          onReviewAgain={() => setActiveIndex(clientsIndex)}
           onConfirm={handleConfirm}
           confirming={confirming}
           error={confirmError}
