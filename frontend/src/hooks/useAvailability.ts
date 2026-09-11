@@ -4,6 +4,8 @@
 
 import type {
   AvailabilityRule,
+  CheckConflictsRequest,
+  CheckConflictsResponse,
   CreateAvailabilityRuleRequest,
   FreeSlotsResponse,
   ParseAvailabilityRulesRequest,
@@ -11,6 +13,7 @@ import type {
   UpdateAvailabilityRuleRequest,
 } from "@/types/availability"
 import {
+  checkConflicts,
   createAvailabilityRule,
   deleteAvailabilityRule,
   getFreeSlots,
@@ -65,5 +68,18 @@ export function useFreeSlots(date: string, duration?: number, token?: string) {
 export function useParseAvailabilityRules(token?: string) {
   return useAuthMutation<ParseAvailabilityRulesResponse, ParseAvailabilityRulesRequest>({
     mutationFn: (data) => parseAvailabilityRules(data, token),
+  })
+}
+
+/**
+ * Ask the rule engine about one proposed window, on demand.
+ *
+ * Deliberately a mutation rather than a query: the question is only worth
+ * asking once the therapist has settled on a time and pressed save, not on
+ * every keystroke in the date and time fields.
+ */
+export function useCheckConflicts(token?: string) {
+  return useAuthMutation<CheckConflictsResponse, CheckConflictsRequest>({
+    mutationFn: (data) => checkConflicts(data, token),
   })
 }
