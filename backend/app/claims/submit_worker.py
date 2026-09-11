@@ -142,17 +142,34 @@ def submit_pending(  # noqa: PLR0913 — the run's collaborators, keyword-only
     practice_user_ids: Collection[str],
     commit: Callable[[], None],
     limit: int = MAX_SUBMISSIONS_PER_RUN,
+    on_pending: Callable[[str], None] | None = None,
 ) -> SubmitSummary:
     """File the principal's ``validated`` claims, oldest first, at most ``limit``.
 
     ``commit`` makes the pending marker durable before each call; the
     session-owning caller passes its own commit. Claims with a marker
     already on them are reconciled, never re-minted.
+
+    ``on_pending`` is called with the control number of each claim this run is
+    about to hand to the vendor. It exists so the caller — which knows WHICH
+    PRACTICE this run belongs to, and this worker deliberately does not — can
+    record where the claim went, so an acknowledgement arriving later is routed
+    by lookup instead of by asking every practice in turn (PABLO-ffw8).
+
+    It fires BEFORE the vendor call, alongside the pending marker and for the
+    same reason: the crash that loses an answer is exactly the crash after
+    which a webhook arrives for a claim we would otherwise have no record of
+    routing. Recording a control number we then fail to file costs one unused
+    row and nothing else, which is the cheaper way to be wrong.
+
+    It must not raise. The filing is not conditional on the bookkeeping.
     """
     summary = SubmitSummary()
     for claim in pipeline.claims.list_by_state(("validated",), limit=limit):
         if not owned_by_principal(pipeline, claim, practice_user_ids):
             continue
+        if on_pending is not None:
+            on_pending(claim.control_number)
         if claim.submission_pending_at is not None:
             _reconcile(pipeline, client, account, claim, payers=payers, summary=summary)
             continue

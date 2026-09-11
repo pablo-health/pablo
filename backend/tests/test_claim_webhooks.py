@@ -38,7 +38,7 @@ from tests.claims_pipeline_fakes import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Collection, Iterator
 
 # Deliberately not shaped like a real signing secret: these are only ever fed
 # to hmac.new(), so any bytes do.
@@ -293,10 +293,25 @@ def test_a_vendor_outage_asks_for_a_redelivery(route: dict[str, Any]) -> None:
 # --- the fan-out over practices ------------------------------------------------------
 
 
+#: Which tenant schemas a delivery opened. The receiver's whole job is to open
+#: one; before the index it opened every practice until something matched.
+OPENED: list[str] = []
+
+
 @pytest.fixture
 def practices(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[PipelineHarness]]:
-    """Two practices on fakes; the tenant session and the repositories are stubbed."""
+    """Two practices on fakes, sharing one clearinghouse account as deployments do.
+
+    The routing index is modelled rather than hardcoded: the practice that
+    filed a control number is the practice whose repository holds the claim,
+    which is exactly what ``platform.claim_routes`` records at filing time. So
+    these tests assert the receiver opens the RIGHT practice, not that a stub
+    was primed with the right answer.
+    """
     harnesses = [make_harness(now=NOW, principal=USER_ID), make_harness(now=NOW, principal="b-1")]
+    # One account serves every practice — the single webhook endpoint with its
+    # single signing secret cannot describe anything else.
+    harnesses[1].client = harnesses[0].client
     contexts = [
         fanout.PracticeContext(
             schema=f"practice_{i}",
@@ -308,15 +323,30 @@ def practices(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[PipelineHarness]
     ]
     by_schema = dict(zip([c.schema for c in contexts], harnesses, strict=True))
     current: dict[str, PipelineHarness] = {}
+    OPENED.clear()
 
     @contextlib.contextmanager
     def tenant_db_session(schema: str, user_id: str) -> Iterator[object]:
+        OPENED.append(schema)
         harness = by_schema[schema]
         assert user_id == harness.pipeline.principal_user_id
         current["harness"] = harness
         yield object()
 
-    monkeypatch.setattr(fanout, "active_practices", lambda **_kwargs: iter(contexts))
+    def route_for_control_numbers(numbers: Collection[str]) -> Any | None:
+        from app.claims.routing import ClaimRoute  # noqa: PLC0415
+
+        for context, harness in zip(contexts, harnesses, strict=True):
+            if any(harness.claims.get_by_control_number(n) is not None for n in numbers):
+                return ClaimRoute(
+                    practice_id=context.practice_id or "",
+                    user_id=harness.pipeline.principal_user_id,
+                    schema=context.schema,
+                )
+        return None
+
+    monkeypatch.setattr(fanout, "_routing_client", lambda: harnesses[0].client)
+    monkeypatch.setattr(fanout, "route_for_control_numbers", route_for_control_numbers)
     monkeypatch.setattr(fanout, "tenant_db_session", tenant_db_session)
     monkeypatch.setattr(fanout, "PostgresClaimRepository", lambda _s: current["harness"].claims)
     monkeypatch.setattr(
@@ -344,6 +374,49 @@ def test_the_practice_that_owns_the_transaction_applies_it(
     assert outcome == "moved"
     assert second.get(created.id).state == "payer_accepted"
     assert first.receipts.list_for_claim(created.id) == []
+
+
+def test_only_the_practice_that_filed_the_claim_is_opened(
+    practices: list[PipelineHarness],
+) -> None:
+    """One lookup, one tenant — the practice that did not file it is never opened.
+
+    This was a fan-out: open each practice in turn and ask whether any of its
+    clinicians could see the claim. It had to be bounded to answer inside the
+    vendor's timeout, so a practice past the bound was never asked at all and
+    its claims silently stopped moving (PABLO-ffw8). Asserting that exactly one
+    tenant is opened is asserting that bound cannot come back.
+    """
+    _first, second = practices
+    created = second.add(state="submitted", submitted_at=NOW)
+    transaction = second.client.acknowledge("payer_accepted", created.control_number)
+
+    outcome = fanout.ingest_transaction_event(
+        WebhookEvent(id="evt-1", type="transaction.processed", transaction_id=transaction)
+    )
+
+    assert outcome == "moved"
+    assert OPENED == ["practice_1"]
+
+
+def test_a_transaction_we_have_no_record_of_filing_opens_nothing(
+    practices: list[PipelineHarness],
+) -> None:
+    """No index row, no tenant opened — deliberately, with nothing behind it.
+
+    The old scan would have opened every practice to find out. Nothing bills
+    through this yet, so there is no population of unindexed claims worth
+    keeping that scan alive for.
+    """
+    first, _second = practices
+    transaction = first.client.acknowledge("payer_accepted", "SOMEBODYELSE")
+
+    outcome = fanout.ingest_transaction_event(
+        WebhookEvent(id="evt-1", type="transaction.processed", transaction_id=transaction)
+    )
+
+    assert outcome == "unmatched"
+    assert OPENED == []
 
 
 def test_a_redelivery_is_a_no_op_with_no_second_transition(

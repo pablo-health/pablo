@@ -138,6 +138,46 @@ class EmailTenantMappingRow(PlatformBase):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class ClaimRouteRow(PlatformBase):
+    """Which practice filed the claim carrying this control number.
+
+    A clearinghouse webhook names a transaction and nothing else. Without this
+    the receiver has to ASK every practice in turn whether it can see the claim
+    — a scan whose cost grows with the customer list and which is capped, so
+    past the cap a delivery reports "unmatched" forever and nothing alerts,
+    because "unmatched" is also what a delivery for somebody else's claim says
+    (PABLO-ffw8: measured on dev, where the practice holding the claims ranked
+    70th of 78 against a cap of 50).
+
+    Deliberately the smallest thing that answers the routing question: a
+    control number and a practice id. No PHI, no clinical content, no patient
+    identifier — the same class of object as ``email_tenant_mappings``, which
+    also lives outside the practice schemas for the same reason. Anything more
+    belongs in the tenant.
+
+    It names the CLINICIAN as well as the practice, because the practice alone
+    does not finish the job. Claims are row-policied: a tenant session sees a
+    clinician's claims only when it is armed as that clinician, so a receiver
+    that knew only the practice still had to open a session per clinician and
+    ask each in turn whether the claim was theirs — a scan inside the tenant,
+    replacing the scan across tenants. Filing knows exactly whose claim it is;
+    recording it turns the last search into a lookup too.
+
+    The primary key is the point as much as the lookup is: two practices cannot
+    both claim one control number, so a collision is refused at write time
+    rather than resolved by whichever practice a search happened to visit first
+    — which would have posted a payer's money to the wrong practice.
+    """
+
+    __tablename__ = "claim_routes"
+    __table_args__ = {"schema": PLATFORM_SCHEMA}
+
+    control_number: Mapped[str] = mapped_column(String(17), primary_key=True)
+    practice_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class SetupTokenRow(PlatformBase):
     """Short-lived token to pass email from marketing signup to login page.
 
