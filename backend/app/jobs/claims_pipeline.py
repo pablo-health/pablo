@@ -168,7 +168,21 @@ def run_practice(
             ]
             totals["remit_read"] += len(waiting)
             totals["remit_posted"] += post_remittances(
-                run.pipeline, timelines, waiting, details=details
+                run.pipeline,
+                timelines,
+                waiting,
+                details=details,
+                # What the payer says the client owes becomes a row on the
+                # client's own ledger. Without this the money stops at the
+                # claim: a practice can see that a payer paid $80 of $150
+                # and the client is never told about the $20.
+                #
+                # Safe to turn on only because the posting path now refuses
+                # to write that row from a remittance whose own numbers do
+                # not account for each other — it raises a hold instead and
+                # asks the practice. Wiring the ledger without that guard is
+                # the order that bills somebody the wrong amount.
+                charges=run.charges,
             )
             run.commit()
         if "watchdog" in stages:
