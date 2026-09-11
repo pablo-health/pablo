@@ -2,20 +2,13 @@
 
 """Re-emitting open holds, and saying so when there are none.
 
-Two things are under test and the second is the unusual one.
+The heartbeat assertions are about counting: exactly one line per run, never
+zero, never two. The signal a reader acts on is its ABSENCE, so duplicates
+teach them to tolerate noise and a silent quiet run is indistinguishable
+from a dead tick.
 
-The first is ordinary: every open hold produces an event, every tick, so a
-dropped line costs one interval rather than the hold.
-
-The second is the heartbeat, and the assertions about it are about
-counting. Exactly one line per run — never zero, never two — because the
-signal a reader acts on is its ABSENCE. Two lines teach them to tolerate
-duplicates; zero lines on a quiet run is indistinguishable from the tick
-being dead, which is precisely the thing the line exists to distinguish.
-
-The PHI test asserts against a fully populated hold rather than an empty
-one. A test that populated nothing would pass on an emitter that leaked
-every field it was given.
+The PHI test runs against a FULLY POPULATED hold — one populating nothing
+would pass on an emitter that leaked every field it was given.
 """
 
 from __future__ import annotations
