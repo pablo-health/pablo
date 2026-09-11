@@ -27,6 +27,7 @@ from ..db.tenant_session import tenant_db_session
 from ..repositories.postgres.claim_receipts import PostgresClaimReceiptRepository
 from ..repositories.postgres.claims import PostgresClaimRepository
 from ..repositories.postgres.coverage import PostgresPayerRepository
+from ..repositories.postgres.patient_payment import PostgresPatientPaymentRepository
 from ..repositories.postgres.remittance_hold import PostgresRemittanceHoldRepository
 from ..services.practice_billing_profile import SINGLETON_ID
 from ..services.token_encryption import decrypt_tokens
@@ -47,6 +48,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from ..repositories.coverage import PayerRepository
+    from ..repositories.patient_payment import PatientPaymentRepository
     from .clearinghouse import ClearinghouseClient
     from .routing import ClaimRoute
     from .webhooks import WebhookEvent
@@ -71,6 +73,10 @@ class TenantRun:
     pipeline: ClaimPipeline
     payers: PayerRepository
     commit: Callable[[], None]
+    #: The client charge ledger, so what a payer says a client owes reaches
+    #: the client rather than stopping at the claim. Bound to the same
+    #: tenant session as everything else in the run.
+    charges: PatientPaymentRepository | None = None
 
 
 def practice_user_ids(practice_id: str | None) -> list[str]:
@@ -314,6 +320,7 @@ def for_each_clinician(practice: PracticeContext, work: Callable[[TenantRun, str
                     ),
                     payers=PostgresPayerRepository(session),
                     commit=session.commit,
+                    charges=PostgresPatientPaymentRepository(session),
                 )
                 work(run, user_id)
             completed += 1
