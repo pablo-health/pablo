@@ -114,6 +114,62 @@ def test_the_cli_maps_its_flags(practices: dict[str, Any]) -> None:
     assert {schema for schema, _ in practices["visited"]} == {"practice_a"}
 
 
+def test_a_later_stage_failing_cannot_undo_an_earlier_stage(
+    practices: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A filing that happened stays happened, even when the next stage dies.
+
+    The stages share one clinician session, so they used to share one
+    transaction: a raise in the status stage rolled back the claim the submit
+    stage had already sent to the payer. The idempotency marker survived,
+    because submit commits that deliberately before the vendor call, so the
+    next run found a claim marked pending, reconciled it out of the feed, moved
+    it, and lost it again — every interval, forever, and the practice could
+    file nothing at all (PABLO-02vb).
+
+    Asserting a commit lands BETWEEN the two stages is asserting that loop
+    cannot form. The lock timeout that triggered it in production is not
+    reproduced here on purpose: any exception did this, so the test raises the
+    cheapest one.
+    """
+    from app.claims.submit_worker import SubmitSummary  # noqa: PLC0415
+
+    harness: PipelineHarness = practices["harnesses"]["practice_a"]
+    order: list[str] = []
+
+    def submit_pending(*_args: Any, commit: Any, **_kwargs: Any) -> SubmitSummary:
+        order.append("submit")
+        return SubmitSummary(submitted=1)
+
+    def poll_acknowledgments(*_args: Any, **_kwargs: Any) -> Any:
+        order.append("status")
+        msg = "lock timeout, or anything else"
+        raise RuntimeError(msg)
+
+    def commit() -> None:
+        order.append("commit")
+
+    monkeypatch.setattr(job, "submit_pending", submit_pending)
+    monkeypatch.setattr(job, "poll_acknowledgments", poll_acknowledgments)
+    monkeypatch.setattr(harness, "commit", commit)
+
+    with pytest.raises(RuntimeError):
+        job.run_practice(
+            PracticeContext(
+                schema="practice_a",
+                practice_id="practice_a",
+                client=harness.client,
+                user_ids=[USER_ID],
+            ),
+            ["submit", "status"],
+            max_per_tenant=10,
+        )
+
+    assert order == ["submit", "commit", "status"], (
+        "the filing must be committed before the next stage can fail"
+    )
+
+
 def test_one_failing_clinician_does_not_stop_the_rest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
