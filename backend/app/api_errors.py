@@ -26,6 +26,11 @@ from .request_context import extract_request_context
 _auth_logger = logging.getLogger("pablo.auth")
 _logger = logging.getLogger("pablo.unhandled")
 
+#: Sent when the request carried no credential at all. Not a code any raiser
+#: uses — this module infers it, because the distinction it draws is the one
+#: that separates an attacker from a browser (see :func:`_log_auth_failed`).
+NO_CREDENTIALS = "NO_CREDENTIALS"
+
 # Codes that look like "auth failed" but are expected, benign session
 # states rather than a brute-force / bad-token signal — excluded from the
 # auth_failed counter so the spike alert isn't polluted by ordinary users:
@@ -35,10 +40,24 @@ _logger = logging.getLogger("pablo.unhandled")
 #     token carries no attack value (it is rejected on its own), and a
 #     single dashboard load fans out enough parallel requests to trip the
 #     per-IP spike threshold by itself the moment the token expires.
+#   - NO_CREDENTIALS: nothing was presented to reject. A browser opening the
+#     app asks "am I signed in?" before it can know, and the answer is a 401;
+#     counting that as an attack counts the front door for being a door.
+#   - FEATURE_NOT_ENABLED / SUBSCRIPTION_REQUIRED: authorisation denials about
+#     ENTITLEMENT, not identity. The caller proved who they are and was told
+#     this feature is not theirs, which is a gate working, not a credential
+#     being guessed.
 # Genuinely suspicious codes (INVALID_TOKEN, TOKEN_REVOKED, USER_DISABLED)
 # still count — those are the signal the alert exists to catch.
 _AUTH_FAILED_EXEMPT_CODES: frozenset[str] = frozenset(
-    {"MFA_REQUIRED", "IDLE_TIMEOUT", "TOKEN_EXPIRED"}
+    {
+        "MFA_REQUIRED",
+        "IDLE_TIMEOUT",
+        "TOKEN_EXPIRED",
+        NO_CREDENTIALS,
+        "FEATURE_NOT_ENABLED",
+        "SUBSCRIPTION_REQUIRED",
+    }
 )
 
 
@@ -137,6 +156,24 @@ def _log_auth_failed(request: Request, exc: StarletteHTTPException) -> None:
     """
     try:
         code = _extract_error_code(exc.detail)
+        if code == "UNKNOWN" and not request.headers.get("authorization"):
+            # Nothing was presented, so nothing was rejected. Credential
+            # attacks require a credential: stuffing, spraying and replay all
+            # SEND something and see what sticks. A request with no
+            # Authorization header is a client that has not signed in yet, and
+            # on this deployment that is the overwhelming majority of 401s —
+            # the app asks /api/auth/session whether it has a session before it
+            # can possibly know, and every page boot fans out a handful more.
+            #
+            # Inferred rather than raised because the raisers here are
+            # framework-level: fastapi's own security dependency answers with a
+            # plain-string detail, which carries no envelope code and so
+            # arrived as UNKNOWN — matching nothing in the exempt set below and
+            # counting every unauthenticated page load as attack signal.
+            #
+            # Auth on this deployment is bearer-only (no cookie is ever read
+            # for it), so the header's absence is the whole test.
+            code = NO_CREDENTIALS
         if code in _AUTH_FAILED_EXEMPT_CODES:
             return
         ip, ua = extract_request_context(request)

@@ -119,8 +119,16 @@ def _build_app() -> FastAPI:
     @app.get("/unauth-string-detail")
     def unauth_string_detail() -> None:
         # Legacy: not all sites use the envelope. The handler should
-        # still emit, with reason=UNKNOWN.
+        # still emit, with reason=UNKNOWN — but only when the caller
+        # presented something. See the NO_CREDENTIALS tests.
         raise HTTPException(status_code=401, detail="who?")
+
+    @app.get("/forbidden-feature-not-enabled")
+    def forbidden_feature_not_enabled() -> None:
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": "FEATURE_NOT_ENABLED", "message": "...", "details": {}}},
+        )
 
     @app.get("/boom")
     def boom() -> None:
@@ -302,10 +310,52 @@ def test_no_emit_on_200(auth_logs: io.StringIO) -> None:
 
 
 def test_string_detail_falls_back_to_unknown_reason(auth_logs: io.StringIO) -> None:
-    TestClient(_build_app()).get("/unauth-string-detail")
+    """A credential WAS presented and rejected, so this is real signal."""
+    TestClient(_build_app()).get(
+        "/unauth-string-detail", headers={"Authorization": "Bearer something"}
+    )
     payloads = _lines(auth_logs)
     assert len(payloads) == 1
     assert payloads[0]["reason"] == "UNKNOWN"
+
+
+def test_skips_a_request_that_presented_no_credential(auth_logs: io.StringIO) -> None:
+    """Nothing presented, nothing rejected — not an attack, and not counted.
+
+    A browser opening the app asks whether it has a session before it can know,
+    and the answer is a 401. Counting that as a credential attack counted the
+    front door for being a door: on the dev deployment it was the single
+    largest contributor to the auth-failure spike alert, which fired on our own
+    e2e suite (THERAPY-8uww).
+    """
+    response = TestClient(_build_app()).get("/unauth-string-detail")
+    assert response.status_code == 401, "the caller is still rejected"
+    assert _lines(auth_logs) == [], "but it is not counted as attack signal"
+
+
+def test_an_entitlement_denial_is_not_a_credential_attack(auth_logs: io.StringIO) -> None:
+    """The caller proved who they are and was told the feature is not theirs.
+
+    That is a gate working, not a credential being guessed, so it must not feed
+    an alert whose whole job is to spot credentials being guessed.
+    """
+    response = TestClient(_build_app()).get(
+        "/forbidden-feature-not-enabled", headers={"Authorization": "Bearer good-token"}
+    )
+    assert response.status_code == 403
+    assert _lines(auth_logs) == []
+
+
+def test_a_bad_token_still_counts_even_with_no_envelope(auth_logs: io.StringIO) -> None:
+    """The exemption keys off ABSENCE, never off the reason being unreadable.
+
+    If an unparseable detail were exempted wholesale, an attacker spraying
+    tokens at any endpoint that raises a plain string would go uncounted.
+    """
+    TestClient(_build_app()).get("/unauth-string-detail", headers={"Authorization": "Bearer wrong"})
+    payloads = _lines(auth_logs)
+    assert len(payloads) == 1
+    assert payloads[0]["event"] == "auth_failed"
 
 
 def test_source_ip_recorded(auth_logs: io.StringIO) -> None:
