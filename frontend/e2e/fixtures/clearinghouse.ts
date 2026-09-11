@@ -2,8 +2,8 @@
 
 /**
  * Drive the fake clearinghouse (scripts/fake_clearinghouse.py): read what
- * it received, reset it between specs, and force the 277CA or 835 for a
- * claim instead of waiting on its timer.
+ * it received, reset it between specs, force the 277CA or 835 for a claim
+ * instead of waiting on its timer, and choose what the 835 will say.
  */
 
 import { CLEARINGHOUSE_URL } from "./stack"
@@ -42,6 +42,17 @@ export interface WebhookDelivery {
    */
   error: string | null
 }
+
+/**
+ * What an 835 says about a claim.
+ *
+ * `disagreeing` is the one worth explaining: the claim states a
+ * patient-responsibility total and the service lines itemise the same money
+ * as a contractual write-off, so the payer has said two different things
+ * about who owes it. Everything else in the document balances, so exactly
+ * one of the engine's checks fires.
+ */
+export type RemittanceOutcome = "paid" | "partial" | "denied" | "disagreeing"
 
 export interface ReceivedLog {
   requests: ReceivedRequest[]
@@ -94,5 +105,22 @@ export const clearinghouse = {
   /** Deliver the 277CA or 835 for a control number now. */
   deliver(kind: "277" | "835", controlNumber: string): Promise<WebhookDelivery> {
     return call<WebhookDelivery>("POST", "/_fake/deliver", { kind, control_number: controlNumber })
+  },
+
+  /**
+   * What the payer's 835 will say for claims filed from here on.
+   *
+   * Armed BEFORE filing, deliberately. A claim filed through the app gets a
+   * server-generated control number — so the harness's control-number
+   * prefixes (`PART-`, `DENY-`, `NOSUM-`) are unreachable from a browser —
+   * and the 835 follows five seconds after submission, so a spec that waited
+   * to learn the number would be racing that timer.
+   *
+   * `clearinghouse.reset()` clears it. A spec that arms an outcome and does
+   * not reset leaves it armed for whatever runs next, which is why the
+   * claims specs are serial and reset at the top.
+   */
+  expect835(outcome: RemittanceOutcome): Promise<void> {
+    return call("POST", "/_fake/outcome", { outcome })
   },
 }

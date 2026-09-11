@@ -100,6 +100,13 @@ services:
       # reads as the fixture it is; it only ever encrypts this stack's
       # throwaway database.
       - GOOGLE_CALENDAR_ENCRYPTION_KEY=e2eplaceholderkeyplaceholderkeyplaceholderA=
+      # A client's charge ledger is 503 until the deployment has card
+      # payments configured, and what a payer says a client owes lands on
+      # that ledger — so without a key no end-to-end test can see the one
+      # number the billing surface exists to produce. Present, not valid:
+      # reading the ledger never calls the processor, and nothing in this
+      # stack charges a card. Same rule as the clearinghouse key above.
+      - STRIPE_SECRET_KEY=sk_test_e2e_not_a_real_key
     healthcheck:
       # curl isn't in the Chainguard base; probe with the stdlib. The image's
       # own check targets a path the app doesn't serve, so it is replaced.
