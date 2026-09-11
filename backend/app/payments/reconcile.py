@@ -23,6 +23,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from sqlalchemy import text
+from sqlalchemy.dialects.postgresql import insert
 
 from ..db import (
     PLATFORM_SCHEMA,
@@ -449,7 +450,15 @@ def apply_charge_outcome(  # noqa: PLR0913 — keyword-only outcome fields, not 
 
 
 def event_already_processed(event_id: str) -> bool:
-    """Has this event already been handled?"""
+    """Has this event already been handled?
+
+    A fast path, NOT the correctness boundary. This read and the insert in
+    :func:`record_processed_event` are two statements in two transactions, so
+    two simultaneous deliveries of one event both see ``False`` here. What
+    actually enforces exactly-once is the primary key on the dedupe table,
+    and — for the ledger row itself — the ``SELECT ... FOR UPDATE`` in
+    :func:`apply_charge_outcome`.
+    """
     with create_standalone_session() as db:
         return db.get(ProcessedPaymentEventRow, event_id) is not None
 
@@ -463,10 +472,26 @@ def record_processed_event(
     deliberately determined to be none of this application's business.
     Recording an event we failed to reconcile spends the processor's redelivery
     on nothing and strands the ledger row.
+
+    **Tolerant of the row already being there, on purpose.** Two simultaneous
+    deliveries of one event both pass the dedupe read above, and both reach
+    here; the primary key lets exactly one insert. The loser has nothing left
+    to do — the winner applied the outcome and recorded the event — so it
+    records nothing and returns, and its delivery answers with the same
+    success. Raising instead would turn a race whose outcome is already
+    correct into an unhandled 500 and a wasted redelivery.
+
+    ``ON CONFLICT DO NOTHING`` rather than a second read: a read would be the
+    same check-then-act one statement lower down. The database decides, once.
+
+    Note this does NOT weaken the guarantee. A row here still means the event
+    was dealt with exactly once, because whoever inserted it is whoever
+    applied it.
     """
     with create_standalone_session() as db:
-        db.add(
-            ProcessedPaymentEventRow(
+        db.execute(
+            insert(ProcessedPaymentEventRow)
+            .values(
                 event_id=event_id,
                 event_type=event_type,
                 practice_id=practice_id,
@@ -475,6 +500,7 @@ def record_processed_event(
                 ),
                 processed_at=datetime.now(UTC),
             )
+            .on_conflict_do_nothing(index_elements=["event_id"])
         )
         db.commit()
 
