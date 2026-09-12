@@ -67,9 +67,9 @@ const BLOCKED_RULE_TYPES: RuleType[] = [
   "block_specific_dates",
 ]
 
-type ParamFields = Record<string, string>
+export type ParamFields = Record<string, string>
 
-function defaultFields(ruleType: RuleType): ParamFields {
+export function defaultFields(ruleType: RuleType): ParamFields {
   switch (ruleType) {
     case "working_hours":
       return { day_of_week: "0", start: "09:00", end: "17:00" }
@@ -135,7 +135,7 @@ function paramsToFields(
   }
 }
 
-function buildParams(
+export function buildParams(
   ruleType: RuleType,
   fields: ParamFields,
   dates: string[]
@@ -165,7 +165,13 @@ function buildParams(
   }
 }
 
-function validate(ruleType: RuleType, fields: ParamFields, dates: string[]): string | null {
+/**
+ * What this form refuses to send, so the therapist hears it here rather
+ * than as a 422. The API is the authority on rule params — the backend's
+ * tagged union, emitted as availabilityRuleParams.schema.json — and
+ * AvailabilityParamsContract.test.ts fails if this drifts from it.
+ */
+export function validate(ruleType: RuleType, fields: ParamFields, dates: string[]): string | null {
   switch (ruleType) {
     case "working_hours":
     case "block_time_range":
