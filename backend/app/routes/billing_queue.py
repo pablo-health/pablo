@@ -42,6 +42,7 @@ from fastapi import APIRouter, Depends, Request
 from ..auth.service import require_baa_acceptance
 from ..db.models import DEFAULT_CHARGE_CURRENCY
 from ..models import AuditAction, User
+from ..models.audit import ResourceType
 from ..models.billing_queue import (
     UnbilledClaimSummary,
     UnbilledQueueResponse,
@@ -78,6 +79,11 @@ router = APIRouter(prefix="/api/billing", tags=["billing"])
 #: a credit) are money facts about a visit that was already claimed.
 _SETTLING_CHARGE_KINDS = frozenset({"session"})
 
+#: An order of magnitude above a busy year's unbilled sessions. The queue
+#: surfaces recent unbilled work, not a full practice history, so this caps
+#: what would otherwise be an unbounded read across every finalized note.
+UNBILLED_QUEUE_NOTE_LIMIT = 500
+
 
 @router.get("/unbilled-sessions", response_model=UnbilledQueueResponse)
 def get_unbilled_sessions(
@@ -93,7 +99,7 @@ def get_unbilled_sessions(
     claims_repo: ClaimRepository = Depends(get_claim_repository),
     audit: AuditService = Depends(get_audit_service),
 ) -> UnbilledQueueResponse:
-    notes = notes_repo.list_finalized(user.id)
+    notes = notes_repo.list_finalized(user.id, limit=UNBILLED_QUEUE_NOTE_LIMIT)
     if not notes:
         return UnbilledQueueResponse(items=[])
 
@@ -117,11 +123,7 @@ def get_unbilled_sessions(
     patients = patient_repo.get_multiple(patient_ids, user.id)
     # The coverage row itself, not just "is there one": the copay the row
     # offers to collect is read off it.
-    coverage_by_patient = {
-        patient_id: active
-        for patient_id in patient_ids
-        if (active := coverage_repo.get_active(patient_id)) is not None
-    }
+    coverage_by_patient = coverage_repo.get_active_for_patients(patient_ids)
     appointment_types = {t.id: t for t in appointment_type_repo.list_by_user(user.id)}
 
     items: list[UnbilledSessionItem] = []
@@ -171,6 +173,16 @@ def get_unbilled_sessions(
                 ),
             )
         )
-        audit.log_session_action(AuditAction.SESSION_VIEWED, user, request, session, patient)
 
+    audit.log(
+        AuditAction.SESSION_VIEWED,
+        user,
+        request,
+        resource_type=ResourceType.SESSION,
+        resource_id="unbilled-queue",
+        changes={
+            "count": len(items),
+            "session_ids": [item.session_id for item in items],
+        },
+    )
     return UnbilledQueueResponse(items=items)
