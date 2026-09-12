@@ -282,6 +282,18 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("delete", "/api/supervision/{relationship_id}"),  # deletes a supervision relationship
         ("get", "/api/supervision/{relationship_id}/hours"),  # lists accrued hours (own records)
         ("post", "/api/supervision/{relationship_id}/hours"),  # logs an accrued-hours entry
+        # credentialing.py — the clinician's own credential record. No patient
+        # data of any kind: these are her licences, her identifiers and her
+        # payer panels. The sensitive half (SSN, DOB, tax id, bank details) is
+        # not reachable from here at all — it goes through
+        # app.credentialing.government_ids, which audits every read and write,
+        # and PATCH /intake/answers takes the tenant AuditService for that
+        # reason despite appearing on this list for its unencrypted fields.
+        ("get", "/api/credentialing/intake"),  # her own question set and progress
+        ("get", "/api/credentialing/intake/confirmations"),  # her own Tier-0 answers
+        ("put", "/api/credentialing/intake/confirmations/{field_key}"),  # records one confirmation
+        ("patch", "/api/credentialing/intake/answers"),  # saves her own scalar answers
+        ("get", "/api/credentialing/intake/sources"),  # static provenance vocabulary
     }
 )
 
