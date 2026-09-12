@@ -4,6 +4,7 @@
 
 import { useCallback, useMemo, useState } from "react"
 import { SetupNav, SetupStepHead, SetupWizardShell } from "@/components/setup"
+import { Skeleton } from "@/components/ui/skeleton"
 import { usePreferences, useSavePreferences } from "@/hooks/usePreferences"
 import { type PaymentRouteId, stepsForRoute } from "./routes"
 import { STEP_BODIES } from "./stepBodies"
@@ -92,6 +93,19 @@ export function GetPaidWizard({ onSettled }: GetPaidWizardProps) {
   const current = useMemo(() => steps[activeIndex], [steps, activeIndex])
   const Body = STEP_BODIES[current?.id ?? "route"]
   const isLastStep = activeIndex === steps.length - 1
+
+  // Nothing is interactive until her saved answers are in hand. `remember`
+  // cannot write without them, so a click landing first would be accepted on
+  // screen and silently not saved — she would pick a route, move on, and meet
+  // the fork again next time. Waiting is the honest version of that.
+  if (!preferences) {
+    return (
+      <div className="space-y-4" data-testid="wizard-loading">
+        <Skeleton className="h-12 w-64" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    )
+  }
 
   return (
     <SetupWizardShell

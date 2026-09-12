@@ -6,9 +6,17 @@
  * its bundle.
  */
 
-/** The practice billing profile; claim review links here on a missing profile field. */
+/**
+ * How insurers identify the practice; claim review links here on a missing
+ * profile field. The id is unchanged from when this page held the whole
+ * billing profile, so links stored elsewhere keep working.
+ */
 export const BILLING_PROFILE_SETTINGS_ID = "billing-profile"
 export const BILLING_PROFILE_SETTINGS_PATH = `/dashboard/settings/${BILLING_PROFILE_SETTINGS_ID}`
+
+/** Where insurers reach the practice. One settings item per wizard step. */
+export const BILLING_CONTACT_SETTINGS_ID = "billing-contact"
+export const BILLING_CONTACT_SETTINGS_PATH = `/dashboard/settings/${BILLING_CONTACT_SETTINGS_ID}`
 
 /** The payer list; the claims setup checklist links here for the first payer. */
 export const INSURANCE_PAYERS_SETTINGS_ID = "insurance"

@@ -77,6 +77,7 @@ describe("settings registry merge", () => {
       "payments",
       "superbills",
       "billing-profile",
+      "billing-contact",
       "insurance",
     ])
 
