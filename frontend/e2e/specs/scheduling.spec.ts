@@ -35,6 +35,13 @@ test("a clinician books and cancels an appointment", async ({ signedInPage: page
   const appointment = (await (await created).json()) as { id: string }
 
   try {
+    // The week grid starts on Sunday and always opens on today's week, so
+    // when today is Saturday tomorrow's appointment belongs to the next one
+    // and the default view never shows it. Step forward on that one day.
+    if (tomorrow.getDay() === 0) {
+      await page.getByRole("button", { name: "Next" }).click()
+    }
+
     await expect(page.getByText(`${patient.first_name} ${patient.last_name}`, { exact: true })).toBeVisible()
     const session = await api.post<{ id: string }>(
       `/api/appointments/${appointment.id}/start-session`,
