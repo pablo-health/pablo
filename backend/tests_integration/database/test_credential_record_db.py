@@ -347,22 +347,16 @@ class TestEncryptedIdentifiers:
         # connection sees zero rows, which would make this assertion pass
         # vacuously. Arming it reads the same row the owner reads; what is being
         # bypassed is the ORM, not the isolation boundary.
+        query = (
+            f"SELECT * FROM {tenant_schema}.credential_government_ids "  # noqa: S608
+            "WHERE user_id = :uid"
+        )
         with engine.connect() as conn:
             conn.execute(
                 text("SELECT set_config('app.current_user_id', :uid, false)"),
                 {"uid": _CLINICIAN_A},
             )
-            row = (
-                conn.execute(
-                    text(  # noqa: S608 — schema name is a test-generated literal
-                        f"SELECT * FROM {tenant_schema}.credential_government_ids "
-                        "WHERE user_id = :uid"
-                    ),
-                    {"uid": _CLINICIAN_A},
-                )
-                .mappings()
-                .one()
-            )
+            row = conn.execute(text(query), {"uid": _CLINICIAN_A}).mappings().one()
         assert row["ssn_encrypted"], "nothing was stored, so nothing was proved"
         for column, value in row.items():
             for secret in (_SSN, _TAX_ID, _DOB.isoformat()):
