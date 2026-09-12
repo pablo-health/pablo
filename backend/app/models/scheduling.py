@@ -12,6 +12,8 @@ from pydantic import BaseModel, Field, field_validator
 # Runtime import: Pydantic resolves this annotation at runtime for validation,
 # so it cannot live in a TYPE_CHECKING block.
 from ..scheduling_engine.models.appointment import AppointmentStatus  # noqa: TC001
+from ..scheduling_engine.models.availability import EnforcementLevel, RuleType  # noqa: TC001
+from .availability_rule_params import TaggedAvailabilityRule
 from .validators import validate_visit_diagnosis_codes, validate_visit_modifiers
 
 # 11 office, 02 telehealth other than home, 10 telehealth in home. Closed —
@@ -199,19 +201,24 @@ class AppointmentListResponse(BaseModel):
 # --- Availability rule models ---
 
 
-class CreateAvailabilityRuleRequest(BaseModel):
-    """Request to create an availability rule."""
-
-    rule_type: str
-    enforcement: str = "hard"
-    params: dict[str, Any]
+#: Request to create an availability rule: the tagged union itself, so
+#: FastAPI validates ``params`` against the rule type before anything is
+#: stored and answers a malformed rule with a 422 naming the field.
+CreateAvailabilityRuleRequest = TaggedAvailabilityRule
 
 
 class UpdateAvailabilityRuleRequest(BaseModel):
-    """Request to update an availability rule."""
+    """Request to update an availability rule.
 
-    rule_type: str | None = None
-    enforcement: str | None = None
+    Every field is optional, so this can't be the tagged union: PATCH may
+    carry params without a rule type, and the surfaces that edit one row
+    do. The route resolves the effective rule type from the stored rule
+    and validates params through :func:`validate_rule_params` — the same
+    union, reached the only other way it can be.
+    """
+
+    rule_type: RuleType | None = None
+    enforcement: EnforcementLevel | None = None
     params: dict[str, Any] | None = None
 
 
