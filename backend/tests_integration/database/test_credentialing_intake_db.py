@@ -197,7 +197,8 @@ class TestProvisioning:
                 {"schema": tenant_schema},
             )
         assert forced is True
-        assert policies and policies > 0
+        assert policies is not None
+        assert policies > 0
 
 
 class TestTheSchemaEnforcesTheMirrorRule:
@@ -229,9 +230,7 @@ class TestTheSchemaEnforcesTheMirrorRule:
             scoped.session.rollback()
             scoped.close()
 
-    def test_a_confirmation_is_one_row_per_field(
-        self, engine: Engine, tenant_schema: str
-    ) -> None:
+    def test_a_confirmation_is_one_row_per_field(self, engine: Engine, tenant_schema: str) -> None:
         """Re-confirming updates. The question is "is this right now"."""
         from app.credentialing import confirmations  # noqa: PLC0415
         from app.db.models import CredentialConfirmationRow  # noqa: PLC0415
