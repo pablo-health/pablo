@@ -79,6 +79,7 @@ describe("settings registry merge", () => {
       "billing-profile",
       "billing-contact",
       "insurance",
+      "credentialing",
     ])
 
     const you = settingsGroups.find((group) => group.id === "you")

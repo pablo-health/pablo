@@ -47,7 +47,7 @@ _ENCRYPTED_FIELDS: dict[str, str] = {
 #: partial date of birth is either the whole fact or useless.
 _LAST4_FIELDS: frozenset[str] = frozenset({"ssn", "tax_id"})
 
-#: Writable without encryption. The intake's scalar answers land here too —
+#: Writable without encryption. The checklist's scalar answers land here too —
 #: not because they are sensitive, but because this row has one writer and a
 #: second one would race it.
 _PLAIN_FIELDS: frozenset[str] = frozenset(

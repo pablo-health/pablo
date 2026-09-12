@@ -12,25 +12,25 @@ import { fireEvent, render, screen } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type {
   Confirmation,
-  IntakeField,
-  IntakeSurface,
-  IntakeTier,
+  ChecklistField,
+  ChecklistSurface,
+  ChecklistTier,
 } from "@/types/credentialing"
-import { IntakeWizard } from "../IntakeWizard"
+import { CredentialingWizard } from "../CredentialingWizard"
 
-const useIntake = vi.hoisted(() => vi.fn())
+const useChecklist = vi.hoisted(() => vi.fn())
 const useConfirmations = vi.hoisted(() => vi.fn())
 const recordMutate = vi.hoisted(() => vi.fn())
 const saveMutate = vi.hoisted(() => vi.fn())
 
-vi.mock("@/hooks/useCredentialingIntake", () => ({
-  useIntake: (...args: unknown[]) => useIntake(...args),
+vi.mock("@/hooks/useCredentialingChecklist", () => ({
+  useChecklist: (...args: unknown[]) => useChecklist(...args),
   useConfirmations: (...args: unknown[]) => useConfirmations(...args),
   useRecordConfirmation: () => ({ mutate: recordMutate, isPending: false }),
-  useSaveIntakeAnswers: () => ({ mutate: saveMutate, isPending: false }),
+  useSaveChecklistAnswers: () => ({ mutate: saveMutate, isPending: false }),
 }))
 
-function field(overrides: Partial<IntakeField> = {}): IntakeField {
+function field(overrides: Partial<ChecklistField> = {}): ChecklistField {
   return {
     key: "npi_number",
     label: "Individual NPI",
@@ -48,7 +48,7 @@ function field(overrides: Partial<IntakeField> = {}): IntakeField {
   }
 }
 
-function surface(overrides: Partial<IntakeSurface> = {}): IntakeSurface {
+function surface(overrides: Partial<ChecklistSurface> = {}): ChecklistSurface {
   return {
     supervised: false,
     prescriber: false,
@@ -69,7 +69,7 @@ function renderWizard() {
   })
   return render(
     <QueryClientProvider client={client}>
-      <IntakeWizard />
+      <CredentialingWizard />
     </QueryClientProvider>,
   )
 }
@@ -80,7 +80,7 @@ function goToTier(label: string) {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  useIntake.mockReturnValue({ data: surface(), isLoading: false })
+  useChecklist.mockReturnValue({ data: surface(), isLoading: false })
   useConfirmations.mockReturnValue({ data: [] as Confirmation[] })
 })
 
@@ -171,7 +171,7 @@ describe("tier 0 confirmations", () => {
 })
 
 describe("the supervision fork", () => {
-  const tierOneFields: IntakeField[] = [
+  const tierOneFields: ChecklistField[] = [
     field({
       key: "licenses",
       label: "Every licence you hold",
@@ -182,7 +182,7 @@ describe("the supervision fork", () => {
   ]
 
   it("asks the fork before anything it changes", () => {
-    useIntake.mockReturnValue({
+    useChecklist.mockReturnValue({
       data: surface({ fields: tierOneFields }),
       isLoading: false,
     })
@@ -195,7 +195,7 @@ describe("the supervision fork", () => {
   })
 
   it("re-asks the server for the other branch's questions, and saves the answer", () => {
-    useIntake.mockReturnValue({
+    useChecklist.mockReturnValue({
       data: surface({ fields: tierOneFields }),
       isLoading: false,
     })
@@ -206,13 +206,13 @@ describe("the supervision fork", () => {
 
     // The branch is asked of the API, not decided in the client — the question
     // set is the server's and the client keeps no copy of the rule.
-    expect(useIntake).toHaveBeenLastCalledWith({ supervised: true })
+    expect(useChecklist).toHaveBeenLastCalledWith({ supervised: true })
     expect(saveMutate).toHaveBeenCalledWith({ supervision_status: "supervised" })
   })
 })
 
 describe("stopping after tier 1", () => {
-  const readyFields: IntakeField[] = [
+  const readyFields: ChecklistField[] = [
     field({
       key: "licenses",
       label: "Every licence you hold",
@@ -223,7 +223,7 @@ describe("stopping after tier 1", () => {
     }),
   ]
 
-  function readySurface(): IntakeSurface {
+  function readySurface(): ChecklistSurface {
     return surface({
       claims_ready: true,
       fields: readyFields,
@@ -236,7 +236,7 @@ describe("stopping after tier 1", () => {
   }
 
   it("says she is done rather than pointing at what is left", () => {
-    useIntake.mockReturnValue({ data: readySurface(), isLoading: false })
+    useChecklist.mockReturnValue({ data: readySurface(), isLoading: false })
     renderWizard()
     goToTier("About your practice")
 
@@ -244,7 +244,7 @@ describe("stopping after tier 1", () => {
   })
 
   it("does not nag toward the panels tier", () => {
-    useIntake.mockReturnValue({ data: readySurface(), isLoading: false })
+    useChecklist.mockReturnValue({ data: readySurface(), isLoading: false })
     renderWizard()
     goToTier("About your practice")
 
@@ -256,7 +256,7 @@ describe("stopping after tier 1", () => {
   it("frames the finish for a clinician who may never bill through us", () => {
     // Someone who bought Pablo for credentialing alone must not be told her
     // reward is that we can bill for her.
-    useIntake.mockReturnValue({ data: readySurface(), isLoading: false })
+    useChecklist.mockReturnValue({ data: readySurface(), isLoading: false })
     renderWizard()
     goToTier("About your practice")
 
@@ -264,7 +264,7 @@ describe("stopping after tier 1", () => {
   })
 
   it("marks the panels tier optional without marking it failed", () => {
-    useIntake.mockReturnValue({ data: readySurface(), isLoading: false })
+    useChecklist.mockReturnValue({ data: readySurface(), isLoading: false })
     renderWizard()
     goToTier("Applying to panels")
 
@@ -274,13 +274,13 @@ describe("stopping after tier 1", () => {
 
 describe("questions that are not confirmations", () => {
   it("says which are optional and which are already on file", () => {
-    useIntake.mockReturnValue({
+    useChecklist.mockReturnValue({
       data: surface({
         fields: [
           field({
             key: "bank_account",
             label: "Where payments should land",
-            tier: "tier_1_claims_ready" as IntakeTier,
+            tier: "tier_1_claims_ready" as ChecklistTier,
             kind: "collection",
             required: false,
             source: null,
@@ -289,7 +289,7 @@ describe("questions that are not confirmations", () => {
           field({
             key: "licenses",
             label: "Every licence you hold",
-            tier: "tier_1_claims_ready" as IntakeTier,
+            tier: "tier_1_claims_ready" as ChecklistTier,
             kind: "collection",
             source: null,
             answered: true,
@@ -311,7 +311,7 @@ describe("tier 0 shows what the record holds", () => {
   it("shows a value that is on file before she has confirmed anything", () => {
     // The bug: the API carried no value, so the card asked her to agree with
     // "Nothing on file" for an NPI sitting on her own profile.
-    useIntake.mockReturnValue({
+    useChecklist.mockReturnValue({
       data: surface({ fields: [field({ current_value: "1999999984" })] }),
       isLoading: false,
     })
@@ -331,7 +331,7 @@ describe("tier 0 shows what the record holds", () => {
   it("prefers the record over the value she agreed with last time", () => {
     // A column that has changed since she confirmed it is the one thing this
     // tier exists to surface. Showing the old value would hide it.
-    useIntake.mockReturnValue({
+    useChecklist.mockReturnValue({
       data: surface({ fields: [field({ current_value: "1999999984", answered: true })] }),
       isLoading: false,
     })
@@ -356,7 +356,7 @@ describe("tier 0 shows what the record holds", () => {
   it("confirms the value she was actually shown", () => {
     // So a later divergence between card and column is visible in the record,
     // rather than the confirmation quietly agreeing with something else.
-    useIntake.mockReturnValue({
+    useChecklist.mockReturnValue({
       data: surface({ fields: [field({ current_value: "1999999984" })] }),
       isLoading: false,
     })

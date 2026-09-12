@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 /**
- * The credentialing intake, against the whole stack.
+ * The credentialing checklist, against the whole stack.
  *
  * What only a real run can show: that the question set narrows and the answers
  * land for a freshly-onboarded practice, against a provisioned tenant schema
@@ -13,7 +13,7 @@
 
 import { test, expect } from "../fixtures/auth"
 
-interface IntakeField {
+interface ChecklistField {
   key: string
   tier: string
   kind: string
@@ -29,12 +29,12 @@ interface TierProgress {
   complete: boolean
 }
 
-interface IntakeSurface {
+interface ChecklistSurface {
   supervised: boolean
   prescriber: boolean
   claims_ready: boolean
   progress: TierProgress[]
-  fields: IntakeField[]
+  fields: ChecklistField[]
 }
 
 interface Confirmation {
@@ -43,16 +43,16 @@ interface Confirmation {
   correction: string | null
 }
 
-const INTAKE = "/api/credentialing/intake"
+const INTAKE = "/api/credentialing/checklist"
 
-test.describe("credentialing intake", () => {
+test.describe("credentialing checklist", () => {
   test("a real practice gets a whole question set back", async ({ api }) => {
-    const intake = await api.get<IntakeSurface>(INTAKE)
+    const checklist = await api.get<ChecklistSurface>(INTAKE)
 
-    expect(intake.fields.length).toBeGreaterThan(0)
+    expect(checklist.fields.length).toBeGreaterThan(0)
     // Per tier, never one figure — finishing the claims-ready tier and stopping
     // is a complete outcome, and a single number would render it as half done.
-    expect(intake.progress.map((t) => t.tier)).toEqual([
+    expect(checklist.progress.map((t) => t.tier)).toEqual([
       "tier_0_confirm",
       "tier_1_claims_ready",
       "tier_2_credentialing",
@@ -60,24 +60,24 @@ test.describe("credentialing intake", () => {
     // Counts are NOT asserted against zero: the account is worker-scoped and
     // shared across the whole run, and onboarding itself fills some of this in.
     // That a fact entered elsewhere already counts is the point, not a flaw.
-    expect(intake.progress.every((t) => t.required > 0)).toBe(true)
+    expect(checklist.progress.every((t) => t.required > 0)).toBe(true)
   })
 
   test("nothing in the confirm tier is an empty box awaiting typing", async ({ api }) => {
-    const intake = await api.get<IntakeSurface>(INTAKE)
+    const checklist = await api.get<ChecklistSurface>(INTAKE)
 
-    const confirmTier = intake.fields.filter((f) => f.tier === "tier_0_confirm")
+    const confirmTier = checklist.fields.filter((f) => f.tier === "tier_0_confirm")
     expect(confirmTier.length).toBeGreaterThan(0)
     expect(confirmTier.every((f) => f.source !== null)).toBe(true)
   })
 
   test("the supervision fork changes what is asked", async ({ api }) => {
-    const independent = await api.get<IntakeSurface>(`${INTAKE}?supervised=false`)
-    const supervised = await api.get<IntakeSurface>(`${INTAKE}?supervised=true`)
+    const independent = await api.get<ChecklistSurface>(`${INTAKE}?supervised=false`)
+    const supervised = await api.get<ChecklistSurface>(`${INTAKE}?supervised=true`)
 
     expect(independent.supervised).toBe(false)
     expect(supervised.supervised).toBe(true)
-    const keys = (s: IntakeSurface) => s.fields.map((f) => f.key)
+    const keys = (s: ChecklistSurface) => s.fields.map((f) => f.key)
     expect(keys(supervised)).toContain("supervisor")
     expect(keys(independent)).not.toContain("supervisor")
   })
@@ -85,17 +85,17 @@ test.describe("credentialing intake", () => {
   test("an answer is remembered, and the branch follows it", async ({ api }) => {
     await api.patch(`${INTAKE}/answers`, { supervision_status: "supervised" })
 
-    const intake = await api.get<IntakeSurface>(INTAKE)
+    const checklist = await api.get<ChecklistSurface>(INTAKE)
 
-    expect(intake.supervised).toBe(true)
-    expect(intake.fields.map((f) => f.key)).toContain("supervisor")
+    expect(checklist.supervised).toBe(true)
+    expect(checklist.fields.map((f) => f.key)).toContain("supervisor")
   })
 
   test("the CAQH question is answered in the claims-ready tier", async ({ api }) => {
     await api.patch(`${INTAKE}/answers`, { caqh_id: "16273849" })
 
-    const intake = await api.get<IntakeSurface>(INTAKE)
-    const caqh = intake.fields.find((f) => f.key === "caqh_id")
+    const checklist = await api.get<ChecklistSurface>(INTAKE)
+    const caqh = checklist.fields.find((f) => f.key === "caqh_id")
 
     expect(caqh?.tier).toBe("tier_1_claims_ready")
     expect(caqh?.answered).toBe(true)
@@ -129,17 +129,17 @@ test.describe("credentialing intake", () => {
       presented_value: "true",
     })
 
-    const intake = await api.get<IntakeSurface>(INTAKE)
-    const cleared = intake.fields.find((f) => f.key === "exclusion_clearance")
+    const checklist = await api.get<ChecklistSurface>(INTAKE)
+    const cleared = checklist.fields.find((f) => f.key === "exclusion_clearance")
 
     expect(cleared?.answered).toBe(true)
   })
 
   test("the banking answers do not block the claims-ready finish", async ({ api }) => {
-    // No payer has asked for proof of an account at intake time, and EFT
+    // No payer has asked for proof of an account at checklist time, and EFT
     // enrolment happens after contracting — so neither may be required here.
-    const intake = await api.get<IntakeSurface>(INTAKE)
-    const byKey = new Map(intake.fields.map((f) => [f.key, f]))
+    const checklist = await api.get<ChecklistSurface>(INTAKE)
+    const byKey = new Map(checklist.fields.map((f) => [f.key, f]))
 
     expect(byKey.get("bank_account")?.required).toBe(false)
     expect(byKey.get("voided_cheque")?.required).toBe(false)

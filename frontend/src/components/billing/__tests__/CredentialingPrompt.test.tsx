@@ -13,16 +13,16 @@
 
 import { fireEvent, render, screen } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import type { IntakeField, IntakeSurface } from "@/types/credentialing"
+import type { ChecklistField, ChecklistSurface } from "@/types/credentialing"
 import { CredentialingPrompt } from "../CredentialingPrompt"
 
-const useIntake = vi.hoisted(() => vi.fn())
+const useChecklist = vi.hoisted(() => vi.fn())
 
-vi.mock("@/hooks/useCredentialingIntake", () => ({
-  useIntake: (...args: unknown[]) => useIntake(...args),
+vi.mock("@/hooks/useCredentialingChecklist", () => ({
+  useChecklist: (...args: unknown[]) => useChecklist(...args),
 }))
 
-function panelsField(answered: boolean): IntakeField {
+function panelsField(answered: boolean): ChecklistField {
   return {
     key: "payer_participation",
     label: "Which payers are you already in network with?",
@@ -39,7 +39,7 @@ function panelsField(answered: boolean): IntakeField {
   }
 }
 
-function surface(fields: IntakeField[]): IntakeSurface {
+function surface(fields: ChecklistField[]): ChecklistSurface {
   return {
     supervised: false,
     prescriber: false,
@@ -51,7 +51,7 @@ function surface(fields: IntakeField[]): IntakeSurface {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  useIntake.mockReturnValue({ data: surface([panelsField(false)]) })
+  useChecklist.mockReturnValue({ data: surface([panelsField(false)]) })
 })
 
 describe("CredentialingPrompt", () => {
@@ -63,7 +63,7 @@ describe("CredentialingPrompt", () => {
 
   it("says nothing once the record answers it", () => {
     // The promise the intake rests on: never ask for what we can already read.
-    useIntake.mockReturnValue({ data: surface([panelsField(true)]) })
+    useChecklist.mockReturnValue({ data: surface([panelsField(true)]) })
 
     const { container } = render(<CredentialingPrompt />)
 
@@ -71,7 +71,7 @@ describe("CredentialingPrompt", () => {
   })
 
   it("says nothing while the answer is still unknown", () => {
-    useIntake.mockReturnValue({ data: undefined })
+    useChecklist.mockReturnValue({ data: undefined })
 
     const { container } = render(<CredentialingPrompt />)
 

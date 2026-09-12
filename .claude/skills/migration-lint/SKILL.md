@@ -52,6 +52,7 @@ would actually break.
 |-----------|--------|
 | Model file changed (Modified / Added), at least one new migration added | PASS |
 | Model file changed, no new migration in diff | FAIL (exit 1) |
+| Model file touched, but only comments/docstrings moved | PASS |
 | Only migration files changed (e.g. a data fix) | PASS |
 | No model files changed | PASS (no-op) |
 | Versions directory resolves to exactly one head | PASS |

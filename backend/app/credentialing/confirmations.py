@@ -2,7 +2,7 @@
 
 """Recording that a clinician looked at a pre-filled value and said yes or no.
 
-The intake's first tier asks nothing. It fills fields from NPPES, the public
+The checklist's first tier asks nothing. It fills fields from NPPES, the public
 PECOS file, the exclusion lists and what the practice already stores, and asks
 only whether each is right. This is where that answer goes.
 

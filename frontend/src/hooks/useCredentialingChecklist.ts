@@ -3,15 +3,15 @@
 "use client"
 
 import {
-  getIntake,
+  getChecklist,
   listConfirmations,
   recordConfirmation,
-  saveIntakeAnswers,
+  saveChecklistAnswers,
 } from "@/lib/api/credentialing"
 import { queryKeys } from "@/lib/api/queryKeys"
 import type {
   ConfirmationPayload,
-  IntakeAnswers,
+  ChecklistAnswers,
 } from "@/types/credentialing"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
 
@@ -22,13 +22,13 @@ import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
  * is answering the supervision fork — the answer has to narrow the same page
  * it was given on, before anything is saved.
  */
-export function useIntake(
+export function useChecklist(
   branch?: { supervised?: boolean; prescriber?: boolean },
   token?: string,
 ) {
   return useAuthQuery({
-    queryKey: queryKeys.credentialing.intake(branch),
-    queryFn: () => getIntake(branch ?? {}, token),
+    queryKey: queryKeys.credentialing.checklist(branch),
+    queryFn: () => getChecklist(branch ?? {}, token),
   })
 }
 
@@ -57,9 +57,9 @@ export function useRecordConfirmation(token?: string) {
   })
 }
 
-export function useSaveIntakeAnswers(token?: string) {
+export function useSaveChecklistAnswers(token?: string) {
   return useAuthMutation({
-    mutationFn: (answers: IntakeAnswers) => saveIntakeAnswers(answers, token),
+    mutationFn: (answers: ChecklistAnswers) => saveChecklistAnswers(answers, token),
     invalidateKeys: [queryKeys.credentialing.all],
   })
 }

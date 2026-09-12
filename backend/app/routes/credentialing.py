@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""The credentialing intake surface — what to ask, and what came back.
+"""The credentialing checklist surface — what to ask, and what came back.
 
 One GET describes the whole sitting: which questions apply to this clinician,
 which already have an answer on file, and how far each tier has got. The wizard
@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 from ..api_errors import BadRequestError, NotFoundError
 from ..auth.route_access import subscription_exempt
 from ..auth.service import get_current_user, get_tenant_context
-from ..credentialing import confirmations, government_ids, intake, status
+from ..credentialing import checklist, confirmations, government_ids, status
 from ..db import get_db_session
 from ..db.models import CREDENTIAL_CONFIRMATION_SOURCES, ClinicianProfileRow
 from ..models import User
@@ -54,7 +54,7 @@ AuditDep = Annotated[AuditService, Depends(get_audit_service)]
 SubscriptionExemptDep = Annotated[None, Depends(subscription_exempt)]
 
 
-class IntakeFieldResponse(BaseModel):
+class ChecklistFieldResponse(BaseModel):
     """One question, with everything the surface needs to render it."""
 
     key: str
@@ -85,7 +85,7 @@ class TierProgressResponse(BaseModel):
     complete: bool
 
 
-class IntakeResponse(BaseModel):
+class ChecklistResponse(BaseModel):
     """The whole sitting."""
 
     supervised: bool
@@ -94,7 +94,7 @@ class IntakeResponse(BaseModel):
     #: honest finish line for a clinician who may never credential.
     claims_ready: bool
     progress: list[TierProgressResponse]
-    fields: list[IntakeFieldResponse]
+    fields: list[ChecklistFieldResponse]
 
 
 class ConfirmationPayload(BaseModel):
@@ -117,7 +117,7 @@ class ConfirmationResponse(BaseModel):
     confirmed_at: str
 
 
-class IntakeAnswersPayload(BaseModel):
+class ChecklistAnswersPayload(BaseModel):
     """The scalar answers that land on the clinician's identifier row.
 
     Only the unencrypted ones. SSN, date of birth and tax id are written
@@ -135,9 +135,9 @@ class IntakeAnswersPayload(BaseModel):
 
 
 def _field_to_response(
-    field: intake.IntakeField, *, answered: bool, current_value: str | None
-) -> IntakeFieldResponse:
-    return IntakeFieldResponse(
+    field: checklist.ChecklistField, *, answered: bool, current_value: str | None
+) -> ChecklistFieldResponse:
+    return ChecklistFieldResponse(
         key=field.key,
         label=field.label,
         section=field.section.value,
@@ -183,28 +183,28 @@ def _who(
     return supervised, prescriber
 
 
-@router.get("/intake", response_model=IntakeResponse)
-def get_intake(
+@router.get("/checklist", response_model=ChecklistResponse)
+def get_checklist(
     user: UserDep,
     session: DbSession,
     _exempt: SubscriptionExemptDep,
     supervised: bool | None = None,
     prescriber: bool | None = None,
-) -> IntakeResponse:
+) -> ChecklistResponse:
     """The question set for this clinician, with what she has already answered."""
     is_supervised, is_prescriber = _who(
         session, user.id, supervised=supervised, prescriber=prescriber
     )
     answered = status.answered_keys(session, user.id)
     values = status.current_values(session, user.id)
-    fields = intake.applicable(
-        intake.INTAKE_FIELDS, supervised=is_supervised, prescriber=is_prescriber
+    fields = checklist.applicable(
+        checklist.CHECKLIST_FIELDS, supervised=is_supervised, prescriber=is_prescriber
     )
-    progress = intake.completion(answered, supervised=is_supervised, prescriber=is_prescriber)
-    return IntakeResponse(
+    progress = checklist.completion(answered, supervised=is_supervised, prescriber=is_prescriber)
+    return ChecklistResponse(
         supervised=is_supervised,
         prescriber=is_prescriber,
-        claims_ready=intake.claims_ready(
+        claims_ready=checklist.claims_ready(
             answered, supervised=is_supervised, prescriber=is_prescriber
         ),
         progress=[
@@ -223,7 +223,7 @@ def get_intake(
     )
 
 
-@router.get("/intake/confirmations", response_model=list[ConfirmationResponse])
+@router.get("/checklist/confirmations", response_model=list[ConfirmationResponse])
 def list_confirmations(
     user: UserDep,
     session: DbSession,
@@ -233,7 +233,7 @@ def list_confirmations(
     return [_confirmation_to_response(r) for r in confirmations.list_for(session, user.id)]
 
 
-@router.put("/intake/confirmations/{field_key}", response_model=ConfirmationResponse)
+@router.put("/checklist/confirmations/{field_key}", response_model=ConfirmationResponse)
 def record_confirmation(
     field_key: str,
     payload: ConfirmationPayload,
@@ -247,8 +247,8 @@ def record_confirmation(
     the question is "is this right now" rather than a history of what she was
     shown.
     """
-    field = next((f for f in intake.INTAKE_FIELDS if f.key == field_key), None)
-    if field is None or field.tier is not intake.Tier.CONFIRM:
+    field = next((f for f in checklist.CHECKLIST_FIELDS if f.key == field_key), None)
+    if field is None or field.tier is not checklist.Tier.CONFIRM:
         raise NotFoundError(f"No Tier-0 field named {field_key!r}")
 
     try:
@@ -268,9 +268,9 @@ def record_confirmation(
     return _confirmation_to_response(row)
 
 
-@router.patch("/intake/answers")
-def save_intake_answers(
-    payload: IntakeAnswersPayload,
+@router.patch("/checklist/answers")
+def save_checklist_answers(
+    payload: ChecklistAnswersPayload,
     request: Request,
     user: UserDep,
     session: DbSession,
@@ -279,7 +279,7 @@ def save_intake_answers(
 ) -> dict[str, object]:
     """Save the scalar answers, leaving anything unmentioned alone.
 
-    Partial by design: the intake is meant to be left and resumed, so a request
+    Partial by design: the checklist is meant to be left and resumed, so a request
     carrying one field must not blank the rest. Writes go through
     ``government_ids`` rather than onto the row, because that row has one
     writer and a second would race it.
@@ -293,7 +293,7 @@ def save_intake_answers(
     return summary
 
 
-@router.get("/intake/sources", response_model=list[str])
+@router.get("/checklist/sources", response_model=list[str])
 def list_confirmation_sources(_exempt: SubscriptionExemptDep) -> list[str]:
     """The provenance vocabulary, so the surface never invents a label."""
     return list(CREDENTIAL_CONFIRMATION_SOURCES)

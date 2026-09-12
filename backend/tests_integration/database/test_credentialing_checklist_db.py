@@ -1,12 +1,12 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Real-Postgres proof for the tiered intake.
+"""Real-Postgres proof for the tiered checklist.
 
 Four things the unit suite cannot show, because they are properties of a
 provisioned tenant rather than of the code:
 
 1. A freshly-provisioned tenant carries ``credential_confirmations`` and the
-   four columns the intake added. Provisioning applies ``tenant_template.sql``
+   four columns the checklist added. Provisioning applies ``tenant_template.sql``
    rather than the alembic chain, so a migrated tenant having them says
    nothing about a new one.
 2. The confirmation table is force-RLS'd with a working policy, and the
@@ -17,7 +17,7 @@ provisioned tenant rather than of the code:
    earlier draft of the design got wrong: the record was briefly platform-
    scoped, and a completion computed there would have been the same for every
    practice a clinician worked in.
-4. One clinician's intake is not readable as another's. The conftest role is
+4. One clinician's checklist is not readable as another's. The conftest role is
    NOSUPERUSER NOBYPASSRLS, so this is the real boundary.
 
 Run: ``make test-integration``.
@@ -52,7 +52,7 @@ pytestmark = pytest.mark.skipif(
 _CLINICIAN_A = "5e7b4e2c-ad4a-5ebf-c1af-af6c9e5a5e05"
 _CLINICIAN_B = "6f8c5f3d-be5b-5fca-d2bf-bf7daf6b6f06"
 
-#: The columns the intake added to the identifier row. Listed rather than
+#: The columns the checklist added to the identifier row. Listed rather than
 #: derived so that dropping one is a decision made here too.
 _NEW_IDENTIFIER_COLUMNS = (
     "supervision_status",
@@ -94,7 +94,7 @@ def tenant_schema(engine: Engine) -> Iterator[str]:
         conn.execute(text("SET search_path = practice, platform, public"))
         conn.commit()
 
-    schema = f"practice_test_intake_{uuid.uuid4().hex[:8]}"
+    schema = f"practice_test_checklist_{uuid.uuid4().hex[:8]}"
     create_practice_schema(engine, schema)
     yield schema
     with engine.connect() as conn:
@@ -275,7 +275,7 @@ class TestTierOneCompletesAgainstTheTenantRecord:
         herself in the same schema, sees none of it — so "Tier 1 is finished"
         is a fact about a clinician in a practice, not about the deployment.
         """
-        from app.credentialing import intake, status  # noqa: PLC0415
+        from app.credentialing import checklist, status  # noqa: PLC0415
 
         scoped_a = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
         try:
@@ -283,18 +283,18 @@ class TestTierOneCompletesAgainstTheTenantRecord:
             scoped_a.session.commit()
 
             answered = status.answered_keys(scoped_a.session, _CLINICIAN_A)
-            assert intake.claims_ready(answered)
+            assert checklist.claims_ready(answered)
 
-            by_tier = {c.tier: c for c in intake.completion(answered)}
-            assert by_tier[intake.Tier.CLAIMS_READY].complete
-            assert by_tier[intake.Tier.CREDENTIALING].answered == 0
+            by_tier = {c.tier: c for c in checklist.completion(answered)}
+            assert by_tier[checklist.Tier.CLAIMS_READY].complete
+            assert by_tier[checklist.Tier.CREDENTIALING].answered == 0
         finally:
             scoped_a.close()
 
         scoped_b = _TenantSession(engine, tenant_schema, _CLINICIAN_B)
         try:
             answered_b = status.answered_keys(scoped_b.session, _CLINICIAN_B)
-            assert not intake.claims_ready(answered_b)
+            assert not checklist.claims_ready(answered_b)
             assert answered_b == set()
         finally:
             scoped_b.close()

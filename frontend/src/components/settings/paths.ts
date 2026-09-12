@@ -21,3 +21,10 @@ export const BILLING_CONTACT_SETTINGS_PATH = `/dashboard/settings/${BILLING_CONT
 /** The payer list; the claims setup checklist links here for the first payer. */
 export const INSURANCE_PAYERS_SETTINGS_ID = "insurance"
 export const INSURANCE_PAYERS_SETTINGS_PATH = `/dashboard/settings/${INSURANCE_PAYERS_SETTINGS_ID}`
+
+/**
+ * What the insurers still need from her — the tiered credentialing checklist.
+ * The billing page's prompt links here rather than carrying its own copy.
+ */
+export const CREDENTIALING_SETTINGS_ID = "credentialing"
+export const CREDENTIALING_SETTINGS_PATH = `/dashboard/settings/${CREDENTIALING_SETTINGS_ID}`

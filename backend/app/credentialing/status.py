@@ -1,11 +1,11 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""How far through the intake a clinician actually is, read off the record.
+"""How far through the checklist a clinician actually is, read off the record.
 
 :func:`answered_keys` is the bridge between the question set and the tables it
 writes into. Nothing here restates where a field lands — every lookup is
 derived from that field's own ``target``, so a question retargeted in
-``intake.py`` reports against its new home with no edit here.
+``checklist.py`` reports against its new home with no edit here.
 
 A field counts as answered when its target holds something:
 
@@ -17,7 +17,7 @@ A field counts as answered when its target holds something:
 * an upload — a document of that type exists in the vault.
 * ``credential_confirmations`` — she has confirmed that field.
 
-The result feeds :func:`app.credentialing.intake.completion`, which reports per
+The result feeds :func:`app.credentialing.checklist.completion`, which reports per
 tier. Nothing here produces a single overall figure, for the reason given
 there: one number renders Tier-1-and-stop as half done.
 
@@ -32,6 +32,7 @@ column nobody is reading.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, datetime
 from typing import TYPE_CHECKING
 
@@ -41,12 +42,12 @@ from ..db.models import (
     Base,
     ClinicianProfileRow,
     ComplianceDocumentRow,
-    CredentialConfirmationRow,
     CredentialDisclosureRow,
     PracticeBillingProfileRow,
 )
 from ..services.practice_billing_profile import SINGLETON_ID
-from .intake import INTAKE_FIELDS, FieldKind, IntakeField, Tier
+from . import confirmations
+from .checklist import CHECKLIST_FIELDS, ChecklistField, FieldKind, Tier
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -62,7 +63,7 @@ _SINGLE_ROW_TABLES: frozenset[str] = frozenset({"credential_government_ids", "cl
 _PRACTICE_SCOPED_TABLES: frozenset[str] = frozenset({"practice_billing_profile"})
 
 
-def _table_and_column(field: IntakeField) -> tuple[str, str | None]:
+def _table_and_column(field: ChecklistField) -> tuple[str, str | None]:
     table, _, column = field.target.partition(".")
     return table, column or None
 
@@ -72,7 +73,7 @@ def _has_document(session: Session, user_id: str, document_type: str) -> bool:
 
     Keyed on ``document_type`` rather than on a foreign key from the question,
     because the vault is where a document lives whether it arrived through the
-    intake or through the compliance surface that predates it.
+    checklist or through the compliance surface that predates it.
     """
     return (
         session.scalar(
@@ -89,17 +90,24 @@ def _has_document(session: Session, user_id: str, document_type: str) -> bool:
     ) > 0
 
 
-def _is_answered(session: Session, user_id: str, field: IntakeField) -> bool:  # noqa: PLR0911
+def _is_answered(
+    session: Session,
+    user_id: str,
+    field: ChecklistField,
+    *,
+    answered_elsewhere: _AnsweredElsewhere,
+) -> bool:
     table, column = _table_and_column(field)
 
-    if table == "credential_confirmations":
-        return _confirmed(session, user_id, field.key)
+    # Both of these are answered by the confirmation rather than by a column:
+    # one has no home column anywhere, and the other's column belongs to the
+    # practice, so confirming it is the per-clinician fact.
+    if table == "credential_confirmations" or table in _PRACTICE_SCOPED_TABLES:
+        return field.key in answered_elsewhere.confirmed
     if table == "credential_disclosures":
-        return _disclosed(session, user_id, field.key)
+        return field.key in answered_elsewhere.disclosed
     if field.kind is FieldKind.UPLOAD and table == "compliance_documents":
         return _has_document(session, user_id, field.key)
-    if table in _PRACTICE_SCOPED_TABLES:
-        return _confirmed(session, user_id, field.key)
 
     mapped = Base.metadata.tables.get(table)
     if mapped is None or "user_id" not in mapped.c:
@@ -115,47 +123,45 @@ def _is_answered(session: Session, user_id: str, field: IntakeField) -> bool:  #
     return (session.scalar(select(func.count()).select_from(mapped).where(predicate)) or 0) > 0
 
 
-def _confirmed(session: Session, user_id: str, field_key: str) -> bool:
-    return (
-        session.scalar(
-            select(func.count())
-            .select_from(CredentialConfirmationRow)
-            .where(
-                and_(
-                    CredentialConfirmationRow.user_id == user_id,
-                    CredentialConfirmationRow.field_key == field_key,
-                )
-            )
-        )
-        or 0
-    ) > 0
+@dataclass(frozen=True)
+class _AnsweredElsewhere:
+    """The two key sets that answer a field without a column behind them.
 
+    Loaded once per walk rather than asked per field. Both tables are keyed by
+    the field's own key, so a COUNT per field was one query per card — fifteen
+    round trips to learn what two selects already know.
+    """
 
-def _disclosed(session: Session, user_id: str, question_key: str) -> bool:
-    return (
-        session.scalar(
-            select(func.count())
-            .select_from(CredentialDisclosureRow)
-            .where(
-                and_(
-                    CredentialDisclosureRow.user_id == user_id,
-                    CredentialDisclosureRow.question_key == question_key,
-                )
+    confirmed: frozenset[str]
+    disclosed: frozenset[str]
+
+    @classmethod
+    def load(cls, session: Session, user_id: str) -> _AnsweredElsewhere:
+        disclosed = session.scalars(
+            select(CredentialDisclosureRow.question_key).where(
+                CredentialDisclosureRow.user_id == user_id
             )
+        ).all()
+        return cls(
+            confirmed=frozenset(row.field_key for row in confirmations.list_for(session, user_id)),
+            disclosed=frozenset(disclosed),
         )
-        or 0
-    ) > 0
 
 
 def answered_keys(session: Session, user_id: str) -> set[str]:
-    """Which of the intake's questions this clinician has an answer on file for.
+    """Which of the checklist's items this clinician has an answer on file for.
 
     Reads the record rather than a progress column, so a fact entered through
     any other surface — the compliance vault, the billing profile, an importer
-    — counts. The intake exists to avoid asking twice; a progress column it
+    — counts. The checklist exists to avoid asking twice; a progress column it
     kept for itself would ask again.
     """
-    return {f.key for f in INTAKE_FIELDS if _is_answered(session, user_id, f)}
+    answered_elsewhere = _AnsweredElsewhere.load(session, user_id)
+    return {
+        f.key
+        for f in CHECKLIST_FIELDS
+        if _is_answered(session, user_id, f, answered_elsewhere=answered_elsewhere)
+    }
 
 
 # --- What is actually in the record --------------------------------------
@@ -223,19 +229,15 @@ def _render(value: object) -> str | None:
 def _presented_values(session: Session, user_id: str) -> dict[str, str | None]:
     """The last value she was shown for each field she has answered on.
 
-    One query for the whole tier rather than one per card.
+    One query for the whole tier rather than one per card, and it is the one
+    ``confirmations`` already owns — the reader here does not need its own
+    idea of how a confirmation row is found.
     """
-    rows = session.execute(
-        select(
-            CredentialConfirmationRow.field_key,
-            CredentialConfirmationRow.presented_value,
-        ).where(CredentialConfirmationRow.user_id == user_id)
-    ).tuples()
-    return dict(rows.all())
+    return {row.field_key: row.presented_value for row in confirmations.list_for(session, user_id)}
 
 
 def _current_value(
-    field: IntakeField,
+    field: ChecklistField,
     *,
     rows: dict[str, object],
     presented: dict[str, str | None],
@@ -283,7 +285,7 @@ def current_values(session: Session, user_id: str) -> dict[str, str]:
         rows["practice_billing_profile"] = billing
 
     values: dict[str, str] = {}
-    for field in INTAKE_FIELDS:
+    for field in CHECKLIST_FIELDS:
         if field.tier is not Tier.CONFIRM:
             continue
         rendered = _current_value(field, rows=rows, presented=presented)

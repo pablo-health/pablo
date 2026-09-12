@@ -5,7 +5,7 @@
 import { X } from "lucide-react"
 import Link from "next/link"
 import { useState } from "react"
-import { useIntake } from "@/hooks/useCredentialingIntake"
+import { useChecklist } from "@/hooks/useCredentialingChecklist"
 
 /**
  * The way into billing setup, for a practice that has not been through it.
@@ -28,9 +28,9 @@ import { useIntake } from "@/hooks/useCredentialingIntake"
  */
 export function CredentialingPrompt() {
   const [dismissed, setDismissed] = useState(false)
-  const { data: intake } = useIntake()
+  const { data: checklist } = useChecklist()
 
-  const panels = intake?.fields.find((f) => f.key === "payer_participation")
+  const panels = checklist?.fields.find((f) => f.key === "payer_participation")
   // Absent means the question does not apply to her at all; answered means we
   // already know. Either way there is nothing to ask.
   if (dismissed || !panels || panels.answered) return null
