@@ -545,9 +545,12 @@ def test_create_appointment_clean_slate_has_no_warnings(write_client: TestClient
     assert response.json()["warnings"] == []
 
 
-def test_create_appointment_malformed_rule_does_not_500(write_client: TestClient) -> None:
-    """A rule with params missing an expected key must not 500 the booking
-    path — it's treated as non-blocking rather than crashing the check."""
+def test_a_rule_missing_a_param_never_reaches_the_booking_path(
+    write_client: TestClient,
+) -> None:
+    """The engine reads params with bare subscripts, so a working_hours row
+    with no start/end used to be a 500 waiting on the availability path.
+    It is refused at save time instead, naming the fields."""
     rule_response = write_client.post(
         "/api/availability/rules",
         json={
@@ -556,11 +559,13 @@ def test_create_appointment_malformed_rule_does_not_500(write_client: TestClient
             "params": {"day_of_week": 2},  # missing "start"/"end"
         },
     )
-    assert rule_response.status_code == 201, rule_response.text
 
-    response = write_client.post("/api/appointments", json=_create_payload())
+    assert rule_response.status_code == 422, rule_response.text
+    assert "start" in rule_response.text
+    assert "end" in rule_response.text
 
-    assert response.status_code == 201, response.text
+    listed = write_client.get("/api/availability/rules")
+    assert listed.json()["total"] == 0, listed.text
 
 
 def test_update_appointment_rejects_blocked_day_rule_on_reschedule(
@@ -1100,6 +1105,93 @@ def test_create_appointment_not_connected_leaves_status_null(
     assert body["google_sync_status"] is None
 
 
+# --- Availability rule params: validated at the boundary ---
+#
+# params is JSONB and the engine reads it with bare subscripts, so the
+# create/update boundary is the only place that can refuse a shape. These
+# pin what it refuses: a 422 naming the field, and nothing stored.
+
+
+def _stored_rules(client: TestClient) -> list[dict[str, Any]]:
+    response = client.get("/api/availability/rules")
+    assert response.status_code == 200, response.text
+    data: list[dict[str, Any]] = response.json()["data"]
+    return data
+
+
+def test_create_rule_refuses_a_misspelled_param_key(write_client: TestClient) -> None:
+    """`minute` for `minutes` would otherwise store as a buffer rule that
+    enforces nothing and reads as configured in the UI."""
+    response = write_client.post(
+        "/api/availability/rules",
+        json={"rule_type": "buffer_after", "enforcement": "hard", "params": {"minute": 15}},
+    )
+
+    assert response.status_code == 422, response.text
+    assert "minutes" in response.text
+    assert _stored_rules(write_client) == []
+
+
+@pytest.mark.parametrize(
+    ("params", "named"),
+    [
+        ({"day_of_week": 9, "start": "09:00", "end": "17:00"}, "day_of_week"),
+        ({"day_of_week": 2, "start": "25:00", "end": "17:00"}, "start"),
+        ({"day_of_week": 2, "start": "17:00", "end": "09:00"}, "end"),
+    ],
+)
+def test_create_rule_refuses_out_of_range_values(
+    write_client: TestClient, params: dict[str, Any], named: str
+) -> None:
+    response = write_client.post(
+        "/api/availability/rules",
+        json={"rule_type": "working_hours", "enforcement": "hard", "params": params},
+    )
+
+    assert response.status_code == 422, response.text
+    assert named in response.text
+    assert _stored_rules(write_client) == []
+
+
+def test_update_rule_refuses_malformed_params_and_keeps_the_stored_ones(
+    write_client: TestClient,
+) -> None:
+    created = write_client.post(
+        "/api/availability/rules",
+        json={"rule_type": "buffer_after", "enforcement": "hard", "params": {"minutes": 15}},
+    )
+    assert created.status_code == 201, created.text
+    rule_id = created.json()["id"]
+
+    response = write_client.patch(
+        f"/api/availability/rules/{rule_id}", json={"params": {"minutes": -5}}
+    )
+
+    assert response.status_code == 422, response.text
+    assert "minutes" in response.text
+    assert _stored_rules(write_client)[0]["params"] == {"minutes": 15}
+
+
+def test_update_rule_refuses_a_new_rule_type_the_stored_params_do_not_fit(
+    write_client: TestClient,
+) -> None:
+    """Changing the type alone would leave a row whose params belong to the
+    type it used to be — a max_per_day rule with no max is a 500 later."""
+    created = write_client.post(
+        "/api/availability/rules",
+        json={"rule_type": "buffer_after", "enforcement": "hard", "params": {"minutes": 15}},
+    )
+    assert created.status_code == 201, created.text
+    rule_id = created.json()["id"]
+
+    response = write_client.patch(
+        f"/api/availability/rules/{rule_id}", json={"rule_type": "max_per_day"}
+    )
+
+    assert response.status_code == 422, response.text
+    assert _stored_rules(write_client)[0]["rule_type"] == "buffer_after"
+
+
 # --- Natural-language availability rule parse ---
 
 
@@ -1142,6 +1234,82 @@ def test_parse_availability_rules_returns_proposals_creates_nothing(
     assert body["proposals"][0]["params"] == {"day_of_week": 4}
     assert body["could_not_parse"] is None
     assert rule_repo.list_by_user("test-user-123") == []
+
+
+def test_a_proposal_carrying_a_key_the_engine_never_reads_is_refused(
+    write_client: TestClient, rule_repo: InMemoryAvailabilityRuleRepository
+) -> None:
+    """The parser is the writer most able to invent a param, so its
+    proposals go through the same models as a hand-written rule. A
+    buffer_after described with a `max` instead of `minutes` is refused
+    rather than shown as a rule the therapist can confirm."""
+    _wire_parse_service(
+        {
+            "proposals": [
+                {
+                    "rule_type": "buffer_after",
+                    "enforcement": "hard",
+                    "max": 15,
+                    "human_summary": "15 minutes after each session.",
+                    "confidence": 0.95,
+                }
+            ],
+            "could_not_parse": None,
+            "exclusive": False,
+        }
+    )
+
+    response = write_client.post(
+        "/api/availability/rules/parse", json={"text": "Leave 15 minutes after each session"}
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["proposals"] == []
+    assert body["could_not_parse"]
+    assert rule_repo.list_by_user("test-user-123") == []
+
+
+def test_a_proposal_edited_to_carry_an_invented_key_is_refused_on_confirm(
+    write_client: TestClient,
+) -> None:
+    """Confirming is an ordinary create call, and a caller may edit a
+    proposal before sending it — so the boundary refuses the invented key
+    even when the parser's own output was clean."""
+    _wire_parse_service(
+        {
+            "proposals": [
+                {
+                    "rule_type": "buffer_after",
+                    "enforcement": "hard",
+                    "minutes": 15,
+                    "human_summary": "15 minutes after each session.",
+                    "confidence": 0.95,
+                }
+            ],
+            "could_not_parse": None,
+            "exclusive": False,
+        }
+    )
+    parsed = write_client.post(
+        "/api/availability/rules/parse", json={"text": "Leave 15 minutes after each session"}
+    )
+    assert parsed.status_code == 200, parsed.text
+    proposal = parsed.json()["proposals"][0]
+    assert proposal["params"] == {"minutes": 15}
+
+    response = write_client.post(
+        "/api/availability/rules",
+        json={
+            "rule_type": proposal["rule_type"],
+            "enforcement": proposal["enforcement"],
+            "params": {**proposal["params"], "grace_minutes": 5},
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    assert "grace_minutes" in response.text
+    assert _stored_rules(write_client) == []
 
 
 def test_parse_availability_rules_rate_limited(write_client: TestClient) -> None:
