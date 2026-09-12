@@ -1854,3 +1854,102 @@ def test_create_recurring_override_records_each_rule_type_once(
     assert kwargs["changes"]["overridden_rules"] == [
         {"rule_type": "block_day_of_week", "enforcement": "hard"}
     ]
+
+
+# --- Availability rules scoped to an appointment type ---
+
+
+def _wednesday_claim(appointment_type_id: str, **overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "rule_type": "working_hours",
+        "enforcement": "hard",
+        "params": {"day_of_week": 2, "start": "09:00", "end": "17:00"},
+        "appointment_type_id": appointment_type_id,
+        "allow_other_types": False,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_create_rule_round_trips_its_scope(write_client: TestClient) -> None:
+    response = write_client.post(
+        "/api/availability/rules",
+        json={
+            "rule_type": "max_per_day",
+            "enforcement": "hard",
+            "params": {"max": 2},
+            "appointment_type_id": "type-intake",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["appointment_type_id"] == "type-intake"
+    assert body["allow_other_types"] is True
+    assert body["warnings"] == []
+
+
+def test_create_rule_defaults_to_practice_wide(write_client: TestClient) -> None:
+    """Omitting the new fields leaves a rule exactly as it has always been."""
+    response = write_client.post(
+        "/api/availability/rules",
+        json={"rule_type": "max_per_day", "enforcement": "hard", "params": {"max": 2}},
+    )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["appointment_type_id"] is None
+    assert body["allow_other_types"] is True
+
+
+def test_create_rule_warns_when_a_claim_swallows_the_day(write_client: TestClient) -> None:
+    """Claiming the practice's whole Wednesday for one type comes back with
+    a warning rather than silently leaving every other type nowhere to go."""
+    practice_hours = write_client.post(
+        "/api/availability/rules",
+        json={
+            "rule_type": "working_hours",
+            "enforcement": "hard",
+            "params": {"day_of_week": 2, "start": "09:00", "end": "17:00"},
+        },
+    )
+    assert practice_hours.status_code == 201, practice_hours.text
+
+    response = write_client.post("/api/availability/rules", json=_wednesday_claim("type-intake"))
+
+    assert response.status_code == 201, response.text
+    warnings = response.json()["warnings"]
+    assert any("no Wednesday availability" in w for w in warnings)
+
+
+def test_slots_honour_a_claimed_window(write_client: TestClient) -> None:
+    for payload in (
+        {
+            "rule_type": "working_hours",
+            "enforcement": "hard",
+            "params": {"day_of_week": 2, "start": "09:00", "end": "17:00"},
+        },
+        _wednesday_claim(
+            "type-intake", params={"day_of_week": 2, "start": "09:00", "end": "12:00"}
+        ),
+    ):
+        assert write_client.post("/api/availability/rules", json=payload).status_code == 201
+
+    def starts(**params: object) -> list[str]:
+        response = write_client.get(
+            "/api/availability/slots",
+            params={"date": "2026-04-15", "duration": 60, **params},
+        )
+        assert response.status_code == 200, response.text
+        return [s["start"][11:16] for s in response.json()["slots"]]
+
+    # Local 09:00-17:00 at 60 minutes is eight slots; the claim takes the
+    # first three of them for intakes and leaves the rest to everyone else.
+    intake = starts(appointment_type_id="type-intake")
+    follow_up = starts(appointment_type_id="type-follow-up")
+
+    assert len(intake) == 3
+    assert len(follow_up) == 5
+    assert not set(intake) & set(follow_up)
+    # No type named lists against practice-wide rules and loses the claim.
+    assert starts() == follow_up

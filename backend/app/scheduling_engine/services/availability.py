@@ -82,9 +82,7 @@ def _applies_to_type(rule: AvailabilityRule, appointment_type_id: str | None) ->
     return rule.appointment_type_id is None or rule.appointment_type_id == appointment_type_id
 
 
-def _intersect_ranges(
-    a: list[tuple[int, int]], b: list[tuple[int, int]]
-) -> list[tuple[int, int]]:
+def _intersect_ranges(a: list[tuple[int, int]], b: list[tuple[int, int]]) -> list[tuple[int, int]]:
     """Every span present in both lists of half-open minute ranges."""
     overlaps = [
         (max(a_start, b_start), min(a_end, b_end))
@@ -261,9 +259,7 @@ class AvailabilityEngine:
             return FreeSlotsResult(configured=True, slots=[], duration_minutes=resolved_duration)
 
         blocked_minutes = self._get_blocked_minutes(rules)
-        hard_claimed, soft_claimed = self._claimed_minutes(
-            all_rules, date_str, appointment_type_id
-        )
+        hard_claimed, soft_claimed = self._claimed_minutes(all_rules, date_str, appointment_type_id)
         blocked_minutes = blocked_minutes | hard_claimed
 
         day = date.fromisoformat(date_str)
@@ -717,11 +713,9 @@ class AvailabilityEngine:
         for r in same_day:
             if r.rule_type == RuleType.WORKING_HOURS and r.appointment_type_id is None:
                 practice_hours |= _window_minutes(r)
-        all_claims = claimed.union(*(_window_minutes(r) for r in rival_claims)) if rival_claims else claimed
+        all_claims = claimed.union(*(_window_minutes(r) for r in rival_claims))
         if practice_hours and not practice_hours - all_claims:
-            warnings.append(
-                f"This leaves no {day} availability for any other appointment type."
-            )
+            warnings.append(f"This leaves no {day} availability for any other appointment type.")
         return warnings
 
     def _get_max_per_day(self, rules: list[AvailabilityRule]) -> tuple[int, str] | None:
