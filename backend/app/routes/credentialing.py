@@ -71,6 +71,11 @@ class IntakeFieldResponse(BaseModel):
     #: a confirm control either way; the other tiers use it to show what is
     #: left without implying anything is overdue.
     answered: bool
+    #: What the record holds for this field right now, rendered for display.
+    #: Tier 0 only — the tier that asks her to agree with a value rather than
+    #: to type one. ``None`` means nothing is on file, which the card says out
+    #: loud rather than showing an empty box as though it were an answer.
+    current_value: str | None = None
 
 
 class TierProgressResponse(BaseModel):
@@ -129,7 +134,9 @@ class IntakeAnswersPayload(BaseModel):
     medicaid_intent: bool | None = None
 
 
-def _field_to_response(field: intake.IntakeField, *, answered: bool) -> IntakeFieldResponse:
+def _field_to_response(
+    field: intake.IntakeField, *, answered: bool, current_value: str | None
+) -> IntakeFieldResponse:
     return IntakeFieldResponse(
         key=field.key,
         label=field.label,
@@ -142,6 +149,7 @@ def _field_to_response(field: intake.IntakeField, *, answered: bool) -> IntakeFi
         help_text=field.help_text,
         choices=list(field.choices),
         answered=answered,
+        current_value=current_value,
     )
 
 
@@ -188,6 +196,7 @@ def get_intake(
         session, user.id, supervised=supervised, prescriber=prescriber
     )
     answered = status.answered_keys(session, user.id)
+    values = status.current_values(session, user.id)
     fields = intake.applicable(
         intake.INTAKE_FIELDS, supervised=is_supervised, prescriber=is_prescriber
     )
@@ -207,7 +216,10 @@ def get_intake(
             )
             for p in progress
         ],
-        fields=[_field_to_response(f, answered=f.key in answered) for f in fields],
+        fields=[
+            _field_to_response(f, answered=f.key in answered, current_value=values.get(f.key))
+            for f in fields
+        ],
     )
 
 

@@ -43,6 +43,7 @@ function field(overrides: Partial<IntakeField> = {}): IntakeField {
     help_text: null,
     choices: [],
     answered: false,
+    current_value: null,
     ...overrides,
   }
 }
@@ -303,5 +304,70 @@ describe("questions that are not confirmations", () => {
     expect(screen.getByText("Optional")).toBeInTheDocument()
     expect(screen.getByText("On file")).toBeInTheDocument()
     expect(screen.getByText("Not yet")).toBeInTheDocument()
+  })
+})
+
+describe("tier 0 shows what the record holds", () => {
+  it("shows a value that is on file before she has confirmed anything", () => {
+    // The bug: the API carried no value, so the card asked her to agree with
+    // "Nothing on file" for an NPI sitting on her own profile.
+    useIntake.mockReturnValue({
+      data: surface({ fields: [field({ current_value: "1999999984" })] }),
+      isLoading: false,
+    })
+    useConfirmations.mockReturnValue({ data: [] as Confirmation[] })
+    renderWizard()
+
+    expect(screen.getByText("1999999984")).toBeInTheDocument()
+    expect(screen.queryByText(/nothing on file/i)).not.toBeInTheDocument()
+  })
+
+  it("still says so when there is genuinely nothing behind a field", () => {
+    renderWizard()
+
+    expect(screen.getByText(/nothing on file/i)).toBeInTheDocument()
+  })
+
+  it("prefers the record over the value she agreed with last time", () => {
+    // A column that has changed since she confirmed it is the one thing this
+    // tier exists to surface. Showing the old value would hide it.
+    useIntake.mockReturnValue({
+      data: surface({ fields: [field({ current_value: "1999999984", answered: true })] }),
+      isLoading: false,
+    })
+    useConfirmations.mockReturnValue({
+      data: [
+        {
+          field_key: "npi_number",
+          source: "nppes",
+          presented_value: "1000000004",
+          confirmed: true,
+          correction: null,
+          confirmed_at: "2026-09-01T00:00:00Z",
+        },
+      ],
+    })
+    renderWizard()
+
+    expect(screen.getByText("1999999984")).toBeInTheDocument()
+    expect(screen.queryByText("1000000004")).not.toBeInTheDocument()
+  })
+
+  it("confirms the value she was actually shown", () => {
+    // So a later divergence between card and column is visible in the record,
+    // rather than the confirmation quietly agreeing with something else.
+    useIntake.mockReturnValue({
+      data: surface({ fields: [field({ current_value: "1999999984" })] }),
+      isLoading: false,
+    })
+    useConfirmations.mockReturnValue({ data: [] as Confirmation[] })
+    renderWizard()
+
+    fireEvent.click(screen.getByRole("button", { name: /looks right/i }))
+
+    expect(recordMutate).toHaveBeenCalledWith({
+      fieldKey: "npi_number",
+      payload: expect.objectContaining({ presented_value: "1999999984" }),
+    })
   })
 })

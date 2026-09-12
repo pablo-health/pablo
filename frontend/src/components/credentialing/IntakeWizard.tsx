@@ -106,8 +106,14 @@ export function IntakeWizard() {
                     key={field.key}
                     field={field}
                     confirmation={confirmationByKey.get(field.key)}
+                    // The record first, her last-confirmed value second. That
+                    // order is what makes a column that has since changed
+                    // visible: she is re-asked about the new value rather than
+                    // shown the one she already agreed with.
                     presentedValue={
-                      confirmationByKey.get(field.key)?.presented_value ?? null
+                      field.current_value ??
+                      confirmationByKey.get(field.key)?.presented_value ??
+                      null
                     }
                     pending={recordConfirmation.isPending}
                     onRecord={(fieldKey, payload) =>
