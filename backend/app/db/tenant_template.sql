@@ -385,6 +385,23 @@ CREATE TABLE __TENANT_SCHEMA__.credential_bank_accounts (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.credential_confirmations (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    field_key character varying(64) NOT NULL,
+    source character varying(32) NOT NULL,
+    presented_value text,
+    confirmed boolean NOT NULL,
+    correction text,
+    confirmed_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_credential_confirmations_corrected CHECK ((confirmed OR (correction IS NOT NULL))),
+    CONSTRAINT ck_credential_confirmations_source CHECK (((source)::text = ANY ((ARRAY['nppes'::character varying, 'pecos_public_file'::character varying, 'leie_sam'::character varying, 'clinician_profiles'::character varying, 'practice_billing_profile'::character varying])::text[])))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.credential_disclosures (
     id uuid NOT NULL,
     user_id uuid NOT NULL,
@@ -447,6 +464,11 @@ CREATE TABLE __TENANT_SCHEMA__.credential_government_ids (
     sole_proprietor boolean,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
+    supervision_status character varying(16),
+    caqh_id character varying(32),
+    medicare_intent boolean,
+    medicaid_intent boolean,
+    CONSTRAINT ck_credential_government_ids_supervision_status CHECK (((supervision_status IS NULL) OR ((supervision_status)::text = ANY ((ARRAY['independent'::character varying, 'supervised'::character varying])::text[])))),
     CONSTRAINT ck_credential_government_ids_tax_id_type CHECK (((tax_id_type IS NULL) OR ((tax_id_type)::text = ANY ((ARRAY['ein'::character varying, 'ssn'::character varying])::text[]))))
 );
 
@@ -1379,6 +1401,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.credential_bank_accounts
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.credential_confirmations
+    ADD CONSTRAINT pk_credential_confirmations PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.credential_disclosures
     ADD CONSTRAINT pk_credential_disclosures PRIMARY KEY (id);
 
@@ -1526,6 +1553,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.claims
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.contracted_rates
     ADD CONSTRAINT ux_contracted_rates_participation_code_date UNIQUE (participation_id, cpt, modifier, effective_date);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.credential_confirmations
+    ADD CONSTRAINT ux_credential_confirmations_user_field UNIQUE (user_id, field_key);
 
 
 

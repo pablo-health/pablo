@@ -54,6 +54,7 @@ from .routes import (
     claims_export,
     compliance,
     coverage,
+    credentialing,
     dashboard,
     ehr_routes,
     ext_auth,
@@ -272,6 +273,7 @@ app.include_router(calendar_import.router)
 app.include_router(note_types.router)
 app.include_router(compliance.router)
 app.include_router(supervision.router)
+app.include_router(credentialing.router)
 app.include_router(outcome_measures_router)
 app.include_router(patient_outcome_measures_router)
 app.include_router(medications_router)
