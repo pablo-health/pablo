@@ -2,7 +2,6 @@
 
 "use client"
 
-import Image from "next/image"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { INSURANCE_PAYERS_SETTINGS_PATH } from "@/components/settings/paths"
@@ -28,23 +27,14 @@ interface CredentialingIntroProps {
 export function CredentialingIntro({ onStart }: CredentialingIntroProps) {
   return (
     <div className="mx-auto max-w-2xl space-y-6">
-      <div className="flex items-start gap-4">
-        <Image
-          src="/pablo-tie.webp"
-          alt=""
-          width={56}
-          height={56}
-          className="shrink-0"
-        />
-        <div>
-          <h2 className="text-xl font-display font-semibold text-neutral-900">
-            Getting on insurance panels
-          </h2>
-          <p className="mt-1 text-sm text-neutral-600">
-            Also called <span className="font-medium">credentialing</span> — the
-            word payers, CAQH and your state board all use for it.
-          </p>
-        </div>
+      <div>
+        <h2 className="text-xl font-display font-semibold text-neutral-900">
+          Getting on insurance panels
+        </h2>
+        <p className="mt-1 text-sm text-neutral-600">
+          Also called <span className="font-medium">credentialing</span> — the
+          word payers, CAQH and your state board all use for it.
+        </p>
       </div>
 
       <div className="space-y-4 text-sm leading-relaxed text-neutral-700">

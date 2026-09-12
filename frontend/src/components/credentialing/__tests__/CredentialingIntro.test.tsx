@@ -12,13 +12,6 @@ import { fireEvent, render, screen } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 import { CredentialingIntro } from "../CredentialingIntro"
 
-vi.mock("next/image", () => ({
-  default: (props: Record<string, unknown>) => (
-    // eslint-disable-next-line @next/next/no-img-element, jsx-a11y/alt-text
-    <img {...(props as { alt?: string })} />
-  ),
-}))
-
 describe("CredentialingIntro", () => {
   it("names the jargon rather than avoiding it", () => {
     // She will meet the word within a day of starting — from a payer, from
