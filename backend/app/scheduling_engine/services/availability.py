@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+import calendar
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from ..models.availability import EnforcementLevel, RuleType
@@ -61,6 +63,55 @@ _ALIGNMENT_STEP_MINUTES = {"hour": 60, "half_hour": 30}
 def _next_aligned_minute(minute: int, step: int) -> int:
     remainder = minute % step
     return minute if remainder == 0 else minute + (step - remainder)
+
+
+class _DayCap(StrEnum):
+    """What the day's max_per_day rules, taken together, have decided."""
+
+    OPEN = "open"
+    OVER = "over"
+    CLOSED = "closed"
+
+
+def _applies_to_type(rule: AvailabilityRule, appointment_type_id: str | None) -> bool:
+    """Whether ``rule`` governs a listing for ``appointment_type_id``.
+
+    A practice-wide rule governs every type, which is why an unscoped rule
+    set behaves exactly as it did before types entered the picture.
+    """
+    return rule.appointment_type_id is None or rule.appointment_type_id == appointment_type_id
+
+
+def _intersect_ranges(
+    a: list[tuple[int, int]], b: list[tuple[int, int]]
+) -> list[tuple[int, int]]:
+    """Every span present in both lists of half-open minute ranges."""
+    overlaps = [
+        (max(a_start, b_start), min(a_end, b_end))
+        for a_start, a_end in a
+        for b_start, b_end in b
+        if _ranges_overlap(a_start, a_end, b_start, b_end)
+    ]
+    return sorted(overlaps)
+
+
+def _window_minutes(rule: AvailabilityRule) -> set[int]:
+    """The minutes-of-day a working_hours rule covers."""
+    return set(range(_time_to_minutes(rule.params["start"]), _time_to_minutes(rule.params["end"])))
+
+
+def _is_exclusive_window(rule: AvailabilityRule) -> bool:
+    """Whether ``rule`` claims its window for one type and no other.
+
+    Only working_hours defines a window to claim. A rule that counts or
+    blocks has nothing to hand out, so ``allow_other_types`` means nothing
+    on one and is ignored rather than guessed at.
+    """
+    return (
+        rule.rule_type == RuleType.WORKING_HOURS
+        and rule.appointment_type_id is not None
+        and not rule.allow_other_types
+    )
 
 
 class AvailabilityEngine:
@@ -125,8 +176,9 @@ class AvailabilityEngine:
         duration_minutes: int | None = None,
         *,
         tz: tzinfo = UTC,
+        appointment_type_id: str | None = None,
     ) -> FreeSlotsResult:
-        """Compute available time slots for a given date and duration.
+        """Compute available time slots for a given date, duration and type.
 
         ``date_str`` is a local calendar date in ``tz`` — the working-hours
         window runs from local midnight to the next local midnight, and slot
@@ -137,20 +189,71 @@ class AvailabilityEngine:
         rule (falling back to :data:`DEFAULT_DURATION_MINUTES`); callers that
         pass a duration explicitly keep that exact value.
 
+        ``appointment_type_id`` is the kind of appointment being listed for.
+        A rule applies when its own ``appointment_type_id`` is None (the
+        practice-wide rule) or equals this one; rules scoped to a different
+        type are skipped. Passing None therefore lists exactly what a
+        practice-wide rule set has always produced.
+
+        WHEN A PRACTICE-WIDE AND A TYPE-SCOPED RULE OF THE SAME TYPE BOTH
+        APPLY, the answer is fixed per rule type and never left to whichever
+        row was written first:
+
+        * ``working_hours`` — INTERSECTION. The practice's own hours are the
+          outer bound and a type-scoped window can only narrow within them; a
+          type is never offered outside the hours the practice keeps. A
+          type-scoped window on a weekday the practice does not work
+          therefore yields nothing, because the practice is shut.
+        * ``buffer_before`` / ``buffer_after`` — THE LARGER WINS, as it
+          already does between two practice-wide buffers. A buffer is a
+          minimum gap, and the longest minimum is the one that holds.
+        * ``max_per_day`` — BOTH COUNT, INDEPENDENTLY, over different
+          populations. A practice-wide cap counts every active appointment
+          that day; a type-scoped cap counts only that type's. "Two intakes a
+          day" does not exempt an intake from "eight appointments a day" —
+          whichever is reached first closes the day (HARD) or marks the
+          remaining slots ``over_cap`` (SOFT).
+        * everything that blocks (``block_time_range``, ``block_day_of_week``,
+          ``block_date_range``, ``block_specific_dates``) — UNION. Every
+          applying rule subtracts, which is what these rules already do
+          between themselves.
+        * ``session_defaults`` — the type-scoped one wins outright if there is
+          one, since a default only has one value to give.
+
+        EXCLUSIVE WINDOWS. A type-scoped ``working_hours`` rule with
+        ``allow_other_types`` False claims its window: it is subtracted from
+        every OTHER type's listing. HARD removes those slots; SOFT returns
+        them marked ``over_cap``, the same flag and the same enforcement
+        ladder a soft day cap uses, so a practice can still offer them
+        deliberately in-app while a public surface hides them. Two types
+        whose exclusive windows overlap both lose the overlap — each claim
+        subtracts from the other, so the result does not depend on rule
+        ordering or creation time. A listing with no type named
+        (``appointment_type_id`` None) has every exclusive window subtracted,
+        because it cannot promise the slot will be used by the type that
+        claimed it.
+
+        Exclusivity governs LISTING ONLY. It never touches appointments
+        already booked in a window that later became exclusive, and it does
+        not stand between a practice and a booking it makes directly —
+        :meth:`check_conflicts` is the booking-side gate and is deliberately
+        not type-scoped.
+
         A user with zero rules is NOT CONFIGURED — ``configured`` is False,
         distinct from a configured user whose rules simply leave no openings
         on this date. Both cases produce an empty ``slots`` list, so callers
         must check ``configured`` to tell "set up your availability" apart
         from "this day is full".
         """
-        rules = self._rule_repo.list_by_user(user_id)
+        all_rules = self._rule_repo.list_by_user(user_id)
+        rules = [r for r in all_rules if _applies_to_type(r, appointment_type_id)]
         resolved_duration = (
             duration_minutes if duration_minutes is not None else self._get_default_duration(rules)
         )
-        if not rules:
+        if not all_rules:
             return FreeSlotsResult(configured=False, slots=[], duration_minutes=resolved_duration)
 
-        working_ranges = self._get_working_hours(rules, date_str)
+        working_ranges = self._get_working_hours(rules, date_str, appointment_type_id)
         if not working_ranges:
             return FreeSlotsResult(configured=True, slots=[], duration_minutes=resolved_duration)
 
@@ -158,6 +261,10 @@ class AvailabilityEngine:
             return FreeSlotsResult(configured=True, slots=[], duration_minutes=resolved_duration)
 
         blocked_minutes = self._get_blocked_minutes(rules)
+        hard_claimed, soft_claimed = self._claimed_minutes(
+            all_rules, date_str, appointment_type_id
+        )
+        blocked_minutes = blocked_minutes | hard_claimed
 
         day = date.fromisoformat(date_str)
         day_start = datetime.combine(day, time(0), tzinfo=tz)
@@ -172,16 +279,10 @@ class AvailabilityEngine:
         )
         blocked_minutes = blocked_minutes | appt_blocked
 
-        over_cap = False
-        max_per_day = self._get_max_per_day(rules)
-        if max_per_day is not None:
-            cap, enforcement = max_per_day
-            if len(active) >= cap:
-                if enforcement != EnforcementLevel.SOFT:
-                    return FreeSlotsResult(
-                        configured=True, slots=[], duration_minutes=resolved_duration
-                    )
-                over_cap = True
+        capped = self._day_cap_state(rules, active, appointment_type_id)
+        if capped is _DayCap.CLOSED:
+            return FreeSlotsResult(configured=True, slots=[], duration_minutes=resolved_duration)
+        over_cap = capped is _DayCap.OVER
 
         alignment_step = self._get_alignment_step(rules)
 
@@ -197,7 +298,7 @@ class AvailabilityEngine:
                     slot = TimeSlot(
                         start=_minute_to_utc_iso(day, minute, tz),
                         end=_minute_to_utc_iso(day, minute + resolved_duration, tz),
-                        over_cap=over_cap,
+                        over_cap=over_cap or bool(slot_range & soft_claimed),
                     )
                     slots.append(slot)
                     minute += resolved_duration + buffer_before + buffer_after
@@ -217,7 +318,20 @@ class AvailabilityEngine:
         proposed_start: datetime,
         proposed_end: datetime,
     ) -> Conflict | None:
-        """Check a single rule against a proposed time window."""
+        """Check a single rule against a proposed time window.
+
+        TYPE-SCOPED RULES ARE SKIPPED HERE. A conflict check is handed an
+        instant and nothing else — it does not know what kind of appointment
+        is being proposed, so it cannot tell whether "at most two intakes a
+        day" is even about this booking. Applying it anyway would count every
+        appointment against a cap meant for one type. Type scoping is a
+        listing concept (see :meth:`get_free_slots`); the booking-side gate
+        stays practice-wide, which is also what keeps a practice free to book
+        deliberately inside a window some other type has claimed.
+        """
+        if rule.appointment_type_id is not None:
+            return None
+
         checkers = {
             RuleType.WORKING_HOURS: lambda: self._check_working_hours(
                 rule, proposed_start, proposed_end
@@ -396,20 +510,35 @@ class AvailabilityEngine:
     # --- Free slots helpers ---
 
     def _get_working_hours(
-        self, rules: list[AvailabilityRule], date_str: str
+        self,
+        rules: list[AvailabilityRule],
+        date_str: str,
+        appointment_type_id: str | None = None,
     ) -> list[tuple[int, int]]:
-        """Get working hour ranges (in minutes) for a given date."""
+        """Get working hour ranges (in minutes) for a given date and type.
+
+        A type-scoped window NARROWS the practice's own hours rather than
+        adding to them — see :meth:`get_free_slots` for why the intersection
+        is the defensible reading. With no type-scoped window for the day,
+        the practice's hours stand as they always have.
+        """
         day_of_week = date.fromisoformat(date_str).weekday()
-        ranges: list[tuple[int, int]] = []
+        practice: list[tuple[int, int]] = []
+        scoped: list[tuple[int, int]] = []
         for rule in rules:
             if (
-                rule.rule_type == RuleType.WORKING_HOURS
-                and rule.params.get("day_of_week") == day_of_week
+                rule.rule_type != RuleType.WORKING_HOURS
+                or rule.params.get("day_of_week") != day_of_week
             ):
-                start = _time_to_minutes(rule.params["start"])
-                end = _time_to_minutes(rule.params["end"])
-                ranges.append((start, end))
-        return sorted(ranges)
+                continue
+            span = (_time_to_minutes(rule.params["start"]), _time_to_minutes(rule.params["end"]))
+            if rule.appointment_type_id is None:
+                practice.append(span)
+            elif rule.appointment_type_id == appointment_type_id:
+                scoped.append(span)
+        if not scoped:
+            return sorted(practice)
+        return _intersect_ranges(practice, scoped)
 
     def _is_date_blocked(self, rules: list[AvailabilityRule], date_str: str) -> bool:
         day_of_week = date.fromisoformat(date_str).weekday()
@@ -452,11 +581,17 @@ class AvailabilityEngine:
         return buffer_before, buffer_after
 
     def _get_session_defaults_rule(self, rules: list[AvailabilityRule]) -> AvailabilityRule | None:
-        """Get the user's session_defaults rule, if any (first by created_at)."""
-        for rule in rules:
-            if rule.rule_type == RuleType.SESSION_DEFAULTS:
-                return rule
-        return None
+        """Get the session_defaults rule in force, if any.
+
+        ``rules`` is already narrowed to what applies, so a type-scoped rule
+        here is one scoped to the type being listed — and it wins over the
+        practice-wide default, which is the whole point of setting it. Ties
+        within a scope fall to the first by created_at, as before.
+        """
+        defaults = [r for r in rules if r.rule_type == RuleType.SESSION_DEFAULTS]
+        scoped = [r for r in defaults if r.appointment_type_id is not None]
+        chosen = scoped or defaults
+        return chosen[0] if chosen else None
 
     def _get_default_duration(self, rules: list[AvailabilityRule]) -> int:
         """Resolve the fallback slot duration from the session_defaults rule."""
@@ -476,6 +611,118 @@ class AvailabilityEngine:
         if not isinstance(alignment, str):
             return 0
         return _ALIGNMENT_STEP_MINUTES.get(alignment, 0)
+
+    def _claimed_minutes(
+        self,
+        rules: list[AvailabilityRule],
+        date_str: str,
+        appointment_type_id: str | None,
+    ) -> tuple[set[int], set[int]]:
+        """Minutes another type has claimed exclusively, split hard and soft.
+
+        Every exclusive window belonging to a type OTHER than the one being
+        listed subtracts, which is what makes the claim mutual: two types
+        whose windows overlap each subtract from the other and neither is
+        offered the overlap, whatever order the rules were written in.
+
+        A listing with no type named loses all of them — it cannot promise
+        the slot will be used by whoever claimed it.
+        """
+        day_of_week = date.fromisoformat(date_str).weekday()
+        hard: set[int] = set()
+        soft: set[int] = set()
+        for rule in rules:
+            if not _is_exclusive_window(rule) or rule.appointment_type_id == appointment_type_id:
+                continue
+            if rule.params.get("day_of_week") != day_of_week:
+                continue
+            claimed = soft if rule.enforcement == EnforcementLevel.SOFT else hard
+            claimed |= _window_minutes(rule)
+        return hard, soft
+
+    def _day_cap_state(
+        self,
+        rules: list[AvailabilityRule],
+        active: list[Appointment],
+        appointment_type_id: str | None,
+    ) -> _DayCap:
+        """Decide what the day's max_per_day rules leave open.
+
+        The practice-wide caps and the type-scoped caps are two separate
+        questions asked over two different populations — every active
+        appointment, and only this type's — and both are answered. A cap
+        that only counts intakes never excuses an intake from the
+        practice's own day limit.
+        """
+        groups: list[tuple[list[AvailabilityRule], int]] = [
+            ([r for r in rules if r.appointment_type_id is None], len(active))
+        ]
+        if appointment_type_id is not None:
+            groups.append(
+                (
+                    [r for r in rules if r.appointment_type_id == appointment_type_id],
+                    sum(1 for a in active if a.appointment_type_id == appointment_type_id),
+                )
+            )
+
+        state = _DayCap.OPEN
+        for group, booked in groups:
+            cap = self._get_max_per_day(group)
+            if cap is None:
+                continue
+            limit, enforcement = cap
+            if booked < limit:
+                continue
+            if enforcement != EnforcementLevel.SOFT:
+                return _DayCap.CLOSED
+            state = _DayCap.OVER
+        return state
+
+    def exclusivity_warnings(self, rule: AvailabilityRule) -> list[str]:
+        """What ``rule`` would take away from the practice's other types.
+
+        Called when a rule is written, because an exclusive window is the one
+        rule that can leave a practice with a calendar nothing else fits in,
+        and learning that from an empty slot list a week later is no way to
+        learn it. These are warnings, not refusals: a practice that means to
+        give a whole day to intakes is entitled to.
+        """
+        if not _is_exclusive_window(rule):
+            return []
+        try:
+            day_of_week = rule.params["day_of_week"]
+            claimed = _window_minutes(rule)
+        except (KeyError, TypeError, ValueError):
+            # Same stance the rest of the engine takes on unvalidated params:
+            # a rule we cannot read is a rule we cannot warn about.
+            return []
+
+        others = [r for r in self._rule_repo.list_by_user(rule.user_id) if r.id != rule.id]
+        same_day = [r for r in others if r.params.get("day_of_week") == day_of_week]
+        day = calendar.day_name[day_of_week]
+        warnings: list[str] = []
+
+        rival_claims = [
+            r
+            for r in same_day
+            if _is_exclusive_window(r) and r.appointment_type_id != rule.appointment_type_id
+        ]
+        if any(claimed & _window_minutes(r) for r in rival_claims):
+            warnings.append(
+                f"This window overlaps one another appointment type already claims on "
+                f"{day}. Neither type is offered the overlapping minutes."
+            )
+
+        practice_hours: set[int] = set()
+        for r in same_day:
+            if r.rule_type == RuleType.WORKING_HOURS and r.appointment_type_id is None:
+                practice_hours |= _window_minutes(r)
+        all_claims = claimed.union(*(_window_minutes(r) for r in rival_claims)) if rival_claims else claimed
+        if practice_hours and not practice_hours - all_claims:
+            warnings.append(
+                f"This leaves no {day} availability for any other appointment type."
+            )
+        return warnings
 
     def _get_max_per_day(self, rules: list[AvailabilityRule]) -> tuple[int, str] | None:
         """Get the most restrictive max_per_day cap and its enforcement level.

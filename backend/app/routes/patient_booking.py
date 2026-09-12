@@ -365,6 +365,7 @@ def _require_offered_slot(
     duration_minutes: int,
     *,
     tz: tzinfo,
+    appointment_type_id: str | None,
 ) -> None:
     """Refuse a start the engine would not have offered.
 
@@ -383,9 +384,15 @@ def _require_offered_slot(
     Soft rules still permit the booking — that is what soft means — but they
     reach the engine now, which is what makes ``over_cap`` and the warning list
     meaningful rather than dead.
+
+    Checked for the type actually being booked, so a rule scoped to that type
+    — a cap on how many of them run in a day, a window another type has
+    claimed — reaches this guard exactly as it reaches the listing.
     """
     date_str = start_at.astimezone(tz).date().isoformat()
-    free = engine.get_free_slots(owner, date_str, duration_minutes, tz=tz)
+    free = engine.get_free_slots(
+        owner, date_str, duration_minutes, tz=tz, appointment_type_id=appointment_type_id
+    )
     if not any(_slot_instant(slot.start) == start_at for slot in free.slots):
         raise _refuse(_SLOT_TAKEN, "SLOT_TAKEN", status.HTTP_409_CONFLICT)
 
@@ -442,7 +449,10 @@ def list_bookable_slots(
             PostgresAppointmentRepository(session),
         )
         tz = _owner_timezone(session, owner)
-        free = engine.get_free_slots(owner, date, duration_minutes, tz=tz)
+        # No type is named: this surface offers a duration, not a type, and
+        # the patient picks one when they book. Practice-wide rules only,
+        # which is what this endpoint has always listed against.
+        free = engine.get_free_slots(owner, date, duration_minutes, tz=tz, appointment_type_id=None)
 
         earliest, latest = _window(policy, now=datetime.now(UTC))
         offered = [
@@ -556,7 +566,9 @@ def book_appointment(
         # guard 1 is relaxed for a duration or a slot-hint the lattice does not
         # model, guard 2 is the only thing between a patient's arbitrary instant
         # and the diary.
-        _require_offered_slot(engine, owner, start_at, duration, tz=tz)
+        _require_offered_slot(
+            engine, owner, start_at, duration, tz=tz, appointment_type_id=appointment_type.id
+        )
 
         try:
             created = SchedulingService(
@@ -667,7 +679,14 @@ def reschedule_appointment(
         # own buffer blocking the slot next to it. That is existing engine
         # behaviour, shared with the clinician-side reschedule, and is not
         # worked around here.
-        _require_offered_slot(engine, owner, start_at, duration, tz=tz)
+        _require_offered_slot(
+            engine,
+            owner,
+            start_at,
+            duration,
+            tz=tz,
+            appointment_type_id=appointment.appointment_type_id,
+        )
 
         try:
             moved = service.reschedule_appointment(
