@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.credentialing.intake import (
+from .intake import (
     INTAKE_FIELDS,
     Applicability,
     CaqhSection,
