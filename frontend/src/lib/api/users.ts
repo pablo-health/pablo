@@ -273,7 +273,24 @@ export interface UserPreferences {
    * waved away. Optional because a response from before the flag existed
    * simply lacks it, which reads as "not yet". */
   calendar_setup_complete?: boolean
+  /** The same, for billing setup. Set on finish AND on "finish later": a
+   * first-visit surface she cannot leave is a trap, not a wizard. */
+  billing_setup_complete?: boolean
+  /** Her answer to "how do you get paid today?", so a resumed wizard opens on
+   * the branch she chose rather than back at the fork. */
+  billing_setup_route?: BillingSetupRoute | null
+  /** Where she had got to, as the step's id rather than its position — an
+   * index would point at the wrong screen once a step is inserted ahead of
+   * it. An unknown id falls back to the start of her branch. */
+  billing_setup_step?: string | null
 }
+
+/** How a therapist is paid today — the answer billing setup branches on. */
+export type BillingSetupRoute =
+  | "private_pay"
+  | "already_paneled"
+  | "wants_panels"
+  | "platform_to_own"
 
 export async function getPreferences(
   token?: string

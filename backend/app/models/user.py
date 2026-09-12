@@ -17,6 +17,16 @@ OnboardingState = Literal["in_progress", "later", "completed"]
 ThemeName = Literal["warm-paper", "dark", "high-contrast", "boring-ehr"]
 CalendarDensity = Literal["gentle", "balanced", "compact"]
 
+#: How a therapist is paid today — the answer billing setup branches on.
+#: Situational rather than aspirational: it describes her practice now, and she
+#: can change it when it changes.
+BillingSetupRoute = Literal[
+    "private_pay",
+    "already_paneled",
+    "wants_panels",
+    "platform_to_own",
+]
+
 # Max length of a single credential title (matches clinician_profiles.title).
 MAX_CREDENTIAL_TITLE_LEN = 50
 
@@ -83,6 +93,21 @@ class UserPreferences(BaseModel):
     # calendar setup wizard, so the Calendar page stops opening on it.
     # Settings keeps its own way back into the wizard regardless.
     calendar_setup_complete: bool = False
+    # The same, for billing setup. Set when she finishes the wizard AND when
+    # she chooses to finish later, because a first-visit surface she cannot
+    # leave is a trap rather than a wizard — she gets a card on the billing
+    # page instead, and can return whenever.
+    billing_setup_complete: bool = False
+    # Her answer to the wizard's first question: how she is paid today. Kept
+    # because it decides what the rest of setup asks for, so a resumed wizard
+    # must open on the branch she chose rather than back at the fork.
+    # ``None`` means she has not answered yet.
+    billing_setup_route: BillingSetupRoute | None = None
+    # Where she had got to, as the step's ID rather than its position. An index
+    # would quietly point at the wrong screen the first time a step is inserted
+    # ahead of it; an id either resolves or falls back to the start of her
+    # branch. Free text on purpose, so adding a step is not a schema change.
+    billing_setup_step: str | None = None
 
 
 class UpdateThemeRequest(BaseModel):
