@@ -58,6 +58,7 @@ function makeType(overrides: Partial<AppointmentTypeResponse> = {}): Appointment
     name: "Intake",
     default_fee_cents: null,
     duration_minutes: 30,
+    cpt: null,
     audience: "new",
     min_notice_hours: null,
     earliest_offer_business_days: 1,

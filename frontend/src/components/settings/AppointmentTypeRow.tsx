@@ -4,7 +4,7 @@
 
 import { Calendar, ChevronDown, ChevronUp, UserPlus } from "lucide-react"
 import Link from "next/link"
-import { useState } from "react"
+import { useId, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -16,6 +16,11 @@ import {
 } from "@/components/ui/select"
 import { SegmentedControl, SettingsBadge, Toggle } from "@/components/settings/ui"
 import { SchedulingTypeExtras } from "@/components/settings/settingsSlots.extensions"
+import {
+  COMMON_SERVICE_CODES,
+  describeServiceCode,
+  normalizeServiceCode,
+} from "@/lib/serviceCodes"
 import { cn } from "@/lib/utils"
 import type {
   AppointmentAudience,
@@ -115,9 +120,12 @@ export function AppointmentTypeRow({
   defaultNoticeHours: number
 }) {
   const [nameDraft, setNameDraft] = useState(appointmentType.name)
+  const [cptDraft, setCptDraft] = useState(appointmentType.cpt ?? "")
+  const serviceCodeListId = useId()
   const isNewPatientType = appointmentType.audience === "new"
   const notice = appointmentType.min_notice_hours ?? defaultNoticeHours
   const fee = appointmentType.default_fee_cents
+  const knownCode = describeServiceCode(cptDraft)
 
   return (
     <li className="block p-0">
@@ -173,7 +181,7 @@ export function AppointmentTypeRow({
 
       {open && (
         <div className="ml-11 mb-3 grid gap-3.5 rounded-xl border border-border bg-foreground/[0.04] p-[18px]">
-          <div className="grid grid-cols-[1.4fr_1fr_1fr] gap-3">
+          <div className="grid grid-cols-[1.4fr_0.8fr_0.8fr_1.1fr] gap-3">
             <label className="grid gap-1 text-[12.5px] font-semibold text-foreground">
               Name
               <Input
@@ -207,6 +215,36 @@ export function AppointmentTypeRow({
                   onChange={(e) => onChange({ default_fee_cents: parseFeeInput(e.target.value) })}
                 />
               </span>
+            </label>
+            <label className="grid gap-1 text-[12.5px] font-semibold text-foreground">
+              Service code
+              <Input
+                list={serviceCodeListId}
+                value={cptDraft}
+                placeholder="Optional"
+                maxLength={10}
+                onChange={(e) => setCptDraft(e.target.value)}
+                onBlur={() => {
+                  // Only on a real change: tabbing through a settings field
+                  // should not write to the chart's billing setup.
+                  const next = normalizeServiceCode(cptDraft)
+                  setCptDraft(next ?? "")
+                  if (next !== appointmentType.cpt) onChange({ cpt: next })
+                }}
+              />
+              {/* A datalist rather than a select: the common codes are there to
+                  be picked, but a payer that wants something else must not be a
+                  reason to come and ask us for it. */}
+              <datalist id={serviceCodeListId}>
+                {COMMON_SERVICE_CODES.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.description}
+                  </option>
+                ))}
+              </datalist>
+              <small className="text-[11.5px] font-normal text-muted-foreground">
+                {knownCode ?? "Leave it blank until you need it."}
+              </small>
             </label>
           </div>
 

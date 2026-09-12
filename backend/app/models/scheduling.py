@@ -14,7 +14,11 @@ from pydantic import BaseModel, Field, field_validator
 from ..scheduling_engine.models.appointment import AppointmentStatus  # noqa: TC001
 from ..scheduling_engine.models.availability import EnforcementLevel, RuleType  # noqa: TC001
 from .availability_rule_params import TaggedAvailabilityRule
-from .validators import validate_visit_diagnosis_codes, validate_visit_modifiers
+from .validators import (
+    normalize_service_code,
+    validate_visit_diagnosis_codes,
+    validate_visit_modifiers,
+)
 
 # 11 office, 02 telehealth other than home, 10 telehealth in home. Closed —
 # payers deny claims on a missing or unrecognized place-of-service code, so
@@ -365,6 +369,10 @@ class CreateAppointmentTypeRequest(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     default_fee_cents: int | None = Field(None, ge=0)
     duration_minutes: int = Field(50, ge=5, le=480)
+    #: The service code this type bills as. Defaults to None and is never
+    #: derived from the duration — an unset code is the honest answer until
+    #: the practice says otherwise.
+    cpt: str | None = Field(None, max_length=10)
     audience: Literal["new", "existing", "both"] = "existing"
     #: None means "use the practice default"; 0 means "no notice needed".
     min_notice_hours: int | None = Field(None, ge=0)
@@ -373,6 +381,11 @@ class CreateAppointmentTypeRequest(BaseModel):
     horizon_unit: Literal["business", "days"] = "business"
     self_bookable: bool = False
     offerable: bool = True
+
+    @field_validator("cpt")
+    @classmethod
+    def _normalize_cpt(cls, v: str | None) -> str | None:
+        return normalize_service_code(v)
 
 
 class UpdateAppointmentTypeRequest(BaseModel):
@@ -387,6 +400,9 @@ class UpdateAppointmentTypeRequest(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=100)
     default_fee_cents: int | None = Field(None, ge=0)
     duration_minutes: int | None = Field(None, ge=5, le=480)
+    #: An explicit null clears the code; an omitted field leaves it alone.
+    #: Changing the duration never touches it.
+    cpt: str | None = Field(None, max_length=10)
     audience: Literal["new", "existing", "both"] | None = None
     min_notice_hours: int | None = Field(None, ge=0)
     earliest_offer_business_days: int | None = Field(None, ge=0)
@@ -394,6 +410,11 @@ class UpdateAppointmentTypeRequest(BaseModel):
     horizon_unit: Literal["business", "days"] | None = None
     self_bookable: bool | None = None
     offerable: bool | None = None
+
+    @field_validator("cpt")
+    @classmethod
+    def _normalize_cpt(cls, v: str | None) -> str | None:
+        return normalize_service_code(v)
 
 
 class AppointmentTypeResponse(BaseModel):
@@ -404,6 +425,7 @@ class AppointmentTypeResponse(BaseModel):
     name: str
     default_fee_cents: int | None = None
     duration_minutes: int = 50
+    cpt: str | None = None
     audience: str = "existing"
     min_notice_hours: int | None = None
     earliest_offer_business_days: int = 1

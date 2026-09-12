@@ -1121,6 +1121,14 @@ _ALWAYS_SEEDED_NAMES = ("Consultation", "Intake")
 
 
 class _SeedAppointmentType(TypedDict, total=False):
+    """The fields a seeded type may set. ``cpt`` is absent on purpose.
+
+    A seed that named a service code would be us choosing a billing code for a
+    clinician we have never met — "Intake" is not always 90791 and a 50-minute
+    session is not always 90834. Leaving it out means the type arrives with no
+    code and mypy rejects anyone adding one to a seed without reading this.
+    """
+
     name: str
     default_fee_cents: int | None
     duration_minutes: int
@@ -1226,6 +1234,7 @@ def _appointment_type_to_response(appointment_type: AppointmentType) -> Appointm
         name=appointment_type.name,
         default_fee_cents=appointment_type.default_fee_cents,
         duration_minutes=appointment_type.duration_minutes,
+        cpt=appointment_type.cpt,
         audience=appointment_type.audience,
         min_notice_hours=appointment_type.min_notice_hours,
         earliest_offer_business_days=appointment_type.earliest_offer_business_days,
@@ -1314,6 +1323,7 @@ def create_appointment_type(
         name=request.name,
         default_fee_cents=request.default_fee_cents,
         duration_minutes=request.duration_minutes,
+        cpt=request.cpt,
         audience=request.audience,
         min_notice_hours=request.min_notice_hours,
         earliest_offer_business_days=request.earliest_offer_business_days,

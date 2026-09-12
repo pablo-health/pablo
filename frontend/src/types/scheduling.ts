@@ -132,6 +132,8 @@ export interface AppointmentTypeResponse {
   name: string
   default_fee_cents: number | null
   duration_minutes: number
+  /** The service code this type bills as. `null` until the practice sets one. */
+  cpt: string | null
   audience: AppointmentAudience
   /** `null` means "use the practice default", distinct from `0` (no notice). */
   min_notice_hours: number | null
@@ -155,6 +157,7 @@ export interface CreateAppointmentTypeRequest {
   name: string
   default_fee_cents?: number | null
   duration_minutes?: number
+  cpt?: string | null
   audience?: AppointmentAudience
   min_notice_hours?: number | null
   earliest_offer_business_days?: number
@@ -168,6 +171,7 @@ export interface UpdateAppointmentTypeRequest {
   name?: string
   default_fee_cents?: number | null
   duration_minutes?: number
+  cpt?: string | null
   audience?: AppointmentAudience
   min_notice_hours?: number | null
   earliest_offer_business_days?: number

@@ -27,6 +27,11 @@ class AppointmentType:
     minor units; ``None`` means unset, not free — see
     :mod:`app.scheduling_engine.services.rate_resolver`.
 
+    ``cpt`` is the service code a session of this type bills as, typed by the
+    practice. It is never derived from ``duration_minutes``: the psychotherapy
+    codes band by session length, but the bands have edges and practices bill
+    differently, so choosing one on a clinician's behalf is not ours to do.
+
     ``min_notice_hours`` is ``None`` when the type defers to the practice
     default. That is a different statement from ``0``, which means this type
     needs no notice at all, so do not collapse them.
@@ -37,6 +42,9 @@ class AppointmentType:
     name: str
     default_fee_cents: int | None = None
     duration_minutes: int = 50
+    #: The service code this type bills as. ``None`` means the practice has
+    #: not set one, and nothing derives it — see the class docstring.
+    cpt: str | None = None
     audience: Audience = "existing"
     min_notice_hours: int | None = None
     earliest_offer_business_days: int = 1
@@ -53,6 +61,7 @@ class AppointmentType:
         "name",
         "default_fee_cents",
         "duration_minutes",
+        "cpt",
         "audience",
         "min_notice_hours",
         "earliest_offer_business_days",
