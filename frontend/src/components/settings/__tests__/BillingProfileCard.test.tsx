@@ -81,7 +81,7 @@ describe("BillingProfileCard", () => {
     const user = userEvent.setup()
     render(<BillingProfileCard profile={onFile()} />)
 
-    await user.click(screen.getByRole("button", { name: "Replace" }))
+    await user.click(screen.getByRole("button", { name: "Change" }))
 
     const input = screen.getByTestId("tax-id-input")
     expect(input).toHaveValue("")
@@ -98,7 +98,7 @@ describe("BillingProfileCard", () => {
     const user = userEvent.setup()
     render(<BillingProfileCard profile={onFile()} />)
 
-    await user.click(screen.getByRole("button", { name: "Replace" }))
+    await user.click(screen.getByRole("button", { name: "Change" }))
     await user.type(screen.getByTestId("tax-id-input"), "1234")
     await user.click(screen.getByRole("button", { name: "Keep current" }))
 
@@ -140,7 +140,7 @@ describe("BillingProfileCard", () => {
     const user = userEvent.setup()
     render(<BillingProfileCard profile={profile()} />)
 
-    await user.type(screen.getByLabelText("Billing NPI (optional)"), "12345")
+    await user.type(screen.getByLabelText("Organization NPI (optional)"), "12345")
     await user.click(screen.getByRole("button", { name: "Save" }))
 
     expect(screen.getByRole("alert")).toHaveTextContent("ten digits")
@@ -169,9 +169,9 @@ describe("BillingProfileCard", () => {
     expect(screen.getByLabelText("Billing address")).toHaveValue("1 Test St, Atlanta, GA 30301")
     expect(screen.getByLabelText("City")).toHaveValue("")
     expect(screen.getByLabelText("State")).toHaveValue("")
-    expect(screen.getByLabelText("ZIP")).toHaveValue("")
+    expect(screen.getByLabelText("ZIP code")).toHaveValue("")
     expect(screen.getByTestId("tax-id-input")).toHaveValue("")
-    expect(screen.getByLabelText("Billing NPI (optional)")).toHaveValue("")
+    expect(screen.getByLabelText("Organization NPI (optional)")).toHaveValue("")
     expect(mockUpdate).not.toHaveBeenCalled()
     expect(screen.queryByRole("button", { name: "Use my profile details" })).not.toBeInTheDocument()
   })

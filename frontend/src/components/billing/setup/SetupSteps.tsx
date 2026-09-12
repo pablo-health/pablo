@@ -25,8 +25,8 @@ export function PracticeDetailsStep() {
     <div className="space-y-5">
       <SetupStepHead
         eyebrow="Step 2"
-        title="Your practice details"
-        lede="Who you are on paper. A superbill needs this, and so does an insurance claim — you only fill it in once."
+        title="Practice details"
+        lede="Enter the information you use for superbills and insurance claims. You'll only need to do this once."
       />
       {profile ? <BillingProfileCard profile={profile} /> : <Skeleton className="h-64 w-full" />}
     </div>

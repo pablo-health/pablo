@@ -16,8 +16,14 @@
 
 "use client"
 
+import { useRouter } from "next/navigation"
 import { GetPaidWizard } from "@/components/billing/setup/GetPaidWizard"
 
 export default function BillingSetupPage() {
-  return <GetPaidWizard />
+  const router = useRouter()
+
+  // Finishing has to GO somewhere. Marking setup settled and leaving her on
+  // the same screen reads as a button that does nothing — the wizard cannot
+  // know where it was mounted, so the page it lives on owns the exit.
+  return <GetPaidWizard onSettled={() => router.push("/dashboard/billing")} />
 }

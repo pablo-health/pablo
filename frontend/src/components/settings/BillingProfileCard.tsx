@@ -39,10 +39,10 @@ import type {
 import { useSettingsSaved } from "./SettingsSavedContext"
 
 export const BILLING_NPI_HELP =
-  "Only if you bill as a group or organization (a type 2 NPI). Solo practices leave this blank and file under your own NPI, below."
+  "Enter your Type 2 NPI if you bill as a group or organization. Solo practitioners can leave this blank."
 
 export const CONTACT_EMAIL_HELP =
-  "The inbox payers and your clearinghouse write to about enrollments. The practice's general address, not a clinician's own."
+  "The email address insurers and your clearinghouse should use for enrollment questions. Use an address you check regularly."
 
 type TextField =
   | "legal_name"
@@ -187,7 +187,7 @@ export function BillingProfileCard({ profile, practiceDetails }: BillingProfileC
   return (
     <SettingsCard
       title="Practice profile"
-      description="The legal entity your claims are filed as. Payers match this against what they have on file for your tax id."
+      description="Use the legal and tax information registered for your practice. Payers match this against what they hold for your tax ID."
     >
       <div className="space-y-4">
         {canPrefill && (
@@ -255,7 +255,7 @@ export function BillingProfileCard({ profile, practiceDetails }: BillingProfileC
                   variant="outline"
                   onClick={() => setReplacingTaxId(true)}
                 >
-                  Replace
+                  Change
                 </Button>
               </div>
             )}
@@ -274,10 +274,10 @@ export function BillingProfileCard({ profile, practiceDetails }: BillingProfileC
           </div>
         </div>
         <p className="text-[12.5px] text-muted-foreground">
-          Stored encrypted. Once saved, only the last four digits are ever shown here.
+          Your tax ID is encrypted. After you save it, only the last four digits will be shown.
         </p>
 
-        <Field id="billing-npi" label="Billing NPI (optional)" help={BILLING_NPI_HELP}>
+        <Field id="billing-npi" label="Organization NPI (optional)" help={BILLING_NPI_HELP}>
           <Input
             id="billing-npi"
             value={draft.billing_npi}
@@ -301,7 +301,7 @@ export function BillingProfileCard({ profile, practiceDetails }: BillingProfileC
             aria-label="Address line 2"
             value={draft.address_line2}
             onChange={(e) => set("address_line2", e.target.value)}
-            placeholder="Suite, unit (optional)"
+            placeholder="Address line 2 (optional)"
             autoComplete="address-line2"
           />
           <div className="grid gap-3 sm:grid-cols-[2fr_1fr_1fr]">
@@ -323,7 +323,7 @@ export function BillingProfileCard({ profile, practiceDetails }: BillingProfileC
                 autoComplete="address-level1"
               />
             </Field>
-            <Field id="postal-code" label="ZIP">
+            <Field id="postal-code" label="ZIP code">
               <Input
                 id="postal-code"
                 value={draft.postal_code}
@@ -346,7 +346,7 @@ export function BillingProfileCard({ profile, practiceDetails }: BillingProfileC
               autoComplete="tel"
             />
           </Field>
-          <Field id="contact-email" label="Contact email" help={CONTACT_EMAIL_HELP}>
+          <Field id="contact-email" label="Billing email" help={CONTACT_EMAIL_HELP}>
             <Input
               id="contact-email"
               type="email"
