@@ -33,6 +33,7 @@ function panelsField(answered: boolean): IntakeField {
     applies_to: "all",
     source: null,
     help_text: null,
+    current_value: null,
     choices: [],
     answered,
   }

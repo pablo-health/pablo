@@ -39,6 +39,7 @@ from app.db.models import (
     CredentialServiceLocationRow,
     PayerParticipationRow,
     PayerRow,
+    PracticeBillingProfileRow,
 )
 from app.models import User
 from app.routes import credentialing as credentialing_routes
@@ -464,3 +465,119 @@ def test_the_tier_one_fixture_actually_covers_the_tier() -> None:
         "payer_participation",
     }
     assert required == covered, f"Tier 1 changed; extend _answer_tier_one: {required ^ covered}"
+
+
+class TestTierZeroShowsWhatItIsAskingAbout:
+    """A confirm card has to carry the value it wants confirmed.
+
+    The tier shipped able to record an answer and unable to show the question:
+    ``GET /intake`` returned provenance and no value, so every card rendered
+    "Nothing on file" even for an NPI sitting on the profile, and she was asked
+    to agree with a blank.
+
+    Bug classes covered:
+      * a value the record holds not reaching the card;
+      * an unset column and an empty string rendering identically, so "nothing
+        on file" and "confirmed as empty" become indistinguishable;
+      * the card showing what she confirmed last year rather than what the
+        column says today, which hides exactly the divergence this tier is for;
+      * the other tiers picking up a pre-filled value and turning a question
+        into a confirmation.
+    """
+
+    def _profile(self, session: Session, **columns: Any) -> None:
+        session.add(
+            ClinicianProfileRow(
+                user_id=_USER_ID,
+                practice_id="practice-1",
+                joined_at=datetime.now(UTC),
+                **columns,
+            )
+        )
+        session.commit()
+
+    def _billing_profile(self, session: Session, **columns: Any) -> None:
+        now = datetime.now(UTC)
+        session.add(PracticeBillingProfileRow(id=1, created_at=now, updated_at=now, **columns))
+        session.commit()
+
+    def _field(self, client: TestClient, key: str) -> Any:
+        return next(f for f in client.get(_URL).json()["fields"] if f["key"] == key)
+
+    def test_an_npi_on_the_profile_reaches_the_card(self, harness: dict[str, Any]) -> None:
+        # Acceptance 1, and the whole bug: nothing was confirmed first.
+        self._profile(harness["session"], npi_number="1999999984")
+
+        assert self._field(harness["client"], "npi_number")["current_value"] == "1999999984"
+
+    def test_a_practice_value_reaches_the_card_too(self, harness: dict[str, Any]) -> None:
+        # Not every Tier-0 value is the clinician's own; the practice's billing
+        # identity is confirmed here as well.
+        self._billing_profile(harness["session"], legal_name="Cedar Therapy PLLC")
+
+        assert self._field(harness["client"], "practice_name")["current_value"] == (
+            "Cedar Therapy PLLC"
+        )
+
+    def test_a_field_with_nothing_behind_it_says_so(self, harness: dict[str, Any]) -> None:
+        assert self._field(harness["client"], "npi_number")["current_value"] is None
+
+    def test_an_empty_column_is_nothing_on_file_rather_than_a_value(
+        self, harness: dict[str, Any]
+    ) -> None:
+        # Acceptance 2. A blank string would render as a confirmed fact that
+        # happens to look empty — she would be agreeing to nothing, twice.
+        self._profile(harness["session"], npi_number="   ")
+
+        assert self._field(harness["client"], "npi_number")["current_value"] is None
+
+    def test_the_record_wins_over_what_she_confirmed_before(self, harness: dict[str, Any]) -> None:
+        """Acceptance 3: a column that has since changed must be visible.
+
+        Showing the previously-confirmed value instead would mean she could
+        never be told the record moved underneath her — which is the one thing
+        a confirm tier exists to catch.
+        """
+        self._profile(harness["session"], npi_number="1999999984")
+        _confirm(harness["client"], "npi_number", presented_value="1000000004")
+
+        assert self._field(harness["client"], "npi_number")["current_value"] == "1999999984"
+
+    def test_a_field_with_no_home_column_falls_back_to_what_she_was_shown(
+        self, harness: dict[str, Any]
+    ) -> None:
+        # legal_name and the three yes/no confirmations have no column
+        # anywhere; the confirmation row IS the value for those.
+        _confirm(harness["client"], "legal_name", presented_value="Dana Okafor")
+
+        assert self._field(harness["client"], "legal_name")["current_value"] == "Dana Okafor"
+
+    def test_the_questions_are_not_given_answers(self, harness: dict[str, Any]) -> None:
+        # Tier 1 and Tier 2 ask; only Tier 0 confirms. A value appearing on a
+        # question would turn typing into agreeing.
+        fields = harness["client"].get(_URL).json()["fields"]
+
+        assert all(f["current_value"] is None for f in fields if f["tier"] != Tier.CONFIRM.value)
+
+    def test_one_request_carries_the_whole_tier(self, harness: dict[str, Any]) -> None:
+        # Acceptance 5. Fourteen cards must not mean fourteen round trips.
+        self._profile(
+            harness["session"],
+            npi_number="1999999984",
+            taxonomy_code="101YM0800X",
+            license_number="LPC-4417",
+            license_state="NC",
+        )
+        self._billing_profile(
+            harness["session"], legal_name="Cedar Therapy PLLC", address_line1="14 Mill Street"
+        )
+
+        fields = harness["client"].get(_URL).json()["fields"]
+        values = {f["key"]: f["current_value"] for f in fields if f["tier"] == Tier.CONFIRM.value}
+
+        assert values["npi_number"] == "1999999984"
+        assert values["taxonomy_code"] == "101YM0800X"
+        assert values["primary_license"] == "LPC-4417"
+        assert values["primary_license_state"] == "NC"
+        assert values["practice_name"] == "Cedar Therapy PLLC"
+        assert values["practice_address"] == "14 Mill Street"

@@ -50,6 +50,12 @@ export interface IntakeField {
   help_text: string | null
   choices: string[]
   answered: boolean
+  /**
+   * What the record holds for this field right now. Tier 0 only — the tier
+   * that asks her to agree with a value rather than to type one. `null` means
+   * nothing is on file, which the card says rather than showing a blank.
+   */
+  current_value: string | null
 }
 
 export interface TierProgress {
