@@ -7,6 +7,23 @@ Models map 1:1 to the existing domain dataclasses but are database-aware.
 
 Complex nested structures (SOAP notes, transcripts, EHR route steps) are
 stored as JSONB — they're always read/written as a whole and rarely queried.
+
+NO ``relationship()`` ANYWHERE, AND ONE OBLIGATION THAT FOLLOWS. There are 36
+foreign keys in this file and no ORM relationships, which is deliberate: a
+relationship lazy-loads when you touch the attribute, and that SELECT can fire
+after the session's ``search_path`` or ``app.current_user_id`` has moved on, or
+from a serializer walking the graph past the repository layer that owns tenant
+scoping. Under FORCE ROW LEVEL SECURITY it then returns ZERO ROWS rather than
+raising — so ``claim.lines`` would read as "this claim has no lines" instead of
+"you asked outside the tenant context". Fail-closed is right for a guard and
+catastrophic for an accessor.
+
+The obligation: because the unit of work cannot see a dependency it was never
+told about, **flush a parent before inserting a child that references it.**
+Adding both in one ``session.add`` pair and flushing once inserts them in
+mapper order, and the foreign key refuses the child. That failure is loud and
+immediate, which is the trade — a wrong ordering raises, where a lazy load
+would have quietly returned the wrong answer.
 """
 
 from __future__ import annotations
@@ -3073,3 +3090,99 @@ class PayerParticipationEventRow(Base):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     detail: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+#: How a contracted rate is expressed. A fee schedule arrives with the contract
+#: and is one of these two shapes: a table of amounts per code, or a percentage
+#: of the Medicare physician fee schedule for the practice's locality.
+CONTRACTED_RATE_BASES: tuple[str, ...] = ("fixed", "percent_of_mpfs")
+
+
+class ContractedRateRow(Base):
+    """What a payer agreed to pay this clinician for one code.
+
+    The fee schedule arrives WITH the contract, after credentialing approval —
+    so a rate hangs off a ``payer_participations`` row rather than off the payer,
+    and only exists once that participation reached ``contracted``.
+
+    Rates are versioned by ``effective_date`` and never edited in place: a
+    schedule that changes is a new row, and the old one stays so a claim from
+    last year still reads against the rate that was in force when it was filed.
+    ``end_date`` NULL means "still current".
+
+    ``basis`` is what makes this two columns rather than one.
+    ``fixed`` reads ``amount_cents``; ``percent_of_mpfs`` reads ``percent``
+    against ``mpfs_amount_cents``. The Medicare amount is a column and not a
+    lookup because this codebase ships no fee schedule and fetching one is its
+    own project — the practice enters the locality amount from the schedule the
+    payer supplied. A percentage-basis row with no ``mpfs_amount_cents`` is
+    therefore a real and expected state, and the variance reports it as not
+    computable rather than guessing at a number somebody could bill on.
+
+    ``modifier`` is NOT NULL and defaults to the empty string, which is the
+    unmodified code. A nullable column would read better and break the unique
+    constraint: NULLs are distinct in Postgres, so two "no modifier" rates for
+    the same code and date would both be accepted, and the report would then
+    have to choose between them.
+
+    Carries ``user_id`` beside ``participation_id`` for the same reason
+    ``payer_participation_events`` does — the row takes its parent's
+    row-ownership policy without the policy engine learning a join.
+    """
+
+    __tablename__ = "contracted_rates"
+    __table_args__ = (
+        CheckConstraint(
+            f"basis IN ({_sql_in_list(CONTRACTED_RATE_BASES)})",
+            name="ck_contracted_rates_basis",
+        ),
+        # Each basis needs its own number and must not carry the other's, so a
+        # row cannot be ambiguous about which arm computed it.
+        CheckConstraint(
+            "(basis = 'fixed' AND amount_cents IS NOT NULL AND percent IS NULL) OR "
+            "(basis = 'percent_of_mpfs' AND percent IS NOT NULL AND amount_cents IS NULL)",
+            name="ck_contracted_rates_basis_fields",
+        ),
+        CheckConstraint(
+            "amount_cents IS NULL OR amount_cents >= 0", name="ck_contracted_rates_amount"
+        ),
+        CheckConstraint("percent IS NULL OR percent > 0", name="ck_contracted_rates_percent"),
+        CheckConstraint(
+            "end_date IS NULL OR end_date >= effective_date",
+            name="ck_contracted_rates_date_order",
+        ),
+        UniqueConstraint(
+            "participation_id",
+            "cpt",
+            "modifier",
+            "effective_date",
+            name="ux_contracted_rates_participation_code_date",
+        ),
+        Index("ix_contracted_rates_participation_id", "participation_id"),
+        Index("ix_contracted_rates_user_id", "user_id"),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    participation_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("payer_participations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    cpt: Mapped[str] = mapped_column(String(10), nullable=False)
+    modifier: Mapped[str] = mapped_column(String(8), nullable=False, default="")
+    basis: Mapped[str] = mapped_column(String(16), nullable=False)
+    amount_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Percent of the Medicare fee schedule, e.g. 85.000. Over 100 is ordinary
+    # for a well-negotiated behavioural contract.
+    percent: Mapped[Decimal | None] = mapped_column(Numeric(7, 3), nullable=True)
+    mpfs_amount_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    effective_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    source_document_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("compliance_documents.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

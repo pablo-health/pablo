@@ -343,6 +343,30 @@ CREATE TABLE __TENANT_SCHEMA__.compliance_items (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.contracted_rates (
+    id uuid NOT NULL,
+    participation_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    cpt character varying(10) NOT NULL,
+    modifier character varying(8) DEFAULT ''::character varying NOT NULL,
+    basis character varying(16) NOT NULL,
+    amount_cents integer,
+    percent numeric(7,3),
+    mpfs_amount_cents integer,
+    effective_date date NOT NULL,
+    end_date date,
+    source_document_id uuid,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_contracted_rates_amount CHECK (((amount_cents IS NULL) OR (amount_cents >= 0))),
+    CONSTRAINT ck_contracted_rates_basis CHECK (((basis)::text = ANY ((ARRAY['fixed'::character varying, 'percent_of_mpfs'::character varying])::text[]))),
+    CONSTRAINT ck_contracted_rates_basis_fields CHECK (((((basis)::text = 'fixed'::text) AND (amount_cents IS NOT NULL) AND (percent IS NULL)) OR (((basis)::text = 'percent_of_mpfs'::text) AND (percent IS NOT NULL) AND (amount_cents IS NULL)))),
+    CONSTRAINT ck_contracted_rates_date_order CHECK (((end_date IS NULL) OR (end_date >= effective_date))),
+    CONSTRAINT ck_contracted_rates_percent CHECK (((percent IS NULL) OR (percent > (0)::numeric)))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.credential_bank_accounts (
     id uuid NOT NULL,
     user_id uuid NOT NULL,
@@ -1345,6 +1369,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.payers
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.contracted_rates
+    ADD CONSTRAINT pk_contracted_rates PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.credential_bank_accounts
     ADD CONSTRAINT pk_credential_bank_accounts PRIMARY KEY (id);
 
@@ -1492,6 +1521,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.claim_lines
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.claims
     ADD CONSTRAINT ux_claims_control_number UNIQUE (control_number);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.contracted_rates
+    ADD CONSTRAINT ux_contracted_rates_participation_code_date UNIQUE (participation_id, cpt, modifier, effective_date);
 
 
 
@@ -1644,6 +1678,14 @@ CREATE INDEX ix_compliance_documents_uploaded_by_user_id ON __TENANT_SCHEMA__.co
 
 
 CREATE INDEX ix_compliance_items_user_id ON __TENANT_SCHEMA__.compliance_items USING btree (user_id);
+
+
+
+CREATE INDEX ix_contracted_rates_participation_id ON __TENANT_SCHEMA__.contracted_rates USING btree (participation_id);
+
+
+
+CREATE INDEX ix_contracted_rates_user_id ON __TENANT_SCHEMA__.contracted_rates USING btree (user_id);
 
 
 
@@ -2034,6 +2076,16 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.claims
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.claims
     ADD CONSTRAINT fk_claims_payer_id_payers FOREIGN KEY (payer_id) REFERENCES __TENANT_SCHEMA__.payers(id) ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.contracted_rates
+    ADD CONSTRAINT fk_contracted_rates_participation_id FOREIGN KEY (participation_id) REFERENCES __TENANT_SCHEMA__.payer_participations(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.contracted_rates
+    ADD CONSTRAINT fk_contracted_rates_source_document_id FOREIGN KEY (source_document_id) REFERENCES __TENANT_SCHEMA__.compliance_documents(id) ON DELETE SET NULL;
 
 
 
