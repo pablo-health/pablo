@@ -5,7 +5,8 @@
 import { useCallback, useMemo, useState } from "react"
 import { SetupNav, SetupStepHead, SetupWizardShell } from "@/components/setup"
 import { usePreferences, useSavePreferences } from "@/hooks/usePreferences"
-import { PAYMENT_ROUTES, type PaymentRouteId, stepsForRoute } from "./routes"
+import { type PaymentRouteId, stepsForRoute } from "./routes"
+import { STEP_BODIES } from "./stepBodies"
 
 interface GetPaidWizardProps {
   /** Called after setup is marked done, so a host page can stop showing it. */
@@ -89,6 +90,8 @@ export function GetPaidWizard({ onSettled }: GetPaidWizardProps) {
   }, [remember, onSettled])
 
   const current = useMemo(() => steps[activeIndex], [steps, activeIndex])
+  const Body = STEP_BODIES[current?.id ?? "route"]
+  const isLastStep = activeIndex === steps.length - 1
 
   return (
     <SetupWizardShell
@@ -106,81 +109,18 @@ export function GetPaidWizard({ onSettled }: GetPaidWizardProps) {
         activeIndex > 0 ? (
           <SetupNav
             onBack={() => goTo(activeIndex - 1)}
-            onContinue={() => goTo(activeIndex + 1)}
-            canContinue={false}
-            isLastStep={activeIndex === steps.length - 1}
+            onContinue={isLastStep ? settle : () => goTo(activeIndex + 1)}
+            // Never gated. Setup here is progressive by design — the same
+            // stance ClaimsSetupChecklist takes, where a practice can fill in
+            // what it has and come back for the rest. Blocking Continue until
+            // a step is perfect would turn a resumable flow into a wall.
+            canContinue
+            isLastStep={isLastStep}
           />
         ) : undefined
       }
     >
-      {activeIndex === 0 ? (
-        <RouteStep selected={activeRoute} onChoose={choose} />
-      ) : (
-        <NextStepPlaceholder label={current?.label ?? "Next"} />
-      )}
+      <Body route={activeRoute} onChoose={choose} />
     </SetupWizardShell>
-  )
-}
-
-function RouteStep({
-  selected,
-  onChoose,
-}: {
-  selected: PaymentRouteId | null
-  onChoose: (id: PaymentRouteId) => void
-}) {
-  return (
-    <div className="space-y-5">
-      <SetupStepHead
-        eyebrow="Step 1"
-        title="How do you get paid today?"
-        lede="Choose what best describes your practice right now. You can change this later."
-      />
-
-      <div className="space-y-2">
-        {PAYMENT_ROUTES.map((option) => {
-          const isSelected = selected === option.id
-          return (
-            <button
-              key={option.id}
-              type="button"
-              onClick={() => onChoose(option.id)}
-              aria-pressed={isSelected}
-              className={`w-full rounded-xl border p-4 text-left transition-colors ${
-                isSelected
-                  ? "border-neutral-900 bg-neutral-50"
-                  : "border-border bg-card hover:border-neutral-400 hover:bg-neutral-50"
-              }`}
-            >
-              <span className="block text-sm font-medium text-neutral-900">
-                {option.label}
-              </span>
-              <span className="mt-1 block text-sm text-muted-foreground">
-                {option.detail}
-              </span>
-            </button>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
-/**
- * Placeholder for a step that is not built yet.
- *
- * It says so plainly rather than rendering an empty panel: a blank step reads
- * as something broken, and someone reviewing this flow should be able to tell
- * the difference between "not built" and "not working".
- */
-function NextStepPlaceholder({ label }: { label: string }) {
-  return (
-    <div className="space-y-5">
-      <SetupStepHead
-        eyebrow="Coming next"
-        title={label}
-        lede="This step isn't built yet. Back returns you to the previous question."
-      />
-    </div>
   )
 }

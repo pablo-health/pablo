@@ -18,6 +18,16 @@ vi.mock("@/hooks/usePreferences", () => ({
   useSavePreferences: () => ({ mutate: savePreferences, isPending: false }),
 }))
 
+// The later steps mount the settings cards for the billing profile and
+// appointment types, which fetch their own data. These tests are about routing
+// and resuming, so the cards stand in as markers — what they render is their
+// own tests' business.
+vi.mock("../SetupSteps", () => ({
+  PracticeDetailsStep: () => <div>practice details step</div>,
+  RatesStep: () => <div>rates step</div>,
+  PrivatePayDoneStep: () => <div>private pay done</div>,
+}))
+
 function prefs(overrides: Partial<UserPreferences> = {}): UserPreferences {
   return {
     default_session_type: "individual",

@@ -1,6 +1,27 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-import type { SetupStepperStep } from "@/components/setup"
+/**
+ * Every step this wizard can show.
+ *
+ * A union rather than loose strings, so the table of step bodies can be typed
+ * ``Record<StepId, ...>``: a step added here without a body fails to compile,
+ * and a body for a step that no longer exists fails too. That check used to be
+ * a runtime test, which only caught it once somebody walked the flow.
+ */
+export type StepId =
+  | "route"
+  | "practice"
+  | "rates"
+  | "payers"
+  | "confirm"
+  | "record"
+  | "done"
+
+/** A step, narrowed to the ids this wizard knows. Satisfies the shell's shape. */
+export interface SetupStep {
+  id: StepId
+  label: string
+}
 
 /**
  * The four answers to "how are you getting paid right now?", and what each one
@@ -57,14 +78,17 @@ export const PAYMENT_ROUTES: readonly PaymentRoute[] = [
  * need the same facts about who you are and what you charge. That shared spine
  * is why this is one wizard rather than two that happen to sit near each other.
  */
-const SHARED_STEPS: readonly SetupStepperStep[] = [
+const SHARED_STEPS: readonly SetupStep[] = [
   { id: "route", label: "How you're paid" },
   { id: "practice", label: "Practice details" },
   { id: "rates", label: "Your rates" },
 ]
 
-const PAYER_STEP: SetupStepperStep = { id: "payers", label: "Payers" }
-const RECORD_STEPS: readonly SetupStepperStep[] = [
+//: Every branch ends somewhere it says what happens next, rather than stopping.
+const DONE_STEP: SetupStep = { id: "done", label: "Done" }
+
+const PAYER_STEP: SetupStep = { id: "payers", label: "Payers" }
+const RECORD_STEPS: readonly SetupStep[] = [
   { id: "confirm", label: "What we found" },
   { id: "record", label: "Your record" },
 ]
@@ -76,9 +100,9 @@ const RECORD_STEPS: readonly SetupStepperStep[] = [
  * three entries the moment she clicked would make the choice feel like it cost
  * her something.
  */
-export function stepsForRoute(route: PaymentRouteId | null): readonly SetupStepperStep[] {
+export function stepsForRoute(route: PaymentRouteId | null): readonly SetupStep[] {
   if (route === null) return SHARED_STEPS
-  if (route === "private_pay") return SHARED_STEPS
-  if (route === "already_paneled") return [...SHARED_STEPS, PAYER_STEP]
-  return [...SHARED_STEPS, PAYER_STEP, ...RECORD_STEPS]
+  if (route === "private_pay") return [...SHARED_STEPS, DONE_STEP]
+  if (route === "already_paneled") return [...SHARED_STEPS, PAYER_STEP, DONE_STEP]
+  return [...SHARED_STEPS, PAYER_STEP, ...RECORD_STEPS, DONE_STEP]
 }
