@@ -43,6 +43,10 @@ from ..models import (
     User,
 )
 from ..models.audit import ResourceType
+from ..models.availability_rule_params import (
+    AvailabilityRuleParamsError,
+    validate_rule_params,
+)
 from ..models.enums import SessionSource, SessionType, VideoPlatform
 from ..models.scheduling import (
     AppointmentListResponse,
@@ -115,7 +119,7 @@ from ..scheduling_engine.exceptions import (
     RuleViolationError,
 )
 from ..scheduling_engine.models.appointment_type import AppointmentType, Audience, HorizonUnit
-from ..scheduling_engine.models.availability import AvailabilityRule, EnforcementLevel, RuleType
+from ..scheduling_engine.models.availability import AvailabilityRule, EnforcementLevel
 from ..scheduling_engine.services.availability import AvailabilityEngine
 from ..scheduling_engine.services.scheduling import SchedulingService
 from ..scheduling_engine.services.scheduling_policy import load_policy, update_policy
@@ -935,24 +939,18 @@ def create_availability_rule(
     ctx: TenantContext = Depends(get_tenant_context),
     rule_repo: AvailabilityRuleRepository = Depends(get_availability_rule_repository),
 ) -> AvailabilityRuleResponse:
-    """Create a new availability rule."""
-    try:
-        RuleType(request.rule_type)
-    except ValueError as e:
-        raise BadRequestError(f"Invalid rule_type: {request.rule_type}") from e
+    """Create a new availability rule.
 
-    try:
-        EnforcementLevel(request.enforcement)
-    except ValueError as e:
-        raise BadRequestError(f"Invalid enforcement: {request.enforcement}") from e
-
+    ``request`` is the tagged union, so params that don't match the rule
+    type never reach here — FastAPI has already answered 422.
+    """
     now = utc_now()
     rule = AvailabilityRule(
         id=str(uuid.uuid4()),
         user_id=ctx.user_id,
         rule_type=request.rule_type,
         enforcement=request.enforcement,
-        params=request.params,
+        params=request.params.model_dump(exclude_none=True),
         created_at=now,
         updated_at=now,
     )
@@ -970,27 +968,29 @@ def update_availability_rule(
     ctx: TenantContext = Depends(get_tenant_context),
     rule_repo: AvailabilityRuleRepository = Depends(get_availability_rule_repository),
 ) -> AvailabilityRuleResponse:
-    """Update an existing availability rule."""
+    """Update an existing availability rule.
+
+    Params are re-validated whenever either half of the pair moves: new
+    params against the rule's type, and a new rule type against the params
+    already stored, since changing the type alone would otherwise leave a
+    row whose params belong to the type it used to be.
+    """
     rule = rule_repo.get(rule_id, ctx.user_id)
     if not rule:
         raise NotFoundError(f"Rule not found: {rule_id}")
 
     if request.rule_type is not None:
-        try:
-            RuleType(request.rule_type)
-        except ValueError as e:
-            raise BadRequestError(f"Invalid rule_type: {request.rule_type}") from e
         rule.rule_type = request.rule_type
 
     if request.enforcement is not None:
-        try:
-            EnforcementLevel(request.enforcement)
-        except ValueError as e:
-            raise BadRequestError(f"Invalid enforcement: {request.enforcement}") from e
         rule.enforcement = request.enforcement
 
-    if request.params is not None:
-        rule.params = request.params
+    if request.rule_type is not None or request.params is not None:
+        params = rule.params if request.params is None else request.params
+        try:
+            rule.params = validate_rule_params(rule.rule_type, params)
+        except AvailabilityRuleParamsError as e:
+            raise UnprocessableEntityError(f"Invalid params for {rule.rule_type}: {e}") from e
 
     rule.updated_at = utc_now()
     updated = rule_repo.update(rule)
