@@ -42,7 +42,7 @@ export function BillingContactStep() {
       <SetupStepHead
         eyebrow="Billing contact"
         title="Where should insurers reach you?"
-        lede="Where enrollment questions and payment notices go. Saved separately, so you can change it later without touching anything else."
+        lede="Where enrollment questions and payment notices go."
       />
       {profile ? <BillingContactCard profile={profile} /> : <Skeleton className="h-64 w-full" />}
     </div>
