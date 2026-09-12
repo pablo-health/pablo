@@ -10,7 +10,7 @@
 
 import { test, expect } from "../fixtures/auth"
 
-const SETUP_PATH = "/dashboard/credentialing"
+const SETUP_PATH = "/dashboard/billing/setup"
 
 test("the first question renders on the setup shell", async ({ signedInPage: page }) => {
   await page.goto(SETUP_PATH)
