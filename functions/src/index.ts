@@ -28,6 +28,26 @@ setGlobalOptions({
 });
 
 /**
+ * How long to wait on the backend before giving up on it.
+ *
+ * Identity Platform's blocking-function budget is a hard 7 seconds, enforced
+ * from OUTSIDE the function: when it runs out the invocation is killed, so a
+ * still-pending await never reaches its own catch. Both handlers below have a
+ * catch that decides what an unreachable backend means — fail open for
+ * sign-in, fail closed for create — and without a bound shorter than that
+ * budget, NEITHER of them runs. The deadline decides instead, and it decides
+ * "fail" for both, which is the opposite of what beforeSignIn intends.
+ *
+ * So this is not a tuning knob; it is what makes the error handling
+ * reachable. It must stay comfortably under 7s: the remaining budget has to
+ * cover the OIDC token mint above and the handler's own work. Observed cold
+ * pablo-backend boot is ~12s, well past anything that would fit, so a cold
+ * backend is always going to hit this — the point is to hit it as a timeout
+ * we handle rather than as a deadline that kills us.
+ */
+const BACKEND_TIMEOUT_MS = 3500;
+
+/**
  * Get the Pablo backend URL from environment or derive from project.
  */
 function getBackendUrl(): string {
@@ -52,6 +72,7 @@ async function callPabloApi<T>(path: string, body: Record<string, unknown>): Pro
     method: "POST",
     headers: { "Content-Type": "application/json" },
     data: body,
+    timeout: BACKEND_TIMEOUT_MS,
   });
 
   return response.data as T;
@@ -86,7 +107,11 @@ export const beforeCreate = beforeUserCreated(async (event) => {
     }
   } catch (error) {
     if (error instanceof HttpsError) throw error;
-    // If the backend is unreachable, fail closed (deny access)
+    // If the backend is unreachable, fail closed (deny access). Unchanged by
+    // BACKEND_TIMEOUT_MS — a cold backend was already denied here, by the
+    // deadline. What changes is that it is denied with THIS message instead of
+    // a bare BLOCKING_FUNCTION_ERROR_RESPONSE, so the person reading it can
+    // tell "try again in a moment" from "you are not allowlisted".
     console.error("Failed to check allowlist:", error);
     throw new HttpsError(
       "internal",
@@ -134,6 +159,13 @@ export const beforeSignIn = beforeUserSignedIn(async (event) => {
     // Fail OPEN (unlike beforeCreate) on purpose: beforeSignIn runs on every
     // login, so a transient check-status blip must not lock every existing user
     // out of signing in. Login availability is the trade; PHI access is not.
+    //
+    // A COLD BACKEND REACHES HERE, and only because of BACKEND_TIMEOUT_MS. It
+    // used to be caught by Identity Platform's 7s deadline instead, which kills
+    // the invocation from outside — so this branch never ran and the first
+    // sign-in after an idle period failed with BLOCKING_FUNCTION_ERROR_RESPONSE.
+    // A slow backend is the commonest kind of unreachable, and it was the one
+    // case this fail-open did not cover.
     console.error("Failed to check user status (failing open):", error);
   }
 
