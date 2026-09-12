@@ -10,6 +10,17 @@ so this is fast enough to run before every push:
    (``models.py`` / ``platform_models.py``) is in the diff, at least one ``A``
    (added) file under ``backend/alembic/versions/`` must be in it too.
 
+   "In the diff" means the SCHEMA changed, not the file. A model file whose
+   only edit is a comment or a docstring is compared by AST against the base
+   and, if nothing but prose moved, does not demand a migration. Comments never
+   reach the AST at all and docstrings are stripped before the comparison, so
+   the exemption cannot swallow a real change: a column, a constraint, an
+   argument, a default — anything that could reach Postgres — is a node, and a
+   node that moved fails the check as before. Without this, renaming a symbol
+   a comment refers to forces either a no-op migration into the chain or a
+   knowingly stale comment, and a guard that fires on correct work is a guard
+   people learn to wave through.
+
 2. **The chain has exactly one head.** ``down_revision`` makes the versions
    directory a linked list, so two branches cut from the same parent leave it
    with two heads. Git merges both without complaint and alembic then refuses
@@ -35,7 +46,9 @@ the wrong order. Neither is visible here without a database.
 from __future__ import annotations
 
 import argparse
+import ast
 import re
+import pathlib
 import subprocess
 import sys
 from pathlib import Path
@@ -277,6 +290,47 @@ def _check_template_regenerated(
     return 1
 
 
+def _without_prose(source: str) -> str | None:
+    """The module's structure, with comments and docstrings gone.
+
+    ``None`` when the source will not parse, which sends the caller back to
+    treating the file as changed — an unparseable model file is not something
+    to wave a guardrail through.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        body = node.body
+        if (
+            body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
+            node.body = body[1:] or [ast.Pass()]
+
+    return ast.dump(tree)
+
+
+def _schema_unchanged(path: str, base: str | None, staged: bool) -> bool:
+    """Whether this model file's edit is prose only."""
+    before_ref = "HEAD" if staged else (base or "origin/main")
+    try:
+        before = _git("show", f"{before_ref}:{path}")
+        after = pathlib.Path(path).read_text(encoding="utf-8")
+    except (subprocess.CalledProcessError, OSError):
+        return False
+
+    before_ast = _without_prose(before)
+    after_ast = _without_prose(after)
+    return before_ast is not None and before_ast == after_ast
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -292,7 +346,9 @@ def main() -> int:
 
     changes = _name_status(args.base, args.staged)
 
-    changed_models = [path for status, path in changes if path in MODEL_FILES and status in {"A", "M"}]
+    touched_models = [path for status, path in changes if path in MODEL_FILES and status in {"A", "M"}]
+    prose_only = [p for p in touched_models if _schema_unchanged(p, args.base, args.staged)]
+    changed_models = [p for p in touched_models if p not in prose_only]
     added_migrations = [
         path
         for status, path in changes
@@ -306,7 +362,15 @@ def main() -> int:
 
     # 1. Models ship with migrations (guardrail #4).
     if not changed_models:
-        print("migration-lint: no model changes - nothing to check.")
+        if prose_only:
+            print(
+                "migration-lint: OK - model file(s) touched, but only comments or "
+                "docstrings moved:"
+            )
+            for m in prose_only:
+                print(f"  prose only: {m}")
+        else:
+            print("migration-lint: no model changes - nothing to check.")
     elif added_migrations:
         print(
             f"migration-lint: OK - {len(changed_models)} model file(s) changed, "

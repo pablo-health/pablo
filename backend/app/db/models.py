@@ -3024,7 +3024,7 @@ class CredentialConfirmationRow(Base):
 
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
-    #: An ``ChecklistField.key`` from ``app.credentialing.checklist``. Free text at
+    #: A ``ChecklistField.key`` from ``app.credentialing.checklist``. Free text at
     #: the schema level so adding a Tier-0 field is not a migration.
     field_key: Mapped[str] = mapped_column(String(64), nullable=False)
     source: Mapped[str] = mapped_column(String(32), nullable=False)
