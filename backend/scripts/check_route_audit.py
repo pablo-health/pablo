@@ -289,11 +289,14 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # app.credentialing.government_ids, which audits every read and write,
         # and PATCH /intake/answers takes the tenant AuditService for that
         # reason despite appearing on this list for its unencrypted fields.
-        ("get", "/api/credentialing/intake"),  # her own question set and progress
-        ("get", "/api/credentialing/intake/confirmations"),  # her own Tier-0 answers
-        ("put", "/api/credentialing/intake/confirmations/{field_key}"),  # records one confirmation
-        ("patch", "/api/credentialing/intake/answers"),  # saves her own scalar answers
-        ("get", "/api/credentialing/intake/sources"),  # static provenance vocabulary
+        ("get", "/api/credentialing/checklist"),  # her own question set and progress
+        ("get", "/api/credentialing/checklist/confirmations"),  # her own Tier-0 answers
+        (
+            "put",
+            "/api/credentialing/checklist/confirmations/{field_key}",
+        ),  # records one confirmation
+        ("patch", "/api/credentialing/checklist/answers"),  # saves her own scalar answers
+        ("get", "/api/credentialing/checklist/sources"),  # static provenance vocabulary
     }
 )
 

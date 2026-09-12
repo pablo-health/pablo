@@ -5,6 +5,7 @@ import {
   Mail,
   Calendar,
   CalendarClock,
+  ClipboardCheck,
   Clock,
   Mic,
   Palette,
@@ -21,6 +22,7 @@ import { AvailabilityPage } from "./pages/AvailabilityPage"
 import { BillingContactPage } from "./pages/BillingContactPage"
 import { BillingProfilePage } from "./pages/BillingProfilePage"
 import { CalendarsPage } from "./pages/CalendarsPage"
+import { CredentialingPage } from "./pages/CredentialingPage"
 import { InsurancePage } from "./pages/InsurancePage"
 import { PatientPortalPage } from "./pages/PatientPortalPage"
 import { ProfilePage } from "./pages/ProfilePage"
@@ -31,6 +33,7 @@ import { SuperbillsPage } from "./pages/SuperbillsPage"
 import {
   BILLING_CONTACT_SETTINGS_ID,
   BILLING_PROFILE_SETTINGS_ID,
+  CREDENTIALING_SETTINGS_ID,
   INSURANCE_PAYERS_SETTINGS_ID,
 } from "./paths"
 import { settingsExtensions } from "./registry.extensions"
@@ -184,6 +187,13 @@ const baseGroups: SettingsGroup[] = [
         icon: ShieldPlus,
         page: InsurancePage,
         desc: "Who you file claims with, and the filing deadlines each payer holds you to.",
+      },
+      {
+        id: CREDENTIALING_SETTINGS_ID,
+        label: "Credentialing",
+        icon: ClipboardCheck,
+        page: CredentialingPage,
+        desc: "What a payer application asks for, in three sittings — confirm what we already know, then only what is left.",
       },
     ],
   },

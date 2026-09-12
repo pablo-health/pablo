@@ -27,7 +27,7 @@ from dataclasses import replace
 from datetime import UTC, date, datetime
 
 import pytest
-from app.credentialing.intake import INTAKE_FIELDS, TIER_0_CONFIRM, Tier
+from app.credentialing.checklist import CHECKLIST_FIELDS, TIER_0_CONFIRM, Tier
 from app.credentialing.status import (
     _REFUSED_COLUMNS,
     _current_value,
@@ -64,7 +64,7 @@ class TestTheEncryptedColumnsAreRefused:
 
     @pytest.mark.parametrize("column", ENCRYPTED_COLUMNS)
     def test_a_field_pointed_at_one_resolves_to_nothing(self, column: str) -> None:
-        # Not an exception: a 500 on the whole intake would be a worse outcome
+        # Not an exception: a 500 on the whole checklist would be a worse outcome
         # than an empty card. What matters is that the value does not leave.
         field = replace(_NPI_FIELD, target=f"credential_government_ids.{column}")
         rows = {"credential_government_ids": _Row(**{column: "gAAAAABm-ciphertext"})}
@@ -163,7 +163,7 @@ def test_tier_zero_is_the_only_tier_with_values() -> None:
     confirm_keys = {f.key for f in TIER_0_CONFIRM}
     other_tables = {
         f.target.partition(".")[0]
-        for f in INTAKE_FIELDS
+        for f in CHECKLIST_FIELDS
         if f.tier is not Tier.CONFIRM and f.key not in confirm_keys
     }
 

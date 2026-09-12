@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""What the tiered intake asks, of whom, and where the answers land. No database.
+"""What the tiered checklist asks, of whom, and where the answers land. No database.
 
 The question set is a design decision expressed as data, and the things most
 easily broken by a well-meaning edit are the ones the design is load-bearing
@@ -11,15 +11,15 @@ column to land in. Each is asserted here rather than remembered.
 
 from __future__ import annotations
 
-from app.credentialing import intake
-from app.credentialing.field_map import FIELD_MAP_PATH, render
-from app.credentialing.intake import (
-    INTAKE_FIELDS,
+from app.credentialing import checklist
+from app.credentialing.checklist import (
+    CHECKLIST_FIELDS,
     Applicability,
     CaqhSection,
     FieldKind,
     Tier,
 )
+from app.credentialing.field_map import FIELD_MAP_PATH, render
 from app.db.models import Base
 
 #: The ordinary applicant: independently licensed, does not prescribe. The
@@ -27,15 +27,17 @@ from app.db.models import Base
 _ORDINARY: dict[str, bool] = {"supervised": False, "prescriber": False}
 
 
-def _for(tier: Tier, **who: bool) -> tuple[intake.IntakeField, ...]:
-    return intake.applicable(intake.fields_for_tier(tier), **(who or _ORDINARY))
+def _for(tier: Tier, **who: bool) -> tuple[checklist.ChecklistField, ...]:
+    return checklist.applicable(checklist.fields_for_tier(tier), **(who or _ORDINARY))
 
 
-def _questions(fields: tuple[intake.IntakeField, ...]) -> tuple[intake.IntakeField, ...]:
+def _questions(
+    fields: tuple[checklist.ChecklistField, ...],
+) -> tuple[checklist.ChecklistField, ...]:
     return tuple(f for f in fields if f.kind is not FieldKind.UPLOAD)
 
 
-def _uploads(fields: tuple[intake.IntakeField, ...]) -> tuple[intake.IntakeField, ...]:
+def _uploads(fields: tuple[checklist.ChecklistField, ...]) -> tuple[checklist.ChecklistField, ...]:
     return tuple(f for f in fields if f.kind is FieldKind.UPLOAD)
 
 
@@ -78,8 +80,8 @@ class TestTierOneIsClaimsReadyAndStoppable:
         now invents a rule nobody set.
         """
         for key in ("bank_account", "voided_cheque"):
-            assert not next(f for f in INTAKE_FIELDS if f.key == key).required, key
-        assert intake.claims_ready({f.key for f in _for(Tier.CLAIMS_READY) if f.required})
+            assert not next(f for f in CHECKLIST_FIELDS if f.key == key).required, key
+        assert checklist.claims_ready({f.key for f in _for(Tier.CLAIMS_READY) if f.required})
 
     def test_the_panels_she_is_already_on_are_still_asked(self) -> None:
         """The opposite call, and worth stating beside it.
@@ -89,7 +91,7 @@ class TestTierOneIsClaimsReadyAndStoppable:
         to. It is the most credentialing-relevant question in the tier, so it
         stays required even as the banking answers stop being.
         """
-        panels = next(f for f in INTAKE_FIELDS if f.key == "payer_participation")
+        panels = next(f for f in CHECKLIST_FIELDS if f.key == "payer_participation")
         assert panels.required
         assert panels.tier is Tier.CLAIMS_READY
 
@@ -105,9 +107,9 @@ class TestTierOneIsClaimsReadyAndStoppable:
         from that state may read as an error or an incomplete record.
         """
         answered = {f.key for f in _for(Tier.CLAIMS_READY) if f.required}
-        assert intake.claims_ready(answered)
+        assert checklist.claims_ready(answered)
 
-        by_tier = {c.tier: c for c in intake.completion(answered)}
+        by_tier = {c.tier: c for c in checklist.completion(answered)}
         assert by_tier[Tier.CLAIMS_READY].complete
         assert not by_tier[Tier.CREDENTIALING].complete
         assert by_tier[Tier.CREDENTIALING].answered == 0
@@ -119,8 +121,8 @@ class TestTierOneIsClaimsReadyAndStoppable:
         entry per tier and there is no combined figure for a caller to reach
         for by accident.
         """
-        assert {c.tier for c in intake.completion(set())} == set(Tier)
-        assert not hasattr(intake, "overall_completion")
+        assert {c.tier for c in checklist.completion(set())} == set(Tier)
+        assert not hasattr(checklist, "overall_completion")
 
     def test_every_tier_one_field_lands_somewhere_billing_already_needs(self) -> None:
         """Tier 1 is claims-ready data, not credentialing data asked early.
@@ -148,7 +150,7 @@ class TestSupervisionFork:
 
     def test_the_fork_question_itself_is_asked_of_everyone(self) -> None:
         """It cannot be behind the fork it switches."""
-        fork = next(f for f in INTAKE_FIELDS if f.key == "supervision_status")
+        fork = next(f for f in CHECKLIST_FIELDS if f.key == "supervision_status")
         assert fork.applies_to is Applicability.ALL
         assert fork.tier is Tier.CLAIMS_READY
 
@@ -189,14 +191,14 @@ class TestTierTwo:
         that wrote a row directly would store a ``true`` whose question can
         later be reworded underneath it.
         """
-        disclosures = [f for f in INTAKE_FIELDS if f.target == "credential_disclosures"]
+        disclosures = [f for f in CHECKLIST_FIELDS if f.target == "credential_disclosures"]
         assert disclosures
         assert all(f.audited_writer == "app.credentialing.disclosures" for f in disclosures)
 
     def test_the_encrypted_fields_are_written_through_the_audited_path(self) -> None:
         """SSN, DOB, tax id and bank details have exactly one way in."""
         sensitive = {"ssn", "date_of_birth", "tax_id", "bank_account"}
-        for field in (f for f in INTAKE_FIELDS if f.key in sensitive):
+        for field in (f for f in CHECKLIST_FIELDS if f.key in sensitive):
             assert field.audited_writer == "app.credentialing.government_ids", field.key
 
 
@@ -207,13 +209,13 @@ class TestTheWholeSet:
         Tier 0 is excluded because it asks nothing — the design counts its
         fourteen separately, as confirmations.
         """
-        everything = intake.applicable(INTAKE_FIELDS, **_ORDINARY)
+        everything = checklist.applicable(CHECKLIST_FIELDS, **_ORDINARY)
         asked = tuple(f for f in everything if f.tier is not Tier.CONFIRM)
         assert len(_questions(asked)) == 23
         assert len(_uploads(asked)) == 6
 
     def test_keys_are_unique(self) -> None:
-        keys = [f.key for f in INTAKE_FIELDS]
+        keys = [f.key for f in CHECKLIST_FIELDS]
         assert len(keys) == len(set(keys))
 
     def test_every_target_resolves_against_the_schema(self) -> None:
@@ -226,7 +228,7 @@ class TestTheWholeSet:
         """
         tables = Base.metadata.tables
         unresolved = []
-        for field in INTAKE_FIELDS:
+        for field in CHECKLIST_FIELDS:
             if "." in field.target:
                 table, column = field.target.split(".", 1)
                 ok = table in tables and column in tables[table].c
@@ -244,7 +246,7 @@ class TestTheWholeSet:
         the wording it was given. Everything else names the column it lands in,
         which is what lets a route write it without a second lookup.
         """
-        for field in INTAKE_FIELDS:
+        for field in CHECKLIST_FIELDS:
             names_a_column = "." in field.target
             row_per_answer = field.kind is FieldKind.COLLECTION or (
                 field.audited_writer == "app.credentialing.disclosures"
@@ -274,7 +276,7 @@ class TestCaqhShape:
         ]
 
     def test_every_section_the_intake_fills_is_one_of_them(self) -> None:
-        assert {f.section for f in INTAKE_FIELDS} <= set(CaqhSection)
+        assert {f.section for f in CHECKLIST_FIELDS} <= set(CaqhSection)
 
     def test_the_committed_field_map_matches_the_question_set(self) -> None:
         """AC 6's field-by-field correspondence, kept honest.
@@ -284,5 +286,5 @@ class TestCaqhShape:
         ``poetry run python backend/scripts/regen_intake_field_map.py``.
         """
         assert FIELD_MAP_PATH.read_text(encoding="utf-8") == render(), (
-            "docs/reference/caqh-intake-field-map.md is stale — regenerate it"
+            "docs/reference/caqh-checklist-field-map.md is stale — regenerate it"
         )

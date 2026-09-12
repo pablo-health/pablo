@@ -8,16 +8,16 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   useConfirmations,
-  useIntake,
+  useChecklist,
   useRecordConfirmation,
-  useSaveIntakeAnswers,
-} from "@/hooks/useCredentialingIntake"
-import type { Confirmation, IntakeTier, TierProgress } from "@/types/credentialing"
+  useSaveChecklistAnswers,
+} from "@/hooks/useCredentialingChecklist"
+import type { Confirmation, ChecklistTier, TierProgress } from "@/types/credentialing"
 import { ConfirmCard } from "./ConfirmCard"
 import { TIERS, fieldsForTier, groupBySection, sectionLabel } from "./tiers"
 
 /**
- * The tiered credentialing intake.
+ * The tiered credentialing checklist.
  *
  * The question set comes from the server and is not restated here. That is the
  * point: the supervision fork changes what is asked, the API enforces it, and a
@@ -31,16 +31,16 @@ import { TIERS, fieldsForTier, groupBySection, sectionLabel } from "./tiers"
  * setup: every field in it is on a payer application too, which is why the
  * tier's own blurb says so.
  */
-export function IntakeWizard() {
+export function CredentialingWizard() {
   // Held locally so answering the supervision fork re-narrows the page she is
   // standing on, before anything is saved.
   const [branch, setBranch] = useState<{ supervised?: boolean }>({})
-  const [tier, setTier] = useState<IntakeTier>("tier_0_confirm")
+  const [tier, setTier] = useState<ChecklistTier>("tier_0_confirm")
 
-  const { data: intake, isLoading } = useIntake(branch)
+  const { data: checklist, isLoading } = useChecklist(branch)
   const { data: confirmations = [] } = useConfirmations()
   const recordConfirmation = useRecordConfirmation()
-  const saveAnswers = useSaveIntakeAnswers()
+  const saveAnswers = useSaveChecklistAnswers()
 
   const confirmationByKey = useMemo(() => {
     const m = new Map<string, Confirmation>()
@@ -49,14 +49,14 @@ export function IntakeWizard() {
   }, [confirmations])
 
   const progressByTier = useMemo(() => {
-    const m = new Map<IntakeTier, TierProgress>()
-    for (const p of intake?.progress ?? []) m.set(p.tier, p)
+    const m = new Map<ChecklistTier, TierProgress>()
+    for (const p of checklist?.progress ?? []) m.set(p.tier, p)
     return m
-  }, [intake])
+  }, [checklist])
 
-  if (isLoading || !intake) {
+  if (isLoading || !checklist) {
     return (
-      <div className="space-y-3" data-testid="intake-loading">
+      <div className="space-y-3" data-testid="checklist-loading">
         <Skeleton className="h-10 w-full" />
         <Skeleton className="h-24 w-full" />
         <Skeleton className="h-24 w-full" />
@@ -65,7 +65,7 @@ export function IntakeWizard() {
   }
 
   const current = TIERS.find((t) => t.id === tier) ?? TIERS[0]
-  const fields = fieldsForTier(intake.fields, tier)
+  const fields = fieldsForTier(checklist.fields, tier)
 
   return (
     <div className="space-y-6">
@@ -73,7 +73,7 @@ export function IntakeWizard() {
         selected={tier}
         onSelect={setTier}
         progressByTier={progressByTier}
-        claimsReady={intake.claims_ready}
+        claimsReady={checklist.claims_ready}
       />
 
       <header>
@@ -83,7 +83,7 @@ export function IntakeWizard() {
 
       {tier === "tier_1_claims_ready" && (
         <SupervisionFork
-          supervised={branch.supervised ?? intake.supervised}
+          supervised={branch.supervised ?? checklist.supervised}
           onChange={(supervised) => {
             setBranch({ supervised })
             saveAnswers.mutate({
@@ -129,15 +129,15 @@ export function IntakeWizard() {
         ))}
       </div>
 
-      {tier === "tier_1_claims_ready" && intake.claims_ready && <FinishedForNow />}
+      {tier === "tier_1_claims_ready" && checklist.claims_ready && <FinishedForNow />}
     </div>
   )
 }
 
 interface TierStepsProps {
-  selected: IntakeTier
-  onSelect: (tier: IntakeTier) => void
-  progressByTier: Map<IntakeTier, TierProgress>
+  selected: ChecklistTier
+  onSelect: (tier: ChecklistTier) => void
+  progressByTier: Map<ChecklistTier, TierProgress>
   claimsReady: boolean
 }
 
@@ -150,7 +150,7 @@ interface TierStepsProps {
  */
 function TierSteps({ selected, onSelect, progressByTier }: TierStepsProps) {
   return (
-    <div className="flex flex-wrap gap-2" role="tablist" aria-label="Intake steps">
+    <div className="flex flex-wrap gap-2" role="tablist" aria-label="Checklist steps">
       {TIERS.map((t) => {
         const progress = progressByTier.get(t.id)
         const done = progress?.complete ?? false

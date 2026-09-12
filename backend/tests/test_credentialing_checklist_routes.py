@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""The intake endpoints the wizard talks to.
+"""The checklist endpoints the wizard talks to.
 
 * the question set comes back narrowed to this clinician, and the supervision
   fork changes it on the same request that answers it;
@@ -27,7 +27,7 @@ from app.api_errors import register_exception_handlers
 from app.auth.route_access import subscription_exempt
 from app.auth.service import get_current_user, get_tenant_context
 from app.credentialing import confirmations, government_ids
-from app.credentialing.intake import INTAKE_FIELDS, Tier, applicable, fields_for_tier
+from app.credentialing.checklist import CHECKLIST_FIELDS, Tier, applicable, fields_for_tier
 from app.db import get_db_session
 from app.db.models import (
     Base,
@@ -58,7 +58,7 @@ if TYPE_CHECKING:
 
 _USER_ID = "11111111-1111-4111-8111-111111111111"
 _OTHER_USER_ID = "22222222-2222-4222-8222-222222222222"
-_URL = "/api/credentialing/intake"
+_URL = "/api/credentialing/checklist"
 
 
 def _user() -> User:
@@ -76,7 +76,7 @@ def _user() -> User:
 #: than listed — a retargeted field brings its table along instead of failing
 #: here with a missing-table error nobody can read.
 def _intake_tables() -> list[Any]:
-    names = {f.target.partition(".")[0] for f in INTAKE_FIELDS}
+    names = {f.target.partition(".")[0] for f in CHECKLIST_FIELDS}
     # ``payers`` is not a target — a participation row points at it, and the
     # fixture needs one to point at.
     names.add("payers")
@@ -117,7 +117,7 @@ def harness(engine: Engine) -> Iterator[dict[str, Any]]:
 
 
 def _confirm(client: TestClient, field_key: str, **overrides: Any) -> Any:
-    field = next(f for f in INTAKE_FIELDS if f.key == field_key)
+    field = next(f for f in CHECKLIST_FIELDS if f.key == field_key)
     payload = {"source": field.source, "confirmed": True, "presented_value": "as shown"}
     payload.update(overrides)
     return client.put(f"{_URL}/confirmations/{field_key}", json=payload)
@@ -283,7 +283,7 @@ class TestStoppingAfterTierOne:
 
 class TestSavingAnswers:
     def test_a_partial_save_leaves_the_rest_alone(self, harness: dict[str, Any]) -> None:
-        """The intake is meant to be left and resumed mid-tier."""
+        """The checklist is meant to be left and resumed mid-tier."""
         harness["client"].patch(f"{_URL}/answers", json={"caqh_id": "16273849"})
         harness["client"].patch(f"{_URL}/answers", json={"business_structure": "llc"})
 
@@ -471,7 +471,7 @@ class TestTierZeroShowsWhatItIsAskingAbout:
     """A confirm card has to carry the value it wants confirmed.
 
     The tier shipped able to record an answer and unable to show the question:
-    ``GET /intake`` returned provenance and no value, so every card rendered
+    ``GET /checklist`` returned provenance and no value, so every card rendered
     "Nothing on file" even for an NPI sitting on the profile, and she was asked
     to agree with a blank.
 

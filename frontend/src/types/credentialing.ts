@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 /**
- * Credentialing intake types.
+ * Credentialing checklist types.
  *
  * Mirrors backend/app/routes/credentialing.py response shapes. The question
  * set itself is NOT declared here — it arrives from the server, because the
@@ -10,12 +10,12 @@
  * eventually disagrees about what is required of whom.
  */
 
-export type IntakeTier =
+export type ChecklistTier =
   | "tier_0_confirm"
   | "tier_1_claims_ready"
   | "tier_2_credentialing"
 
-export type IntakeFieldKind =
+export type ChecklistFieldKind =
   | "text"
   | "date"
   | "boolean"
@@ -24,7 +24,7 @@ export type IntakeFieldKind =
   | "collection"
   | "upload"
 
-export type IntakeApplicability =
+export type ChecklistApplicability =
   | "all"
   | "independent_only"
   | "supervised_only"
@@ -38,14 +38,14 @@ export type ConfirmationSource =
   | "clinician_profiles"
   | "practice_billing_profile"
 
-export interface IntakeField {
+export interface ChecklistField {
   key: string
   label: string
   section: string
-  tier: IntakeTier
-  kind: IntakeFieldKind
+  tier: ChecklistTier
+  kind: ChecklistFieldKind
   required: boolean
-  applies_to: IntakeApplicability
+  applies_to: ChecklistApplicability
   source: ConfirmationSource | null
   help_text: string | null
   choices: string[]
@@ -59,19 +59,19 @@ export interface IntakeField {
 }
 
 export interface TierProgress {
-  tier: IntakeTier
+  tier: ChecklistTier
   answered: number
   required: number
   complete: boolean
 }
 
-export interface IntakeSurface {
+export interface ChecklistSurface {
   supervised: boolean
   prescriber: boolean
   /** Every question the billing pipeline needs has an answer. */
   claims_ready: boolean
   progress: TierProgress[]
-  fields: IntakeField[]
+  fields: ChecklistField[]
 }
 
 export interface Confirmation {
@@ -91,7 +91,7 @@ export interface ConfirmationPayload {
   correction?: string | null
 }
 
-export interface IntakeAnswers {
+export interface ChecklistAnswers {
   supervision_status?: string | null
   caqh_id?: string | null
   business_structure?: string | null

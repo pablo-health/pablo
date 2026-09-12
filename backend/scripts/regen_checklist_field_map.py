@@ -1,8 +1,8 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Rewrite docs/reference/caqh-intake-field-map.md from the question set.
+"""Rewrite docs/reference/caqh-checklist-field-map.md from the question set.
 
-Run after changing ``app/credentialing/intake.py``; the unit suite fails if the
+Run after changing ``app/credentialing/checklist.py``; the unit suite fails if the
 committed file and the question set disagree.
 """
 

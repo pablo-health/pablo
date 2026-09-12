@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-import type { ConfirmationSource, IntakeField, IntakeTier } from "@/types/credentialing"
+import type { ConfirmationSource, ChecklistField, ChecklistTier } from "@/types/credentialing"
 
 /**
  * How each tier is named and framed to the clinician.
@@ -13,7 +13,7 @@ import type { ConfirmationSource, IntakeField, IntakeTier } from "@/types/creden
  * without reading as unimportant.
  */
 export interface TierCopy {
-  id: IntakeTier
+  id: ChecklistTier
   /** Step label. Never a number alone — "Step 2 of 3" implies three are owed. */
   label: string
   blurb: string
@@ -73,7 +73,7 @@ export function sectionLabel(section: string): string {
 }
 
 /** Fields of one tier, in the order the server gave them. */
-export function fieldsForTier(fields: IntakeField[], tier: IntakeTier): IntakeField[] {
+export function fieldsForTier(fields: ChecklistField[], tier: ChecklistTier): ChecklistField[] {
   return fields.filter((f) => f.tier === tier)
 }
 
@@ -85,8 +85,8 @@ export function fieldsForTier(fields: IntakeField[], tier: IntakeTier): IntakeFi
  * profile uses, which is what lets the collected record export into it rather
  * than needing translation.
  */
-export function groupBySection(fields: IntakeField[]): [string, IntakeField[]][] {
-  const groups = new Map<string, IntakeField[]>()
+export function groupBySection(fields: ChecklistField[]): [string, ChecklistField[]][] {
+  const groups = new Map<string, ChecklistField[]>()
   for (const field of fields) {
     const existing = groups.get(field.section)
     if (existing) existing.push(field)

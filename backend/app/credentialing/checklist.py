@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""The intake question set: what gets asked, in whose order, and when.
+"""The checklist: what gets asked, in whose order, and when.
 
 One definition, consumed by the API, the wizard and anything exporting the
 record. The point of keeping it here rather than in the UI is that the ORDER
@@ -105,8 +105,8 @@ class Applicability(StrEnum):
 
 
 @dataclass(frozen=True)
-class IntakeField:
-    """One thing the intake asks for, or asks her to confirm.
+class ChecklistField:
+    """One thing the checklist asks for, or asks her to confirm.
 
     ``target`` is ``table.column`` for a scalar or the bare table name for a
     collection, so the mapping doc and the route layer agree on where a value
@@ -148,8 +148,8 @@ class IntakeField:
 _NPPES, _PECOS, _EXCLUSIONS, _PROFILE, _PRACTICE = CREDENTIAL_CONFIRMATION_SOURCES
 
 
-TIER_0_CONFIRM: tuple[IntakeField, ...] = (
-    IntakeField(
+TIER_0_CONFIRM: tuple[ChecklistField, ...] = (
+    ChecklistField(
         key="legal_name",
         label="Legal name",
         section=CaqhSection.PERSONAL_INFORMATION,
@@ -159,7 +159,7 @@ TIER_0_CONFIRM: tuple[IntakeField, ...] = (
         source=_NPPES,
         help_text="As it appears in the NPPES registry.",
     ),
-    IntakeField(
+    ChecklistField(
         key="npi_number",
         label="Individual NPI",
         section=CaqhSection.PROFESSIONAL_IDS,
@@ -168,7 +168,7 @@ TIER_0_CONFIRM: tuple[IntakeField, ...] = (
         target="clinician_profiles.npi_number",
         source=_NPPES,
     ),
-    IntakeField(
+    ChecklistField(
         key="taxonomy_code",
         label="Primary taxonomy",
         section=CaqhSection.SPECIALTIES,
@@ -178,7 +178,7 @@ TIER_0_CONFIRM: tuple[IntakeField, ...] = (
         source=_NPPES,
         help_text="The specialty classification a payer expects on a claim.",
     ),
-    IntakeField(
+    ChecklistField(
         key="primary_license",
         label="Primary licence",
         section=CaqhSection.PROFESSIONAL_IDS,
@@ -187,7 +187,7 @@ TIER_0_CONFIRM: tuple[IntakeField, ...] = (
         target="clinician_profiles.license_number",
         source=_PROFILE,
     ),
-    IntakeField(
+    ChecklistField(
         key="primary_license_state",
         label="Primary licence state",
         section=CaqhSection.PROFESSIONAL_IDS,
@@ -196,7 +196,7 @@ TIER_0_CONFIRM: tuple[IntakeField, ...] = (
         target="clinician_profiles.license_state",
         source=_PROFILE,
     ),
-    IntakeField(
+    ChecklistField(
         key="dea_number",
         label="DEA registration",
         section=CaqhSection.PROFESSIONAL_IDS,
@@ -207,7 +207,7 @@ TIER_0_CONFIRM: tuple[IntakeField, ...] = (
         source=_PROFILE,
         applies_to=Applicability.PRESCRIBER_ONLY,
     ),
-    IntakeField(
+    ChecklistField(
         key="credential_titles",
         label="Credentials",
         section=CaqhSection.PERSONAL_INFORMATION,
@@ -216,7 +216,7 @@ TIER_0_CONFIRM: tuple[IntakeField, ...] = (
         target="clinician_profiles.credential_titles",
         source=_PROFILE,
     ),
-    IntakeField(
+    ChecklistField(
         key="practice_name",
         label="Practice legal name",
         section=CaqhSection.PRACTICE_LOCATIONS,
@@ -225,7 +225,7 @@ TIER_0_CONFIRM: tuple[IntakeField, ...] = (
         target="practice_billing_profile.legal_name",
         source=_PRACTICE,
     ),
-    IntakeField(
+    ChecklistField(
         key="practice_address",
         label="Practice address",
         section=CaqhSection.PRACTICE_LOCATIONS,
@@ -234,7 +234,7 @@ TIER_0_CONFIRM: tuple[IntakeField, ...] = (
         target="practice_billing_profile.address_line1",
         source=_PRACTICE,
     ),
-    IntakeField(
+    ChecklistField(
         key="billing_npi",
         label="Billing NPI",
         section=CaqhSection.PROFESSIONAL_IDS,
@@ -244,7 +244,7 @@ TIER_0_CONFIRM: tuple[IntakeField, ...] = (
         source=_PRACTICE,
         required=False,
     ),
-    IntakeField(
+    ChecklistField(
         key="medicare_enrollment",
         label="Medicare enrolment on file",
         section=CaqhSection.PROFESSIONAL_IDS,
@@ -255,7 +255,7 @@ TIER_0_CONFIRM: tuple[IntakeField, ...] = (
         required=False,
         help_text="From the public PECOS file.",
     ),
-    IntakeField(
+    ChecklistField(
         key="exclusion_clearance",
         label="No federal exclusions found",
         section=CaqhSection.DISCLOSURE,
@@ -265,7 +265,7 @@ TIER_0_CONFIRM: tuple[IntakeField, ...] = (
         source=_EXCLUSIONS,
         help_text="Checked against the LEIE and SAM exclusion lists.",
     ),
-    IntakeField(
+    ChecklistField(
         key="hospital_affiliations_none",
         label="No hospital affiliations",
         section=CaqhSection.HOSPITAL_AFFILIATIONS,
@@ -278,7 +278,7 @@ TIER_0_CONFIRM: tuple[IntakeField, ...] = (
             "everyone, so confirming it here saves the question later."
         ),
     ),
-    IntakeField(
+    ChecklistField(
         key="credentialing_contact",
         label="Who the payer should contact",
         section=CaqhSection.CREDENTIAL_CONTACTS,
@@ -291,8 +291,8 @@ TIER_0_CONFIRM: tuple[IntakeField, ...] = (
 )
 
 
-TIER_1_CLAIMS_READY: tuple[IntakeField, ...] = (
-    IntakeField(
+TIER_1_CLAIMS_READY: tuple[ChecklistField, ...] = (
+    ChecklistField(
         key="supervision_status",
         label="Are you independently licensed, or practising under supervision?",
         section=CaqhSection.PROFESSIONAL_IDS,
@@ -306,7 +306,7 @@ TIER_1_CLAIMS_READY: tuple[IntakeField, ...] = (
             "fields."
         ),
     ),
-    IntakeField(
+    ChecklistField(
         key="business_structure",
         label="Business structure",
         section=CaqhSection.PERSONAL_INFORMATION,
@@ -323,7 +323,7 @@ TIER_1_CLAIMS_READY: tuple[IntakeField, ...] = (
             "professional_corporation",
         ),
     ),
-    IntakeField(
+    ChecklistField(
         key="date_of_birth",
         label="Date of birth",
         section=CaqhSection.PERSONAL_INFORMATION,
@@ -332,7 +332,7 @@ TIER_1_CLAIMS_READY: tuple[IntakeField, ...] = (
         target="credential_government_ids.dob_encrypted",
         audited_writer="app.credentialing.government_ids",
     ),
-    IntakeField(
+    ChecklistField(
         key="licenses",
         label="Every licence you hold",
         section=CaqhSection.PROFESSIONAL_IDS,
@@ -344,7 +344,7 @@ TIER_1_CLAIMS_READY: tuple[IntakeField, ...] = (
             "expiry dates become your renewal reminders."
         ),
     ),
-    IntakeField(
+    ChecklistField(
         key="supervisor",
         label="Your supervisor",
         section=CaqhSection.PROFESSIONAL_IDS,
@@ -354,7 +354,7 @@ TIER_1_CLAIMS_READY: tuple[IntakeField, ...] = (
         applies_to=Applicability.SUPERVISED_ONLY,
         help_text="Payers that panel supervised clinicians credential the supervisor too.",
     ),
-    IntakeField(
+    ChecklistField(
         key="liability_policy",
         label="Malpractice cover",
         section=CaqhSection.PROFESSIONAL_LIABILITY_INSURANCE,
@@ -363,7 +363,7 @@ TIER_1_CLAIMS_READY: tuple[IntakeField, ...] = (
         target="credential_liability_policies",
         help_text="Carrier, policy number, and the per-occurrence and aggregate limits.",
     ),
-    IntakeField(
+    ChecklistField(
         key="liability_certificate",
         label="Certificate of insurance",
         section=CaqhSection.PROFESSIONAL_LIABILITY_INSURANCE,
@@ -374,7 +374,7 @@ TIER_1_CLAIMS_READY: tuple[IntakeField, ...] = (
             "The certificate itself. A payer wants the document, not a transcription of it."
         ),
     ),
-    IntakeField(
+    ChecklistField(
         key="service_locations",
         label="Where you see clients",
         section=CaqhSection.PRACTICE_LOCATIONS,
@@ -386,7 +386,7 @@ TIER_1_CLAIMS_READY: tuple[IntakeField, ...] = (
             "languages matter more than they look."
         ),
     ),
-    IntakeField(
+    ChecklistField(
         key="payer_participation",
         label="Which payers are you already in network with?",
         section=CaqhSection.PRACTICE_LOCATIONS,
@@ -399,7 +399,7 @@ TIER_1_CLAIMS_READY: tuple[IntakeField, ...] = (
             "one out-of-network is also how we know to offer it later."
         ),
     ),
-    IntakeField(
+    ChecklistField(
         key="bank_account",
         label="Where payments should land",
         section=CaqhSection.PRACTICE_LOCATIONS,
@@ -415,7 +415,7 @@ TIER_1_CLAIMS_READY: tuple[IntakeField, ...] = (
             "A clinician already billing should fill it in now."
         ),
     ),
-    IntakeField(
+    ChecklistField(
         key="voided_cheque",
         label="Proof of your bank account",
         section=CaqhSection.PRACTICE_LOCATIONS,
@@ -431,7 +431,7 @@ TIER_1_CLAIMS_READY: tuple[IntakeField, ...] = (
             "enrolment, and we will have this ready."
         ),
     ),
-    IntakeField(
+    ChecklistField(
         key="caqh_id",
         label="Do you have a CAQH ID?",
         section=CaqhSection.PROFESSIONAL_IDS,
@@ -447,8 +447,8 @@ TIER_1_CLAIMS_READY: tuple[IntakeField, ...] = (
 )
 
 
-TIER_2_CREDENTIALING: tuple[IntakeField, ...] = (
-    IntakeField(
+TIER_2_CREDENTIALING: tuple[ChecklistField, ...] = (
+    ChecklistField(
         key="ssn",
         label="Social Security number",
         section=CaqhSection.PERSONAL_INFORMATION,
@@ -461,7 +461,7 @@ TIER_2_CREDENTIALING: tuple[IntakeField, ...] = (
             "read of it is logged."
         ),
     ),
-    IntakeField(
+    ChecklistField(
         key="tax_id",
         label="Tax ID",
         section=CaqhSection.PERSONAL_INFORMATION,
@@ -470,7 +470,7 @@ TIER_2_CREDENTIALING: tuple[IntakeField, ...] = (
         target="credential_government_ids.tax_id_encrypted",
         audited_writer="app.credentialing.government_ids",
     ),
-    IntakeField(
+    ChecklistField(
         key="type2_npi",
         label="Organisation NPI",
         section=CaqhSection.PROFESSIONAL_IDS,
@@ -480,7 +480,7 @@ TIER_2_CREDENTIALING: tuple[IntakeField, ...] = (
         required=False,
         help_text="If you bill as an entity rather than as yourself.",
     ),
-    IntakeField(
+    ChecklistField(
         key="license_certificate",
         label="Licence certificates",
         section=CaqhSection.PROFESSIONAL_IDS,
@@ -492,7 +492,7 @@ TIER_2_CREDENTIALING: tuple[IntakeField, ...] = (
             "all a claim needs; an application wants the certificate itself."
         ),
     ),
-    IntakeField(
+    ChecklistField(
         key="education",
         label="Degrees",
         section=CaqhSection.EDUCATION_AND_TRAINING,
@@ -500,7 +500,7 @@ TIER_2_CREDENTIALING: tuple[IntakeField, ...] = (
         kind=FieldKind.COLLECTION,
         target="credential_education",
     ),
-    IntakeField(
+    ChecklistField(
         key="degree_certificate",
         label="Highest degree",
         section=CaqhSection.EDUCATION_AND_TRAINING,
@@ -509,7 +509,7 @@ TIER_2_CREDENTIALING: tuple[IntakeField, ...] = (
         target="compliance_documents.id",
         help_text="The diploma or a transcript. Primary-source verification starts here.",
     ),
-    IntakeField(
+    ChecklistField(
         key="training",
         label="Internships, practica, residencies and fellowships",
         section=CaqhSection.EDUCATION_AND_TRAINING,
@@ -521,7 +521,7 @@ TIER_2_CREDENTIALING: tuple[IntakeField, ...] = (
             "so entering them saves explaining the same period twice."
         ),
     ),
-    IntakeField(
+    ChecklistField(
         key="employment",
         label="Work history",
         section=CaqhSection.EMPLOYMENT_INFORMATION,
@@ -533,7 +533,7 @@ TIER_2_CREDENTIALING: tuple[IntakeField, ...] = (
             "needs a line explaining it, which is the portal's own rule."
         ),
     ),
-    IntakeField(
+    ChecklistField(
         key="cv",
         label="Curriculum vitae",
         section=CaqhSection.EMPLOYMENT_INFORMATION,
@@ -546,7 +546,7 @@ TIER_2_CREDENTIALING: tuple[IntakeField, ...] = (
             "is what the portal actually files."
         ),
     ),
-    IntakeField(
+    ChecklistField(
         key="references",
         label="Three professional references",
         section=CaqhSection.PROFESSIONAL_REFERENCES,
@@ -558,7 +558,7 @@ TIER_2_CREDENTIALING: tuple[IntakeField, ...] = (
             "is usually rejected, so pick accordingly."
         ),
     ),
-    IntakeField(
+    ChecklistField(
         key="disclosure_license_action",
         label="Has any licence of yours ever been limited, suspended or revoked?",
         section=CaqhSection.DISCLOSURE,
@@ -567,7 +567,7 @@ TIER_2_CREDENTIALING: tuple[IntakeField, ...] = (
         target="credential_disclosures",
         audited_writer="app.credentialing.disclosures",
     ),
-    IntakeField(
+    ChecklistField(
         key="disclosure_malpractice_claim",
         label="Has a malpractice claim ever been filed against you?",
         section=CaqhSection.DISCLOSURE,
@@ -576,7 +576,7 @@ TIER_2_CREDENTIALING: tuple[IntakeField, ...] = (
         target="credential_disclosures",
         audited_writer="app.credentialing.disclosures",
     ),
-    IntakeField(
+    ChecklistField(
         key="disclosure_criminal_history",
         label="Have you ever been convicted of a criminal offence?",
         section=CaqhSection.DISCLOSURE,
@@ -585,7 +585,7 @@ TIER_2_CREDENTIALING: tuple[IntakeField, ...] = (
         target="credential_disclosures",
         audited_writer="app.credentialing.disclosures",
     ),
-    IntakeField(
+    ChecklistField(
         key="disclosure_coverage_lapse",
         label="Has your malpractice cover ever lapsed?",
         section=CaqhSection.DISCLOSURE,
@@ -594,7 +594,7 @@ TIER_2_CREDENTIALING: tuple[IntakeField, ...] = (
         target="credential_disclosures",
         audited_writer="app.credentialing.disclosures",
     ),
-    IntakeField(
+    ChecklistField(
         key="disclosure_medicare_sanction",
         label="Have you ever been sanctioned by Medicare or Medicaid?",
         section=CaqhSection.DISCLOSURE,
@@ -603,7 +603,7 @@ TIER_2_CREDENTIALING: tuple[IntakeField, ...] = (
         target="credential_disclosures",
         audited_writer="app.credentialing.disclosures",
     ),
-    IntakeField(
+    ChecklistField(
         key="medicare_intent",
         label="Do you want to enrol with Medicare?",
         section=CaqhSection.PROFESSIONAL_IDS,
@@ -612,7 +612,7 @@ TIER_2_CREDENTIALING: tuple[IntakeField, ...] = (
         target="credential_government_ids.medicare_intent",
         required=False,
     ),
-    IntakeField(
+    ChecklistField(
         key="medicaid_intent",
         label="Do you want to enrol with your state Medicaid programme?",
         section=CaqhSection.PROFESSIONAL_IDS,
@@ -621,7 +621,7 @@ TIER_2_CREDENTIALING: tuple[IntakeField, ...] = (
         target="credential_government_ids.medicaid_intent",
         required=False,
     ),
-    IntakeField(
+    ChecklistField(
         key="dea_certificate",
         label="DEA registration certificate",
         section=CaqhSection.PROFESSIONAL_IDS,
@@ -631,7 +631,7 @@ TIER_2_CREDENTIALING: tuple[IntakeField, ...] = (
         applies_to=Applicability.PRESCRIBER_ONLY,
         required=False,
     ),
-    IntakeField(
+    ChecklistField(
         key="w9",
         label="Signed W-9",
         section=CaqhSection.PERSONAL_INFORMATION,
@@ -648,33 +648,33 @@ TIER_2_CREDENTIALING: tuple[IntakeField, ...] = (
 
 
 #: Every field, in CAQH section order within tier order. The whole question set.
-INTAKE_FIELDS: tuple[IntakeField, ...] = (
+CHECKLIST_FIELDS: tuple[ChecklistField, ...] = (
     *TIER_0_CONFIRM,
     *TIER_1_CLAIMS_READY,
     *TIER_2_CREDENTIALING,
 )
 
 
-def fields_for_tier(tier: Tier) -> tuple[IntakeField, ...]:
+def fields_for_tier(tier: Tier) -> tuple[ChecklistField, ...]:
     """The question set for one sitting, in declaration order."""
-    return tuple(f for f in INTAKE_FIELDS if f.tier is tier)
+    return tuple(f for f in CHECKLIST_FIELDS if f.tier is tier)
 
 
-def fields_for_section(section: CaqhSection) -> tuple[IntakeField, ...]:
+def fields_for_section(section: CaqhSection) -> tuple[ChecklistField, ...]:
     """Everything that exports into one portal section, across all tiers.
 
     What an export builder reads: the portal wants a section at a time, and it
     does not care which sitting each answer came from.
     """
-    return tuple(f for f in INTAKE_FIELDS if f.section is section)
+    return tuple(f for f in CHECKLIST_FIELDS if f.section is section)
 
 
 def applicable(
-    fields: tuple[IntakeField, ...],
+    fields: tuple[ChecklistField, ...],
     *,
     supervised: bool = False,
     prescriber: bool = False,
-) -> tuple[IntakeField, ...]:
+) -> tuple[ChecklistField, ...]:
     """Narrow a question set to this clinician.
 
     The supervision fork lives here rather than in the UI so the API agrees with

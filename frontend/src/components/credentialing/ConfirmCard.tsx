@@ -6,11 +6,11 @@ import { Check, Pencil } from "lucide-react"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import type { Confirmation, ConfirmationPayload, IntakeField } from "@/types/credentialing"
+import type { Confirmation, ConfirmationPayload, ChecklistField } from "@/types/credentialing"
 import { sourceLabel } from "./tiers"
 
 interface ConfirmCardProps {
-  field: IntakeField
+  field: ChecklistField
   /** What she has already said about this field, if anything. */
   confirmation?: Confirmation
   /** The value we are showing her, already looked up. */
