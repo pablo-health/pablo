@@ -68,12 +68,10 @@ class ClinicianProfileRow(Base):
 class PatientRow(Base):
     """Patient master record.
 
-    Access (read/write) is governed by :class:`PatientClinicianRow`
-    grants, not by a ``user_id`` column on the row itself. The column
-    was dropped in migration ``9dea1edf7fe0`` once the
-    ``patient_clinicians`` access table became the source of truth;
-    the RLS policy on this table is ``has_patient_access(id,
-    current_user)``.
+    Access is governed by :class:`PatientClinicianRow` grants, not by a
+    ``user_id`` column on the row — that column was dropped in migration
+    ``9dea1edf7fe0`` once the access table became the source of truth. The RLS
+    policy here is ``has_patient_access(id, current_user)``.
     """
 
     __tablename__ = "patients"
@@ -100,57 +98,40 @@ class PatientRow(Base):
     # (THERAPY-cgy) may remove clinical rows past retention after writing the
     # minimal retention stub in the compliance schema.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # Chart closure (THERAPY-hek). Orthogonal to soft-delete: a closed
-    # chart is a live, retained record whose care episode has ended.
-    # ``status`` stays in {active, inactive, on_hold} — closure is a
-    # timestamp, not a new status enum value, so the existing list
-    # filters keep returning chart-closed patients (with these fields
-    # visible). The hard-purge cron keys off ``deleted_at``, never off
-    # ``chart_closed_at``.
+    # Chart closure (THERAPY-hek). Orthogonal to soft-delete: a closed chart is
+    # a live, retained record whose care episode has ended. Closure is a
+    # timestamp rather than a new ``status`` value, so existing list filters
+    # keep returning closed charts. The hard-purge cron keys off
+    # ``deleted_at``, never off this.
     chart_closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     chart_closure_reason: Mapped[str | None] = mapped_column(Text)
-    # Whether the patient has consented to receive protected health information
-    # by email, and the provenance of that decision. Emailing a patient about
-    # their care can disclose PHI over an external channel, so any deployment
-    # that sends patient email needs to know whether email is a consented PHI
-    # channel for this patient before including clinical detail.
-    #
-    # ``phi_email_consent`` is a NULLABLE boolean carrying three states: ``NULL``
-    # = no record on file (never asked), ``True`` = consented, ``False`` =
-    # declined. The current decision lives here; the grant/withdrawal *history*
-    # lives in the audit trail (recording a change is an audited event). A
-    # withdrawal is simply setting the flag back to ``False``.
+    # Whether email is a consented PHI channel for this patient — anything
+    # clinical in an email is a disclosure over an external channel.
+    # Three states: NULL never asked, True consented, False declined. The
+    # current decision lives here; the grant/withdrawal history is in the
+    # audit trail, since recording a change is an audited event.
     phi_email_consent: Mapped[bool | None] = mapped_column(Boolean)
-    # When the consent decision was recorded / obtained.
     phi_email_consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # Optional reference to a signed consent document (e.g. a patient_document
-    # id or storage path) backing the attestation. ``NULL`` when the consent was
-    # recorded as a clinician attestation without an attached document.
+    # A signed consent document backing the attestation. NULL when consent was
+    # recorded as a clinician attestation with nothing attached.
     phi_email_consent_doc: Mapped[str | None] = mapped_column(Text)
-    # The user who recorded the consent decision (audit provenance).
     phi_email_consent_by: Mapped[str | None] = mapped_column(String(128))
-    # Per-patient rate override, integer minor units (cents). NULL = no
-    # override; the effective rate falls through to the appointment type's
-    # default (see app.scheduling_engine.services.rate_resolver). Reduced-fee
-    # and sliding-scale arrangements are per-person, so this is a real
-    # column rather than a note someone has to remember to read.
+    # Per-patient rate override in cents. NULL falls through to the appointment
+    # type's default (app.scheduling_engine.services.rate_resolver). A real
+    # column because sliding-scale arrangements are per-person, not a note
+    # someone has to remember to read.
     rate_cents: Mapped[int | None] = mapped_column(Integer)
-    # Free-text record of a sliding-scale arrangement, in the clinician's own
-    # words. Never parsed or used in arithmetic — exists so the reason for a
-    # rate survives staff turnover and the clinician's memory.
+    # The arrangement in the clinician's own words. Never parsed — it exists so
+    # the REASON for a rate survives staff turnover.
     sliding_scale_note: Mapped[str | None] = mapped_column(Text)
-    # Where this row came from, for a human merge review to prioritize.
-    # NULL = created by staff in the normal chart flow (the overwhelming
-    # majority of rows, and not itself suspicious). A non-NULL value marks a
-    # row created through an unauthenticated intake surface that cannot
-    # verify the caller's claimed identity, so it may duplicate an existing
-    # chart — 'voice' today, room for e.g. 'public_booking' later. Nothing
-    # reads this column to merge or de-duplicate automatically; it only
-    # flags a row for a person to look at.
+    # Flags a row for human merge review. NULL = created by staff in the normal
+    # chart flow (most rows, and not suspicious). Non-NULL means an
+    # unauthenticated intake surface that cannot verify the caller's claimed
+    # identity created it, so it may duplicate an existing chart — 'voice'
+    # today. Nothing de-duplicates automatically off this.
     origin: Mapped[str | None] = mapped_column(String(20))
-    # Mailing address, collected for claim submission (X12 837P subscriber/
-    # patient loop). Optional — a chart with no billing intent has no reason
-    # to require it.
+    # Mailing address, for the X12 837P subscriber/patient loop. Optional — a
+    # chart with no billing intent has no reason to require it.
     address_line1: Mapped[str | None] = mapped_column(String(255))
     address_line2: Mapped[str | None] = mapped_column(String(255))
     city: Mapped[str | None] = mapped_column(String(100))
@@ -336,15 +317,12 @@ if _MODEL_ROLE_VALUES != _ENUM_ROLE_VALUES:
 class OutcomeMeasureRow(Base):
     """Scored clinical instrument result (PHQ-9, GAD-7, or any generic instrument).
 
-    One row per administration — a patient may have many rows for the same
-    instrument over time. The trend-query index on
-    ``(patient_id, instrument, administered_at)`` is the hot path for
-    displaying score-over-time charts in the patient chart view.
+    One row per administration — many rows per instrument over time. The index
+    on ``(patient_id, instrument, administered_at)`` is the hot path for
+    score-over-time charts in the chart view.
 
-    Access is governed by app-layer patient-access checks (the same
-    ``has_patient_access`` function used by the notes table) — no separate
-    row-level-security policy, matching how the notes table is protected.
-    See PABLO-o5k.
+    Access is governed by the same ``has_patient_access`` checks the notes table
+    uses — no separate RLS policy. See PABLO-o5k.
     """
 
     __tablename__ = "outcome_measures"
@@ -452,22 +430,20 @@ if _MODEL_SOURCE_VALUES != _ENUM_SOURCE_VALUES:
 class DiagnosticAssessmentRow(Base):
     """A structured diagnostic determination for a patient (PABLO-6xj).
 
-    One row per assessment: the clinician's per-criterion responses + gate
-    attestations against a versioned definition (snapshotted by
-    ``definition_code`` + ``definition_version``), the computed
-    ``meets_criteria`` (NULL for ``checklist`` definitions, which make no
-    algorithmic determination), and the clinician-confirmed ICD-10-CM code. Distinct
-    from ``outcome_measures`` (continuous symptom scores) — this is a
-    point-in-time categorical determination.
+    One row per assessment: per-criterion responses and gate attestations
+    against a versioned definition (snapshotted by ``definition_code`` +
+    ``definition_version``), the computed ``meets_criteria`` (NULL for
+    ``checklist`` definitions, which make no algorithmic determination), and the
+    clinician-confirmed ICD-10-CM code. Distinct from ``outcome_measures``
+    (continuous symptom scores): this is a point-in-time categorical
+    determination.
 
-    Per-tenant (lives in each ``practice_{id}`` schema), access governed by the
-    app-layer ``has_patient_access`` function, same as ``notes`` /
+    Access is governed by ``has_patient_access``, like ``notes`` /
     ``outcome_measures`` — no separate RLS policy.
 
-    ``criterion_citations`` and ``confirmed_at`` are unused at launch; they are
-    reserved for future provenance-tracked capture (which source supports each
-    criterion, plus a clinician confirmation step), shipped now so that
-    capability needs no migration.
+    ``criterion_citations`` and ``confirmed_at`` are unused at launch, reserved
+    for provenance-tracked capture (which source supports each criterion, plus
+    a confirmation step) and shipped early so that needs no migration.
     """
 
     __tablename__ = "diagnostic_assessments"
@@ -566,17 +542,17 @@ class AppointmentRow(Base):
     #
     # A practice's notice period is a FEE boundary, not a permission one:
     # anybody may cancel at any time, because the alternative to a late
-    # cancellation is a no-show, which costs the practice the slot AND the
-    # warning. These columns are what make the fee defensible afterwards.
+    # cancellation is a no-show, which costs the slot AND the warning. These
+    # columns make the fee defensible afterwards.
     #
-    # ``updated_at`` cannot stand in for ``cancelled_at``: any later edit
-    # moves it, so by billing time it may say nothing about when the slot was
-    # actually given up. And without ``cancelled_by`` a lapsed hold, a
-    # clinician rearranging their week, and a patient cancelling an hour
-    # ahead are the same row — only one of which anyone may be charged for.
+    # ``updated_at`` cannot stand in for ``cancelled_at`` — any later edit moves
+    # it, so by billing time it may say nothing about when the slot was given
+    # up. And without ``cancelled_by``, a lapsed hold, a clinician rearranging
+    # their week and a patient cancelling an hour ahead are the same row, only
+    # one of which anyone may be charged for.
     #
-    # All NULL on rows cancelled before this shipped, which reads as "not
-    # known" rather than as a claim that the cancellation was early or nobody's.
+    # All NULL on rows cancelled before this shipped, which reads as "not known"
+    # rather than as a claim the cancellation was early or nobody's.
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     cancelled_by: Mapped[str | None] = mapped_column(String(20), nullable=True)
     cancelled_by_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False), nullable=True)
@@ -670,24 +646,21 @@ class AppointmentTypeRow(Base):
     """A kind of appointment: how long it runs, who it is for, when it may be offered.
 
     This started as a fee table and is now the unit of scheduling. A type
-    carries its own length and its own booking window, because a fifteen-minute
-    consultation and a sixty-minute intake do not want the same notice, the
-    same lead time, or the same horizon.
+    carries its own length and booking window, because a fifteen-minute
+    consultation and a sixty-minute intake want different notice, lead time and
+    horizon. ``default_fee_cents`` is the fee absent a per-patient override —
+    see :mod:`app.scheduling_engine.services.rate_resolver`.
 
-    ``default_fee_cents`` remains the fee absent a per-patient override — see
-    :mod:`app.scheduling_engine.services.rate_resolver`.
+    ``appointments.appointment_type_id`` references this table, so a rename no
+    longer orphans the appointments booked under it. Two places differ, both
+    deliberately:
 
-    ``appointments.appointment_type_id`` references this table, so renaming a
-    type no longer orphans the appointments booked under it. Two places
-    deliberately differ:
-
-    * ``appointments.session_type`` — kept as the name the appointment was
-      booked under, so history reads correctly after a rename.
-    * ``booking_links.appointment_type_id`` — holds this table's id as a
-      plain value with no foreign key, because that table is PLATFORM-scoped
-      (a public slug has to resolve before any tenant schema can be selected)
-      and a platform table cannot hold a foreign key into one of N per-tenant
-      schemas. It is validated in the application instead.
+    * ``appointments.session_type`` keeps the name the appointment was booked
+      under, so history reads correctly after a rename.
+    * ``booking_links.appointment_type_id`` holds this id as a plain value with
+      no foreign key: that table is PLATFORM-scoped (a public slug resolves
+      before any tenant schema is selected) and a platform table cannot key
+      into one of N per-tenant schemas. Validated in the application instead.
     """
 
     __tablename__ = "appointment_types"
@@ -761,25 +734,22 @@ class AppointmentTypeRow(Base):
 class SchedulingPolicyRow(Base):
     """The practice's standing scheduling policy. One row per tenant.
 
-    Answers the questions an appointment type does not: how late a patient may
-    cancel, how a new enquiry starts, whether patients may book at all. A type
-    says what an appointment IS; this says what the practice will allow to
-    happen to its calendar.
+    Answers what an appointment type does not: how late a patient may cancel,
+    how a new enquiry starts, whether patients may book at all. A type says
+    what an appointment IS; this says what the practice allows to happen to its
+    calendar. Singleton, pinned by ``CHECK (id = 1)``, so a save upserts.
 
-    Singleton, pinned by ``CHECK (id = 1)``, so a save upserts the one row.
-
-    Every gate defaults off or strict. ``self_book_existing`` and
-    ``self_book_new`` are both false, and ``self_book_mode`` is ``request`` (a
-    pending appointment the clinician confirms) rather than ``auto``. A
-    practice upgrading into this code must not discover that patients can
-    suddenly book it.
+    Every gate defaults off or strict — ``self_book_existing`` and
+    ``self_book_new`` false, ``self_book_mode`` ``request`` rather than
+    ``auto`` — because a practice upgrading into this code must not discover
+    that patients can suddenly book it.
 
     Whether a PARTICULAR type may be self-booked lives on
-    ``appointment_types.self_bookable``, not here. Two switches, deliberately:
-    this one is the practice saying "self-booking is a thing I allow at all",
-    the per-type one is "and this type in particular". Both must be on.
+    ``appointment_types.self_bookable``. Two switches deliberately: this one is
+    "self-booking is a thing I allow at all", that one is "and this type in
+    particular". Both must be on.
 
-    Storing policy is all this does. Enforcing it at booking time is separate
+    Storing policy is all this does; enforcing it at booking time is separate
     and not yet built.
     """
 
@@ -840,16 +810,14 @@ class SchedulingPolicyRow(Base):
 class PracticeBillingProfileRow(Base):
     """The practice's billing identity: the legal entity a claim is filed as.
 
-    One row per tenant, singleton, pinned by ``CHECK (id = 1)`` — same shape
-    as :class:`SchedulingPolicyRow`, and for the same reason: this is
-    practice-level configuration, not a per-patient or per-user record, so
-    there is no ``user_id`` / ``patient_id`` to scope it by.
+    Singleton, pinned by ``CHECK (id = 1)`` — same shape as
+    :class:`SchedulingPolicyRow` and for the same reason: practice-level
+    configuration, so no ``user_id`` / ``patient_id`` to scope it by.
 
-    ``tax_id_encrypted`` holds the EIN or SSN at rest, AES-256-GCM encrypted
-    the same way OAuth calendar tokens are (see
-    ``app.services.token_encryption``). ``tax_id_last4`` is stored
-    separately, in the clear, purely for display — a settings page can show
-    "···· 1234" without ever decrypting the real value.
+    ``tax_id_encrypted`` holds the EIN or SSN at rest, AES-256-GCM encrypted the
+    same way OAuth calendar tokens are (``app.services.token_encryption``).
+    ``tax_id_last4`` is kept separately in the clear purely for display, so a
+    settings page can show "···· 1234" without decrypting anything.
     """
 
     __tablename__ = "practice_billing_profile"
@@ -980,15 +948,13 @@ class ComplianceItemRow(Base):
 class ComplianceDocumentRow(Base):
     """Dormant data-model rail for the Phase 3 compliance vault.
 
-    Will eventually back uploaded artifacts (license PDFs, malpractice
-    declarations, CAQH attestations, BAAs) attached to a
-    ``ComplianceItemRow``. Shipping the table now — without routes,
-    storage wiring, or UI — means self-hosters won't need a forced
-    schema migration when the vault product surface lands. ``storage_uri``
-    is opaque (gs:// today, s3:// or local fs in self-host) so the
-    storage backend can swap without a column change. ``document_type``
-    is a free-form string for v1 to keep the schema flexible while the
-    vault feature shape is still settling.
+    Will back uploaded artifacts (license PDFs, malpractice declarations, CAQH
+    attestations, BAAs) attached to a ``ComplianceItemRow``. Shipping the table
+    now — no routes, storage wiring or UI — means self-hosters need no forced
+    migration when the vault surface lands. ``storage_uri`` is opaque (gs://
+    today, s3:// or local fs self-hosted) so the backend can swap without a
+    column change, and ``document_type`` is free-form while the feature shape
+    settles.
     """
 
     __tablename__ = "compliance_documents"
@@ -1015,21 +981,18 @@ class ComplianceDocumentRow(Base):
 class SupervisionRelationshipRow(Base):
     """Per-user supervision / oversight relationship — PHI-free.
 
-    Models the regulatory relationships a clinician must keep current:
-    physician delegation, NP collaborative agreements, PA supervision,
-    and pre-licensure clinical supervision. These describe the
-    clinician's own professional standing (and that of their named
-    supervisor), not any patient, so the table lives in the practice
-    schema alongside ``compliance_items`` and is gated by ``user_id``
-    like the rest of the user-owned data.
+    The regulatory relationships a clinician must keep current: physician
+    delegation, NP collaborative agreements, PA supervision, pre-licensure
+    clinical supervision. These describe the clinician's own professional
+    standing and her named supervisor's, not any patient, so the table sits in
+    the practice schema beside ``compliance_items`` and is gated by ``user_id``.
 
-    The relationship's review deadline rides an existing
-    ``compliance_items`` row (``compliance_item_id``) so it reuses the
-    reminder/dispatch machinery — ``next_review_date`` mirrors that
-    item's ``due_date``. The link is nullable so a relationship can be
-    recorded before its review item exists. ``relationship_type`` and
-    ``status`` are free-form strings (validated at the service layer)
-    to keep the schema flexible across professions and jurisdictions.
+    The review deadline rides an existing ``compliance_items`` row
+    (``compliance_item_id``) to reuse the reminder machinery, with
+    ``next_review_date`` mirroring that item's ``due_date``. Nullable, so a
+    relationship can be recorded before its review item exists.
+    ``relationship_type`` and ``status`` are free-form (validated at the service
+    layer) to stay flexible across professions and jurisdictions.
     """
 
     __tablename__ = "supervision_relationships"
@@ -1092,15 +1055,14 @@ class SupervisionHoursRow(Base):
 class ChatConversationRow(Base):
     """Patient-context chat conversation envelope (THERAPY-bhv).
 
-    Lives in the practice schema alongside ``patients``. No ``tenant_id``
-    column — schema-per-practice already isolates rows. ``patient_id``
-    and ``caller_system_prompt`` are immutable after insert; the service
-    layer enforces this (no DB constraint because the audit guarantee is
-    a service-level invariant, not a schema invariant).
+    Lives in the practice schema alongside ``patients``; no ``tenant_id``
+    column, since schema-per-practice already isolates rows. ``patient_id`` and
+    ``caller_system_prompt`` are immutable after insert, enforced by the service
+    layer rather than a constraint — the audit guarantee is a service-level
+    invariant, not a schema one.
 
-    Cascade delete on the parent: removing a conversation drops its
-    messages via the FK below. See chat-design doc §6.6 for the
-    user-initiated hard-delete semantics.
+    Removing a conversation cascades to its messages via the FK below. See
+    chat-design §6.6 for user-initiated hard-delete semantics.
     """
 
     __tablename__ = "chat_conversations"
@@ -1200,33 +1162,25 @@ class LlmUsageRow(Base):
 class PatientDocumentRow(Base):
     """Clinician-uploaded patient document (THERAPY-ak6m.2).
 
-    Per-tenant table. RLS shape combines two policies, keyed on the
-    ``category`` enum (see :class:`app.models.DocumentCategory` for
-    the regulatory rationale):
+    Per-tenant. The RLS shape combines two policies keyed on ``category``
+    (:class:`app.models.DocumentCategory` carries the regulatory rationale):
 
-    * ``chart`` rows follow the same patient-access model as
-      :class:`NoteRow`: anyone with a ``patient_clinicians`` grant on
-      the patient can see them. Default. Matches clinical reality —
-      co-treating clinicians share the chart.
-    * ``therapist_private`` and ``psychotherapy_notes`` rows collapse
-      to direct ``user_id`` ownership: only the uploader can see
-      them. Access predicate is identical for the two categories;
-      they're kept distinct so downstream disclosure workflows
-      (release-of-records, patient right-of-access) can filter on
-      the HIPAA-meaningful boundary later.
+    * ``chart`` rows follow :class:`NoteRow`'s patient-access model — anyone
+      with a ``patient_clinicians`` grant sees them. Default, and it matches
+      clinical reality: co-treating clinicians share the chart.
+    * ``therapist_private`` and ``psychotherapy_notes`` collapse to uploader-
+      only ``user_id`` ownership. The predicate is identical for both; they
+      stay distinct so disclosure workflows (release-of-records, right-of-
+      access) can filter on the HIPAA-meaningful boundary later.
 
     See :func:`app.db.enable_rls_on_schema` for the policy body.
 
-    Lifecycle:
-
-    * ``finalized_at`` is NULL between init (signed URL minted +
-      placeholder row inserted) and finalize (GCS object verified +
-      PyMuPDF extraction run). List/get filters
-      ``finalized_at IS NOT NULL`` so abandoned init rows never appear.
-    * ``extracted_text`` is NULL when PyMuPDF returned <100 chars
-      (treated as a scanned PDF; ak6m.2.3 will OCR these).
-    * ``deleted_at`` non-NULL = soft-deleted; GCS-object cleanup cron
-      is deferred to ak6m.2.1.
+    Lifecycle: ``finalized_at`` is NULL between init (signed URL minted,
+    placeholder row inserted) and finalize (GCS object verified, PyMuPDF
+    extraction run), and list/get filter it out so abandoned inits never
+    appear. ``extracted_text`` is NULL when PyMuPDF returned under 100 chars
+    — treated as a scanned PDF, OCR'd by ak6m.2.3. ``deleted_at`` non-NULL is
+    soft-deleted; the GCS cleanup cron is deferred to ak6m.2.1.
     """
 
     __tablename__ = "patient_documents"
@@ -1334,14 +1288,13 @@ class AuditLogRow(Base):
 
     __table_args__ = (
         # Disarming a principal sets its GUC to '' rather than dropping it, so
-        # every request runs with one of the two identity GUCs empty. Every
-        # other principal column in the schema is a uuid, where '' fails the
-        # cast and the comparison is a no-match; this one is VARCHAR for the
-        # reasons above it, so '' is storable and '' = '' is true. Without
-        # this constraint the empty id is a bucket shared by every principal
-        # whose other GUC is cleared — readable and writable across the
-        # clinician/patient boundary, invisible to legitimate readers, and
-        # unreachable by the retention purge.
+        # every request runs with one of the two identity GUCs empty. Every other
+        # principal column is a uuid, where '' fails the cast and never matches;
+        # this one is VARCHAR for the reasons above, so '' is storable and
+        # '' = '' is true. Without this constraint the empty id is a bucket
+        # shared by every principal whose other GUC is cleared — readable and
+        # writable across the clinician/patient boundary, invisible to
+        # legitimate readers, and unreachable by the retention purge.
         CheckConstraint("user_id <> ''", name="audit_logs_user_id_not_empty"),
     )
 
@@ -1388,27 +1341,24 @@ def _sql_in_list(values: tuple[str, ...]) -> str:
 class PrescribingEncounterRow(Base):
     """A controlled-substance prescribing encounter — the rules-engine input.
 
-    One row per prescribing visit, sibling of ``notes`` / ``diagnostic_assessments``
-    inside each ``practice_{id}`` schema. Access is enforced at the application
-    layer via ``has_patient_access`` (keyed on ``patient_id``), same as the
-    rest of the per-patient chart — no separate RLS policy.
+    One row per prescribing visit, sibling of ``notes`` /
+    ``diagnostic_assessments`` inside each ``practice_{id}`` schema. Access is
+    enforced via ``has_patient_access`` on ``patient_id``, like the rest of the
+    chart — no separate RLS policy.
 
     Prescriber credentials and the delegating physician are **snapshotted**
-    here (not only referenced) so the record reflects what was true at
-    prescribing time — contemporaneous capture, no divergence if the standing
-    ``clinician_profiles`` / ``supervision_relationships`` rows later change.
-    ``delegation_ref`` points at the delegation agreement in force (e.g. a
-    ``supervision_relationships`` row).
+    here rather than only referenced, so the record reflects what was true at
+    prescribing time even if the standing ``clinician_profiles`` /
+    ``supervision_relationships`` rows later change. ``delegation_ref`` points
+    at the delegation agreement in force.
 
-    Stamped with ``ruleset_version`` (the ruleset in force, e.g.
-    ``"MI-RX-2026.06"``) so the rules applied to the encounter can be
-    reconstructed later. ``status`` / ``finalized_at`` back the finalization
-    gating added by the enforcement evaluator (layer 3); they are shipped now
-    so that capability needs no later migration.
+    ``ruleset_version`` (e.g. ``"MI-RX-2026.06"``) stamps the ruleset in force
+    so the rules applied can be reconstructed later. ``status`` /
+    ``finalized_at`` back the layer-3 finalization gating, shipped early so
+    that capability needs no migration.
 
-    The enforcement evaluator (layer 3) assembles a flat evaluation context
-    from these columns; the curated ruleset ``trigger`` / ``satisfied_when``
-    field paths resolve as:
+    The enforcement evaluator assembles a flat context from these columns; the
+    curated ruleset's ``trigger`` / ``satisfied_when`` paths resolve as:
 
     * ``prescription.{schedule,drug_class,days_supply,refills,quantity,strength}``
       -> :class:`PrescriptionRow`
@@ -1501,14 +1451,13 @@ class PrescribingEncounterRow(Base):
 class PrescriptionRow(Base):
     """A single prescription within a :class:`PrescribingEncounterRow`.
 
-    The unit the rules engine evaluates: ``schedule`` + ``drug_class`` select
-    which ruleset items apply (a Schedule II stimulant triggers the
-    delegation / dual-DEA / MAPS items; a non-controlled drug, ``schedule
-    "none"``, triggers nothing), and the quantitative fields
-    (``days_supply``, ``refills``) drive the conditional triggers and
-    ``satisfied_when`` checks. ``patient_id`` is denormalized from the
-    encounter so per-tenant patient-access checks and chart queries key on it
-    directly, same as ``notes`` / ``patient_medications``.
+    The unit the rules engine evaluates. ``schedule`` + ``drug_class`` select
+    which ruleset items apply — a Schedule II stimulant triggers the delegation
+    / dual-DEA / MAPS items, a non-controlled drug (``schedule "none"``)
+    triggers nothing — and ``days_supply`` / ``refills`` drive the conditional
+    triggers and ``satisfied_when`` checks. ``patient_id`` is denormalized from
+    the encounter so patient-access checks and chart queries key on it directly,
+    like ``notes`` / ``patient_medications``.
     """
 
     __tablename__ = "prescriptions"
@@ -1559,18 +1508,17 @@ class PrescriptionRow(Base):
 class PrescribingEncounterAddendumRow(Base):
     """A dated, labelled correction appended to a finalized encounter.
 
-    Finalized encounters are immutable; the only lawful change is an
-    addendum. Addenda are append-only — no ``updated_at`` / ``deleted_at`` —
-    and form a tamper-evident hash chain: ``digest`` is the content digest of
-    this addendum and ``prev_digest`` links to the previous chain link (the
-    encounter's ``integrity_digest`` for the first addendum, the prior
-    addendum's chain link thereafter), so removing or reordering any addendum
-    breaks every digest after it. Per-tenant, patient-scoped (RLS via
-    ``has_patient_access``), same as the encounter.
+    Finalized encounters are immutable; the only lawful change is an addendum.
+    Addenda are append-only — no ``updated_at`` / ``deleted_at`` — and form a
+    tamper-evident hash chain: ``digest`` is this addendum's content digest and
+    ``prev_digest`` the previous chain link (the encounter's
+    ``integrity_digest`` for the first, the prior addendum's thereafter), so
+    removing or reordering one breaks every digest after it. Patient-scoped via
+    ``has_patient_access``, same as the encounter.
 
-    ``label`` is the kind of correction (clinician-supplied); ``text`` is the
-    correction itself, in the clinician's own words. ``created_at`` is the
-    server clock at the time of writing — backdating is not representable.
+    ``label`` is the kind of correction, ``text`` the correction itself in the
+    clinician's own words. ``created_at`` is the server clock at writing —
+    backdating is not representable.
     """
 
     __tablename__ = "prescribing_encounter_addenda"
@@ -1611,26 +1559,23 @@ CHECKLIST_REQUIREMENT_LEVELS: tuple[str, ...] = tuple(r.value for r in Requireme
 class PrescribingChecklistItemRow(Base):
     """The attestation ledger — one row per applicable rule item on an encounter.
 
-    The verification record behind "no checkbox without evidence": when the
-    enforcement evaluator (``app.rules.enforcement.evaluate_enforcement``) runs
-    a curated ruleset against an open encounter + prescription, the
-    attestation service (``app.prescribing.attestation``) persists one row here
-    for each *applicable* item — its computed ``status``, its ``flag_behavior``
-    / ``requirement_level``, and (once bound) the ``evidence_link`` that
-    satisfies it. An item is ``satisfied`` only when its evidence resolves (or
-    a computed ``satisfied_when`` check holds); a bare row with no evidence
-    stays ``missing``. Items that stop applying (the drug changed) are
-    soft-deleted, never silently flipped.
+    The record behind "no checkbox without evidence". When
+    ``app.rules.enforcement.evaluate_enforcement`` runs a curated ruleset
+    against an open encounter + prescription, ``app.prescribing.attestation``
+    persists one row per *applicable* item: its computed ``status``, its
+    ``flag_behavior`` / ``requirement_level``, and once bound the
+    ``evidence_link`` satisfying it. An item is ``satisfied`` only when its
+    evidence resolves or a computed ``satisfied_when`` holds; a bare row stays
+    ``missing``. Items that stop applying (the drug changed) are soft-deleted,
+    never silently flipped.
 
-    ``ruleset_version`` records the ruleset in force when the row was computed,
-    so the rules applied to the encounter can be reconstructed later — the same
-    contemporaneous-capture guarantee the encounter itself carries. The ledger
-    is mutable only while the encounter is ``open``; once finalized the
-    encounter (and its ledger) are frozen and corrections become dated addenda.
+    ``ruleset_version`` records the ruleset in force when the row was computed
+    — the same contemporaneous-capture guarantee the encounter carries. The
+    ledger is mutable only while the encounter is ``open``; after finalization
+    both are frozen and corrections become dated addenda.
 
-    Per-tenant (each ``practice_{id}`` schema), patient-scoped: the
-    ``patient_id`` column gives it the auto-applied ``has_patient_access`` RLS
-    policy, same as the encounter and the rest of the per-patient chart.
+    Patient-scoped: ``patient_id`` gives it the auto-applied
+    ``has_patient_access`` policy, like the rest of the chart.
     """
 
     __tablename__ = "prescribing_checklist_items"
@@ -1719,27 +1664,25 @@ CHARGE_STATUSES: tuple[str, ...] = (
 DEFAULT_CHARGE_CURRENCY = "usd"
 
 #: What a ledger row IS, as distinct from how its charge attempt ended
-#: (``CHARGE_STATUSES``). Before insurance there was only one kind — the
-#: full-rate charge for a visit — so every row that predates this column
-#: reads as ``session``, which is why that is the default.
+#: (``CHARGE_STATUSES``). Before insurance there was one kind — the full-rate
+#: charge for a visit — so rows predating this column read as ``session``,
+#: hence the default.
 #:
-#: ``copay`` is the client's share taken at the visit. ``patient_resp`` is
-#: what the payer's remittance says the client owes once it has adjudicated.
-#: ``payment`` is money collected against a bill somebody else raised — a
-#: client paying down a balance. It is deliberately distinct from ``session``:
-#: a session charge is itself a bill, so settling a ``patient_resp`` with one
-#: would re-bill the very amount it was paying off.
+#: ``copay`` is the client's share taken at the visit; ``patient_resp`` what
+#: the payer's remittance says they owe after adjudication. ``payment`` is
+#: money collected against a bill somebody else raised, deliberately distinct
+#: from ``session``: a session charge is itself a bill, so settling a
+#: ``patient_resp`` with one would re-bill the amount it was paying off.
 #: ``contractual_adjustment`` is the gap between the practice's rate and the
 #: payer's allowed amount — a participating practice agrees never to bill it,
-#: so it is recorded to explain the arithmetic and is owed by nobody.
-#: ``write_off`` is money the practice decides not to collect.  ``credit`` is
-#: money held on the client's behalf, most often an over-collected copay.
+#: so it explains the arithmetic and is owed by nobody. ``write_off`` is money
+#: the practice decides not to collect; ``credit`` money held on the client's
+#: behalf, usually an over-collected copay.
 #:
 #: Only ``session`` and ``patient_resp`` are ever OWED; ``session``, ``copay``
-#: and ``payment`` are what COLLECT. ``session`` is both, which is exactly
-#: what makes a paid self-pay visit net to zero. Nothing here encodes that —
-#: the arithmetic lives in one place,
-#: :func:`app.payments.balance.patient_balance`.
+#: and ``payment`` COLLECT. ``session`` is both, which is what makes a paid
+#: self-pay visit net to zero. Nothing here encodes that — the arithmetic lives
+#: in :func:`app.payments.balance.patient_balance`.
 CHARGE_KINDS: tuple[str, ...] = (
     "session",
     "copay",
@@ -1764,20 +1707,19 @@ class PatientPaymentMethodRow(Base):
     property of the schema rather than of the routes above it: there is no
     column here a PAN or CVC could be written into. The browser posts the card
     straight to Stripe against a SetupIntent and hands the backend a ``pm_…``
-    id; what is stored is that id, the customer id, and the display triple the
-    UI renders ("Visa ···· 4242, exp 4/2029").
+    id; stored is that id, the customer id, and the display triple the UI
+    renders ("Visa ···· 4242, exp 4/2029").
 
-    One row per client (``patient_id`` is unique). Re-running setup replaces
-    the card in place rather than accumulating stale ones the clinician would
-    then have to choose between; several cards per client is a client-portal
-    concern, not a charge-for-the-session one.
+    One row per client (``patient_id`` unique). Re-running setup replaces the
+    card in place rather than accumulating stale ones to choose between; several
+    cards per client is a client-portal concern, not a charge-for-the-session
+    one.
 
-    ``stripe_payment_method_id`` is nullable for exactly one window: the row is
-    created when the SetupIntent is minted (the customer id is known then) and
-    completed when the browser confirms and Stripe reports which payment method
-    got attached. A row with a NULL payment-method id is a setup that was
-    started and never finished — it is not chargeable, and the charge route
-    treats it as "no card on file".
+    ``stripe_payment_method_id`` is nullable for one window: the row is created
+    when the SetupIntent is minted (the customer id is known then) and completed
+    when Stripe reports which payment method got attached. NULL means a setup
+    started and never finished — not chargeable, and the charge route treats it
+    as "no card on file".
     """
 
     __tablename__ = "patient_payment_methods"
@@ -1816,16 +1758,15 @@ class PatientPaymentMethodRow(Base):
 class PatientChargeRow(Base):
     """One charge attempt against a client's card on file — the ledger row.
 
-    Written FIRST, as ``pending``, before Stripe is called. That ordering is
-    the point of the table: if the call times out, or the process dies between
-    the call and the response, the practice still has a row saying a charge was
-    attempted, and the webhook (or a human reading the Stripe dashboard) can
-    reconcile it by ``stripe_payment_intent_id``. A ledger written only on
-    success would lose exactly the cases somebody needs to look at.
+    Written FIRST, as ``pending``, before Stripe is called — which is the point
+    of the table. If the call times out or the process dies before the response,
+    the practice still has a row saying a charge was attempted, reconcilable by
+    ``stripe_payment_intent_id``. A ledger written only on success would lose
+    exactly the cases somebody needs to look at.
 
-    ``appointment_id`` is nullable: a charge need not hang off an appointment (a
-    late-cancellation fee, or a balance), and an appointment can be deleted
-    while the money record must not be. Soft reference, no foreign key.
+    ``appointment_id`` is nullable and a soft reference with no foreign key: a
+    charge need not hang off an appointment (a late-cancellation fee, a
+    balance), and an appointment can be deleted while the money record must not.
     """
 
     __tablename__ = "patient_charges"
@@ -1873,25 +1814,19 @@ class PatientChargeRow(Base):
             unique=True,
             postgresql_where=text("stripe_payment_intent_id IS NOT NULL"),
         ),
-        # At most one balance payment in flight per client, and the database
-        # is what says so.
+        # At most one balance payment in flight per client, and the database is
+        # what says so. The route's own check is not enough: it reads the ledger
+        # then inserts, so two requests can both read before either writes. A
+        # staged row is ``pending``, and ``pending`` deliberately does not count
+        # as collected — so while the first request is at the processor the
+        # balance still reads as owed and the second charges the card again for
+        # the whole of it. Two charges and a refund somebody has to notice.
         #
-        # The route checks first, and that check is not enough on its own: it
-        # reads the ledger and then inserts, so two requests can both read
-        # before either has written. A staged row is ``pending``, and
-        # ``pending`` is deliberately not counted as collected — so while the
-        # first request is at the processor the balance still reads as owed,
-        # and the second charges the card again for the whole of it. What the
-        # client has then is two charges and a refund somebody has to notice.
-        #
-        # ``kind = 'payment'`` only. Every other kind is a BILL rather than a
+        # ``kind = 'payment'`` only: every other kind is a BILL rather than a
         # collection, and a client can legitimately have any number of those
-        # outstanding at once; constraining them would refuse a second
-        # session charge for no reason.
-        #
-        # ``status = 'pending'`` only, so a terminal row never blocks. A
-        # decline is final and retrying is a fresh charge a clinician asked
-        # for.
+        # outstanding. ``status = 'pending'`` only, so a terminal row never
+        # blocks — a decline is final, and retrying is a fresh charge a
+        # clinician asked for.
         Index(
             "ux_patient_charges_one_pending_payment",
             "patient_id",
@@ -1994,26 +1929,29 @@ class PayerRow(Base):
     """An insurance payer this practice files with or checks eligibility against.
 
     Practice-level, not per-client: one row per payer, referenced by every
-    coverage on file that names it. There is no ``user_id`` / ``patient_id``
-    to scope it by, so — like ``practice_billing_profile`` — its isolation
-    boundary is the tenant schema and RLS is deliberately left off
-    (registered in ``_CORE_NOT_ROW_SCOPED``).
+    coverage that names it. No ``user_id`` / ``patient_id`` to scope it by, so
+    — like ``practice_billing_profile`` — its isolation boundary is the tenant
+    schema and RLS is deliberately off (``_CORE_NOT_ROW_SCOPED``).
 
-    ``payer_id`` is the electronic payer id printed on the card or listed in
-    the clearinghouse's payer directory. ``clearinghouse_payer_id`` is the
-    clearinghouse's own identifier for the same payer, filled in later by
-    whatever looks the payer up; NULL until then.
+    ``payer_id`` is the electronic payer id on the card or in the
+    clearinghouse's directory; ``clearinghouse_payer_id`` is the
+    clearinghouse's own identifier for the same payer, NULL until something
+    looks it up.
 
-    Behavioral benefits are often administered by a different entity than
-    the one the medical card names. ``is_carveout`` marks such a payer and
-    ``carveout_of`` points at the medical payer it carves out from, so a
-    claim can be routed to the right one.
+    Behavioral benefits are often administered by a different entity than the
+    medical card names. ``is_carveout`` marks such a payer and ``carveout_of``
+    points at the one it carves out from, so a claim routes to the right one.
 
-    The three ``*_days`` columns are the deadlines a claim against this payer
-    lives under: how long after the service the original claim may be filed,
-    how long after a rejection a corrected claim may follow, and how long
-    after a denial an appeal may be lodged. Nothing here computes a date from
-    them; the claim workflow reads them.
+    The three ``*_days`` columns are this payer's deadlines: original filing,
+    corrected claim after a rejection, appeal after a denial. Nothing here
+    computes a date from them; the claim workflow reads them.
+
+    ``enrollment_status`` is the ELECTRONIC connection — whether 837/835/270
+    can be exchanged with this payer. It says nothing about whether any
+    clinician is on the payer's panel; that is
+    ``payer_participations.status``, per clinician and independent. Both are
+    true and false in every combination, and these similar names invite
+    reading one for the other. Don't.
     """
 
     __tablename__ = "payers"
@@ -2052,23 +1990,23 @@ class PatientCoverageRow(Base):
     """The insurance plan a client is on — what a claim and an eligibility
     check both need before they can be built.
 
-    Carries ``patient_id`` and no ``user_id``, so ``enable_rls_on_schema``
-    attaches the standard ``has_patient_access`` policy: only a clinician
-    with a grant on the client can read or write their coverage.
+    Carries ``patient_id`` and no ``user_id``, so the standard
+    ``has_patient_access`` policy applies: only a clinician with a grant on the
+    client can read or write their coverage.
 
     One active primary coverage per client (partial unique index on
     ``patient_id WHERE active``). Replacing a plan deactivates the old row
-    rather than deleting it, so a claim filed under the old plan can still
-    be read against what was on file at the time.
+    rather than deleting it, so a claim filed under the old plan can still be
+    read against what was on file at the time.
 
-    The member id is protected health information, not a secret: it is
-    stored as typed and must never reach a log line. The subscriber fields
-    are nullable because they only matter when the subscriber is somebody
-    other than the client (``subscriber_relationship != 'self'``); the
-    claim scrub, not this table, decides when they are required.
+    The member id is protected health information, not a secret: stored as
+    typed, never in a log line. The subscriber fields are nullable because they
+    only matter when the subscriber is not the client
+    (``subscriber_relationship != 'self'``), and the claim scrub decides when
+    they are required.
 
-    ``last_271`` and ``verified_at`` are written by the eligibility check,
-    never by the chart form; they stay NULL until one has run.
+    ``last_271`` and ``verified_at`` are written by the eligibility check, never
+    the chart form; NULL until one has run.
     """
 
     __tablename__ = "patient_coverage"
@@ -2154,20 +2092,20 @@ class PayerEnrollmentRow(Base):
     """One enrollment request with a payer for one transaction type.
 
     Keyed by ``(payer_id, transaction_type)``: a practice files at most one
-    request per payer per transaction, and the clearinghouse's own id for it
-    is ``vendor_request_id``. Practice-level like ``payers`` — the practice
-    is enrolled, not a clinician — so there is no ``user_id`` / ``patient_id``
-    and no ``id`` either, which keeps the table out of ``enable_rls_on_schema``
-    altogether; its isolation boundary is the tenant schema.
+    request per payer per transaction, and ``vendor_request_id`` is the
+    clearinghouse's own id for it. Practice-level like ``payers`` — the practice
+    is enrolled, not a clinician — so no ``user_id`` / ``patient_id`` and no
+    ``id`` either, which keeps the table out of ``enable_rls_on_schema``
+    entirely; its isolation boundary is the tenant schema.
 
-    ``requested_by_user_id`` is who asked for the enrollment and therefore
-    who the reminder is addressed to when the payer wants something. It is
-    deliberately not named ``user_id``: that name would make the row
-    clinician-owned and hide the practice's enrollment from everyone else.
+    ``requested_by_user_id`` is who asked, and therefore who the reminder is
+    addressed to when the payer wants something. Deliberately not named
+    ``user_id``: that would make the row clinician-owned and hide the practice's
+    enrollment from everyone else.
 
     ``instructions`` is the clearinghouse's wording of what the payer needs,
-    kept to show on the payer row and in the reminder. It is stored and
-    rendered, never logged.
+    shown on the payer row and in the reminder. Stored and rendered, never
+    logged.
     """
 
     __tablename__ = "payer_enrollments"
@@ -2227,23 +2165,22 @@ CLAIM_CONTROL_NUMBER_MAX_LENGTH = 17
 class ClaimRow(Base):
     """One professional claim, built from a session and filed with a payer.
 
-    A snapshot, not a view: the billing identity, the subscriber and the
-    diagnosis list are copied in when the claim is built, so an edit to the
-    appointment or the coverage afterwards does not change what was (or
-    will be) filed. A claim past ``draft`` is never edited in place; the
-    correction is a new row with ``frequency_code`` ``7`` (or ``8`` to
-    void) that points back here through ``parent_claim_id``.
+    A snapshot, not a view: the billing identity, subscriber and diagnosis list
+    are copied in when the claim is built, so a later edit to the appointment or
+    the coverage does not change what was filed. A claim past ``draft`` is never
+    edited in place — the correction is a new row with ``frequency_code`` ``7``
+    (or ``8`` to void) pointing back through ``parent_claim_id``.
 
-    Carries ``patient_id`` and no ``user_id``, so ``enable_rls_on_schema``
-    attaches the standard ``has_patient_access`` policy — the same posture
-    as ``patient_coverage``. The snapshots hold the subscriber's name, date
-    of birth and address and the diagnosis codes: protected health
-    information that is stored here and never written to a log line.
+    Carries ``patient_id`` and no ``user_id``, so the standard
+    ``has_patient_access`` policy applies, same posture as ``patient_coverage``.
+    The snapshots hold the subscriber's name, date of birth and address and the
+    diagnosis codes — protected health information, stored here and never
+    written to a log line.
 
-    ``control_number`` is CLM01, the practice's own identifier for the
-    claim on the wire; the clearinghouse and the payer echo it back on
-    every acknowledgement, which is how those are matched to this row.
-    Generated here, unique within the practice, never reused.
+    ``control_number`` is CLM01, the practice's own identifier for the claim on
+    the wire. The clearinghouse and payer echo it back on every
+    acknowledgement, which is how those match to this row. Generated here,
+    unique within the practice, never reused.
     """
 
     __tablename__ = "claims"
@@ -2353,21 +2290,20 @@ CLAIM_EVENT_KINDS: tuple[str, ...] = (
 class ClaimEventRow(Base):
     """One receipt on a claim: a hop it took, or an alert raised about it.
 
-    The claims tracker shows every hop with the moment its receipt arrived,
-    and this is where those moments live. It is also what makes the
-    acknowledgement paths idempotent: a clearinghouse webhook delivery is
-    keyed by ``vendor_event_id`` (unique, so a redelivery cannot move the
-    claim twice) and a deadline alert by ``(claim, kind, deadline kind,
-    rung)`` (unique, so a restarted watchdog cannot re-raise it).
+    The claims tracker shows every hop with the moment its receipt arrived, and
+    this is where those moments live. It is also what makes the acknowledgement
+    paths idempotent: a clearinghouse webhook delivery is keyed by
+    ``vendor_event_id`` (unique, so a redelivery cannot move the claim twice) and
+    a deadline alert by ``(claim, kind, deadline kind, rung)`` (unique, so a
+    restarted watchdog cannot re-raise it).
 
     Carries ``patient_id`` beside ``claim_id`` for the same reason
-    ``claim_lines`` does: the row is isolated by the ``has_patient_access``
-    policy of its claim without the policy engine learning a join.
+    ``claim_lines`` does: the row is isolated by its claim's
+    ``has_patient_access`` policy without the policy engine learning a join.
 
-    ``detail`` holds codes and vendor identifiers only — the clearinghouse
-    edit codes or 277CA status codes behind a rejection, the correlation
-    and trace ids behind a filing. Never a member id, a diagnosis or a
-    name.
+    ``detail`` holds codes and vendor identifiers only — clearinghouse edit
+    codes or 277CA status codes behind a rejection, correlation and trace ids
+    behind a filing. Never a member id, a diagnosis or a name.
     """
 
     __tablename__ = "claim_events"
@@ -2414,14 +2350,14 @@ class ClaimLineRow(Base):
     Appointments get deleted; a money record does not, and it must keep
     reading correctly after the visit it came from is gone.
 
-    Carries ``patient_id`` alongside ``claim_id`` so the row is isolated by
-    the same ``has_patient_access`` policy as its claim, rather than by a
-    join the policy engine would have to be taught. It is a copy of the
-    claim's ``patient_id`` and is never different from it.
+    Carries ``patient_id`` alongside ``claim_id`` so the row is isolated by the
+    same ``has_patient_access`` policy as its claim, rather than by a join the
+    policy engine would have to be taught. A copy of the claim's
+    ``patient_id``, never different from it.
 
     ``allowed_cents`` / ``paid_cents`` / ``patient_resp_cents`` and
-    ``adjustments`` (CARC/RARC entries) are written by remittance posting;
-    they stay unset until an 835 arrives.
+    ``adjustments`` (CARC/RARC entries) are written by remittance posting and
+    stay unset until an 835 arrives.
     """
 
     __tablename__ = "claim_lines"
@@ -2491,25 +2427,24 @@ REMITTANCE_HOLD_FINDINGS: tuple[str, ...] = (
 class RemittanceHoldRow(Base):
     """A remittance whose two statements of the client's share disagree.
 
-    An 835 states the claim's patient-responsibility total (``CLP05``) and
-    then itemises the same figure across the service lines as ``PR``-group
-    adjustments. When those two disagree the engine posts what the payer
-    paid, withholds the client's ledger row, and writes one of these
-    instead of billing a real person a number it cannot corroborate.
+    An 835 states the claim's patient-responsibility total (``CLP05``) and then
+    itemises the same figure across the service lines as ``PR``-group
+    adjustments. When the two disagree the engine posts what the payer paid,
+    withholds the client's ledger row, and writes one of these rather than
+    billing a real person a number it cannot corroborate.
 
-    Carries ``patient_id`` and no ``user_id``, so ``enable_rls_on_schema``
-    attaches the standard ``has_patient_access`` policy and the clinician
-    who owns the claim is the one who sees the hold.
+    Carries ``patient_id`` and no ``user_id``, so the standard
+    ``has_patient_access`` policy applies and the clinician who owns the claim
+    is the one who sees the hold.
 
-    ``posting_key`` is the key the posting path already dedupes receipts on
-    — the claim id and the vendor entry that carried the adjudication —
-    and it is unique here for the same reason it is there: a remittance
-    delivered twice is one event, and a second hold would put the same
-    disagreement in front of a person twice.
+    ``posting_key`` is the key the posting path already dedupes receipts on —
+    the claim id plus the vendor entry that carried the adjudication — and is
+    unique here for the same reason: a remittance delivered twice is one event,
+    and a second hold would show one person the same disagreement twice.
 
-    No column holds clinical content. ``codes`` is CARC/RARC pairs, which
-    are numbers from a public list; the amounts are money the payer
-    reported; there is no name, no date of service and no diagnosis.
+    No column holds clinical content. ``codes`` is CARC/RARC pairs from a
+    public list, the amounts are what the payer reported, and there is no name,
+    date of service or diagnosis.
     """
 
     __tablename__ = "remittance_holds"
@@ -2591,3 +2526,550 @@ class RemittanceHoldRow(Base):
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     resolved_by_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     finding: Mapped[str | None] = mapped_column(String(24), nullable=True)
+
+
+# ---------------------------------------------------------------------------
+# The clinician's credential record — the structured facts behind the
+# compliance clocks. ``compliance_items`` already tracks WHEN a licence
+# expires; nothing recorded what the licence was, nor any of the
+# biographical sections a payer application asks for.
+#
+# Three decisions hold across every table below:
+#
+#   * ``clinician_profiles`` keeps the PRIMARY identity (licence number and
+#     state, DEA, NPI, taxonomy). These extend it, never fork it — there is
+#     one DEA column in this schema and it lives there.
+#   * Documents stay in ``compliance_documents``. Every table here points at
+#     one by id; none stores bytes.
+#   * Every table carries ``user_id``, so ``enable_rls_on_schema`` gives it
+#     the direct-ownership policy — which is why none needs registering as
+#     not-row-scoped. They are row-scoped, on the clinician who owns them.
+#
+# This is provider PII (SSN, date of birth, bank account), not patient PHI,
+# and still the most sensitive class in the schema. The encrypted columns are
+# read through one audited path (``app.credentialing.government_ids``).
+# ---------------------------------------------------------------------------
+
+
+#: How a stored credential fact was established. ``self`` is what she told us
+#: and the default for anything typed into a form; ``nppes`` and ``board``
+#: mean a public source was read and agreed. Only the latter two are worth
+#: anything to a payer, so provenance is a column, not an assumption.
+CREDENTIAL_VERIFICATION_SOURCES: tuple[str, ...] = ("self", "nppes", "board")
+
+#: Where a licence stands with its issuing board — distinct from whether the
+#: expiry date has passed. A licence can be ``active`` with a date in the past
+#: while a renewal processes, and ``suspended`` with a date years out.
+CREDENTIAL_LICENSE_STATUSES: tuple[str, ...] = (
+    "active",
+    "inactive",
+    "expired",
+    "suspended",
+    "revoked",
+)
+
+#: Which number the clinician files taxes under. Mirrors
+#: ``practice_billing_profile.tax_id_type`` — the practice has a billing
+#: identity and each clinician has her own, which for a solo practice is the
+#: same number in two places.
+CREDENTIAL_TAX_ID_TYPES: tuple[str, ...] = ("ein", "ssn")
+
+#: What kind of account EFT lands in — the one field a payer's enrollment form
+#: asks for that cannot be read off a voided cheque.
+CREDENTIAL_BANK_ACCOUNT_TYPES: tuple[str, ...] = ("checking", "savings")
+
+#: Where this clinician stands with one payer's panel. A state machine with an
+#: effective date, never a boolean, because credentialing and contracting are
+#: two processes: ``credentialed`` means the payer verified her, ``contracted``
+#: means a participation agreement carrying a fee schedule exists, and
+#: ``in_network`` means both as of ``effective_date``. A practice can sit in
+#: ``credentialed`` for years believing it is paneled — separating the two is
+#: what makes that gap visible.
+#:
+#: ``single_case_agreement`` is the side door: a one-off in-network rate for
+#: one client, agreed without paneling, so it implies none of the others.
+PARTICIPATION_STATUSES: tuple[str, ...] = (
+    "out_of_network",
+    "application_submitted",
+    "credentialed",
+    "contracted",
+    "in_network",
+    "single_case_agreement",
+    "denied",
+    "terminated",
+)
+
+
+class CredentialGovernmentIdRow(Base):
+    """The clinician's government identifiers — one row per clinician.
+
+    Deliberately its own table rather than columns on ``clinician_profiles``:
+    SSN, date of birth and tax id are the highest-sensitivity fields in the
+    schema, and isolating them gives the class exactly one access path to
+    audit. Everything that reads a value here goes through
+    ``app.credentialing.government_ids``, which records the read.
+
+    Encrypted with the same AES-256-GCM helper the calendar tokens and the
+    practice's billing tax id already use (``app.services.token_encryption``).
+    The ``*_last4`` columns are in the clear on purpose: a form needs to show
+    which number is on file, and four digits are not the identifier. There is
+    no ``dob_last4`` — a partial date of birth is either the whole fact or
+    useless, so seeing it means decrypting it, which is audited.
+
+    ``business_structure`` and ``sole_proprietor`` look like one question and
+    are two: the first is the entity type on the tax return, the second a
+    filing status a payer's W-9 section asks about independently — and a
+    single-member LLC answers yes to it.
+    """
+
+    __tablename__ = "credential_government_ids"
+    __table_args__ = (
+        CheckConstraint(
+            f"tax_id_type IS NULL OR tax_id_type IN ({_sql_in_list(CREDENTIAL_TAX_ID_TYPES)})",
+            name="ck_credential_government_ids_tax_id_type",
+        ),
+    )
+
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    ssn_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ssn_last4: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    dob_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tax_id_type: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    tax_id_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tax_id_last4: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    # The organisation NPI, when the clinician bills as an entity rather than
+    # as herself. The individual (type 1) NPI lives on clinician_profiles.
+    type2_npi: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    business_structure: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    sole_proprietor: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CredentialLicenseRow(Base):
+    """Every licence the clinician holds, in every state.
+
+    ``clinician_profiles.license_number`` / ``license_state`` remain the
+    primary licence and the one a claim is filed under; this holds the full
+    set, with the primary mirrored as ``is_primary``. Multi-state is ordinary
+    — telehealth and the compacts — and an application asks for all of them.
+
+    ``expiration_date`` is what the ``license`` compliance clock derives FROM,
+    never the reverse. ``app.credentialing.clocks`` proposes; she confirms.
+    """
+
+    __tablename__ = "credential_licenses"
+    __table_args__ = (
+        CheckConstraint(
+            f"status IN ({_sql_in_list(CREDENTIAL_LICENSE_STATUSES)})",
+            name="ck_credential_licenses_status",
+        ),
+        CheckConstraint(
+            f"verification_source IN ({_sql_in_list(CREDENTIAL_VERIFICATION_SOURCES)})",
+            name="ck_credential_licenses_verification_source",
+        ),
+        UniqueConstraint(
+            "user_id",
+            "state",
+            "license_number",
+            name="ux_credential_licenses_user_state_number",
+        ),
+        # Partial, because a unique constraint on (user_id, is_primary) would
+        # also forbid a second NON-primary licence — the ordinary case.
+        Index(
+            "ux_credential_licenses_one_primary",
+            "user_id",
+            unique=True,
+            postgresql_where=text("is_primary"),
+        ),
+        Index("ix_credential_licenses_user_id", "user_id"),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    # Free text: the abbreviations differ by state and discipline (LMFT,
+    # LCSW, LPCC, PMHNP-BC), and a new one shouldn't need a migration. Same
+    # posture as ``compliance_items.item_type``.
+    license_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    license_number: Mapped[str] = mapped_column(String(100), nullable=False)
+    state: Mapped[str] = mapped_column(String(2), nullable=False)
+    issue_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    expiration_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    verification_source: Mapped[str] = mapped_column(String(8), nullable=False, default="self")
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    document_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("compliance_documents.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CredentialLiabilityPolicyRow(Base):
+    """A malpractice policy: carrier, limits, dates, and the COI behind it.
+
+    A payer asks for the per-occurrence and aggregate limits, not just that
+    coverage exists, and refuses an application below its floor — so the
+    numbers are columns, in cents like every other amount here.
+
+    Superseded policies stay rather than being replaced: an application asks
+    for continuous coverage history, and a gap in it is a disclosure question.
+    """
+
+    __tablename__ = "credential_liability_policies"
+    __table_args__ = (
+        Index("ix_credential_liability_policies_user_id", "user_id"),
+        Index(
+            "ux_credential_liability_policies_one_current",
+            "user_id",
+            unique=True,
+            postgresql_where=text("is_current"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    carrier_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    policy_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    per_occurrence_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    aggregate_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    effective_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    expiration_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    is_current: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    document_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("compliance_documents.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CredentialEducationRow(Base):
+    """One degree: where, in what, and when.
+
+    The professional degree is the one a payer verifies with the school; the
+    undergraduate one is asked for and rarely checked. Both are rows.
+    """
+
+    __tablename__ = "credential_education"
+    __table_args__ = (Index("ix_credential_education_user_id", "user_id"),)
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    institution: Mapped[str] = mapped_column(String(255), nullable=False)
+    degree: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    field_of_study: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # ISO 3166-1 alpha-2. Asked for because a degree earned abroad routes the
+    # application differently.
+    country: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CredentialTrainingRow(Base):
+    """Post-degree training: internship, practicum, residency, fellowship.
+
+    Separate from ``credential_education`` because the questions differ — a
+    training entry names a supervisor and a specialty — and because a payer's
+    form separates them too.
+    """
+
+    __tablename__ = "credential_training"
+    __table_args__ = (Index("ix_credential_training_user_id", "user_id"),)
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    # Free text, same reason as ``license_type``.
+    program_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    institution: Mapped[str] = mapped_column(String(255), nullable=False)
+    specialty: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    supervisor_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CredentialEmploymentRow(Base):
+    """Work history, which a payer reads as a continuous timeline.
+
+    ``end_date`` NULL means current. ``preceding_gap_explanation`` explains the
+    gap immediately BEFORE this row's ``start_date``.
+
+    There is no ``has_gap`` flag. Whether a gap exists is a fact about two
+    dates, so it is derived from the ordered rows on every ask
+    (``app.credentialing.employment.gaps``) — a stored copy drifts the first
+    time someone corrects a date, leaving an explanation attached to a gap
+    that is no longer there.
+    """
+
+    __tablename__ = "credential_employment"
+    __table_args__ = (Index("ix_credential_employment_user_id", "user_id"),)
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    employer_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    position: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    address_line1: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    address_line2: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    city: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    state: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    postal_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    preceding_gap_explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CredentialReferenceRow(Base):
+    """A professional reference. Payers ask for three, and contact them.
+
+    ``years_known`` is a column because a reference of under a year is
+    routinely rejected — catching that before the application goes out is the
+    difference between a fixable form and a sixty-day stall.
+    """
+
+    __tablename__ = "credential_references"
+    __table_args__ = (Index("ix_credential_references_user_id", "user_id"),)
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    full_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    title: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    credential: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    organization: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    relationship: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    years_known: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CredentialDisclosureRow(Base):
+    """One answered disclosure question, pinned to the wording she answered.
+
+    The attestation questions — malpractice history, licence action, criminal
+    history — get reworded by the bodies that ask them. ``question_key`` names
+    the question, ``question_version`` names the wording, and the pair is what
+    she attested to. Without the version a rewording silently changes the
+    meaning of a stored ``true``. So two versions of one key coexist rather
+    than the new one replacing the old.
+
+    A ``true`` answer always carries an explanation, enforced in the schema:
+    an unexplained yes is not an answer a payer accepts, and learning that at
+    submission time costs a review cycle.
+    """
+
+    __tablename__ = "credential_disclosures"
+    __table_args__ = (
+        CheckConstraint(
+            "answer IS NOT TRUE OR explanation IS NOT NULL",
+            name="ck_credential_disclosures_explained",
+        ),
+        UniqueConstraint(
+            "user_id",
+            "question_key",
+            "question_version",
+            name="ux_credential_disclosures_user_key_version",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    question_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    question_version: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    answer: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    answered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CredentialServiceLocationRow(Base):
+    """A place the clinician sees clients, as a payer directory would list it.
+
+    The apparently cosmetic fields are not: ``accepts_new_patients`` is the
+    most-complained-about wrong entry in every payer directory, ``languages``
+    and ``ada_accessible`` are how a member filters, and ``hours`` is what a
+    network-adequacy audit checks. ``telehealth_only`` marks an address that
+    exists for the paperwork and not a door anyone walks through.
+
+    ``hours`` and ``languages`` are JSONB: read and written whole, never
+    queried by element, and shaped by the payer rather than by us.
+    """
+
+    __tablename__ = "credential_service_locations"
+    __table_args__ = (
+        Index("ix_credential_service_locations_user_id", "user_id"),
+        Index(
+            "ux_credential_service_locations_one_primary",
+            "user_id",
+            unique=True,
+            postgresql_where=text("is_primary"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    address_line1: Mapped[str] = mapped_column(String(255), nullable=False)
+    address_line2: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    city: Mapped[str] = mapped_column(String(100), nullable=False)
+    state: Mapped[str] = mapped_column(String(2), nullable=False)
+    postal_code: Mapped[str] = mapped_column(String(20), nullable=False)
+    phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    fax: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    accepts_new_patients: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    hours: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    ada_accessible: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    languages: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    telehealth_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CredentialBankAccountRow(Base):
+    """Where EFT lands, and the voided cheque that proves it.
+
+    Encrypted like the government ids and read through the same audited path.
+    ``*_last4`` is in the clear so a form can show which account is on file —
+    a routing number is public information about a bank; what is worth
+    protecting is its pairing with an account number.
+    """
+
+    __tablename__ = "credential_bank_accounts"
+    __table_args__ = (
+        CheckConstraint(
+            f"account_type IN ({_sql_in_list(CREDENTIAL_BANK_ACCOUNT_TYPES)})",
+            name="ck_credential_bank_accounts_account_type",
+        ),
+        Index("ix_credential_bank_accounts_user_id", "user_id"),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    account_holder_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    routing_number_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    routing_number_last4: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    account_number_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    account_number_last4: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    account_type: Mapped[str] = mapped_column(String(8), nullable=False)
+    document_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("compliance_documents.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class PayerParticipationRow(Base):
+    """Whether THIS CLINICIAN is on THIS PAYER's panel, and since when.
+
+    Not ``payers.enrollment_status`` or ``payer_enrollments``, which are the
+    practice's ELECTRONIC connection to a payer (837/835/270). Different fact,
+    different party, and the two move independently in every combination: this
+    row is about a person and a panel, those are about a practice and a pipe.
+
+    Unique on ``(user_id, payer_id)``, which is why panel status cannot be a
+    column on ``payers``: in a group practice each clinician holds her own
+    status against the same payer.
+
+    The behavioural carve-out needs nothing here — a carve-out is already its
+    own ``payers`` row with ``is_carveout`` and ``carveout_of``, so being
+    in-network with a health plan and out-of-network with the entity
+    administering its behavioural benefits is two rows against two payers.
+    Likewise state: a payer row already knows it is BCBS of Michigan.
+
+    ``status`` never moves without a ``payer_participation_events`` row
+    recording the move. ``app.credentialing.participation`` is the only thing
+    that should write this column.
+    """
+
+    __tablename__ = "payer_participations"
+    __table_args__ = (
+        CheckConstraint(
+            f"status IN ({_sql_in_list(PARTICIPATION_STATUSES)})",
+            name="ck_payer_participations_status",
+        ),
+        UniqueConstraint("user_id", "payer_id", name="ux_payer_participations_user_payer"),
+        Index("ix_payer_participations_payer_id", "payer_id"),
+        Index("ix_payer_participations_user_id", "user_id"),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    payer_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("payers.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="out_of_network")
+    # ``credentialed_at`` set with ``contracted_at`` NULL is the
+    # credentialed-but-not-contracted trap the tracker exists to surface.
+    credentialed_at: Mapped[date | None] = mapped_column(Date, nullable=True)
+    contracted_at: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # The payer's date, not ours — routinely weeks after the contract signs.
+    effective_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    termination_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Usually three years out. Missing it terminates the panel silently.
+    recredentialing_due_at: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # The id the PAYER knows her by. Not her NPI; what a status call is keyed on.
+    provider_id_with_payer: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class PayerParticipationEventRow(Base):
+    """One transition of one participation, with the moment it happened.
+
+    The current status answers "where does this panel sit"; only the history
+    answers "when did it go quiet" — and an application that has not moved in
+    ninety days is the ordinary failure mode of paneling, invisible to a table
+    that stores only the latest value.
+
+    Carries ``user_id`` beside ``participation_id`` for the same reason
+    ``claim_events`` carries ``patient_id`` beside ``claim_id``: the row is
+    isolated by its parent's predicate without the policy engine learning a
+    join.
+
+    ``detail`` holds identifiers about the PROCESS — a reviewer's reference
+    number, which queue a form went into. Never anything about a client.
+    """
+
+    __tablename__ = "payer_participation_events"
+    __table_args__ = (
+        CheckConstraint(
+            f"to_status IN ({_sql_in_list(PARTICIPATION_STATUSES)})",
+            name="ck_payer_participation_events_to_status",
+        ),
+        CheckConstraint(
+            f"from_status IS NULL OR from_status IN ({_sql_in_list(PARTICIPATION_STATUSES)})",
+            name="ck_payer_participation_events_from_status",
+        ),
+        Index("ix_payer_participation_events_participation_id", "participation_id"),
+        Index("ix_payer_participation_events_user_id", "user_id"),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    participation_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("payer_participations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    # NULL on the row that records a participation coming into existence.
+    from_status: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    to_status: Mapped[str] = mapped_column(String(24), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    detail: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

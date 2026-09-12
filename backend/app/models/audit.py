@@ -319,6 +319,25 @@ class AuditAction(StrEnum):
     # file that carries client ids and nothing else.
     BILLING_PERIOD_EXPORTED = "billing_period_exported"
 
+    # The clinician's own credential record. Not patient PHI — this is her
+    # SSN, date of birth, tax id and bank account — but the most sensitive
+    # class the schema holds outside the PHI perimeter, and state SSN and
+    # breach-notification law attaches to it. So every DECRYPTION is audited,
+    # not just every write: the encrypted columns have one reader
+    # (``app.credentialing.government_ids``) and it records each read with the
+    # field names it decrypted. The `changes` payload never carries a value,
+    # and never the key names ``ssn`` / ``dob`` either — those are in
+    # PHI_FIELD_NAMES, so ``_assert_changes_phi_free`` would refuse the row.
+    CREDENTIAL_IDENTIFIERS_VIEWED = "credential_identifiers_viewed"
+    CREDENTIAL_IDENTIFIERS_UPDATED = "credential_identifiers_updated"
+    CREDENTIAL_BANK_ACCOUNT_VIEWED = "credential_bank_account_viewed"
+    # A panel moving. Recorded beside the ``payer_participation_events`` row
+    # because the two answer different questions: the event row is the
+    # clinical-operations history of the panel, this is who moved it and from
+    # where. Payload carries the participation id, the payer row id and the
+    # from/to statuses — no payer-assigned provider id.
+    PAYER_PARTICIPATION_TRANSITIONED = "payer_participation_transitioned"
+
     # The financial report: aging, payer mix, collections rate and
     # claim-to-payment lag over an explicit window, all computed on read
     # from the ledger and claims. One row per read naming the window and
@@ -343,6 +362,8 @@ class ResourceType(StrEnum):
     CLAIM_EXPORT = "claim_export"
     BILLING_PERIOD_EXPORT = "billing_period_export"
     BILLING_REPORT = "billing_report"
+    CREDENTIAL_RECORD = "credential_record"
+    PAYER_PARTICIPATION = "payer_participation"
 
 
 # HIPAA § 164.316(b)(2)(i) — 6-year minimum retention. 7y = margin + matches
