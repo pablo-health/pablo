@@ -35,6 +35,15 @@ test("a clinician books and cancels an appointment", async ({ signedInPage: page
   const appointment = (await (await created).json()) as { id: string }
 
   try {
+    // The week view runs Sunday to Saturday (`weekStartsOn: 0` in
+    // editorial/dateUtils), so booking for tomorrow from a SATURDAY puts the
+    // appointment in next week, where the default view cannot see it. The
+    // appointment is created either way — it is simply off-screen — so the
+    // assertion below would fail one day in seven, which is exactly how this
+    // went unnoticed until a Saturday CI run.
+    if (tomorrow.getDay() === 0) {
+      await page.getByRole("button", { name: "Next", exact: true }).click()
+    }
     await expect(page.getByText(`${patient.first_name} ${patient.last_name}`, { exact: true })).toBeVisible()
     const session = await api.post<{ id: string }>(
       `/api/appointments/${appointment.id}/start-session`,

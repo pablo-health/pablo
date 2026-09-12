@@ -25,6 +25,9 @@ vi.mock("@/components/billing/claims/RemittanceHolds", () => ({
 vi.mock("@/components/billing/claims/ClaimsTracker", () => ({
   ClaimsTracker: () => <div data-testid="claims-tracker" />,
 }))
+vi.mock("@/components/billing/CredentialingPrompt", () => ({
+  CredentialingPrompt: () => <div data-testid="credentialing-prompt" />,
+}))
 
 // A practice that has set nothing up, so every checklist step is outstanding.
 vi.mock("@/hooks/useBillingProfile", () => ({

@@ -6,6 +6,7 @@ import { BalancesView } from "@/components/billing/BalancesView"
 import { BillerExport } from "@/components/billing/BillerExport"
 import { BillingSetupGate } from "@/components/billing/BillingSetupGate"
 import { ClaimsSetupChecklist } from "@/components/billing/ClaimsSetupChecklist"
+import { CredentialingPrompt } from "@/components/billing/CredentialingPrompt"
 import { ClaimsTracker } from "@/components/billing/claims/ClaimsTracker"
 import { RemittanceHolds } from "@/components/billing/claims/RemittanceHolds"
 import { ReportsView } from "@/components/billing/ReportsView"
@@ -31,6 +32,10 @@ export default function BillingPage() {
             should not depend on picking the right tab. Renders nothing when
             nothing is held, which is almost always. */}
         <RemittanceHolds />
+        {/* Whether she is on any payer's panel decides whether these sessions
+            bill as claims or as superbills, and we may have never been told.
+            Renders nothing once the record answers it. */}
+        <CredentialingPrompt />
         <Tabs defaultValue="unbilled">
           <TabsList>
             <TabsTrigger value="unbilled" data-testid="billing-tab-unbilled">
