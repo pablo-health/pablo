@@ -28,6 +28,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from app.db.models import CREDENTIAL_CONFIRMATION_SOURCES, CREDENTIAL_SUPERVISION_STATUSES
+
 
 class CaqhSection(StrEnum):
     """The eleven profile sections, in the portal's own order.
@@ -111,6 +113,14 @@ class IntakeField:
     lands without either restating it. ``source`` is filled in only for
     :attr:`Tier.CONFIRM` fields and says where the pre-filled value came from,
     which is what lets the surface tell her *why* it already knows.
+
+    Every Tier-0 field leaves a ``credential_confirmations`` row regardless of
+    its target — that table is the provenance, not the value. Most Tier-0
+    fields still target the column that owns the value, and confirming does not
+    move it. The few that target ``credential_confirmations.presented_value``
+    are the ones with no home column anywhere else: the portal asks them of
+    everyone, so the answer has to live somewhere, and the confirmation row is
+    where.
     """
 
     key: str
@@ -131,12 +141,11 @@ class IntakeField:
 
 #: Where a Tier-0 value comes from. Named so the surface can say "from the NPPES
 #: registry" rather than presenting a value with no provenance, which reads as
-#: the software having guessed.
-_NPPES = "nppes"
-_PECOS = "pecos_public_file"
-_EXCLUSIONS = "leie_sam"
-_PROFILE = "clinician_profiles"
-_PRACTICE = "practice_billing_profile"
+#: the software having guessed. These are the schema's own vocabulary rather
+#: than a parallel list: the same string is written to
+#: ``credential_confirmations.source``, and a second copy of it would eventually
+#: disagree with the CHECK constraint.
+_NPPES, _PECOS, _EXCLUSIONS, _PROFILE, _PRACTICE = CREDENTIAL_CONFIRMATION_SOURCES
 
 
 TIER_0_CONFIRM: tuple[IntakeField, ...] = (
@@ -146,7 +155,7 @@ TIER_0_CONFIRM: tuple[IntakeField, ...] = (
         section=CaqhSection.PERSONAL_INFORMATION,
         tier=Tier.CONFIRM,
         kind=FieldKind.TEXT,
-        target="credential_government_ids.legal_name_confirmed",
+        target="credential_confirmations.presented_value",
         source=_NPPES,
         help_text="As it appears in the NPPES registry.",
     ),
@@ -241,7 +250,7 @@ TIER_0_CONFIRM: tuple[IntakeField, ...] = (
         section=CaqhSection.PROFESSIONAL_IDS,
         tier=Tier.CONFIRM,
         kind=FieldKind.BOOLEAN,
-        target="credential_government_ids.medicare_enrolled_confirmed",
+        target="credential_confirmations.presented_value",
         source=_PECOS,
         required=False,
         help_text="From the public PECOS file.",
@@ -252,7 +261,7 @@ TIER_0_CONFIRM: tuple[IntakeField, ...] = (
         section=CaqhSection.DISCLOSURE,
         tier=Tier.CONFIRM,
         kind=FieldKind.BOOLEAN,
-        target="credential_disclosures.exclusion_clearance",
+        target="credential_confirmations.presented_value",
         source=_EXCLUSIONS,
         help_text="Checked against the LEIE and SAM exclusion lists.",
     ),
@@ -262,7 +271,7 @@ TIER_0_CONFIRM: tuple[IntakeField, ...] = (
         section=CaqhSection.HOSPITAL_AFFILIATIONS,
         tier=Tier.CONFIRM,
         kind=FieldKind.BOOLEAN,
-        target="credential_disclosures.hospital_affiliations_none",
+        target="credential_confirmations.presented_value",
         source=_PROFILE,
         help_text=(
             "Pre-answered for an outpatient practice. The portal asks it of "
@@ -290,7 +299,7 @@ TIER_1_CLAIMS_READY: tuple[IntakeField, ...] = (
         tier=Tier.CLAIMS_READY,
         kind=FieldKind.CHOICE,
         target="credential_government_ids.supervision_status",
-        choices=("independent", "supervised"),
+        choices=CREDENTIAL_SUPERVISION_STATUSES,
         help_text=(
             "Asked first because it changes what follows. An associate-licensed "
             "clinician is a different applicant, not the same one with extra "
@@ -457,12 +466,33 @@ TIER_2_CREDENTIALING: tuple[IntakeField, ...] = (
         help_text="If you bill as an entity rather than as yourself.",
     ),
     IntakeField(
+        key="license_certificate",
+        label="Licence certificates",
+        section=CaqhSection.PROFESSIONAL_IDS,
+        tier=Tier.CREDENTIALING,
+        kind=FieldKind.UPLOAD,
+        target="credential_licenses.document_id",
+        help_text=(
+            "One per licence. Tier 1 collected the numbers and dates, which is "
+            "all a claim needs; an application wants the certificate itself."
+        ),
+    ),
+    IntakeField(
         key="education",
         label="Degrees",
         section=CaqhSection.EDUCATION_AND_TRAINING,
         tier=Tier.CREDENTIALING,
         kind=FieldKind.COLLECTION,
         target="credential_education",
+    ),
+    IntakeField(
+        key="degree_certificate",
+        label="Highest degree",
+        section=CaqhSection.EDUCATION_AND_TRAINING,
+        tier=Tier.CREDENTIALING,
+        kind=FieldKind.UPLOAD,
+        target="compliance_documents.id",
+        help_text="The diploma or a transcript. Primary-source verification starts here.",
     ),
     IntakeField(
         key="training",

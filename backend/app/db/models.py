@@ -2595,6 +2595,24 @@ CREDENTIAL_TAX_ID_TYPES: tuple[str, ...] = ("ein", "ssn")
 #: asks for that cannot be read off a voided cheque.
 CREDENTIAL_BANK_ACCOUNT_TYPES: tuple[str, ...] = ("checking", "savings")
 
+#: Whether she practises on her own licence or under someone else's. Not a
+#: detail of the licence: an associate is a different applicant, most payers
+#: will not panel her at all, and the ones that do credential her supervisor
+#: alongside her. The intake asks it before anything else for that reason.
+CREDENTIAL_SUPERVISION_STATUSES: tuple[str, ...] = ("independent", "supervised")
+
+#: Where a pre-filled value came from, for the fields the intake confirms
+#: rather than asks. A payer application distinguishes self-reported from
+#: verified, so the provenance is worth as much as the value — the same reason
+#: ``credential_licenses.verification_source`` exists.
+CREDENTIAL_CONFIRMATION_SOURCES: tuple[str, ...] = (
+    "nppes",
+    "pecos_public_file",
+    "leie_sam",
+    "clinician_profiles",
+    "practice_billing_profile",
+)
+
 #: Where this clinician stands with one payer's panel. A state machine with an
 #: effective date, never a boolean, because credentialing and contracting are
 #: two processes: ``credentialed`` means the payer verified her, ``contracted``
@@ -2645,6 +2663,11 @@ class CredentialGovernmentIdRow(Base):
             f"tax_id_type IS NULL OR tax_id_type IN ({_sql_in_list(CREDENTIAL_TAX_ID_TYPES)})",
             name="ck_credential_government_ids_tax_id_type",
         ),
+        CheckConstraint(
+            "supervision_status IS NULL OR supervision_status IN "
+            f"({_sql_in_list(CREDENTIAL_SUPERVISION_STATUSES)})",
+            name="ck_credential_government_ids_supervision_status",
+        ),
     )
 
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
@@ -2659,6 +2682,19 @@ class CredentialGovernmentIdRow(Base):
     type2_npi: Mapped[str | None] = mapped_column(String(20), nullable=True)
     business_structure: Mapped[str | None] = mapped_column(String(40), nullable=True)
     sole_proprietor: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # The supervision fork's answer, and it has to live somewhere a
+    # supervision_relationships row does not: the intake asks it first, before
+    # there is a supervisor to name, precisely so the rest of the question set
+    # can branch on it.
+    supervision_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Unencrypted on purpose — a CAQH number identifies a profile in a
+    # directory the payers already read, not the clinician.
+    caqh_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Intent, not enrollment status. Enrollment is a payer_participations row
+    # with dates; these two say only that she wants the application filed, and
+    # they are what turns a checklist on.
+    medicare_intent: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    medicaid_intent: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -2906,6 +2942,69 @@ class CredentialDisclosureRow(Base):
     answer: Mapped[bool] = mapped_column(Boolean, nullable=False)
     explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
     answered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CredentialConfirmationRow(Base):
+    """What the clinician was shown, where it came from, and whether it is right.
+
+    The intake's first tier asks nothing. It fills fields from NPPES, the
+    public PECOS file, the exclusion lists and what the practice already
+    stores, and asks her only to confirm them. A confirm surface that records
+    nothing is theatre, so each of those fields leaves a row here: a payer
+    application distinguishes self-reported data from verified data, and
+    "confirmed on this date, against this source" is what puts a value on the
+    right side of that line.
+
+    Not ``credential_disclosures``, which is the obvious-looking home and the
+    wrong one. That table's check requires an explanation whenever the answer
+    is ``true`` — correct for an attestation, backwards here, where ``true``
+    means "this is right" and needs nothing further while ``false`` is the
+    answer carrying a correction. The check below is that constraint's mirror
+    image.
+
+    ``presented_value`` is the value she saw, stored as text whatever its type.
+    For a field with a home column — the NPI, the taxonomy code — the column
+    remains the record and this is a snapshot, so a later divergence between
+    what she confirmed and what the row now says is visible rather than
+    inferred. For the handful of Tier-0 fields with no home column — the
+    exclusion-list clearance, the "no hospital affiliations" the portal asks
+    everyone — this IS the record.
+
+    One row per ``(user_id, field_key)``: re-confirming is an update, because
+    the question is always "is this right now", never a history of answers.
+    ``credential_disclosures`` keeps versions for the opposite reason — the
+    wording it pins can change underneath a stored ``true``.
+    """
+
+    __tablename__ = "credential_confirmations"
+    __table_args__ = (
+        CheckConstraint(
+            f"source IN ({_sql_in_list(CREDENTIAL_CONFIRMATION_SOURCES)})",
+            name="ck_credential_confirmations_source",
+        ),
+        CheckConstraint(
+            "confirmed OR correction IS NOT NULL",
+            name="ck_credential_confirmations_corrected",
+        ),
+        UniqueConstraint(
+            "user_id",
+            "field_key",
+            name="ux_credential_confirmations_user_field",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    #: An ``IntakeField.key`` from ``app.credentialing.intake``. Free text at
+    #: the schema level so adding a Tier-0 field is not a migration.
+    field_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    presented_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    correction: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
