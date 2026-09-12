@@ -79,7 +79,11 @@ class TestValuesAreRangeChecked:
             ("max_per_day", {"max": "thirty"}, "max"),
             ("buffer_before", {"minutes": -1}, "minutes"),
             ("buffer_after", {"minutes": "thirty"}, "minutes"),
-            ("block_date_range", {"start_date": "2026-03-10", "end_date": "2026-03-01"}, "end_date"),
+            (
+                "block_date_range",
+                {"start_date": "2026-03-10", "end_date": "2026-03-01"},
+                "end_date",
+            ),
             ("block_date_range", {"start_date": "2026-02-30", "end_date": "2026-03-01"}, "start"),
             ("block_date_range", {"start_date": "10-03-2026", "end_date": "2026-03-01"}, "start"),
             ("block_specific_dates", {"dates": []}, "dates"),

@@ -21,7 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.models.availability_rule_params import rule_params_json_schema  # noqa: E402
+from app.models.availability_rule_params import rule_params_json_schema
 
 SCHEMA_PATH = (
     Path(__file__).resolve().parents[2]

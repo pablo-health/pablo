@@ -119,7 +119,7 @@ from ..scheduling_engine.exceptions import (
     RuleViolationError,
 )
 from ..scheduling_engine.models.appointment_type import AppointmentType, Audience, HorizonUnit
-from ..scheduling_engine.models.availability import AvailabilityRule, EnforcementLevel
+from ..scheduling_engine.models.availability import AvailabilityRule, EnforcementLevel, RuleType
 from ..scheduling_engine.services.availability import AvailabilityEngine
 from ..scheduling_engine.services.scheduling import SchedulingService
 from ..scheduling_engine.services.scheduling_policy import load_policy, update_policy
@@ -979,18 +979,18 @@ def update_availability_rule(
     if not rule:
         raise NotFoundError(f"Rule not found: {rule_id}")
 
-    if request.rule_type is not None:
-        rule.rule_type = request.rule_type
+    if request.rule_type is not None or request.params is not None:
+        rule_type = request.rule_type or RuleType(rule.rule_type)
+        raw_params = rule.params if request.params is None else request.params
+        try:
+            validated = validate_rule_params(rule_type, raw_params)
+        except AvailabilityRuleParamsError as e:
+            raise UnprocessableEntityError(f"Invalid params for {rule_type}: {e}") from e
+        rule.rule_type = rule_type
+        rule.params = validated
 
     if request.enforcement is not None:
         rule.enforcement = request.enforcement
-
-    if request.rule_type is not None or request.params is not None:
-        params = rule.params if request.params is None else request.params
-        try:
-            rule.params = validate_rule_params(rule.rule_type, params)
-        except AvailabilityRuleParamsError as e:
-            raise UnprocessableEntityError(f"Invalid params for {rule.rule_type}: {e}") from e
 
     rule.updated_at = utc_now()
     updated = rule_repo.update(rule)

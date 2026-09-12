@@ -4,10 +4,15 @@
  * Availability rule types
  *
  * Mirrors backend/app/scheduling_engine/models/availability.py — the
- * nine RuleType values and the two EnforcementLevel values. params
- * shape varies per rule_type; see AvailabilitySettings.tsx for the
- * per-type param forms. session_defaults has its own dedicated fields
- * section rather than a generic RuleForm entry.
+ * nine RuleType values and the two EnforcementLevel values.
+ *
+ * params shape varies per rule_type, and the authority on it is the
+ * backend's tagged union, emitted as availabilityRuleParams.schema.json
+ * beside this file: the API rejects params that don't match their rule
+ * type, including an unknown key. AvailabilitySettings.tsx holds the
+ * per-type param forms and is pinned to that schema by
+ * AvailabilityParamsContract.test.ts. session_defaults has its own
+ * dedicated fields section rather than a generic RuleForm entry.
  */
 
 export const RULE_TYPES = [
