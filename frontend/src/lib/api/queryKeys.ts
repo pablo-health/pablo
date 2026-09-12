@@ -231,6 +231,18 @@ const baseQueryKeys = {
       [...baseQueryKeys.supervision.all, "hours", id] as const,
   },
 
+  // Credentialing intake query keys
+  credentialing: {
+    all: ["credentialing"] as const,
+    // The branch is part of the key: the fork's two answers are two different
+    // question sets, and caching them under one key would show her the other
+    // one for a beat after she answers.
+    intake: (branch?: { supervised?: boolean; prescriber?: boolean }) =>
+      [...baseQueryKeys.credentialing.all, "intake", branch ?? {}] as const,
+    confirmations: () =>
+      [...baseQueryKeys.credentialing.all, "confirmations"] as const,
+  },
+
   // Admin query keys
   admin: {
     all: ["admin"] as const,

@@ -47,9 +47,20 @@ _ENCRYPTED_FIELDS: dict[str, str] = {
 #: partial date of birth is either the whole fact or useless.
 _LAST4_FIELDS: frozenset[str] = frozenset({"ssn", "tax_id"})
 
-#: Writable without encryption.
+#: Writable without encryption. The intake's scalar answers land here too —
+#: not because they are sensitive, but because this row has one writer and a
+#: second one would race it.
 _PLAIN_FIELDS: frozenset[str] = frozenset(
-    {"tax_id_type", "type2_npi", "business_structure", "sole_proprietor"}
+    {
+        "tax_id_type",
+        "type2_npi",
+        "business_structure",
+        "sole_proprietor",
+        "supervision_status",
+        "caqh_id",
+        "medicare_intent",
+        "medicaid_intent",
+    }
 )
 
 
@@ -94,6 +105,10 @@ def load_summary(session: Session, user_id: str) -> dict[str, object]:
             "type2_npi": None,
             "business_structure": None,
             "sole_proprietor": None,
+            "supervision_status": None,
+            "caqh_id": None,
+            "medicare_intent": None,
+            "medicaid_intent": None,
         }
     return {
         "has_ssn": bool(row.ssn_encrypted),
@@ -105,6 +120,10 @@ def load_summary(session: Session, user_id: str) -> dict[str, object]:
         "type2_npi": row.type2_npi,
         "business_structure": row.business_structure,
         "sole_proprietor": row.sole_proprietor,
+        "supervision_status": row.supervision_status,
+        "caqh_id": row.caqh_id,
+        "medicare_intent": row.medicare_intent,
+        "medicaid_intent": row.medicaid_intent,
     }
 
 

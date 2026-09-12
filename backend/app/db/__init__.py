@@ -1655,7 +1655,7 @@ def rls_forced_tenant_tables() -> set[str]:
     patient-access, user-owned, or special-cased — is covered automatically,
     with no hand-maintained list. MUST stay consistent with enable_rls_on_schema.
     """
-    from app.db.models import Base  # lazy import — avoid circular import
+    from .models import Base  # lazy import — avoid circular import
 
     not_row_scoped = not_row_scoped_tenant_tables()
     scoping_cols = {"user_id", "patient_id", "id"}
