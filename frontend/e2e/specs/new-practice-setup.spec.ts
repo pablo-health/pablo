@@ -25,6 +25,7 @@
  * thing under test: whether a therapist can get her practice set up at all.
  */
 
+import { randomUUID } from "node:crypto"
 import { type Browser, type Page, type Response, expect, test } from "@playwright/test"
 import { ApiClient, createEmulatorUser } from "../fixtures/api"
 import { BASE_URL } from "../fixtures/stack"
@@ -64,7 +65,10 @@ async function withNewPractice(
   browser: Browser,
   body: (page: Page, api: ApiClient) => Promise<void>,
 ) {
-  const stamp = `${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6)}`
+  // randomUUID rather than Math.random: this string becomes a password, and a
+  // predictable generator for one is a bad pattern to leave in the tree even
+  // where the account is a throwaway on a local emulator.
+  const stamp = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`
   const email = `e2e-new-${stamp}@example.com`
   const password = `E2e-password-${stamp}-long-enough`
   await createEmulatorUser(email, password)
