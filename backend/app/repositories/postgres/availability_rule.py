@@ -70,6 +70,8 @@ def _row_to_rule(row: AvailabilityRuleRow) -> AvailabilityRule:
         rule_type=row.rule_type,
         enforcement=row.enforcement,
         params=row.params,
+        appointment_type_id=row.appointment_type_id,
+        allow_other_types=row.allow_other_types,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -81,5 +83,7 @@ def _rule_to_row(rule: AvailabilityRule, row: AvailabilityRuleRow) -> None:
     row.rule_type = rule.rule_type
     row.enforcement = rule.enforcement
     row.params = rule.params
+    row.appointment_type_id = rule.appointment_type_id
+    row.allow_other_types = rule.allow_other_types
     row.created_at = rule.created_at
     row.updated_at = rule.updated_at

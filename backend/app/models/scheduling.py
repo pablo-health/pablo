@@ -203,7 +203,9 @@ class AppointmentListResponse(BaseModel):
 
 #: Request to create an availability rule: the tagged union itself, so
 #: FastAPI validates ``params`` against the rule type before anything is
-#: stored and answers a malformed rule with a 422 naming the field.
+#: stored and answers a malformed rule with a 422 naming the field. The
+#: scoping fields ``appointment_type_id`` and ``allow_other_types`` ride on
+#: the union's shared base, so every rule type accepts them.
 CreateAvailabilityRuleRequest = TaggedAvailabilityRule
 
 
@@ -215,21 +217,36 @@ class UpdateAvailabilityRuleRequest(BaseModel):
     do. The route resolves the effective rule type from the stored rule
     and validates params through :func:`validate_rule_params` — the same
     union, reached the only other way it can be.
+
+    Omitting a field leaves it alone, ``appointment_type_id`` included,
+    which means this cannot widen a type-scoped rule back to practice-wide.
+    Delete and recreate for that; a rule silently losing its scope is the
+    failure mode worth designing out.
     """
 
     rule_type: RuleType | None = None
     enforcement: EnforcementLevel | None = None
     params: dict[str, Any] | None = None
+    appointment_type_id: str | None = None
+    allow_other_types: bool | None = None
 
 
 class AvailabilityRuleResponse(BaseModel):
-    """API response for an availability rule."""
+    """API response for an availability rule.
+
+    ``warnings`` is what the practice should know about what it just wrote —
+    an exclusive window that leaves other appointment types nowhere to go,
+    say. Empty on reads and on any rule that takes nothing away.
+    """
 
     id: str
     user_id: str
     rule_type: str
     enforcement: str
     params: dict[str, Any]
+    appointment_type_id: str | None = None
+    allow_other_types: bool = True
+    warnings: list[str] = Field(default_factory=list)
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

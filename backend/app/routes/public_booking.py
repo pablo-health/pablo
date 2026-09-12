@@ -464,7 +464,10 @@ def get_public_free_slots(
     """
     parsed = _parse_booking_date(date_param)
     result = engine.get_free_slots(
-        ctx.link.user_id, parsed.isoformat(), ctx.appointment_type.duration_minutes
+        ctx.link.user_id,
+        parsed.isoformat(),
+        ctx.appointment_type.duration_minutes,
+        appointment_type_id=ctx.appointment_type.id,
     )
     slots = _public_slots(result.slots)
     return FreeSlotsResponse(
@@ -740,7 +743,10 @@ def create_public_booking(
     _parse_booking_date(date_str)
 
     result = engine.get_free_slots(
-        ctx.link.user_id, date_str, ctx.appointment_type.duration_minutes
+        ctx.link.user_id,
+        date_str,
+        ctx.appointment_type.duration_minutes,
+        appointment_type_id=ctx.appointment_type.id,
     )
     slot = next((s for s in _public_slots(result.slots) if s.start == request.start_at), None)
     if slot is None:
@@ -986,6 +992,7 @@ def confirm_public_booking(
             ctx.link.user_id,
             appt.start_at.date().isoformat(),
             ctx.appointment_type.duration_minutes,
+            appointment_type_id=ctx.appointment_type.id,
         )
         still_free = any(s.start == _slot_start_iso(appt) for s in _public_slots(result.slots))
         restored = patient_repo.restore(appt.patient_id, ctx.link.user_id) if still_free else None

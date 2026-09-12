@@ -13,7 +13,16 @@ if TYPE_CHECKING:
 
 @dataclass
 class TimeSlot:
-    """A time window with start and end."""
+    """A time window with start and end.
+
+    ``over_cap`` marks a slot a SOFT rule discourages without forbidding:
+    the day is past a soft max_per_day cap, or the minutes belong to another
+    appointment type's soft exclusive window. Both are the same answer —
+    the practice may still book here deliberately, so the slot is returned
+    rather than hidden, and a surface that cannot exercise that judgement
+    (a public booking page) drops it. A HARD rule never produces one of
+    these; it removes the slot outright.
+    """
 
     start: str  # ISO 8601 UTC
     end: str  # ISO 8601 UTC

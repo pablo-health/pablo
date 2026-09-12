@@ -173,12 +173,20 @@ class _TaggedRule(BaseModel):
     """One member of the tagged union: a rule type and the params it takes.
 
     ``enforcement`` rides along because the create body carries it —
-    ``hard`` refuses a booking, ``soft`` permits it and flags it.
+    ``hard`` refuses a booking, ``soft`` permits it and flags it. So do the
+    two scoping fields, for the same reason and with more at stake: the
+    members forbid extra keys, so a field the create body sends and this
+    base does not declare is a 422, not a silently dropped value.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     enforcement: EnforcementLevel = EnforcementLevel.HARD
+    #: Narrow the rule to one appointment type. Omitted means practice-wide.
+    appointment_type_id: str | None = None
+    #: Set False on a type-scoped working_hours rule to claim its window for
+    #: that type alone. Default True changes nothing for any other type.
+    allow_other_types: bool = True
 
 
 class WorkingHoursRule(_TaggedRule):

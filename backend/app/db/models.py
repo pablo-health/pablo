@@ -655,6 +655,26 @@ class AvailabilityRuleRow(Base):
     rule_type: Mapped[str] = mapped_column(String(30), nullable=False)
     enforcement: Mapped[str] = mapped_column(String(10), nullable=False)
     params: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    #: The appointment type this rule governs, or NULL for all of them.
+    #:
+    #: NULL is the practice-wide rule and what every pre-existing row means.
+    #: Deleting the type CASCADES the rule away rather than nulling it: a cap
+    #: of "two intakes a day" that quietly became "two appointments a day"
+    #: because somebody tidied up a type would be a far worse surprise than
+    #: the rule disappearing along with the thing it was about.
+    appointment_type_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("appointment_types.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    #: Whether other types may be offered inside this rule's window.
+    #:
+    #: True everywhere until a practice deliberately says otherwise, so
+    #: scoping a rule to a type changes nothing for any other type.
+    allow_other_types: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true"), default=True
+    )
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
