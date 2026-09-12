@@ -23,7 +23,8 @@ vi.mock("@/hooks/usePreferences", () => ({
 // and resuming, so the cards stand in as markers — what they render is their
 // own tests' business.
 vi.mock("../SetupSteps", () => ({
-  PracticeDetailsStep: () => <div>practice details step</div>,
+  PracticeIdentityStep: () => <div>practice identity step</div>,
+  BillingContactStep: () => <div>billing contact step</div>,
   RatesStep: () => <div>rates step</div>,
   PrivatePayDoneStep: () => <div>private pay done</div>,
 }))
@@ -83,7 +84,7 @@ describe("remembering where she stopped", () => {
     expect(savePreferences).toHaveBeenCalledWith(
       expect.objectContaining({
         billing_setup_route: "private_pay",
-        billing_setup_step: "practice",
+        billing_setup_step: "identity",
       }),
     )
   })
@@ -147,7 +148,8 @@ describe("the steps she is shown", () => {
     // choice feel like it cost her something.
     render(<GetPaidWizard />)
 
-    expect(screen.getByText("Practice details")).toBeInTheDocument()
+    expect(screen.getByText("Practice identity")).toBeInTheDocument()
+    expect(screen.getByText("Billing contact")).toBeInTheDocument()
     expect(screen.queryByText("Payers")).not.toBeInTheDocument()
   })
 

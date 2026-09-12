@@ -4,7 +4,8 @@
 
 import Link from "next/link"
 import { AppointmentTypesCard } from "@/components/settings/AppointmentTypesCard"
-import { BillingProfileCard } from "@/components/settings/BillingProfileCard"
+import { BillingContactCard } from "@/components/settings/BillingContactCard"
+import { PracticeIdentityCard } from "@/components/settings/PracticeIdentityCard"
 import { SetupStepHead } from "@/components/setup"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useBillingProfile } from "@/hooks/useBillingProfile"
@@ -18,17 +19,32 @@ import { useBillingProfile } from "@/hooks/useBillingProfile"
  * of them — so the wizard borrows the surface instead of copying it.
  */
 
-export function PracticeDetailsStep() {
+export function PracticeIdentityStep() {
   const { data: profile } = useBillingProfile()
 
   return (
     <div className="space-y-5">
       <SetupStepHead
-        eyebrow="Step 2"
-        title="Practice details"
-        lede="Enter the information you use for superbills and insurance claims. You'll only need to do this once."
+        eyebrow="Practice identity"
+        title="How insurers identify your practice"
+        lede="The legal and tax details that appear on a claim. You'll only need to enter these once."
       />
-      {profile ? <BillingProfileCard profile={profile} /> : <Skeleton className="h-64 w-full" />}
+      {profile ? <PracticeIdentityCard profile={profile} /> : <Skeleton className="h-64 w-full" />}
+    </div>
+  )
+}
+
+export function BillingContactStep() {
+  const { data: profile } = useBillingProfile()
+
+  return (
+    <div className="space-y-5">
+      <SetupStepHead
+        eyebrow="Billing contact"
+        title="Where should insurers reach you?"
+        lede="Where enrollment questions and payment notices go. Saved separately, so you can change it later without touching anything else."
+      />
+      {profile ? <BillingContactCard profile={profile} /> : <Skeleton className="h-64 w-full" />}
     </div>
   )
 }

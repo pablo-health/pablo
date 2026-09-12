@@ -10,17 +10,25 @@
  */
 export type StepId =
   | "route"
-  | "practice"
+  | "identity"
+  | "contact"
   | "rates"
   | "payers"
   | "confirm"
   | "record"
   | "done"
 
-/** A step, narrowed to the ids this wizard knows. Satisfies the shell's shape. */
+/**
+ * A step, narrowed to the ids this wizard knows. Satisfies the shell's shape.
+ *
+ * ``caption`` is what Pablo says beside this step. Per-step rather than one
+ * line for the whole wizard, because a caption that is true of every screen
+ * says nothing about any of them.
+ */
 export interface SetupStep {
   id: StepId
   label: string
+  caption: string
 }
 
 /**
@@ -79,18 +87,27 @@ export const PAYMENT_ROUTES: readonly PaymentRoute[] = [
  * is why this is one wizard rather than two that happen to sit near each other.
  */
 const SHARED_STEPS: readonly SetupStep[] = [
-  { id: "route", label: "How you're paid" },
-  { id: "practice", label: "Practice details" },
-  { id: "rates", label: "Your rates" },
+  { id: "route", label: "How you're paid", caption: "Tell Pablo once. He'll take it from here." },
+  { id: "identity", label: "Practice identity", caption: "Pablo keeps the paperwork straight." },
+  { id: "contact", label: "Billing contact", caption: "So billing messages reach the right place." },
+  { id: "rates", label: "Your rates", caption: "What a session is worth, in one place." },
 ]
 
 //: Every branch ends somewhere it says what happens next, rather than stopping.
-const DONE_STEP: SetupStep = { id: "done", label: "Done" }
+const DONE_STEP: SetupStep = {
+  id: "done",
+  label: "Done",
+  caption: "That's everything Pablo needs.",
+}
 
-const PAYER_STEP: SetupStep = { id: "payers", label: "Payers" }
+const PAYER_STEP: SetupStep = {
+  id: "payers",
+  label: "Payers",
+  caption: "Who you can bill, and who you can't yet.",
+}
 const RECORD_STEPS: readonly SetupStep[] = [
-  { id: "confirm", label: "What we found" },
-  { id: "record", label: "Your record" },
+  { id: "confirm", label: "What we found", caption: "Pablo looked these up. Just check them." },
+  { id: "record", label: "Your record", caption: "Answer once, reuse for every payer." },
 ]
 
 /**

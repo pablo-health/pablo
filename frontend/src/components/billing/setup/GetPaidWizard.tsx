@@ -103,7 +103,7 @@ export function GetPaidWizard({ onSettled }: GetPaidWizardProps) {
       onFinishLater={settle}
       aside={{
         img: "/pablo-tie.webp",
-        caption: "Tell Pablo once. He'll take it from here.",
+        caption: current?.caption ?? "Tell Pablo once. He'll take it from here.",
       }}
       footer={
         activeIndex > 0 ? (

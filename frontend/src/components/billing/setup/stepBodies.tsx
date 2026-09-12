@@ -5,7 +5,7 @@
 import type { ComponentType } from "react"
 import { SetupStepHead } from "@/components/setup"
 import { RouteStep } from "./RouteStep"
-import { PracticeDetailsStep, PrivatePayDoneStep, RatesStep } from "./SetupSteps"
+import { BillingContactStep, PracticeIdentityStep, PrivatePayDoneStep, RatesStep } from "./SetupSteps"
 import type { PaymentRouteId, StepId } from "./routes"
 
 export interface StepBodyProps {
@@ -33,7 +33,8 @@ export interface StepBodyProps {
  */
 export const STEP_BODIES: Record<StepId, ComponentType<StepBodyProps>> = {
   route: ({ route, onChoose }) => <RouteStep selected={route} onChoose={onChoose} />,
-  practice: () => <PracticeDetailsStep />,
+  identity: () => <PracticeIdentityStep />,
+  contact: () => <BillingContactStep />,
   rates: () => <RatesStep />,
   payers: () => <NotBuiltYet label="Payers" />,
   confirm: () => <NotBuiltYet label="What we found" />,

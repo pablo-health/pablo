@@ -4,7 +4,8 @@
 
 import { useBillingProfile } from "@/hooks/useBillingProfile"
 import { BillingProfileBanner } from "../BillingProfileBanner"
-import { BillingProfileCard } from "../BillingProfileCard"
+import { BillingContactCard } from "../BillingContactCard"
+import { PracticeIdentityCard } from "../PracticeIdentityCard"
 import { billingProfileGaps } from "../billingProfileGaps"
 import { RenderingProviderCard } from "../RenderingProviderCard"
 import { useSettingsUserStatus } from "../useSettingsPreferences"
@@ -17,7 +18,13 @@ import { WaiverPolicyCard } from "../WaiverPolicyCard"
  * own identifiers. The banner names what claims still need, in the same
  * words a claim review refuses with.
  *
- * Both cards seed their drafts from what is loaded, so nothing renders until
+ * Practice identity and billing contact are separate cards with separate
+ * saves. Filling in a practice's paperwork is a lot to ask at once, and the
+ * two are different tasks — one is detail she may have to look up, the other
+ * she knows by heart — so each persists on its own and she can do them in
+ * whichever order suits.
+ *
+ * All cards seed their drafts from what is loaded, so nothing renders until
  * both reads are in.
  */
 export function BillingProfilePage() {
@@ -34,13 +41,13 @@ export function BillingProfilePage() {
         gaps={billingProfileGaps(profile, clinician)}
         registered={Boolean(profile.clearinghouse_provider_id)}
       />
-      <BillingProfileCard
+      <PracticeIdentityCard
         profile={profile}
-        practiceDetails={{
-          name: user.practice_name,
-          phone: user.practice_phone,
-          address: user.practice_address,
-        }}
+        practiceDetails={{ name: user.practice_name }}
+      />
+      <BillingContactCard
+        profile={profile}
+        practiceDetails={{ phone: user.practice_phone, address: user.practice_address }}
       />
       <RenderingProviderCard npiNumber={clinician.npi_number} taxonomyCode={clinician.taxonomy_code} />
       <WaiverPolicyCard />
