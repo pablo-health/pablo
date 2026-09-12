@@ -13,4 +13,6 @@ Five modules, each owning one thing the tables alone cannot enforce:
   same transaction, so the history can never disagree with the status.
 * :mod:`clocks` — proposes compliance-item due dates from record dates, and
   only proposes.
+* :mod:`rates` — what a payer contracted to pay, and the variance against what
+  it actually allowed.
 """
