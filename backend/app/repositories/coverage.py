@@ -67,6 +67,15 @@ class PatientCoverageRepository(ABC):
         """The client's active primary coverage, or ``None``."""
 
     @abstractmethod
+    def get_active_for_patients(self, patient_ids: list[str]) -> dict[str, PatientCoverage]:
+        """Batch form of :meth:`get_active` — one query for many clients.
+
+        Returns a ``{patient_id: PatientCoverage}`` map containing only the
+        clients with an active coverage row; a client with none is simply
+        absent. An empty ``patient_ids`` returns ``{}``.
+        """
+
+    @abstractmethod
     def create(self, coverage: PatientCoverage) -> PatientCoverage:
         """Add a coverage row. Flushed, not committed.
 
@@ -124,6 +133,14 @@ class InMemoryPatientCoverageRepository(PatientCoverageRepository):
             if row.patient_id == patient_id and row.active:
                 return row
         return None
+
+    def get_active_for_patients(self, patient_ids: list[str]) -> dict[str, PatientCoverage]:
+        wanted = set(patient_ids)
+        return {
+            row.patient_id: row
+            for row in self._rows.values()
+            if row.patient_id in wanted and row.active
+        }
 
     def create(self, coverage: PatientCoverage) -> PatientCoverage:
         if coverage.active and self.get_active(coverage.patient_id) is not None:

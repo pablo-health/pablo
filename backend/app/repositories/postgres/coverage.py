@@ -145,6 +145,17 @@ class PostgresPatientCoverageRepository(PatientCoverageRepository):
         )
         return _to_coverage(row) if row is not None else None
 
+    def get_active_for_patients(self, patient_ids: list[str]) -> dict[str, PatientCoverage]:
+        if not patient_ids:
+            return {}
+        rows = self._session.execute(
+            select(PatientCoverageRow).where(
+                PatientCoverageRow.patient_id.in_(patient_ids),
+                PatientCoverageRow.active.is_(True),
+            )
+        ).scalars()
+        return {row.patient_id: _to_coverage(row) for row in rows}
+
     def create(self, coverage: PatientCoverage) -> PatientCoverage:
         row = PatientCoverageRow(
             id=coverage.id,
