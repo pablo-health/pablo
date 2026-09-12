@@ -20,12 +20,27 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import Engine, create_engine, event
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.pool import StaticPool
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
 _LISTENER = "_reset_search_path_on_checkin"
+
+
+@compiles(JSONB, "sqlite")
+def _render_jsonb_as_json(_type: JSONB, _compiler: Any, **_kw: Any) -> str:
+    """Let a table carrying a JSONB column be created here.
+
+    SQLite has no JSONB, and without this any table with one fails to create
+    at all — which would decide by accident that a whole surface can only be
+    tested against Postgres. JSON is close enough for the round-trip these
+    fixtures do; anything depending on JSONB's operators or indexes belongs in
+    the integration suite, where it runs against real Postgres.
+    """
+    return "JSON"
 
 
 def _checkin_listeners() -> list[Any]:

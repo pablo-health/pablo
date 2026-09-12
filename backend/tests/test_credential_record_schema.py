@@ -36,6 +36,7 @@ CREDENTIAL_TABLES: frozenset[str] = frozenset(
         "credential_employment",
         "credential_references",
         "credential_disclosures",
+        "credential_confirmations",
         "credential_service_locations",
         "credential_bank_accounts",
         "payer_participations",
