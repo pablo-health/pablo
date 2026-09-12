@@ -1,6 +1,14 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-import { Calendar, ClipboardCheck, CreditCard, Home, Settings, Users } from "lucide-react"
+import {
+  BadgeCheck,
+  Calendar,
+  ClipboardCheck,
+  CreditCard,
+  Home,
+  Settings,
+  Users,
+} from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { navExtensions } from "./sidebarExtensions.extensions"
 
@@ -58,6 +66,17 @@ const baseClinicianNavigation: NavItem[] = [
   { name: "Patients", href: "/dashboard/patients", icon: Users },
   { name: "Review", href: "/dashboard/sessions", icon: ClipboardCheck },
   { name: "Billing", href: "/dashboard/billing", icon: CreditCard },
+  // Its own item rather than a billing sub-page: getting onto panels is a
+  // months-long project with its own state and deadlines, and a clinician may
+  // buy Pablo for it without ever billing through us — which makes reaching it
+  // through billing the wrong door. Dormant for most practices most of the
+  // time, so a build that does not sell it gates the item off through
+  // `requiresCapability` rather than by forking this list.
+  {
+    name: "Credentialing",
+    href: "/dashboard/credentialing",
+    icon: BadgeCheck,
+  },
 ]
 
 /** Apply the slot's per-href patches (relabel / re-icon) to the base items. */
