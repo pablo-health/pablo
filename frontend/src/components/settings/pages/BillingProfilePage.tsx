@@ -4,27 +4,26 @@
 
 import { useBillingProfile } from "@/hooks/useBillingProfile"
 import { BillingProfileBanner } from "../BillingProfileBanner"
-import { BillingContactCard } from "../BillingContactCard"
-import { PracticeIdentityCard } from "../PracticeIdentityCard"
 import { billingProfileGaps } from "../billingProfileGaps"
+import { PracticeIdentityCard } from "../PracticeIdentityCard"
 import { RenderingProviderCard } from "../RenderingProviderCard"
 import { useSettingsUserStatus } from "../useSettingsPreferences"
 import { WaiverPolicyCard } from "../WaiverPolicyCard"
 
 /**
- * Billing > Practice profile.
+ * Billing > Practice identity.
  *
- * Who a claim is filed by: the practice's legal identity and the clinician's
- * own identifiers. The banner names what claims still need, in the same
- * words a claim review refuses with.
+ * Who a claim is filed by — the practice on paper, and the clinician on the
+ * claim. The banner names what claims still need, in the same words a claim
+ * review refuses with, so it covers the contact details that now live on their
+ * own page as well as the identity on this one.
  *
- * Practice identity and billing contact are separate cards with separate
- * saves. Filling in a practice's paperwork is a lot to ask at once, and the
- * two are different tasks — one is detail she may have to look up, the other
- * she knows by heart — so each persists on its own and she can do them in
- * whichever order suits.
+ * One settings item per step of billing setup. The wizard asks for practice
+ * identity and billing contact as separate screens, and Settings mirrors that,
+ * so "change the thing I entered on that screen" is one item rather than a
+ * position in a long form.
  *
- * All cards seed their drafts from what is loaded, so nothing renders until
+ * Every card seeds its draft from what is loaded, so nothing renders until
  * both reads are in.
  */
 export function BillingProfilePage() {
@@ -41,15 +40,11 @@ export function BillingProfilePage() {
         gaps={billingProfileGaps(profile, clinician)}
         registered={Boolean(profile.clearinghouse_provider_id)}
       />
-      <PracticeIdentityCard
-        profile={profile}
-        practiceDetails={{ name: user.practice_name }}
+      <PracticeIdentityCard profile={profile} practiceDetails={{ name: user.practice_name }} />
+      <RenderingProviderCard
+        npiNumber={clinician.npi_number}
+        taxonomyCode={clinician.taxonomy_code}
       />
-      <BillingContactCard
-        profile={profile}
-        practiceDetails={{ phone: user.practice_phone, address: user.practice_address }}
-      />
-      <RenderingProviderCard npiNumber={clinician.npi_number} taxonomyCode={clinician.taxonomy_code} />
       <WaiverPolicyCard />
     </>
   )

@@ -2,6 +2,7 @@
 
 import {
   Building2,
+  Mail,
   Calendar,
   CalendarClock,
   Clock,
@@ -17,6 +18,7 @@ import type { LucideIcon } from "lucide-react"
 import type { ComponentType } from "react"
 import { AppearancePage } from "./pages/AppearancePage"
 import { AvailabilityPage } from "./pages/AvailabilityPage"
+import { BillingContactPage } from "./pages/BillingContactPage"
 import { BillingProfilePage } from "./pages/BillingProfilePage"
 import { CalendarsPage } from "./pages/CalendarsPage"
 import { InsurancePage } from "./pages/InsurancePage"
@@ -26,7 +28,11 @@ import { SchedulingPage } from "./pages/SchedulingPage"
 import { SecurityPage } from "./pages/SecurityPage"
 import { SessionsPage } from "./pages/SessionsPage"
 import { SuperbillsPage } from "./pages/SuperbillsPage"
-import { BILLING_PROFILE_SETTINGS_ID, INSURANCE_PAYERS_SETTINGS_ID } from "./paths"
+import {
+  BILLING_CONTACT_SETTINGS_ID,
+  BILLING_PROFILE_SETTINGS_ID,
+  INSURANCE_PAYERS_SETTINGS_ID,
+} from "./paths"
 import { settingsExtensions } from "./registry.extensions"
 
 /**
@@ -160,10 +166,17 @@ const baseGroups: SettingsGroup[] = [
       },
       {
         id: BILLING_PROFILE_SETTINGS_ID,
-        label: "Practice profile",
+        label: "Practice identity",
         icon: Building2,
         page: BillingProfilePage,
-        desc: "Who your claims are filed by: legal name, tax id, NPI, address, and your taxonomy code.",
+        desc: "The legal and tax details insurers use to identify your practice.",
+      },
+      {
+        id: BILLING_CONTACT_SETTINGS_ID,
+        label: "Billing contact",
+        icon: Mail,
+        page: BillingContactPage,
+        desc: "Where insurers and your clearinghouse reach you about enrollments and claims.",
       },
       {
         id: INSURANCE_PAYERS_SETTINGS_ID,

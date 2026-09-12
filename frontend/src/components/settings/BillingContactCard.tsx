@@ -102,7 +102,7 @@ export function BillingContactCard({
               type="button"
               variant="link"
               size="sm"
-              className="h-auto p-0 text-[12.5px]"
+              className="h-auto p-0 text-[12.5px] underline underline-offset-4"
               onClick={() =>
                 setDraft((current) => ({
                   ...current,
