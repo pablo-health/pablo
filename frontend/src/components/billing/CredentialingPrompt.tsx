@@ -16,6 +16,16 @@ import { useIntake } from "@/hooks/useCredentialingIntake"
  * be right without it, and the two answers lead somewhere different: one to
  * recording her contracts, the other to getting her some.
  *
+ * It asks how she gets PAID rather than whether she is credentialed, and that
+ * is not a wording preference. "Are you credentialed?" is mis-answerable by
+ * almost everyone: a clinician with an NPI and a CAQH profile reads that as
+ * yes and is contracted with nobody. This codebase already knows that failure
+ * — ``payer_participations`` separates ``credentialed`` from ``contracted``
+ * precisely because a practice can sit in the first for years believing it is
+ * paneled. A wrong yes here routes her into claims that deny. How her clients
+ * pay her is something she cannot be wrong about, and the answer is itself the
+ * Tier-1 fact we were trying to learn.
+ *
  * Asked ONLY when the record is silent. If she already has a payer
  * participation on file we know the answer, and asking anyway would break the
  * promise the whole intake rests on — never ask for what we can already read.
@@ -50,7 +60,7 @@ export function CredentialingPrompt() {
       <div className="pr-8">
         <div className="min-w-0">
           <p className="text-sm font-medium text-neutral-900">
-            Are you already contracted with insurance companies?
+            How do your clients pay you today?
           </p>
           <p className="mt-1 text-sm text-neutral-600">
             It decides how these sessions get billed — as a claim we file, or as
@@ -62,13 +72,13 @@ export function CredentialingPrompt() {
               href={INSURANCE_PAYERS_SETTINGS_PATH}
               className="font-medium text-neutral-900 underline underline-offset-4 hover:text-neutral-700"
             >
-              Yes — tell us which ones
+              Insurance pays me — tell us which
             </Link>
             <Link
               href="/dashboard/credentialing"
               className="font-medium text-neutral-900 underline underline-offset-4 hover:text-neutral-700"
             >
-              Not yet — help me get on panels
+              Clients pay me directly — help me take insurance
             </Link>
           </div>
         </div>

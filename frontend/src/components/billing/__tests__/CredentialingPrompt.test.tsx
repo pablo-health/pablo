@@ -54,8 +54,20 @@ describe("CredentialingPrompt", () => {
   it("asks when the record has nothing on file", () => {
     render(<CredentialingPrompt />)
 
+    expect(screen.getByText(/how do your clients pay you/i)).toBeInTheDocument()
+  })
+
+  it("asks something she cannot answer wrongly", () => {
+    // "Are you credentialed?" invites a false yes from anyone holding an NPI
+    // or a CAQH profile, and a wrong yes routes her into claims that deny.
+    // payer_participations already separates credentialed from contracted for
+    // exactly that reason. How her clients pay her is not mistakable.
+    render(<CredentialingPrompt />)
+
+    expect(screen.queryByText(/credentialed/i)).not.toBeInTheDocument()
+    expect(screen.getByRole("link", { name: /insurance pays me/i })).toBeInTheDocument()
     expect(
-      screen.getByText(/already contracted with insurance companies/i),
+      screen.getByRole("link", { name: /clients pay me directly/i }),
     ).toBeInTheDocument()
   })
 
@@ -82,7 +94,7 @@ describe("CredentialingPrompt", () => {
     render(<CredentialingPrompt />)
 
     expect(
-      screen.getByRole("link", { name: /tell us which ones/i }),
+      screen.getByRole("link", { name: /insurance pays me/i }),
     ).toHaveAttribute("href", "/dashboard/settings/insurance")
   })
 
@@ -90,7 +102,7 @@ describe("CredentialingPrompt", () => {
     render(<CredentialingPrompt />)
 
     expect(
-      screen.getByRole("link", { name: /help me get on panels/i }),
+      screen.getByRole("link", { name: /clients pay me directly/i }),
     ).toHaveAttribute("href", "/dashboard/credentialing")
   })
 
@@ -101,7 +113,7 @@ describe("CredentialingPrompt", () => {
     fireEvent.click(screen.getByRole("button", { name: /dismiss/i }))
 
     expect(
-      screen.queryByText(/already contracted with insurance companies/i),
+      screen.queryByText(/how do your clients pay you/i),
     ).not.toBeInTheDocument()
   })
 })
