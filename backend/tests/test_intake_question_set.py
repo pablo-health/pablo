@@ -67,6 +67,32 @@ class TestTierOneIsClaimsReadyAndStoppable:
         assert len(_questions(fields)) == 9
         assert len(_uploads(fields)) == 2
 
+    def test_the_banking_answers_are_offered_rather_than_demanded(self) -> None:
+        """Nothing needed only at Stage G may block the finish line here.
+
+        EFT enrolment happens after a contract is signed, 60-200 days out, and
+        the account is the one Tier-1 fact that is on no CAQH section. A
+        clinician here to get on panels may not have the account yet; one
+        forming an entity certainly may not. What proof a payer accepts varies
+        too — a voided cheque, a bank letter, a statement — so demanding one
+        now invents a rule nobody set.
+        """
+        for key in ("bank_account", "voided_cheque"):
+            assert not next(f for f in INTAKE_FIELDS if f.key == key).required, key
+        assert intake.claims_ready({f.key for f in _for(Tier.CLAIMS_READY) if f.required})
+
+    def test_the_panels_she_is_already_on_are_still_asked(self) -> None:
+        """The opposite call, and worth stating beside it.
+
+        Which payers she is in network with decides whether a session bills as
+        a claim or a superbill, and which panels there is any point applying
+        to. It is the most credentialing-relevant question in the tier, so it
+        stays required even as the banking answers stop being.
+        """
+        panels = next(f for f in INTAKE_FIELDS if f.key == "payer_participation")
+        assert panels.required
+        assert panels.tier is Tier.CLAIMS_READY
+
     def test_the_caqh_id_question_is_asked_in_tier_one(self) -> None:
         """Pulled forward on purpose: one field, and it changes the later plan."""
         assert "caqh_id" in {f.key for f in _for(Tier.CLAIMS_READY)}

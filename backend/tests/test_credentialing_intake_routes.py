@@ -462,7 +462,5 @@ def test_the_tier_one_fixture_actually_covers_the_tier() -> None:
         "liability_certificate",
         "service_locations",
         "payer_participation",
-        "bank_account",
-        "voided_cheque",
     }
     assert required == covered, f"Tier 1 changed; extend _answer_tier_one: {required ^ covered}"

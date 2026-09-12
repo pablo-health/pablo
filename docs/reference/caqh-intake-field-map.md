@@ -80,8 +80,8 @@ the ones with no home column anywhere else.
 | `practice_address` | 0 · confirm | text | `practice_billing_profile.address_line1` | required | everyone | `practice_billing_profile` | — |
 | `service_locations` | 1 · claims-ready | collection | `credential_service_locations` | required | everyone | — | — |
 | `payer_participation` | 1 · claims-ready | collection | `payer_participations` | required | everyone | — | `app.credentialing.participation` |
-| `bank_account` | 1 · claims-ready | collection | `credential_bank_accounts` | required | everyone | — | `app.credentialing.government_ids` |
-| `voided_cheque` | 1 · claims-ready | upload | `credential_bank_accounts.document_id` | required | everyone | — | — |
+| `bank_account` | 1 · claims-ready | collection | `credential_bank_accounts` | optional | everyone | — | `app.credentialing.government_ids` |
+| `voided_cheque` | 1 · claims-ready | upload | `credential_bank_accounts.document_id` | optional | everyone | — | — |
 
 
 ## Hospital Affiliations

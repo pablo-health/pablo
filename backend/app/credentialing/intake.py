@@ -406,15 +406,30 @@ TIER_1_CLAIMS_READY: tuple[IntakeField, ...] = (
         tier=Tier.CLAIMS_READY,
         kind=FieldKind.COLLECTION,
         target="credential_bank_accounts",
+        required=False,
         audited_writer="app.credentialing.government_ids",
+        help_text=(
+            "Offered now, needed later. EFT enrolment comes after a contract "
+            "is signed, so a clinician who is here to get on panels does not "
+            "have to have an account yet — and one forming an entity may not. "
+            "A clinician already billing should fill it in now."
+        ),
     ),
     IntakeField(
         key="voided_cheque",
-        label="Voided cheque",
+        label="Proof of your bank account",
         section=CaqhSection.PRACTICE_LOCATIONS,
         tier=Tier.CLAIMS_READY,
         kind=FieldKind.UPLOAD,
         target="credential_bank_accounts.document_id",
+        required=False,
+        help_text=(
+            "A voided cheque, a bank letter or a statement header — payers "
+            "differ, and some ask for nothing. Optional here on purpose: no "
+            "payer has asked yet, and a clinician who banks online may have no "
+            "chequebook at all. Whichever payer wants one will say so at "
+            "enrolment, and we will have this ready."
+        ),
     ),
     IntakeField(
         key="caqh_id",
