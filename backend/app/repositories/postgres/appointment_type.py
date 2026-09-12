@@ -70,6 +70,7 @@ _SCHEDULING_FIELDS = (
     "name",
     "default_fee_cents",
     "duration_minutes",
+    "cpt",
     "audience",
     "min_notice_hours",
     "earliest_offer_business_days",

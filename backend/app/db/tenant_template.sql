@@ -90,6 +90,7 @@ CREATE TABLE __TENANT_SCHEMA__.appointment_types (
     horizon_unit character varying(10) DEFAULT 'business'::character varying NOT NULL,
     self_bookable boolean DEFAULT false NOT NULL,
     offerable boolean DEFAULT true NOT NULL,
+    cpt character varying(10),
     CONSTRAINT ck_appointment_types_audience CHECK (((audience)::text = ANY ((ARRAY['new'::character varying, 'existing'::character varying, 'both'::character varying])::text[]))),
     CONSTRAINT ck_appointment_types_duration CHECK (((duration_minutes >= 5) AND (duration_minutes <= 480))),
     CONSTRAINT ck_appointment_types_earliest_offer CHECK ((earliest_offer_business_days >= 0)),

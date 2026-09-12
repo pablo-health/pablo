@@ -712,6 +712,13 @@ class AppointmentTypeRow(Base):
     #: itself is worth when times are proposed for it.
     duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False, server_default="50")
 
+    #: The service code this type bills as — a CPT, typed by the practice.
+    #: Nullable because a practice that never bills insurance and never issues
+    #: an estimate needs none, and never inferred from ``duration_minutes``:
+    #: the psychotherapy codes band by session length, but the bands have
+    #: edges and picking a billing code for a clinician is not ours to do.
+    cpt: Mapped[str | None] = mapped_column(String(10))
+
     #: Who may be offered this type: ``new``, ``existing`` or ``both``. A
     #: consultation is for people who are not patients yet; a standard session
     #: is not.

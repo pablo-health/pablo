@@ -151,3 +151,20 @@ def validate_visit_diagnosis_codes(value: list[str] | None) -> list[str] | None:
         if code not in known:
             raise ValueError(f"Unknown ICD-10 diagnosis code: {code!r}")
     return value
+
+
+def normalize_service_code(value: str | None) -> str | None:
+    """Tidy a hand-typed service code without judging it.
+
+    Strips surrounding space and upper-cases, so a HCPCS code typed ``h0004``
+    still matches the ``H0004`` a contracted rate was filed under, and an
+    emptied field clears the code rather than storing a blank string.
+
+    Deliberately does NOT check the value against any code set: the code sets
+    change without asking us, and a practice whose payer wants something we
+    have never heard of must still be able to type it.
+    """
+    if value is None:
+        return None
+    normalized = value.strip().upper()
+    return normalized or None
