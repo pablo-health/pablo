@@ -39,6 +39,25 @@ class AvailabilityRule:
     rule_type: str  # RuleType value
     enforcement: str  # EnforcementLevel value
     params: dict[str, Any]
+    #: Which appointment type this rule governs, or None for all of them.
+    #:
+    #: None is the practice-wide rule and the default: "Mondays 9-5" applies
+    #: to every kind of appointment, which is what every rule written before
+    #: this column meant and still means. Setting it narrows the rule to one
+    #: type — "at most two intakes a day" is a MAX_PER_DAY rule with a type,
+    #: not a new rule type.
+    appointment_type_id: str | None = None
+    #: Whether other appointment types may use the window this rule defines.
+    #:
+    #: True — the default — is today's behaviour: scoping a WORKING_HOURS
+    #: window to a type says when that type may be offered and says nothing
+    #: about anybody else. False turns the window into a claim: those minutes
+    #: are offered to this type and to no other.
+    #:
+    #: Only meaningful on a type-scoped rule that defines a window. A
+    #: practice-wide rule has no other types to exclude, and a rule that only
+    #: counts or blocks does not define a window to hand out.
+    allow_other_types: bool = True
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -51,6 +70,8 @@ class AvailabilityRule:
             rule_type=data["rule_type"],
             enforcement=data["enforcement"],
             params=data.get("params", {}),
+            appointment_type_id=data.get("appointment_type_id"),
+            allow_other_types=data.get("allow_other_types", True),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
         )
@@ -63,6 +84,8 @@ class AvailabilityRule:
             "rule_type": self.rule_type,
             "enforcement": self.enforcement,
             "params": self.params,
+            "appointment_type_id": self.appointment_type_id,
+            "allow_other_types": self.allow_other_types,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }

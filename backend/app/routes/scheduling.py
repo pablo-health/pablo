@@ -43,6 +43,10 @@ from ..models import (
     User,
 )
 from ..models.audit import ResourceType
+from ..models.availability_rule_params import (
+    AvailabilityRuleParamsError,
+    validate_rule_params,
+)
 from ..models.enums import SessionSource, SessionType, VideoPlatform
 from ..models.scheduling import (
     AppointmentListResponse,
@@ -851,13 +855,18 @@ def cancel_series(
 # --- Availability endpoints ---
 
 
-def _rule_to_response(rule: AvailabilityRule) -> AvailabilityRuleResponse:
+def _rule_to_response(
+    rule: AvailabilityRule, warnings: list[str] | None = None
+) -> AvailabilityRuleResponse:
     return AvailabilityRuleResponse(
         id=rule.id,
         user_id=rule.user_id,
         rule_type=rule.rule_type,
         enforcement=rule.enforcement,
         params=rule.params,
+        appointment_type_id=rule.appointment_type_id,
+        allow_other_types=rule.allow_other_types,
+        warnings=warnings or [],
         created_at=rule.created_at,
         updated_at=rule.updated_at,
     )
@@ -872,12 +881,21 @@ def get_free_slots(
         ge=1,
         le=480,
     ),
+    appointment_type_id: str | None = Query(
+        None,
+        description=(
+            "Which appointment type these slots are for. Omit to list against "
+            "practice-wide rules only, as before."
+        ),
+    ),
     ctx: TenantContext = Depends(get_tenant_context),
     engine: AvailabilityEngine = Depends(get_availability_engine),
     tz: tzinfo = Depends(get_owner_timezone),
 ) -> FreeSlotsResponse:
-    """Get available time slots for a given date."""
-    result = engine.get_free_slots(ctx.user_id, date, duration, tz=tz)
+    """Get available time slots for a given date, optionally for one type."""
+    result = engine.get_free_slots(
+        ctx.user_id, date, duration, tz=tz, appointment_type_id=appointment_type_id
+    )
     return FreeSlotsResponse(
         date=date,
         duration_minutes=result.duration_minutes,
@@ -934,30 +952,32 @@ def create_availability_rule(
     request: CreateAvailabilityRuleRequest,
     ctx: TenantContext = Depends(get_tenant_context),
     rule_repo: AvailabilityRuleRepository = Depends(get_availability_rule_repository),
+    engine: AvailabilityEngine = Depends(get_availability_engine),
 ) -> AvailabilityRuleResponse:
-    """Create a new availability rule."""
-    try:
-        RuleType(request.rule_type)
-    except ValueError as e:
-        raise BadRequestError(f"Invalid rule_type: {request.rule_type}") from e
+    """Create a new availability rule.
 
-    try:
-        EnforcementLevel(request.enforcement)
-    except ValueError as e:
-        raise BadRequestError(f"Invalid enforcement: {request.enforcement}") from e
+    A rule that claims its window for one appointment type comes back with
+    ``warnings`` describing what that costs the others — it is still
+    created, but a practice should not discover it locked itself out of its
+    own calendar by finding an empty week.
 
+    ``request`` is the tagged union, so params that don't match the rule
+    type never reach here — FastAPI has already answered 422.
+    """
     now = utc_now()
     rule = AvailabilityRule(
         id=str(uuid.uuid4()),
         user_id=ctx.user_id,
         rule_type=request.rule_type,
         enforcement=request.enforcement,
-        params=request.params,
+        params=request.params.model_dump(exclude_none=True),
+        appointment_type_id=request.appointment_type_id,
+        allow_other_types=request.allow_other_types,
         created_at=now,
         updated_at=now,
     )
     created = rule_repo.create(rule)
-    return _rule_to_response(created)
+    return _rule_to_response(created, engine.exclusivity_warnings(created))
 
 
 @router.patch(
@@ -969,32 +989,47 @@ def update_availability_rule(
     request: UpdateAvailabilityRuleRequest,
     ctx: TenantContext = Depends(get_tenant_context),
     rule_repo: AvailabilityRuleRepository = Depends(get_availability_rule_repository),
+    engine: AvailabilityEngine = Depends(get_availability_engine),
 ) -> AvailabilityRuleResponse:
-    """Update an existing availability rule."""
+    """Update an existing availability rule.
+
+    Params are re-validated whenever either half of the pair moves: new
+    params against the rule's type, and a new rule type against the params
+    already stored, since changing the type alone would otherwise leave a
+    row whose params belong to the type it used to be.
+
+    Omitting ``appointment_type_id`` leaves the rule's scope alone rather
+    than clearing it — see ``UpdateAvailabilityRuleRequest``.
+    """
     rule = rule_repo.get(rule_id, ctx.user_id)
     if not rule:
         raise NotFoundError(f"Rule not found: {rule_id}")
 
-    if request.rule_type is not None:
+    if request.rule_type is not None or request.params is not None:
+        rule_type = request.rule_type or RuleType(rule.rule_type)
+        raw_params = rule.params if request.params is None else request.params
         try:
-            RuleType(request.rule_type)
-        except ValueError as e:
-            raise BadRequestError(f"Invalid rule_type: {request.rule_type}") from e
-        rule.rule_type = request.rule_type
+            validated = validate_rule_params(rule_type, raw_params)
+        except AvailabilityRuleParamsError as e:
+            raise UnprocessableEntityError(f"Invalid params for {rule_type}: {e}") from e
+        rule.rule_type = rule_type
+        rule.params = validated
 
     if request.enforcement is not None:
-        try:
-            EnforcementLevel(request.enforcement)
-        except ValueError as e:
-            raise BadRequestError(f"Invalid enforcement: {request.enforcement}") from e
         rule.enforcement = request.enforcement
 
-    if request.params is not None:
-        rule.params = request.params
+    # Params are not reassigned here: the block above already stored the
+    # validated form, and writing the raw request over it would put back
+    # exactly what validation just rejected.
+    if request.appointment_type_id is not None:
+        rule.appointment_type_id = request.appointment_type_id
+
+    if request.allow_other_types is not None:
+        rule.allow_other_types = request.allow_other_types
 
     rule.updated_at = utc_now()
     updated = rule_repo.update(rule)
-    return _rule_to_response(updated)
+    return _rule_to_response(updated, engine.exclusivity_warnings(updated))
 
 
 @router.delete(

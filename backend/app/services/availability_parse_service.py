@@ -27,8 +27,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, TypeGuard
+from typing import TYPE_CHECKING, Any
 
+from pydantic import ValidationError
+
+from ..models.availability_rule_params import RULE_PARAM_MODELS
+from ..scheduling_engine.models.availability import RuleType
 from ..scheduling_engine.services.date_intent import (
     DateIntent,
     DateToken,
@@ -244,79 +248,35 @@ class AvailabilityParseResult:
     a refusal whose reason the model didn't name."""
 
 
-_TIME_STRING_LENGTH = 5
-_MAX_HOUR = 23
-_MAX_MINUTE = 59
 _MAX_DAY_OF_WEEK = 6
-
-
-def _is_valid_time(value: object) -> TypeGuard[str]:
-    if not isinstance(value, str) or len(value) != _TIME_STRING_LENGTH or value[2] != ":":
-        return False
-    hours, minutes = value[:2], value[3:]
-    if not (hours.isdigit() and minutes.isdigit()):
-        return False
-    return 0 <= int(hours) <= _MAX_HOUR and 0 <= int(minutes) <= _MAX_MINUTE
 
 
 def _is_valid_day(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= _MAX_DAY_OF_WEEK
 
 
-def _is_valid_int(value: object, *, minimum: int) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool) and value >= minimum
-
-
-def _validate_time_range_params(raw: dict[str, Any]) -> dict[str, Any] | None:
-    start, end = raw.get("start"), raw.get("end")
-    if not _is_valid_time(start) or not _is_valid_time(end) or end <= start:
-        return None
-    return {"start": start, "end": end}
-
-
-def _validate_working_hours_params(raw: dict[str, Any]) -> dict[str, Any] | None:
-    time_range = _validate_time_range_params(raw)
-    day = raw.get("day_of_week")
-    if time_range is None or not _is_valid_day(day):
-        return None
-    return {"day_of_week": day, **time_range}
-
-
-def _validate_block_day_params(raw: dict[str, Any]) -> dict[str, Any] | None:
-    day = raw.get("day_of_week")
-    return {"day_of_week": day} if _is_valid_day(day) else None
-
-
-def _validate_max_per_day_params(raw: dict[str, Any]) -> dict[str, Any] | None:
-    max_value = raw.get("max")
-    return {"max": max_value} if _is_valid_int(max_value, minimum=1) else None
-
-
-def _validate_buffer_params(raw: dict[str, Any]) -> dict[str, Any] | None:
-    minutes = raw.get("minutes")
-    return {"minutes": minutes} if _is_valid_int(minutes, minimum=0) else None
-
-
-_PARAM_VALIDATORS: dict[str, Any] = {
-    "working_hours": _validate_working_hours_params,
-    "block_day_of_week": _validate_block_day_params,
-    "block_time_range": _validate_time_range_params,
-    "max_per_day": _validate_max_per_day_params,
-    "buffer_before": _validate_buffer_params,
-    "buffer_after": _validate_buffer_params,
-}
-
-
 def _validate_params(rule_type: str, raw: dict[str, Any]) -> dict[str, Any] | None:
     """Validate and extract this rule type's params from a raw proposal.
 
-    Mirrors the frontend's ``validate()`` (AvailabilitySettings.tsx) so a
-    proposal that would fail the manual form's own validation is rejected
-    here instead of being passed through -- the create API does not
-    validate params itself.
+    Validated through the shared tagged union
+    (:mod:`app.models.availability_rule_params`) — the same authority the
+    create API validates against — so a proposal that would be a 422 there
+    is dropped here instead of being shown to the therapist as a rule they
+    can confirm.
+
+    The model returns every param flat on the proposal, so the params
+    model's own field names select which of them belong to this rule type.
+    Anything else the model invented is not carried forward, and a key it
+    invented *in place of* a real one fails the model as a missing field.
     """
-    validator = _PARAM_VALIDATORS.get(rule_type)
-    return validator(raw) if validator else None
+    model = RULE_PARAM_MODELS.get(RuleType(rule_type)) if rule_type in COVERED_RULE_TYPES else None
+    if model is None:
+        return None
+    candidate = {name: raw[name] for name in model.model_fields if name in raw}
+    try:
+        return dict(model(**candidate).model_dump(exclude_none=True))
+    except ValidationError:
+        return None
 
 
 _MODIFIERS = frozenset({"this", "next"})

@@ -28,12 +28,15 @@ from app.repositories import (
     get_patient_coverage_repository,
     get_patient_payment_repository,
 )
+from app.repositories.audit import InMemoryAuditRepository
 from app.repositories.claims import InMemoryClaimRepository
 from app.repositories.coverage import InMemoryPatientCoverageRepository
+from app.routes.billing_queue import UNBILLED_QUEUE_NOTE_LIMIT
 from app.scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from app.scheduling_engine.models.appointment_type import AppointmentType
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.scheduling_engine.repositories.appointment_type import InMemoryAppointmentTypeRepository
+from app.services import AuditService, get_audit_service
 
 from tests.claims_fixtures import claim as claim_fixture
 from tests.claims_fixtures import line as line_fixture
@@ -80,11 +83,13 @@ def _note(session_id: str, *, finalized: bool) -> Note:
     )
 
 
-def _session(session_id: str, session_date: datetime, *, user_id: str) -> TherapySession:
+def _session(
+    session_id: str, session_date: datetime, *, user_id: str, patient_id: str = PATIENT_ID
+) -> TherapySession:
     return TherapySession(
         id=session_id,
         user_id=user_id,
-        patient_id=PATIENT_ID,
+        patient_id=patient_id,
         session_date=session_date,
         session_number=1,
         status="completed",
@@ -119,6 +124,7 @@ def _clear_overrides():
     app.dependency_overrides.pop(get_patient_payment_repository, None)
     app.dependency_overrides.pop(get_patient_coverage_repository, None)
     app.dependency_overrides.pop(get_claim_repository, None)
+    app.dependency_overrides.pop(get_audit_service, None)
 
 
 def _wire(
@@ -208,6 +214,76 @@ def _seed_patient(
         ),
         mock_user_id,
     )
+
+
+def _seed_visit(
+    mock_repo: InMemoryPatientRepository,
+    mock_session_repo: InMemoryTherapySessionRepository,
+    mock_notes_repo: InMemoryNotesRepository,
+    mock_user_id: str,
+    *,
+    patient_id: str,
+    session_id: str,
+    finalized_at: datetime,
+    rate_cents: int = 15000,
+) -> None:
+    """A finalized, unbilled visit for a given client — the batch tests' unit."""
+    mock_repo.create(
+        Patient(
+            id=patient_id,
+            first_name="Client",
+            last_name=patient_id,
+            created_at=finalized_at,
+            updated_at=finalized_at,
+            rate_cents=rate_cents,
+        ),
+        mock_user_id,
+    )
+    mock_session_repo.create(
+        _session(session_id, finalized_at, user_id=mock_user_id, patient_id=patient_id)
+    )
+    mock_notes_repo.add(
+        Note(
+            id=str(uuid.uuid4()),
+            patient_id=patient_id,
+            session_id=session_id,
+            note_type="soap",
+            finalized_at=finalized_at,
+            created_at=finalized_at,
+            updated_at=finalized_at,
+        ),
+        mock_user_id,
+    )
+
+
+class _CountingCoverageRepo:
+    """Wraps a coverage repository, counting how each lookup method is used.
+
+    Lets a test assert the route takes the batch path instead of the
+    per-patient one without caring what the underlying data looks like.
+    """
+
+    def __init__(self, inner: InMemoryPatientCoverageRepository) -> None:
+        self._inner = inner
+        self.get_active_calls = 0
+        self.get_active_for_patients_calls = 0
+
+    def get(self, coverage_id: str) -> PatientCoverage | None:
+        return self._inner.get(coverage_id)
+
+    def get_active(self, patient_id: str) -> PatientCoverage | None:
+        self.get_active_calls += 1
+        return self._inner.get_active(patient_id)
+
+    def get_active_for_patients(self, patient_ids: list[str]) -> dict[str, PatientCoverage]:
+        self.get_active_for_patients_calls += 1
+        return self._inner.get_active_for_patients(patient_ids)
+
+    def create(self, coverage: PatientCoverage) -> PatientCoverage:
+        return self._inner.create(coverage)
+
+    def update(self, coverage: PatientCoverage) -> PatientCoverage:
+        return self._inner.update(coverage)
 
 
 def test_empty_queue_when_nothing_finalized(client) -> None:
@@ -504,3 +580,175 @@ def test_a_collected_copay_keeps_the_session_in_the_queue(client, one_finalized_
     items = client.get("/api/billing/unbilled-sessions").json()["items"]
     assert len(items) == 1
     assert items[0]["session_id"] == "sess-1"
+
+
+# ---------------------------------------------------------------------------
+# Batching: one coverage query and one audit row for the whole queue, not
+# one per row.
+# ---------------------------------------------------------------------------
+
+
+def test_coverage_lookup_is_batched_across_patients(
+    client,
+    mock_repo: InMemoryPatientRepository,
+    mock_session_repo: InMemoryTherapySessionRepository,
+    mock_notes_repo: InMemoryNotesRepository,
+    mock_user_id: str,
+) -> None:
+    now = datetime(2026, 6, 1, tzinfo=UTC)
+    for i in range(1, 4):
+        _seed_visit(
+            mock_repo,
+            mock_session_repo,
+            mock_notes_repo,
+            mock_user_id,
+            patient_id=f"patient-{i}",
+            session_id=f"sess-{i}",
+            finalized_at=now,
+        )
+    coverage = _CountingCoverageRepo(InMemoryPatientCoverageRepository())
+    _wire(coverage=coverage)
+
+    resp = client.get("/api/billing/unbilled-sessions")
+
+    assert len(resp.json()["items"]) == 3
+    assert coverage.get_active_for_patients_calls == 1
+    assert coverage.get_active_calls == 0
+
+
+def test_exactly_one_audit_row_per_request_naming_the_session_ids(
+    client,
+    mock_repo: InMemoryPatientRepository,
+    mock_session_repo: InMemoryTherapySessionRepository,
+    mock_notes_repo: InMemoryNotesRepository,
+    mock_user_id: str,
+) -> None:
+    now = datetime(2026, 6, 1, tzinfo=UTC)
+    session_ids = [f"sess-{i}" for i in range(1, 4)]
+    for i, session_id in zip(range(1, 4), session_ids, strict=True):
+        _seed_visit(
+            mock_repo,
+            mock_session_repo,
+            mock_notes_repo,
+            mock_user_id,
+            patient_id=f"patient-{i}",
+            session_id=session_id,
+            finalized_at=now,
+        )
+    repository = InMemoryAuditRepository()
+    app.dependency_overrides[get_audit_service] = lambda: AuditService(repository)
+    _wire()
+
+    resp = client.get("/api/billing/unbilled-sessions")
+
+    assert len(resp.json()["items"]) == 3
+    logged = repository.list_for_user(mock_user_id)
+    session_viewed = [entry for entry in logged if entry.action == "session_viewed"]
+    assert len(session_viewed) == 1
+    assert sorted(session_viewed[0].changes["session_ids"]) == sorted(session_ids)
+    assert session_viewed[0].changes["count"] == 3
+    # ids only — no patient name, no clinical content.
+    assert "patient_name" not in session_viewed[0].changes
+
+
+def test_list_finalized_is_called_with_the_queue_limit(
+    client,
+    mock_repo: InMemoryPatientRepository,
+    mock_session_repo: InMemoryTherapySessionRepository,
+    mock_notes_repo: InMemoryNotesRepository,
+    mock_user_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert UNBILLED_QUEUE_NOTE_LIMIT == 500
+    _seed_patient(mock_repo, mock_user_id, rate_cents=15000)
+    mock_session_repo.create(
+        _session("sess-1", datetime(2026, 6, 10, tzinfo=UTC), user_id=mock_user_id)
+    )
+    mock_notes_repo.add(_note("sess-1", finalized=True), mock_user_id)
+    calls: list[int | None] = []
+    original_list_finalized = mock_notes_repo.list_finalized
+
+    def _spy(user_id: str, *, limit: int | None = None) -> list[Note]:
+        calls.append(limit)
+        return original_list_finalized(user_id, limit=limit)
+
+    monkeypatch.setattr(mock_notes_repo, "list_finalized", _spy)
+    _wire()
+
+    client.get("/api/billing/unbilled-sessions")
+
+    assert calls == [UNBILLED_QUEUE_NOTE_LIMIT]
+
+
+def test_queue_rows_and_order_are_unchanged_by_batching(
+    client,
+    mock_repo: InMemoryPatientRepository,
+    mock_session_repo: InMemoryTherapySessionRepository,
+    mock_notes_repo: InMemoryNotesRepository,
+    mock_user_id: str,
+) -> None:
+    """A settled visit, a claimed visit, and a plain unbilled one, together.
+
+    Pins down that batching the coverage lookup and hoisting the audit call
+    didn't change which rows come back or their order — newest finalized
+    note first, settled visits dropped.
+    """
+    _seed_patient(mock_repo, mock_user_id, rate_cents=15000)
+    oldest = datetime(2026, 6, 1, tzinfo=UTC)
+    middle = datetime(2026, 6, 5, tzinfo=UTC)
+    newest = datetime(2026, 6, 10, tzinfo=UTC)
+
+    mock_session_repo.create(_session("sess-settled", oldest, user_id=mock_user_id))
+    mock_notes_repo.add(
+        Note(
+            id=str(uuid.uuid4()),
+            patient_id=PATIENT_ID,
+            session_id="sess-settled",
+            note_type="soap",
+            finalized_at=oldest,
+            created_at=oldest,
+            updated_at=oldest,
+        ),
+        mock_user_id,
+    )
+    mock_session_repo.create(_session("sess-claimed", middle, user_id=mock_user_id))
+    mock_notes_repo.add(
+        Note(
+            id=str(uuid.uuid4()),
+            patient_id=PATIENT_ID,
+            session_id="sess-claimed",
+            note_type="soap",
+            finalized_at=middle,
+            created_at=middle,
+            updated_at=middle,
+        ),
+        mock_user_id,
+    )
+    mock_session_repo.create(_session("sess-unbilled", newest, user_id=mock_user_id))
+    mock_notes_repo.add(
+        Note(
+            id=str(uuid.uuid4()),
+            patient_id=PATIENT_ID,
+            session_id="sess-unbilled",
+            note_type="soap",
+            finalized_at=newest,
+            created_at=newest,
+            updated_at=newest,
+        ),
+        mock_user_id,
+    )
+
+    appt_repo = InMemoryAppointmentRepository()
+    appt_repo.create(_appointment("appt-settled", "sess-settled", user_id=mock_user_id))
+    appt_repo.create(_appointment("appt-claimed", "sess-claimed", user_id=mock_user_id))
+    _wire(
+        appt_repo=appt_repo,
+        payments=_FakePayments(succeeded={("appt-settled", "session")}),
+        coverage=_covered(),
+        claims=_claims_on("appt-claimed", state="submitted"),
+    )
+
+    items = client.get("/api/billing/unbilled-sessions").json()["items"]
+
+    assert [item["session_id"] for item in items] == ["sess-unbilled", "sess-claimed"]
+    assert items[1]["claim"]["state"] == "submitted"

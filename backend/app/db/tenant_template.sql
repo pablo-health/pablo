@@ -175,7 +175,9 @@ CREATE TABLE __TENANT_SCHEMA__.availability_rules (
     enforcement character varying(10) NOT NULL,
     params jsonb NOT NULL,
     created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone
+    updated_at timestamp with time zone,
+    appointment_type_id uuid,
+    allow_other_types boolean DEFAULT true NOT NULL
 );
 
 
@@ -1641,6 +1643,10 @@ CREATE INDEX ix_audit_logs_user_timestamp ON __TENANT_SCHEMA__.audit_logs USING 
 
 
 
+CREATE INDEX ix_availability_rules_appointment_type_id ON __TENANT_SCHEMA__.availability_rules USING btree (appointment_type_id);
+
+
+
 CREATE INDEX ix_availability_rules_user_id ON __TENANT_SCHEMA__.availability_rules USING btree (user_id);
 
 
@@ -2033,6 +2039,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.appointments
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.appointments
     ADD CONSTRAINT appointments_session_id_fkey FOREIGN KEY (session_id) REFERENCES __TENANT_SCHEMA__.therapy_sessions(id) ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.availability_rules
+    ADD CONSTRAINT availability_rules_appointment_type_id_fkey FOREIGN KEY (appointment_type_id) REFERENCES __TENANT_SCHEMA__.appointment_types(id) ON DELETE CASCADE;
 
 
 
