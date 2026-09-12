@@ -43,6 +43,10 @@ from ..models import (
     User,
 )
 from ..models.audit import ResourceType
+from ..models.availability_rule_params import (
+    AvailabilityRuleParamsError,
+    validate_rule_params,
+)
 from ..models.enums import SessionSource, SessionType, VideoPlatform
 from ..models.scheduling import (
     AppointmentListResponse,
@@ -956,24 +960,17 @@ def create_availability_rule(
     ``warnings`` describing what that costs the others — it is still
     created, but a practice should not discover it locked itself out of its
     own calendar by finding an empty week.
+
+    ``request`` is the tagged union, so params that don't match the rule
+    type never reach here — FastAPI has already answered 422.
     """
-    try:
-        RuleType(request.rule_type)
-    except ValueError as e:
-        raise BadRequestError(f"Invalid rule_type: {request.rule_type}") from e
-
-    try:
-        EnforcementLevel(request.enforcement)
-    except ValueError as e:
-        raise BadRequestError(f"Invalid enforcement: {request.enforcement}") from e
-
     now = utc_now()
     rule = AvailabilityRule(
         id=str(uuid.uuid4()),
         user_id=ctx.user_id,
         rule_type=request.rule_type,
         enforcement=request.enforcement,
-        params=request.params,
+        params=request.params.model_dump(exclude_none=True),
         appointment_type_id=request.appointment_type_id,
         allow_other_types=request.allow_other_types,
         created_at=now,
@@ -996,6 +993,11 @@ def update_availability_rule(
 ) -> AvailabilityRuleResponse:
     """Update an existing availability rule.
 
+    Params are re-validated whenever either half of the pair moves: new
+    params against the rule's type, and a new rule type against the params
+    already stored, since changing the type alone would otherwise leave a
+    row whose params belong to the type it used to be.
+
     Omitting ``appointment_type_id`` leaves the rule's scope alone rather
     than clearing it — see ``UpdateAvailabilityRuleRequest``.
     """
@@ -1003,23 +1005,22 @@ def update_availability_rule(
     if not rule:
         raise NotFoundError(f"Rule not found: {rule_id}")
 
-    if request.rule_type is not None:
+    if request.rule_type is not None or request.params is not None:
+        rule_type = request.rule_type or RuleType(rule.rule_type)
+        raw_params = rule.params if request.params is None else request.params
         try:
-            RuleType(request.rule_type)
-        except ValueError as e:
-            raise BadRequestError(f"Invalid rule_type: {request.rule_type}") from e
-        rule.rule_type = request.rule_type
+            validated = validate_rule_params(rule_type, raw_params)
+        except AvailabilityRuleParamsError as e:
+            raise UnprocessableEntityError(f"Invalid params for {rule_type}: {e}") from e
+        rule.rule_type = rule_type
+        rule.params = validated
 
     if request.enforcement is not None:
-        try:
-            EnforcementLevel(request.enforcement)
-        except ValueError as e:
-            raise BadRequestError(f"Invalid enforcement: {request.enforcement}") from e
         rule.enforcement = request.enforcement
 
-    if request.params is not None:
-        rule.params = request.params
-
+    # Params are not reassigned here: the block above already stored the
+    # validated form, and writing the raw request over it would put back
+    # exactly what validation just rejected.
     if request.appointment_type_id is not None:
         rule.appointment_type_id = request.appointment_type_id
 

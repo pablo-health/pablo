@@ -12,6 +12,8 @@ from pydantic import BaseModel, Field, field_validator
 # Runtime import: Pydantic resolves this annotation at runtime for validation,
 # so it cannot live in a TYPE_CHECKING block.
 from ..scheduling_engine.models.appointment import AppointmentStatus  # noqa: TC001
+from ..scheduling_engine.models.availability import EnforcementLevel, RuleType  # noqa: TC001
+from .availability_rule_params import TaggedAvailabilityRule
 from .validators import validate_visit_diagnosis_codes, validate_visit_modifiers
 
 # 11 office, 02 telehealth other than home, 10 telehealth in home. Closed —
@@ -199,30 +201,31 @@ class AppointmentListResponse(BaseModel):
 # --- Availability rule models ---
 
 
-class CreateAvailabilityRuleRequest(BaseModel):
-    """Request to create an availability rule."""
-
-    rule_type: str
-    enforcement: str = "hard"
-    params: dict[str, Any]
-    #: Narrow the rule to one appointment type. Omitted means practice-wide.
-    appointment_type_id: str | None = None
-    #: Set False on a type-scoped working_hours rule to claim its window for
-    #: that type alone. Default True changes nothing for any other type.
-    allow_other_types: bool = True
+#: Request to create an availability rule: the tagged union itself, so
+#: FastAPI validates ``params`` against the rule type before anything is
+#: stored and answers a malformed rule with a 422 naming the field. The
+#: scoping fields ``appointment_type_id`` and ``allow_other_types`` ride on
+#: the union's shared base, so every rule type accepts them.
+CreateAvailabilityRuleRequest = TaggedAvailabilityRule
 
 
 class UpdateAvailabilityRuleRequest(BaseModel):
     """Request to update an availability rule.
 
-    Every field is optional and omitting one leaves it alone —
-    ``appointment_type_id`` included, which means this cannot widen a
-    type-scoped rule back to practice-wide. Delete and recreate for that; a
-    rule silently losing its scope is the failure mode worth designing out.
+    Every field is optional, so this can't be the tagged union: PATCH may
+    carry params without a rule type, and the surfaces that edit one row
+    do. The route resolves the effective rule type from the stored rule
+    and validates params through :func:`validate_rule_params` — the same
+    union, reached the only other way it can be.
+
+    Omitting a field leaves it alone, ``appointment_type_id`` included,
+    which means this cannot widen a type-scoped rule back to practice-wide.
+    Delete and recreate for that; a rule silently losing its scope is the
+    failure mode worth designing out.
     """
 
-    rule_type: str | None = None
-    enforcement: str | None = None
+    rule_type: RuleType | None = None
+    enforcement: EnforcementLevel | None = None
     params: dict[str, Any] | None = None
     appointment_type_id: str | None = None
     allow_other_types: bool | None = None

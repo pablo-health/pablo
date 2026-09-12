@@ -1,0 +1,612 @@
+{
+  "$defs": {
+    "BlockDateRangeParams": {
+      "additionalProperties": false,
+      "description": "No appointments anywhere in an inclusive span of dates.",
+      "properties": {
+        "end_date": {
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "title": "End Date",
+          "type": "string"
+        },
+        "start_date": {
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "title": "Start Date",
+          "type": "string"
+        }
+      },
+      "required": [
+        "start_date",
+        "end_date"
+      ],
+      "title": "BlockDateRangeParams",
+      "type": "object"
+    },
+    "BlockDateRangeRule": {
+      "additionalProperties": false,
+      "properties": {
+        "allow_other_types": {
+          "default": true,
+          "title": "Allow Other Types",
+          "type": "boolean"
+        },
+        "appointment_type_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Appointment Type Id"
+        },
+        "enforcement": {
+          "$ref": "#/$defs/EnforcementLevel",
+          "default": "hard"
+        },
+        "params": {
+          "$ref": "#/$defs/BlockDateRangeParams"
+        },
+        "rule_type": {
+          "const": "block_date_range",
+          "title": "Rule Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule_type",
+        "params"
+      ],
+      "title": "BlockDateRangeRule",
+      "type": "object"
+    },
+    "BlockDayOfWeekParams": {
+      "additionalProperties": false,
+      "description": "No appointments on this day of the week.",
+      "properties": {
+        "day_of_week": {
+          "description": "0=Monday through 6=Sunday",
+          "maximum": 6,
+          "minimum": 0,
+          "title": "Day Of Week",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "day_of_week"
+      ],
+      "title": "BlockDayOfWeekParams",
+      "type": "object"
+    },
+    "BlockDayOfWeekRule": {
+      "additionalProperties": false,
+      "properties": {
+        "allow_other_types": {
+          "default": true,
+          "title": "Allow Other Types",
+          "type": "boolean"
+        },
+        "appointment_type_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Appointment Type Id"
+        },
+        "enforcement": {
+          "$ref": "#/$defs/EnforcementLevel",
+          "default": "hard"
+        },
+        "params": {
+          "$ref": "#/$defs/BlockDayOfWeekParams"
+        },
+        "rule_type": {
+          "const": "block_day_of_week",
+          "title": "Rule Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule_type",
+        "params"
+      ],
+      "title": "BlockDayOfWeekRule",
+      "type": "object"
+    },
+    "BlockSpecificDatesParams": {
+      "additionalProperties": false,
+      "description": "No appointments on any of these individual dates.",
+      "properties": {
+        "dates": {
+          "items": {
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Dates",
+          "type": "array"
+        }
+      },
+      "required": [
+        "dates"
+      ],
+      "title": "BlockSpecificDatesParams",
+      "type": "object"
+    },
+    "BlockSpecificDatesRule": {
+      "additionalProperties": false,
+      "properties": {
+        "allow_other_types": {
+          "default": true,
+          "title": "Allow Other Types",
+          "type": "boolean"
+        },
+        "appointment_type_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Appointment Type Id"
+        },
+        "enforcement": {
+          "$ref": "#/$defs/EnforcementLevel",
+          "default": "hard"
+        },
+        "params": {
+          "$ref": "#/$defs/BlockSpecificDatesParams"
+        },
+        "rule_type": {
+          "const": "block_specific_dates",
+          "title": "Rule Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule_type",
+        "params"
+      ],
+      "title": "BlockSpecificDatesRule",
+      "type": "object"
+    },
+    "BlockTimeRangeParams": {
+      "additionalProperties": false,
+      "description": "No appointments in this time range, on every day.\n\nDeliberately no ``day_of_week``: the engine blocks the range on every\ndate it evaluates, so a day would be a field nothing reads.",
+      "properties": {
+        "end": {
+          "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+          "title": "End",
+          "type": "string"
+        },
+        "start": {
+          "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+          "title": "Start",
+          "type": "string"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "title": "BlockTimeRangeParams",
+      "type": "object"
+    },
+    "BlockTimeRangeRule": {
+      "additionalProperties": false,
+      "properties": {
+        "allow_other_types": {
+          "default": true,
+          "title": "Allow Other Types",
+          "type": "boolean"
+        },
+        "appointment_type_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Appointment Type Id"
+        },
+        "enforcement": {
+          "$ref": "#/$defs/EnforcementLevel",
+          "default": "hard"
+        },
+        "params": {
+          "$ref": "#/$defs/BlockTimeRangeParams"
+        },
+        "rule_type": {
+          "const": "block_time_range",
+          "title": "Rule Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule_type",
+        "params"
+      ],
+      "title": "BlockTimeRangeRule",
+      "type": "object"
+    },
+    "BufferAfterParams": {
+      "additionalProperties": false,
+      "description": "A gap required after every appointment.",
+      "properties": {
+        "minutes": {
+          "minimum": 0,
+          "title": "Minutes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "minutes"
+      ],
+      "title": "BufferAfterParams",
+      "type": "object"
+    },
+    "BufferAfterRule": {
+      "additionalProperties": false,
+      "properties": {
+        "allow_other_types": {
+          "default": true,
+          "title": "Allow Other Types",
+          "type": "boolean"
+        },
+        "appointment_type_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Appointment Type Id"
+        },
+        "enforcement": {
+          "$ref": "#/$defs/EnforcementLevel",
+          "default": "hard"
+        },
+        "params": {
+          "$ref": "#/$defs/BufferAfterParams"
+        },
+        "rule_type": {
+          "const": "buffer_after",
+          "title": "Rule Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule_type",
+        "params"
+      ],
+      "title": "BufferAfterRule",
+      "type": "object"
+    },
+    "BufferBeforeParams": {
+      "additionalProperties": false,
+      "description": "A gap required before every appointment.",
+      "properties": {
+        "minutes": {
+          "minimum": 0,
+          "title": "Minutes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "minutes"
+      ],
+      "title": "BufferBeforeParams",
+      "type": "object"
+    },
+    "BufferBeforeRule": {
+      "additionalProperties": false,
+      "properties": {
+        "allow_other_types": {
+          "default": true,
+          "title": "Allow Other Types",
+          "type": "boolean"
+        },
+        "appointment_type_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Appointment Type Id"
+        },
+        "enforcement": {
+          "$ref": "#/$defs/EnforcementLevel",
+          "default": "hard"
+        },
+        "params": {
+          "$ref": "#/$defs/BufferBeforeParams"
+        },
+        "rule_type": {
+          "const": "buffer_before",
+          "title": "Rule Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule_type",
+        "params"
+      ],
+      "title": "BufferBeforeRule",
+      "type": "object"
+    },
+    "EnforcementLevel": {
+      "enum": [
+        "hard",
+        "soft"
+      ],
+      "title": "EnforcementLevel",
+      "type": "string"
+    },
+    "MaxPerDayParams": {
+      "additionalProperties": false,
+      "description": "At most this many appointments in a day.",
+      "properties": {
+        "max": {
+          "minimum": 1,
+          "title": "Max",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "max"
+      ],
+      "title": "MaxPerDayParams",
+      "type": "object"
+    },
+    "MaxPerDayRule": {
+      "additionalProperties": false,
+      "properties": {
+        "allow_other_types": {
+          "default": true,
+          "title": "Allow Other Types",
+          "type": "boolean"
+        },
+        "appointment_type_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Appointment Type Id"
+        },
+        "enforcement": {
+          "$ref": "#/$defs/EnforcementLevel",
+          "default": "hard"
+        },
+        "params": {
+          "$ref": "#/$defs/MaxPerDayParams"
+        },
+        "rule_type": {
+          "const": "max_per_day",
+          "title": "Rule Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule_type",
+        "params"
+      ],
+      "title": "MaxPerDayRule",
+      "type": "object"
+    },
+    "SessionDefaultsParams": {
+      "additionalProperties": false,
+      "description": "What a new appointment starts as, rather than what it may not be.\n\nBoth fields are optional \u2014 an empty ``session_defaults`` is how the\nfrontend clears a default it had set \u2014 and the engine falls back to\nits own duration and an unaligned grid when they're absent.",
+      "properties": {
+        "alignment": {
+          "anyOf": [
+            {
+              "enum": [
+                "hour",
+                "half_hour"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Alignment"
+        },
+        "duration_minutes": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Minutes"
+        }
+      },
+      "title": "SessionDefaultsParams",
+      "type": "object"
+    },
+    "SessionDefaultsRule": {
+      "additionalProperties": false,
+      "properties": {
+        "allow_other_types": {
+          "default": true,
+          "title": "Allow Other Types",
+          "type": "boolean"
+        },
+        "appointment_type_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Appointment Type Id"
+        },
+        "enforcement": {
+          "$ref": "#/$defs/EnforcementLevel",
+          "default": "hard"
+        },
+        "params": {
+          "$ref": "#/$defs/SessionDefaultsParams"
+        },
+        "rule_type": {
+          "const": "session_defaults",
+          "title": "Rule Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule_type",
+        "params"
+      ],
+      "title": "SessionDefaultsRule",
+      "type": "object"
+    },
+    "WorkingHoursParams": {
+      "additionalProperties": false,
+      "description": "When the therapist is available on one day of the week.",
+      "properties": {
+        "day_of_week": {
+          "description": "0=Monday through 6=Sunday",
+          "maximum": 6,
+          "minimum": 0,
+          "title": "Day Of Week",
+          "type": "integer"
+        },
+        "end": {
+          "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+          "title": "End",
+          "type": "string"
+        },
+        "start": {
+          "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+          "title": "Start",
+          "type": "string"
+        }
+      },
+      "required": [
+        "start",
+        "end",
+        "day_of_week"
+      ],
+      "title": "WorkingHoursParams",
+      "type": "object"
+    },
+    "WorkingHoursRule": {
+      "additionalProperties": false,
+      "properties": {
+        "allow_other_types": {
+          "default": true,
+          "title": "Allow Other Types",
+          "type": "boolean"
+        },
+        "appointment_type_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Appointment Type Id"
+        },
+        "enforcement": {
+          "$ref": "#/$defs/EnforcementLevel",
+          "default": "hard"
+        },
+        "params": {
+          "$ref": "#/$defs/WorkingHoursParams"
+        },
+        "rule_type": {
+          "const": "working_hours",
+          "title": "Rule Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule_type",
+        "params"
+      ],
+      "title": "WorkingHoursRule",
+      "type": "object"
+    }
+  },
+  "discriminator": {
+    "mapping": {
+      "block_date_range": "#/$defs/BlockDateRangeRule",
+      "block_day_of_week": "#/$defs/BlockDayOfWeekRule",
+      "block_specific_dates": "#/$defs/BlockSpecificDatesRule",
+      "block_time_range": "#/$defs/BlockTimeRangeRule",
+      "buffer_after": "#/$defs/BufferAfterRule",
+      "buffer_before": "#/$defs/BufferBeforeRule",
+      "max_per_day": "#/$defs/MaxPerDayRule",
+      "session_defaults": "#/$defs/SessionDefaultsRule",
+      "working_hours": "#/$defs/WorkingHoursRule"
+    },
+    "propertyName": "rule_type"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/WorkingHoursRule"
+    },
+    {
+      "$ref": "#/$defs/BlockDayOfWeekRule"
+    },
+    {
+      "$ref": "#/$defs/BlockTimeRangeRule"
+    },
+    {
+      "$ref": "#/$defs/BlockDateRangeRule"
+    },
+    {
+      "$ref": "#/$defs/BlockSpecificDatesRule"
+    },
+    {
+      "$ref": "#/$defs/MaxPerDayRule"
+    },
+    {
+      "$ref": "#/$defs/BufferBeforeRule"
+    },
+    {
+      "$ref": "#/$defs/BufferAfterRule"
+    },
+    {
+      "$ref": "#/$defs/SessionDefaultsRule"
+    }
+  ]
+}
