@@ -43,6 +43,7 @@ from app.claims.enrollment import (
     required_transactions,
     reset_refresh_floor,
     sync_provider_record,
+    transactions_to_file,
 )
 from app.claims.events import compliance_item_type
 from app.db.models import (
@@ -131,11 +132,28 @@ def _seed_profile(session: Session, **overrides: str | None) -> None:
     update_billing_profile(session, {**_PROFILE, **overrides})
 
 
-def _seed_payer(session: Session, *, payer_id: str = TEST_PAYER_ID) -> PayerRow:
+def _seed_payer(
+    session: Session,
+    *,
+    payer_id: str = TEST_PAYER_ID,
+    enroll_remittance: bool = True,
+    enroll_claims: bool = True,
+    enroll_eligibility: bool = True,
+) -> PayerRow:
+    """A payer on the practice's list, asked for everything unless said otherwise.
+
+    Remittance is the one the real default leaves off, and the recorded
+    directory requires only remittance — so a helper that mirrored the
+    default would file nothing in every test below. The default-off case is
+    what ``TestTransactionChoice`` is for.
+    """
     payer = PayerRow(
         id=_PAYER_ROW_ID,
         name="Stedi Test Payer",
         payer_id=payer_id,
+        enroll_eligibility=enroll_eligibility,
+        enroll_claims=enroll_claims,
+        enroll_remittance=enroll_remittance,
         created_at=_NOW,
         updated_at=_NOW,
     )
@@ -467,6 +485,103 @@ class TestPayerStatusMirror:
         self, support: dict[str, str], expected: list[str]
     ) -> None:
         assert required_transactions(support) == expected
+
+
+# --- what the practice asked for -------------------------------------------------
+
+
+_ALL_REQUIRED = {
+    "professionalClaimSubmission": "ENROLLMENT_REQUIRED",
+    "eligibilityCheck": "ENROLLMENT_REQUIRED",
+    "claimPayment": "ENROLLMENT_REQUIRED",
+}
+
+
+class TestTransactionChoice:
+    """What the payer requires and what the practice wants are separate questions."""
+
+    def test_the_default_payer_does_not_reroute_remittances(self, session: Session) -> None:
+        """The bug this exists for: adding a payer used to move its ERAs to us."""
+        _seed_profile(session)
+        payer = _seed_payer(session, enroll_remittance=False)
+        client = FakeClearinghouse()
+
+        created = request_enrollments(session, client, payer_row_id=payer.id, user_id=_USER_ID)
+
+        assert created == []
+        assert client.calls_named("create_enrollment") == []
+
+    def test_eligibility_only_is_expressible(self, session: Session) -> None:
+        _seed_profile(session)
+        payer = _seed_payer(session, enroll_claims=False, enroll_remittance=False)
+        client = FakeClearinghouse(transaction_support=_ALL_REQUIRED)
+
+        created = request_enrollments(session, client, payer_row_id=payer.id, user_id=_USER_ID)
+
+        assert [row.transaction_type for row in created] == ["270"]
+
+    def test_claims_without_remittance_is_expressible(self, session: Session) -> None:
+        """The ordinary shape mid-migration: bill here, let the biller keep posting."""
+        _seed_profile(session)
+        payer = _seed_payer(session, enroll_remittance=False)
+        client = FakeClearinghouse(transaction_support=_ALL_REQUIRED)
+
+        created = request_enrollments(session, client, payer_row_id=payer.id, user_id=_USER_ID)
+
+        assert [row.transaction_type for row in created] == ["837P", "270"]
+
+    def test_everything_still_arrives_in_one_action(self, session: Session) -> None:
+        _seed_profile(session)
+        payer = _seed_payer(session)
+        client = FakeClearinghouse(transaction_support=_ALL_REQUIRED)
+
+        created = request_enrollments(session, client, payer_row_id=payer.id, user_id=_USER_ID)
+
+        assert [row.transaction_type for row in created] == ["837P", "270", "835"]
+
+    def test_switching_remittance_on_later_files_it_then(self, session: Session) -> None:
+        _seed_profile(session)
+        payer = _seed_payer(session, enroll_remittance=False)
+        client = FakeClearinghouse(transaction_support=_ALL_REQUIRED)
+        request_enrollments(session, client, payer_row_id=payer.id, user_id=_USER_ID)
+
+        payer.enroll_remittance = True
+        created = request_enrollments(session, client, payer_row_id=payer.id, user_id=_USER_ID)
+
+        assert [row.transaction_type for row in created] == ["835"]
+        assert sorted(_rows(session)) == ["270", "835", "837P"]
+
+    def test_switching_one_off_leaves_a_filed_request_alone(self, session: Session) -> None:
+        """A checkbox stops the next request; withdrawing one is the clearinghouse's business."""
+        _seed_profile(session)
+        payer = _seed_payer(session)
+        client = FakeClearinghouse()
+        request_enrollments(session, client, payer_row_id=payer.id, user_id=_USER_ID)
+
+        payer.enroll_remittance = False
+        request_enrollments(session, client, payer_row_id=payer.id, user_id=_USER_ID)
+
+        assert sorted(_rows(session)) == ["835"]
+
+    def test_the_directory_still_answers_what_the_payer_requires(self, session: Session) -> None:
+        """``required_transactions`` is untouched by the choice; only the filing narrows."""
+        _seed_profile(session)
+        payer = _seed_payer(session, enroll_remittance=False)
+
+        assert required_transactions(_ALL_REQUIRED) == ["837P", "270", "835"]
+        assert transactions_to_file(payer, _ALL_REQUIRED) == ["837P", "270"]
+
+    def test_a_payer_enrolled_for_what_it_wanted_reads_as_enrolled(self, session: Session) -> None:
+        """Without this an eligibility-only payer waits forever for an 835 nobody asked for."""
+        _seed_profile(session)
+        payer = _seed_payer(session, enroll_remittance=False)
+        client = FakeClearinghouse(transaction_support=_ALL_REQUIRED)
+        request_enrollments(session, client, payer_row_id=payer.id, user_id=_USER_ID)
+
+        client.listing = _listing_for(session, "LIVE", "837P", "270")
+        refresh_enrollments(session, client, arm=_no_arm)
+
+        assert payer.enrollment_status == "active"
 
 
 # --- action required -> reminder -> resolved -------------------------------------

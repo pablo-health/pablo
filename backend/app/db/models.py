@@ -1996,6 +1996,16 @@ class PayerRow(Base):
     ``payer_participations.status``, per clinician and independent. Both are
     true and false in every combination, and these similar names invite
     reading one for the other. Don't.
+
+    The three ``enroll_*`` columns are the practice's answer to what Pablo
+    should file with this payer. They gate enrollment, not traffic: a
+    transaction the payer needs no enrollment for works whether its column is
+    set or not — that is the payer's arrangement, not our permission. Which
+    makes ``enroll_remittance`` the consequential one, since remittance
+    always needs an enrollment and completing it moves the payer's ERAs to us
+    from wherever they arrive today. So it starts off, and the other two
+    start on: being wrong about remittance costs somebody downstream their
+    payment postings, and being wrong about the other two costs a click.
     """
 
     __tablename__ = "payers"
@@ -2019,6 +2029,15 @@ class PayerRow(Base):
         Uuid(as_uuid=False), ForeignKey("payers.id", ondelete="SET NULL"), nullable=True
     )
     enrollment_status: Mapped[str] = mapped_column(String(16), nullable=False, default="none")
+    enroll_eligibility: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true"), default=True
+    )
+    enroll_claims: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true"), default=True
+    )
+    enroll_remittance: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
     timely_filing_days: Mapped[int] = mapped_column(
         Integer, nullable=False, default=DEFAULT_TIMELY_FILING_DAYS
     )

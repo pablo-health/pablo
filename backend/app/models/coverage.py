@@ -61,6 +61,9 @@ class Payer(BaseModel):
     is_carveout: bool = False
     carveout_of: str | None = None
     enrollment_status: EnrollmentStatus = "none"
+    enroll_eligibility: bool = True
+    enroll_claims: bool = True
+    enroll_remittance: bool = False
     timely_filing_days: int = DEFAULT_TIMELY_FILING_DAYS
     corrected_claim_days: int = DEFAULT_CORRECTED_CLAIM_DAYS
     appeal_days: int = DEFAULT_APPEAL_DAYS
@@ -86,12 +89,22 @@ class CreatePayerRequest(BaseModel):
 
 
 class UpdatePayerRequest(BaseModel):
-    """Partial update. An omitted field keeps its current value."""
+    """Partial update. An omitted field keeps its current value.
+
+    The ``enroll_*`` switches say what the practice wants Pablo to enrol this
+    payer for. Turning one on is what the next enrollment request acts on;
+    turning one off stops a future request and leaves any already filed
+    alone, because withdrawing an enrollment is the clearinghouse's business
+    and not a side effect of a checkbox.
+    """
 
     name: str | None = Field(default=None, min_length=1, max_length=255)
     payer_id: str | None = Field(default=None, min_length=1, max_length=80)
     is_carveout: bool | None = None
     carveout_of: str | None = None
+    enroll_eligibility: bool | None = None
+    enroll_claims: bool | None = None
+    enroll_remittance: bool | None = None
     timely_filing_days: int | None = Field(default=None, gt=0, le=3650)
     corrected_claim_days: int | None = Field(default=None, gt=0, le=3650)
     appeal_days: int | None = Field(default=None, gt=0, le=3650)
@@ -107,6 +120,9 @@ class PayerResponse(BaseModel):
     is_carveout: bool
     carveout_of: str | None = None
     enrollment_status: EnrollmentStatus
+    enroll_eligibility: bool
+    enroll_claims: bool
+    enroll_remittance: bool
     timely_filing_days: int
     corrected_claim_days: int
     appeal_days: int

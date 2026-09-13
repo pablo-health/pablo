@@ -120,7 +120,14 @@ def harness(engine: Engine) -> Iterator[dict[str, Any]]:
     enrollment.register_clearinghouse_client_factory(lambda _practice_id: clearinghouse)
     session = Session(engine)
     payers = PostgresPayerRepository(session)
-    payer = payers.create(new_payer(name="Stedi Test Payer", payer_id=TEST_PAYER_ID))
+    payer = payers.create(
+        # The recorded directory requires an enrollment for remittance alone,
+        # and remittance is the one a payer starts switched off for — so the
+        # practice has to have asked for it before there is a task to answer.
+        new_payer(name="Stedi Test Payer", payer_id=TEST_PAYER_ID).model_copy(
+            update={"enroll_remittance": True}
+        )
+    )
     update_billing_profile(session, dict(_PROFILE))
     session.flush()
 

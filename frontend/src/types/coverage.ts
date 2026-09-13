@@ -29,6 +29,15 @@ export interface PayerResponse {
   is_carveout: boolean
   carveout_of: string | null
   enrollment_status: EnrollmentStatus
+  /**
+   * What the practice wants Pablo enrolled for with this payer. These gate
+   * enrollment, not traffic — a transaction the payer needs no enrollment for
+   * works either way. `enroll_remittance` is the consequential one: completing
+   * that enrollment moves the payer's ERAs here from wherever they arrive now.
+   */
+  enroll_eligibility: boolean
+  enroll_claims: boolean
+  enroll_remittance: boolean
   /** Days after the service an original claim may be filed. */
   timely_filing_days: number
   /** Days after a rejection a corrected claim may follow. */
@@ -138,6 +147,9 @@ export interface UpdatePayerRequest {
   payer_id?: string
   is_carveout?: boolean
   carveout_of?: string | null
+  enroll_eligibility?: boolean
+  enroll_claims?: boolean
+  enroll_remittance?: boolean
   timely_filing_days?: number
   corrected_claim_days?: number
   appeal_days?: number

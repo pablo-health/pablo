@@ -8,14 +8,23 @@ request per transaction type, filed through the clearinghouse, and answered
 by the payer on its own schedule. Remittance (835) always needs one; claims
 (837P) and eligibility (270) only when the payer's directory entry says so.
 
+What the payer requires and what the practice wants are separate questions,
+and both have to be true before a request is filed. The first is the
+directory's answer (:func:`required_transactions`); the second is the
+practice's, on the ``payers.enroll_*`` columns. Remittance is why: enrolling
+for it moves the payer's ERAs to us from whatever clearinghouse or billing
+service receives them today, which is not something to do because a button
+was pressed for a different reason.
+
 Three things live here:
 
 * :func:`ensure_provider_record` — the practice's one provider record at the
   clearinghouse, created from the billing profile the first time it is
   complete. Its contact is the practice's general inbox, never a clinician.
-* :func:`request_enrollments` — files whatever a payer needs that has not
-  been filed yet, records each request on ``payer_enrollments``, and mirrors
-  the set into ``payers.enrollment_status``.
+* :func:`request_enrollments` — files what a payer needs and the practice
+  wants that has not been filed yet, records each request on
+  ``payer_enrollments``, and mirrors the set into
+  ``payers.enrollment_status``.
 * :func:`refresh_enrollments` — polls the clearinghouse for every open
   request and records what changed. Bounded, and run per tenant by the
   daily job in ``app.jobs.payer_enrollment_refresh``, or on demand through
@@ -111,6 +120,13 @@ MAX_LIST_PAGES = 20
 
 #: The vendor's directory answer that means "file an enrollment first".
 _ENROLLMENT_REQUIRED = "ENROLLMENT_REQUIRED"
+
+#: The ``payers`` column carrying the practice's answer for each transaction.
+_CHOICE_COLUMNS: dict[str, str] = {
+    "837P": "enroll_claims",
+    "270": "enroll_eligibility",
+    "835": "enroll_remittance",
+}
 
 
 class BillingProfileIncompleteError(Exception):
@@ -305,6 +321,23 @@ def required_transactions(transaction_support: Mapping[str, str]) -> list[str]:
     return required
 
 
+def chosen_transactions(payer: PayerRow) -> list[str]:
+    """The transaction types the practice has asked Pablo to enrol this payer for."""
+    return [tx for tx in ENROLLMENT_TRANSACTION_TYPES if getattr(payer, _CHOICE_COLUMNS[tx])]
+
+
+def transactions_to_file(payer: PayerRow, transaction_support: Mapping[str, str]) -> list[str]:
+    """What we file for this payer: what it requires, narrowed to what she asked for.
+
+    Two different questions, and conflating them is what let one press of
+    "Enroll with payer" reroute a practice's remittances. The payer decides
+    what an enrollment is needed for; the practice decides what Pablo should
+    be doing at all. Only the overlap is filed.
+    """
+    chosen = set(chosen_transactions(payer))
+    return [tx for tx in required_transactions(transaction_support) if tx in chosen]
+
+
 def _request(
     provider_id: str, payer: PayerRow, contact: ProviderContact, transaction_type: str
 ) -> EnrollmentRequest:
@@ -329,11 +362,16 @@ def request_enrollments(
     user_id: str,
     now: datetime | None = None,
 ) -> list[PayerEnrollmentRow]:
-    """File every enrollment this payer needs that is not on file yet.
+    """File every enrollment this payer needs, and the practice wants, that is not on file yet.
 
     Returns the requests created by this call; a payer whose requests were
     all filed earlier gets an empty list and no vendor call. ``user_id`` is
     who asked, and who the reminder goes to if the payer wants something.
+
+    A transaction the practice has switched off is not filed, even when the
+    payer requires an enrollment for it. Switching it on later and pressing
+    again files it then — this is additive, and nothing here withdraws a
+    request already on file.
 
     Each request is flushed as it is filed, so a vendor error on the second
     request keeps the first — the next call picks up where this one
@@ -360,7 +398,7 @@ def request_enrollments(
         payer.clearinghouse_payer_id = entry.stediId
 
     created: list[PayerEnrollmentRow] = []
-    for transaction_type in required_transactions(entry.transactionSupport):
+    for transaction_type in transactions_to_file(payer, entry.transactionSupport):
         if transaction_type in existing:
             continue
         enrollment = client.create_enrollment(
@@ -456,15 +494,21 @@ def _instructions(enrollment: Enrollment) -> str | None:
     return "\n".join(parts) or None
 
 
-def derive_payer_status(statuses: Iterable[tuple[str, str]]) -> str:
+def derive_payer_status(
+    statuses: Iterable[tuple[str, str]], *, enroll_remittance: bool = True
+) -> str:
     """``payers.enrollment_status`` from the payer's ``(transaction_type, status)`` requests.
 
-    ``active`` means claims can go out and remittances come back: remittance
-    is live, and claims are live or never needed a request (a payer whose
-    directory entry marks claims ``SUPPORTED`` gets no 837P request, and
-    remittance alone is what stands between it and ``active``). A rejection
-    anywhere is ``error``; anything the payer or vendor has started on is
-    ``pending``; requests filed and not yet picked up are ``filed``.
+    ``active`` means nothing the practice asked for is still outstanding:
+    claims are live or never needed a request (a payer whose directory entry
+    marks claims ``SUPPORTED`` gets no 837P request), and remittance is live
+    or was never wanted. A rejection anywhere is ``error``; anything the
+    payer or vendor has started on is ``pending``; requests filed and not yet
+    picked up are ``filed``.
+
+    ``enroll_remittance`` is the practice's own switch, not a status. With it
+    off there is no 835 request coming, so waiting for one would leave an
+    eligibility-only payer reading "in progress" forever.
     """
     by_transaction = dict(statuses)
     if not by_transaction:
@@ -472,7 +516,8 @@ def derive_payer_status(statuses: Iterable[tuple[str, str]]) -> str:
     if "rejected" in by_transaction.values():
         return "error"
     claims_ready = by_transaction.get("837P", "live") == "live"
-    if claims_ready and by_transaction.get("835") == "live":
+    remittance_ready = by_transaction.get("835") == "live" or not enroll_remittance
+    if claims_ready and remittance_ready:
         return "active"
     if any(
         s in {"provider_action_required", "provisioning", "live"} for s in by_transaction.values()
@@ -483,7 +528,8 @@ def derive_payer_status(statuses: Iterable[tuple[str, str]]) -> str:
 
 def _mirror_status(session: Session, payer: PayerRow, now: datetime) -> None:
     status = derive_payer_status(
-        (row.transaction_type, row.status) for row in list_enrollments(session, payer.id)
+        ((row.transaction_type, row.status) for row in list_enrollments(session, payer.id)),
+        enroll_remittance=payer.enroll_remittance,
     )
     if payer.enrollment_status != status:
         payer.enrollment_status = status
