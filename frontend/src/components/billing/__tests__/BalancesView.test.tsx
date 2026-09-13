@@ -28,6 +28,7 @@ function item(overrides: Partial<ClientBalanceItem> = {}): ClientBalanceItem {
     balance_cents: 6200,
     currency: "usd",
     outstanding_since: "2026-05-24T10:00:00Z",
+    outcome_known: true,
     ...overrides,
   }
 }
@@ -85,5 +86,41 @@ describe("BalancesView", () => {
 
     expect(screen.getByText("boom")).toBeInTheDocument()
     expect(screen.queryByText("Nothing outstanding")).not.toBeInTheDocument()
+  })
+})
+
+describe("BalancesView when a payer settles somewhere else", () => {
+  /**
+   * This list is what a practice works through when chasing money. A row
+   * whose figure is only a floor has to say so on the row itself — the list
+   * is read one line at a time, and a caveat at the top is not attached to
+   * the line being acted on.
+   */
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it("says the figure is only the least this client owes", () => {
+    mockUseBalances.mockReturnValue({
+      data: { items: [item({ outcome_known: false })] },
+      isLoading: false,
+      error: null,
+    })
+
+    render(<BalancesView />)
+
+    expect(screen.getByText(/At least this/i)).toBeInTheDocument()
+  })
+
+  it("says nothing extra for a client whose outcome we receive", () => {
+    mockUseBalances.mockReturnValue({
+      data: { items: [item()] },
+      isLoading: false,
+      error: null,
+    })
+
+    render(<BalancesView />)
+
+    expect(screen.queryByText(/At least this/i)).not.toBeInTheDocument()
   })
 })

@@ -29,12 +29,15 @@ from fastapi import APIRouter, Depends, Request, Response
 from ..auth.service import require_baa_acceptance
 from ..db import get_db_session
 from ..models.audit import AuditAction, ResourceType
+from ..payments.balance import outcome_is_known
 from ..payments.statement import PracticeBlock, build_statement, render_statement_pdf
 from ..repositories import (
     get_appointment_repository,
     get_claim_repository,
+    get_patient_coverage_repository,
     get_patient_payment_repository,
     get_patient_repository,
+    get_payer_repository,
     get_user_repository,
 )
 from ..services import AuditService, get_audit_service
@@ -45,6 +48,7 @@ from .claims import _practice_timezone, _require_patient
 if TYPE_CHECKING:
     from ..models import User
     from ..repositories.claims import ClaimRepository
+    from ..repositories.coverage import PatientCoverageRepository, PayerRepository
     from ..repositories.patient import PatientRepository
     from ..repositories.patient_payment import PatientPaymentRepository
     from ..repositories.user import UserRepository
@@ -84,6 +88,8 @@ ClaimsRepo = Annotated["ClaimRepository", Depends(get_claim_repository)]
 AppointmentsRepo = Annotated["AppointmentRepository", Depends(get_appointment_repository)]
 UsersRepo = Annotated["UserRepository", Depends(get_user_repository)]
 Practice = Annotated[PracticeBlock, Depends(get_practice_block)]
+CoverageRepo = Annotated["PatientCoverageRepository", Depends(get_patient_coverage_repository)]
+PayersRepo = Annotated["PayerRepository", Depends(get_payer_repository)]
 
 
 @router.get(
@@ -101,11 +107,14 @@ def generate_statement(
     appointments: AppointmentsRepo,
     users: UsersRepo,
     practice: Practice,
+    coverage: CoverageRepo,
+    payers: PayersRepo,
     audit: AuditService = Depends(get_audit_service),
 ) -> Response:
     """The client's statement, as a PDF download."""
     patient = _require_patient(patients, patient_id, user.id)
     charges = payments.list_charges(patient_id)
+    active = coverage.get_active(patient_id)
     statement = build_statement(
         patient_id=patient_id,
         client_name=patient.display_name,
@@ -115,6 +124,7 @@ def generate_statement(
         practice=practice,
         timezone=_practice_timezone(users, user.id),
         generated_at=utc_now(),
+        outcome_known=outcome_is_known(payers.get(active.payer_id) if active is not None else None),
     )
     pdf = render_statement_pdf(statement)
 

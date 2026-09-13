@@ -32,7 +32,7 @@ vi.mock("@/hooks/usePayments", () => ({
   usePatientBalance: (...args: unknown[]) => mockUsePatientBalance(...args),
 }))
 
-function balanceOf(balanceCents: number) {
+function balanceOf(balanceCents: number, outcomeKnown = true) {
   return {
     data: {
       owed_cents: Math.max(balanceCents, 0),
@@ -41,6 +41,7 @@ function balanceOf(balanceCents: number) {
       adjusted_cents: 0,
       credited_cents: Math.max(-balanceCents, 0),
       balance_cents: balanceCents,
+      outcome_known: outcomeKnown,
       by_visit: [],
     },
   }
@@ -138,6 +139,46 @@ describe("PatientSummary", () => {
       render(<PatientSummary patient={PATIENT} />)
 
       expect(screen.queryByTestId("chart-balance")).not.toBeInTheDocument()
+    })
+  })
+
+  describe("when the payer settles somewhere else", () => {
+    /**
+     * This client's plan pays a billing service, so their share of a visit
+     * never becomes a row here. The total is a floor, and the header has to
+     * say which of the two it is showing.
+     */
+    it("says a figure is only the least they owe", () => {
+      mockUsePatientBalance.mockReturnValue(balanceOf(6200, false))
+
+      render(<PatientSummary patient={PATIENT} />)
+
+      expect(screen.getByTestId("chart-balance")).toHaveTextContent(
+        "Owes at least $62.00",
+      )
+    })
+
+    it("breaks its own silence rule at zero", () => {
+      // Everywhere else a zero balance shows nothing, because a settled
+      // client is the ordinary case. Here zero means we were never told —
+      // and silence would be indistinguishable from settled.
+      mockUsePatientBalance.mockReturnValue(balanceOf(0, false))
+
+      render(<PatientSummary patient={PATIENT} />)
+
+      expect(screen.getByTestId("chart-balance")).toHaveTextContent(
+        "Balance tracked elsewhere",
+      )
+    })
+
+    it("still states a credit plainly", () => {
+      // Money the practice took is money it took; no missing remittance
+      // makes a refund it owes any less owed.
+      mockUsePatientBalance.mockReturnValue(balanceOf(-1000, false))
+
+      render(<PatientSummary patient={PATIENT} />)
+
+      expect(screen.getByTestId("chart-balance")).toHaveTextContent("Credit $10.00")
     })
   })
 })

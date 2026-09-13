@@ -35,6 +35,11 @@ The rules, once, here:
 Ledger amounts are positive magnitudes (the table enforces it); sign is
 applied here, by kind, so no reader elsewhere has to remember which are
 negative.
+
+:func:`outcome_is_known` answers a different question that every caller of
+the arithmetic needs beside it: whether the rows are the whole story. They
+are not, for a client whose payer sends its remittances somewhere else — see
+that function.
 """
 
 from __future__ import annotations
@@ -46,7 +51,30 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
+    from ..models.coverage import Payer
     from ..models.payments import PatientCharge
+
+
+def outcome_is_known(payer: Payer | None) -> bool:
+    """Whether this client's settled amounts reach us at all.
+
+    A balance is only the whole of what a client owes if we learn what the
+    payer paid and what it left them. That answer arrives as an 835 and
+    becomes a ``patient_resp`` row. Where the 835 goes to a previous
+    clearinghouse or a billing service instead, no row is ever written — so
+    the client's share of an insured visit is not WRONG on the balance, it is
+    absent from it, and absent reads as nothing owed.
+
+    That is the failure worth naming: a stale figure at least looks like a
+    figure, while a missing one looks like a settled account. She does not
+    chase what she cannot see.
+
+    A client with no coverage on file is private pay. There is no payer, no
+    remittance to wait for and nothing unknown, so their balance is the whole
+    of it.
+    """
+    return payer is None or payer.enroll_remittance
+
 
 #: Kinds that put money on the client's tab. Owed regardless of status: a
 #: bill is a bill until it is paid off, written off or credited away.

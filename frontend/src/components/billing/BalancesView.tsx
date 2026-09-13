@@ -89,6 +89,15 @@ function BalanceRow({ item }: { item: ClientBalanceItem }) {
           <span className="text-xs text-neutral-500">
             Outstanding since {formatChargeDate(item.outstanding_since)}
           </span>
+          {/* Said on the row rather than once at the top of the list: this
+              list is read one line at a time, and the line being chased is
+              the one that has to carry the caveat. */}
+          {!item.outcome_known && (
+            <span className="text-xs text-amber-700">
+              At least this &mdash; your billing service receives this
+              payer&rsquo;s remittances, not Pablo
+            </span>
+          )}
         </span>
         <span
           className={`shrink-0 text-sm font-medium ${

@@ -80,7 +80,8 @@ export function BalanceTab({ patientId }: BalanceTabProps) {
   }
 
   const owed = balance.data.balance_cents
-  const line = formatBalanceLine(owed)
+  const outcomeKnown = balance.data.outcome_known
+  const line = formatBalanceLine(owed, "usd", outcomeKnown)
   // The card routes 503 on a deployment that takes no cards at all. The
   // balance itself still totals — a practice that only bills insurance has
   // clients who owe it money — so only the charge action goes away.
@@ -118,9 +119,20 @@ export function BalanceTab({ patientId }: BalanceTabProps) {
   return (
     <div className="space-y-6">
       <section className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-lg font-semibold text-neutral-900" data-testid="balance-total">
-          {line ?? "Nothing owed"}
-        </p>
+        <div>
+          <p className="text-lg font-semibold text-neutral-900" data-testid="balance-total">
+            {line ?? "Nothing owed"}
+          </p>
+          {/* Under the total, where somebody about to press "Charge balance"
+              reads it. What the plan paid never reaches this ledger, so this
+              figure can only be short. */}
+          {!outcomeKnown && (
+            <p className="mt-0.5 text-sm text-amber-700">
+              This payer&rsquo;s remittances go to your billing service, so what
+              the plan has already paid isn&rsquo;t reflected here.
+            </p>
+          )}
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" onClick={handleStatement} disabled={downloading}>
             <FileText className="mr-2 h-4 w-4" />

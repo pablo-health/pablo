@@ -19,6 +19,12 @@ A negative balance is kept rather than filtered out: it is a refund the
 practice owes, and a collections screen that shows only debts is the one place
 that would never surface it.
 
+Each row also says whether the outcome behind it is known — see
+:func:`app.payments.balance.outcome_is_known`. For a client whose payer sends
+its remittances elsewhere the figure is a floor rather than a total, and
+chasing a floor as though it were the whole debt is how a client gets asked
+for money twice.
+
 Access is the schema plus the ``has_patient_access`` row policy, exactly as
 the claims tracker does it: rows for a client the caller cannot see never
 arrive, and any that name an unreadable client are dropped rather than
@@ -36,11 +42,13 @@ from ..auth.service import require_baa_acceptance
 from ..models import AuditAction, User
 from ..models.audit import ResourceType
 from ..models.payments import BalancesResponse, ClientBalanceItem
-from ..payments.balance import BalanceSummary, patient_balance
+from ..payments.balance import BalanceSummary, outcome_is_known, patient_balance
 from ..repositories import (
     PatientRepository,
+    get_patient_coverage_repository,
     get_patient_payment_repository,
     get_patient_repository,
+    get_payer_repository,
 )
 from ..services import AuditService, get_audit_service
 
@@ -48,6 +56,7 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from ..models.payments import PatientCharge
+    from ..repositories.coverage import PatientCoverageRepository, PayerRepository
     from ..repositories.patient_payment import PatientPaymentRepository
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
@@ -59,6 +68,8 @@ def list_balances(
     user: User = Depends(require_baa_acceptance),
     patients: PatientRepository = Depends(get_patient_repository),
     payments: PatientPaymentRepository = Depends(get_patient_payment_repository),
+    coverage: PatientCoverageRepository = Depends(get_patient_coverage_repository),
+    payers: PayerRepository = Depends(get_payer_repository),
     audit: AuditService = Depends(get_audit_service),
 ) -> BalancesResponse:
     """Clients carrying a balance, the oldest outstanding first."""
@@ -67,6 +78,16 @@ def list_balances(
         by_patient[charge.patient_id].append(charge)
 
     visible = patients.get_multiple(list(by_patient), user.id)
+    # One read for every client on the list rather than one apiece, and one
+    # payer lookup rather than one per client: the practice has a handful of
+    # payers and this list can be long.
+    active = coverage.get_active_for_patients(list(visible))
+    known: dict[str, bool] = {}
+    for patient_id in visible:
+        plan = active.get(patient_id)
+        payer = payers.get(plan.payer_id) if plan is not None else None
+        known[patient_id] = outcome_is_known(payer)
+
     items: list[ClientBalanceItem] = []
     for patient_id, charges in by_patient.items():
         patient = visible.get(patient_id)
@@ -82,6 +103,7 @@ def list_balances(
                 balance_cents=summary.balance_cents,
                 currency=charges[0].currency,
                 outstanding_since=_outstanding_since(charges, summary),
+                outcome_known=known.get(patient_id, True),
             )
         )
 
