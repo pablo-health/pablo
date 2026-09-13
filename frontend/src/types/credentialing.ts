@@ -119,4 +119,36 @@ export interface NppesLookup {
   city: string | null
   state: string | null
   postal_code: string | null
+  /** Self-reported to the registry, never board-checked. Confirm, don't trust. */
+  license_number: string | null
+  license_state: string | null
+  /** False for a deactivated NPI, which still answers a lookup. */
+  active: boolean
+  /** 1 individual, 2 organisation. Catches a practice NPI in the personal field. */
+  entity_type: number | null
+}
+
+/** One row of a name search: enough for her to recognise herself. */
+export interface NppesMatch {
+  npi: string
+  legal_name: string | null
+  credential: string | null
+  taxonomy_code: string | null
+  taxonomy_description: string | null
+  city: string | null
+  state: string | null
+  entity_type: number | null
+  active: boolean
+}
+
+export interface NppesSearchResult {
+  matches: NppesMatch[]
+  /** The registry gave us as many as we asked for; there may be more. */
+  truncated: boolean
+}
+
+export interface NppesSearchQuery {
+  last_name: string
+  first_name?: string
+  state?: string
 }

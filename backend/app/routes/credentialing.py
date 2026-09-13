@@ -319,6 +319,90 @@ class NppesLookupResponse(BaseModel):
     city: str | None = None
     state: str | None = None
     postal_code: str | None = None
+    #: Self-reported to the registry and never checked against a board. A value
+    #: to put in front of her, not evidence that anybody is licensed.
+    license_number: str | None = None
+    license_state: str | None = None
+    #: False for a deactivated NPI, which still answers a lookup.
+    active: bool = True
+    #: 1 individual, 2 organisation. Lets the screen say "that is your
+    #: practice's NPI, not yours" instead of confirming the wrong one.
+    entity_type: int | None = None
+
+
+class NppesMatch(BaseModel):
+    """One provider a name search turned up, in the shape a row renders.
+
+    Credential, taxonomy and city are all here because a name alone does not
+    identify anybody: "Amanda Nicholson" is five people in five states and
+    three of them are mental health. These are the facts that let her pick
+    herself out of that list.
+    """
+
+    npi: str
+    legal_name: str | None = None
+    credential: str | None = None
+    taxonomy_code: str | None = None
+    taxonomy_description: str | None = None
+    city: str | None = None
+    state: str | None = None
+    entity_type: int | None = None
+    active: bool = True
+
+
+class NppesSearchResponse(BaseModel):
+    matches: list[NppesMatch]
+    #: True when the registry returned as many as we asked for, so there may be
+    #: more behind them. The screen says "narrow it down" rather than implying
+    #: the list is everybody.
+    truncated: bool
+
+
+@router.get("/nppes", response_model=NppesSearchResponse)
+def search_npi(
+    _user: UserDep,
+    _exempt: SubscriptionExemptDep,
+    last_name: str,
+    first_name: str | None = None,
+    state: str | None = None,
+) -> NppesSearchResponse:
+    """Find a provider by name, for someone who cannot recall ten digits.
+
+    Same posture as the single lookup: public directory, no PHI, nothing
+    written. Surname is required because the registry will happily return the
+    world otherwise; state is optional but does the real work, taking a common
+    name from dozens of people down to one.
+    """
+    if not last_name.strip():
+        raise BadRequestError("A surname is needed to search")
+
+    try:
+        providers = nppes.search(
+            last_name=last_name,
+            first_name=first_name,
+            state=state,
+            base_url=get_settings().nppes_base_url,
+        )
+    except nppes.NppesUnavailableError as exc:
+        raise ServiceUnavailableError("The NPI registry is not answering right now") from exc
+
+    return NppesSearchResponse(
+        matches=[
+            NppesMatch(
+                npi=p.npi,
+                legal_name=p.legal_name,
+                credential=p.credential,
+                taxonomy_code=p.taxonomy_code,
+                taxonomy_description=p.taxonomy_description,
+                city=p.city,
+                state=p.state,
+                entity_type=p.entity_type,
+                active=p.active,
+            )
+            for p in providers
+        ],
+        truncated=len(providers) >= nppes.SEARCH_LIMIT,
+    )
 
 
 @router.get("/nppes/{npi}", response_model=NppesLookupResponse)
@@ -359,4 +443,8 @@ def look_up_npi(
         city=provider.city,
         state=provider.state,
         postal_code=provider.postal_code,
+        license_number=provider.license_number,
+        license_state=provider.license_state,
+        active=provider.active,
+        entity_type=provider.entity_type,
     )
