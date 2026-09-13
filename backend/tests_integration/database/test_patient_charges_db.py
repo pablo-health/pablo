@@ -875,8 +875,17 @@ def _charges_from_db(engine: Engine, tenant_schema: str, patient_id: str) -> lis
         _current_user_id.reset(uid_token)
 
 
-def _summary_as_body(summary: Any) -> dict[str, Any]:
-    """A :class:`BalanceSummary` in the shape ``BalanceResponse`` serialises to."""
+def _summary_as_body(summary: Any, *, outcome_known: bool = False) -> dict[str, Any]:
+    """A :class:`BalanceSummary` in the shape ``BalanceResponse`` serialises to.
+
+    ``outcome_known`` is not arithmetic and does not come off the summary —
+    the route reads it from the client's payer. It defaults to False here
+    because these fixtures seed a client WITH coverage, and a payer added to
+    a practice is not enrolled to send its remittances to Pablo until
+    somebody asks for that. Asserting it rather than excluding it is the
+    point: the route agreeing with the arithmetic has to include agreeing
+    about what it cannot know.
+    """
     return {
         "owed_cents": summary.owed_cents,
         "collected_cents": summary.collected_cents,
@@ -884,6 +893,7 @@ def _summary_as_body(summary: Any) -> dict[str, Any]:
         "adjusted_cents": summary.adjusted_cents,
         "credited_cents": summary.credited_cents,
         "balance_cents": summary.balance_cents,
+        "outcome_known": outcome_known,
         "by_visit": [
             {
                 "appointment_id": visit.appointment_id,

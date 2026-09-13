@@ -35,8 +35,13 @@ from ..db import get_db_session
 from ..db.models import DEFAULT_CHARGE_CURRENCY, WRITE_OFF_REASONS
 from ..models.audit import AuditAction, ResourceType
 from ..models.payments import ChargeResponse, CreateWriteOffRequest
-from ..payments.balance import patient_balance
-from ..repositories import get_patient_payment_repository, get_patient_repository
+from ..payments.balance import outcome_is_known, patient_balance
+from ..repositories import (
+    get_patient_coverage_repository,
+    get_patient_payment_repository,
+    get_patient_repository,
+    get_payer_repository,
+)
 from ..services import AuditService, get_audit_service
 from ..services.practice_billing_profile import load_billing_profile
 from .patient_payments import _require_patient, _to_charge_response
@@ -44,6 +49,7 @@ from .patient_payments import _require_patient, _to_charge_response
 if TYPE_CHECKING:
     from ..models import User
     from ..models.payments import PatientCharge
+    from ..repositories.coverage import PatientCoverageRepository, PayerRepository
     from ..repositories.patient import PatientRepository
     from ..repositories.patient_payment import PatientPaymentRepository
 
@@ -51,6 +57,8 @@ router = APIRouter(prefix="/api/patients", tags=["patient-payments"])
 
 PaymentsRepo = Annotated["PatientPaymentRepository", Depends(get_patient_payment_repository)]
 PatientsRepo = Annotated["PatientRepository", Depends(get_patient_repository)]
+CoverageRepo = Annotated["PatientCoverageRepository", Depends(get_patient_coverage_repository)]
+PayersRepo = Annotated["PayerRepository", Depends(get_payer_repository)]
 CurrentUser = Annotated["User", Depends(require_baa_acceptance)]
 
 
@@ -99,6 +107,8 @@ def create_write_off(
     payments: PaymentsRepo,
     patients: PatientsRepo,
     policy: Policy,
+    coverage: CoverageRepo,
+    payers: PayersRepo,
     audit: AuditService = Depends(get_audit_service),
 ) -> ChargeResponse:
     """Write off part or all of a client's balance, with a stated reason.
@@ -107,6 +117,19 @@ def create_write_off(
     this family. 422 for a reason outside the fixed set, or for an amount
     that would take the write-off past what is actually owed. 403 for a
     reason practice policy has not opted into.
+
+    ``small_balance`` also needs the balance to be KNOWN, which it is not for
+    a client whose payer settles through somebody else — see
+    :func:`app.payments.balance.outcome_is_known`. The figure is a floor
+    there, and a floor is short in exactly the direction that makes this
+    write-off look allowed: a four-hundred-dollar debt whose remittance never
+    reached us reads as nothing and sails under a five-dollar threshold.
+    "Not worth chasing" is a judgement about an amount, so it needs the
+    amount.
+
+    The other two gates need no such guard. Refusing a write-off larger than
+    the balance is only ever too STRICT when the balance is short, and
+    courtesy is a policy switch that has nothing to do with the figure.
     """
     _require_patient(patients, patient_id, user.id)
 
@@ -125,12 +148,21 @@ def create_write_off(
             detail="Courtesy write-offs are turned off for this practice. Turn them "
             "on in Settings > Billing before writing one off this way.",
         )
-    if payload.reason == "small_balance" and balance_cents > policy.small_balance_cents:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This client's balance is above the practice's small-balance "
-            "write-off threshold.",
-        )
+    if payload.reason == "small_balance":
+        active = coverage.get_active(patient_id)
+        if not outcome_is_known(payers.get(active.payer_id) if active is not None else None):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This client's balance isn't known here — this payer's "
+                "remittances go to your billing service — so it can't be written "
+                "off as a small balance.",
+            )
+        if balance_cents > policy.small_balance_cents:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This client's balance is above the practice's small-balance "
+                "write-off threshold.",
+            )
     if payload.amount_cents > balance_cents:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
