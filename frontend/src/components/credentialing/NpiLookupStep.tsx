@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { SetupStepHead } from "@/components/setup"
 import { useSettingsUserStatus } from "@/components/settings/useSettingsPreferences"
-import { useNpiLookup } from "@/hooks/useCredentialingChecklist"
+import { useNpiLookup, useRecordConfirmation } from "@/hooks/useCredentialingChecklist"
+import { useUpdateProfessionalInfo } from "@/hooks/useProfessionalInfo"
 import { NoNpiYet } from "./NoNpiYet"
 import { NpiNameSearch } from "./NpiNameSearch"
 
@@ -36,13 +37,28 @@ import { NpiNameSearch } from "./NpiNameSearch"
  *   she can carry on; the lookup is a convenience, never a gate.
  * * **no NPI on file** — ask for it.
  *
- * Nothing here writes to her record. The registry's answer is presented, and
- * confirming it is what promotes it — the same order the Tier-0 cards use, and
- * the reason a lookup that wrote directly would quietly undo the design.
+ * The lookup itself writes nothing. Confirming is what promotes the registry's
+ * answer onto her record — the same order the Tier-0 cards use, and the reason
+ * a lookup that wrote directly would quietly undo the design.
+ *
+ * What "That's me" saves, and why it is more than the number: the registry
+ * answered with her taxonomy and licence too, and those are Tier-0 fields that
+ * would otherwise render "Nothing on file" and ask her to type what she just
+ * agreed was right. Only fields the registry actually supplied are sent, so
+ * agreeing can never blank something she already had.
+ *
+ * A confirmation row is recorded for the NPI alongside the write. That row is
+ * the provenance — it says she was shown this value, by this source, and said
+ * yes — and it is what makes a later divergence between the registry and her
+ * record legible rather than mysterious.
  */
 export function NpiLookupStep({ onConfirmed }: { onConfirmed?: (npi: string) => void }) {
   const { data: user, isLoading: userLoading } = useSettingsUserStatus()
   const knownNpi = user?.npi_number ?? null
+
+  const saveProfile = useUpdateProfessionalInfo()
+  const recordConfirmation = useRecordConfirmation()
+  const [saved, setSaved] = useState(false)
 
   const [draft, setDraft] = useState("")
   const [submitted, setSubmitted] = useState<string | null>(null)
@@ -68,6 +84,30 @@ export function NpiLookupStep({ onConfirmed }: { onConfirmed?: (npi: string) => 
     if (!wellFormed) return
     setSubmitted(draft.trim())
     setEditing(false)
+  }
+
+  /**
+   * Promote what she just agreed with.
+   *
+   * Only fields the registry supplied are sent: an absent taxonomy must not
+   * arrive as an instruction to clear the one she already had. The
+   * confirmation is recorded whether or not the profile write had anything to
+   * add, because "she was shown this and said yes" is true either way and is
+   * the fact the Tier-0 provenance rests on.
+   */
+  function confirm(record: NonNullable<typeof lookup>) {
+    const profile: Record<string, string> = { npi_number: record.npi }
+    if (record.taxonomy_code) profile.taxonomy_code = record.taxonomy_code
+    if (record.license_number) profile.license_number = record.license_number
+    if (record.license_state) profile.license_state = record.license_state
+
+    saveProfile.mutate(profile)
+    recordConfirmation.mutate({
+      fieldKey: "npi_number",
+      payload: { source: "nppes", confirmed: true, presented_value: record.npi },
+    })
+    setSaved(true)
+    onConfirmed?.(record.npi)
   }
 
   return (
@@ -230,9 +270,14 @@ export function NpiLookupStep({ onConfirmed }: { onConfirmed?: (npi: string) => 
           )}
 
           <div className="mt-4 flex items-center gap-2">
-            <Button type="button" size="sm" onClick={() => onConfirmed?.(lookup.npi)}>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => confirm(lookup)}
+              disabled={saveProfile.isPending || recordConfirmation.isPending}
+            >
               <Check className="mr-1 h-4 w-4" aria-hidden />
-              That&rsquo;s me
+              {saved ? "Saved" : "That’s me"}
             </Button>
             <Button
               type="button"
@@ -248,8 +293,9 @@ export function NpiLookupStep({ onConfirmed }: { onConfirmed?: (npi: string) => 
             </Button>
           </div>
           <p className="mt-3 text-xs text-stone-500">
-            Confirming copies these onto your record. We never write what the
-            registry says until you say it is right.
+            {saved
+              ? "Saved to your record. Change it any time in Settings."
+              : "Confirming copies these onto your record. We never write what the registry says until you say it is right."}
           </p>
         </div>
       )}
