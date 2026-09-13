@@ -19,6 +19,7 @@ The encrypted identifiers are not among them; those go through
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, Request
@@ -27,7 +28,7 @@ from pydantic import BaseModel, Field
 from ..api_errors import BadRequestError, NotFoundError, ServiceUnavailableError
 from ..auth.route_access import subscription_exempt
 from ..auth.service import get_current_user, get_tenant_context
-from ..credentialing import checklist, confirmations, government_ids, nppes, status
+from ..credentialing import checklist, confirmations, government_ids, nppes, panels, status
 from ..db import get_db_session
 from ..db.models import CREDENTIAL_CONFIRMATION_SOURCES, ClinicianProfileRow
 from ..models import User
@@ -451,4 +452,79 @@ def look_up_npi(
         active=provider.active,
         entity_type=provider.entity_type,
         sole_proprietor=provider.sole_proprietor,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Panel applications
+# ---------------------------------------------------------------------------
+
+
+class PanelApplicationResponse(BaseModel):
+    """One application to join a payer's panel, as she needs to read it."""
+
+    id: str
+    payer_name: str
+    status: str
+    #: ``"therapist"`` when the next move is hers. The screen leads on this.
+    action_owner: str
+    #: What it is waiting for, in her words. Written for her when the owner is
+    #: hers, so it is shown verbatim rather than mapped through a status label.
+    awaiting: str | None = None
+    due_at: datetime | None = None
+    reference: str | None = None
+    submitted_at: datetime | None = None
+    effective_at: datetime | None = None
+    #: Days since it went in, or ``None`` if it has not been submitted yet.
+    #: This is the answer to the question she actually has, which is whether
+    #: the silence means something is wrong — "in review" alone does not say.
+    days_since_submitted: int | None = None
+
+
+class PanelApplicationsResponse(BaseModel):
+    """Every application, with the one number the screen leads on.
+
+    ``needs_you`` is reported rather than left to the caller to count, so the
+    screen and any reminder built on this cannot disagree about whether she
+    owes anything. Zero is a meaningful answer and the screen says so out
+    loud: a clinician who owes nothing should be told that, not shown an empty
+    table and left to infer it.
+    """
+
+    data: list[PanelApplicationResponse]
+    needs_you: int
+
+
+@router.get("/panel-applications", response_model=PanelApplicationsResponse)
+def list_panel_applications(
+    user: UserDep,
+    session: DbSession,
+    _exempt: SubscriptionExemptDep,
+) -> PanelApplicationsResponse:
+    """Where each of her panel applications stands, hers to act on first.
+
+    Her own only. The table is row-scoped by ``user_id`` and the GUC is armed
+    at router level, so the policy would refuse a colleague's rows even if this
+    query asked for them — the explicit ``user.id`` is the same answer stated
+    twice rather than a second mechanism.
+    """
+    applications = panels.list_for(session, user.id)
+    now = datetime.now(UTC)
+    return PanelApplicationsResponse(
+        data=[
+            PanelApplicationResponse(
+                id=app.row.id,
+                payer_name=app.payer_name,
+                status=app.row.status,
+                action_owner=app.row.action_owner,
+                awaiting=app.row.awaiting,
+                due_at=app.row.due_at,
+                reference=app.row.reference,
+                submitted_at=app.row.submitted_at,
+                effective_at=app.row.effective_at,
+                days_since_submitted=app.days_since_submitted(now),
+            )
+            for app in applications
+        ],
+        needs_you=sum(1 for app in applications if app.mine_to_act_on and not app.settled),
     )

@@ -246,6 +246,8 @@ const baseQueryKeys = {
     nppes: (npi: string) => [...baseQueryKeys.credentialing.all, "nppes", npi] as const,
     nppesSearch: (query: { last_name: string; first_name?: string; state?: string }) =>
       [...baseQueryKeys.credentialing.all, "nppes-search", query] as const,
+    panelApplications: () =>
+      [...baseQueryKeys.credentialing.all, "panel-applications"] as const,
   },
 
   // Admin query keys

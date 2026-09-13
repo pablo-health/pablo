@@ -154,3 +154,44 @@ export interface NppesSearchQuery {
   first_name?: string
   state?: string
 }
+
+/** The backend's vocabulary, mirrored so a typo here fails to compile. */
+export type PanelApplicationStatus =
+  | "researching"
+  | "caqh_ready"
+  | "submitted"
+  | "in_review"
+  | "info_requested"
+  | "contract_received"
+  | "effective"
+  | "closed_panel_appeal"
+  | "denied"
+  | "recredentialing"
+
+/**
+ * Where one panel application stands, and whose move it is.
+ *
+ * `action_owner` is the field the screen is built around: Pablo runs the
+ * applications, so `"pablo"` is the ordinary case and `"therapist"` means a
+ * payer genuinely needs something only she can give.
+ */
+export interface PanelApplication {
+  id: string
+  payer_name: string
+  status: PanelApplicationStatus
+  action_owner: "pablo" | "therapist"
+  /** What it is waiting for, written for her. Shown verbatim. */
+  awaiting: string | null
+  due_at: string | null
+  reference: string | null
+  submitted_at: string | null
+  effective_at: string | null
+  /** Days since it went in; null while it is still unfiled. */
+  days_since_submitted: number | null
+}
+
+export interface PanelApplications {
+  data: PanelApplication[]
+  /** How many are hers to act on. Counted by the API, not by the screen. */
+  needs_you: number
+}

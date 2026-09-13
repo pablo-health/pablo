@@ -5,6 +5,7 @@
 import {
   getChecklist,
   listConfirmations,
+  listPanelApplications,
   lookUpNpi,
   searchNpi,
   recordConfirmation,
@@ -98,6 +99,22 @@ export function useNpiSearch(query: NppesSearchQuery | null, token?: string) {
     queryFn: () => searchNpi(query as NppesSearchQuery, token),
     enabled: query !== null && query.last_name.trim().length > 0,
     retry: false,
+    staleTime: 5 * 60 * 1000,
+  })
+}
+
+/**
+ * Where her panel applications stand.
+ *
+ * Nothing on this screen is hers to change — Pablo moves these — so there is
+ * no mutation beside it and no optimistic anything. It goes stale on its own
+ * clock because the answer changes when a payer answers, which is on the order
+ * of weeks.
+ */
+export function usePanelApplications(token?: string) {
+  return useAuthQuery({
+    queryKey: queryKeys.credentialing.panelApplications(),
+    queryFn: () => listPanelApplications(token),
     staleTime: 5 * 60 * 1000,
   })
 }

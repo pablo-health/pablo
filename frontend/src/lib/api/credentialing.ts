@@ -15,6 +15,7 @@ import type {
   NppesLookup,
   NppesSearchQuery,
   NppesSearchResult,
+  PanelApplications,
 } from "@/types/credentialing"
 import { get, patch, put } from "./client"
 
@@ -97,4 +98,17 @@ export async function searchNpi(
   if (query.first_name) params.set("first_name", query.first_name)
   if (query.state) params.set("state", query.state)
   return get<NppesSearchResult>(`/api/credentialing/nppes?${params.toString()}`, token)
+}
+
+/**
+ * Where each of her panel applications stands, hers to act on first.
+ *
+ * The order is the API's rather than the screen's — see `panels.list_for` on
+ * the backend. A second sort here would be a second opinion about what she
+ * should look at first, and the two would drift.
+ */
+export async function listPanelApplications(
+  token?: string,
+): Promise<PanelApplications> {
+  return get<PanelApplications>("/api/credentialing/panel-applications", token)
 }
