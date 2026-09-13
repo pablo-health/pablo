@@ -725,6 +725,26 @@ CREATE TABLE __TENANT_SCHEMA__.outcome_measures (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.panel_applications (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    payer_id uuid NOT NULL,
+    status character varying(24) DEFAULT 'researching'::character varying NOT NULL,
+    action_owner character varying(16) DEFAULT 'pablo'::character varying NOT NULL,
+    due_at timestamp with time zone,
+    awaiting text,
+    reference character varying(80),
+    submitted_at timestamp with time zone,
+    effective_at timestamp with time zone,
+    notes text,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_panel_applications_action_owner CHECK (((action_owner)::text = ANY ((ARRAY['pablo'::character varying, 'therapist'::character varying])::text[]))),
+    CONSTRAINT ck_panel_applications_status CHECK (((status)::text = ANY ((ARRAY['researching'::character varying, 'caqh_ready'::character varying, 'submitted'::character varying, 'in_review'::character varying, 'info_requested'::character varying, 'contract_received'::character varying, 'effective'::character varying, 'closed_panel_appeal'::character varying, 'denied'::character varying, 'recredentialing'::character varying])::text[])))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.patient_charges (
     id character varying(128) NOT NULL,
     patient_id uuid NOT NULL,
@@ -1358,6 +1378,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.outcome_measures
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.panel_applications
+    ADD CONSTRAINT panel_applications_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_charges
     ADD CONSTRAINT patient_charges_pkey PRIMARY KEY (id);
 
@@ -1832,6 +1857,14 @@ CREATE INDEX ix_outcome_measures_session_id ON __TENANT_SCHEMA__.outcome_measure
 
 
 
+CREATE INDEX ix_panel_applications_payer_id ON __TENANT_SCHEMA__.panel_applications USING btree (payer_id);
+
+
+
+CREATE INDEX ix_panel_applications_user_id ON __TENANT_SCHEMA__.panel_applications USING btree (user_id);
+
+
+
 CREATE INDEX ix_patient_charges_claim_id ON __TENANT_SCHEMA__.patient_charges USING btree (claim_id) WHERE (claim_id IS NOT NULL);
 
 
@@ -2214,6 +2247,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.outcome_measures
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.outcome_measures
     ADD CONSTRAINT outcome_measures_session_id_fkey FOREIGN KEY (session_id) REFERENCES __TENANT_SCHEMA__.therapy_sessions(id) ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.panel_applications
+    ADD CONSTRAINT panel_applications_payer_id_fkey FOREIGN KEY (payer_id) REFERENCES __TENANT_SCHEMA__.payers(id) ON DELETE CASCADE;
 
 
 
