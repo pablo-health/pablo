@@ -418,6 +418,62 @@
       "title": "MaxPerDayRule",
       "type": "object"
     },
+    "MaxPerWeekParams": {
+      "additionalProperties": false,
+      "description": "At most this many appointments in a week.",
+      "properties": {
+        "max": {
+          "minimum": 1,
+          "title": "Max",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "max"
+      ],
+      "title": "MaxPerWeekParams",
+      "type": "object"
+    },
+    "MaxPerWeekRule": {
+      "additionalProperties": false,
+      "properties": {
+        "allow_other_types": {
+          "default": true,
+          "title": "Allow Other Types",
+          "type": "boolean"
+        },
+        "appointment_type_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Appointment Type Id"
+        },
+        "enforcement": {
+          "$ref": "#/$defs/EnforcementLevel",
+          "default": "hard"
+        },
+        "params": {
+          "$ref": "#/$defs/MaxPerWeekParams"
+        },
+        "rule_type": {
+          "const": "max_per_week",
+          "title": "Rule Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule_type",
+        "params"
+      ],
+      "title": "MaxPerWeekRule",
+      "type": "object"
+    },
     "SessionDefaultsParams": {
       "additionalProperties": false,
       "description": "What a new appointment starts as, rather than what it may not be.\n\nBoth fields are optional \u2014 an empty ``session_defaults`` is how the\nfrontend clears a default it had set \u2014 and the engine falls back to\nits own duration and an unaligned grid when they're absent.",
@@ -575,6 +631,7 @@
       "buffer_after": "#/$defs/BufferAfterRule",
       "buffer_before": "#/$defs/BufferBeforeRule",
       "max_per_day": "#/$defs/MaxPerDayRule",
+      "max_per_week": "#/$defs/MaxPerWeekRule",
       "session_defaults": "#/$defs/SessionDefaultsRule",
       "working_hours": "#/$defs/WorkingHoursRule"
     },
@@ -598,6 +655,9 @@
     },
     {
       "$ref": "#/$defs/MaxPerDayRule"
+    },
+    {
+      "$ref": "#/$defs/MaxPerWeekRule"
     },
     {
       "$ref": "#/$defs/BufferBeforeRule"

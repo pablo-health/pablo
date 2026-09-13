@@ -337,6 +337,9 @@ class AvailabilityEngine:
                 rule, proposed_start, proposed_end
             ),
             RuleType.MAX_PER_DAY: lambda: self._check_max_per_day(rule, user_id, proposed_start),
+            RuleType.MAX_PER_WEEK: lambda: self._check_max_per_week(
+                rule, user_id, proposed_start
+            ),
             RuleType.BUFFER_BEFORE: lambda: self._check_buffer_before(
                 rule, user_id, proposed_start, rule.params
             ),
@@ -422,6 +425,37 @@ class AvailabilityEngine:
                 enforcement=rule.enforcement,
                 message=(
                     f"Maximum {max_count} appointments per day reached ({len(active)} existing)"
+                ),
+            )
+        return None
+
+    def _check_max_per_week(
+        self,
+        rule: AvailabilityRule,
+        user_id: str,
+        proposed_start: datetime,
+    ) -> Conflict | None:
+        """Same count as the daily cap, over the Monday-to-Sunday week.
+
+        The week the proposed time falls in, in the clinician's own frame —
+        a cap on how many sessions a week holds is about their week, not a
+        rolling seven days ending wherever the booking happens to land.
+        """
+        week_start = datetime.combine(
+            proposed_start.date() - timedelta(days=proposed_start.weekday()),
+            time(0),
+            tzinfo=proposed_start.tzinfo,
+        )
+        week_end = week_start + timedelta(days=7)
+        existing = self._appt_repo.list_by_range(user_id, week_start, week_end)
+        active = [a for a in existing if a.status != "cancelled"]
+        max_count = rule.params["max"]
+        if len(active) >= max_count:
+            return Conflict(
+                rule=rule,
+                enforcement=rule.enforcement,
+                message=(
+                    f"Maximum {max_count} appointments per week reached ({len(active)} existing)"
                 ),
             )
         return None

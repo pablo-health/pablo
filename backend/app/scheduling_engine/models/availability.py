@@ -15,6 +15,7 @@ class RuleType(StrEnum):
     BLOCK_DAY_OF_WEEK = "block_day_of_week"
     BLOCK_TIME_RANGE = "block_time_range"
     MAX_PER_DAY = "max_per_day"
+    MAX_PER_WEEK = "max_per_week"
     BUFFER_BEFORE = "buffer_before"
     BUFFER_AFTER = "buffer_after"
     BLOCK_DATE_RANGE = "block_date_range"

@@ -2,9 +2,9 @@
 
 """The one authority on what an availability rule's ``params`` may hold.
 
-``availability_rules.params`` is JSONB because the nine rule types share
+``availability_rules.params`` is JSONB because the ten rule types share
 almost no fields: typed columns would mean one wide table of mostly-NULL
-rows, or nine tables with nine repositories, and adding a rule type would
+rows, or ten tables with ten repositories, and adding a rule type would
 become a migration instead of a code change. What JSONB does not buy is
 permission to store any shape at all. Nothing downstream re-checks:
 :class:`~app.scheduling_engine.services.availability.AvailabilityEngine`
@@ -145,6 +145,12 @@ class MaxPerDayParams(_RuleParams):
     max: Annotated[StrictInt, Field(ge=1)]
 
 
+class MaxPerWeekParams(_RuleParams):
+    """At most this many appointments in a week."""
+
+    max: Annotated[StrictInt, Field(ge=1)]
+
+
 class BufferBeforeParams(_RuleParams):
     """A gap required before every appointment."""
 
@@ -219,6 +225,11 @@ class MaxPerDayRule(_TaggedRule):
     params: MaxPerDayParams
 
 
+class MaxPerWeekRule(_TaggedRule):
+    rule_type: Literal[RuleType.MAX_PER_WEEK]
+    params: MaxPerWeekParams
+
+
 class BufferBeforeRule(_TaggedRule):
     rule_type: Literal[RuleType.BUFFER_BEFORE]
     params: BufferBeforeParams
@@ -241,6 +252,7 @@ TaggedAvailabilityRule = Annotated[
     | BlockDateRangeRule
     | BlockSpecificDatesRule
     | MaxPerDayRule
+    | MaxPerWeekRule
     | BufferBeforeRule
     | BufferAfterRule
     | SessionDefaultsRule,

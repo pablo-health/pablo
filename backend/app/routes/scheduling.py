@@ -1059,6 +1059,7 @@ def parse_availability_rules(
     rule_repo: AvailabilityRuleRepository = Depends(get_availability_rule_repository),
     parse_service: AvailabilityRuleParseService = Depends(get_availability_rule_parse_service),
     user_repo: UserRepository = Depends(get_user_repository),
+    type_repo: AppointmentTypeRepository = Depends(get_appointment_type_repository),
 ) -> ParseAvailabilityRulesResponse:
     """Parse a natural-language sentence into proposed availability rules.
 
@@ -1074,12 +1075,21 @@ def parse_availability_rules(
     tz = _owner_timezone(user_repo, ctx.user_id)
     reference_date = _now(tz).date()
 
+    # The practice's own types, read here for the same reason and in the
+    # same breath: they are the only names a proposal may be scoped to, and
+    # the parser cannot go looking for them once the connection is gone.
+    appointment_types = type_repo.list_by_user(ctx.user_id)
+
     # Release the request-scoped DB connection before the LLM call, same
     # seam as the note-import route (sessions.py) -- otherwise the pooled
     # connection (and its open transaction) sits idle across the round trip.
     release_db_connection()
 
-    result = parse_service.parse(request.text, reference_date=reference_date)
+    result = parse_service.parse(
+        request.text,
+        reference_date=reference_date,
+        appointment_types=appointment_types,
+    )
 
     proposals = [
         ProposedAvailabilityRule(
@@ -1087,6 +1097,8 @@ def parse_availability_rules(
             enforcement=p.enforcement,
             params=p.params,
             human_summary=p.human_summary,
+            appointment_type_id=p.appointment_type_id,
+            allow_other_types=p.allow_other_types,
         )
         for p in result.proposals
     ]
