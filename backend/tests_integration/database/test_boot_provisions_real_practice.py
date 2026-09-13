@@ -15,11 +15,12 @@ the deployment's own practice is a practice like any other.
 from __future__ import annotations
 
 import os
-import uuid
 from typing import TYPE_CHECKING
 
 import pytest
 from sqlalchemy import create_engine, text
+
+from . import scratch_db
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -47,18 +48,17 @@ def booted_engine() -> Iterator[Engine]:
     """
     from app.db.provisioning import ensure_schemas  # noqa: PLC0415
 
-    scratch = f"pablo_boot_{uuid.uuid4().hex[:8]}"
+    scratch = scratch_db.scratch_name("pablo_boot")
     admin = create_engine(_DB_URL, isolation_level="AUTOCOMMIT", pool_pre_ping=True)
-    with admin.connect() as conn:
-        conn.execute(text(f'CREATE DATABASE "{scratch}"'))
+    scratch_db.create(admin, scratch)
 
-    base, _, _ = _DB_URL.rpartition("/")
-    eng = create_engine(f"{base}/{scratch}", pool_pre_ping=True)
+    eng = create_engine(scratch_db.swap_database(_DB_URL, scratch), pool_pre_ping=True)
     ensure_schemas(eng)
     yield eng
     eng.dispose()
-    with admin.connect() as conn:
-        conn.execute(text(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)'))
+    # Not WITH (FORCE): forcing terminates whatever is still attached, which
+    # needs a privilege the CI role deliberately does not have. See scratch_db.
+    scratch_db.drop(admin, scratch)
     admin.dispose()
 
 
