@@ -1,12 +1,18 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 /**
- * Practice identity — legal name, tax ID, organisation NPI.
+ * Practice identity — legal name, tax ID, billing NPI.
  *
  * The tax ID is the field under test: never pre-filled, masked to its last
  * four once on file, changed only through an explicit action, and sent only
  * when typed. The card saves ONLY its own fields, so the billing contact it
  * sits beside cannot be blanked by saving this half.
+ *
+ * The billing NPI carries a second bug class: it was once hidden from a sole
+ * proprietor filing under an SSN, who was then told by the clearinghouse
+ * banner that she was missing it. A field the product refuses to show and
+ * then demands is a dead end with no exit, so the tests below pin that it
+ * stays reachable for her.
  */
 
 import { render, screen } from "@testing-library/react"
@@ -23,6 +29,12 @@ vi.mock("@/hooks/useBillingProfile", () => ({
 
 vi.mock("../SettingsSavedContext", () => ({
   useSettingsSaved: () => ({ flashSaved: vi.fn() }),
+}))
+
+let clinicianNpi: string | null = null
+
+vi.mock("../useSettingsPreferences", () => ({
+  useSettingsUserStatus: () => ({ data: { npi_number: clinicianNpi } }),
 }))
 
 function profile(overrides: Partial<BillingProfileResponse> = {}): BillingProfileResponse {
@@ -58,6 +70,7 @@ const onFile = () =>
 
 beforeEach(() => {
   vi.clearAllMocks()
+  clinicianNpi = null
 })
 
 describe("the tax ID", () => {
@@ -108,16 +121,19 @@ describe("the tax ID", () => {
   })
 })
 
-describe("the organisation NPI", () => {
-  it("is hidden for a sole proprietor filing under an SSN", async () => {
-    // Meaningless to her, and an empty box she has to reason about is worse
-    // than no box.
+describe("the billing NPI", () => {
+  it("stays reachable for a sole proprietor filing under an SSN", async () => {
+    // It used to be hidden from her, on the reasoning that an ORGANISATION
+    // NPI means nothing to a sole proprietor. True, and the wrong field: the
+    // clearinghouse wants the NPI a claim is billed under, which for her is
+    // her own. Hidden, she could not fill the one thing registration then
+    // refused her for.
     const user = userEvent.setup()
     render(<PracticeIdentityCard profile={profile()} />)
 
     await user.click(screen.getByRole("radio", { name: "SSN" }))
 
-    expect(screen.queryByLabelText("Organization NPI (optional)")).not.toBeInTheDocument()
+    expect(screen.getByLabelText("Billing NPI")).toBeInTheDocument()
   })
 
   it("still shows when she already has one, whatever the tax ID type", async () => {
@@ -127,18 +143,51 @@ describe("the organisation NPI", () => {
 
     await user.click(screen.getByRole("radio", { name: "SSN" }))
 
-    expect(screen.getByLabelText("Organization NPI (optional)")).toHaveValue("1999999984")
+    expect(screen.getByLabelText("Billing NPI")).toHaveValue("1999999984")
   })
 
   it("refuses one that is not ten digits", async () => {
     const user = userEvent.setup()
     render(<PracticeIdentityCard profile={profile()} />)
 
-    await user.type(screen.getByLabelText("Organization NPI (optional)"), "12345")
+    await user.type(screen.getByLabelText("Billing NPI"), "12345")
     await user.click(screen.getByRole("button", { name: "Save" }))
 
     expect(screen.getByRole("alert")).toHaveTextContent("ten digits")
     expect(mockUpdate).not.toHaveBeenCalled()
+  })
+
+  it("offers her own NPI when she files under an SSN", async () => {
+    clinicianNpi = "1999999984"
+    const user = userEvent.setup()
+    render(<PracticeIdentityCard profile={profile()} />)
+
+    await user.click(screen.getByRole("radio", { name: "SSN" }))
+    await user.click(screen.getByRole("button", { name: "Use my own NPI" }))
+
+    expect(screen.getByLabelText("Billing NPI")).toHaveValue("1999999984")
+  })
+
+  it("does not offer it under an EIN, where the practice is the biller", async () => {
+    // Her personal NPI would be the wrong answer for an entity, and a wrong
+    // prefill is worse than none: the (NPI, tax ID) pair is what the
+    // clearinghouse hangs the provider record on.
+    clinicianNpi = "1999999984"
+    const user = userEvent.setup()
+    render(<PracticeIdentityCard profile={profile()} />)
+
+    await user.click(screen.getByRole("radio", { name: "EIN" }))
+
+    expect(screen.queryByRole("button", { name: "Use my own NPI" })).not.toBeInTheDocument()
+  })
+
+  it("does not offer it when she has no NPI of her own", async () => {
+    const user = userEvent.setup()
+    render(<PracticeIdentityCard profile={profile()} />)
+
+    await user.click(screen.getByRole("radio", { name: "SSN" }))
+
+    expect(screen.queryByRole("button", { name: "Use my own NPI" })).not.toBeInTheDocument()
   })
 })
 
