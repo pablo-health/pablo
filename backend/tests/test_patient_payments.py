@@ -36,7 +36,7 @@ import pytest
 from app.auth.service import TenantContext, get_tenant_context, require_baa_acceptance
 from app.db.models import DEFAULT_CHARGE_CURRENCY
 from app.models import User
-from app.models.coverage import PatientCoverage
+from app.models.coverage import PatientCoverage, Payer
 from app.models.patient import Patient
 from app.models.payments import CardOnFile, PatientCharge
 from app.payments import stripe_api
@@ -48,6 +48,7 @@ from app.repositories import (
     get_patient_coverage_repository,
     get_patient_payment_repository,
     get_patient_repository,
+    get_payer_repository,
 )
 from app.repositories.audit import InMemoryAuditRepository
 from app.repositories.patient_payment import PaymentAlreadyInFlightError
@@ -264,6 +265,22 @@ class _FakeCoverage:
         return None
 
 
+class _FakePayers:
+    """The practice's payer list, as much of it as a payment test needs.
+
+    Default is the empty list, which is the private-pay case: no coverage
+    names a payer, so nothing is unknown.
+    """
+
+    def __init__(self, payer: Payer | None = None) -> None:
+        self.payer = payer
+
+    def get(self, payer_row_id: str) -> Payer | None:
+        if self.payer is not None and self.payer.id == payer_row_id:
+            return self.payer
+        return None
+
+
 class _FakeClaims:
     """The newest claim on a visit, keyed the way the real repository keys it."""
 
@@ -345,6 +362,7 @@ def _client(
     appointments: _FakeAppointments | None = None,
     appointment_types: _FakeAppointmentTypes | None = None,
     coverage: _FakeCoverage | None = None,
+    payers: _FakePayers | None = None,
     claims: _FakeClaims | None = None,
     credentials: PaymentCredentials | None = PaymentCredentials(
         secret_key=_SECRET_KEY, publishable_key=_PUBLISHABLE_KEY
@@ -369,6 +387,7 @@ def _client(
         appointment_types or _FakeAppointmentTypes()
     )
     app.dependency_overrides[get_patient_coverage_repository] = lambda: coverage or _FakeCoverage()
+    app.dependency_overrides[get_payer_repository] = lambda: payers or _FakePayers()
     app.dependency_overrides[get_claim_repository] = lambda: claims or _FakeClaims()
     # The routes MUST audit; the unit suite has no Postgres to write those to.
     audit_service = audit or AuditService(InMemoryAuditRepository())
@@ -1416,6 +1435,111 @@ class TestPatientBalance:
 
         logged = repository.list_for_user(_USER_ID)
         assert [entry.resource_id for entry in logged] == [_PATIENT_ID]
+
+
+class TestWhenTheOutcomeIsNotOurs:
+    """A client whose payer sends its remittances somewhere other than Pablo.
+
+    The arithmetic is not wrong for these clients — it is short. Their share
+    of an insured visit arrives as an 835 that never reaches us, so no
+    ``patient_resp`` row is ever written and the balance omits it silently.
+    A missing figure reads as a settled account, which is why every surface
+    has to say so rather than render the total on its own.
+    """
+
+    def _payer(self, *, enroll_remittance: bool) -> Payer:
+        now = datetime.now(UTC)
+        return Payer(
+            id="payer-1",
+            name="Aetna",
+            payer_id="60054",
+            enroll_remittance=enroll_remittance,
+            created_at=now,
+            updated_at=now,
+        )
+
+    def _ledger(self, *charges: PatientCharge) -> _FakePayments:
+        payments = _FakePayments()
+        payments.charges.extend(charges)
+        return payments
+
+    def _row(self, **overrides: Any) -> PatientCharge:
+        row: dict[str, Any] = {
+            "id": "c1",
+            "patient_id": _PATIENT_ID,
+            "amount_cents": 10_000,
+            "currency": "usd",
+            "status": "pending",
+            "created_by_user_id": _USER_ID,
+            "created_at": datetime.now(UTC),
+        }
+        row.update(overrides)
+        return PatientCharge(**row)
+
+    def test_a_private_pay_client_is_fully_known(self) -> None:
+        """No payer, no remittance to wait for, nothing missing."""
+        client = _client(self._ledger(self._row()), _FakePatients())
+
+        body = client.get(f"/api/patients/{_PATIENT_ID}/balance").json()
+
+        assert body["outcome_known"] is True
+
+    def test_a_payer_we_receive_remittances_from_is_known(self) -> None:
+        client = _client(
+            self._ledger(self._row()),
+            _FakePatients(),
+            coverage=_FakeCoverage(_coverage()),
+            payers=_FakePayers(self._payer(enroll_remittance=True)),
+        )
+
+        body = client.get(f"/api/patients/{_PATIENT_ID}/balance").json()
+
+        assert body["outcome_known"] is True
+
+    def test_a_payer_billing_elsewhere_is_not(self) -> None:
+        client = _client(
+            self._ledger(self._row()),
+            _FakePatients(),
+            coverage=_FakeCoverage(_coverage()),
+            payers=_FakePayers(self._payer(enroll_remittance=False)),
+        )
+
+        body = client.get(f"/api/patients/{_PATIENT_ID}/balance").json()
+
+        assert body["outcome_known"] is False
+        # The arithmetic is untouched. What changes is what may be said about
+        # it, not what it comes to.
+        assert body["owed_cents"] == 10_000
+
+    def test_an_empty_ledger_is_not_reported_as_owing_nothing(self) -> None:
+        """The 409 this route used to give asserts a settled account.
+
+        Nothing on the ledger and no remittances coming means we do not know
+        what they owe — which is not the same sentence as "nothing", and is
+        the sentence a therapist would act on differently.
+        """
+        client = _client(
+            _FakePayments(_stored_card()),
+            _FakePatients(),
+            coverage=_FakeCoverage(_coverage()),
+            payers=_FakePayers(self._payer(enroll_remittance=False)),
+        )
+
+        response = client.post(f"/api/patients/{_PATIENT_ID}/charge-balance")
+
+        assert response.status_code == 409
+        detail = response.json()["detail"]
+        assert "owes nothing" not in detail
+        assert "billing service" in detail
+
+    def test_a_private_pay_client_owing_nothing_still_says_so(self) -> None:
+        """Where there is no payer the plain answer is the true one."""
+        client = _client(_FakePayments(_stored_card()), _FakePatients())
+
+        response = client.post(f"/api/patients/{_PATIENT_ID}/charge-balance")
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == "This client owes nothing."
 
 
 class TestChargeBalance:

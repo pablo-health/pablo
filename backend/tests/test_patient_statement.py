@@ -324,6 +324,49 @@ class TestRendering:
         assert statement.charge_ids == ("c-1", "c-2")
 
 
+class TestWhenTheOutcomeIsNotOurs:
+    """A statement for a client whose payer settles through somebody else.
+
+    The figures on the page are a floor, not a total, because the plan's
+    payment reaches a billing service and never becomes a row here. A client
+    handed that page without being told will pay a bill their insurer has
+    already settled — which is the one outcome a statement exists to avoid.
+    """
+
+    def test_the_ordinary_statement_carries_no_caveat(self) -> None:
+        """A document that hedges everything teaches its reader to skip the hedge."""
+        assert _build().outcome_known is True
+        assert not _pdf_has_caveat(render_statement_pdf(_build()))
+
+    def test_the_client_is_told_before_they_pay(self) -> None:
+        statement = _build(outcome_known=False)
+
+        assert statement.outcome_known is False
+        assert _pdf_has_caveat(render_statement_pdf(statement))
+
+    def test_the_figures_themselves_are_unchanged(self) -> None:
+        """This governs what is said about the arithmetic, not the arithmetic."""
+        plain = _build()
+        caveated = _build(outcome_known=False)
+
+        assert caveated.balance_cents == plain.balance_cents
+        assert [line.owed_cents for line in caveated.lines] == [
+            line.owed_cents for line in plain.lines
+        ]
+
+
+def _pdf_has_caveat(pdf: bytes) -> bool:
+    """Whether the caveat reached the page.
+
+    Matched on fragments rather than the whole sentence: the renderer breaks a
+    paragraph across lines, so ``OUTCOME_CAVEAT`` is never contiguous in the
+    stream and asserting on it whole would pass whether or not it rendered.
+    The words below appear nowhere else on a statement. Uncompressed streams
+    (``pageCompression=0``) are what make this readable at all.
+    """
+    return b"already" in pdf and b"before paying" in pdf
+
+
 class TestWhatIsNotOnThePage:
     def test_no_diagnosis_code_reaches_the_statement(self) -> None:
         """The claim carries diagnoses; a document about money does not. A

@@ -79,7 +79,7 @@ from ..models.payments import (
     PatientCharge,
     VisitBalanceResponse,
 )
-from ..payments.balance import BalanceSummary, patient_balance
+from ..payments.balance import BalanceSummary, outcome_is_known, patient_balance
 from ..payments.copay import copay_cents
 from ..payments.provider import PaymentCredentials, get_payment_credential_provider
 from ..payments.reconcile import METADATA_CHARGE_ID, METADATA_PRACTICE_ID, METADATA_USER_ID
@@ -91,6 +91,7 @@ from ..repositories import (
     get_patient_coverage_repository,
     get_patient_payment_repository,
     get_patient_repository,
+    get_payer_repository,
 )
 from ..repositories.patient_payment import PaymentAlreadyInFlightError
 from ..scheduling_engine.services.rate_resolver import resolve_rate_cents
@@ -99,7 +100,7 @@ from ..services import AuditService, get_audit_service
 if TYPE_CHECKING:
     from ..models import Patient, User
     from ..repositories.claims import ClaimRepository
-    from ..repositories.coverage import PatientCoverageRepository
+    from ..repositories.coverage import PatientCoverageRepository, PayerRepository
     from ..repositories.patient import PatientRepository
     from ..repositories.patient_payment import PatientPaymentRepository
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
@@ -119,6 +120,7 @@ AppointmentTypesRepo = Annotated[
     "AppointmentTypeRepository", Depends(get_appointment_type_repository)
 ]
 CoverageRepo = Annotated["PatientCoverageRepository", Depends(get_patient_coverage_repository)]
+PayersRepo = Annotated["PayerRepository", Depends(get_payer_repository)]
 ClaimsRepo = Annotated["ClaimRepository", Depends(get_claim_repository)]
 CurrentUser = Annotated["User", Depends(require_baa_acceptance)]
 Tenant = Annotated[TenantContext, Depends(get_tenant_context)]
@@ -142,7 +144,21 @@ def _to_charge_response(charge: PatientCharge) -> ChargeResponse:
     )
 
 
-def _to_balance_response(summary: BalanceSummary) -> BalanceResponse:
+def _outcome_is_known(
+    coverage: PatientCoverageRepository, payers: PayerRepository, patient_id: str
+) -> bool:
+    """Whether this client's settled amounts reach us — see ``outcome_is_known``.
+
+    Two reads to answer it: the client's active coverage names a payer, and
+    the payer says where its remittances go. A client with neither is private
+    pay, which is the case the underlying rule treats as fully known.
+    """
+    active = coverage.get_active(patient_id)
+    payer = payers.get(active.payer_id) if active is not None else None
+    return outcome_is_known(payer)
+
+
+def _to_balance_response(summary: BalanceSummary, *, outcome_known: bool = True) -> BalanceResponse:
     return BalanceResponse(
         owed_cents=summary.owed_cents,
         collected_cents=summary.collected_cents,
@@ -150,6 +166,7 @@ def _to_balance_response(summary: BalanceSummary) -> BalanceResponse:
         adjusted_cents=summary.adjusted_cents,
         credited_cents=summary.credited_cents,
         balance_cents=summary.balance_cents,
+        outcome_known=outcome_known,
         by_visit=[
             VisitBalanceResponse(
                 appointment_id=visit.appointment_id,
@@ -750,6 +767,8 @@ def charge_balance(
     tenant: Tenant,
     payments: PaymentsRepo,
     patients: PatientsRepo,
+    coverage: CoverageRepo,
+    payers: PayersRepo,
     audit: AuditService = Depends(get_audit_service),
 ) -> ChargeResponse:
     """Charge the card on file for everything this client owes.
@@ -774,6 +793,13 @@ def charge_balance(
     card twice, and neither is sufficient alone — see
     :func:`_payment_already_in_flight`. A decline comes back the way it does
     everywhere else — 200, with a ``failed`` row carrying the reason.
+
+    A client whose payer sends its remittances elsewhere gets a different
+    409 when the ledger totals nothing, because "this client owes nothing"
+    is then a claim we cannot make: their share of an insured visit arrives
+    as an 835 we never receive, so zero here means unknown, not settled.
+    What is owed above zero is still chargeable — it is money on the ledger
+    either way, and the figure can only be short.
     """
     credentials = _require_credentials(tenant.practice_id)
     _require_patient(patients, patient_id, user.id)
@@ -791,7 +817,12 @@ def charge_balance(
     amount_cents = patient_balance(ledger).balance_cents
     if amount_cents <= 0:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail="This client owes nothing."
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This client owes nothing."
+                if _outcome_is_known(coverage, payers, patient_id)
+                else _OUTCOME_UNKNOWN
+            ),
         )
     if amount_cents > MAX_CHARGE_CENTS:
         # The same blast-radius cap the per-charge route applies, which a
@@ -847,6 +878,13 @@ def charge_balance(
 #: different accounts of what happened depending on how close the two
 #: requests landed.
 _PAYMENT_IN_FLIGHT = "A payment for this client is already being processed."
+
+#: Said instead of "owes nothing" when the ledger cannot know. Names where
+#: the answer is rather than leaving her to work out why the number is zero.
+_OUTCOME_UNKNOWN = (
+    "What this client owes isn't known here — this payer's remittances go to "
+    "your billing service, not to Pablo."
+)
 
 
 def _payment_already_in_flight(ledger: list[PatientCharge]) -> bool:
@@ -937,6 +975,8 @@ def get_patient_balance(
     user: CurrentUser,
     payments: PaymentsRepo,
     patients: PatientsRepo,
+    coverage: CoverageRepo,
+    payers: PayersRepo,
     audit: AuditService = Depends(get_audit_service),
 ) -> BalanceResponse:
     """What this client owes, computed from their ledger rows.
@@ -961,4 +1001,7 @@ def get_patient_balance(
         resource_type=ResourceType.PATIENT,
         resource_id=patient_id,
     )
-    return _to_balance_response(patient_balance(payments.list_charges(patient_id)))
+    return _to_balance_response(
+        patient_balance(payments.list_charges(patient_id)),
+        outcome_known=_outcome_is_known(coverage, payers, patient_id),
+    )

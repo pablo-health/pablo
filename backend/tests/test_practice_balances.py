@@ -28,9 +28,15 @@ from typing import Any
 import pytest
 from app.auth.service import require_baa_acceptance
 from app.models import User
+from app.models.coverage import PatientCoverage, Payer
 from app.models.patient import Patient
 from app.models.payments import PatientCharge
-from app.repositories import get_patient_payment_repository, get_patient_repository
+from app.repositories import (
+    get_patient_coverage_repository,
+    get_patient_payment_repository,
+    get_patient_repository,
+    get_payer_repository,
+)
 from app.repositories.audit import InMemoryAuditRepository
 from app.routes import practice_balances
 from app.services import AuditService, get_audit_service
@@ -104,11 +110,33 @@ def _user() -> User:
     )
 
 
+class _FakeCoverage:
+    """Active coverage per client, keyed the way the real repository keys it."""
+
+    def __init__(self, plans: dict[str, PatientCoverage] | None = None) -> None:
+        self.plans = plans or {}
+
+    def get_active_for_patients(self, patient_ids: list[str]) -> dict[str, PatientCoverage]:
+        return {pid: self.plans[pid] for pid in patient_ids if pid in self.plans}
+
+
+class _FakePayers:
+    """The practice's payers by row id. Empty is the private-pay practice."""
+
+    def __init__(self, payers: dict[str, Payer] | None = None) -> None:
+        self.payers = payers or {}
+
+    def get(self, payer_row_id: str) -> Payer | None:
+        return self.payers.get(payer_row_id)
+
+
 def _client(
     charges: list[PatientCharge],
     names: dict[str, str] | None = None,
     *,
     audit: AuditService | None = None,
+    coverage: _FakeCoverage | None = None,
+    payers: _FakePayers | None = None,
 ) -> TestClient:
     app = FastAPI()
     app.include_router(practice_balances.router)
@@ -117,6 +145,8 @@ def _client(
     app.dependency_overrides[get_patient_repository] = lambda: _FakePatients(
         names if names is not None else {_ALICE: "Alice", _BEN: "Ben"}
     )
+    app.dependency_overrides[get_patient_coverage_repository] = lambda: coverage or _FakeCoverage()
+    app.dependency_overrides[get_payer_repository] = lambda: payers or _FakePayers()
     audit_service = audit or AuditService(InMemoryAuditRepository())
     app.dependency_overrides[get_audit_service] = lambda: audit_service
     return TestClient(app, raise_server_exceptions=False)
@@ -212,3 +242,64 @@ def test_every_listed_client_carries_the_fields_the_view_renders(field: str) -> 
     items = _items(_client([_row(_ALICE)]))
 
     assert items[0][field] is not None
+
+
+def _payer(*, enroll_remittance: bool) -> Payer:
+    return Payer(
+        id="payer-1",
+        name="Aetna",
+        payer_id="60054",
+        enroll_remittance=enroll_remittance,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+
+
+def _plan(patient_id: str) -> PatientCoverage:
+    return PatientCoverage(
+        id=f"cov-{patient_id}",
+        patient_id=patient_id,
+        payer_id="payer-1",
+        member_id="123456789",
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+
+
+def test_a_private_pay_balance_is_the_whole_of_what_is_owed() -> None:
+    """Nobody else is settling it, so there is nothing missing from it."""
+    client = _client([_row(_ALICE, amount_cents=5_000, kind="session")])
+
+    [alice] = _items(client)
+
+    assert alice["outcome_known"] is True
+
+
+def test_a_balance_under_a_payer_billing_elsewhere_is_only_a_floor() -> None:
+    """Chasing a floor as though it were the debt is how a client is asked twice.
+
+    The figure is not wrong — it is short by whatever the 835 would have
+    added, and that 835 goes to her billing service.
+    """
+    client = _client(
+        [_row(_ALICE, amount_cents=5_000, kind="session")],
+        coverage=_FakeCoverage({_ALICE: _plan(_ALICE)}),
+        payers=_FakePayers({"payer-1": _payer(enroll_remittance=False)}),
+    )
+
+    [alice] = _items(client)
+
+    assert alice["outcome_known"] is False
+    assert alice["balance_cents"] == 5_000
+
+
+def test_a_payer_whose_remittances_reach_us_is_known() -> None:
+    client = _client(
+        [_row(_ALICE, amount_cents=5_000, kind="session")],
+        coverage=_FakeCoverage({_ALICE: _plan(_ALICE)}),
+        payers=_FakePayers({"payer-1": _payer(enroll_remittance=True)}),
+    )
+
+    [alice] = _items(client)
+
+    assert alice["outcome_known"] is True

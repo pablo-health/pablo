@@ -115,12 +115,30 @@ export function chargeKindLabel(kind: string): string {
  *   that trains people to stop reading the line that matters;
  * * a negative balance — "Credit $10.00". The practice owes it back, and
  *   rendering it as zero would hide a refund.
+ *
+ * `outcomeKnown` false changes two of those three. This client's payer sends
+ * its remittances to a billing service, so their share of an insured visit
+ * never becomes a row here and the total is a floor:
+ *
+ * * a figure becomes "Owes at least $62.00", because the rest may be coming;
+ * * zero stops being `null` and says so instead. Zero is the dangerous one —
+ *   silence there is indistinguishable from a settled account, and a settled
+ *   account is the one thing we cannot claim.
+ *
+ * A credit is left alone. Money the practice already took is money it took,
+ * and no missing remittance makes that less true.
  */
 export function formatBalanceLine(
   balanceCents: number,
   currency = "usd",
+  outcomeKnown = true,
 ): string | null {
-  if (balanceCents === 0) return null
   if (balanceCents < 0) return `Credit ${formatCents(-balanceCents, currency)}`
+  if (!outcomeKnown) {
+    return balanceCents === 0
+      ? "Balance tracked elsewhere"
+      : `Owes at least ${formatCents(balanceCents, currency)}`
+  }
+  if (balanceCents === 0) return null
   return `Owes ${formatCents(balanceCents, currency)}`
 }

@@ -30,12 +30,18 @@ from app.payments.statement import PracticeBlock
 from app.repositories import (
     get_appointment_repository,
     get_claim_repository,
+    get_patient_coverage_repository,
     get_patient_payment_repository,
     get_patient_repository,
+    get_payer_repository,
     get_user_repository,
 )
 from app.repositories.audit import InMemoryAuditRepository
 from app.repositories.claims import InMemoryClaimRepository
+from app.repositories.coverage import (
+    InMemoryPatientCoverageRepository,
+    InMemoryPayerRepository,
+)
 from app.repositories.patient import InMemoryPatientRepository
 from app.repositories.user import InMemoryUserRepository
 from app.routes import patient_statements
@@ -138,6 +144,10 @@ def harness() -> dict[str, Any]:
     app.dependency_overrides[get_patient_payment_repository] = lambda: ledger
     app.dependency_overrides[get_appointment_repository] = lambda: appointments
     app.dependency_overrides[get_user_repository] = InMemoryUserRepository
+    # No coverage on file: the statement's client is private pay, which is
+    # the case where every figure on the page is the whole of it.
+    app.dependency_overrides[get_patient_coverage_repository] = InMemoryPatientCoverageRepository
+    app.dependency_overrides[get_payer_repository] = InMemoryPayerRepository
     app.dependency_overrides[patient_statements.get_practice_block] = lambda: _PRACTICE
     app.dependency_overrides[get_audit_service] = lambda: AuditService(audit_repo)
     return {

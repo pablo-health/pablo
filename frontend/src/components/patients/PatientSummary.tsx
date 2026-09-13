@@ -59,9 +59,13 @@ export function PatientSummary({ patient }: PatientSummaryProps) {
 
   // What the client owes rides here for the same reason: it is the thing a
   // clinician needs to know BEFORE the session, not after hunting for it on
-  // a tab. A settled client shows no line at all — see `formatBalanceLine`.
+  // a tab. A settled client shows no line at all — see `formatBalanceLine`,
+  // which also decides what to say when the payer settles somewhere else and
+  // the total is only a floor.
   const { data: balance } = usePatientBalance(patient.id)
-  const balanceLine = balance ? formatBalanceLine(balance.balance_cents) : null
+  const balanceLine = balance
+    ? formatBalanceLine(balance.balance_cents, "usd", balance.outcome_known)
+    : null
 
   return (
     <div className="card">

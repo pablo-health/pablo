@@ -135,6 +135,12 @@ export interface VisitBalanceResponse {
  * `balance_cents` is positive when the client owes the practice and negative
  * when the practice owes the client. A credit is not clamped to zero: a
  * refund the practice owes is exactly what clamping would hide.
+ *
+ * `outcome_known` is false when this client's payer sends its remittances
+ * somewhere other than Pablo. The arithmetic is still right over the rows we
+ * have; what it cannot include is the client's share of an insured visit,
+ * which only an 835 tells us. Rendering the total without saying so states a
+ * settled account that was never settled.
  */
 export interface BalanceResponse {
   owed_cents: number
@@ -143,6 +149,7 @@ export interface BalanceResponse {
   adjusted_cents: number
   credited_cents: number
   balance_cents: number
+  outcome_known: boolean
   by_visit: VisitBalanceResponse[]
 }
 
@@ -154,6 +161,11 @@ export interface ClientBalanceItem {
   currency: string
   /** When the money behind the balance first went on the ledger. */
   outstanding_since: string
+  /**
+   * False when this client's payer sends its remittances elsewhere, so what
+   * is owed is at least this and possibly more.
+   */
+  outcome_known: boolean
 }
 
 export interface BalancesResponse {

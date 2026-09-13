@@ -25,9 +25,15 @@ from typing import Any
 import pytest
 from app.auth.service import require_baa_acceptance
 from app.models import User
+from app.models.coverage import PatientCoverage, Payer
 from app.models.patient import Patient
 from app.models.payments import PatientCharge
-from app.repositories import get_patient_payment_repository, get_patient_repository
+from app.repositories import (
+    get_patient_coverage_repository,
+    get_patient_payment_repository,
+    get_patient_repository,
+    get_payer_repository,
+)
 from app.repositories.audit import InMemoryAuditRepository
 from app.routes import patient_write_offs
 from app.routes.patient_write_offs import WriteOffPolicy, get_write_off_policy
@@ -125,18 +131,46 @@ def _owed_row(amount_cents: int, *, claim_id: str | None = None) -> PatientCharg
     )
 
 
+class _FakeCoverage:
+    """One client's active coverage, or none — which is private pay."""
+
+    def __init__(self, coverage: PatientCoverage | None = None) -> None:
+        self.coverage = coverage
+
+    def get_active(self, patient_id: str) -> PatientCoverage | None:
+        if self.coverage is not None and self.coverage.patient_id == patient_id:
+            return self.coverage
+        return None
+
+
+class _FakePayers:
+    """The practice's payers by row id."""
+
+    def __init__(self, payer: Payer | None = None) -> None:
+        self.payer = payer
+
+    def get(self, payer_row_id: str) -> Payer | None:
+        if self.payer is not None and self.payer.id == payer_row_id:
+            return self.payer
+        return None
+
+
 def _client(
     payments: _FakePayments,
     patients: _FakePatients,
     *,
     policy: WriteOffPolicy | None = None,
     audit: AuditService | None = None,
+    coverage: _FakeCoverage | None = None,
+    payers: _FakePayers | None = None,
 ) -> tuple[TestClient, AuditService]:
     app = FastAPI()
     app.include_router(patient_write_offs.router)
     app.dependency_overrides[require_baa_acceptance] = _user
     app.dependency_overrides[get_patient_payment_repository] = lambda: payments
     app.dependency_overrides[get_patient_repository] = lambda: patients
+    app.dependency_overrides[get_patient_coverage_repository] = lambda: coverage or _FakeCoverage()
+    app.dependency_overrides[get_payer_repository] = lambda: payers or _FakePayers()
     app.dependency_overrides[get_write_off_policy] = lambda: policy or WriteOffPolicy()
     audit_service = audit or AuditService(InMemoryAuditRepository())
     app.dependency_overrides[get_audit_service] = lambda: audit_service
@@ -219,6 +253,81 @@ class TestSmallBalancePolicy:
         )
         response = _write_off(client, amount_cents=500, reason="small_balance")
         assert response.status_code == 200
+
+
+class TestSmallBalanceNeedsAKnownBalance:
+    """ "Not worth chasing" is a judgement about an amount, so it needs the amount.
+
+    For a client whose payer settles through a billing service, the ledger is
+    short by whatever the 835 would have added. Short in exactly the direction
+    that makes this write-off look allowed: a four-hundred-dollar debt whose
+    remittance never reached us reads as nothing and sails under a five-dollar
+    threshold.
+    """
+
+    def _insured(self, *, enroll_remittance: bool) -> dict[str, Any]:
+        now = datetime.now(UTC)
+        return {
+            "coverage": _FakeCoverage(
+                PatientCoverage(
+                    id="cov-1",
+                    patient_id=_PATIENT_ID,
+                    payer_id="payer-1",
+                    member_id="123456789",
+                    created_at=now,
+                    updated_at=now,
+                )
+            ),
+            "payers": _FakePayers(
+                Payer(
+                    id="payer-1",
+                    name="Aetna",
+                    payer_id="60054",
+                    enroll_remittance=enroll_remittance,
+                    created_at=now,
+                    updated_at=now,
+                )
+            ),
+        }
+
+    def test_refused_when_the_remittances_go_elsewhere(self) -> None:
+        client, _ = _client(
+            _FakePayments([_owed_row(400)]),
+            _FakePatients(),
+            policy=WriteOffPolicy(small_balance_cents=500),
+            **self._insured(enroll_remittance=False),
+        )
+
+        response = _write_off(client, amount_cents=400, reason="small_balance")
+
+        assert response.status_code == 403
+        assert "isn't known here" in response.json()["detail"]
+
+    def test_allowed_when_the_remittances_come_to_us(self) -> None:
+        client, _ = _client(
+            _FakePayments([_owed_row(400)]),
+            _FakePatients(),
+            policy=WriteOffPolicy(small_balance_cents=500),
+            **self._insured(enroll_remittance=True),
+        )
+
+        response = _write_off(client, amount_cents=400, reason="small_balance")
+
+        assert response.status_code == 200
+
+    def test_the_other_reasons_are_untouched(self) -> None:
+        """Hardship and error judge the write-off, not the size of the debt.
+
+        And the amount-versus-balance cap needs no guard either: a short
+        balance only ever makes it too strict, which is the safe direction.
+        """
+        client, _ = _client(
+            _FakePayments([_owed_row(400)]),
+            _FakePatients(),
+            **self._insured(enroll_remittance=False),
+        )
+
+        assert _write_off(client, amount_cents=400, reason="hardship").status_code == 200
 
 
 class TestAmountVsBalance:

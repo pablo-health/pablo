@@ -214,6 +214,12 @@ class BalanceResponse(BaseModel):
     negative when the practice owes the client — a credit is not clamped to
     zero, because a refund the practice owes is exactly the thing a clamped
     balance would hide.
+
+    ``outcome_known`` is false when this client's payer sends its
+    remittances somewhere other than Pablo. The arithmetic is still correct
+    over the rows we have; what it cannot include is the client's share of
+    an insured visit, which only an 835 tells us. A reader that renders the
+    total without this flag is stating a settled account we never settled.
     """
 
     owed_cents: int
@@ -222,6 +228,7 @@ class BalanceResponse(BaseModel):
     adjusted_cents: int
     credited_cents: int
     balance_cents: int
+    outcome_known: bool = True
     by_visit: list[VisitBalanceResponse]
 
 
@@ -238,6 +245,9 @@ class ClientBalanceItem(BaseModel):
     balance_cents: int
     currency: str
     outstanding_since: datetime
+    #: False when this client's payer sends its remittances elsewhere, so
+    #: what is owed here is at least this and possibly more.
+    outcome_known: bool = True
 
 
 class BalancesResponse(BaseModel):

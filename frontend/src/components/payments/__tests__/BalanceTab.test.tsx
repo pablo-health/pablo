@@ -85,6 +85,7 @@ function balance(overrides: Partial<BalanceResponse> = {}): BalanceResponse {
     adjusted_cents: 0,
     credited_cents: 0,
     balance_cents: 0,
+    outcome_known: true,
     by_visit: [],
     ...overrides,
   }
@@ -335,5 +336,33 @@ describe("BalanceTab", () => {
         ),
       )
     })
+  })
+})
+
+describe("BalanceTab when the payer settles somewhere else", () => {
+  /**
+   * The tab with the "Charge balance" button on it. What the plan paid
+   * reaches a billing service and never becomes a row here, so the figure
+   * beside that button can only be short — which is worth saying before
+   * somebody presses it.
+   */
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it("says what the total is missing, under the total", () => {
+    setup({ balanceData: balance({ balance_cents: 6200, outcome_known: false }) })
+
+    expect(screen.getByTestId("balance-total")).toHaveTextContent("Owes at least $62.00")
+    expect(
+      screen.getByText(/remittances go to your billing service/i),
+    ).toBeInTheDocument()
+  })
+
+  it("says nothing extra when the remittances come to us", () => {
+    setup({ balanceData: balance({ balance_cents: 6200 }) })
+
+    expect(screen.getByTestId("balance-total")).toHaveTextContent("Owes $62.00")
+    expect(screen.queryByText(/billing service/i)).not.toBeInTheDocument()
   })
 })

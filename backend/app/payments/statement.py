@@ -120,6 +120,11 @@ class Statement:
     #: The ledger rows the document was rendered from, for the audit entry.
     charge_ids: tuple[str, ...]
     generated_at: datetime
+    #: False when this client's payer sends its remittances somewhere other
+    #: than Pablo — see :func:`app.payments.balance.outcome_is_known`. The
+    #: figures are then a floor, and a client asked to pay a floor as though
+    #: it were the total is a client asked to pay twice.
+    outcome_known: bool = True
 
     @property
     def total_charged_cents(self) -> int:
@@ -162,6 +167,7 @@ def build_statement(  # noqa: PLR0913 — every record the document is copied fr
     practice: PracticeBlock,
     timezone: tzinfo,
     generated_at: datetime,
+    outcome_known: bool = True,
 ) -> Statement:
     """The client's statement over their whole ledger.
 
@@ -197,6 +203,7 @@ def build_statement(  # noqa: PLR0913 — every record the document is copied fr
         client_name=client_name,
         practice=practice,
         lines=tuple(sorted(lines, key=_line_order)),
+        outcome_known=outcome_known,
         charge_ids=tuple(sorted(charge.id for charge in charges)),
         generated_at=generated_at,
     )
@@ -336,6 +343,7 @@ def _story(statement: Statement) -> list:
         Spacer(1, 6),
         Paragraph(_balance_line(statement.balance_cents), right),
         Spacer(1, 14),
+        *_outcome_caveat(statement, body),
         Paragraph(
             "Insurance paid is what the plan has paid so far, and adjusted is the amount the "
             "practice agreed not to bill. A visit still with the plan may change once it is "
@@ -344,6 +352,27 @@ def _story(statement: Statement) -> list:
         ),
         Paragraph(f"Generated {_stamp(statement.generated_at)}", small),
     ]
+
+
+#: Said to the CLIENT, above the small print, when the practice's remittances
+#: go somewhere else. Deliberately not in the footnote type: somebody about to
+#: write a cheque needs to read this before they write it.
+OUTCOME_CAVEAT = (
+    "Your plan's payments are processed outside this system, so any amount it has already "
+    "paid may not be shown here. Please check with the practice before paying this balance."
+)
+
+
+def _outcome_caveat(statement: Statement, style: ParagraphStyle) -> list:
+    """The line that stops a client paying a bill their insurer already settled.
+
+    Nothing at all when we do receive the remittances, which is the ordinary
+    case and needs no caveat — a document that hedges everything teaches its
+    reader to skip the hedge.
+    """
+    if statement.outcome_known:
+        return []
+    return [Paragraph(OUTCOME_CAVEAT, style), Spacer(1, 10)]
 
 
 def _balance_line(balance_cents: int) -> str:
