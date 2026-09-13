@@ -30,6 +30,10 @@ vi.mock("@/components/settings/useSettingsPreferences", () => ({
   useSettingsUserStatus: () => useSettingsUserStatus(),
 }))
 
+vi.mock("../NpiNameSearch", () => ({
+  NpiNameSearch: () => <div data-testid="npi-name-search" />,
+}))
+
 function found(overrides: Partial<NppesLookup> = {}): NppesLookup {
   return {
     npi: "1999999984",
@@ -42,6 +46,10 @@ function found(overrides: Partial<NppesLookup> = {}): NppesLookup {
     city: "DURHAM",
     state: "NC",
     postal_code: "27701",
+    license_number: "MFT001741",
+    license_state: "NC",
+    active: true,
+    entity_type: 1,
     ...overrides,
   }
 }
@@ -211,5 +219,112 @@ describe("when the registry is down", () => {
     render(<NpiLookupStep />)
 
     expect(screen.getByText(/you can carry on/i)).toBeInTheDocument()
+  })
+})
+
+describe("the three doors", () => {
+  it("offers a way through for someone who cannot recall her number", () => {
+    render(<NpiLookupStep />)
+
+    expect(screen.getByRole("button", { name: /don.t know my npi/i })).toBeInTheDocument()
+  })
+
+  it("offers a way through for someone who does not have one at all", () => {
+    render(<NpiLookupStep />)
+
+    expect(screen.getByRole("button", { name: /don.t have one/i })).toBeInTheDocument()
+  })
+
+  it("does not treat 'no NPI' as an error", async () => {
+    const user = userEvent.setup()
+    render(<NpiLookupStep />)
+
+    await user.click(screen.getByRole("button", { name: /don.t have one/i }))
+
+    // A licence does not come with an NPI, and plenty of cash-only therapists
+    // never applied. The screen is a next step, not a failure.
+    expect(screen.getByText(/you.ll need an npi/i)).toBeInTheDocument()
+    expect(screen.getByText(/free/i)).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: /apply at nppes/i })).toHaveAttribute(
+      "href",
+      "https://nppes.cms.hhs.gov/",
+    )
+  })
+
+  it("says the rest of her setup is not blocked on it", async () => {
+    const user = userEvent.setup()
+    render(<NpiLookupStep />)
+
+    await user.click(screen.getByRole("button", { name: /don.t have one/i }))
+
+    expect(screen.getByText(/nothing else in your setup is blocked/i)).toBeInTheDocument()
+  })
+})
+
+describe("when the registry answers with something that is probably not her", () => {
+  it("flags an organisation NPI rather than confirming it", () => {
+    // Tier 0 asks for an individual NPI and a billing NPI next to each other,
+    // so pasting the practice's number in is an easy mistake. Confirming it
+    // silently surfaces months later as a rejected claim.
+    useSettingsUserStatus.mockReturnValue({
+      data: { npi_number: "1999999984" },
+      isLoading: false,
+    })
+    useNpiLookup.mockReturnValue({
+      data: found({ entity_type: 2 }),
+      isLoading: false,
+      error: null,
+    })
+
+    render(<NpiLookupStep />)
+
+    expect(screen.getByText(/organisation.s npi rather than a person.s/i)).toBeInTheDocument()
+  })
+
+  it("flags a deactivated registration", () => {
+    useSettingsUserStatus.mockReturnValue({
+      data: { npi_number: "1999999984" },
+      isLoading: false,
+    })
+    useNpiLookup.mockReturnValue({
+      data: found({ active: false }),
+      isLoading: false,
+      error: null,
+    })
+
+    render(<NpiLookupStep />)
+
+    expect(screen.getByText(/deactivated/i)).toBeInTheDocument()
+  })
+
+  it("still lets her confirm — the registry is often just out of date", async () => {
+    const user = userEvent.setup()
+    const onConfirmed = vi.fn()
+    useSettingsUserStatus.mockReturnValue({
+      data: { npi_number: "1999999984" },
+      isLoading: false,
+    })
+    useNpiLookup.mockReturnValue({
+      data: found({ active: false }),
+      isLoading: false,
+      error: null,
+    })
+
+    render(<NpiLookupStep onConfirmed={onConfirmed} />)
+    await user.click(screen.getByRole("button", { name: /that.s me/i }))
+
+    expect(onConfirmed).toHaveBeenCalledWith("1999999984")
+  })
+
+  it("shows the licence the registry holds, so she need not retype it", () => {
+    useSettingsUserStatus.mockReturnValue({
+      data: { npi_number: "1999999984" },
+      isLoading: false,
+    })
+    useNpiLookup.mockReturnValue({ data: found(), isLoading: false, error: null })
+
+    render(<NpiLookupStep />)
+
+    expect(screen.getByText(/MFT001741/)).toBeInTheDocument()
   })
 })

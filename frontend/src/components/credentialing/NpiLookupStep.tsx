@@ -9,6 +9,8 @@ import { Input } from "@/components/ui/input"
 import { SetupStepHead } from "@/components/setup"
 import { useSettingsUserStatus } from "@/components/settings/useSettingsPreferences"
 import { useNpiLookup } from "@/hooks/useCredentialingChecklist"
+import { NoNpiYet } from "./NoNpiYet"
+import { NpiNameSearch } from "./NpiNameSearch"
 
 /**
  * Where credentialing starts: one number, and everything else follows from it.
@@ -45,6 +47,10 @@ export function NpiLookupStep({ onConfirmed }: { onConfirmed?: (npi: string) => 
   const [draft, setDraft] = useState("")
   const [submitted, setSubmitted] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
+  // Three doors, because three different people arrive here: she knows it, she
+  // cannot recall it, or she does not have one. The old screen offered only a
+  // text box, which silently assumed the first two were the only cases.
+  const [door, setDoor] = useState<"number" | "name" | "none">("number")
 
   // Derived, not synced. Her NPI arrives asynchronously, and the obvious shape
   // — an effect that copies it into state once it lands — is a cascading
@@ -104,8 +110,38 @@ export function NpiLookupStep({ onConfirmed }: { onConfirmed?: (npi: string) => 
               Look it up
             </Button>
           </div>
+
+          <div className="mt-3 flex flex-wrap gap-4 text-sm">
+            <button
+              type="button"
+              onClick={() => setDoor("name")}
+              className="border-0 bg-transparent p-0 text-stone-700 underline underline-offset-4 hover:text-stone-900"
+            >
+              I don&rsquo;t know my NPI
+            </button>
+            <button
+              type="button"
+              onClick={() => setDoor("none")}
+              className="border-0 bg-transparent p-0 text-stone-700 underline underline-offset-4 hover:text-stone-900"
+            >
+              I don&rsquo;t have one
+            </button>
+          </div>
         </div>
       )}
+
+      {showForm && door === "name" && (
+        <NpiNameSearch
+          onPick={(npi) => {
+            setDraft(npi)
+            setSubmitted(npi)
+            setEditing(false)
+            setDoor("number")
+          }}
+        />
+      )}
+
+      {showForm && door === "none" && <NoNpiYet />}
 
       {lookingUp && !showForm && (
         <p className="flex items-center gap-2 text-sm text-stone-600">
@@ -160,6 +196,16 @@ export function NpiLookupStep({ onConfirmed }: { onConfirmed?: (npi: string) => 
                   : null
               }
             />
+            <Fact
+              label="Licence"
+              value={
+                lookup.license_number
+                  ? `${lookup.license_number}${
+                      lookup.license_state ? ` (${lookup.license_state})` : ""
+                    }`
+                  : null
+              }
+            />
             <Fact label="Practice address" value={lookup.address_line1} />
             <Fact
               label="City"
@@ -168,6 +214,20 @@ export function NpiLookupStep({ onConfirmed }: { onConfirmed?: (npi: string) => 
               }
             />
           </dl>
+
+          {lookup.entity_type === 2 && (
+            <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              That&rsquo;s an organisation&rsquo;s NPI rather than a person&rsquo;s. Your
+              practice has one of those too, but payers identify <em>you</em> by your
+              individual NPI &mdash; it&rsquo;s worth checking you&rsquo;ve got the right one.
+            </p>
+          )}
+          {!lookup.active && (
+            <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              The registry has this registration as deactivated. If it should be
+              active, CMS is who reactivates it.
+            </p>
+          )}
 
           <div className="mt-4 flex items-center gap-2">
             <Button type="button" size="sm" onClick={() => onConfirmed?.(lookup.npi)}>

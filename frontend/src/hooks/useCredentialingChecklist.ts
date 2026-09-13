@@ -6,6 +6,7 @@ import {
   getChecklist,
   listConfirmations,
   lookUpNpi,
+  searchNpi,
   recordConfirmation,
   saveChecklistAnswers,
 } from "@/lib/api/credentialing"
@@ -13,6 +14,7 @@ import { queryKeys } from "@/lib/api/queryKeys"
 import type {
   ConfirmationPayload,
   ChecklistAnswers,
+  NppesSearchQuery,
 } from "@/types/credentialing"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
 
@@ -79,6 +81,22 @@ export function useNpiLookup(npi: string | null, token?: string) {
     queryKey: queryKeys.credentialing.nppes(npi ?? ""),
     queryFn: () => lookUpNpi(npi as string, token),
     enabled: ready,
+    retry: false,
+    staleTime: 5 * 60 * 1000,
+  })
+}
+
+/**
+ * Providers matching a name. Runs only once a surname has been submitted —
+ * searching per keystroke would hammer a public registry for no benefit.
+ */
+export function useNpiSearch(query: NppesSearchQuery | null, token?: string) {
+  return useAuthQuery({
+    queryKey: queryKeys.credentialing.nppesSearch(
+      query ?? { last_name: "" },
+    ),
+    queryFn: () => searchNpi(query as NppesSearchQuery, token),
+    enabled: query !== null && query.last_name.trim().length > 0,
     retry: false,
     staleTime: 5 * 60 * 1000,
   })

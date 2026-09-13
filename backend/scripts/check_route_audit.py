@@ -298,6 +298,7 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("patch", "/api/credentialing/checklist/answers"),  # saves her own scalar answers
         ("get", "/api/credentialing/checklist/sources"),  # static provenance vocabulary
         ("get", "/api/credentialing/nppes/{npi}"),  # public registry, her own record, no PHI
+        ("get", "/api/credentialing/nppes"),  # same registry, searched by name
     }
 )
 

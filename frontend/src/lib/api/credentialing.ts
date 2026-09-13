@@ -13,6 +13,8 @@ import type {
   ChecklistAnswers,
   ChecklistSurface,
   NppesLookup,
+  NppesSearchQuery,
+  NppesSearchResult,
 } from "@/types/credentialing"
 import { get, patch, put } from "./client"
 
@@ -79,4 +81,20 @@ export async function saveChecklistAnswers(
  */
 export async function lookUpNpi(npi: string, token?: string): Promise<NppesLookup> {
   return get<NppesLookup>(`/api/credentialing/nppes/${encodeURIComponent(npi)}`, token)
+}
+
+/**
+ * Find a provider by name, for someone who cannot recall ten digits.
+ *
+ * Surname is required; state is what makes the answer usable — a common name
+ * returns dozens of people nationally and one within a state.
+ */
+export async function searchNpi(
+  query: NppesSearchQuery,
+  token?: string,
+): Promise<NppesSearchResult> {
+  const params = new URLSearchParams({ last_name: query.last_name })
+  if (query.first_name) params.set("first_name", query.first_name)
+  if (query.state) params.set("state", query.state)
+  return get<NppesSearchResult>(`/api/credentialing/nppes?${params.toString()}`, token)
 }
