@@ -85,6 +85,11 @@ class NppesProvider:
     #: lookup, so a screen that does not check this would present a retired
     #: number as though it were hers today.
     active: bool = True
+    #: Whether she told the registry she practises as a sole proprietor. A
+    #: Tier-1 question we also ask her, so the registry knowing it is one
+    #: fewer thing to type — but it only counts as confirmed because the card
+    #: shows it, which is the rule the whole tier rests on.
+    sole_proprietor: bool | None = None
     #: ``1`` for an individual, ``2`` for an organisation. Tier 0 asks for both
     #: an individual NPI and a billing NPI, so pasting the practice's type-2
     #: number into the individual field is a mistake worth catching by name
@@ -146,6 +151,23 @@ def _person_name(basic: dict[str, Any]) -> str | None:
     return name or None
 
 
+def _yes_no(raw: Any) -> bool | None:
+    """The registry's YES/NO, or None when it says neither.
+
+    None is a real answer here and not a failure: plenty of records leave it
+    blank, and guessing "no" would put a wrong answer in front of her with the
+    confidence of a looked-up fact.
+    """
+    if not isinstance(raw, str):
+        return None
+    value = raw.strip().upper()
+    if value == "YES":
+        return True
+    if value == "NO":
+        return False
+    return None
+
+
 def _entity_type(record: dict[str, Any]) -> int | None:
     """1 for an individual, 2 for an organisation, None when unstated.
 
@@ -190,6 +212,7 @@ def _to_provider(npi: str, record: dict[str, Any]) -> NppesProvider:
         # worse answer than showing it.
         active=not isinstance(status, str) or status.strip().upper() != "D",
         entity_type=_entity_type(record),
+        sole_proprietor=_yes_no(basic.get("sole_proprietor")),
     )
 
 
