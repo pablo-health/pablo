@@ -9,10 +9,13 @@ import { RouteStep } from "./RouteStep"
 import {
   AlreadyPaneledDoneStep,
   BillingContactStep,
+  CredentialingRecordStep,
   PayersStep,
+  PlatformToOwnDoneStep,
   PracticeIdentityStep,
   PrivatePayDoneStep,
   RatesStep,
+  WantsPanelsDoneStep,
 } from "./SetupSteps"
 import type { PaymentRouteId, StepId } from "./routes"
 
@@ -46,7 +49,7 @@ export const STEP_BODIES: Record<StepId, ComponentType<StepBodyProps>> = {
   rates: () => <RatesStep />,
   payers: () => <PayersStep />,
   confirm: () => <NpiLookupStep />,
-  record: () => <NotBuiltYet label="Your record" />,
+  record: () => <CredentialingRecordStep />,
   done: ({ route }) => <DoneStep route={route} />,
 }
 
@@ -59,8 +62,8 @@ export const STEP_BODIES: Record<StepId, ComponentType<StepBodyProps>> = {
 const DONE_BODIES: Record<PaymentRouteId, ComponentType> = {
   private_pay: PrivatePayDoneStep,
   already_paneled: AlreadyPaneledDoneStep,
-  wants_panels: () => <NotBuiltYet label="Done" />,
-  platform_to_own: () => <NotBuiltYet label="Done" />,
+  wants_panels: WantsPanelsDoneStep,
+  platform_to_own: PlatformToOwnDoneStep,
 }
 
 function DoneStep({ route }: { route: PaymentRouteId | null }) {
