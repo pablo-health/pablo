@@ -76,7 +76,7 @@ test("she can answer it with her own NPI in one click, and that is what is store
   await setStructure(api, "ssn")
   await page.goto(IDENTITY)
 
-  await page.getByRole("button", { name: "Use my own NPI" }).click()
+  await page.getByRole("button", { name: "Use my individual NPI" }).click()
   await page.getByRole("button", { name: "Save" }).first().click()
 
   // The record, not the screen.
@@ -93,7 +93,7 @@ test("an entity is never offered her personal NPI", async ({ signedInPage: page,
   await page.goto(IDENTITY)
 
   await expect(page.getByLabel("Billing NPI")).toBeVisible()
-  await expect(page.getByRole("button", { name: "Use my own NPI" })).toBeHidden()
+  await expect(page.getByRole("button", { name: "Use my individual NPI" })).toBeHidden()
 })
 
 test("an entity's own NPI is what gets stored for it", async ({ signedInPage: page, api }) => {

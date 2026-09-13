@@ -160,7 +160,7 @@ describe("the billing NPI", () => {
     await user.type(screen.getByLabelText("Billing NPI"), "12345")
     await user.click(screen.getByRole("button", { name: "Save" }))
 
-    expect(screen.getByRole("alert")).toHaveTextContent("ten digits")
+    expect(screen.getByRole("alert")).toHaveTextContent("10-digit")
     expect(mockUpdate).not.toHaveBeenCalled()
   })
 
@@ -170,7 +170,7 @@ describe("the billing NPI", () => {
     render(<PracticeIdentityCard profile={profile()} />)
 
     await user.click(screen.getByRole("radio", { name: "SSN" }))
-    await user.click(screen.getByRole("button", { name: "Use my own NPI" }))
+    await user.click(screen.getByRole("button", { name: "Use my individual NPI" }))
 
     expect(screen.getByLabelText("Billing NPI")).toHaveValue("1999999984")
   })
@@ -185,7 +185,7 @@ describe("the billing NPI", () => {
 
     await user.click(screen.getByRole("radio", { name: "EIN" }))
 
-    expect(screen.queryByRole("button", { name: "Use my own NPI" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Use my individual NPI" })).not.toBeInTheDocument()
   })
 
   it("does not offer it when she has no NPI of her own", async () => {
@@ -194,7 +194,7 @@ describe("the billing NPI", () => {
 
     await user.click(screen.getByRole("radio", { name: "SSN" }))
 
-    expect(screen.queryByRole("button", { name: "Use my own NPI" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Use my individual NPI" })).not.toBeInTheDocument()
   })
 })
 
@@ -252,7 +252,7 @@ describe("what it says about how a practice is structured", () => {
     render(<PracticeIdentityCard profile={profile()} />)
 
     await user.click(screen.getByRole("radio", { name: "SSN" }))
-    await user.click(screen.getByRole("button", { name: "Use my own NPI" }))
+    await user.click(screen.getByRole("button", { name: "Use my individual NPI" }))
     await user.click(screen.getByRole("button", { name: "Save" }))
 
     expect(screen.queryByRole("alert")).not.toBeInTheDocument()

@@ -22,7 +22,7 @@
  */
 
 import { render, screen } from "@testing-library/react"
-import { describe, expect, it, vi } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { type CurrentStateId, stepsForState } from "../routes"
 import { STEP_BODIES } from "../stepBodies"
@@ -43,9 +43,32 @@ vi.mock("@/components/credentialing/CredentialingWizard", () => ({
 vi.mock("@/components/credentialing/NpiLookupStep", () => ({
   NpiLookupStep: () => <div />,
 }))
+let profile: Record<string, unknown> | null = null
+let clinician: Record<string, unknown> = { npi_number: null, taxonomy_code: null }
+
 vi.mock("@/hooks/useBillingProfile", () => ({
-  useBillingProfile: () => ({ data: undefined, isLoading: false }),
+  useBillingProfile: () => ({ data: profile, isLoading: false }),
 }))
+
+vi.mock("@/components/settings/useSettingsPreferences", () => ({
+  useSettingsUserStatus: () => ({ data: clinician }),
+}))
+
+/** A profile with nothing a claim is refused for. */
+function completeProfile() {
+  return {
+    legal_name: "Test Practice",
+    tax_id_last4: "9714",
+    tax_id_type: "ein",
+    address_line1: "1 Test St",
+    city: "Savannah",
+    state: "GA",
+    postal_code: "31401",
+    phone: "9125550123",
+    contact_email: "billing@example.com",
+    billing_npi: "1234567893",
+  }
+}
 
 const NOT_BUILT = /isn.t built yet/i
 
@@ -80,6 +103,14 @@ function props(selected: CurrentStateId[], wantsCredentialing: boolean) {
   }
 }
 
+// The readiness mocks are module-level, so without this one test's incomplete
+// profile becomes the next one's starting state — the same leak the wizard's
+// own e2e hit, one layer down.
+beforeEach(() => {
+  profile = completeProfile()
+  clinician = { npi_number: "1999999984", taxonomy_code: "101YM0800X" }
+})
+
 describe("every reachable step has a real screen", () => {
   it.each(CASES)("%s renders no placeholder on any step", (_label, state, wants) => {
     for (const step of stepsForState(state, wants)) {
@@ -103,6 +134,72 @@ describe("every reachable step has a real screen", () => {
   })
 })
 
+describe("an ending is honest about what is actually ready", () => {
+  // Reaching the last step proves nothing: every step in this wizard can be
+  // skipped, on purpose. So the completion wording has to ask what is on file
+  // rather than assume that arriving here means finished. The worst sentence
+  // on this screen is a readiness claim over an incomplete profile, because it
+  // sends somebody off to see clients believing it.
+
+  it("does not say a practice is set up to bill while the profile is incomplete", () => {
+    profile = { legal_name: null, tax_id_last4: null, tax_id_type: null }
+    const Body = STEP_BODIES.done
+    render(<Body {...props(["own_insurance"], false)} />)
+
+    expect(screen.queryByText("You're set up to bill")).not.toBeInTheDocument()
+    expect(screen.getByText("Your billing setup is underway")).toBeInTheDocument()
+  })
+
+  it("says it is set up to bill once nothing is missing", () => {
+    profile = completeProfile()
+    clinician = { npi_number: "1999999984", taxonomy_code: "101YM0800X" }
+    const Body = STEP_BODIES.done
+    render(<Body {...props(["own_insurance"], false)} />)
+
+    expect(screen.getByText("You're set up to bill")).toBeInTheDocument()
+  })
+
+  it("does not say direct payments are ready while the profile is incomplete", () => {
+    profile = { legal_name: null, tax_id_last4: null }
+    const Body = STEP_BODIES.done
+    render(<Body {...props(["self_pay"], false)} />)
+
+    expect(screen.getByText("Your direct-payment setup is saved")).toBeInTheDocument()
+    expect(screen.getByTestId("setup-incomplete")).toBeInTheDocument()
+  })
+
+  it("does not promise a superbill without an NPI to put on it", () => {
+    // A superbill carries the rendering provider's NPI and cannot be produced
+    // without one. Promising it is discovered when a client asks for their
+    // reimbursement paperwork.
+    profile = completeProfile()
+    clinician = { npi_number: null, taxonomy_code: null }
+    const Body = STEP_BODIES.done
+    render(<Body {...props(["self_pay"], false)} />)
+
+    expect(screen.queryByText(/needs a superbill/i)).not.toBeInTheDocument()
+  })
+
+  it("promises one when there is an NPI", () => {
+    profile = completeProfile()
+    clinician = { npi_number: "1999999984", taxonomy_code: "101YM0800X" }
+    const Body = STEP_BODIES.done
+    render(<Body {...props(["self_pay"], false)} />)
+
+    expect(screen.getByText(/needs a superbill/i)).toBeInTheDocument()
+  })
+
+  it("treats an unread profile as not ready rather than as ready", () => {
+    // Both reads are in flight for a moment. Claiming readiness we have not
+    // checked is the failure this whole section exists to avoid.
+    profile = null
+    const Body = STEP_BODIES.done
+    render(<Body {...props(["own_insurance"], false)} />)
+
+    expect(screen.queryByText("You're set up to bill")).not.toBeInTheDocument()
+  })
+})
+
 describe("what an ending may not claim", () => {
   it("does not tell an unpanelled clinician she is set up to bill", () => {
     // She has recorded her facts and applied to nobody. Saying otherwise would
@@ -120,7 +217,7 @@ describe("what an ending may not claim", () => {
     const Body = STEP_BODIES.done
     render(<Body {...props(["platform"], true)} />)
 
-    expect(screen.getByText(/prepares and tracks/i)).toBeInTheDocument()
+    expect(screen.getByText(/prepares and tracks applications/i)).toBeInTheDocument()
     expect(screen.queryByText(/put your applications in/i)).not.toBeInTheDocument()
   })
 
@@ -128,7 +225,7 @@ describe("what an ending may not claim", () => {
     const Body = STEP_BODIES.done
     render(<Body {...props(["platform"], true)} />)
 
-    expect(screen.getByText(/different things/i)).toBeInTheDocument()
+    expect(screen.getByText(/a later step/i)).toBeInTheDocument()
   })
 
   it("tells a platform clinician her current billing is untouched", () => {
@@ -137,7 +234,7 @@ describe("what an ending may not claim", () => {
     const Body = STEP_BODIES.done
     render(<Body {...props(["platform"], true)} />)
 
-    expect(screen.getByText(/changes how you.re billed today/i)).toBeInTheDocument()
+    expect(screen.getByText(/before pablo changes where a payer sends/i)).toBeInTheDocument()
   })
 
   it("never claims her record back from the platform", () => {

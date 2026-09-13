@@ -106,7 +106,7 @@ test("the general enroll action cannot redirect remittances on its own", async (
 
   const dialog = page.getByTestId("remittance-cutover")
   await expect(dialog).toBeVisible()
-  await expect(page.getByTestId("cutover-routing-unknown")).toContainText(/by NPI or by tax ID/i)
+  await expect(page.getByTestId("cutover-routing-unknown")).toContainText(/only for this NPI or for every clinician using this tax ID/i)
   await expect(page.getByTestId("cutover-confirm")).toBeDisabled()
 
   // Backing out files nothing.

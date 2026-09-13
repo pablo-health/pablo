@@ -18,7 +18,7 @@ import { useSettingsSaved } from "./SettingsSavedContext"
 import { useSettingsUserStatus } from "./useSettingsPreferences"
 
 export const BILLING_NPI_HELP =
-  "The NPI claims and enrollments are filed under. If you bill as a group or organization, that's its Type 2 NPI. If you're a sole proprietor, it's your own."
+  "The NPI used when you bill insurance. For a group or organization, this is usually its Type 2 NPI. A sole proprietor may use their individual NPI."
 
 const OWNED = ["legal_name", "billing_npi"] as const
 
@@ -104,7 +104,7 @@ export function PracticeIdentityCard({
 
   function validate(): string | null {
     if (billingNpi.trim() && !/^\d{10}$/.test(billingNpi.trim())) {
-      return "A billing NPI is ten digits."
+      return "Enter a 10-digit NPI."
     }
     const digits = taxId.replace(/\D/g, "")
     if (taxId.trim() && digits.length !== 9) return "A tax ID is nine digits."
@@ -196,10 +196,9 @@ export function PracticeIdentityCard({
             above takes it. */}
         {onPlatform && (
           <p className="text-[12.5px] text-muted-foreground" data-testid="billing-structure-note">
-            A separate practice billing identity &mdash; often an EIN and Type 2 NPI &mdash; can
-            keep independent claims and remittances clearly separated from platform billing.
-            Requirements vary by payer and practice structure, so Pablo will ask for this only when
-            your setup needs it.
+            An EIN and Type 2 NPI can help keep your independent billing separate from billing
+            handled by a service. They aren&rsquo;t required for every practice. Pablo will ask for
+            them only if your billing setup needs them.
           </p>
         )}
 
@@ -222,10 +221,10 @@ export function PracticeIdentityCard({
               className="h-auto p-0 text-[12.5px] underline underline-offset-4"
               onClick={() => setBillingNpi(clinicianNpi)}
             >
-              Use my own NPI
+              Use my individual NPI
             </Button>{" "}
-            — you file under your own tax ID, so you bill as yourself. Nothing is saved until you
-            press Save.
+            — use this if you bill as yourself rather than through an organization. Nothing is
+            saved until you press Save.
           </p>
         )}
 

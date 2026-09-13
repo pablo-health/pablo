@@ -41,7 +41,7 @@ export function RouteStep({
       <SetupStepHead
         eyebrow="Step 1"
         title="How do clients pay you today?"
-        lede="Pick everything that applies. This just decides what we set up first — you can add the rest any time."
+        lede="Choose all that apply. You can change this later."
       />
 
       <div className="space-y-2">
@@ -90,11 +90,15 @@ export function RouteStep({
         <Button size="sm" onClick={onContinue} disabled={nothingPicked}>
           Continue
         </Button>
-        <span className="text-[12.5px] text-muted-foreground">
-          {nothingPicked
-            ? "Pick at least one, or tell us you're not seeing clients yet."
-            : "Checked everything that applies?"}
-        </span>
+        {/* Only when there is something to say. A nudge beside a ready button
+            ("checked everything?") creates doubt without helping anyone decide
+            — the next screen is a summary, which is where a missed option is
+            actually noticed. */}
+        {nothingPicked && (
+          <span className="text-[12.5px] text-muted-foreground">
+            Choose at least one option, or tell us you&rsquo;re not seeing clients yet.
+          </span>
+        )}
       </div>
     </div>
   )

@@ -113,9 +113,9 @@ test("a practice with nothing on file sets itself up through the wizard", async 
     await page.goto("/dashboard/billing/setup")
 
     // Screen 1. Private pay is the shortest honest path through setup.
-    await page.getByLabel("Clients pay me themselves").check()
+    await page.getByLabel("Clients pay me directly").check()
     await page.getByRole("button", { name: "Continue" }).click()
-    await page.getByRole("button", { name: "Set up billing" }).click()
+    await page.getByRole("button", { name: "Continue" }).click()
 
     // Screen 2, on every route including this one: the NPI lookup. She bills
     // nobody and still needs it, because a superbill carries the rendering
@@ -160,7 +160,7 @@ test("a practice with nothing on file sets itself up through the wizard", async 
     await expect(page.getByRole("heading", { name: "What you charge" })).toBeVisible()
     await page.getByRole("button", { name: "Continue" }).click()
 
-    await expect(page.getByRole("heading", { name: "You're set up to get paid" })).toBeVisible()
+    await expect(page.getByRole("heading", { name: /ready to take direct payments|direct-payment setup is saved/i })).toBeVisible()
     await page.getByRole("button", { name: "Finish", exact: true }).click()
     await page.waitForURL(/\/dashboard\/billing$/)
 
@@ -195,9 +195,9 @@ test("setup resumes where a new therapist left off", async ({ browser }) => {
         response.ok() &&
         response.request().postDataJSON()?.billing_setup_step === "confirm",
     )
-    await page.getByLabel("Clients pay me themselves").check()
+    await page.getByLabel("Clients pay me directly").check()
     await page.getByRole("button", { name: "Continue" }).click()
-    await page.getByRole("button", { name: "Set up billing" }).click()
+    await page.getByRole("button", { name: "Continue" }).click()
     await remembered
 
     // Leave, the way closing a tab does.

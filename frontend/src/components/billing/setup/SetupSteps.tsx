@@ -76,7 +76,7 @@ export function RatesStep() {
  * It runs in two layers: the practice registers once with the clearinghouse
  * (``ensure_provider_record``, which needs a complete billing profile — hence
  * the practice steps before this one), and then one request per payer, and
- * sometimes several per payer, because a payer can enrol claims, remittance
+ * sometimes several per payer, because a payer can enroll claims, remittance
  * and eligibility separately. None of it can be filed until she says who she
  * bills, which is what this screen asks.
  */

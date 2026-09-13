@@ -18,12 +18,32 @@ import { expect, test } from "../fixtures/auth"
 
 test("an already-paneled practice reaches the payer screen and finishes", async ({
   signedInPage: page,
+  api,
 }) => {
+  // This test walks the path without filling the forms on the way, which is
+  // fine for what it proves — but the ending now reports actual readiness, and
+  // a profile with gaps honestly says "underway" rather than "set up to bill".
+  // So the readiness is arranged up front, deliberately, rather than the
+  // assertion being softened to accept either answer.
+  await api.patch("/api/practice/billing-profile", {
+    legal_name: "Already Paneled LLC",
+    billing_npi: "1234567893",
+    tax_id: "123456789",
+    tax_id_type: "ein",
+    address_line1: "1 Panel St",
+    city: "Savannah",
+    state: "GA",
+    postal_code: "31401",
+    phone: "9125550123",
+    contact_email: "paneled@example.com",
+  })
+  await api.patch("/api/users/me/professional-info", { npi_number: "1999999984" })
+
   await page.goto("/dashboard/billing/setup")
 
-  await page.getByLabel("Insurance I bill myself").check()
+  await page.getByLabel("I bill insurance myself").check()
   await page.getByRole("button", { name: "Continue" }).click()
-  await page.getByRole("button", { name: "Set up billing" }).click()
+  await page.getByRole("button", { name: "Continue" }).click()
 
   // The lookup leads every route.
   await expect(page.getByRole("heading", { name: "Let's start with your NPI" })).toBeVisible()

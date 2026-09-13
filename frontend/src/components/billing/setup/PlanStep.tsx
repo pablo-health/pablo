@@ -13,9 +13,9 @@ import type { CurrentStateId } from "./routes"
  * her own.
  */
 const PLAN_LINES: Record<CurrentStateId, string> = {
-  self_pay: "Card and bank payments from clients, and superbills when they need them",
-  platform: "Your own practice details, kept separate from the service that pays you",
-  own_insurance: "Claims to the insurers you're already in-network with",
+  self_pay: "Payments from clients, plus superbills when a client needs one",
+  platform: "Billing for work you do outside the service",
+  own_insurance: "Claims for contracts you already have in your own name",
 }
 
 /**
@@ -51,8 +51,8 @@ export function PlanStep({
     <div className="space-y-5">
       <SetupStepHead
         eyebrow="Step 2"
-        title="Here's what we'll set up"
-        lede="Based on what you just told us. Nothing is final — you can change any of it later."
+        title="What Pablo will help you set up"
+        lede="Based on what you chose. You can change this later."
       />
 
       <ul className="space-y-2 text-sm text-neutral-700" data-testid="plan-lines">
@@ -63,13 +63,14 @@ export function PlanStep({
         ))}
       </ul>
 
-      {/* Said plainly, and only to someone it applies to. The reassurance is
-          the point: the commonest fear about pointing a second system at your
-          billing is that it will quietly start rerouting money. */}
+      {/* One sentence, and deliberately not a list.
+          It used to name payer enrollment, payment redirects and billing
+          identifiers — three things nothing on this screen touches. Reciting
+          what will NOT happen introduces machinery the reader had not thought about
+          and makes the safe default sound dangerous. */}
       {onPlatform && (
         <p className="text-[12.5px] text-muted-foreground" data-testid="platform-untouched">
-          Nothing here changes how the service that pays you works today. We won&rsquo;t enrol you
-          with payers, redirect any payment, or ask for anything only an independent biller needs.
+          This won&rsquo;t change how the service handles your current clients or payments.
         </p>
       )}
 
@@ -83,21 +84,27 @@ export function PlanStep({
         />
         <span>
           <span className="block text-sm font-medium text-neutral-900">
-            I also want to take insurance under my own contracts
+            I want to apply for my own insurance contracts
           </span>
+          {/* "Nothing starts until you're ready" was reassuring in tone and
+              unclear about what "starts" — so it said nothing and sounded like
+              it said something. What matters is that the service keeps
+              working, which this says outright. */}
           <span className="mt-1 block text-sm text-muted-foreground">
-            Pablo will help you apply and keep track of it. It takes months, nothing starts until
-            you&rsquo;re ready, and none of it changes how you&rsquo;re paid in the meantime.
+            Pablo can help prepare and track your applications while you keep using the service.
           </span>
         </span>
       </label>
 
       <div className="flex items-center gap-3 border-t border-border pt-4">
+        {/* Not "Set up billing". Some people reach this screen only to prepare
+            a credentialing record, and naming the button after the other
+            person's goal tells them they are in the wrong place. */}
         <Button size="sm" onClick={onContinue}>
-          Set up billing
+          Continue
         </Button>
         <Button type="button" variant="link" size="sm" className="h-auto p-0" onClick={onBack}>
-          Something missing? Go back.
+          Go back
         </Button>
       </div>
     </div>

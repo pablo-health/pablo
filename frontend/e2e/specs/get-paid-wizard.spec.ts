@@ -24,9 +24,9 @@ import { expect, test } from "../fixtures/auth"
 
 const SETUP_PATH = "/dashboard/billing/setup"
 
-const SELF_PAY = "Clients pay me themselves"
-const PLATFORM = /Headway, Alma, Rula/
-const OWN_INSURANCE = "Insurance I bill myself"
+const SELF_PAY = "Clients pay me directly"
+const PLATFORM = /a service like Headway, Alma, or Rula/
+const OWN_INSURANCE = "I bill insurance myself"
 
 /**
  * The clinician is shared across this file's tests, and the wizard remembers
@@ -74,11 +74,11 @@ test("the platform case walks end to end and finishes", async ({ signedInPage: p
 
   // Screen 2 is a confirmation, not a question — and it says plainly that her
   // existing arrangement is not being touched.
-  await expect(page.getByText("Here's what we'll set up")).toBeVisible()
+  await expect(page.getByText("What Pablo will help you set up")).toBeVisible()
   await expect(page.getByTestId("platform-untouched")).toBeVisible()
   await expect(page.getByTestId("wants-credentialing")).not.toBeChecked()
 
-  await page.getByRole("button", { name: "Set up billing" }).click()
+  await page.getByRole("button", { name: "Continue" }).click()
 
   // The shared spine: every practice needs these, whoever pays her.
   await expect(page.getByText("What we found")).toBeVisible()
@@ -88,7 +88,7 @@ test("the platform case walks end to end and finishes", async ({ signedInPage: p
   }
 
   // A real finish, not an empty list.
-  await expect(page.getByText(/Set up alongside|alongside the service/i)).toBeVisible()
+  await expect(page.getByText(/Set up for work outside the service/i)).toBeVisible()
 
   await page.screenshot({
     path: "e2e/test-results/get-paid-platform-done.png",
@@ -106,7 +106,7 @@ test("a platform clinician is never asked for what only an independent biller ne
   await page.getByLabel(PLATFORM).check()
   await page.getByLabel(SELF_PAY).check()
   await page.getByRole("button", { name: "Continue" }).click()
-  await page.getByRole("button", { name: "Set up billing" }).click()
+  await page.getByRole("button", { name: "Continue" }).click()
 
   for (let i = 0; i < 5; i++) {
     await expect(page.getByRole("heading", { name: "Payers" })).toBeHidden()
@@ -126,11 +126,11 @@ test("her answers survive closing the tab", async ({ signedInPage: page }) => {
   await page.getByLabel(PLATFORM).check()
   await page.getByLabel(SELF_PAY).check()
   await page.getByRole("button", { name: "Continue" }).click()
-  await expect(page.getByText("Here's what we'll set up")).toBeVisible()
+  await expect(page.getByText("What Pablo will help you set up")).toBeVisible()
 
   await page.reload()
 
-  await expect(page.getByText("Here's what we'll set up")).toBeVisible()
+  await expect(page.getByText("What Pablo will help you set up")).toBeVisible()
   await expect(page.getByTestId("platform-untouched")).toBeVisible()
 })
 
@@ -143,7 +143,7 @@ test("asking for credentialing adds the screens it needs, and only then", async 
   await page.getByRole("button", { name: "Continue" }).click()
 
   await page.getByTestId("wants-credentialing").check()
-  await page.getByRole("button", { name: "Set up billing" }).click()
+  await page.getByRole("button", { name: "Continue" }).click()
 
   // Payers and the credentialing record appear now, because she asked — not
   // because she is on a platform.
@@ -169,7 +169,7 @@ test("a therapist who only takes cash walks the same, shorter path", async ({
   await page.getByRole("button", { name: "Continue" }).click()
   await expect(page.getByTestId("platform-untouched")).toBeHidden()
 
-  await page.getByRole("button", { name: "Set up billing" }).click()
+  await page.getByRole("button", { name: "Continue" }).click()
 
   await expect(page.getByRole("heading", { name: "Payers" })).toBeHidden()
 })
@@ -181,7 +181,7 @@ test("not seeing clients yet is an answer, not a dead end", async ({ signedInPag
 
   await page.getByRole("button", { name: /not seeing clients yet/i }).click()
 
-  await expect(page.getByText("Here's what we'll set up")).toBeVisible()
+  await expect(page.getByText("What Pablo will help you set up")).toBeVisible()
 })
 
 test("someone already billing insurance herself is asked about payers", async ({
@@ -191,7 +191,7 @@ test("someone already billing insurance herself is asked about payers", async ({
 
   await page.getByLabel(OWN_INSURANCE).check()
   await page.getByRole("button", { name: "Continue" }).click()
-  await page.getByRole("button", { name: "Set up billing" }).click()
+  await page.getByRole("button", { name: "Continue" }).click()
 
   let sawPayers = false
   for (let i = 0; i < 8; i++) {
