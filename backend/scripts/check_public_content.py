@@ -66,7 +66,23 @@ def added_lines(diff: str) -> str:
 
 
 def _git(args: list[str]) -> str:
-    return subprocess.run(["git", *args], capture_output=True, text=True, check=False).stdout
+    """Run git and decode its output, tolerating bytes that are not UTF-8.
+
+    Decoding is explicit rather than ``text=True`` because of the ``--text``
+    flag above: it makes git emit a binary file's RAW BYTES as though they were
+    text, so any committed PDF, image or font hands this script a stream that
+    is not valid UTF-8. ``text=True`` raises ``UnicodeDecodeError`` on the
+    first such byte and the check dies without inspecting anything.
+
+    That is the worst of the three possible behaviours. Dropping ``--text``
+    would restore the blindness the docstring above explains was once used to
+    hide a real leak; crashing turns a content gate into an outage. Replacing
+    undecodable bytes keeps the whole stream in view, and the strings being
+    searched for are ASCII, so a forbidden one still matches even when the
+    binary noise around it is mangled.
+    """
+    out = subprocess.run(["git", *args], capture_output=True, check=False).stdout
+    return out.decode("utf-8", errors="replace")
 
 
 def main() -> int:
