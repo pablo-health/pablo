@@ -22,6 +22,7 @@ import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { AddPayerFromDirectory } from "@/components/settings/AddPayerFromDirectory"
 import { EnrollmentTaskForm } from "@/components/settings/EnrollmentTaskForm"
 import { SettingsCard } from "@/components/settings/ui"
 import {
@@ -280,20 +281,22 @@ export function PayersCard() {
   const [openId, setOpenId] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
   const [newName, setNewName] = useState("")
-  const [newPayerId, setNewPayerId] = useState("")
 
   const payers = data?.data ?? []
 
-  function handleAdd() {
-    const name = newName.trim()
-    const payerId = newPayerId.trim()
+  /**
+   * Add a payer, from wherever its name and id came from.
+   *
+   * The directory is the ordinary path and hand-entry is the fallback, but both
+   * create the same row the same way — a second create path would be a second
+   * set of rules about what a payer row is.
+   */
+  function handleAdd(name: string, payerId: string) {
     if (!name || !payerId) return
     createPayer.mutate(
       { name, payer_id: payerId },
       {
         onSuccess: (created) => {
-          setNewName("")
-          setNewPayerId("")
           setAdding(false)
           setOpenId(created.id)
         },
@@ -326,34 +329,12 @@ export function PayersCard() {
           ))}
         </ul>
         {adding ? (
-          <div className="mt-2 grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
-            <div className="grid gap-1.5">
-              <Label htmlFor="new-payer-name">Name</Label>
-              <Input
-                id="new-payer-name"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                placeholder="e.g. Aetna"
-              />
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="new-payer-id">Payer ID</Label>
-              <Input
-                id="new-payer-id"
-                value={newPayerId}
-                onChange={(e) => setNewPayerId(e.target.value)}
-                placeholder="e.g. 60054"
-              />
-            </div>
-            <div className="flex gap-2">
-              <Button type="button" size="sm" onClick={handleAdd} disabled={createPayer.isPending}>
-                Add
-              </Button>
-              <Button type="button" size="sm" variant="outline" onClick={() => setAdding(false)}>
-                Cancel
-              </Button>
-            </div>
-          </div>
+          <AddPayerFromDirectory
+            pending={createPayer.isPending}
+            onPick={(match) => handleAdd(match.name, match.payer_id)}
+            onManual={(name, payerId) => handleAdd(name, payerId)}
+            onCancel={() => setAdding(false)}
+          />
         ) : (
           <div className="mt-2">
             <Button type="button" size="sm" onClick={() => setAdding(true)}>

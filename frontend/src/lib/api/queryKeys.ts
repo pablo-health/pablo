@@ -298,6 +298,9 @@ const baseQueryKeys = {
 
   // The practice's insurance payer list (Settings and the coverage picker)
   payers: {
+    // Keyed by the term: a second search must not read the first
+    // search's answer out of the cache.
+    directory: (query: string) => ["payers", "directory", query] as const,
     all: ["payers"] as const,
     list: () => [...baseQueryKeys.payers.all, "list"] as const,
     enrollments: (payerRowId: string) =>

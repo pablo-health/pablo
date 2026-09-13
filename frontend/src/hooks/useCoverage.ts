@@ -28,6 +28,7 @@ import {
   updateCoverage,
   updatePayer,
   verifyCoverage,
+  searchPayerDirectory,
 } from "@/lib/api/coverage"
 import { queryKeys } from "@/lib/api/queryKeys"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
@@ -168,5 +169,23 @@ export function useVerifyCoverage(token?: string) {
   return useAuthMutation<CoverageResponse, { patientId: string }>({
     mutationFn: ({ patientId }) => verifyCoverage(patientId, token),
     invalidateKeys: ({ patientId }) => [queryKeys.coverage.byPatient(patientId)],
+  })
+}
+
+/**
+ * Payers matching a name in the clearinghouse directory.
+ *
+ * Runs only once a term has been submitted — searching per keystroke would ask
+ * a vendor directory a question per character for no benefit. `retry: false`
+ * because an unreachable clearinghouse comes back as `unavailable: true`, which
+ * is an answer the screen renders rather than a failure worth repeating.
+ */
+export function usePayerDirectory(query: string | null, token?: string) {
+  return useAuthQuery({
+    queryKey: queryKeys.payers.directory(query ?? ""),
+    queryFn: () => searchPayerDirectory(query as string, token),
+    enabled: query !== null && query.trim().length > 0,
+    retry: false,
+    staleTime: 5 * 60 * 1000,
   })
 }
