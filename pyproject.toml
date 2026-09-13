@@ -178,6 +178,7 @@ types-redis = "^4.6.0"
 types-python-dateutil = "^2.9.0"
 mcp = "^1.28.1"
 testcontainers = {version = "^4.13.0", extras = ["postgres"]}
+pytest-timeout = "^2.4.0"
 
 [build-system]
 requires = ["poetry-core"]
@@ -412,6 +413,13 @@ python_functions = ["test_*"]
 addopts = [
     "-v",
     "--strict-markers",
+    # A blocked test is otherwise indistinguishable from a slow one, and the
+    # run never ends: a PDF extraction test was observed sitting at 0% CPU
+    # indefinitely, which left `make check` unable to finish locally. Fail
+    # loud with a traceback naming the test instead. Generous on purpose --
+    # the slowest honest unit test is well under this. faulthandler_timeout
+    # is NOT a substitute: it dumps a traceback but neither fails nor kills.
+    "--timeout=60",
     "--cov=backend/app",
     "--cov-report=term-missing",
     "--cov-report=html",
