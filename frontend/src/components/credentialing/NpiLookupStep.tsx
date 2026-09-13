@@ -75,7 +75,7 @@ export function NpiLookupStep({ onConfirmed }: { onConfirmed?: (npi: string) => 
       <SetupStepHead
         eyebrow="Credentialing"
         title="Let's start with your NPI"
-        lede="Payers identify you by it, and the public registry already holds most of what an application asks for. We'll look it up so you don't have to type it."
+        lede="It goes on every claim, and on any superbill your client files herself. The public registry already holds most of what those need, so we'll look it up rather than ask you to type it."
       />
 
       {userLoading && submitted === null ? (

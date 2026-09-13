@@ -114,12 +114,23 @@ const PAYER_STEP: SetupStep = {
   caption: "Who you can bill, and who you can't yet.",
 }
 /**
- * The lookup that fills in the rest, which is why it goes first.
+ * The lookup that fills in the rest, which is why it goes first — on every
+ * route, including private pay.
  *
  * The registry holds her legal name, credential, taxonomy, licence and
  * practice address — most of what the practice steps ask her to type. Asking
  * for those first and looking her up afterwards would mean making her type
  * what we were about to find, which is the product's whole argument backwards.
+ *
+ * Private pay needs it too, which is easy to miss. ``superbill.py`` lists
+ * ``npi`` in ``_RENDERING_PROVIDER_REQUIRED``: without one we cannot produce a
+ * superbill at all. A clinician who bills nobody still hands her client a
+ * document that carries it, and finding that out when the client asks for her
+ * reimbursement paperwork is the worst moment to find it out.
+ *
+ * It is not a gate anywhere. The screen answers "I don't have one" as a first
+ * class outcome and lets her carry on, so asking early costs a clinician who
+ * genuinely has no NPI one screen she can wave past.
  */
 const LOOKUP_STEP: SetupStep = {
   id: "confirm",
@@ -140,23 +151,28 @@ const RECORD_STEP: SetupStep = {
  * three entries the moment she clicked would make the choice feel like it cost
  * her something.
  *
- * The credentialing routes put the NPI lookup BEFORE the practice steps, and
- * that ordering is the point rather than a detail. The registry holds her
- * legal name, credential, taxonomy, licence and practice address; the practice
- * steps ask for most of that. Looking her up first turns three forms into three
- * confirmations. Looking her up afterwards — where this step used to sit —
- * meant asking her to type what we were a click away from knowing.
+ * Every route puts the NPI lookup BEFORE the practice steps, and that ordering
+ * is the point rather than a detail. The registry holds her legal name,
+ * credential, taxonomy, licence and practice address; the practice steps ask
+ * for most of that. Looking her up first turns three forms into three
+ * confirmations. Looking her up afterwards — where this step used to sit, on
+ * the one route that had it — meant asking her to type what we were a click
+ * away from knowing.
  *
- * A clinician with no NPI meets that fact first this way, which reads as a wall
- * and is the honest cost of the order. It is still kinder than discovering it
- * after filling in three screens.
+ * Every route, including private pay, and including the clinician who is
+ * already paneled: she files claims herself and her individual NPI is the
+ * rendering provider on each one. See LOOKUP_STEP for why private pay needs it
+ * even though she bills nobody.
  *
- * Private pay never sees it: she is not being credentialed, and a registry
- * lookup would be a question about a number she may not have and does not need.
+ * A clinician with no NPI meets that fact early this way. That is the honest
+ * cost of the order, and it is bounded: the screen treats "I don't have one" as
+ * an answer rather than an error, so she waves past it.
  */
 export function stepsForRoute(route: PaymentRouteId | null): readonly SetupStep[] {
   if (route === null) return SHARED_STEPS
-  if (route === "private_pay") return [...SHARED_STEPS, DONE_STEP]
-  if (route === "already_paneled") return [...SHARED_STEPS, PAYER_STEP, DONE_STEP]
-  return [ROUTE_STEP, LOOKUP_STEP, ...PRACTICE_STEPS, PAYER_STEP, RECORD_STEP, DONE_STEP]
+
+  const opening = [ROUTE_STEP, LOOKUP_STEP, ...PRACTICE_STEPS]
+  if (route === "private_pay") return [...opening, DONE_STEP]
+  if (route === "already_paneled") return [...opening, PAYER_STEP, DONE_STEP]
+  return [...opening, PAYER_STEP, RECORD_STEP, DONE_STEP]
 }
