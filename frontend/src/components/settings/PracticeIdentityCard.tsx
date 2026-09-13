@@ -7,6 +7,7 @@ import { SegmentedControl, SettingsCard } from "@/components/settings/ui"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useUpdateBillingProfile } from "@/hooks/useBillingProfile"
+import { usePreferences } from "@/hooks/usePreferences"
 import type {
   BillingProfileResponse,
   TaxIdType,
@@ -45,6 +46,7 @@ export function PracticeIdentityCard({
   const update = useUpdateBillingProfile()
   const { flashSaved } = useSettingsSaved()
   const { data: user } = useSettingsUserStatus()
+  const { data: preferences } = usePreferences()
   const [legalName, setLegalName] = useState(profile.legal_name ?? "")
   const [billingNpi, setBillingNpi] = useState(profile.billing_npi ?? "")
   const [taxIdType, setTaxIdType] = useState<TaxIdType | "">(profile.tax_id_type ?? "")
@@ -73,6 +75,10 @@ export function PracticeIdentityCard({
   // that she bills as herself. Under an EIN the practice is the biller and her
   // own NPI would be the wrong answer, so we say nothing rather than guess.
   const canPrefillNpi = Boolean(clinicianNpi) && !billingNpi.trim() && taxIdType === "ssn"
+
+  // Whether she works through a platform, which decides only whether the
+  // billing-structure note below has anything to say to her.
+  const onPlatform = (preferences?.billing_setup_state ?? []).includes("platform")
 
   const profileName = practiceDetails?.name?.trim() ?? ""
   const canPrefill = Boolean(profileName) && !legalName.trim()
@@ -178,6 +184,24 @@ export function PracticeIdentityCard({
         <p className="text-[12.5px] text-muted-foreground">
           Your tax ID is encrypted. After you save it, only the last four digits will be shown.
         </p>
+
+        {/* Shown to a clinician working through a platform, because that is
+            who the sentence is about — "separated from platform billing" means
+            nothing to anyone else, and a recommendation nobody can act on
+            reads as a requirement.
+
+            It RECOMMENDS and does not require. Nothing here refuses to
+            continue without an EIN or a Type 2 NPI: a sole proprietor billing
+            under her own NPI and SSN is a supported structure, and the field
+            above takes it. */}
+        {onPlatform && (
+          <p className="text-[12.5px] text-muted-foreground" data-testid="billing-structure-note">
+            A separate practice billing identity &mdash; often an EIN and Type 2 NPI &mdash; can
+            keep independent claims and remittances clearly separated from platform billing.
+            Requirements vary by payer and practice structure, so Pablo will ask for this only when
+            your setup needs it.
+          </p>
+        )}
 
         <Field id="billing-npi" label="Billing NPI" help={BILLING_NPI_HELP}>
           <Input

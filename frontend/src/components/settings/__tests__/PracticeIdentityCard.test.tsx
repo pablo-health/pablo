@@ -37,6 +37,12 @@ vi.mock("../useSettingsPreferences", () => ({
   useSettingsUserStatus: () => ({ data: { npi_number: clinicianNpi } }),
 }))
 
+let billingSetupState: string[] = []
+
+vi.mock("@/hooks/usePreferences", () => ({
+  usePreferences: () => ({ data: { billing_setup_state: billingSetupState } }),
+}))
+
 function profile(overrides: Partial<BillingProfileResponse> = {}): BillingProfileResponse {
   return {
     legal_name: null,
@@ -71,6 +77,7 @@ const onFile = () =>
 beforeEach(() => {
   vi.clearAllMocks()
   clinicianNpi = null
+  billingSetupState = []
 })
 
 describe("the tax ID", () => {
@@ -213,5 +220,45 @@ describe("saving its own half only", () => {
     await user.clear(screen.getByLabelText("Legal business name"))
 
     expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument()
+  })
+})
+
+describe("what it says about how a practice is structured", () => {
+  it("offers the separate-identity note to someone working through a platform", () => {
+    billingSetupState = ["platform", "self_pay"]
+    render(<PracticeIdentityCard profile={profile()} />)
+
+    expect(screen.getByTestId("billing-structure-note")).toBeInTheDocument()
+  })
+
+  it("says nothing about platform billing to someone not on a platform", () => {
+    // The sentence is about keeping independent claims separate from platform
+    // billing. To anyone else it is a recommendation they cannot act on, which
+    // is how a recommendation starts reading as a requirement.
+    billingSetupState = ["self_pay"]
+    render(<PracticeIdentityCard profile={profile()} />)
+
+    expect(screen.queryByTestId("billing-structure-note")).not.toBeInTheDocument()
+  })
+
+  it("recommends without requiring", async () => {
+    // The property that matters, and the one a helpful-sounding note is most
+    // likely to erode: a sole proprietor billing under her own NPI and SSN is
+    // a supported structure. Nothing here may refuse her for lacking an EIN or
+    // a Type 2 NPI.
+    clinicianNpi = "1999999984"
+    billingSetupState = ["platform"]
+    const user = userEvent.setup()
+    render(<PracticeIdentityCard profile={profile()} />)
+
+    await user.click(screen.getByRole("radio", { name: "SSN" }))
+    await user.click(screen.getByRole("button", { name: "Use my own NPI" }))
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument()
+    expect(mockUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ billing_npi: "1999999984" }),
+      expect.anything(),
+    )
   })
 })
