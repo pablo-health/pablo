@@ -44,7 +44,7 @@ interface BillingProfile {
 }
 
 interface Preferences {
-  billing_setup_route?: string | null
+  billing_setup_state?: string[] | null
   billing_setup_step?: string | null
   billing_setup_complete?: boolean
 }
@@ -113,7 +113,9 @@ test("a practice with nothing on file sets itself up through the wizard", async 
     await page.goto("/dashboard/billing/setup")
 
     // Screen 1. Private pay is the shortest honest path through setup.
-    await page.getByText("My clients pay me directly").click()
+    await page.getByLabel("Clients pay me themselves").check()
+    await page.getByRole("button", { name: "Continue" }).click()
+    await page.getByRole("button", { name: "Set up billing" }).click()
 
     // Screen 2, on every route including this one: the NPI lookup. She bills
     // nobody and still needs it, because a superbill carries the rendering
@@ -173,7 +175,7 @@ test("a practice with nothing on file sets itself up through the wizard", async 
     expect(after.contact_email).toBe("new@example.com")
 
     const preferences = await api.get<Preferences>("/api/users/me/preferences")
-    expect(preferences.billing_setup_route).toBe("private_pay")
+    expect(preferences.billing_setup_state).toEqual(["self_pay"])
     expect(preferences.billing_setup_complete).toBe(true)
   })
 })
@@ -189,7 +191,9 @@ test("setup resumes where a new therapist left off", async ({ browser }) => {
         response.request().method() === "PUT" &&
         response.ok(),
     )
-    await page.getByText("My clients pay me directly").click()
+    await page.getByLabel("Clients pay me themselves").check()
+    await page.getByRole("button", { name: "Continue" }).click()
+    await page.getByRole("button", { name: "Set up billing" }).click()
     await remembered
 
     // Leave, the way closing a tab does.
@@ -200,6 +204,6 @@ test("setup resumes where a new therapist left off", async ({ browser }) => {
     // That step is the NPI lookup now: it leads every route, so answering the
     // fork lands her there rather than on the first practice form.
     await expect(page.getByRole("heading", { name: "Let's start with your NPI" })).toBeVisible()
-    await expect(page.getByText("How do you get paid today?")).toBeHidden()
+    await expect(page.getByText("How do clients pay you today?")).toBeHidden()
   })
 })

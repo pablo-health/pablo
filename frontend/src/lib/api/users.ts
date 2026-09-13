@@ -280,21 +280,38 @@ export interface UserPreferences {
   /** The same, for billing setup. Set on finish AND on "finish later": a
    * first-visit surface she cannot leave is a trap, not a wizard. */
   billing_setup_complete?: boolean
-  /** Her answer to "how do you get paid today?", so a resumed wizard opens on
-   * the branch she chose rather than back at the fork. */
+  /** SUPERSEDED by `billing_setup_state`. Read only to seed the checklist for
+   * a clinician who answered the old single-select question, so she resumes
+   * rather than meeting an empty one. */
   billing_setup_route?: BillingSetupRoute | null
+  /** Everything true of how she is paid today. `null` means she has not
+   * answered; `[]` is her real answer of "not seeing clients yet" and must
+   * never read back as unanswered. */
+  billing_setup_state?: BillingSetupState[] | null
+  /** Whether she asked for help getting in-network under her own contracts.
+   * Its own field because it is about what she WANTS and changes on its own
+   * schedule — folding a wish into a description of today is what made the
+   * single answer unable to describe a platform clinician. */
+  billing_setup_wants_credentialing?: boolean
   /** Where she had got to, as the step's id rather than its position — an
    * index would point at the wrong screen once a step is inserted ahead of
    * it. An unknown id falls back to the start of her branch. */
   billing_setup_step?: string | null
 }
 
-/** How a therapist is paid today — the answer billing setup branches on. */
+/** SUPERSEDED by {@link BillingSetupState}. It asked one question and got two
+ * answers back — "platform_to_own" and "wants_panels" each describe where she
+ * is AND where she wants to go — so a therapist on a platform who also took
+ * cash clients could not describe herself at all. */
 export type BillingSetupRoute =
   | "private_pay"
   | "already_paneled"
   | "wants_panels"
   | "platform_to_own"
+
+/** What is true of how she is paid today. Several hold at once, and none of
+ * them says anything about what she wants next. */
+export type BillingSetupState = "self_pay" | "platform" | "own_insurance"
 
 export async function getPreferences(
   token?: string

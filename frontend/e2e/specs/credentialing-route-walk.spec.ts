@@ -30,7 +30,10 @@ test("the not-yet-paneled route gets a record step before its ending @smoke", as
 
   // Step one is always reachable, whatever the saved progress.
   await page.getByRole("button", { name: /How you're paid/ }).click()
-  await page.getByText("I want to accept insurance, but I’m not on a panel yet").click()
+  await page.getByLabel("Clients pay me themselves").check()
+  await page.getByRole("button", { name: "Continue" }).click()
+  await page.getByTestId("wants-credentialing").check()
+  await page.getByRole("button", { name: "Set up billing" }).click()
 
   // "Your record" is what this route exists for, and what used to be a stub.
   await expect(page.getByRole("button", { name: /Your record/ })).toBeVisible({
