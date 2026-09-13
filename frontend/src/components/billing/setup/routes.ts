@@ -81,17 +81,25 @@ export const PAYMENT_ROUTES: readonly PaymentRoute[] = [
   },
 ] as const
 
+/** The question every route opens with. */
+const ROUTE_STEP: SetupStep = {
+  id: "route",
+  label: "How you're paid",
+  caption: "Tell Pablo once. He'll take it from here.",
+}
+
 /**
  * Every route collects practice details and rates: a superbill and a claim
  * need the same facts about who you are and what you charge. That shared spine
  * is why this is one wizard rather than two that happen to sit near each other.
  */
-const SHARED_STEPS: readonly SetupStep[] = [
-  { id: "route", label: "How you're paid", caption: "Tell Pablo once. He'll take it from here." },
+const PRACTICE_STEPS: readonly SetupStep[] = [
   { id: "identity", label: "Practice identity", caption: "Pablo keeps the paperwork straight." },
   { id: "contact", label: "Billing contact", caption: "So billing messages reach the right place." },
   { id: "rates", label: "Your rates", caption: "What a session is worth, in one place." },
 ]
+
+const SHARED_STEPS: readonly SetupStep[] = [ROUTE_STEP, ...PRACTICE_STEPS]
 
 //: Every branch ends somewhere it says what happens next, rather than stopping.
 const DONE_STEP: SetupStep = {
@@ -105,10 +113,25 @@ const PAYER_STEP: SetupStep = {
   label: "Payers",
   caption: "Who you can bill, and who you can't yet.",
 }
-const RECORD_STEPS: readonly SetupStep[] = [
-  { id: "confirm", label: "What we found", caption: "Pablo looked these up. Just check them." },
-  { id: "record", label: "Your record", caption: "Answer once, reuse for every payer." },
-]
+/**
+ * The lookup that fills in the rest, which is why it goes first.
+ *
+ * The registry holds her legal name, credential, taxonomy, licence and
+ * practice address — most of what the practice steps ask her to type. Asking
+ * for those first and looking her up afterwards would mean making her type
+ * what we were about to find, which is the product's whole argument backwards.
+ */
+const LOOKUP_STEP: SetupStep = {
+  id: "confirm",
+  label: "What we found",
+  caption: "Pablo looked these up. Just check them.",
+}
+
+const RECORD_STEP: SetupStep = {
+  id: "record",
+  label: "Your record",
+  caption: "Answer once, reuse for every payer.",
+}
 
 /**
  * The steps this clinician will actually walk, given her answer.
@@ -116,10 +139,24 @@ const RECORD_STEPS: readonly SetupStep[] = [
  * Before she answers, only the shared spine is shown — a stepper that grew
  * three entries the moment she clicked would make the choice feel like it cost
  * her something.
+ *
+ * The credentialing routes put the NPI lookup BEFORE the practice steps, and
+ * that ordering is the point rather than a detail. The registry holds her
+ * legal name, credential, taxonomy, licence and practice address; the practice
+ * steps ask for most of that. Looking her up first turns three forms into three
+ * confirmations. Looking her up afterwards — where this step used to sit —
+ * meant asking her to type what we were a click away from knowing.
+ *
+ * A clinician with no NPI meets that fact first this way, which reads as a wall
+ * and is the honest cost of the order. It is still kinder than discovering it
+ * after filling in three screens.
+ *
+ * Private pay never sees it: she is not being credentialed, and a registry
+ * lookup would be a question about a number she may not have and does not need.
  */
 export function stepsForRoute(route: PaymentRouteId | null): readonly SetupStep[] {
   if (route === null) return SHARED_STEPS
   if (route === "private_pay") return [...SHARED_STEPS, DONE_STEP]
   if (route === "already_paneled") return [...SHARED_STEPS, PAYER_STEP, DONE_STEP]
-  return [...SHARED_STEPS, PAYER_STEP, ...RECORD_STEPS, DONE_STEP]
+  return [ROUTE_STEP, LOOKUP_STEP, ...PRACTICE_STEPS, PAYER_STEP, RECORD_STEP, DONE_STEP]
 }

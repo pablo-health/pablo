@@ -18,10 +18,15 @@ vi.mock("@/hooks/usePreferences", () => ({
   useSavePreferences: () => ({ mutate: savePreferences, isPending: false }),
 }))
 
-// The later steps mount the settings cards for the billing profile and
-// appointment types, which fetch their own data. These tests are about routing
-// and resuming, so the cards stand in as markers — what they render is their
-// own tests' business.
+// Several steps mount components that fetch their own data: the settings cards
+// for the billing profile and appointment types, and — now that it leads the
+// credentialing routes — the NPI lookup. These tests are about routing and
+// resuming, so those stand in as markers; what they render is their own tests'
+// business.
+vi.mock("@/components/credentialing/NpiLookupStep", () => ({
+  NpiLookupStep: () => <div>npi lookup step</div>,
+}))
+
 vi.mock("../SetupSteps", () => ({
   PracticeIdentityStep: () => <div>practice identity step</div>,
   BillingContactStep: () => <div>billing contact step</div>,
