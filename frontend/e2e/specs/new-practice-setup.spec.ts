@@ -115,6 +115,15 @@ test("a practice with nothing on file sets itself up through the wizard", async 
     // Screen 1. Private pay is the shortest honest path through setup.
     await page.getByText("My clients pay me directly").click()
 
+    // Screen 2, on every route including this one: the NPI lookup. She bills
+    // nobody and still needs it, because a superbill carries the rendering
+    // provider's NPI. This practice has none on file, so the field is empty
+    // and she is offered the two ways out rather than being stopped.
+    await expect(page.getByRole("heading", { name: "Let's start with your NPI" })).toBeVisible()
+    await expect(page.getByLabel("Your individual NPI")).toHaveValue("")
+    await expect(page.getByRole("button", { name: /don.t have one/i })).toBeVisible()
+    await page.getByRole("button", { name: "Continue" }).click()
+
     // Practice identity, every field empty and typed for the first time.
     await expect(
       page.getByRole("heading", { name: "How insurers identify your practice" }),
@@ -188,9 +197,9 @@ test("setup resumes where a new therapist left off", async ({ browser }) => {
     await page.goto("/dashboard/billing/setup")
 
     // Back on the step she left, on the branch she chose — not at the fork.
-    await expect(
-      page.getByRole("heading", { name: "How insurers identify your practice" }),
-    ).toBeVisible()
+    // That step is the NPI lookup now: it leads every route, so answering the
+    // fork lands her there rather than on the first practice form.
+    await expect(page.getByRole("heading", { name: "Let's start with your NPI" })).toBeVisible()
     await expect(page.getByText("How do you get paid today?")).toBeHidden()
   })
 })
