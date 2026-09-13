@@ -955,6 +955,7 @@ CREATE TABLE __TENANT_SCHEMA__.payers (
     enroll_eligibility boolean DEFAULT true NOT NULL,
     enroll_claims boolean DEFAULT true NOT NULL,
     enroll_remittance boolean DEFAULT false NOT NULL,
+    directory_requires character varying(40),
     CONSTRAINT ck_payers_appeal_days CHECK ((appeal_days > 0)),
     CONSTRAINT ck_payers_corrected_claim_days CHECK ((corrected_claim_days > 0)),
     CONSTRAINT ck_payers_enrollment_status CHECK (((enrollment_status)::text = ANY ((ARRAY['none'::character varying, 'filed'::character varying, 'pending'::character varying, 'active'::character varying, 'error'::character varying])::text[]))),

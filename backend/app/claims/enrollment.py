@@ -461,6 +461,11 @@ def request_enrollments(
     if payer.clearinghouse_payer_id != entry.stediId:
         payer.clearinghouse_payer_id = entry.stediId
 
+    # Remember what the directory said, so the payer list can tell "nothing
+    # needs enrolling" from "not enrolled yet" without asking the vendor again
+    # on every render. The empty string is a real answer here, not a blank.
+    payer.directory_requires = ",".join(required_transactions(entry.transactionSupport))
+
     created: list[PayerEnrollmentRow] = []
     # Cheapest-to-answer first: the connection she can have today should be
     # working before a payer stops to ask her for a signed form.
@@ -563,7 +568,10 @@ def _instructions(enrollment: Enrollment) -> str | None:
 
 
 def derive_payer_status(
-    statuses: Iterable[tuple[str, str]], *, enroll_remittance: bool = True
+    statuses: Iterable[tuple[str, str]],
+    *,
+    enroll_remittance: bool = True,
+    directory_requires: str | None = None,
 ) -> str:
     """``payers.enrollment_status`` from the payer's ``(transaction_type, status)`` requests.
 
@@ -580,6 +588,13 @@ def derive_payer_status(
     """
     by_transaction = dict(statuses)
     if not by_transaction:
+        # Nothing on file means one of two opposite things, and only the
+        # cached directory answer separates them: a payer that requires no
+        # enrollment is READY — claims and eligibility already flow — while a
+        # payer nobody has asked about yet is genuinely not enrolled. Saying
+        # "not enrolled" to a practice that can bill today is the bug.
+        if directory_requires == "":
+            return "active"
         return "none"
     if "rejected" in by_transaction.values():
         return "error"
@@ -598,6 +613,7 @@ def _mirror_status(session: Session, payer: PayerRow, now: datetime) -> None:
     status = derive_payer_status(
         ((row.transaction_type, row.status) for row in list_enrollments(session, payer.id)),
         enroll_remittance=payer.enroll_remittance,
+        directory_requires=payer.directory_requires,
     )
     if payer.enrollment_status != status:
         payer.enrollment_status = status

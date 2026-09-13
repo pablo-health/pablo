@@ -593,6 +593,68 @@ class TestTransactionChoice:
         assert payer.enrollment_status == "active"
 
 
+class TestAPayerThatNeedsNoEnrollment:
+    """Ready to bill and enrolled for nothing are the same screen, different facts.
+
+    A payer whose directory entry marks everything SUPPORTED needs no
+    enrollment at all. Nothing gets filed, so the status derivation sees an
+    empty set — which until now it read as "none", i.e. "Not enrolled", to a
+    practice that could bill that payer the same afternoon.
+    """
+
+    def test_nothing_required_reads_as_ready_not_as_not_enrolled(self, session: Session) -> None:
+        _seed_profile(session)
+        payer = _seed_payer(session)
+        client = FakeClearinghouse(
+            transaction_support={
+                "professionalClaimSubmission": "SUPPORTED",
+                "eligibilityCheck": "SUPPORTED",
+                "claimPayment": "SUPPORTED",
+            }
+        )
+
+        created = request_enrollments(session, client, payer_row_id=payer.id, user_id=_USER_ID)
+
+        assert created == []
+        assert payer.directory_requires == ""
+        assert payer.enrollment_status == "active"
+
+    def test_a_payer_nobody_has_asked_about_still_reads_not_enrolled(self) -> None:
+        """NULL and "" are different answers and must not collapse."""
+        assert derive_payer_status([], directory_requires=None) == "none"
+        assert derive_payer_status([], directory_requires="") == "active"
+
+    def test_a_payer_that_requires_something_unfiled_still_reads_not_enrolled(
+        self, session: Session
+    ) -> None:
+        """Requiring an enrollment she has not filed is genuinely not enrolled."""
+        _seed_profile(session)
+        payer = _seed_payer(session, enroll_remittance=False)
+        client = FakeClearinghouse()
+
+        request_enrollments(session, client, payer_row_id=payer.id, user_id=_USER_ID)
+
+        # The directory requires remittance; she declined it. Nothing filed,
+        # and "nothing required" is NOT the reason.
+        assert payer.directory_requires == "835"
+        assert payer.enrollment_status == "none"
+
+    def test_what_the_directory_said_is_remembered_for_next_time(self, session: Session) -> None:
+        """Cached so a payer list render costs no vendor call."""
+        _seed_profile(session)
+        payer = _seed_payer(session)
+        client = FakeClearinghouse(
+            transaction_support={
+                "professionalClaimSubmission": "ENROLLMENT_REQUIRED",
+                "claimPayment": "ENROLLMENT_REQUIRED",
+            }
+        )
+
+        request_enrollments(session, client, payer_row_id=payer.id, user_id=_USER_ID)
+
+        assert payer.directory_requires == "837P,835"
+
+
 # --- what the directory says an enrollment will cost ------------------------------
 
 
