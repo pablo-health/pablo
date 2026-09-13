@@ -24,12 +24,13 @@ from __future__ import annotations
 
 import os
 import subprocess
-import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 from sqlalchemy import create_engine, text
+
+from . import scratch_db
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -44,29 +45,24 @@ _BACKEND_DIR = Path(__file__).resolve().parents[2]
 
 
 def _swap_db(url: str, db_name: str) -> str:
-    base, _, _ = url.rpartition("/")
-    return f"{base}/{db_name}"
+    return scratch_db.swap_database(url, db_name)
 
 
 @pytest.fixture
 def fresh_db() -> Iterator[str]:
-    """Create a unique throwaway database; drop it after the test."""
-    db = f"pablo_alembic_test_{uuid.uuid4().hex[:8]}"
+    """Create a unique throwaway database; drop it after the test.
+
+    The drop does not terminate connections. Doing so needs superuser or
+    pg_signal_backend, and the role this suite runs as is deliberately
+    neither — see scratch_db for why that matters.
+    """
+    db = scratch_db.scratch_name("pablo_alembic_test")
     admin = create_engine(_db_url, isolation_level="AUTOCOMMIT")
     try:
-        with admin.connect() as conn:
-            conn.execute(text(f'CREATE DATABASE "{db}"'))
+        scratch_db.create(admin, db)
         yield _swap_db(_db_url, db)
     finally:
-        with admin.connect() as conn:
-            conn.execute(
-                text(
-                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity"
-                    " WHERE datname = :db AND pid <> pg_backend_pid()"
-                ),
-                {"db": db},
-            )
-            conn.execute(text(f'DROP DATABASE IF EXISTS "{db}"'))
+        scratch_db.drop(admin, db)
         admin.dispose()
 
 
