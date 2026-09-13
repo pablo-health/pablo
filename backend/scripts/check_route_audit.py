@@ -301,6 +301,12 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("get", "/api/credentialing/nppes"),  # same registry, searched by name
         # Her own panel applications: a clinician and an insurer, no patient.
         ("get", "/api/credentialing/panel-applications"),
+        # Whether Pablo may act for her with payers. Her own status, no patient.
+        # The POST and DELETE that CHANGE it are audited; reading is not.
+        ("get", "/api/credentialing/payer-authorization"),
+        # The authorisation text itself — a document on disk, identical for
+        # every clinician and carrying nothing about anyone.
+        ("get", "/api/credentialing/payer-authorization/document"),
         ("get", "/api/payers/directory"),  # clearinghouse payer directory, no patient in it
     }
 )
