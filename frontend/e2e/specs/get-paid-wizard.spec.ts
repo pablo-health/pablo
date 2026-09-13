@@ -28,6 +28,22 @@ const SELF_PAY = "Clients pay me themselves"
 const PLATFORM = /Headway, Alma, Rula/
 const OWN_INSURANCE = "Insurance I bill myself"
 
+/**
+ * The clinician is shared across this file's tests, and the wizard remembers
+ * her answers on purpose — which means one test's answers are the next test's
+ * starting state unless they are cleared. Without this, a test that expects an
+ * unanswered checklist finds the previous test's ticks and Continue already
+ * enabled, which is how the first run of this spec failed.
+ */
+test.beforeEach(async ({ api }) => {
+  await api.request("PUT", "/api/users/me/preferences", {
+    billing_setup_state: null,
+    billing_setup_wants_credentialing: false,
+    billing_setup_step: "route",
+    billing_setup_complete: false,
+  })
+})
+
 test("she can say she is on a platform AND takes clients directly", async ({
   signedInPage: page,
 }) => {

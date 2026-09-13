@@ -184,12 +184,16 @@ test("setup resumes where a new therapist left off", async ({ browser }) => {
   await withNewPractice(browser, async (page) => {
     await page.goto("/dashboard/billing/setup")
 
-    // Wait for the answer to land rather than racing the save.
+    // Wait for the answer to land rather than racing the save — and for the
+    // RIGHT save. Answering now writes twice, once on the checklist and again
+    // on the plan screen, so waiting for "a successful PUT" would return on
+    // the first and leave before the step she actually left on was stored.
     const remembered = page.waitForResponse(
       (response: Response) =>
         response.url().includes("/api/users/me/preferences") &&
         response.request().method() === "PUT" &&
-        response.ok(),
+        response.ok() &&
+        response.request().postDataJSON()?.billing_setup_step === "confirm",
     )
     await page.getByLabel("Clients pay me themselves").check()
     await page.getByRole("button", { name: "Continue" }).click()

@@ -65,10 +65,33 @@ export function DoneStep({
         )}
 
         {billsInsurance && (
-          <li>
-            Claims to the insurers you&rsquo;re in-network with are set up. Each one answers on its
-            own schedule, and nothing you do makes that faster.
-          </li>
+          <>
+            <li>
+              Finalise a session and it lands in{" "}
+              <Link
+                href="/dashboard/billing"
+                className="font-medium underline underline-offset-4"
+              >
+                Unbilled
+              </Link>
+              . File the claim from there.
+            </li>
+            <li>
+              Enrollment requests sit with each payer until they answer. You do not need to chase
+              them &mdash; if one wants something from you, it shows up on the payer in{" "}
+              <Link
+                href="/dashboard/settings/insurance"
+                className="font-medium underline underline-offset-4"
+              >
+                Insurance payers
+              </Link>
+              .
+            </li>
+            <li>
+              A payer you are not enrolled with yet can still be billed by superbill, so a client
+              is never stuck waiting on paperwork between us and her insurer.
+            </li>
+          </>
         )}
 
         {wantsCredentialing && (
@@ -150,7 +173,7 @@ function title({
   if (onPlatform) return "Set up alongside the service that pays you"
   if (wantsCredentialing) return "Pablo takes the applications from here"
   if (billsInsurance) return "You're set up to bill"
-  return "You're set up to be paid"
+  return "You're set up to get paid"
 }
 
 function lede({
