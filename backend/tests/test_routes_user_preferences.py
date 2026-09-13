@@ -134,3 +134,83 @@ class TestSavePreferences:
 
         assert other_user_prefs.default_duration_minutes == 50
         assert other_user_prefs.default_video_platform == "zoom"
+
+
+class TestHowSheIsPaid:
+    """The checklist that replaced the single-select billing-setup router.
+
+    Two bug classes, and both fail quietly rather than loudly:
+
+    * **An empty list reading back as "she has not answered".** ``[]`` is her
+      real answer of "not seeing clients yet"; if it collapsed to ``None`` she
+      would be asked again every time, having already told us. That is the
+      whole reason the stored shape is a list rather than a nullable route.
+    * **A clinician who answered the superseded question losing that answer.**
+      Her saved route is read forward once, so she resumes rather than meeting
+      an empty checklist.
+    """
+
+    def test_several_can_be_true_at_once(self) -> None:
+        # The case the single answer could not express: on a platform AND
+        # taking clients privately, which is an ordinary practice.
+        prefs = UserPreferences(billing_setup_state=["platform", "self_pay"])
+
+        assert prefs.billing_setup_state == ["platform", "self_pay"]
+
+    def test_unanswered_and_no_clients_yet_are_different(self) -> None:
+        assert UserPreferences().billing_setup_state is None
+        assert UserPreferences(billing_setup_state=[]).billing_setup_state == []
+
+    def test_wanting_credentialing_is_its_own_fact(self) -> None:
+        # Not a value in the list: it is about what she WANTS, and folding a
+        # wish into a description of today is what made the old answer unable
+        # to describe a platform clinician.
+        prefs = UserPreferences(billing_setup_state=["platform"])
+
+        assert prefs.billing_setup_wants_credentialing is False
+
+    def test_a_superseded_answer_is_read_forward(self) -> None:
+        prefs = UserPreferences(billing_setup_route="platform_to_own")
+
+        assert prefs.billing_setup_state == ["platform"]
+        assert prefs.billing_setup_wants_credentialing is True
+
+    def test_only_the_present_tense_half_survives(self) -> None:
+        # "wants_panels" said she is paid privately AND hopes to panel. The
+        # hope becomes the separate question rather than staying an inference.
+        prefs = UserPreferences(billing_setup_route="wants_panels")
+
+        assert prefs.billing_setup_state == ["self_pay"]
+        assert prefs.billing_setup_wants_credentialing is True
+
+    def test_a_plain_private_pay_answer_asks_for_nothing(self) -> None:
+        prefs = UserPreferences(billing_setup_route="private_pay")
+
+        assert prefs.billing_setup_state == ["self_pay"]
+        assert prefs.billing_setup_wants_credentialing is False
+
+    def test_an_answered_checklist_is_never_overwritten_by_the_old_value(self) -> None:
+        # The failure this guards: she unticks everything and says she is not
+        # seeing clients yet, and the superseded route underneath silently
+        # puts her back on a platform.
+        prefs = UserPreferences(billing_setup_route="platform_to_own", billing_setup_state=[])
+
+        assert prefs.billing_setup_state == []
+        assert prefs.billing_setup_wants_credentialing is False
+
+    def test_it_round_trips_through_the_api(self, client: Any) -> None:
+        client.put(
+            "/api/users/me/preferences",
+            json={"billing_setup_state": ["platform", "self_pay"]},
+        )
+
+        body = client.get("/api/users/me/preferences").json()
+
+        assert body["billing_setup_state"] == ["platform", "self_pay"]
+
+    def test_the_api_refuses_a_state_it_does_not_know(self, client: Any) -> None:
+        response = client.put(
+            "/api/users/me/preferences", json={"billing_setup_state": ["through_a_friend"]}
+        )
+
+        assert response.status_code == 422

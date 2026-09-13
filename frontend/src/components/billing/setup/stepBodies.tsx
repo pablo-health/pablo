@@ -3,25 +3,27 @@
 "use client"
 
 import type { ComponentType } from "react"
-import { SetupStepHead } from "@/components/setup"
 import { NpiLookupStep } from "@/components/credentialing/NpiLookupStep"
+import { DoneStep } from "./DoneStep"
+import { PlanStep } from "./PlanStep"
 import { RouteStep } from "./RouteStep"
 import {
-  AlreadyPaneledDoneStep,
   BillingContactStep,
   CredentialingRecordStep,
   PayersStep,
-  PlatformToOwnDoneStep,
   PracticeIdentityStep,
-  PrivatePayDoneStep,
   RatesStep,
-  WantsPanelsDoneStep,
 } from "./SetupSteps"
-import type { PaymentRouteId, StepId } from "./routes"
+import type { CurrentStateId, StepId } from "./routes"
 
 export interface StepBodyProps {
-  route: PaymentRouteId | null
-  onChoose: (id: PaymentRouteId) => void
+  selected: readonly CurrentStateId[]
+  wantsCredentialing: boolean
+  onToggle: (id: CurrentStateId) => void
+  onToggleCredentialing: (next: boolean) => void
+  onContinue: () => void
+  onBack: () => void
+  onNoClients: () => void
 }
 
 /**
@@ -38,54 +40,35 @@ export interface StepBodyProps {
  * that no longer exists will not either. That used to be a runtime test, which
  * only caught the gap once somebody walked the flow.
  *
- * Steps whose content differs by route switch inside their own body — see
- * ``DONE_BODIES``. Keeping this key one-dimensional is what stops the table
- * turning back into the chain it replaced.
+ * There is no longer a second table of endings. ``DoneStep`` composes itself
+ * from what she ticked, because she can be several things at once and a table
+ * keyed by one of them cannot say so.
  */
 export const STEP_BODIES: Record<StepId, ComponentType<StepBodyProps>> = {
-  route: ({ route, onChoose }) => <RouteStep selected={route} onChoose={onChoose} />,
+  route: ({ selected, onToggle, onContinue, onNoClients }) => (
+    <RouteStep
+      selected={selected}
+      onToggle={onToggle}
+      onContinue={onContinue}
+      onNoClients={onNoClients}
+    />
+  ),
+  plan: ({ selected, wantsCredentialing, onToggleCredentialing, onBack, onContinue }) => (
+    <PlanStep
+      selected={selected}
+      wantsCredentialing={wantsCredentialing}
+      onToggleCredentialing={onToggleCredentialing}
+      onBack={onBack}
+      onContinue={onContinue}
+    />
+  ),
   identity: () => <PracticeIdentityStep />,
   contact: () => <BillingContactStep />,
   rates: () => <RatesStep />,
   payers: () => <PayersStep />,
   confirm: () => <NpiLookupStep />,
   record: () => <CredentialingRecordStep />,
-  done: ({ route }) => <DoneStep route={route} />,
-}
-
-/**
- * How each route ends. Exhaustive over the routes for the same reason: every
- * branch should finish somewhere that says what happens next, and a route
- * added without an ending should be a compile error rather than a dead end
- * somebody finds later.
- */
-const DONE_BODIES: Record<PaymentRouteId, ComponentType> = {
-  private_pay: PrivatePayDoneStep,
-  already_paneled: AlreadyPaneledDoneStep,
-  wants_panels: WantsPanelsDoneStep,
-  platform_to_own: PlatformToOwnDoneStep,
-}
-
-function DoneStep({ route }: { route: PaymentRouteId | null }) {
-  const Body = route ? DONE_BODIES[route] : null
-  return Body ? <Body /> : <NotBuiltYet label="Done" />
-}
-
-/**
- * A step with a place in the flow but no screen yet.
- *
- * It says so plainly rather than rendering an empty panel: a blank step reads
- * as something broken, and someone walking this flow should be able to tell
- * "not built" from "not working".
- */
-function NotBuiltYet({ label }: { label: string }) {
-  return (
-    <div className="space-y-5">
-      <SetupStepHead
-        eyebrow="Coming next"
-        title={label}
-        lede="This step isn't built yet. Back returns you to the previous question."
-      />
-    </div>
-  )
+  done: ({ selected, wantsCredentialing }) => (
+    <DoneStep selected={selected} wantsCredentialing={wantsCredentialing} />
+  ),
 }

@@ -278,7 +278,13 @@ describe("PayersCard", () => {
     await user.click(screen.getByRole("button", { name: /Aetna/ }))
     await user.click(screen.getByRole("button", { name: "Enroll with payer" }))
 
-    expect(mockRequestEnrollments).toHaveBeenCalledWith({ payerRowId: "payer-1" })
+    // Which payer is the assertion; the callbacks beside it are the card's
+    // own business — it keeps the remittance confirmation open when filing
+    // fails, so she sees the error rather than a dialog that vanished.
+    expect(mockRequestEnrollments).toHaveBeenCalledWith(
+      { payerRowId: "payer-1" },
+      expect.anything(),
+    )
   })
 
   it("opens a payer to edit the three deadlines, with the helper text", async () => {

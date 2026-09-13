@@ -27,6 +27,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { AddPayerFromDirectory } from "@/components/settings/AddPayerFromDirectory"
 import { EnrollmentTaskForm } from "@/components/settings/EnrollmentTaskForm"
+import { RemittanceCutoverDialog } from "@/components/settings/RemittanceCutoverDialog"
 import { SettingsCard } from "@/components/settings/ui"
 import {
   useCreatePayer,
@@ -211,6 +212,23 @@ function PayerEnrollments({ payer }: { payer: PayerResponse }) {
   const error = request.error instanceof Error ? request.error.message : null
   const nothingChosen =
     !payer.enroll_eligibility && !payer.enroll_claims && !payer.enroll_remittance
+  const [confirmingCutover, setConfirmingCutover] = useState(false)
+
+  function file() {
+    request.mutate({ payerRowId: payer.id }, { onSuccess: () => setConfirmingCutover(false) })
+  }
+
+  // Remittances are the only choice here with a consequence outside Pablo, so
+  // they get asked for on their own. Everything else files on the press, as it
+  // always did — gating eligibility and claims behind a remittance
+  // confirmation would teach her to click through it.
+  function enroll() {
+    if (payer.enroll_remittance) {
+      setConfirmingCutover(true)
+      return
+    }
+    file()
+  }
 
   return (
     <div className="space-y-2">
@@ -222,12 +240,26 @@ function PayerEnrollments({ payer }: { payer: PayerResponse }) {
           type="button"
           size="sm"
           variant="outline"
-          onClick={() => request.mutate({ payerRowId: payer.id })}
+          onClick={enroll}
           disabled={request.isPending || nothingChosen}
         >
           Enroll with payer
         </Button>
       </div>
+
+      {/* Mounted only while she is actually confirming. It reads the billing
+          profile to show the identity the request goes under, and every payer
+          row rendering that read — to show nothing — would be a fetch per row
+          for a screen almost nobody opens. */}
+      {confirmingCutover && (
+        <RemittanceCutoverDialog
+          payer={payer}
+          open
+          onOpenChange={setConfirmingCutover}
+          onConfirm={file}
+          pending={request.isPending}
+        />
+      )}
       {requests.length > 0 && (
         <ul className="m-0 list-none divide-y divide-border p-0">
           {requests.map((r) => (
