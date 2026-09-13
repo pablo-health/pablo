@@ -878,6 +878,18 @@ class Settings(BaseSettings):
     smtp_username: str = Field(default="", description="SMTP auth username")
     smtp_password: SecretStr = Field(default=SecretStr(""), description="SMTP auth password")
     smtp_from: str = Field(default="", description="From address for outbound email")
+    smtp_ca_file: str | None = Field(
+        default=None,
+        description=(
+            "CA bundle to verify the SMTP server against, for a deployment "
+            "whose mail server presents a certificate the system store does "
+            "not know — the end-to-end harness's stand-in. Scoped to the "
+            "mail client deliberately: setting SSL_CERT_FILE instead REPLACES "
+            "the trust store for the whole process and silently breaks "
+            "certificate verification for every other outbound call. Unset "
+            "(the ordinary case) uses the system trust store."
+        ),
+    )
 
     # CAPTCHA verification for the public booking write surface
     # (docs/design/public-booking.md). 'none' accepts every request — a

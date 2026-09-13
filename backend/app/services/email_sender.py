@@ -120,6 +120,7 @@ class SmtpEmailSender:
         username: str,
         password: str,
         from_addr: str,
+        ca_file: str | None = None,
         client_factory: Callable[[int], Any] | None = None,
     ) -> None:
         self._host = host
@@ -127,7 +128,23 @@ class SmtpEmailSender:
         self._username = username
         self._password = password
         self._from_addr = from_addr
+        #: CA bundle for the STARTTLS handshake, or None for the system store.
+        #: Scoped to this client on purpose — see _tls_context.
+        self._ca_file = ca_file
         self._client_factory = client_factory
+
+    def _tls_context(self) -> ssl.SSLContext:
+        """How this client verifies the mail server's certificate.
+
+        A deployment whose mail server presents a certificate the system store
+        does not know names its CA in settings, and only this handshake uses
+        it. The obvious alternative — the SSL_CERT_FILE environment variable —
+        REPLACES the trust store for the entire process, so every other
+        outbound call starts failing verification with no hint as to why. That
+        is not hypothetical: it is what the end-to-end stack did, and it took
+        the NPI registry lookup down with it.
+        """
+        return ssl.create_default_context(cafile=self._ca_file or None)
 
     def _client(self) -> Any:
         if self._client_factory is not None:
@@ -143,7 +160,7 @@ class SmtpEmailSender:
 
         server = self._client()
         try:
-            server.starttls(context=ssl.create_default_context())
+            server.starttls(context=self._tls_context())
             server.login(self._username, self._password)
             server.send_message(email_message)
         except Exception:
@@ -175,6 +192,7 @@ def email_sender_from_settings(settings: Settings) -> EmailSender:
             username=settings.smtp_username,
             password=settings.smtp_password.get_secret_value(),
             from_addr=settings.smtp_from,
+            ca_file=settings.smtp_ca_file,
         )
     return NoneEmailSender()
 

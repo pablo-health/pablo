@@ -81,7 +81,11 @@ services:
       # The fake mints its own certificate at startup and shares it on the
       # volume below; nothing else in this stack speaks TLS, so trusting that
       # one certificate and nothing else costs nothing.
-      - SSL_CERT_FILE=/srv/mail-tls/cert.pem
+      # Scoped to the mail client. SSL_CERT_FILE, which this used to be,
+      # REPLACES the process-wide trust store — so trusting the fake mail
+      # server meant failing certificate verification for every other
+      # outbound call, the NPI registry included.
+      - SMTP_CA_FILE=/srv/mail-tls/cert.pem
       # The links the product mails point back at the browser's own origin.
       - APP_URL=http://localhost:${E2E_FRONTEND_PORT:-3000}
       # Confirming a claim only marks it ready; the pipeline inside the API
@@ -93,6 +97,9 @@ services:
       # The key only has to be present; the fake never checks it.
       - CLEARINGHOUSE_API_KEY=test_e2e_not_a_real_key
       - CLEARINGHOUSE_BASE_URL=http://fake-clearinghouse:8080
+      # Never the real CMS registry: it is somebody else's uptime, and its
+      # records are real people's, which is not what a fixture should be.
+      - NPPES_BASE_URL=http://fake-nppes:8081/
       - CLEARINGHOUSE_WEBHOOK_SECRET=e2e-clearinghouse-webhook-shared-secret
       # The practice's tax id is stored encrypted under this key, and filing a
       # claim needs a billing profile, so without it saving one is a 500. The
@@ -129,6 +136,8 @@ services:
       firebase-auth:
         condition: service_healthy
       fake-clearinghouse:
+        condition: service_healthy
+      fake-nppes:
         condition: service_healthy
       fake-mail:
         condition: service_healthy
@@ -188,6 +197,28 @@ services:
       timeout: 5s
       start_period: 10s
       retries: 30
+    networks:
+      - e2e-net
+
+  fake-nppes:
+    build:
+      context: .
+      dockerfile: scripts/e2e/fake-nppes.Dockerfile
+    ports:
+      - "${E2E_NPPES_PORT:-8081}:8081"
+    environment:
+      - FAKE_NPPES_FIXTURES=/srv/fixtures
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://localhost:8081/_fake/health').getcode() == 200 else 1)",
+        ]
+      interval: 3s
+      timeout: 3s
+      retries: 20
     networks:
       - e2e-net
 

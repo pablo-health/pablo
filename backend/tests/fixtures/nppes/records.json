@@ -1,0 +1,132 @@
+{
+  "1999999984": {
+    "number": "1999999984",
+    "enumeration_type": "NPI-1",
+    "basic": {
+      "first_name": "TEST",
+      "last_name": "THERAPIST",
+      "credential": "LCSW",
+      "sole_proprietor": "YES",
+      "status": "A",
+      "enumeration_date": "2020-06-09",
+      "last_updated": "2020-06-09"
+    },
+    "taxonomies": [
+      {
+        "code": "101YM0800X",
+        "desc": "Counselor, Mental Health",
+        "license": "LCSW-4417",
+        "state": "NC",
+        "primary": true,
+        "taxonomy_group": ""
+      }
+    ],
+    "addresses": [
+      {
+        "address_purpose": "MAILING",
+        "address_1": "PO BOX 900",
+        "city": "RALEIGH",
+        "state": "NC",
+        "postal_code": "27601"
+      },
+      {
+        "address_purpose": "LOCATION",
+        "address_1": "14 MILL STREET",
+        "city": "DURHAM",
+        "state": "NC",
+        "postal_code": "27701",
+        "telephone_number": "919-555-0142"
+      }
+    ],
+    "identifiers": [],
+    "other_names": [],
+    "practiceLocations": [],
+    "endpoints": []
+  },
+  "1841151289": {
+    "number": "1841151289",
+    "enumeration_type": "NPI-1",
+    "basic": {
+      "first_name": "OTHER",
+      "last_name": "THERAPIST",
+      "credential": "LMFT",
+      "sole_proprietor": "NO",
+      "status": "A"
+    },
+    "taxonomies": [
+      {
+        "code": "163W00000X",
+        "desc": "Registered Nurse",
+        "license": "RN-90210",
+        "state": "NC",
+        "primary": false,
+        "taxonomy_group": ""
+      },
+      {
+        "code": "106H00000X",
+        "desc": "Marriage & Family Therapist",
+        "license": "MFT-001741",
+        "state": "NC",
+        "primary": true,
+        "taxonomy_group": ""
+      }
+    ],
+    "addresses": [
+      {
+        "address_purpose": "LOCATION",
+        "address_1": "2 CEDAR LANE",
+        "city": "ASHEVILLE",
+        "state": "NC",
+        "postal_code": "28801"
+      }
+    ],
+    "identifiers": [],
+    "other_names": [],
+    "practiceLocations": [],
+    "endpoints": []
+  },
+  "1234567893": {
+    "number": "1234567893",
+    "enumeration_type": "NPI-2",
+    "basic": {
+      "organization_name": "TEST THERAPY PLLC",
+      "status": "A"
+    },
+    "taxonomies": [
+      {
+        "code": "101YM0800X",
+        "desc": "Counselor, Mental Health",
+        "primary": true,
+        "taxonomy_group": ""
+      }
+    ],
+    "addresses": [
+      {
+        "address_purpose": "LOCATION",
+        "address_1": "14 MILL STREET",
+        "city": "DURHAM",
+        "state": "NC",
+        "postal_code": "27701"
+      }
+    ],
+    "identifiers": [],
+    "other_names": [],
+    "practiceLocations": [],
+    "endpoints": []
+  },
+  "1700000004": {
+    "number": "1700000004",
+    "enumeration_type": "NPI-1",
+    "basic": {
+      "first_name": "RETIRED",
+      "last_name": "THERAPIST",
+      "status": "D"
+    },
+    "taxonomies": [],
+    "addresses": [],
+    "identifiers": [],
+    "other_names": [],
+    "practiceLocations": [],
+    "endpoints": []
+  }
+}
