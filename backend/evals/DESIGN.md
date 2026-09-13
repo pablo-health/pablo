@@ -17,14 +17,15 @@ every claim has a non-empty `source_segment_ids`, the cited segments
 exist, and the cited segments support the claim.
 
 That check is not shipped today. `_run_source_attribution`
-(`backend/app/services/note_generation_service.py:242`) runs a second
+(`backend/app/services/note_generation_service.py`) runs a second
 LLM call every SOAP generation to populate `source_segment_ids`, but
-the verification layer that would *check* attribution
-(`SourceVerificationService`, embedding + NLI agreement) is gated
-behind `ENABLE_EMBEDDING_VERIFICATION` and disabled by default.
-Failures in attribution are explicitly swallowed: "the SOAP note
-remains valid without sources." Net: the field gets populated, the
-populated values aren't trusted, and the catch-layer is off.
+nothing *checks* the attribution it produces. An embedding + NLI
+agreement layer was written for this and never enabled in any
+deployment; it was removed rather than left to rot, and is
+recoverable from git history if the idea is revived. Failures in
+attribution are explicitly swallowed: "the SOAP note remains valid
+without sources." Net: the field gets populated and the populated
+values aren't trusted.
 
 So evals exist to do, probabilistically and from the outside, the job
 provenance was supposed to do structurally and cheaply. The eval
