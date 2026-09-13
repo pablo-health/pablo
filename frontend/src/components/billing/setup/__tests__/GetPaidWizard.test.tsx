@@ -31,7 +31,9 @@ vi.mock("../SetupSteps", () => ({
   PracticeIdentityStep: () => <div>practice identity step</div>,
   BillingContactStep: () => <div>billing contact step</div>,
   RatesStep: () => <div>rates step</div>,
+  PayersStep: () => <h2>Payers</h2>,
   PrivatePayDoneStep: () => <div>private pay done</div>,
+  AlreadyPaneledDoneStep: () => <div>already paneled done</div>,
 }))
 
 function prefs(overrides: Partial<UserPreferences> = {}): UserPreferences {

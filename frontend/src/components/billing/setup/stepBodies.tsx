@@ -6,7 +6,14 @@ import type { ComponentType } from "react"
 import { SetupStepHead } from "@/components/setup"
 import { NpiLookupStep } from "@/components/credentialing/NpiLookupStep"
 import { RouteStep } from "./RouteStep"
-import { BillingContactStep, PracticeIdentityStep, PrivatePayDoneStep, RatesStep } from "./SetupSteps"
+import {
+  AlreadyPaneledDoneStep,
+  BillingContactStep,
+  PayersStep,
+  PracticeIdentityStep,
+  PrivatePayDoneStep,
+  RatesStep,
+} from "./SetupSteps"
 import type { PaymentRouteId, StepId } from "./routes"
 
 export interface StepBodyProps {
@@ -37,7 +44,7 @@ export const STEP_BODIES: Record<StepId, ComponentType<StepBodyProps>> = {
   identity: () => <PracticeIdentityStep />,
   contact: () => <BillingContactStep />,
   rates: () => <RatesStep />,
-  payers: () => <NotBuiltYet label="Payers" />,
+  payers: () => <PayersStep />,
   confirm: () => <NpiLookupStep />,
   record: () => <NotBuiltYet label="Your record" />,
   done: ({ route }) => <DoneStep route={route} />,
@@ -51,7 +58,7 @@ export const STEP_BODIES: Record<StepId, ComponentType<StepBodyProps>> = {
  */
 const DONE_BODIES: Record<PaymentRouteId, ComponentType> = {
   private_pay: PrivatePayDoneStep,
-  already_paneled: () => <NotBuiltYet label="Done" />,
+  already_paneled: AlreadyPaneledDoneStep,
   wants_panels: () => <NotBuiltYet label="Done" />,
   platform_to_own: () => <NotBuiltYet label="Done" />,
 }
