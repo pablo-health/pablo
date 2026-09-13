@@ -5,6 +5,7 @@
 import {
   getChecklist,
   listConfirmations,
+  lookUpNpi,
   recordConfirmation,
   saveChecklistAnswers,
 } from "@/lib/api/credentialing"
@@ -61,5 +62,24 @@ export function useSaveChecklistAnswers(token?: string) {
   return useAuthMutation({
     mutationFn: (answers: ChecklistAnswers) => saveChecklistAnswers(answers, token),
     invalidateKeys: [queryKeys.credentialing.all],
+  })
+}
+
+/**
+ * The registry's record for one NPI.
+ *
+ * Disabled until the number is ten digits, so typing does not fire a lookup per
+ * keystroke. `retry: false` because "not found" arrives as a normal answer —
+ * there is nothing to retry — and retrying a genuine outage three times only
+ * makes her wait longer for the same screen.
+ */
+export function useNpiLookup(npi: string | null, token?: string) {
+  const ready = npi !== null && /^\d{10}$/.test(npi)
+  return useAuthQuery({
+    queryKey: queryKeys.credentialing.nppes(npi ?? ""),
+    queryFn: () => lookUpNpi(npi as string, token),
+    enabled: ready,
+    retry: false,
+    staleTime: 5 * 60 * 1000,
   })
 }

@@ -80,6 +80,7 @@ describe("settings registry merge", () => {
       "billing-contact",
       "insurance",
       "credentialing",
+      "credentialing-deprecated",
     ])
 
     const you = settingsGroups.find((group) => group.id === "you")

@@ -118,6 +118,18 @@ class ServerError(APIError):
     code = "INTERNAL_ERROR"
 
 
+class ServiceUnavailableError(APIError):
+    """A dependency we do not run is not answering right now.
+
+    Distinct from ServerError: nothing here is broken, and the honest thing to
+    tell a caller is "try again", not "we failed". Retryable by definition,
+    which is why it carries 503 rather than 500.
+    """
+
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    code = "SERVICE_UNAVAILABLE"
+
+
 def _envelope(exc: APIError) -> dict[str, Any]:
     return {
         "error": {

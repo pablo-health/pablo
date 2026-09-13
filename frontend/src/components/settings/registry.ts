@@ -23,6 +23,7 @@ import { BillingContactPage } from "./pages/BillingContactPage"
 import { BillingProfilePage } from "./pages/BillingProfilePage"
 import { CalendarsPage } from "./pages/CalendarsPage"
 import { CredentialingPage } from "./pages/CredentialingPage"
+import { CredentialingStartPage } from "./pages/CredentialingStartPage"
 import { InsurancePage } from "./pages/InsurancePage"
 import { PatientPortalPage } from "./pages/PatientPortalPage"
 import { ProfilePage } from "./pages/ProfilePage"
@@ -33,6 +34,7 @@ import { SuperbillsPage } from "./pages/SuperbillsPage"
 import {
   BILLING_CONTACT_SETTINGS_ID,
   BILLING_PROFILE_SETTINGS_ID,
+  CREDENTIALING_LEGACY_SETTINGS_ID,
   CREDENTIALING_SETTINGS_ID,
   INSURANCE_PAYERS_SETTINGS_ID,
 } from "./paths"
@@ -192,8 +194,19 @@ const baseGroups: SettingsGroup[] = [
         id: CREDENTIALING_SETTINGS_ID,
         label: "Credentialing",
         icon: ClipboardCheck,
+        page: CredentialingStartPage,
+        desc: "Start with your NPI. We look up what the registry already knows, so an application asks you for less.",
+      },
+      {
+        // Kept reachable on purpose: the tiered checklist is still the only
+        // surface that reaches Tier 1 and Tier 2, and removing it would take
+        // working screens away before their replacements exist. It goes when
+        // the new flow covers what it covers.
+        id: CREDENTIALING_LEGACY_SETTINGS_ID,
+        label: "Credentialing (deprecated)",
+        icon: ClipboardCheck,
         page: CredentialingPage,
-        desc: "What a payer application asks for, in three sittings — confirm what we already know, then only what is left.",
+        desc: "The older full checklist. Being replaced by the screens above; still here because nothing else reaches the later tiers yet.",
       },
     ],
   },

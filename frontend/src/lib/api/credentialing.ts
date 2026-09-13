@@ -12,6 +12,7 @@ import type {
   ConfirmationPayload,
   ChecklistAnswers,
   ChecklistSurface,
+  NppesLookup,
 } from "@/types/credentialing"
 import { get, patch, put } from "./client"
 
@@ -68,4 +69,14 @@ export async function saveChecklistAnswers(
     answers,
     token,
   )
+}
+
+/**
+ * Look one NPI up in the public registry.
+ *
+ * Nothing is written by this. What comes back is presented for her to confirm,
+ * and the confirmation is what promotes it onto her record.
+ */
+export async function lookUpNpi(npi: string, token?: string): Promise<NppesLookup> {
+  return get<NppesLookup>(`/api/credentialing/nppes/${encodeURIComponent(npi)}`, token)
 }

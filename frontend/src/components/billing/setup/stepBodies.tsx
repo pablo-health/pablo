@@ -4,6 +4,7 @@
 
 import type { ComponentType } from "react"
 import { SetupStepHead } from "@/components/setup"
+import { NpiLookupStep } from "@/components/credentialing/NpiLookupStep"
 import { RouteStep } from "./RouteStep"
 import { BillingContactStep, PracticeIdentityStep, PrivatePayDoneStep, RatesStep } from "./SetupSteps"
 import type { PaymentRouteId, StepId } from "./routes"
@@ -37,7 +38,7 @@ export const STEP_BODIES: Record<StepId, ComponentType<StepBodyProps>> = {
   contact: () => <BillingContactStep />,
   rates: () => <RatesStep />,
   payers: () => <NotBuiltYet label="Payers" />,
-  confirm: () => <NotBuiltYet label="What we found" />,
+  confirm: () => <NpiLookupStep />,
   record: () => <NotBuiltYet label="Your record" />,
   done: ({ route }) => <DoneStep route={route} />,
 }
