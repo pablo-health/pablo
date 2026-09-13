@@ -28,10 +28,19 @@ from pydantic import BaseModel, Field
 from ..api_errors import BadRequestError, NotFoundError, ServiceUnavailableError
 from ..auth.route_access import subscription_exempt
 from ..auth.service import get_current_user, get_tenant_context
-from ..credentialing import checklist, confirmations, government_ids, nppes, panels, status
+from ..credentialing import (
+    authorization,
+    checklist,
+    confirmations,
+    government_ids,
+    nppes,
+    panels,
+    status,
+)
 from ..db import get_db_session
 from ..db.models import CREDENTIAL_CONFIRMATION_SOURCES, ClinicianProfileRow
 from ..models import User
+from ..models.audit import AuditAction
 from ..services.audit_service import AuditService, get_audit_service
 from ..settings import get_settings
 
@@ -528,3 +537,196 @@ def list_panel_applications(
         ],
         needs_you=sum(1 for app in applications if app.mine_to_act_on and not app.settled),
     )
+
+
+# ---------------------------------------------------------------------------
+# Payer authorisation
+# ---------------------------------------------------------------------------
+
+
+class PayerAuthorizationStatus(BaseModel):
+    """Whether Pablo may act for her with payers, and under what.
+
+    ``available`` is reported separately from ``signed`` because they fail
+    differently. A deployment that bundles no document has nobody to authorise
+    and the screen should say nothing at all; a clinician who has not signed
+    one that IS bundled should be asked. Collapsing the two would show a
+    self-hoster a signature request for a service she is not buying.
+    """
+
+    #: False when this deployment bundles no authorisation document.
+    available: bool
+    #: The version she would be signing.
+    current_version: str | None = None
+    signed: bool
+    signed_version: str | None = None
+    signed_at: datetime | None = None
+    signed_name: str | None = None
+    #: True when she signed an earlier version and a newer one is in force.
+    #: Distinct from never having signed: she agreed once, and what changed is
+    #: our wording, so the ask is different and the screen should say which.
+    superseded: bool = False
+
+
+class SignPayerAuthorizationPayload(BaseModel):
+    """Her signature."""
+
+    #: The version she was shown. Sent back rather than assumed so a document
+    #: published while she was reading cannot be signed without her seeing it.
+    version: str = Field(min_length=1, max_length=20)
+    #: Typed by her, and stored as given. Not validated against her legal name:
+    #: refusing "Dr. A. Rivera" because the record says "Ana Rivera" would be
+    #: the product arguing with a signature.
+    signed_name: str = Field(min_length=1, max_length=200)
+    accepted: bool
+
+
+#: These routes speak for ONE of the two documents: the narrow permission to
+#: sign her name to a payer's form. The services agreement is the other, and it
+#: gets its own surface when counsel has settled its text — deliberately not
+#: this one, because a single screen reporting "signed" for two documents that
+#: authorise different things is how a gate ends up open on the wrong one.
+_ROUTE_KIND = authorization.CREDENTIALING_AUTHORIZATION
+
+
+def _authorization_status(session: Session, user_id: str) -> PayerAuthorizationStatus:
+    version = authorization.current_version(_ROUTE_KIND)
+    if not version:
+        return PayerAuthorizationStatus(available=False, signed=False)
+
+    live = authorization.in_force(session, user_id, _ROUTE_KIND)
+    if live is not None:
+        return PayerAuthorizationStatus(
+            available=True,
+            current_version=version,
+            signed=True,
+            signed_version=live.version,
+            signed_at=live.signed_at,
+            signed_name=live.signed_name,
+        )
+
+    # Not signed under the current version — but she may have signed an older
+    # one, which is a different conversation from never having signed.
+    previous = next(
+        (
+            row
+            for row in authorization.signatures_for(session, user_id, _ROUTE_KIND)
+            if row.revoked_at is None
+        ),
+        None,
+    )
+    return PayerAuthorizationStatus(
+        available=True,
+        current_version=version,
+        signed=False,
+        signed_version=previous.version if previous else None,
+        signed_at=previous.signed_at if previous else None,
+        signed_name=previous.signed_name if previous else None,
+        superseded=previous is not None,
+    )
+
+
+@router.get("/payer-authorization", response_model=PayerAuthorizationStatus)
+def get_payer_authorization(
+    user: UserDep,
+    session: DbSession,
+    _exempt: SubscriptionExemptDep,
+) -> PayerAuthorizationStatus:
+    """Whether Pablo may apply to panels for her, and under which version."""
+    return _authorization_status(session, user.id)
+
+
+@router.get("/payer-authorization/document", response_model=str)
+def read_payer_authorization(
+    _user: UserDep,
+    _exempt: SubscriptionExemptDep,
+    version: str | None = None,
+) -> str:
+    """The text she is being asked to sign, or an earlier version she signed.
+
+    Served from disk rather than from her signed row, because this is also what
+    an unsigned clinician reads before deciding. What she already signed is
+    kept verbatim on her row and is the authority for anything already done
+    under it; this endpoint is for reading, not for proving.
+    """
+    wanted = version or authorization.current_version(_ROUTE_KIND)
+    if not wanted:
+        raise NotFoundError("This deployment bundles no payer authorisation.")
+    text = authorization.read_version(wanted, _ROUTE_KIND)
+    if text is None:
+        raise NotFoundError(f"No payer authorisation version {wanted}.")
+    return text
+
+
+@router.post("/payer-authorization", response_model=PayerAuthorizationStatus)
+def sign_payer_authorization(
+    payload: SignPayerAuthorizationPayload,
+    http_request: Request,
+    user: UserDep,
+    session: DbSession,
+    # Spelled out rather than using the AuditDep alias above, and deliberately.
+    # check_route_audit.py matches the annotation TEXT, so the alias would hide
+    # the fact that this route audits and land it in the exempt list instead —
+    # an audited route filed under "does not audit" is the one shape of entry
+    # that list must never accumulate.
+    audit: AuditService = Depends(get_audit_service),
+    _exempt: SubscriptionExemptDep = None,
+) -> PayerAuthorizationStatus:
+    """Record her signature, with the text she was shown kept beside it.
+
+    Audited. This is the moment Pablo acquires authority to act for her with
+    third parties, which is precisely the kind of event that has to be
+    answerable for later.
+    """
+    if not payload.accepted:
+        raise BadRequestError("The authorisation has to be accepted to be signed.")
+
+    try:
+        row = authorization.sign(
+            session,
+            user.id,
+            version=payload.version,
+            signed_name=payload.signed_name.strip(),
+            at=datetime.now(UTC),
+            kind=_ROUTE_KIND,
+        )
+    except authorization.UnknownVersionError as exc:
+        raise NotFoundError(str(exc)) from exc
+
+    audit.log_onboarding_milestone(
+        AuditAction.PAYER_AUTHORIZATION_SIGNED,
+        user,
+        http_request,
+        # Which document, not only which version. Once there are two, an entry
+        # naming a bare date cannot say what she actually authorised.
+        changes={"kind": row.kind, "version": row.version},
+    )
+    session.commit()
+    return _authorization_status(session, user.id)
+
+
+@router.delete("/payer-authorization", response_model=PayerAuthorizationStatus)
+def revoke_payer_authorization(
+    http_request: Request,
+    user: UserDep,
+    session: DbSession,
+    #: Spelled out for the same reason as the signing route above.
+    audit: AuditService = Depends(get_audit_service),
+    _exempt: SubscriptionExemptDep = None,
+) -> PayerAuthorizationStatus:
+    """Withdraw it.
+
+    Never an error, even when there is nothing to withdraw: she is telling us
+    to stop acting for her, and the honest answer to "you already had" is the
+    same state she was asking for.
+    """
+    withdrawn = authorization.revoke(session, user.id, at=datetime.now(UTC))
+    if withdrawn:
+        audit.log_onboarding_milestone(
+            AuditAction.PAYER_AUTHORIZATION_REVOKED,
+            user,
+            http_request,
+            changes={"withdrawn": str(withdrawn)},
+        )
+    session.commit()
+    return _authorization_status(session, user.id)

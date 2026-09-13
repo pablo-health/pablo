@@ -4,6 +4,7 @@
 
 import { NpiLookupStep } from "@/components/credentialing/NpiLookupStep"
 import { PanelApplications } from "@/components/credentialing/PanelApplications"
+import { PayerAuthorization } from "@/components/credentialing/PayerAuthorization"
 
 /**
  * Billing > Credentialing.
@@ -22,10 +23,17 @@ import { PanelApplications } from "@/components/credentialing/PanelApplications"
  * Credentialing" — a promise kept below a form she has already filled in is
  * not kept. `PanelApplications` renders nothing until there is something to
  * show, so a clinician who has not started still lands on the lookup.
+ *
+ * The authorisation sits above even that, because nothing below it can
+ * honestly happen without it: Pablo cannot file an application it has no
+ * permission to sign. It also renders nothing when this deployment bundles no
+ * authorisation document, so a self-hosted practice — which has no Pablo staff
+ * to authorise — never sees it.
  */
 export function CredentialingStartPage() {
   return (
     <div className="space-y-10">
+      <PayerAuthorization />
       <PanelApplications />
       <NpiLookupStep />
     </div>

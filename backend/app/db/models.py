@@ -2316,6 +2316,76 @@ class PanelApplicationRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class PayerAuthorizationRow(Base):
+    """Her signature authorising Pablo to speak to payers on her behalf.
+
+    Shaped after the BAA (``routes/users.py::accept_baa``) because it is the
+    same kind of object: a versioned agreement, accepted in the product, with
+    the text she saw kept beside the acceptance. It differs from the BAA in
+    three ways that each matter.
+
+    **Per-clinician, not per-practice.** The BAA is between Pablo and the
+    covered entity, so it snapshots onto the practice row. This authorises us
+    to act for HER, under HER NPI, on HER applications — the same reasoning
+    that made ``panel_applications`` row-scoped rather than practice-wide.
+
+    **One row per signature, never edited.** A signature is an event. Signing a
+    new version adds a row; it does not overwrite the old one. That is what
+    lets us answer "what authority did you hold when you rang Aetna in March"
+    with the version in force in March rather than the one in force today.
+
+    **``full_text`` is the point, not an audit nicety.** A row saying she
+    accepted version ``2026-09-13`` is worth nothing once that file is edited.
+    A payer or a licensing board asking what authority we claimed needs the
+    words, and the words have to be the ones she was shown.
+
+    ``revoked_at`` exists because an authorisation to act for someone with
+    third parties that she cannot withdraw is not an authorisation, it is a
+    trap. Revoking sets the timestamp and leaves everything else alone: what
+    she signed, and that she signed it, both remain true.
+
+    PHI-free — this is about a clinician and an insurer, and no patient
+    appears in it.
+    """
+
+    __tablename__ = "payer_authorizations"
+    __table_args__ = (
+        # No unique constraint on (user_id, kind, version). Re-signing the same
+        # version after a revocation is a real sequence, and the second
+        # signature is a different event from the first.
+        CheckConstraint(
+            "kind IN ('credentialing_authorization', 'services_agreement')",
+            name="ck_payer_authorizations_kind",
+        ),
+        Index("ix_payer_authorizations_user_id", "user_id"),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    #: Which document this signature is of. Two of them authorise different
+    #: things — the services agreement is the commercial relationship, the
+    #: credentialing authorisation is the narrow permission to sign her name to
+    #: a payer's form — so they are counted separately and never stand in for
+    #: one another. Schema-enforced, because a typo here would read as a
+    #: missing signature and silently shut a gate rather than open one.
+    kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    #: The dated version she signed, e.g. ``"2026-09-13"`` — the filename stem
+    #: of the document, the same scheme the BAA uses. Each kind carries its own
+    #: series, so the pair ``(kind, version)`` is what identifies a document.
+    version: Mapped[str] = mapped_column(String(20), nullable=False)
+    #: The document as she was shown it. See the class docstring.
+    full_text: Mapped[str] = mapped_column(Text, nullable=False)
+    #: The name she signed under, captured at signing rather than read back
+    #: from the user row later — a clinician who marries and changes her legal
+    #: name did not retroactively sign under the new one.
+    signed_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    signed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    #: When she withdrew it. NULL while it stands.
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 #: Where a claim stands. It only ever moves forward on a receipt from the
 #: next hop — a scrub with no blocking findings, a clearinghouse
 #: acknowledgement, a payer acknowledgement, a remittance. ``rejected`` and

@@ -248,6 +248,16 @@ const baseQueryKeys = {
       [...baseQueryKeys.credentialing.all, "nppes-search", query] as const,
     panelApplications: () =>
       [...baseQueryKeys.credentialing.all, "panel-applications"] as const,
+    payerAuthorization: () =>
+      [...baseQueryKeys.credentialing.all, "payer-authorization"] as const,
+    // Keyed by version: reading an earlier version she signed must not serve
+    // the current one out of the cache, which would show her the wrong words.
+    payerAuthorizationDocument: (version?: string) =>
+      [
+        ...baseQueryKeys.credentialing.all,
+        "payer-authorization-document",
+        version ?? "current",
+      ] as const,
   },
 
   // Admin query keys

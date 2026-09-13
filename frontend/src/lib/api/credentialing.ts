@@ -16,8 +16,10 @@ import type {
   NppesSearchQuery,
   NppesSearchResult,
   PanelApplications,
+  PayerAuthorizationStatus,
+  SignPayerAuthorization,
 } from "@/types/credentialing"
-import { get, patch, put } from "./client"
+import { del, get, patch, post, put } from "./client"
 
 /**
  * The question set for this clinician, with what she has already answered.
@@ -111,4 +113,53 @@ export async function listPanelApplications(
   token?: string,
 ): Promise<PanelApplications> {
   return get<PanelApplications>("/api/credentialing/panel-applications", token)
+}
+
+/** Whether Pablo may apply to panels for her, and under which version. */
+export async function getPayerAuthorization(
+  token?: string,
+): Promise<PayerAuthorizationStatus> {
+  return get<PayerAuthorizationStatus>(
+    "/api/credentialing/payer-authorization",
+    token,
+  )
+}
+
+/**
+ * The text she is being asked to sign.
+ *
+ * Served from disk, not from her signed row — this is what an UNSIGNED
+ * clinician reads before deciding. What she already signed is kept verbatim on
+ * the backend and is the authority for anything done under it.
+ */
+export async function readPayerAuthorization(
+  version?: string,
+  token?: string,
+): Promise<string> {
+  const query = version ? `?version=${encodeURIComponent(version)}` : ""
+  return get<string>(
+    `/api/credentialing/payer-authorization/document${query}`,
+    token,
+  )
+}
+
+export async function signPayerAuthorization(
+  payload: SignPayerAuthorization,
+  token?: string,
+): Promise<PayerAuthorizationStatus> {
+  return post<PayerAuthorizationStatus>(
+    "/api/credentialing/payer-authorization",
+    payload,
+    token,
+  )
+}
+
+/** Withdraw it. Never an error, even when there was nothing to withdraw. */
+export async function revokePayerAuthorization(
+  token?: string,
+): Promise<PayerAuthorizationStatus> {
+  return del<PayerAuthorizationStatus>(
+    "/api/credentialing/payer-authorization",
+    token,
+  )
 }

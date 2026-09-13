@@ -151,6 +151,16 @@ class AuditAction(StrEnum):
     ONBOARDING_SECURITY_GUIDE_ACKNOWLEDGED = "onboarding_security_guide_acknowledged"
     ONBOARDING_COMPLETED = "onboarding_completed"
 
+    # The authorisation letting Pablo apply to insurance panels on a
+    # clinician's behalf: sign her name to a payer's form, and ring the payer
+    # to chase it. Not a HIPAA event — no PHI is involved — but the moment
+    # Pablo acquires authority to act for someone with a third party, which is
+    # exactly the kind of thing that has to be answerable for afterwards. The
+    # revocation is recorded for the same reason and with the same weight: when
+    # the authority ENDED is the half a complaint usually turns on.
+    PAYER_AUTHORIZATION_SIGNED = "payer_authorization_signed"
+    PAYER_AUTHORIZATION_REVOKED = "payer_authorization_revoked"
+
     # Account-recovery / authentication security events (HIPAA
     # § 164.308(a)(5)(ii)(C) login monitoring, § 164.312(b) audit controls).
     # A one-time backup code redeemed as the second factor is the highest-value

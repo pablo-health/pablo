@@ -195,3 +195,30 @@ export interface PanelApplications {
   /** How many are hers to act on. Counted by the API, not by the screen. */
   needs_you: number
 }
+
+/**
+ * Whether Pablo may apply to panels on her behalf, and under which version.
+ *
+ * `available` is separate from `signed` on purpose: a deployment that bundles
+ * no authorisation document has nobody to authorise, and the screen should show
+ * nothing rather than ask a self-hoster to sign for a service she is not buying.
+ */
+export interface PayerAuthorizationStatus {
+  available: boolean
+  current_version: string | null
+  signed: boolean
+  signed_version: string | null
+  signed_at: string | null
+  signed_name: string | null
+  /**
+   * She signed an earlier version and a newer one is in force. Distinct from
+   * never having signed — she agreed once, and what changed is our wording.
+   */
+  superseded: boolean
+}
+
+export interface SignPayerAuthorization {
+  version: string
+  signed_name: string
+  accepted: boolean
+}

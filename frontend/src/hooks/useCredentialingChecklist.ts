@@ -4,9 +4,13 @@
 
 import {
   getChecklist,
+  getPayerAuthorization,
   listConfirmations,
   listPanelApplications,
   lookUpNpi,
+  readPayerAuthorization,
+  revokePayerAuthorization,
+  signPayerAuthorization,
   searchNpi,
   recordConfirmation,
   saveChecklistAnswers,
@@ -16,6 +20,7 @@ import type {
   ConfirmationPayload,
   ChecklistAnswers,
   NppesSearchQuery,
+  SignPayerAuthorization,
 } from "@/types/credentialing"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
 
@@ -116,5 +121,52 @@ export function usePanelApplications(token?: string) {
     queryKey: queryKeys.credentialing.panelApplications(),
     queryFn: () => listPanelApplications(token),
     staleTime: 5 * 60 * 1000,
+  })
+}
+
+/**
+ * Whether Pablo may apply to panels on her behalf.
+ *
+ * No `staleTime`: this gates what Pablo is allowed to do with her name, so the
+ * screen should re-ask rather than show a cached "signed" after she withdrew it
+ * in another tab.
+ */
+export function usePayerAuthorization(token?: string) {
+  return useAuthQuery({
+    queryKey: queryKeys.credentialing.payerAuthorization(),
+    queryFn: () => getPayerAuthorization(token),
+  })
+}
+
+/**
+ * The text of the authorisation. Only fetched once she asks to read it —
+ * it is a full legal document, and nobody wants it in the page weight of a
+ * screen they opened to check on an application.
+ */
+export function usePayerAuthorizationDocument(
+  enabled: boolean,
+  version?: string,
+  token?: string,
+) {
+  return useAuthQuery({
+    queryKey: queryKeys.credentialing.payerAuthorizationDocument(version),
+    queryFn: () => readPayerAuthorization(version, token),
+    enabled,
+    staleTime: Infinity,
+  })
+}
+
+export function useSignPayerAuthorization(token?: string) {
+  return useAuthMutation({
+    mutationFn: (payload: SignPayerAuthorization) =>
+      signPayerAuthorization(payload, token),
+    invalidateKeys: [queryKeys.credentialing.payerAuthorization()],
+  })
+}
+
+export function useRevokePayerAuthorization(token?: string) {
+  return useAuthMutation({
+    mutationFn: () => revokePayerAuthorization(token),
+    invalidateKeys: [queryKeys.credentialing.payerAuthorization()],
   })
 }
