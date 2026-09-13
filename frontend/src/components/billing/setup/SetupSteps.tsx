@@ -4,6 +4,7 @@
 
 import Link from "next/link"
 import { AppointmentTypesCard } from "@/components/settings/AppointmentTypesCard"
+import { PayersCard } from "@/components/settings/PayersCard"
 import { BillingContactCard } from "@/components/settings/BillingContactCard"
 import { PracticeIdentityCard } from "@/components/settings/PracticeIdentityCard"
 import { SetupStepHead } from "@/components/setup"
@@ -58,6 +59,88 @@ export function RatesStep() {
         lede="Your session types and their fees. These set what a client owes and what appears on a superbill."
       />
       <AppointmentTypesCard />
+    </div>
+  )
+}
+
+/**
+ * Who she can bill, and what the clearinghouse still needs from her.
+ *
+ * The same card Settings mounts, because it already is the enrollment surface:
+ * per payer it shows the requests filed through the clearinghouse, what the
+ * payer is waiting on, and the form for answering it. Rebuilding any of that
+ * here would be a second way to answer one payer.
+ *
+ * Enrollment is why this step exists at all, and why it sits where it does.
+ * It runs in two layers: the practice registers once with the clearinghouse
+ * (``ensure_provider_record``, which needs a complete billing profile — hence
+ * the practice steps before this one), and then one request per payer, and
+ * sometimes several per payer, because a payer can enrol claims, remittance
+ * and eligibility separately. None of it can be filed until she says who she
+ * bills, which is what this screen asks.
+ */
+export function PayersStep() {
+  return (
+    <div className="space-y-5">
+      <SetupStepHead
+        eyebrow="Payers"
+        title="Who can you bill today?"
+        lede="Add the insurers you're contracted with. Pablo files the electronic enrollment each one needs, and tells you when a payer wants something back."
+      />
+      <PayersCard />
+    </div>
+  )
+}
+
+/**
+ * Where a practice that is already paneled finishes.
+ *
+ * She was billing before she met us, so this says what changes rather than
+ * congratulating her on arriving. Enrollment is the one thing still moving:
+ * it is filed, the payers answer in their own time, and nothing she does
+ * makes that faster — so the honest ending says where to watch rather than
+ * implying she has something left to do.
+ */
+export function AlreadyPaneledDoneStep() {
+  return (
+    <div className="space-y-5">
+      <SetupStepHead
+        eyebrow="All set"
+        title="You're set up to bill"
+        lede="Your practice details are on file and your payers are in. Here's what happens next."
+      />
+
+      <ul className="space-y-3 text-sm text-neutral-700">
+        <li>
+          Finalise a session and it lands in{" "}
+          <Link href="/dashboard/billing" className="font-medium underline underline-offset-4">
+            Unbilled
+          </Link>
+          . File the claim from there.
+        </li>
+        <li>
+          Enrollment requests sit with each payer until they answer. You do not
+          need to chase them — if one wants something from you, it shows up on
+          the payer in{" "}
+          <Link
+            href="/dashboard/settings/insurance"
+            className="font-medium underline underline-offset-4"
+          >
+            Insurance payers
+          </Link>
+          .
+        </li>
+        <li>
+          A payer you are not enrolled with yet can still be billed by
+          superbill, so a client is never stuck waiting on paperwork between us
+          and her insurer.
+        </li>
+      </ul>
+
+      <p className="border-t border-border pt-4 text-sm text-muted-foreground">
+        Adding a payer later is the same screen. Nothing here has to be complete
+        before you see clients.
+      </p>
     </div>
   )
 }
