@@ -8,7 +8,11 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { SetupStepHead } from "@/components/setup"
 import { useSettingsUserStatus } from "@/components/settings/useSettingsPreferences"
-import { useNpiLookup, useRecordConfirmation } from "@/hooks/useCredentialingChecklist"
+import {
+  useNpiLookup,
+  useRecordConfirmation,
+  useSaveChecklistAnswers,
+} from "@/hooks/useCredentialingChecklist"
 import { useUpdateProfessionalInfo } from "@/hooks/useProfessionalInfo"
 import { NoNpiYet } from "./NoNpiYet"
 import { NpiNameSearch } from "./NpiNameSearch"
@@ -57,6 +61,7 @@ export function NpiLookupStep({ onConfirmed }: { onConfirmed?: (npi: string) => 
   const knownNpi = user?.npi_number ?? null
 
   const saveProfile = useUpdateProfessionalInfo()
+  const saveAnswers = useSaveChecklistAnswers()
   const recordConfirmation = useRecordConfirmation()
   const [saved, setSaved] = useState(false)
 
@@ -102,6 +107,13 @@ export function NpiLookupStep({ onConfirmed }: { onConfirmed?: (npi: string) => 
     if (record.license_state) profile.license_state = record.license_state
 
     saveProfile.mutate(profile)
+    // A Tier-1 answer, so it lands on the identifier row rather than the
+    // profile. Only sent when the registry actually said yes or no: absent is
+    // a real state there, and guessing "no" would put a wrong answer on her
+    // record with the confidence of a looked-up one.
+    if (record.sole_proprietor !== null) {
+      saveAnswers.mutate({ sole_proprietor: record.sole_proprietor })
+    }
     recordConfirmation.mutate({
       fieldKey: "npi_number",
       payload: { source: "nppes", confirmed: true, presented_value: record.npi },
@@ -246,6 +258,12 @@ export function NpiLookupStep({ onConfirmed }: { onConfirmed?: (npi: string) => 
                   : null
               }
             />
+            <Fact
+              label="Sole proprietor"
+              value={
+                lookup.sole_proprietor === null ? null : lookup.sole_proprietor ? "Yes" : "No"
+              }
+            />
             <Fact label="Practice address" value={lookup.address_line1} />
             <Fact
               label="City"
@@ -274,7 +292,7 @@ export function NpiLookupStep({ onConfirmed }: { onConfirmed?: (npi: string) => 
               type="button"
               size="sm"
               onClick={() => confirm(lookup)}
-              disabled={saveProfile.isPending || recordConfirmation.isPending}
+              disabled={saveProfile.isPending || saveAnswers.isPending || recordConfirmation.isPending}
             >
               <Check className="mr-1 h-4 w-4" aria-hidden />
               {saved ? "Saved" : "That’s me"}
