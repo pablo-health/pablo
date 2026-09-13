@@ -9,16 +9,13 @@ Two layers:
   the SOAP registry schema (plus session date/time) is sent, the source
   text reaches the prompt, the response is coerced into note content, and
   the date/time are parsed.
-- Optional local tests run real extraction (and, behind an env flag, a real
-  LLM parse) against a sample SOAP PDF if one is present on disk. They are
-  skipped in CI and never ship the sample file. To run the end-to-end parse
-  locally against a real file::
+- Real extraction runs against ``fixtures/sample_soap_note.pdf``, which is
+  committed, so it runs everywhere rather than only where someone happens to
+  have a note on disk. The real LLM parse sits behind an env flag because it
+  needs Vertex credentials::
 
       RUN_IMPORT_LLM_TEST=1 poetry run pytest \\
           backend/tests/test_note_import_service.py -o addopts="" -q
-
-  with the sample at ~/Downloads/KN_SOAP_NOTE_020426.pdf (Vertex creds
-  required for the LLM step).
 """
 
 from __future__ import annotations
@@ -342,13 +339,26 @@ class TestExtractionHardening:
 
 
 # ---------------------------------------------------------------------------
-# Optional local tests against a real sample PDF (never checked in).
+# Extraction against a committed sample note.
 # ---------------------------------------------------------------------------
+#
+# The fixture is a whole PDF rather than a string of text because that is what
+# the extractor actually walks: a header block of labelled fields, four SOAP
+# sections with inline sub-labels, a numbered list and a signature rule, laid
+# out across pages. A hand-built one-page document would not exercise the same
+# thing.
+#
+# Its content is invented -- see fixtures/build_sample_soap_note.py, which
+# regenerates it. This file is public, so the fixture may never be derived from
+# a real person's note, scrubbed or otherwise.
+#
+# It used to read a PDF out of the developer's ~/Downloads, which meant CI
+# skipped it every time and it only ran on a machine that happened to have that
+# file. Committing it is what makes the coverage real.
 
-_SAMPLE_PDF = Path.home() / "Downloads" / "KN_SOAP_NOTE_020426.pdf"
+_SAMPLE_PDF = Path(__file__).parent / "fixtures" / "sample_soap_note.pdf"
 
 
-@pytest.mark.skipif(not _SAMPLE_PDF.exists(), reason="local sample PDF not present")
 def test_extract_real_sample_pdf() -> None:
     """Real PyMuPDF extraction on a real PDF — no credentials needed."""
     text = extract_document_text(
@@ -363,8 +373,8 @@ def test_extract_real_sample_pdf() -> None:
 
 
 @pytest.mark.skipif(
-    not _SAMPLE_PDF.exists() or os.getenv("RUN_IMPORT_LLM_TEST") != "1",
-    reason="set RUN_IMPORT_LLM_TEST=1 with the sample PDF present (Vertex creds required)",
+    os.getenv("RUN_IMPORT_LLM_TEST") != "1",
+    reason="set RUN_IMPORT_LLM_TEST=1 to run the real LLM parse (Vertex creds required)",
 )
 def test_parse_real_sample_pdf_end_to_end() -> None:
     """Full extraction + real LLM parse against the sample PDF."""
