@@ -172,6 +172,10 @@ export interface ProfessionalInfoUpdate {
   npi_number?: string
   /** NUCC taxonomy code, at most ten characters. */
   taxonomy_code?: string
+  /** Licence number as the issuing board wrote it. */
+  license_number?: string
+  /** Two-letter state or territory that issued the licence. */
+  license_state?: string
 }
 
 export async function updateProfessionalInfo(

@@ -21,9 +21,16 @@ import type { NppesLookup } from "@/types/credentialing"
 
 const useNpiLookup = vi.hoisted(() => vi.fn())
 const useSettingsUserStatus = vi.hoisted(() => vi.fn())
+const saveProfile = vi.hoisted(() => vi.fn())
+const recordConfirmation = vi.hoisted(() => vi.fn())
 
 vi.mock("@/hooks/useCredentialingChecklist", () => ({
   useNpiLookup: (...args: unknown[]) => useNpiLookup(...args),
+  useRecordConfirmation: () => ({ mutate: recordConfirmation, isPending: false }),
+}))
+
+vi.mock("@/hooks/useProfessionalInfo", () => ({
+  useUpdateProfessionalInfo: () => ({ mutate: saveProfile, isPending: false }),
 }))
 
 vi.mock("@/components/settings/useSettingsPreferences", () => ({
@@ -99,7 +106,7 @@ describe("when we already have her NPI", () => {
     expect(screen.getByText(/never write what the registry says until you say/i)).toBeInTheDocument()
   })
 
-  it("hands the confirmed number to its caller rather than saving it itself", async () => {
+  it("tells its caller which number she confirmed", async () => {
     const user = userEvent.setup()
     const onConfirmed = vi.fn()
     useSettingsUserStatus.mockReturnValue({
@@ -326,5 +333,81 @@ describe("when the registry answers with something that is probably not her", ()
     render(<NpiLookupStep />)
 
     expect(screen.getByText(/MFT001741/)).toBeInTheDocument()
+  })
+})
+
+describe("confirming promotes what the registry said", () => {
+  function shown(overrides: Partial<NppesLookup> = {}) {
+    useSettingsUserStatus.mockReturnValue({
+      data: { npi_number: "1999999984" },
+      isLoading: false,
+    })
+    useNpiLookup.mockReturnValue({ data: found(overrides), isLoading: false, error: null })
+  }
+
+  it("writes the number, taxonomy and licence onto her record", async () => {
+    // She agreed these are hers. Leaving them unsaved would mean the Tier-0
+    // cards ask her to type what she just confirmed.
+    const user = userEvent.setup()
+    shown()
+
+    render(<NpiLookupStep />)
+    await user.click(screen.getByRole("button", { name: /that.s me/i }))
+
+    expect(saveProfile).toHaveBeenCalledWith({
+      npi_number: "1999999984",
+      taxonomy_code: "101YM0800X",
+      license_number: "MFT001741",
+      license_state: "NC",
+    })
+  })
+
+  it("sends only what the registry supplied", async () => {
+    // An absent taxonomy must not arrive as an instruction to clear the one
+    // she already had. Agreeing with a record can never take something away.
+    const user = userEvent.setup()
+    shown({ taxonomy_code: null, license_number: null, license_state: null })
+
+    render(<NpiLookupStep />)
+    await user.click(screen.getByRole("button", { name: /that.s me/i }))
+
+    expect(saveProfile).toHaveBeenCalledWith({ npi_number: "1999999984" })
+  })
+
+  it("records the confirmation, with where the value came from", async () => {
+    // The provenance row: she was shown this value, by this source, and said
+    // yes. It is what makes a later divergence legible rather than mysterious.
+    const user = userEvent.setup()
+    shown()
+
+    render(<NpiLookupStep />)
+    await user.click(screen.getByRole("button", { name: /that.s me/i }))
+
+    expect(recordConfirmation).toHaveBeenCalledWith({
+      fieldKey: "npi_number",
+      payload: { source: "nppes", confirmed: true, presented_value: "1999999984" },
+    })
+  })
+
+  it("says so, rather than leaving her wondering whether it took", async () => {
+    const user = userEvent.setup()
+    shown()
+
+    render(<NpiLookupStep />)
+    await user.click(screen.getByRole("button", { name: /that.s me/i }))
+
+    expect(screen.getByRole("button", { name: /saved/i })).toBeInTheDocument()
+    expect(screen.getByText(/saved to your record/i)).toBeInTheDocument()
+  })
+
+  it("writes nothing until she confirms", () => {
+    // The lookup runs on arrival. If merely looking wrote, the promise the
+    // screen makes in its own copy would be false.
+    shown()
+
+    render(<NpiLookupStep />)
+
+    expect(saveProfile).not.toHaveBeenCalled()
+    expect(recordConfirmation).not.toHaveBeenCalled()
   })
 })
