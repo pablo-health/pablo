@@ -276,6 +276,22 @@ export interface PayerDirectoryMatch {
   aliases: string[]
   /** Transaction types needing enrollment: "837P", "270", "835". */
   requires_enrollment: string[]
+  /**
+   * Transactions where enrolling moves EVERY NPI under the practice's tax id,
+   * not just its own. Only set when the payer supports TIN aggregation and not
+   * NPI — one offering both can be asked for the narrow one.
+   */
+  moves_whole_tax_id: string[]
+  /**
+   * How long the payer takes to answer, per transaction, in the vendor's own
+   * words: INSTANT / HOURS / DAYS / WEEKS / OVER_4_WEEKS. A transaction absent
+   * here has no published answer and must not be rendered as quick.
+   */
+  answer_timeframes: Record<string, string>
+  /** Transactions that need nothing from her to file. */
+  files_without_asking: string[]
+  /** This payer wants a PTAN — known now, not when a request stops to ask. */
+  ptan_required: boolean
   /** Already on the practice's list, so the row offers no duplicate. */
   already_added: boolean
 }
