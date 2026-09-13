@@ -209,6 +209,10 @@ class TestWorkerRaisedReminder:
                     id=payer_row_id,
                     name="Stedi Test Payer",
                     payer_id=TEST_PAYER_ID,
+                    # The recorded directory requires an enrollment for
+                    # remittance alone, and that is the one a payer starts
+                    # switched off for — so there is a request to poll.
+                    enroll_remittance=True,
                     created_at=now,
                     updated_at=now,
                 )

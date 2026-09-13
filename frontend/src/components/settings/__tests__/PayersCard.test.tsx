@@ -7,14 +7,15 @@
  * helper text that explains where the numbers come from, and an edit sends
  * only the field that changed. An open payer also shows where the practice
  * stands with it — each enrollment request and what the payer is waiting
- * on — with an "Enroll with payer" button that files the missing ones.
+ * on — with an "Enroll with payer" button that files the missing ones, and
+ * the switches saying which of those Pablo should be asking for at all.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 
-import { DEADLINE_HELP, ENROLLMENT_HELP, PayersCard } from "../PayersCard"
+import { DEADLINE_HELP, ENROLLMENT_HELP, REMITTANCE_WARNING, PayersCard } from "../PayersCard"
 import type {
   EnrollmentTaskListResponse,
   PayerEnrollmentListResponse,
@@ -56,6 +57,9 @@ const AETNA: PayerResponse = {
   is_carveout: false,
   carveout_of: null,
   enrollment_status: "none",
+  enroll_eligibility: true,
+  enroll_claims: true,
+  enroll_remittance: false,
   timely_filing_days: 90,
   corrected_claim_days: 90,
   appeal_days: 180,
@@ -146,6 +150,50 @@ describe("PayersCard", () => {
 
     expect(mockUseEnrollments).toHaveBeenCalledWith("payer-1")
     expect(screen.getByText(ENROLLMENT_HELP)).toBeInTheDocument()
+  })
+
+  it("says what enrolling for remittances moves, whether or not it is ticked", async () => {
+    const user = userEvent.setup()
+    render(<PayersCard />)
+
+    await user.click(screen.getByRole("button", { name: /Aetna/ }))
+
+    // Unticked, this sentence is the reason it is unticked; ticked, it is the
+    // warning. Either way she reads it before the request is filed.
+    expect(screen.getByLabelText("Receive remittances (ERAs)")).not.toBeChecked()
+    expect(screen.getByText(REMITTANCE_WARNING)).toBeInTheDocument()
+    expect(screen.getByLabelText("File claims")).toBeChecked()
+    expect(screen.getByLabelText("Check eligibility")).toBeChecked()
+  })
+
+  it("saves a switch on its own, without touching the others", async () => {
+    const user = userEvent.setup()
+    render(<PayersCard />)
+
+    await user.click(screen.getByRole("button", { name: /Aetna/ }))
+    await user.click(screen.getByLabelText("Receive remittances (ERAs)"))
+
+    expect(mockUpdate).toHaveBeenCalledWith({
+      id: "payer-1",
+      data: { enroll_remittance: true },
+    })
+  })
+
+  it("has nothing to enroll for when she has asked for nothing", async () => {
+    mockUsePayers.mockReturnValue({
+      data: {
+        data: [
+          { ...AETNA, enroll_eligibility: false, enroll_claims: false, enroll_remittance: false },
+        ],
+        total: 1,
+      },
+    })
+    const user = userEvent.setup()
+    render(<PayersCard />)
+
+    await user.click(screen.getByRole("button", { name: /Aetna/ }))
+
+    expect(screen.getByRole("button", { name: "Enroll with payer" })).toBeDisabled()
   })
 
   it("shows each request, what the payer is waiting on, and the overall status", async () => {

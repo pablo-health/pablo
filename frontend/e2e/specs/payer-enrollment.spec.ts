@@ -57,6 +57,10 @@ async function givePayerWaitingOnUs(api: ApiClient, label: string): Promise<stri
   await clearinghouse.reset()
   await api.patch("/api/practice/billing-profile", BILLING_PROFILE)
   const payer = await api.post<Payer>("/api/payers", { name, payer_id: "STEDI" })
+  // Remittance is the one this payer's directory entry requires an
+  // enrollment for, and the one a payer starts switched off for — so there
+  // is no task to answer until the practice has asked for it.
+  await api.patch(`/api/payers/${payer.id}`, { enroll_remittance: true })
   await api.post(`/api/payers/${payer.id}/enrollments`)
   return name
 }

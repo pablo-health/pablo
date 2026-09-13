@@ -7,12 +7,14 @@
  * against it lives under. The defaults are the common floor; a practice's
  * participation agreement can say otherwise, and this is where it says so.
  *
- * Each payer also shows where the practice stands with it for electronic
- * transactions: the enrollment requests filed through the clearinghouse and
- * what the payer is waiting on, with an "Enroll with payer" button for a
- * payer that has nothing on file yet. "Check for updates" polls every open
- * request across every payer in one pass and says what changed, including
- * nothing.
+ * Each payer also carries two related but separate things. What the practice
+ * wants Pablo doing with it — check eligibility, file claims, receive
+ * remittances, any combination — and where it stands with the payer for each
+ * of those: the enrollment requests filed through the clearinghouse and what
+ * the payer is waiting on, with an "Enroll with payer" button that files what
+ * has been asked for and is not on file yet. "Check for updates" polls every
+ * open request across every payer in one pass and says what changed,
+ * including nothing.
  */
 
 "use client"
@@ -20,6 +22,7 @@
 import { ChevronDown, ChevronUp, Plus } from "lucide-react"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { AddPayerFromDirectory } from "@/components/settings/AddPayerFromDirectory"
@@ -46,7 +49,10 @@ export const DEADLINE_HELP =
   "From your participation agreement; the defaults are the common floor."
 
 export const ENROLLMENT_HELP =
-  "Filed through your clearinghouse account. Remittance always needs one; claims and eligibility only when the payer says so."
+  "Filed through your clearinghouse account, for what you've ticked above. Remittance always needs an enrollment; claims and eligibility only when the payer says so."
+
+export const REMITTANCE_WARNING =
+  "Enrolling for remittances moves this payer's ERAs to Pablo. They stop arriving wherever they arrive today \u2014 your old clearinghouse, or your billing service."
 
 type DeadlineField = "timely_filing_days" | "corrected_claim_days" | "appeal_days"
 
@@ -124,11 +130,87 @@ function EnrollmentRequestRow({
   )
 }
 
+type EnrollField = "enroll_eligibility" | "enroll_claims" | "enroll_remittance"
+
+/** `weighty` marks the one whose help is a consequence rather than a description. */
+const CHOICES: { field: EnrollField; label: string; help: string; weighty?: true }[] = [
+  {
+    field: "enroll_eligibility",
+    label: "Check eligibility",
+    help: "Ask this payer what a client's plan covers, before the session.",
+  },
+  {
+    field: "enroll_claims",
+    label: "File claims",
+    help: "Send this payer your claims from Pablo.",
+  },
+  {
+    field: "enroll_remittance",
+    label: "Receive remittances (ERAs)",
+    help: REMITTANCE_WARNING,
+    weighty: true,
+  },
+]
+
+/**
+ * What the practice wants Pablo doing with this payer.
+ *
+ * Separate from what the payer requires, which the enrollment panel below
+ * reports. One press of "Enroll with payer" used to file all three together,
+ * and the remittance one moves money information: a practice with a billing
+ * service downstream stops receiving the ERAs its biller posts payments from.
+ * So remittance starts off, and the sentence saying what moves sits under it
+ * whether it is ticked or not — unticked, that sentence is the reason.
+ */
+function PayerTransactionChoice({
+  payer,
+  onChange,
+}: {
+  payer: PayerResponse
+  onChange: (patch: UpdatePayerRequest) => void
+}) {
+  return (
+    <fieldset className="m-0 border-0 p-0">
+      <legend className="mb-1.5 p-0 text-sm font-semibold text-foreground">
+        What should Pablo do with this payer?
+      </legend>
+      <div className="space-y-2">
+        {CHOICES.map(({ field, label, help, weighty }) => (
+          <div key={field} className="flex items-start gap-2.5">
+            <Checkbox
+              id={`${field}-${payer.id}`}
+              checked={payer[field]}
+              onCheckedChange={(checked) => onChange({ [field]: checked === true })}
+              className="mt-0.5"
+            />
+            <div className="grid gap-0.5">
+              <Label htmlFor={`${field}-${payer.id}`} className="font-normal">
+                {label}
+              </Label>
+              {/* Three grey lines read as three descriptions, and one of them
+                  is not a description. */}
+              <p
+                className={
+                  weighty ? "text-[12.5px] text-amber-800" : "text-[12.5px] text-muted-foreground"
+                }
+              >
+                {help}
+              </p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </fieldset>
+  )
+}
+
 function PayerEnrollments({ payer }: { payer: PayerResponse }) {
   const { data } = usePayerEnrollments(payer.id)
   const request = useRequestPayerEnrollments()
   const requests = data?.data ?? []
   const error = request.error instanceof Error ? request.error.message : null
+  const nothingChosen =
+    !payer.enroll_eligibility && !payer.enroll_claims && !payer.enroll_remittance
 
   return (
     <div className="space-y-2">
@@ -141,7 +223,7 @@ function PayerEnrollments({ payer }: { payer: PayerResponse }) {
           size="sm"
           variant="outline"
           onClick={() => request.mutate({ payerRowId: payer.id })}
-          disabled={request.isPending}
+          disabled={request.isPending || nothingChosen}
         >
           Enroll with payer
         </Button>
@@ -233,6 +315,7 @@ function PayerRow({
             ))}
           </div>
           <p className="text-[12.5px] text-muted-foreground">{DEADLINE_HELP}</p>
+          <PayerTransactionChoice payer={payer} onChange={onChange} />
           <PayerEnrollments payer={payer} />
         </div>
       )}

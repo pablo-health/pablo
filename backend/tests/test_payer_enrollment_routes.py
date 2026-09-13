@@ -139,7 +139,14 @@ def clearinghouse() -> Iterator[FakeClearinghouse]:
 def payer_harness(engine: Engine, clearinghouse: FakeClearinghouse) -> Iterator[dict[str, Any]]:
     session = Session(engine)
     payers = PostgresPayerRepository(session)
-    payer = payers.create(new_payer(name="Stedi Test Payer", payer_id=TEST_PAYER_ID))
+    # The recorded directory requires an enrollment for remittance alone, and
+    # remittance is the one a payer starts switched off for — so a harness
+    # about what gets filed has to have asked for it.
+    payer = payers.create(
+        new_payer(name="Stedi Test Payer", payer_id=TEST_PAYER_ID).model_copy(
+            update={"enroll_remittance": True}
+        )
+    )
 
     app = FastAPI()
     app.include_router(coverage_routes.payers_router)
@@ -174,6 +181,21 @@ class TestRequestEnrollments:
         assert request["status"] == "stedi_action_required"
         assert request["vendor_request_id"] == "enr-0001"
         assert request["instructions"] is None
+
+    def test_the_practices_own_switches_decide_what_is_filed(
+        self, payer_harness: dict[str, Any]
+    ) -> None:
+        """The switch on the payer row is what the enroll button acts on."""
+        _complete_profile(payer_harness["session"])
+        payer = payer_harness["payer"]
+        client = payer_harness["client"]
+
+        client.patch(f"/api/payers/{payer.id}", json={"enroll_remittance": False})
+        response = client.post(f"/api/payers/{payer.id}/enrollments")
+
+        assert response.status_code == 200, response.text
+        assert response.json()["data"] == []
+        assert payer_harness["clearinghouse"].calls_named("create_enrollment") == []
 
     def test_pressing_twice_files_nothing_new(self, payer_harness: dict[str, Any]) -> None:
         _complete_profile(payer_harness["session"])
