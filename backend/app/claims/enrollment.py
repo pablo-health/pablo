@@ -89,7 +89,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session
 
-    from ..models.claims_transport import Enrollment, Payer
+    from ..models.claims_transport import Enrollment, EnrollmentProcess, Payer
 
 logger = logging.getLogger(__name__)
 
@@ -321,6 +321,70 @@ def required_transactions(transaction_support: Mapping[str, str]) -> list[str]:
     return required
 
 
+#: How long the payer takes to answer, cheapest first. The vendor's own
+#: vocabulary; anything outside it sorts last, because an unknown wait is not
+#: a short one.
+_TIMEFRAME_ORDER: dict[str, int] = {
+    "INSTANT": 0,
+    "HOURS": 1,
+    "DAYS": 2,
+    "WEEKS": 3,
+    "OVER_4_WEEKS": 4,
+}
+
+#: The vendor's word for an enrollment that needs nothing from the practice.
+ONE_CLICK = "ONE_CLICK"
+
+#: The aggregation level that moves every NPI under the tax id, not just hers.
+TIN_LEVEL = "TIN"
+
+
+def enrollment_process(entry: Payer, transaction_type: str) -> EnrollmentProcess | None:
+    """What the directory says enrolling this transaction with this payer takes."""
+    return entry.enrollment.transactionEnrollmentProcesses.get(_TRANSACTION_KEYS[transaction_type])
+
+
+def moves_every_npi_under_the_tax_id(entry: Payer, transaction_type: str) -> bool:
+    """Whether enrolling here reroutes colleagues billing under the same tax id.
+
+    True only when the directory says this payer supports TIN aggregation and
+    NOT NPI — a payer offering both can be asked for the narrow one, so it
+    carries no such consequence. A payer that says nothing is not assumed to
+    be either, because guessing wrong in the reassuring direction is how
+    somebody finds out from an angry colleague.
+    """
+    process = enrollment_process(entry, transaction_type)
+    if process is None:
+        return False
+    prefs = {p.upper() for p in process.supportedAggregationPreferences}
+    return TIN_LEVEL in prefs and "NPI" not in prefs
+
+
+def filing_order(entry: Payer, transaction_types: Iterable[str]) -> list[str]:
+    """The transactions to file, cheapest-to-answer first.
+
+    Ordered by what the payer says it will cost her: the ones that need
+    nothing from her and answer immediately go first, so the connection she
+    can have today is working before she is asked for a signed form. A
+    transaction the directory says nothing about sorts last — an unknown wait
+    is not a short one.
+
+    Ties keep ``ENROLLMENT_TRANSACTION_TYPES`` order, so a payer whose
+    processes are all identical files in the same sequence it always did.
+    """
+    order = {tx: i for i, tx in enumerate(ENROLLMENT_TRANSACTION_TYPES)}
+
+    def cost(transaction_type: str) -> tuple[int, int, int]:
+        process = enrollment_process(entry, transaction_type)
+        if process is None:
+            return (1, len(_TIMEFRAME_ORDER), order[transaction_type])
+        needs_her = 0 if process.type == ONE_CLICK else 1
+        wait = _TIMEFRAME_ORDER.get(process.timeframe or "", len(_TIMEFRAME_ORDER))
+        return (needs_her, wait, order[transaction_type])
+
+    return sorted(transaction_types, key=cost)
+
+
 def chosen_transactions(payer: PayerRow) -> list[str]:
     """The transaction types the practice has asked Pablo to enrol this payer for."""
     return [tx for tx in ENROLLMENT_TRANSACTION_TYPES if getattr(payer, _CHOICE_COLUMNS[tx])]
@@ -397,8 +461,17 @@ def request_enrollments(
     if payer.clearinghouse_payer_id != entry.stediId:
         payer.clearinghouse_payer_id = entry.stediId
 
+    # Remember what the directory said, so the payer list can tell "nothing
+    # needs enrolling" from "not enrolled yet" without asking the vendor again
+    # on every render. The empty string is a real answer here, not a blank.
+    payer.directory_requires = ",".join(required_transactions(entry.transactionSupport))
+
     created: list[PayerEnrollmentRow] = []
-    for transaction_type in transactions_to_file(payer, entry.transactionSupport):
+    # Cheapest-to-answer first: the connection she can have today should be
+    # working before a payer stops to ask her for a signed form.
+    for transaction_type in filing_order(
+        entry, transactions_to_file(payer, entry.transactionSupport)
+    ):
         if transaction_type in existing:
             continue
         enrollment = client.create_enrollment(
@@ -495,7 +568,10 @@ def _instructions(enrollment: Enrollment) -> str | None:
 
 
 def derive_payer_status(
-    statuses: Iterable[tuple[str, str]], *, enroll_remittance: bool = True
+    statuses: Iterable[tuple[str, str]],
+    *,
+    enroll_remittance: bool = True,
+    directory_requires: str | None = None,
 ) -> str:
     """``payers.enrollment_status`` from the payer's ``(transaction_type, status)`` requests.
 
@@ -512,6 +588,13 @@ def derive_payer_status(
     """
     by_transaction = dict(statuses)
     if not by_transaction:
+        # Nothing on file means one of two opposite things, and only the
+        # cached directory answer separates them: a payer that requires no
+        # enrollment is READY — claims and eligibility already flow — while a
+        # payer nobody has asked about yet is genuinely not enrolled. Saying
+        # "not enrolled" to a practice that can bill today is the bug.
+        if directory_requires == "":
+            return "active"
         return "none"
     if "rejected" in by_transaction.values():
         return "error"
@@ -530,6 +613,7 @@ def _mirror_status(session: Session, payer: PayerRow, now: datetime) -> None:
     status = derive_payer_status(
         ((row.transaction_type, row.status) for row in list_enrollments(session, payer.id)),
         enroll_remittance=payer.enroll_remittance,
+        directory_requires=payer.directory_requires,
     )
     if payer.enrollment_status != status:
         payer.enrollment_status = status

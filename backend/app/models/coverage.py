@@ -64,6 +64,9 @@ class Payer(BaseModel):
     enroll_eligibility: bool = True
     enroll_claims: bool = True
     enroll_remittance: bool = False
+    #: What the directory said this payer requires, comma-joined. None until
+    #: anybody has asked; "" means asked and the answer was "nothing".
+    directory_requires: str | None = None
     timely_filing_days: int = DEFAULT_TIMELY_FILING_DAYS
     corrected_claim_days: int = DEFAULT_CORRECTED_CLAIM_DAYS
     appeal_days: int = DEFAULT_APPEAL_DAYS

@@ -108,13 +108,16 @@ from ..claims.eligibility import (
     summary_for_coverage,
 )
 from ..claims.enrollment import (
+    ONE_CLICK,
     BillingProfileIncompleteError,
     PayerNotInDirectoryError,
     PrincipalArmer,
     clearinghouse_client_for_practice,
     enroll_if_new,
+    enrollment_process,
     enrollment_request,
     list_enrollments,
+    moves_every_npi_under_the_tax_id,
     refresh_enrollment,
     refresh_enrollments_throttled,
     request_enrollments,
@@ -319,6 +322,21 @@ class PayerDirectoryMatch(BaseModel):
     #: Transaction types this payer needs an enrollment request for, using the
     #: same names the enrollment surface uses: "837P", "270", "835".
     requires_enrollment: list[str] = []
+    #: Transaction types where enrolling moves EVERY NPI under the practice's
+    #: tax id, not just its own — colleagues included. Only when the directory
+    #: says the payer supports TIN aggregation and not NPI; a payer offering
+    #: both can be asked for the narrow one and carries no such consequence.
+    moves_whole_tax_id: list[str] = []
+    #: How long the payer takes to answer, per transaction, in the vendor's own
+    #: words: INSTANT / HOURS / DAYS / WEEKS / OVER_4_WEEKS. Absent when the
+    #: directory does not say, which must not be rendered as "quick".
+    answer_timeframes: dict[str, str] = {}
+    #: Transaction types that need nothing from the practice to file
+    #: (the vendor's ONE_CLICK). The rest will stop and ask for something.
+    files_without_asking: list[str] = []
+    #: True when this payer wants a PTAN. Known up front rather than
+    #: discovered days later when a request stops on a task.
+    ptan_required: bool = False
     #: True when the practice already has this payer on its list, so the
     #: surface can say "already added" rather than offering a duplicate.
     already_added: bool = False
@@ -367,6 +385,24 @@ def search_payer_directory(
                 name=hit.displayName,
                 aliases=hit.aliases,
                 requires_enrollment=required_transactions(hit.transactionSupport),
+                moves_whole_tax_id=[
+                    tx
+                    for tx in required_transactions(hit.transactionSupport)
+                    if moves_every_npi_under_the_tax_id(hit, tx)
+                ],
+                answer_timeframes={
+                    tx: process.timeframe
+                    for tx in required_transactions(hit.transactionSupport)
+                    if (process := enrollment_process(hit, tx)) is not None
+                    and process.timeframe is not None
+                },
+                files_without_asking=[
+                    tx
+                    for tx in required_transactions(hit.transactionSupport)
+                    if (process := enrollment_process(hit, tx)) is not None
+                    and process.type == ONE_CLICK
+                ],
+                ptan_required=hit.enrollment.ptanRequired,
                 already_added=hit.primaryPayerId in existing,
             )
             for hit in hits

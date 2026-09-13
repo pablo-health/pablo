@@ -265,6 +265,45 @@ class ClaimSubmissionResult(BaseModel):
     payer: SubmissionPayer
 
 
+class EnrollmentProcess(BaseModel):
+    """What enrolling for one transaction with one payer will actually take.
+
+    ``type`` is whether it needs anything from the practice: ``ONE_CLICK``
+    files and is done, ``MULTI_STEP`` stops to ask for a form, an
+    attestation or a document.
+
+    ``timeframe`` is how long the payer takes to answer —
+    ``INSTANT``/``HOURS``/``DAYS``/``WEEKS``/``OVER_4_WEEKS``. Both are
+    the vendor's own vocabulary and are stored as given; a value outside
+    the set is kept rather than rejected, because a directory that learns a
+    new word should not break a payer search.
+
+    ``supportedAggregationPreferences`` is the one that can surprise
+    somebody. ``NPI`` means enrolling moves that NPI alone; ``TIN`` means it
+    moves EVERY NPI billing under that tax id — colleagues included. A payer
+    offering both lets us ask for the narrow one; a payer offering only
+    ``TIN`` cannot be enrolled narrowly, and the practice deserves to know
+    before it files.
+    """
+
+    model_config = _WIRE_MODEL_CONFIG
+
+    type: str | None = None
+    timeframe: str | None = None
+    supportedAggregationPreferences: list[str] = []
+
+
+class PayerEnrollment(BaseModel):
+    """The directory's account of what enrolling with this payer involves."""
+
+    model_config = _WIRE_MODEL_CONFIG
+
+    ptanRequired: bool = False
+    #: Keyed by the vendor's transaction names — the same keys
+    #: ``transactionSupport`` uses.
+    transactionEnrollmentProcesses: dict[str, EnrollmentProcess] = {}
+
+
 class Payer(BaseModel):
     """One payer-search hit.
 
@@ -273,6 +312,12 @@ class Payer(BaseModel):
     ...) to ``SUPPORTED``, ``ENROLLMENT_REQUIRED`` or ``NOT_SUPPORTED`` — what
     decides whether an enrollment request has to be filed before the
     practice can use that transaction with this payer.
+
+    ``enrollment`` is the same directory entry's account of what that
+    enrollment will COST: how long, whether it needs anything from her, and
+    whether it moves her colleagues' routing too. It has been on the wire all
+    along and was simply not modelled, which is why the product has been
+    asking a question it already had the answer to.
     """
 
     model_config = _WIRE_MODEL_CONFIG
@@ -282,6 +327,7 @@ class Payer(BaseModel):
     displayName: str
     aliases: list[str] = []
     transactionSupport: dict[str, str] = {}
+    enrollment: PayerEnrollment = PayerEnrollment()
 
 
 class EligibilityProvider(BaseModel):

@@ -124,3 +124,54 @@ describe("BalancesView when a payer settles somewhere else", () => {
     expect(screen.queryByText(/At least this/i)).not.toBeInTheDocument()
   })
 })
+
+describe("BalancesView when clients settle somewhere else", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it("does not claim nothing is outstanding when it cannot know", () => {
+    // The sharpest form of this bug: a practice whose clients all settle
+    // through a biller would be told "every client's ledger nets to zero",
+    // which is precisely what we were never in a position to say.
+    mockUseBalances.mockReturnValue({
+      data: { items: [], outcome_elsewhere_count: 3 },
+      isLoading: false,
+      error: null,
+    })
+
+    render(<BalancesView />)
+
+    expect(screen.queryByText(/nets to zero/i)).not.toBeInTheDocument()
+    expect(
+      screen.getByText(/3 clients settle through your billing service/i),
+    ).toBeInTheDocument()
+  })
+
+  it("still says so above a list that does have rows", () => {
+    mockUseBalances.mockReturnValue({
+      data: { items: [item()], outcome_elsewhere_count: 1 },
+      isLoading: false,
+      error: null,
+    })
+
+    render(<BalancesView />)
+
+    expect(
+      screen.getByText(/1 client settles through your billing service/i),
+    ).toBeInTheDocument()
+  })
+
+  it("keeps the plain empty state when nothing is missing", () => {
+    mockUseBalances.mockReturnValue({
+      data: { items: [], outcome_elsewhere_count: 0 },
+      isLoading: false,
+      error: null,
+    })
+
+    render(<BalancesView />)
+
+    expect(screen.getByText(/nets to zero/i)).toBeInTheDocument()
+    expect(screen.queryByText(/billing service/i)).not.toBeInTheDocument()
+  })
+})

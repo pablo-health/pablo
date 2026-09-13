@@ -37,6 +37,7 @@ _PAYER_FIELDS = (
     "enroll_eligibility",
     "enroll_claims",
     "enroll_remittance",
+    "directory_requires",
     "timely_filing_days",
     "corrected_claim_days",
     "appeal_days",

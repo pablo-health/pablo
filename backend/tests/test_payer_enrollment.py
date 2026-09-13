@@ -37,6 +37,8 @@ from app.claims.enrollment import (
     PayerNotInDirectoryError,
     derive_payer_status,
     ensure_provider_record,
+    filing_order,
+    moves_every_npi_under_the_tax_id,
     refresh_enrollments,
     refresh_enrollments_throttled,
     request_enrollments,
@@ -52,7 +54,7 @@ from app.db.models import (
     PayerRow,
     PracticeBillingProfileRow,
 )
-from app.models.claims_transport import Enrollment
+from app.models.claims_transport import Enrollment, Payer
 from app.services.practice_billing_profile import SINGLETON_ID, update_billing_profile
 from app.settings import get_settings
 from sqlalchemy import Engine, select
@@ -310,7 +312,12 @@ class TestRequestEnrollments:
 
         created = request_enrollments(session, client, payer_row_id=payer.id, user_id=_USER_ID)
 
-        assert [row.transaction_type for row in created] == ["837P", "270", "835"]
+        # Remittance leads, which is not the declaration order: the recorded
+        # directory marks claimPayment ONE_CLICK/INSTANT and says nothing about
+        # the other two, so it is the one that costs her least to file. Order
+        # itself is TestFilingOrder's subject; this test is about WHICH three.
+        assert sorted(row.transaction_type for row in created) == ["270", "835", "837P"]
+        assert created[0].transaction_type == "835"
         assert len({row.vendor_request_id for row in created}) == 3
 
     def test_a_second_request_files_nothing_new(self, session: Session) -> None:
@@ -537,7 +544,9 @@ class TestTransactionChoice:
 
         created = request_enrollments(session, client, payer_row_id=payer.id, user_id=_USER_ID)
 
-        assert [row.transaction_type for row in created] == ["837P", "270", "835"]
+        # This test is about "one action gets everything", not about sequence —
+        # the order is what each costs her and belongs to TestFilingOrder.
+        assert sorted(row.transaction_type for row in created) == ["270", "835", "837P"]
 
     def test_switching_remittance_on_later_files_it_then(self, session: Session) -> None:
         _seed_profile(session)
@@ -582,6 +591,155 @@ class TestTransactionChoice:
         refresh_enrollments(session, client, arm=_no_arm)
 
         assert payer.enrollment_status == "active"
+
+
+class TestAPayerThatNeedsNoEnrollment:
+    """Ready to bill and enrolled for nothing are the same screen, different facts.
+
+    A payer whose directory entry marks everything SUPPORTED needs no
+    enrollment at all. Nothing gets filed, so the status derivation sees an
+    empty set — which until now it read as "none", i.e. "Not enrolled", to a
+    practice that could bill that payer the same afternoon.
+    """
+
+    def test_nothing_required_reads_as_ready_not_as_not_enrolled(self, session: Session) -> None:
+        _seed_profile(session)
+        payer = _seed_payer(session)
+        client = FakeClearinghouse(
+            transaction_support={
+                "professionalClaimSubmission": "SUPPORTED",
+                "eligibilityCheck": "SUPPORTED",
+                "claimPayment": "SUPPORTED",
+            }
+        )
+
+        created = request_enrollments(session, client, payer_row_id=payer.id, user_id=_USER_ID)
+
+        assert created == []
+        assert payer.directory_requires == ""
+        assert payer.enrollment_status == "active"
+
+    def test_a_payer_nobody_has_asked_about_still_reads_not_enrolled(self) -> None:
+        """NULL and "" are different answers and must not collapse."""
+        assert derive_payer_status([], directory_requires=None) == "none"
+        assert derive_payer_status([], directory_requires="") == "active"
+
+    def test_a_payer_that_requires_something_unfiled_still_reads_not_enrolled(
+        self, session: Session
+    ) -> None:
+        """Requiring an enrollment she has not filed is genuinely not enrolled."""
+        _seed_profile(session)
+        payer = _seed_payer(session, enroll_remittance=False)
+        client = FakeClearinghouse()
+
+        request_enrollments(session, client, payer_row_id=payer.id, user_id=_USER_ID)
+
+        # The directory requires remittance; she declined it. Nothing filed,
+        # and "nothing required" is NOT the reason.
+        assert payer.directory_requires == "835"
+        assert payer.enrollment_status == "none"
+
+    def test_what_the_directory_said_is_remembered_for_next_time(self, session: Session) -> None:
+        """Cached so a payer list render costs no vendor call."""
+        _seed_profile(session)
+        payer = _seed_payer(session)
+        client = FakeClearinghouse(
+            transaction_support={
+                "professionalClaimSubmission": "ENROLLMENT_REQUIRED",
+                "claimPayment": "ENROLLMENT_REQUIRED",
+            }
+        )
+
+        request_enrollments(session, client, payer_row_id=payer.id, user_id=_USER_ID)
+
+        assert payer.directory_requires == "837P,835"
+
+
+# --- what the directory says an enrollment will cost ------------------------------
+
+
+def _entry(**processes: dict[str, object]) -> Payer:
+    """A directory hit carrying the enrollment processes named."""
+    return Payer(
+        stediId="X",
+        primaryPayerId="X",
+        displayName="X",
+        enrollment={"transactionEnrollmentProcesses": processes},
+    )
+
+
+class TestFilingOrder:
+    """File what costs her least first, so the fast connection is live sooner.
+
+    The directory answers this per payer per transaction: ``type`` says
+    whether it needs anything from her, ``timeframe`` says how long the payer
+    takes. Both are the vendor's own vocabulary.
+    """
+
+    def test_one_click_goes_before_multi_step(self) -> None:
+        entry = _entry(
+            claimPayment={"type": "MULTI_STEP", "timeframe": "INSTANT"},
+            professionalClaimSubmission={"type": "ONE_CLICK", "timeframe": "WEEKS"},
+        )
+
+        # Needing nothing from her outranks answering quickly: a form she has
+        # not been asked for yet blocks longer than a payer that is merely slow.
+        assert filing_order(entry, ["835", "837P"]) == ["837P", "835"]
+
+    def test_quicker_answers_go_first_among_equals(self) -> None:
+        entry = _entry(
+            claimPayment={"type": "ONE_CLICK", "timeframe": "OVER_4_WEEKS"},
+            eligibilityCheck={"type": "ONE_CLICK", "timeframe": "INSTANT"},
+        )
+
+        assert filing_order(entry, ["835", "270"]) == ["270", "835"]
+
+    def test_a_transaction_the_directory_is_silent_about_sorts_last(self) -> None:
+        """An unknown wait is not a short one."""
+        entry = _entry(claimPayment={"type": "ONE_CLICK", "timeframe": "WEEKS"})
+
+        assert filing_order(entry, ["837P", "835"]) == ["835", "837P"]
+
+    def test_an_entry_with_no_processes_keeps_the_declared_order(self) -> None:
+        """A payer the directory says nothing about files exactly as it always did."""
+        assert filing_order(_entry(), ["835", "270", "837P"]) == ["837P", "270", "835"]
+
+    def test_an_unrecognised_timeframe_is_not_treated_as_fast(self) -> None:
+        entry = _entry(
+            claimPayment={"type": "ONE_CLICK", "timeframe": "SOMEDAY"},
+            eligibilityCheck={"type": "ONE_CLICK", "timeframe": "WEEKS"},
+        )
+
+        assert filing_order(entry, ["835", "270"]) == ["270", "835"]
+
+
+class TestTinLevelEnrollment:
+    """Some payers move every NPI under the tax id, not just hers.
+
+    From the vendor's FAQ: enrolling one NPI with such a payer switches all of
+    them. For a solo practice that is invisible; for a group, or a clinician
+    still sharing a TIN with a practice she is leaving, it reroutes colleagues
+    who never asked.
+    """
+
+    def test_tin_only_moves_everyone(self) -> None:
+        entry = _entry(claimPayment={"supportedAggregationPreferences": ["TIN"]})
+
+        assert moves_every_npi_under_the_tax_id(entry, "835") is True
+
+    def test_offering_npi_too_means_we_can_ask_for_the_narrow_one(self) -> None:
+        entry = _entry(claimPayment={"supportedAggregationPreferences": ["NPI", "TIN"]})
+
+        assert moves_every_npi_under_the_tax_id(entry, "835") is False
+
+    def test_npi_only_moves_nobody_else(self) -> None:
+        entry = _entry(claimPayment={"supportedAggregationPreferences": ["NPI"]})
+
+        assert moves_every_npi_under_the_tax_id(entry, "835") is False
+
+    def test_silence_is_not_taken_as_reassurance(self) -> None:
+        """We do not claim a payer is safe because the directory did not say."""
+        assert moves_every_npi_under_the_tax_id(_entry(), "835") is False
 
 
 # --- action required -> reminder -> resolved -------------------------------------

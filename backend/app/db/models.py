@@ -2038,6 +2038,19 @@ class PayerRow(Base):
     enroll_remittance: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false"), default=False
     )
+    #: What the clearinghouse directory said this payer requires an enrollment
+    #: for, comma-joined ("837P,835"), cached the last time we asked.
+    #:
+    #: NULL means nobody has asked yet. The EMPTY STRING is the load-bearing
+    #: value: it means we asked and the answer was "nothing" — which is a very
+    #: different state from "not enrolled yet", and without somewhere to record
+    #: it the two are indistinguishable. A payer needing no enrollment would
+    #: otherwise read as "Not enrolled" forever while she bills it happily.
+    #:
+    #: Cached rather than re-fetched because the alternative is a vendor call
+    #: every time a payer list renders. Refreshed whenever we ask the directory
+    #: for real, which is each time an enrollment is filed.
+    directory_requires: Mapped[str | None] = mapped_column(String(40), nullable=True)
     timely_filing_days: Mapped[int] = mapped_column(
         Integer, nullable=False, default=DEFAULT_TIMELY_FILING_DAYS
     )

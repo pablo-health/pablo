@@ -170,4 +170,11 @@ export interface ClientBalanceItem {
 
 export interface BalancesResponse {
   items: ClientBalanceItem[]
+  /**
+   * Clients who owe nothing *here* because their payer settles through a
+   * billing service, so we were never told what they owe. Absent from `items`
+   * for the same reason a settled client is — which is why the screen has to
+   * say they exist. A count, never identities.
+   */
+  outcome_elsewhere_count: number
 }
