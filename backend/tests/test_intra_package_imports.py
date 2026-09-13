@@ -64,11 +64,6 @@ _GRANDFATHERED: frozenset[str] = frozenset(
         "jobs/pentest_context.py",
         "jobs/pentest_explore.py",
         "jobs/pentest_runner.py",
-        "services/signals/__init__.py",
-        "services/signals/entity_consistency.py",
-        "services/signals/hedging.py",
-        "services/signals/negation.py",
-        "services/signals/temporal.py",
     }
 )
 
