@@ -249,3 +249,27 @@ export interface UpdateCoverageRequest extends Partial<SubscriberFields> {
   /** Send `null` to drop the override and fall back to the payer's answer. */
   copay_override_cents?: number | null
 }
+
+/**
+ * One payer the clearinghouse directory knows about.
+ *
+ * `requires_enrollment` is why the picker exists rather than a bare name
+ * search: the directory says, per transaction, whether an enrollment has to be
+ * filed before the practice can use it. Told at pick time that is information;
+ * told afterwards it is a surprise.
+ */
+export interface PayerDirectoryMatch {
+  payer_id: string
+  name: string
+  aliases: string[]
+  /** Transaction types needing enrollment: "837P", "270", "835". */
+  requires_enrollment: string[]
+  /** Already on the practice's list, so the row offers no duplicate. */
+  already_added: boolean
+}
+
+export interface PayerDirectoryResult {
+  matches: PayerDirectoryMatch[]
+  /** The clearinghouse could not be asked — not the same as "no such payer". */
+  unavailable: boolean
+}

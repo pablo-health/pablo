@@ -19,6 +19,7 @@ import type {
   PayerResponse,
   UpdateCoverageRequest,
   UpdatePayerRequest,
+  PayerDirectoryResult,
 } from "@/types/coverage"
 import { ApiError, del, get, patch, post, postForm } from "./client"
 
@@ -192,4 +193,20 @@ export async function verifyCoverage(
   token?: string,
 ): Promise<CoverageResponse> {
   return post<CoverageResponse>(`/api/patients/${patientId}/coverage/verify`, {}, token)
+}
+
+/**
+ * Find a payer in the clearinghouse directory.
+ *
+ * The directory is the authority on which payers exist and what each needs, so
+ * she picks from it rather than typing a code nobody knows from memory.
+ */
+export async function searchPayerDirectory(
+  query: string,
+  token?: string,
+): Promise<PayerDirectoryResult> {
+  return get<PayerDirectoryResult>(
+    `/api/payers/directory?q=${encodeURIComponent(query)}`,
+    token,
+  )
 }

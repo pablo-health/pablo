@@ -118,6 +118,7 @@ from ..claims.enrollment import (
     refresh_enrollment,
     refresh_enrollments_throttled,
     request_enrollments,
+    required_transactions,
 )
 from ..claims.enrollment_tasks import (
     Answer,
@@ -300,6 +301,77 @@ def list_payers(
     """The practice's payer list, by name."""
     data = [_to_payer_response(payer) for payer in payers.list()]
     return PayerListResponse(data=data, total=len(data))
+
+
+class PayerDirectoryMatch(BaseModel):
+    """One payer the clearinghouse directory knows about.
+
+    ``requires_enrollment`` is the useful part and the reason this endpoint
+    exists rather than a bare name search: the directory says, per transaction,
+    whether the practice has to file an enrollment before it can use it. Told
+    at pick time, that turns "add a payer" into "add a payer and see what it
+    will ask of you" — told afterwards, it is a surprise.
+    """
+
+    payer_id: str
+    name: str
+    aliases: list[str] = []
+    #: Transaction types this payer needs an enrollment request for, using the
+    #: same names the enrollment surface uses: "837P", "270", "835".
+    requires_enrollment: list[str] = []
+    #: True when the practice already has this payer on its list, so the
+    #: surface can say "already added" rather than offering a duplicate.
+    already_added: bool = False
+
+
+class PayerDirectoryResponse(BaseModel):
+    matches: list[PayerDirectoryMatch]
+    #: True when the clearinghouse is not reachable. The surface keeps the
+    #: hand-typed path open rather than treating a vendor outage as "no such
+    #: payer" — those are different answers and lead her to different actions.
+    unavailable: bool = False
+
+
+@payers_router.get("/directory", response_model=PayerDirectoryResponse)
+def search_payer_directory(
+    payers: PayersRepo,
+    q: str,
+    client: ClearinghouseClient | None = Depends(get_clearinghouse_client),
+) -> PayerDirectoryResponse:
+    """Find a payer by name in the clearinghouse's directory.
+
+    The directory is the authority on which payers exist and what they need,
+    which is why she should pick from it rather than type a code: 60054 is
+    Aetna, and nobody knows that from memory. A wrong code is only discovered
+    when an enrollment is filed against it.
+
+    A clearinghouse that is not configured or not answering comes back as
+    ``unavailable`` rather than as an empty result. "We cannot ask right now"
+    and "no such payer" send her to different places, and conflating them would
+    tell her to check a name that was never the problem.
+    """
+    if client is None:
+        return PayerDirectoryResponse(matches=[], unavailable=True)
+
+    try:
+        hits = client.search_payers(q)
+    except Exception:
+        logger.warning("payer_directory_search_failed")
+        return PayerDirectoryResponse(matches=[], unavailable=True)
+
+    existing = {payer.payer_id for payer in payers.list()}
+    return PayerDirectoryResponse(
+        matches=[
+            PayerDirectoryMatch(
+                payer_id=hit.primaryPayerId,
+                name=hit.displayName,
+                aliases=hit.aliases,
+                requires_enrollment=required_transactions(hit.transactionSupport),
+                already_added=hit.primaryPayerId in existing,
+            )
+            for hit in hits
+        ]
+    )
 
 
 @payers_router.post("", response_model=PayerResponse, status_code=status.HTTP_201_CREATED)

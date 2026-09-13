@@ -299,6 +299,7 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("get", "/api/credentialing/checklist/sources"),  # static provenance vocabulary
         ("get", "/api/credentialing/nppes/{npi}"),  # public registry, her own record, no PHI
         ("get", "/api/credentialing/nppes"),  # same registry, searched by name
+        ("get", "/api/payers/directory"),  # clearinghouse payer directory, no patient in it
     }
 )
 

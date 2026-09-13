@@ -30,6 +30,7 @@ const mockUseTasks = vi.fn()
 const mockAnswerTask = vi.fn()
 const mockRefreshEnrollments = vi.fn()
 const mockUseRefreshEnrollments = vi.fn()
+const mockUseDirectory = vi.fn()
 
 vi.mock("@/hooks/useCoverage", () => ({
   usePayers: (...args: unknown[]) => mockUsePayers(...args),
@@ -44,6 +45,7 @@ vi.mock("@/hooks/useCoverage", () => ({
   useEnrollmentTasks: (...args: unknown[]) => mockUseTasks(...args),
   useAnswerEnrollmentTask: () => ({ mutate: mockAnswerTask, isPending: false, error: null }),
   useRefreshPayerEnrollments: (...args: unknown[]) => mockUseRefreshEnrollments(...args),
+  usePayerDirectory: (...args: unknown[]) => mockUseDirectory(...args),
 }))
 
 const AETNA: PayerResponse = {
@@ -113,6 +115,7 @@ const TASKS: EnrollmentTaskListResponse = {
 describe("PayersCard", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockUseDirectory.mockReturnValue({ data: undefined, isLoading: false })
     mockUsePayers.mockReturnValue({ data: { data: [AETNA], total: 1 } })
     mockUseEnrollments.mockReturnValue({ data: undefined })
     mockUseTasks.mockReturnValue({ data: undefined, isLoading: false, error: null })
@@ -258,11 +261,15 @@ describe("PayersCard", () => {
     })
   })
 
-  it("adds a payer by name and payer id", async () => {
+  it("adds a payer by hand when the directory does not have it", async () => {
+    // The fallback, not the ordinary path. The directory is authoritative
+    // about what it knows, not about what exists, so a practice whose payer is
+    // genuinely missing must not be stuck.
     const user = userEvent.setup()
     render(<PayersCard />)
 
     await user.click(screen.getByRole("button", { name: /Add a payer/ }))
+    await user.click(screen.getByRole("button", { name: /isn.t listed/i }))
     await user.type(screen.getByLabelText("Name"), "Cigna")
     await user.type(screen.getByLabelText("Payer ID"), "62308")
     await user.click(screen.getByRole("button", { name: "Add" }))
@@ -271,6 +278,108 @@ describe("PayersCard", () => {
       { name: "Cigna", payer_id: "62308" },
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     )
+  })
+
+  it("adds a payer from the directory, keeping its name and code", async () => {
+    // The whole point: she never types 62308, and the name stored is the
+    // directory's rather than one she invented, so the two cannot disagree.
+    const user = userEvent.setup()
+    mockUseDirectory.mockReturnValue({
+      data: {
+        unavailable: false,
+        matches: [
+          {
+            payer_id: "62308",
+            name: "CIGNA HEALTH AND LIFE INSURANCE COMPANY",
+            aliases: [],
+            requires_enrollment: ["835"],
+            already_added: false,
+          },
+        ],
+      },
+      isLoading: false,
+    })
+    render(<PayersCard />)
+
+    await user.click(screen.getByRole("button", { name: /Add a payer/ }))
+    await user.type(screen.getByLabelText(/find your insurer/i), "cigna")
+    await user.click(screen.getByRole("button", { name: "Search" }))
+    await user.click(screen.getByRole("button", { name: /^Add$/ }))
+
+    expect(mockCreate).toHaveBeenCalledWith(
+      { name: "CIGNA HEALTH AND LIFE INSURANCE COMPANY", payer_id: "62308" },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    )
+  })
+
+  it("says what a payer will require before she commits to it", async () => {
+    const user = userEvent.setup()
+    mockUseDirectory.mockReturnValue({
+      data: {
+        unavailable: false,
+        matches: [
+          {
+            payer_id: "62308",
+            name: "Cigna",
+            aliases: [],
+            requires_enrollment: ["837P", "835"],
+            already_added: false,
+          },
+        ],
+      },
+      isLoading: false,
+    })
+    render(<PayersCard />)
+
+    await user.click(screen.getByRole("button", { name: /Add a payer/ }))
+    await user.type(screen.getByLabelText(/find your insurer/i), "cigna")
+    await user.click(screen.getByRole("button", { name: "Search" }))
+
+    expect(screen.getByText(/needs enrollment for claims, remittance/i)).toBeInTheDocument()
+  })
+
+  it("offers no duplicate for a payer already on the list", async () => {
+    const user = userEvent.setup()
+    mockUseDirectory.mockReturnValue({
+      data: {
+        unavailable: false,
+        matches: [
+          {
+            payer_id: "60054",
+            name: "Aetna",
+            aliases: [],
+            requires_enrollment: [],
+            already_added: true,
+          },
+        ],
+      },
+      isLoading: false,
+    })
+    render(<PayersCard />)
+
+    await user.click(screen.getByRole("button", { name: /Add a payer/ }))
+    await user.type(screen.getByLabelText(/find your insurer/i), "aetna")
+    await user.click(screen.getByRole("button", { name: "Search" }))
+
+    expect(screen.getByText(/already added/i)).toBeInTheDocument()
+  })
+
+  it("tells her the directory is down rather than that her payer does not exist", async () => {
+    // Different answers, different actions. Conflating them would send her to
+    // check a name that was never the problem.
+    const user = userEvent.setup()
+    mockUseDirectory.mockReturnValue({
+      data: { unavailable: true, matches: [] },
+      isLoading: false,
+    })
+    render(<PayersCard />)
+
+    await user.click(screen.getByRole("button", { name: /Add a payer/ }))
+    await user.type(screen.getByLabelText(/find your insurer/i), "aetna")
+    await user.click(screen.getByRole("button", { name: "Search" }))
+
+    expect(screen.getByText(/directory isn.t answering/i)).toBeInTheDocument()
+    expect(screen.queryByText(/nothing matched/i)).not.toBeInTheDocument()
   })
 
   it("checks every payer's enrollments in one press", async () => {
