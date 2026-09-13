@@ -132,7 +132,8 @@ function EnrollmentRequestRow({
 
 type EnrollField = "enroll_eligibility" | "enroll_claims" | "enroll_remittance"
 
-const CHOICES: { field: EnrollField; label: string; help: string }[] = [
+/** `weighty` marks the one whose help is a consequence rather than a description. */
+const CHOICES: { field: EnrollField; label: string; help: string; weighty?: true }[] = [
   {
     field: "enroll_eligibility",
     label: "Check eligibility",
@@ -147,6 +148,7 @@ const CHOICES: { field: EnrollField; label: string; help: string }[] = [
     field: "enroll_remittance",
     label: "Receive remittances (ERAs)",
     help: REMITTANCE_WARNING,
+    weighty: true,
   },
 ]
 
@@ -173,7 +175,7 @@ function PayerTransactionChoice({
         What should Pablo do with this payer?
       </legend>
       <div className="space-y-2">
-        {CHOICES.map(({ field, label, help }) => (
+        {CHOICES.map(({ field, label, help, weighty }) => (
           <div key={field} className="flex items-start gap-2.5">
             <Checkbox
               id={`${field}-${payer.id}`}
@@ -185,7 +187,15 @@ function PayerTransactionChoice({
               <Label htmlFor={`${field}-${payer.id}`} className="font-normal">
                 {label}
               </Label>
-              <p className="text-[12.5px] text-muted-foreground">{help}</p>
+              {/* Three grey lines read as three descriptions, and one of them
+                  is not a description. */}
+              <p
+                className={
+                  weighty ? "text-[12.5px] text-amber-800" : "text-[12.5px] text-muted-foreground"
+                }
+              >
+                {help}
+              </p>
             </div>
           </div>
         ))}
