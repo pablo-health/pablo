@@ -22,11 +22,13 @@ import type { NppesLookup } from "@/types/credentialing"
 const useNpiLookup = vi.hoisted(() => vi.fn())
 const useSettingsUserStatus = vi.hoisted(() => vi.fn())
 const saveProfile = vi.hoisted(() => vi.fn())
+const saveAnswers = vi.hoisted(() => vi.fn())
 const recordConfirmation = vi.hoisted(() => vi.fn())
 
 vi.mock("@/hooks/useCredentialingChecklist", () => ({
   useNpiLookup: (...args: unknown[]) => useNpiLookup(...args),
   useRecordConfirmation: () => ({ mutate: recordConfirmation, isPending: false }),
+  useSaveChecklistAnswers: () => ({ mutate: saveAnswers, isPending: false }),
 }))
 
 vi.mock("@/hooks/useProfessionalInfo", () => ({
@@ -57,6 +59,7 @@ function found(overrides: Partial<NppesLookup> = {}): NppesLookup {
     license_state: "NC",
     active: true,
     entity_type: 1,
+    sole_proprietor: true,
     ...overrides,
   }
 }
@@ -409,5 +412,46 @@ describe("confirming promotes what the registry said", () => {
 
     expect(saveProfile).not.toHaveBeenCalled()
     expect(recordConfirmation).not.toHaveBeenCalled()
+  })
+})
+
+describe("the sole-proprietor answer the registry already has", () => {
+  it("shows it, so confirming it is honest", () => {
+    // Writing a value she was never shown would be the one thing this tier
+    // must not do. It appears on the card before it can be saved.
+    useSettingsUserStatus.mockReturnValue({ data: { npi_number: "1999999984" }, isLoading: false })
+    useNpiLookup.mockReturnValue({ data: found(), isLoading: false, error: null })
+
+    render(<NpiLookupStep />)
+
+    expect(screen.getByText("Sole proprietor")).toBeInTheDocument()
+  })
+
+  it("saves it as the Tier-1 answer it is", async () => {
+    const user = userEvent.setup()
+    useSettingsUserStatus.mockReturnValue({ data: { npi_number: "1999999984" }, isLoading: false })
+    useNpiLookup.mockReturnValue({ data: found(), isLoading: false, error: null })
+
+    render(<NpiLookupStep />)
+    await user.click(screen.getByRole("button", { name: /that.s me/i }))
+
+    expect(saveAnswers).toHaveBeenCalledWith({ sole_proprietor: true })
+  })
+
+  it("says nothing when the registry says nothing", async () => {
+    // Absent is a real state on these records. Guessing "no" would put a wrong
+    // answer on her record with the confidence of a looked-up one.
+    const user = userEvent.setup()
+    useSettingsUserStatus.mockReturnValue({ data: { npi_number: "1999999984" }, isLoading: false })
+    useNpiLookup.mockReturnValue({
+      data: found({ sole_proprietor: null }),
+      isLoading: false,
+      error: null,
+    })
+
+    render(<NpiLookupStep />)
+    await user.click(screen.getByRole("button", { name: /that.s me/i }))
+
+    expect(saveAnswers).not.toHaveBeenCalled()
   })
 })

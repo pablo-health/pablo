@@ -328,6 +328,9 @@ class NppesLookupResponse(BaseModel):
     #: 1 individual, 2 organisation. Lets the screen say "that is your
     #: practice's NPI, not yours" instead of confirming the wrong one.
     entity_type: int | None = None
+    #: A Tier-1 question the registry has already answered. None when it has
+    #: not — which is common, and not the same as "no".
+    sole_proprietor: bool | None = None
 
 
 class NppesMatch(BaseModel):
@@ -447,4 +450,5 @@ def look_up_npi(
         license_state=provider.license_state,
         active=provider.active,
         entity_type=provider.entity_type,
+        sole_proprietor=provider.sole_proprietor,
     )

@@ -126,6 +126,8 @@ export interface NppesLookup {
   active: boolean
   /** 1 individual, 2 organisation. Catches a practice NPI in the personal field. */
   entity_type: number | null
+  /** A Tier-1 question the registry has already answered. `null` when it hasn't. */
+  sole_proprietor: boolean | null
 }
 
 /** One row of a name search: enough for her to recognise herself. */
