@@ -2209,6 +2209,113 @@ class PayerEnrollmentRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+#: Where an application to join a payer's panel stands.
+#:
+#: Not the same thing as ``payers.enrollment_status``, and the two are easy to
+#: confuse. That one is the ELECTRONIC connection — whether 837/835/270 can be
+#: exchanged with a payer she is already contracted with. This one is whether
+#: the payer will contract with her at all. A clinician can be enrolled for
+#: transactions with a payer whose panel she is not on, and vice versa.
+#:
+#: ``info_requested`` is the load-bearing one. A payer info request carries a
+#: 30-60 day fuse and a missed one kills the application outright, which is
+#: why it is the status whose deadline matters most.
+PANEL_APPLICATION_STATUSES: tuple[str, ...] = (
+    "researching",
+    "caqh_ready",
+    "submitted",
+    "in_review",
+    "info_requested",
+    "contract_received",
+    "effective",
+    "closed_panel_appeal",
+    "denied",
+    "recredentialing",
+)
+
+#: Whose move it is. The column the concierge model turns on: with Pablo
+#: running the applications, the default owner is ``pablo`` and the clinician
+#: hears from us only when she genuinely has to act. Without it the board can
+#: only nag her about everything, which is the process she was trying to stop
+#: carrying.
+PANEL_ACTION_OWNERS: tuple[str, ...] = ("pablo", "therapist")
+
+
+class PanelApplicationRow(Base):
+    """One application to join a payer's panel, and whose move it is.
+
+    PHI-free — an application is about the clinician and an insurer, and no
+    patient appears in it — but NOT practice-wide, which is the difference
+    from ``payers``. It carries a ``user_id`` and is row-scoped by it, so a
+    clinician sees her own applications and not a colleague's.
+
+    That is deliberate rather than inherited. A payer belongs to the practice:
+    everyone bills the same insurers, so scoping it per user would be
+    meaningless. A panel application belongs to a person, and it accumulates
+    exactly the facts somebody would rather their colleagues did not browse —
+    which panels rejected her, what she is appealing, how long she has been
+    waiting. Practice-level visibility would be a privacy decision made by
+    accident, so it is made the other way on purpose.
+
+    The consequence: Pablo's own operator surface reads these across
+    clinicians, which needs the platform role rather than the app role. That
+    is the same boundary the cross-tenant jobs already use.
+
+    ``payer_id`` points at the practice's own payer row rather than carrying a
+    typed insurer name, so an application and the electronic enrollment that
+    follows it refer to the same payer. A name typed by hand would make "BCBS"
+    mean forty different entities and leave the two surfaces unable to agree
+    they are discussing one insurer.
+
+    ``due_at`` is what the current status is waiting on and by when. The
+    reminder itself is a ``compliance_items`` row raised from it — that
+    machinery is already shipped, and a second reminder system beside it would
+    be one more thing to keep in step.
+    """
+
+    __tablename__ = "panel_applications"
+    __table_args__ = (
+        CheckConstraint(
+            f"status IN ({_sql_in_list(PANEL_APPLICATION_STATUSES)})",
+            name="ck_panel_applications_status",
+        ),
+        CheckConstraint(
+            f"action_owner IN ({_sql_in_list(PANEL_ACTION_OWNERS)})",
+            name="ck_panel_applications_action_owner",
+        ),
+        # One live application per payer per clinician. A second one is a
+        # recredentialing years later, not a duplicate — so this is not unique.
+        Index("ix_panel_applications_payer_id", "payer_id"),
+        Index("ix_panel_applications_user_id", "user_id"),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    #: Whose panel application this is. A group practice credentials each
+    #: clinician separately, so this is per-clinician even though the table is
+    #: not row-scoped.
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    payer_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("payers.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="researching")
+    action_owner: Mapped[str] = mapped_column(String(16), nullable=False, default="pablo")
+    #: What the current status is waiting on, and by when. NULL when nothing
+    #: is pending — a submitted application with no answer yet is waiting on
+    #: the payer's own clock, not on a date we set.
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: What she is waiting for, in words she can act on. Shown to her verbatim
+    #: when the owner is hers, so it is written for her, not for us.
+    awaiting: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: The payer's own application or reference number, which is what any
+    #: phone call about it will start by asking for.
+    reference: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    effective_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 #: Where a claim stands. It only ever moves forward on a receipt from the
 #: next hop — a scrub with no blocking findings, a clearinghouse
 #: acknowledgement, a payer acknowledgement, a remittance. ``rejected`` and
