@@ -19,6 +19,13 @@ A negative balance is kept rather than filtered out: it is a refund the
 practice owes, and a collections screen that shows only debts is the one place
 that would never surface it.
 
+A zero balance IS filtered out, which is right for a settled client and wrong
+for one whose payer settles elsewhere — their zero means "never told", not
+"nothing owed". Those are counted into ``outcome_elsewhere_count`` so the
+screen can say they exist. A count rather than rows, because listing them
+would bury the rows that can actually be acted on; and a count discloses no
+patient, so the audit payload is unchanged.
+
 Each row also says whether the outcome behind it is known — see
 :func:`app.payments.balance.outcome_is_known`. For a client whose payer sends
 its remittances elsewhere the figure is a floor rather than a total, and
@@ -89,12 +96,21 @@ def list_balances(
         known[patient_id] = outcome_is_known(payer)
 
     items: list[ClientBalanceItem] = []
+    # Clients who settle elsewhere and total zero here. They are dropped by the
+    # same rule that drops a genuinely settled client, which is how the person
+    # most at risk of being forgotten becomes the one this screen cannot show.
+    # Counted rather than listed: every insured client of a service-billing
+    # practice would otherwise appear with a zero, and a list where most rows
+    # are noise is a list nobody reads.
+    elsewhere = 0
     for patient_id, charges in by_patient.items():
         patient = visible.get(patient_id)
         if patient is None:
             continue
         summary = patient_balance(charges)
         if summary.balance_cents == 0:
+            if not known.get(patient_id, True):
+                elsewhere += 1
             continue
         items.append(
             ClientBalanceItem(
@@ -122,7 +138,7 @@ def list_balances(
             "patient_ids": [item.patient_id for item in items],
         },
     )
-    return BalancesResponse(items=items)
+    return BalancesResponse(items=items, outcome_elsewhere_count=elsewhere)
 
 
 def _outstanding_since(charges: list[PatientCharge], summary: BalanceSummary) -> datetime:

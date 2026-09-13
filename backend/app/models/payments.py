@@ -254,3 +254,8 @@ class BalancesResponse(BaseModel):
     """Every client carrying a balance, oldest first."""
 
     items: list[ClientBalanceItem]
+    #: Clients who owe nothing HERE because their payer settles through a
+    #: billing service, so we were never told what they owe. They are absent
+    #: from ``items`` for the same reason a settled client is, which is why the
+    #: screen has to say they exist. A count, not identities.
+    outcome_elsewhere_count: int = 0

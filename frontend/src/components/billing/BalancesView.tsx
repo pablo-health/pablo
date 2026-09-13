@@ -46,14 +46,29 @@ export function BalancesView() {
   }
 
   const items = data?.items ?? []
+  const elsewhere = data?.outcome_elsewhere_count ?? 0
+
+  /**
+   * "N clients settle through your billing service." Said wherever this screen
+   * would otherwise imply it has shown everything — which includes the empty
+   * state, where "every client's ledger nets to zero" is exactly the false
+   * reassurance a service-billing practice would be given.
+   */
+  const elsewhereLine =
+    elsewhere === 0
+      ? null
+      : `${elsewhere} ${elsewhere === 1 ? "client settles" : "clients settle"} through your ` +
+        `billing service, so what they owe isn't tracked here.`
 
   if (items.length === 0) {
     return (
       <div className="card text-center py-12">
         <Wallet className="mx-auto h-8 w-8 text-neutral-300" />
-        <p className="mt-3 text-sm font-medium text-neutral-900">Nothing outstanding</p>
+        <p className="mt-3 text-sm font-medium text-neutral-900">
+          {elsewhereLine ? "Nothing outstanding here" : "Nothing outstanding"}
+        </p>
         <p className="mt-1 text-sm text-neutral-500">
-          Every client&rsquo;s ledger nets to zero.
+          {elsewhereLine ?? "Every client\u2019s ledger nets to zero."}
         </p>
       </div>
     )
@@ -65,6 +80,7 @@ export function BalancesView() {
         Clients whose ledger does not net to zero, oldest first. A credit is a refund the
         practice owes and is listed alongside the debts rather than hidden.
       </p>
+      {elsewhereLine && <p className="mb-4 text-sm text-amber-700">{elsewhereLine}</p>}
       <ul className="space-y-1">
         {items.map((item) => (
           <BalanceRow key={item.patient_id} item={item} />

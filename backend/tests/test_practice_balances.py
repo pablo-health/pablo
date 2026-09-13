@@ -303,3 +303,54 @@ def test_a_payer_whose_remittances_reach_us_is_known() -> None:
     [alice] = _items(client)
 
     assert alice["outcome_known"] is True
+
+
+def test_a_client_who_settles_elsewhere_and_owes_nothing_here_is_counted() -> None:
+    """The client this screen structurally cannot show.
+
+    Her payer sends its remittances to a billing service, so her share of an
+    insured visit never becomes a row here and her balance totals zero. The
+    zero-balance filter — right for a settled client — then drops her. Open
+    her chart and it says "Balance tracked elsewhere"; never open it and
+    nothing suggests you should.
+    """
+    client = _client(
+        # A succeeded session charge nets to zero: it is both the bill and its
+        # own payment. What is MISSING is her share of the insured visit, which
+        # only an 835 would have told us.
+        [_row(_ALICE, amount_cents=5_000, kind="session", status="succeeded")],
+        coverage=_FakeCoverage({_ALICE: _plan(_ALICE)}),
+        payers=_FakePayers({"payer-1": _payer(enroll_remittance=False)}),
+    )
+
+    response = client.get("/api/billing/balances")
+
+    body = response.json()
+    # Nets to zero: a session charge is both the bill and its own payment.
+    assert body["items"] == []
+    assert body["outcome_elsewhere_count"] == 1
+
+
+def test_a_settled_private_pay_client_is_not_counted() -> None:
+    """Nothing is missing for her, so there is nothing to say."""
+    client = _client([_row(_ALICE, amount_cents=5_000, kind="session", status="succeeded")])
+
+    body = client.get("/api/billing/balances").json()
+
+    assert body["items"] == []
+    assert body["outcome_elsewhere_count"] == 0
+
+
+def test_a_client_who_settles_elsewhere_but_owes_something_is_listed_not_counted() -> None:
+    """She is actionable, so she belongs in the list — flagged, not hidden."""
+    client = _client(
+        [_row(_ALICE, amount_cents=5_000, kind="session")],
+        coverage=_FakeCoverage({_ALICE: _plan(_ALICE)}),
+        payers=_FakePayers({"payer-1": _payer(enroll_remittance=False)}),
+    )
+
+    body = client.get("/api/billing/balances").json()
+
+    [alice] = body["items"]
+    assert alice["outcome_known"] is False
+    assert body["outcome_elsewhere_count"] == 0
