@@ -9,9 +9,9 @@
  * unreachable from setup. A billing feature nobody can reach is not a billing
  * feature.
  *
- * What this proves is the path, not the payer machinery: that answering "I'm
- * already on insurance panels" walks her to the payer screen, that the screen
- * is the real one rather than a placeholder, and that the route now finishes.
+ * What this proves is the path, not the payer machinery: that ticking
+ * "Insurance I bill myself" walks her to the payer screen, that the screen is
+ * the real one rather than a placeholder, and that the route now finishes.
  */
 
 import { expect, test } from "../fixtures/auth"
@@ -21,7 +21,9 @@ test("an already-paneled practice reaches the payer screen and finishes", async 
 }) => {
   await page.goto("/dashboard/billing/setup")
 
-  await page.getByText("I’m already on insurance panels").click()
+  await page.getByLabel("Insurance I bill myself").check()
+  await page.getByRole("button", { name: "Continue" }).click()
+  await page.getByRole("button", { name: "Set up billing" }).click()
 
   // The lookup leads every route.
   await expect(page.getByRole("heading", { name: "Let's start with your NPI" })).toBeVisible()
@@ -71,7 +73,7 @@ test("the payer screen offers the enrollment surface, not a second copy of it", 
   // re-ask the routing question — so replaying the walk here would be testing
   // resume, not the payer screen.
   await api.request("PUT", "/api/users/me/preferences", {
-    billing_setup_route: "already_paneled",
+    billing_setup_state: ["own_insurance"],
     billing_setup_step: "payers",
   })
 

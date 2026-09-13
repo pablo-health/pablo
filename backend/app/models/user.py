@@ -6,9 +6,9 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .validators import validate_phone
 
@@ -17,15 +17,50 @@ OnboardingState = Literal["in_progress", "later", "completed"]
 ThemeName = Literal["warm-paper", "dark", "high-contrast", "boring-ehr"]
 CalendarDensity = Literal["gentle", "balanced", "compact"]
 
-#: How a therapist is paid today — the answer billing setup branches on.
-#: Situational rather than aspirational: it describes her practice now, and she
-#: can change it when it changes.
+#: SUPERSEDED by :data:`BillingSetupState`. Retained so preferences saved
+#: before the change still load, and so a returning clinician resumes where she
+#: left off rather than at an empty checklist.
+#:
+#: It asked one question and got two answers back: "platform_to_own" and
+#: "wants_panels" describe where she is AND where she wants to go, which is why
+#: a therapist on a platform who also takes cash clients could not describe
+#: herself at all.
 BillingSetupRoute = Literal[
     "private_pay",
     "already_paneled",
     "wants_panels",
     "platform_to_own",
 ]
+
+#: What is true of how she is paid today. Several hold at once — a therapist on
+#: a platform who also sees a few clients privately is the ordinary case, not an
+#: edge one.
+#:
+#: Purely descriptive. Nothing here says what she WANTS, which is asked once,
+#: separately, and answered by ``billing_setup_wants_credentialing``. Each entry
+#: only ever ADDS to what setup covers; none of them removes a step or sends her
+#: down a different path, which is what makes an under-answered checklist safe.
+BillingSetupState = Literal[
+    "self_pay",
+    "platform",
+    "own_insurance",
+]
+
+#: How a superseded single answer reads as a description of today. Only the
+#: present-tense half survives: "wants_panels" said she is paid privately and
+#: hopes to panel, and the hope is now a separate question rather than an
+#: inference we make on her behalf.
+_ROUTE_AS_STATE: dict[str, list[str]] = {
+    "private_pay": ["self_pay"],
+    "already_paneled": ["own_insurance"],
+    "wants_panels": ["self_pay"],
+    "platform_to_own": ["platform"],
+}
+
+#: Which superseded answers carried an explicit wish to be credentialed. Read
+#: once, to seed the new question for a clinician who already answered the old
+#: one — never to re-derive it afterwards.
+_ROUTE_WANTED_CREDENTIALING = frozenset({"wants_panels", "platform_to_own"})
 
 # Max length of a single credential title (matches clinician_profiles.title).
 MAX_CREDENTIAL_TITLE_LEN = 50
@@ -98,16 +133,45 @@ class UserPreferences(BaseModel):
     # leave is a trap rather than a wizard — she gets a card on the billing
     # page instead, and can return whenever.
     billing_setup_complete: bool = False
-    # Her answer to the wizard's first question: how she is paid today. Kept
-    # because it decides what the rest of setup asks for, so a resumed wizard
-    # must open on the branch she chose rather than back at the fork.
-    # ``None`` means she has not answered yet.
+    # SUPERSEDED by ``billing_setup_state``. Still written by nothing and read
+    # only to seed the checklist for a clinician who answered the old question;
+    # kept on the model so her saved blob still validates.
     billing_setup_route: BillingSetupRoute | None = None
+    # Everything true of how she is paid today, not one of them. ``None`` means
+    # she has not answered; an empty list means she answered "not seeing clients
+    # yet", which is a real answer and must not read as unanswered.
+    billing_setup_state: list[BillingSetupState] | None = None
+    # Whether she asked for help getting in-network under her own contracts.
+    # Deliberately its own field rather than a value inside the list above: it
+    # is about what she WANTS and changes on its own schedule, and folding a
+    # wish into a description of today is exactly what made the old single
+    # answer unable to describe a platform clinician.
+    billing_setup_wants_credentialing: bool = False
     # Where she had got to, as the step's ID rather than its position. An index
     # would quietly point at the wrong screen the first time a step is inserted
     # ahead of it; an id either resolves or falls back to the start of her
     # branch. Free text on purpose, so adding a step is not a schema change.
     billing_setup_step: str | None = None
+
+    @model_validator(mode="after")
+    def _seed_state_from_superseded_route(self) -> UserPreferences:
+        """Read a pre-checklist answer forward, once.
+
+        A clinician who answered the old single question should resume where
+        she left off rather than meet an empty checklist, so her saved route is
+        read as the description of today it half was. Only ever seeds: once
+        ``billing_setup_state`` is set — including to the empty list, which is
+        her real answer of "not seeing clients yet" — this does nothing, so
+        unticking a box can never be undone by the old value underneath it.
+        """
+        if self.billing_setup_state is None and self.billing_setup_route is not None:
+            self.billing_setup_state = cast(
+                "list[BillingSetupState]",
+                list(_ROUTE_AS_STATE.get(self.billing_setup_route, [])),
+            )
+            if self.billing_setup_route in _ROUTE_WANTED_CREDENTIALING:
+                self.billing_setup_wants_credentialing = True
+        return self
 
 
 class UpdateThemeRequest(BaseModel):

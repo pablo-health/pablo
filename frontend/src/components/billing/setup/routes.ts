@@ -10,6 +10,7 @@
  */
 export type StepId =
   | "route"
+  | "plan"
   | "identity"
   | "contact"
   | "rates"
@@ -32,60 +33,75 @@ export interface SetupStep {
 }
 
 /**
- * The four answers to "how are you getting paid right now?", and what each one
- * makes the rest of the wizard.
+ * What is true of how she is paid today. Several hold at once.
  *
- * Situational, not aspirational. Every option describes what is true today
- * rather than what she hopes for, because the routing depends on the former
- * and she can only be sure of the former. Asking what she *wants* would invite
- * an answer about the next six months and route her on it.
+ * Descriptive, not aspirational, and deliberately not a fork. This says where
+ * her money comes from now; what she WANTS is asked once, separately, on the
+ * plan screen. Folding the two together is what made the old single-select
+ * router unable to describe a therapist who is on a platform AND takes a few
+ * clients privately — which is an ordinary practice, not an edge case.
  */
-export type PaymentRouteId =
-  | "private_pay"
-  | "already_paneled"
-  | "wants_panels"
-  | "platform_to_own"
+export type CurrentStateId = "self_pay" | "platform" | "own_insurance"
 
-export interface PaymentRoute {
-  id: PaymentRouteId
+export interface CurrentStateOption {
+  id: CurrentStateId
   label: string
   detail: string
 }
 
-//: Both halves are written in HER voice, not the product's. A label she would
-//: say about herself, explained in a sentence she would also say, makes
-//: choosing feel like self-description rather than being sorted into a bucket.
-export const PAYMENT_ROUTES: readonly PaymentRoute[] = [
+/**
+ * Both halves in HER voice, as plain sentences with a subject.
+ *
+ * The platforms are NAMED because nobody says "I'm on a platform" — she says
+ * "I'm on Headway". Recognition beats recall, and the list reads as knowing her
+ * world. They appear only as examples of where her clients come from: never
+ * compared to us, and never with leaving implied, because a therapist may
+ * intend to stay on one indefinitely and that is a perfectly good answer.
+ *
+ * "Directly" used to be the first option's label and was ambiguous three ways —
+ * direct payment, direct contracts, direct deposit. Superbills are called out
+ * because out-of-network therapists are a large share of private pay and would
+ * not otherwise know which line is theirs.
+ */
+export const CURRENT_STATES: readonly CurrentStateOption[] = [
   {
-    id: "private_pay",
-    label: "My clients pay me directly",
+    id: "self_pay",
+    label: "Clients pay me themselves",
     detail:
-      "Clients pay by card, bank transfer, or on a sliding scale. I don’t bill insurance.",
+      "Card, cash, bank transfer, or a sliding scale — including clients who use superbills for out-of-network reimbursement.",
   },
   {
-    id: "already_paneled",
-    label: "I’m already on insurance panels",
-    detail: "I’m contracted with at least one insurer and can bill them directly.",
+    id: "platform",
+    label: "Through Headway, Alma, Rula, Grow Therapy, SonderMind, or a similar service",
+    detail: "They handle the insurance side and pay me.",
   },
   {
-    id: "wants_panels",
-    label: "I want to accept insurance, but I’m not on a panel yet",
-    detail:
-      "I’d like help applying to insurers and managing the credentialing process.",
-  },
-  {
-    id: "platform_to_own",
-    label: "I see clients through a platform and want my own contracts",
-    detail:
-      "I want insurer contracts in my own name, so I can build an independent practice.",
+    id: "own_insurance",
+    label: "Insurance I bill myself",
+    detail: "I'm in-network with at least one insurer and submit claims under my own name.",
   },
 ] as const
 
-/** The question every route opens with. */
+/** The question every therapist answers. */
 const ROUTE_STEP: SetupStep = {
   id: "route",
   label: "How you're paid",
   caption: "Tell Pablo once. He'll take it from here.",
+}
+
+/**
+ * What we are about to set up, and the one thing she might want that none of
+ * it implies.
+ *
+ * Second, not last. It reads as a confirmation she would want anyway rather
+ * than another question, which is what lets the credentialing ask cost no extra
+ * screen — and it is her second look at the checklist, so a box she meant to
+ * tick and didn't gets caught here for free.
+ */
+const PLAN_STEP: SetupStep = {
+  id: "plan",
+  label: "What we'll set up",
+  caption: "Check this looks right before we start.",
 }
 
 /**
@@ -99,8 +115,6 @@ const PRACTICE_STEPS: readonly SetupStep[] = [
   { id: "rates", label: "Your rates", caption: "What a session is worth, in one place." },
 ]
 
-const SHARED_STEPS: readonly SetupStep[] = [ROUTE_STEP, ...PRACTICE_STEPS]
-
 //: Every branch ends somewhere it says what happens next, rather than stopping.
 const DONE_STEP: SetupStep = {
   id: "done",
@@ -113,9 +127,10 @@ const PAYER_STEP: SetupStep = {
   label: "Payers",
   caption: "Who you can bill, and who you can't yet.",
 }
+
 /**
- * The lookup that fills in the rest, which is why it goes first — on every
- * route, including private pay.
+ * The lookup that fills in the rest, which is why it goes first — for everyone,
+ * including a therapist who bills nobody.
  *
  * The registry holds her legal name, credential, taxonomy, licence and
  * practice address — most of what the practice steps ask her to type. Asking
@@ -145,34 +160,43 @@ const RECORD_STEP: SetupStep = {
 }
 
 /**
- * The steps this clinician will actually walk, given her answer.
+ * The steps she will actually walk, given what she ticked and what she asked
+ * for.
  *
- * Before she answers, only the shared spine is shown — a stepper that grew
- * three entries the moment she clicked would make the choice feel like it cost
+ * THE INVARIANT THIS FUNCTION EXISTS TO HOLD: every answer only ever ADDS
+ * steps. Nothing here removes a step or sends her somewhere else. That is what
+ * makes an under-answered checklist safe — and people do under-answer, ticking
+ * whatever felt most true and moving on. A therapist on a platform who forgets
+ * to mention her three cash clients gets correct platform setup and can add the
+ * rest from Billing; she never lands somewhere wrong. Any future change that
+ * makes a tick *remove* a step breaks that guarantee and the promise on screen
+ * 1 that she can change this later.
+ *
+ * Being on a platform adds NOTHING to setup, and that is the point rather than
+ * an oversight. Her platform already handles the insurance side; what the tick
+ * buys her is restraint everywhere else — no payer step, no enrollment, no
+ * clearinghouse record, nothing demanded that only an independent biller needs.
+ *
+ * Before she answers, only the opening is shown: a stepper that grew four
+ * entries the moment she ticked a box would make answering feel like it cost
  * her something.
- *
- * Every route puts the NPI lookup BEFORE the practice steps, and that ordering
- * is the point rather than a detail. The registry holds her legal name,
- * credential, taxonomy, licence and practice address; the practice steps ask
- * for most of that. Looking her up first turns three forms into three
- * confirmations. Looking her up afterwards — where this step used to sit, on
- * the one route that had it — meant asking her to type what we were a click
- * away from knowing.
- *
- * Every route, including private pay, and including the clinician who is
- * already paneled: she files claims herself and her individual NPI is the
- * rendering provider on each one. See LOOKUP_STEP for why private pay needs it
- * even though she bills nobody.
- *
- * A clinician with no NPI meets that fact early this way. That is the honest
- * cost of the order, and it is bounded: the screen treats "I don't have one" as
- * an answer rather than an error, so she waves past it.
  */
-export function stepsForRoute(route: PaymentRouteId | null): readonly SetupStep[] {
-  if (route === null) return SHARED_STEPS
+export function stepsForState(
+  state: readonly CurrentStateId[] | null,
+  wantsCredentialing = false,
+): readonly SetupStep[] {
+  if (state === null) return [ROUTE_STEP]
 
-  const opening = [ROUTE_STEP, LOOKUP_STEP, ...PRACTICE_STEPS]
-  if (route === "private_pay") return [...opening, DONE_STEP]
-  if (route === "already_paneled") return [...opening, PAYER_STEP, DONE_STEP]
-  return [...opening, PAYER_STEP, RECORD_STEP, DONE_STEP]
+  const steps: SetupStep[] = [ROUTE_STEP, PLAN_STEP, LOOKUP_STEP, ...PRACTICE_STEPS]
+
+  // Which payers she can bill is a question for someone who bills insurers
+  // herself, or is about to. It is never asked because she is on a platform:
+  // the platform's payers are the platform's business.
+  if (state.includes("own_insurance") || wantsCredentialing) steps.push(PAYER_STEP)
+  // The credentialing record is only worth collecting from someone who asked
+  // to be credentialed. Being out of network is not a request.
+  if (wantsCredentialing) steps.push(RECORD_STEP)
+
+  steps.push(DONE_STEP)
+  return steps
 }
