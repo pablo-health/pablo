@@ -272,13 +272,21 @@ class ProposedAvailabilityRule(BaseModel):
     """A single rule proposal parsed from natural language, pending confirm.
 
     Never persisted directly -- the caller confirms (optionally editing
-    it first) through the existing create-rule endpoint.
+    it first) through the existing create-rule endpoint. The two scoping
+    fields carry through to that call unchanged, so a proposal the parser
+    bound to one appointment type is confirmed as that same rule.
     """
 
     rule_type: str
     enforcement: str
     params: dict[str, Any]
     human_summary: str
+    #: The appointment type this proposal is scoped to, resolved by the
+    #: parser against the practice's own types. None is practice-wide.
+    appointment_type_id: str | None = None
+    #: False on a type-scoped working-hours proposal whose sentence gave
+    #: the window to that type alone.
+    allow_other_types: bool = True
 
 
 class ParseAvailabilityRulesResponse(BaseModel):

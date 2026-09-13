@@ -4,7 +4,7 @@
  * Availability rule types
  *
  * Mirrors backend/app/scheduling_engine/models/availability.py — the
- * nine RuleType values and the two EnforcementLevel values.
+ * ten RuleType values and the two EnforcementLevel values.
  *
  * params shape varies per rule_type, and the authority on it is the
  * backend's tagged union, emitted as availabilityRuleParams.schema.json
@@ -20,6 +20,7 @@ export const RULE_TYPES = [
   "block_day_of_week",
   "block_time_range",
   "max_per_day",
+  "max_per_week",
   "buffer_before",
   "buffer_after",
   "block_date_range",

@@ -121,7 +121,7 @@ describe("BlockedTimeCard", () => {
     expect(mutateDelete).toHaveBeenCalledWith("r1", expect.anything())
   })
 
-  it("offers all eight rule types in the rule-type picker", async () => {
+  it("offers all nine rule types in the rule-type picker", async () => {
     const user = userEvent.setup()
     renderWithClient(<BlockedTimeCard />)
 
@@ -130,7 +130,7 @@ describe("BlockedTimeCard", () => {
 
     const listbox = screen.getByRole("listbox")
     const options = within(listbox).getAllByRole("option")
-    expect(options).toHaveLength(8)
+    expect(options).toHaveLength(9)
   })
 
   it("rejects an end time before the start time", async () => {

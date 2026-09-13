@@ -48,6 +48,7 @@ export const RULE_TYPE_LABELS: Record<RuleType, string> = {
   block_day_of_week: "Block a day of the week",
   block_time_range: "Block a time range",
   max_per_day: "Limit appointments per day",
+  max_per_week: "Limit appointments per week",
   buffer_before: "Buffer before appointments",
   buffer_after: "Buffer after appointments",
   block_date_range: "Block a date range",
@@ -79,6 +80,8 @@ export function defaultFields(ruleType: RuleType): ParamFields {
       return { start: "12:00", end: "13:00" }
     case "max_per_day":
       return { max: "8" }
+    case "max_per_week":
+      return { max: "20" }
     case "buffer_before":
     case "buffer_after":
       return { minutes: "15" }
@@ -113,6 +116,7 @@ function paramsToFields(
         dates: [],
       }
     case "max_per_day":
+    case "max_per_week":
       return { fields: { max: String(params.max ?? 1) }, dates: [] }
     case "buffer_before":
     case "buffer_after":
@@ -152,6 +156,7 @@ export function buildParams(
     case "block_time_range":
       return { start: fields.start, end: fields.end }
     case "max_per_day":
+    case "max_per_week":
       return { max: Number(fields.max) }
     case "buffer_before":
     case "buffer_after":
@@ -188,6 +193,7 @@ export function validate(ruleType: RuleType, fields: ParamFields, dates: string[
       if (dates.length === 0) return "Add at least one date."
       return null
     case "max_per_day":
+    case "max_per_week":
       if (fields.max === "" || Number(fields.max) < 1) return "Maximum must be at least 1."
       return null
     case "buffer_before":
@@ -215,6 +221,10 @@ export function summarize(rule: AvailabilityRule): string {
     case "max_per_day": {
       const max = Number(p.max)
       return `Max ${max} appointment${max === 1 ? "" : "s"} per day`
+    }
+    case "max_per_week": {
+      const max = Number(p.max)
+      return `Max ${max} appointment${max === 1 ? "" : "s"} per week`
     }
     case "buffer_before":
       return `${p.minutes} min buffer before every appointment`
@@ -575,9 +585,12 @@ function RuleParamsFields({
         </div>
       )
     case "max_per_day":
+    case "max_per_week":
       return (
         <div className="grid gap-2 max-w-xs">
-          <Label htmlFor="param-max">Max appointments per day</Label>
+          <Label htmlFor="param-max">
+            Max appointments per {ruleType === "max_per_week" ? "week" : "day"}
+          </Label>
           <Input
             id="param-max"
             type="number"

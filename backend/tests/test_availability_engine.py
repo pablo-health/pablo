@@ -236,6 +236,74 @@ class TestMaxPerDay:
         assert len(conflicts) == 0
 
 
+class TestMaxPerWeek:
+    """The same count as the daily cap, over the clinician's own week."""
+
+    def test_under_max_across_the_week(
+        self,
+        rule_repo: InMemoryAvailabilityRuleRepository,
+        appt_repo: InMemoryAppointmentRepository,
+        engine: AvailabilityEngine,
+    ) -> None:
+        rule_repo.create(_rule(RuleType.MAX_PER_WEEK, {"max": 3}))
+        appt_repo.create(_appt("2026-03-16T10:00:00Z", "2026-03-16T10:50:00Z", appt_id="a1"))
+        appt_repo.create(_appt("2026-03-18T10:00:00Z", "2026-03-18T10:50:00Z", appt_id="a2"))
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-20T11:00:00Z", "2026-03-20T11:50:00Z"
+        ).conflicts
+        assert len(conflicts) == 0
+
+    def test_at_max_across_the_week(
+        self,
+        rule_repo: InMemoryAvailabilityRuleRepository,
+        appt_repo: InMemoryAppointmentRepository,
+        engine: AvailabilityEngine,
+    ) -> None:
+        rule_repo.create(_rule(RuleType.MAX_PER_WEEK, {"max": 2}))
+        appt_repo.create(_appt("2026-03-16T10:00:00Z", "2026-03-16T10:50:00Z", appt_id="a1"))
+        appt_repo.create(_appt("2026-03-18T10:00:00Z", "2026-03-18T10:50:00Z", appt_id="a2"))
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-20T11:00:00Z", "2026-03-20T11:50:00Z"
+        ).conflicts
+        assert len(conflicts) == 1
+        assert "per week" in conflicts[0].message.lower()
+
+    def test_last_week_does_not_count_against_this_one(
+        self,
+        rule_repo: InMemoryAvailabilityRuleRepository,
+        appt_repo: InMemoryAppointmentRepository,
+        engine: AvailabilityEngine,
+    ) -> None:
+        """Monday starts a new week — a cap on a week is not a rolling seven
+        days ending wherever the next booking happens to land."""
+        rule_repo.create(_rule(RuleType.MAX_PER_WEEK, {"max": 1}))
+        appt_repo.create(_appt("2026-03-22T10:00:00Z", "2026-03-22T10:50:00Z", appt_id="a1"))
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-23T11:00:00Z", "2026-03-23T11:50:00Z"
+        ).conflicts
+        assert len(conflicts) == 0
+
+    def test_cancelled_not_counted(
+        self,
+        rule_repo: InMemoryAvailabilityRuleRepository,
+        appt_repo: InMemoryAppointmentRepository,
+        engine: AvailabilityEngine,
+    ) -> None:
+        rule_repo.create(_rule(RuleType.MAX_PER_WEEK, {"max": 1}))
+        appt_repo.create(
+            _appt(
+                "2026-03-16T10:00:00Z",
+                "2026-03-16T10:50:00Z",
+                appt_id="a1",
+                status=AppointmentStatus.CANCELLED,
+            )
+        )
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-18T11:00:00Z", "2026-03-18T11:50:00Z"
+        ).conflicts
+        assert len(conflicts) == 0
+
+
 class TestBufferBefore:
     def test_violates_buffer(
         self,

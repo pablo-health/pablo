@@ -21,6 +21,15 @@ caller. A date-bearing sentence the model can't express as tokens (a
 named holiday, an unresolvable qualifier) is rejected into
 ``could_not_parse`` rather than guessed at, and so is any date-type
 proposal the caller can't supply a reference date for.
+
+An appointment type is handled the same way. A rule may be scoped to one
+of the practice's types ("only two intakes a week"), but the model never
+names a type on its own: the caller passes the practice's own
+:class:`~app.scheduling_engine.models.appointment_type.AppointmentType`
+rows, the model may only echo a name from that list, and the service
+resolves the echo back to an id. A name that isn't on the list is a
+question for the therapist, never a rule that quietly applies to every
+kind of appointment.
 """
 
 from __future__ import annotations
@@ -47,11 +56,14 @@ from .structured_llm_gateway import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from datetime import date
+
+    from ..scheduling_engine.models.appointment_type import AppointmentType
 
 logger = logging.getLogger(__name__)
 
-# The eight rule types this parser covers -- an explicit allow-list, not
+# The nine rule types this parser covers -- an explicit allow-list, not
 # "every RuleType member", so a settings-owned type added to the enum
 # later is excluded automatically rather than silently picked up.
 COVERED_RULE_TYPES = frozenset(
@@ -60,6 +72,7 @@ COVERED_RULE_TYPES = frozenset(
         "block_day_of_week",
         "block_time_range",
         "max_per_day",
+        "max_per_week",
         "buffer_before",
         "buffer_after",
         "block_date_range",
@@ -78,6 +91,11 @@ _MAX_OUTPUT_TOKENS = 2048
 _LOW_CONFIDENCE_COULD_NOT_PARSE = (
     "I was not confident enough about that one to suggest a rule. Try "
     "saying it more precisely, or use the form below."
+)
+
+_UNKNOWN_TYPE_COULD_NOT_PARSE = (
+    'This practice has no appointment type called "{name}". Add the type '
+    "first, or say the rule without naming one."
 )
 
 _DEFAULT_COULD_NOT_PARSE = (
@@ -100,6 +118,8 @@ _SYSTEM_PROMPT = (
     "this time range on any day.\n"
     "- max_per_day: max (integer, at least 1) -- at most this many "
     "appointments per day.\n"
+    "- max_per_week: max (integer, at least 1) -- at most this many "
+    "appointments per week.\n"
     "- buffer_before: minutes (integer, at least 0) -- gap required before "
     "every appointment.\n"
     "- buffer_after: minutes (integer, at least 0) -- gap required after "
@@ -167,7 +187,60 @@ _SYSTEM_PROMPT = (
 
 # The reasons a refusal can carry. Kept as an explicit tuple so the schema
 # enum, the validator and the response model can't drift apart.
-REFUSAL_REASONS: tuple[str, ...] = ("ambiguous", "out_of_scope", "multi_intent")
+REFUSAL_REASONS: tuple[str, ...] = (
+    "ambiguous",
+    "out_of_scope",
+    "multi_intent",
+    "unknown_appointment_type",
+)
+
+_NO_APPOINTMENT_TYPES_PROMPT = (
+    "APPOINTMENT TYPES\n\n"
+    "This practice has no appointment types configured, so every rule "
+    "applies to every kind of appointment: leave appointment_type null on "
+    "every proposal. If the sentence names a kind of appointment, leave "
+    'proposals empty and refuse with refusal_reason "unknown_appointment_'
+    'type".\n'
+)
+
+_APPOINTMENT_TYPES_PROMPT = (
+    "APPOINTMENT TYPES\n\n"
+    "This practice has these appointment types, and only these:\n"
+    "{names}\n"
+    "A sentence naming one of them scopes the rule to it: set "
+    "appointment_type to that name copied exactly as spelled above. A "
+    "sentence naming no kind of appointment leaves appointment_type null, "
+    "which applies the rule to every kind -- the ordinary case.\n\n"
+    "Never write an appointment_type that is not on the list. If the "
+    "sentence names a kind of appointment this practice does not have, "
+    'leave proposals empty and refuse with refusal_reason "unknown_'
+    'appointment_type", naming in could_not_parse the kind you could not '
+    "find.\n\n"
+    "Set type_exclusive to true only on a working_hours proposal that is "
+    "scoped to a type AND whose sentence hands that window to that type "
+    'alone ("Tuesday afternoons are for intakes only"): no other kind of '
+    "appointment may be offered those minutes. Scoping a window to a type "
+    'without saying that ("I see intakes on Tuesday afternoons") is a '
+    "narrowing, not a claim -- leave type_exclusive false.\n\n"
+    "Those two readings store different rules, so a sentence supporting "
+    'both is not yours to settle. "I only do intakes on Tuesdays" reads '
+    'either as a narrowing ("intakes happen on Tuesdays and nowhere else") '
+    'or as a claim ("Tuesdays are for intakes and nothing else"), and "two '
+    'intakes a week on Tuesdays" reads either as one weekly cap or as a '
+    "weekly cap plus Tuesday hours. When both readings are live, propose "
+    "the reading you think likeliest, give every proposal a confidence of "
+    "0.3 or below, and write could_not_parse as a short question naming "
+    "the two readings, so the therapist is the one who decides.\n"
+)
+
+
+def _appointment_types_prompt(appointment_types: Sequence[AppointmentType]) -> str:
+    """The practice's own type names, as the only names the model may use."""
+    if not appointment_types:
+        return _NO_APPOINTMENT_TYPES_PROMPT
+    names = "\n".join(f'- "{t.name}"' for t in appointment_types)
+    return _APPOINTMENT_TYPES_PROMPT.format(names=names)
+
 
 _RESPONSE_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -202,6 +275,8 @@ _RESPONSE_SCHEMA: dict[str, Any] = {
                             "range": {"type": "boolean"},
                         },
                     },
+                    "appointment_type": {"type": "string", "nullable": True},
+                    "type_exclusive": {"type": "boolean", "nullable": True},
                     "human_summary": {"type": "string"},
                     "confidence": {"type": "number"},
                 },
@@ -231,6 +306,12 @@ class ProposedRule:
     confidence: float = 1.0
     """The model's own probability that this is what was meant. A proposal
     below the configured floor is dropped rather than shown."""
+    appointment_type_id: str | None = None
+    """Which of the practice's appointment types this rule governs, or None
+    for all of them. Only ever an id the caller supplied."""
+    allow_other_types: bool = True
+    """False claims this rule's window for its type alone. Only meaningful
+    on a type-scoped working_hours rule, exactly as the engine reads it."""
 
 
 @dataclass(frozen=True)
@@ -372,6 +453,79 @@ def _resolve_date_params(
     return None
 
 
+class _UnknownAppointmentTypeError(Exception):
+    """A type name the practice does not have -- carries the name so the
+    therapist is asked about the words they actually used."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name)
+        self.name = name
+
+
+def _normalize_type_name(name: str) -> str:
+    """A type name reduced to what a sentence and a settings row can share.
+
+    Case and a trailing plural are the two differences between "Intake" on
+    the settings page and "intakes" in a sentence; nothing else is guessed
+    at, so a name the practice does not have stays unresolvable.
+    """
+    return " ".join(name.split()).casefold().removesuffix("s")
+
+
+def _index_appointment_types(appointment_types: Sequence[AppointmentType]) -> dict[str, str]:
+    """The practice's types keyed by normalized name.
+
+    Two types whose names differ only by case or a trailing "s" cannot be
+    told apart from a sentence, so neither is bound: the name resolves as
+    unknown and the therapist is asked, rather than one of the two being
+    picked for them.
+    """
+    index: dict[str, str] = {}
+    ambiguous: set[str] = set()
+    for appointment_type in appointment_types:
+        key = _normalize_type_name(appointment_type.name)
+        if index.get(key, appointment_type.id) != appointment_type.id:
+            ambiguous.add(key)
+        index[key] = appointment_type.id
+    for key in ambiguous:
+        del index[key]
+    return index
+
+
+def _resolve_appointment_type(raw: object, index: dict[str, str]) -> str | None:
+    """The id of the type the model named, or None when it named none.
+
+    Raises :class:`_UnknownAppointmentTypeError` for a name the practice
+    does not have. Falling back to None there would turn "no intakes on
+    Fridays" into a rule that blocks every kind of appointment, which is
+    the one outcome nobody asked for.
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    resolved = index.get(_normalize_type_name(raw))
+    if resolved is None:
+        raise _UnknownAppointmentTypeError(raw.strip())
+    return resolved
+
+
+def _claims_its_window(
+    rule_type: str, appointment_type_id: str | None, raw: dict[str, Any]
+) -> bool:
+    """Whether this proposal hands its window to its type and no other.
+
+    Mirrors the engine's own reading (``_is_exclusive_window``): only
+    working_hours defines a window to claim, and only a type-scoped rule
+    has another type to exclude. An exclusivity flag anywhere else names
+    nothing the engine would act on, so it is ignored rather than shown
+    as a rule the therapist did not get.
+    """
+    return (
+        raw.get("type_exclusive") is True
+        and rule_type == "working_hours"
+        and appointment_type_id is not None
+    )
+
+
 class AvailabilityRuleParseService:
     """Parse a natural-language availability sentence into rule proposals."""
 
@@ -389,12 +543,28 @@ class AvailabilityRuleParseService:
         settings = get_settings()
         return self._model or settings.ai_model_flash or settings.ai_model
 
-    def parse(self, text: str, reference_date: date | None = None) -> AvailabilityParseResult:
-        logger.info("Availability parse request: %d chars", len(text))
+    def parse(
+        self,
+        text: str,
+        reference_date: date | None = None,
+        appointment_types: Sequence[AppointmentType] = (),
+    ) -> AvailabilityParseResult:
+        """Propose rules for ``text``, scoped to ``appointment_types`` if named.
+
+        ``appointment_types`` is the practice's own list, and the only
+        source of a type a proposal may be bound to.
+        """
+        logger.info(
+            "Availability parse request: %d chars, %d appointment type(s)",
+            len(text),
+            len(appointment_types),
+        )
         try:
             completion = self._llm_gateway.complete_structured(
                 model=self._resolve_model(),
-                system_prompt=_SYSTEM_PROMPT,
+                system_prompt=_SYSTEM_PROMPT
+                + "\n\n"
+                + _appointment_types_prompt(appointment_types),
                 user_prompt=text,
                 response_schema=_RESPONSE_SCHEMA,
                 max_output_tokens=_MAX_OUTPUT_TOKENS,
@@ -413,7 +583,9 @@ class AvailabilityRuleParseService:
                 refusal_reason="ambiguous",
             )
 
-        result = self._coerce(completion.data, reference_date)
+        result = self._coerce(
+            completion.data, reference_date, _index_appointment_types(appointment_types)
+        )
         logger.info(
             "Availability parse result: %d proposal(s) [%s]",
             len(result.proposals),
@@ -421,7 +593,12 @@ class AvailabilityRuleParseService:
         )
         return result
 
-    def _coerce(self, data: dict[str, Any], reference_date: date | None) -> AvailabilityParseResult:
+    def _coerce(
+        self,
+        data: dict[str, Any],
+        reference_date: date | None,
+        type_index: dict[str, str],
+    ) -> AvailabilityParseResult:
         raw_proposals = data.get("proposals")
         if not isinstance(raw_proposals, list):
             raw_proposals = []
@@ -429,7 +606,19 @@ class AvailabilityRuleParseService:
         proposals: list[ProposedRule] = []
         for raw in raw_proposals:
             try:
-                proposal = self._coerce_one(raw, reference_date) if isinstance(raw, dict) else None
+                proposal = (
+                    self._coerce_one(raw, reference_date, type_index)
+                    if isinstance(raw, dict)
+                    else None
+                )
+            except _UnknownAppointmentTypeError as exc:
+                # A type the practice does not have is a question, not a
+                # rule: binding nothing would silently widen the rule to
+                # every kind of appointment.
+                return AvailabilityParseResult(
+                    could_not_parse=_UNKNOWN_TYPE_COULD_NOT_PARSE.format(name=exc.name),
+                    refusal_reason="unknown_appointment_type",
+                )
             except _DateIntentUnresolvableError as exc:
                 # Unlike a malformed proposal, an unresolvable-but-well-formed
                 # date_intent gets its specific reason surfaced verbatim.
@@ -484,7 +673,12 @@ class AvailabilityRuleParseService:
     def _confidence_floor(self) -> float:
         return get_settings().availability_parse_confidence_floor
 
-    def _coerce_one(self, raw: dict[str, Any], reference_date: date | None) -> ProposedRule | None:
+    def _coerce_one(
+        self,
+        raw: dict[str, Any],
+        reference_date: date | None,
+        type_index: dict[str, str],
+    ) -> ProposedRule | None:
         rule_type = raw.get("rule_type")
         if rule_type not in COVERED_RULE_TYPES:
             return None
@@ -501,10 +695,13 @@ class AvailabilityRuleParseService:
         human_summary = raw.get("human_summary")
         if not isinstance(human_summary, str):
             human_summary = ""
+        appointment_type_id = _resolve_appointment_type(raw.get("appointment_type"), type_index)
         return ProposedRule(
             rule_type=rule_type,
             enforcement=enforcement,
             params=params,
             human_summary=human_summary,
             confidence=_coerce_confidence(raw.get("confidence")),
+            appointment_type_id=appointment_type_id,
+            allow_other_types=not _claims_its_window(rule_type, appointment_type_id, raw),
         )

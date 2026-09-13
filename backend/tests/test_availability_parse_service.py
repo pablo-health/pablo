@@ -15,6 +15,7 @@ from datetime import date
 from typing import Any
 
 import pytest
+from app.scheduling_engine.models.appointment_type import AppointmentType
 from app.scheduling_engine.models.availability import RuleType
 from app.services.availability_parse_service import (
     COVERED_RULE_TYPES,
@@ -39,13 +40,25 @@ def _fake_service(response: dict[str, Any]) -> AvailabilityRuleParseService:
     return _service(gateway)
 
 
+def _appointment_type(name: str, type_id: str) -> AppointmentType:
+    return AppointmentType(id=type_id, user_id="clinician-1", name=name)
+
+
+#: What the practice has configured in every type-scoping test below.
+PRACTICE_TYPES = [
+    _appointment_type("Intake", "type-intake"),
+    _appointment_type("Consultation", "type-consult"),
+]
+
+
 class TestCoveredRuleTypes:
-    def test_covers_exactly_the_eight_non_session_defaults_types(self) -> None:
+    def test_covers_exactly_the_nine_non_session_defaults_types(self) -> None:
         assert {
             "working_hours",
             "block_day_of_week",
             "block_time_range",
             "max_per_day",
+            "max_per_week",
             "buffer_before",
             "buffer_after",
             "block_date_range",
@@ -541,3 +554,240 @@ class TestConfidenceFloor:
             get_settings.cache_clear()
 
         assert [p.rule_type for p in result.proposals] == ["block_day_of_week"]
+
+
+class TestAppointmentTypeBinding:
+    """A rule is scoped only to a type the practice actually has."""
+
+    @staticmethod
+    def _response(appointment_type: object, **extra: object) -> dict[str, Any]:
+        proposal: dict[str, Any] = {
+            "rule_type": "max_per_week",
+            "enforcement": "hard",
+            "max": 2,
+            "appointment_type": appointment_type,
+            "human_summary": "Two intakes a week.",
+            "confidence": 0.95,
+        }
+        proposal.update(extra)
+        return {"proposals": [proposal]}
+
+    def test_a_named_type_binds_its_id(self) -> None:
+        service = _fake_service(self._response("Intake"))
+
+        result = service.parse(
+            "only two intakes a week",
+            reference_date=REFERENCE_DATE,
+            appointment_types=PRACTICE_TYPES,
+        )
+
+        assert [p.appointment_type_id for p in result.proposals] == ["type-intake"]
+        assert result.proposals[0].params == {"max": 2}
+
+    @pytest.mark.parametrize("named", ["intakes", "  INTAKE ", "Intakes"])
+    def test_case_and_a_plural_still_find_the_type(self, named: str) -> None:
+        service = _fake_service(self._response(named))
+
+        result = service.parse(
+            "two intakes a week",
+            reference_date=REFERENCE_DATE,
+            appointment_types=PRACTICE_TYPES,
+        )
+
+        assert [p.appointment_type_id for p in result.proposals] == ["type-intake"]
+
+    def test_an_unknown_type_is_a_question_not_a_practice_wide_rule(self) -> None:
+        service = _fake_service(self._response("Group therapy"))
+
+        result = service.parse(
+            "only two group therapy sessions a week",
+            reference_date=REFERENCE_DATE,
+            appointment_types=PRACTICE_TYPES,
+        )
+
+        assert result.proposals == []
+        assert result.refusal_reason == "unknown_appointment_type"
+        assert "Group therapy" in (result.could_not_parse or "")
+
+    def test_a_type_named_when_the_practice_has_none_is_refused(self) -> None:
+        service = _fake_service(self._response("Intake"))
+
+        result = service.parse("two intakes a week", reference_date=REFERENCE_DATE)
+
+        assert result.proposals == []
+        assert result.refusal_reason == "unknown_appointment_type"
+
+    def test_two_types_that_read_alike_bind_neither(self) -> None:
+        """ "Intake" and "Intakes" cannot be told apart from a sentence."""
+        service = _fake_service(self._response("Intake"))
+
+        result = service.parse(
+            "two intakes a week",
+            reference_date=REFERENCE_DATE,
+            appointment_types=[
+                _appointment_type("Intake", "type-intake"),
+                _appointment_type("Intakes", "type-intakes"),
+            ],
+        )
+
+        assert result.proposals == []
+        assert result.refusal_reason == "unknown_appointment_type"
+
+    def test_a_sentence_naming_no_type_stays_practice_wide(self) -> None:
+        service = _fake_service(self._response(None))
+
+        result = service.parse(
+            "no more than two a week",
+            reference_date=REFERENCE_DATE,
+            appointment_types=PRACTICE_TYPES,
+        )
+
+        assert [p.appointment_type_id for p in result.proposals] == [None]
+        assert result.proposals[0].allow_other_types is True
+
+    def test_the_practice_s_type_names_reach_the_model(self) -> None:
+        gateway = FakeStructuredLLMGateway(
+            default_response=StructuredCompletion(data={"proposals": []})
+        )
+
+        _service(gateway).parse(
+            "two intakes a week",
+            reference_date=REFERENCE_DATE,
+            appointment_types=PRACTICE_TYPES,
+        )
+
+        system_prompt = gateway.calls[0]["system_prompt"]
+        assert '"Intake"' in system_prompt
+        assert '"Consultation"' in system_prompt
+
+
+class TestTypeExclusivity:
+    """Narrowing and claiming are different rules, so they are asked about."""
+
+    @staticmethod
+    def _working_hours(confidence: float, **extra: object) -> dict[str, Any]:
+        proposal: dict[str, Any] = {
+            "rule_type": "working_hours",
+            "enforcement": "hard",
+            "day_of_week": 1,
+            "start": "13:00",
+            "end": "17:00",
+            "appointment_type": "Intake",
+            "human_summary": "Tuesday afternoons for intakes.",
+            "confidence": confidence,
+        }
+        proposal.update(extra)
+        return proposal
+
+    def _parse(self, proposal: dict[str, Any], text: str, could_not_parse: str | None = None):
+        service = _fake_service({"proposals": [proposal], "could_not_parse": could_not_parse})
+        return service.parse(text, reference_date=REFERENCE_DATE, appointment_types=PRACTICE_TYPES)
+
+    def test_a_narrowing_leaves_the_window_open_to_other_types(self) -> None:
+        result = self._parse(
+            self._working_hours(0.95, type_exclusive=False),
+            "I see intakes on Tuesday afternoons",
+        )
+
+        assert [p.allow_other_types for p in result.proposals] == [True]
+        assert result.proposals[0].appointment_type_id == "type-intake"
+
+    def test_a_claim_closes_the_window_to_other_types(self) -> None:
+        result = self._parse(
+            self._working_hours(0.95, type_exclusive=True),
+            "Tuesday afternoons are for intakes only",
+        )
+
+        assert [p.allow_other_types for p in result.proposals] == [False]
+        assert result.proposals[0].appointment_type_id == "type-intake"
+
+    def test_a_sentence_supporting_both_readings_is_asked_about(self) -> None:
+        question = (
+            "Did you mean intakes happen only on Tuesdays, or that Tuesdays are only for intakes?"
+        )
+        result = self._parse(
+            self._working_hours(0.3, type_exclusive=False),
+            "I only do intakes on Tuesdays",
+            could_not_parse=question,
+        )
+
+        assert result.proposals == []
+        assert result.could_not_parse == question
+
+    def test_a_claim_on_a_rule_with_no_window_is_ignored(self) -> None:
+        """Only working_hours hands out minutes — the engine reads the flag
+        nowhere else, so a proposal must not show a claim it would not get."""
+        service = _fake_service(
+            {
+                "proposals": [
+                    {
+                        "rule_type": "max_per_week",
+                        "enforcement": "hard",
+                        "max": 2,
+                        "appointment_type": "Intake",
+                        "type_exclusive": True,
+                        "human_summary": "Two intakes a week.",
+                        "confidence": 0.95,
+                    }
+                ]
+            }
+        )
+
+        result = service.parse(
+            "two intakes a week",
+            reference_date=REFERENCE_DATE,
+            appointment_types=PRACTICE_TYPES,
+        )
+
+        assert [p.allow_other_types for p in result.proposals] == [True]
+
+    def test_a_claim_without_a_type_is_ignored(self) -> None:
+        result = self._parse(
+            self._working_hours(0.95, appointment_type=None, type_exclusive=True),
+            "Tuesday afternoons only",
+        )
+
+        assert [p.allow_other_types for p in result.proposals] == [True]
+
+
+class TestMaxPerWeek:
+    def test_a_weekly_cap_validates_like_a_daily_one(self) -> None:
+        service = _fake_service(
+            {
+                "proposals": [
+                    {
+                        "rule_type": "max_per_week",
+                        "enforcement": "hard",
+                        "max": 20,
+                        "human_summary": "Twenty a week.",
+                        "confidence": 0.95,
+                    }
+                ]
+            }
+        )
+
+        result = service.parse("no more than 20 a week", reference_date=REFERENCE_DATE)
+
+        assert [p.rule_type for p in result.proposals] == ["max_per_week"]
+        assert result.proposals[0].params == {"max": 20}
+
+    @pytest.mark.parametrize("bad_max", [0, -1, "many"])
+    def test_a_cap_below_one_is_rejected_like_max_per_day(self, bad_max: object) -> None:
+        service = _fake_service(
+            {
+                "proposals": [
+                    {
+                        "rule_type": "max_per_week",
+                        "enforcement": "hard",
+                        "max": bad_max,
+                        "human_summary": "A cap.",
+                        "confidence": 0.95,
+                    }
+                ]
+            }
+        )
+
+        result = service.parse("cap my week", reference_date=REFERENCE_DATE)
+
+        assert result.proposals == []
+        assert result.could_not_parse
