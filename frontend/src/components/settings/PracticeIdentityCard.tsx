@@ -14,14 +14,15 @@ import type {
 } from "@/types/practiceBilling"
 import { Field, type PracticeDetails, textPatch } from "./billingProfileShared"
 import { useSettingsSaved } from "./SettingsSavedContext"
+import { useSettingsUserStatus } from "./useSettingsPreferences"
 
 export const BILLING_NPI_HELP =
-  "Enter your Type 2 NPI if you bill as a group or organization. Solo practitioners can leave this blank."
+  "The NPI claims and enrollments are filed under. If you bill as a group or organization, that's its Type 2 NPI. If you're a sole proprietor, it's your own."
 
 const OWNED = ["legal_name", "billing_npi"] as const
 
 /**
- * How insurers identify the practice: legal name, tax ID, organisation NPI.
+ * How insurers identify the practice: legal name, tax ID, billing NPI.
  *
  * Its own card with its own Save, separate from the billing contact details.
  * Filling in a practice's paperwork is a lot to ask in one sitting, and these
@@ -43,6 +44,7 @@ export function PracticeIdentityCard({
 }) {
   const update = useUpdateBillingProfile()
   const { flashSaved } = useSettingsSaved()
+  const { data: user } = useSettingsUserStatus()
   const [legalName, setLegalName] = useState(profile.legal_name ?? "")
   const [billingNpi, setBillingNpi] = useState(profile.billing_npi ?? "")
   const [taxIdType, setTaxIdType] = useState<TaxIdType | "">(profile.tax_id_type ?? "")
@@ -60,11 +62,17 @@ export function PracticeIdentityCard({
   }
   const isDirty = Object.keys(patch).length > 0
 
-  // Shown when she already has one, so a value on file never disappears, and
-  // otherwise only when it could apply — an organisation NPI is meaningless to
-  // a sole proprietor filing under an SSN, and an empty box she has to reason
-  // about is worse than no box.
-  const showBillingNpi = Boolean(billingNpi.trim()) || taxIdType !== "ssn"
+  // Always shown. This box used to be hidden from a sole proprietor filing
+  // under an SSN, on the reasoning that an ORGANISATION NPI is meaningless to
+  // her — which is true, and was the wrong field to be asking about. The
+  // clearinghouse wants the NPI a claim is billed under, and for a sole
+  // proprietor that is her own. Hiding it left her unable to fill a field she
+  // was then told she was missing, with no way out of it in the product.
+  const clinicianNpi = user?.npi_number?.trim() ?? ""
+  // Offered only when she files under an SSN, which is the unambiguous signal
+  // that she bills as herself. Under an EIN the practice is the biller and her
+  // own NPI would be the wrong answer, so we say nothing rather than guess.
+  const canPrefillNpi = Boolean(clinicianNpi) && !billingNpi.trim() && taxIdType === "ssn"
 
   const profileName = practiceDetails?.name?.trim() ?? ""
   const canPrefill = Boolean(profileName) && !legalName.trim()
@@ -90,7 +98,7 @@ export function PracticeIdentityCard({
 
   function validate(): string | null {
     if (billingNpi.trim() && !/^\d{10}$/.test(billingNpi.trim())) {
-      return "An organization NPI is ten digits."
+      return "A billing NPI is ten digits."
     }
     const digits = taxId.replace(/\D/g, "")
     if (taxId.trim() && digits.length !== 9) return "A tax ID is nine digits."
@@ -171,16 +179,30 @@ export function PracticeIdentityCard({
           Your tax ID is encrypted. After you save it, only the last four digits will be shown.
         </p>
 
-        {showBillingNpi && (
-          <Field id="billing-npi" label="Organization NPI (optional)" help={BILLING_NPI_HELP}>
-            <Input
-              id="billing-npi"
-              value={billingNpi}
-              onChange={(e) => setBillingNpi(e.target.value)}
-              inputMode="numeric"
-              placeholder="10 digits"
-            />
-          </Field>
+        <Field id="billing-npi" label="Billing NPI" help={BILLING_NPI_HELP}>
+          <Input
+            id="billing-npi"
+            value={billingNpi}
+            onChange={(e) => setBillingNpi(e.target.value)}
+            inputMode="numeric"
+            placeholder="10 digits"
+          />
+        </Field>
+
+        {canPrefillNpi && (
+          <p className="text-[12.5px] text-muted-foreground">
+            <Button
+              type="button"
+              variant="link"
+              size="sm"
+              className="h-auto p-0 text-[12.5px] underline underline-offset-4"
+              onClick={() => setBillingNpi(clinicianNpi)}
+            >
+              Use my own NPI
+            </Button>{" "}
+            — you file under your own tax ID, so you bill as yourself. Nothing is saved until you
+            press Save.
+          </p>
         )}
 
         {problem && (
