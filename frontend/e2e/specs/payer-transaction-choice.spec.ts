@@ -74,3 +74,56 @@ test("a payer she has asked nothing of has nothing to enroll for", async ({
 
   await expect(page.getByRole("button", { name: "Enroll with payer" })).toBeDisabled()
 })
+
+test("filing claims does not quietly start moving the money too", async ({
+  signedInPage: page,
+}) => {
+  // The cascade worth guarding: each of these is a separate decision with a
+  // different blast radius, and only one of them reaches outside Pablo.
+  const name = await addPayer(page)
+  await openPayer(page, name)
+
+  await expect(page.getByLabel("File claims")).toBeChecked()
+  await expect(page.getByLabel("Receive remittances (ERAs)")).not.toBeChecked()
+
+  await openPayer(page, name)
+  await expect(page.getByLabel("Receive remittances (ERAs)")).not.toBeChecked()
+})
+
+test("the general enroll action cannot redirect remittances on its own", async ({
+  signedInPage: page,
+}) => {
+  // One press filing eligibility, claims and remittances together makes the
+  // consequential one look like the other two. Remittances get asked for on
+  // their own, with what is actually being requested on screen.
+  const name = await addPayer(page)
+  await openPayer(page, name)
+
+  await page.getByLabel("Receive remittances (ERAs)").click()
+  await expect(page.getByLabel("Receive remittances (ERAs)")).toBeChecked()
+
+  await page.getByRole("button", { name: "Enroll with payer" }).click()
+
+  const dialog = page.getByTestId("remittance-cutover")
+  await expect(dialog).toBeVisible()
+  await expect(page.getByTestId("cutover-routing-unknown")).toContainText(/by NPI or by tax ID/i)
+  await expect(page.getByTestId("cutover-confirm")).toBeDisabled()
+
+  // Backing out files nothing.
+  await page.getByRole("button", { name: "Cancel" }).click()
+  await expect(dialog).toBeHidden()
+})
+
+test("enrolling without remittances files on the press, as it always did", async ({
+  signedInPage: page,
+}) => {
+  // Gating eligibility and claims behind a remittance confirmation would only
+  // teach her to click through it.
+  const name = await addPayer(page)
+  await openPayer(page, name)
+
+  await expect(page.getByLabel("Receive remittances (ERAs)")).not.toBeChecked()
+  await page.getByRole("button", { name: "Enroll with payer" }).click()
+
+  await expect(page.getByTestId("remittance-cutover")).toBeHidden()
+})
