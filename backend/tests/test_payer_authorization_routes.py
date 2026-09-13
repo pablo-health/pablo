@@ -386,3 +386,104 @@ class TestTheDocumentDirectory:
         (harness["documents"] / "PAYER-AUTH-draft.md").write_text("Not ready.")
 
         assert harness["client"].get(_URL).json()["current_version"] == _V1
+
+
+def _publish_agreement(documents: Path, version: str, text: str) -> None:
+    (documents / f"SERVICES-AGREEMENT-{version}.md").write_text(text)
+
+
+class TestTheTwoDocuments:
+    """The services agreement and the credentialing authorisation are separate.
+
+    Only the second has text today. The column and the discovery exist now
+    because adding them later would mean a migration plus a backfill that has
+    to guess which document a live signature had been — and because the
+    permissive failure is the one that matters: a signed commercial agreement
+    reading as permission to sign her name to a payer's form.
+    """
+
+    def test_a_signature_records_which_document_it_is_of(self, harness: dict[str, Any]) -> None:
+        _publish(harness["documents"], _V1, _V1_TEXT)
+
+        _sign(harness["client"], _V1)
+
+        row = harness["session"].query(PayerAuthorizationRow).one()
+        assert row.kind == authorization.CREDENTIALING_AUTHORIZATION
+
+    def test_each_kind_carries_its_own_version_series(self, harness: dict[str, Any]) -> None:
+        """Revising one document must not move the other's version in force."""
+        _publish(harness["documents"], _V1, _V1_TEXT)
+        _publish_agreement(harness["documents"], _V2, "The commercial terms.")
+
+        assert authorization.current_version(authorization.CREDENTIALING_AUTHORIZATION) == _V1
+        assert authorization.current_version(authorization.SERVICES_AGREEMENT) == _V2
+
+    def test_one_document_is_not_read_as_the_other(self, harness: dict[str, Any]) -> None:
+        """The permissive failure: a signed agreement counting as signing authority."""
+        _publish_agreement(harness["documents"], _V1, "The commercial terms.")
+        _publish(harness["documents"], _V1, _V1_TEXT)
+        authorization.sign(
+            harness["session"],
+            _USER_ID,
+            version=_V1,
+            signed_name="Ana Rivera",
+            at=datetime.now(UTC),
+            kind=authorization.SERVICES_AGREEMENT,
+        )
+
+        assert (
+            authorization.in_force(
+                harness["session"], _USER_ID, authorization.CREDENTIALING_AUTHORIZATION
+            )
+            is None
+        )
+        assert harness["client"].get(_URL).json()["signed"] is False
+
+    def test_a_version_of_the_wrong_kind_cannot_be_signed(self, harness: dict[str, Any]) -> None:
+        """Same date, other document — not a version of this one."""
+        _publish_agreement(harness["documents"], _V1, "The commercial terms.")
+
+        assert _sign(harness["client"], _V1).status_code == 404
+
+    def test_withdrawal_sweeps_both(self, harness: dict[str, Any]) -> None:
+        """ "Stop acting for me" is not read as narrowly as it could be."""
+        _publish(harness["documents"], _V1, _V1_TEXT)
+        _publish_agreement(harness["documents"], _V1, "The commercial terms.")
+        _sign(harness["client"], _V1)
+        authorization.sign(
+            harness["session"],
+            _USER_ID,
+            version=_V1,
+            signed_name="Ana Rivera",
+            at=datetime.now(UTC),
+            kind=authorization.SERVICES_AGREEMENT,
+        )
+
+        harness["client"].delete(_URL)
+
+        rows = authorization.signatures_for(harness["session"], _USER_ID)
+        assert len(rows) == 2
+        assert all(row.revoked_at is not None for row in rows)
+
+    def test_history_can_be_read_per_document_or_whole(self, harness: dict[str, Any]) -> None:
+        _publish(harness["documents"], _V1, _V1_TEXT)
+        _publish_agreement(harness["documents"], _V1, "The commercial terms.")
+        _sign(harness["client"], _V1)
+        authorization.sign(
+            harness["session"],
+            _USER_ID,
+            version=_V1,
+            signed_name="Ana Rivera",
+            at=datetime.now(UTC),
+            kind=authorization.SERVICES_AGREEMENT,
+        )
+
+        everything = authorization.signatures_for(harness["session"], _USER_ID)
+        just_the_authorization = authorization.signatures_for(
+            harness["session"], _USER_ID, authorization.CREDENTIALING_AUTHORIZATION
+        )
+
+        assert len(everything) == 2
+        assert [row.kind for row in just_the_authorization] == [
+            authorization.CREDENTIALING_AUTHORIZATION
+        ]

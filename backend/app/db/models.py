@@ -2350,16 +2350,28 @@ class PayerAuthorizationRow(Base):
 
     __tablename__ = "payer_authorizations"
     __table_args__ = (
-        # No unique constraint on (user_id, version). Re-signing the same
+        # No unique constraint on (user_id, kind, version). Re-signing the same
         # version after a revocation is a real sequence, and the second
         # signature is a different event from the first.
+        CheckConstraint(
+            "kind IN ('credentialing_authorization', 'services_agreement')",
+            name="ck_payer_authorizations_kind",
+        ),
         Index("ix_payer_authorizations_user_id", "user_id"),
     )
 
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    #: Which document this signature is of. Two of them authorise different
+    #: things — the services agreement is the commercial relationship, the
+    #: credentialing authorisation is the narrow permission to sign her name to
+    #: a payer's form — so they are counted separately and never stand in for
+    #: one another. Schema-enforced, because a typo here would read as a
+    #: missing signature and silently shut a gate rather than open one.
+    kind: Mapped[str] = mapped_column(String(40), nullable=False)
     #: The dated version she signed, e.g. ``"2026-09-13"`` — the filename stem
-    #: of the document, the same scheme the BAA uses.
+    #: of the document, the same scheme the BAA uses. Each kind carries its own
+    #: series, so the pair ``(kind, version)`` is what identifies a document.
     version: Mapped[str] = mapped_column(String(20), nullable=False)
     #: The document as she was shown it. See the class docstring.
     full_text: Mapped[str] = mapped_column(Text, nullable=False)

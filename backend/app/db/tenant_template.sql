@@ -913,13 +913,15 @@ CREATE TABLE __TENANT_SCHEMA__.patients (
 CREATE TABLE __TENANT_SCHEMA__.payer_authorizations (
     id uuid NOT NULL,
     user_id uuid NOT NULL,
+    kind character varying(40) NOT NULL,
     version character varying(20) NOT NULL,
     full_text text NOT NULL,
     signed_name character varying(200) NOT NULL,
     signed_at timestamp with time zone NOT NULL,
     revoked_at timestamp with time zone,
     created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_payer_authorizations_kind CHECK (((kind)::text = ANY ((ARRAY['credentialing_authorization'::character varying, 'services_agreement'::character varying])::text[])))
 );
 
 

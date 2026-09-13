@@ -15,6 +15,13 @@ rather than a misconfiguration, and every caller here treats it that way.
 
 The documents themselves therefore live in the managed deployment's overlay,
 not in this repository — the same split the BAA already uses.
+
+There are TWO of them, and they authorise different things. The services
+agreement is the commercial relationship; the credentialing authorisation is
+the narrow permission to sign her name to a payer's form and to speak to that
+payer as her. Each is revised on its own schedule, so each carries its own
+version series rather than sharing one — re-wording the commercial terms should
+not invalidate a signature about signing authority, or the reverse.
 """
 
 from __future__ import annotations
@@ -37,62 +44,89 @@ if TYPE_CHECKING:
 #: ``backend/baa``, and absent in this repository on purpose.
 AUTHORIZATION_DIR = (Path(__file__).parent.parent.parent / "payer_authorizations").resolve()
 
+#: The narrow permission to sign her name to a payer's form and to chase it
+#: with that payer. This is the one the panel work gates on.
+CREDENTIALING_AUTHORIZATION = "credentialing_authorization"
+
+#: The commercial relationship underneath it.
+SERVICES_AGREEMENT = "services_agreement"
+
+#: Every kind a row may carry. The database holds the same list as a check
+#: constraint; this is the readable copy, and the two are meant to agree.
+AUTHORIZATION_KINDS: tuple[str, ...] = (CREDENTIALING_AUTHORIZATION, SERVICES_AGREEMENT)
+
 _VERSION_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
-_FILENAME_GLOB = "PAYER-AUTH-*.md"
-_FILENAME_PREFIX = "PAYER-AUTH-"
+#: Each kind is discovered by its own filename prefix, so one directory can
+#: hold both series without either shadowing the other.
+_FILENAME_PREFIXES: dict[str, str] = {
+    CREDENTIALING_AUTHORIZATION: "PAYER-AUTH-",
+    SERVICES_AGREEMENT: "SERVICES-AGREEMENT-",
+}
 
 
-def available_versions() -> dict[str, Path]:
-    """Every bundled version, newest first, as ``version -> path``."""
-    if not AUTHORIZATION_DIR.is_dir():
+def available_versions(kind: str = CREDENTIALING_AUTHORIZATION) -> dict[str, Path]:
+    """Every bundled version of one kind, newest first, as ``version -> path``."""
+    prefix = _FILENAME_PREFIXES.get(kind)
+    if prefix is None or not AUTHORIZATION_DIR.is_dir():
         return {}
     found = {}
-    for path in sorted(AUTHORIZATION_DIR.glob(_FILENAME_GLOB), reverse=True):
-        version = path.stem.removeprefix(_FILENAME_PREFIX)
+    for path in sorted(AUTHORIZATION_DIR.glob(f"{prefix}*.md"), reverse=True):
+        version = path.stem.removeprefix(prefix)
         if _VERSION_PATTERN.match(version):
             found[version] = path.resolve()
     return found
 
 
-def current_version() -> str:
-    """The version in force, or ``""`` when no document is bundled.
+def current_version(kind: str = CREDENTIALING_AUTHORIZATION) -> str:
+    """The version in force, or ``""`` when no document of that kind is bundled.
 
     Empty is a real answer, not a failure: a deployment with no Pablo staff
     behind it has nobody to authorise, so the flow is off rather than broken.
+    It is also the answer for a kind whose text counsel has not settled yet,
+    which is the same shape of "not available" and wants the same handling.
     """
-    versions = available_versions()
+    versions = available_versions(kind)
     return next(iter(versions), "")
 
 
-def read_version(version: str) -> str | None:
+def read_version(version: str, kind: str = CREDENTIALING_AUTHORIZATION) -> str | None:
     """The text of one version, or ``None`` if this deployment has no such file.
 
     Reads through :func:`available_versions` rather than joining the version
     onto a path, so a version string can never walk out of the directory.
     """
-    path = available_versions().get(version)
+    path = available_versions(kind).get(version)
     return path.read_text() if path is not None else None
 
 
-def signatures_for(session: Session, user_id: str) -> list[PayerAuthorizationRow]:
+def signatures_for(
+    session: Session,
+    user_id: str,
+    kind: str | None = None,
+) -> list[PayerAuthorizationRow]:
     """Every signature she has given, newest first.
 
     A list rather than the latest one, because the history is the record: the
     question a payer asks is what authority we held on a date, not what we hold
     now.
+
+    ``kind`` narrows to one document; omitted, it returns both series
+    interleaved by date, which is what an "everything she has signed" view
+    wants.
     """
-    return list(
-        session.scalars(
-            select(PayerAuthorizationRow)
-            .where(PayerAuthorizationRow.user_id == user_id)
-            .order_by(PayerAuthorizationRow.signed_at.desc())
-        ).all()
-    )
+    query = select(PayerAuthorizationRow).where(PayerAuthorizationRow.user_id == user_id)
+    if kind is not None:
+        query = query.where(PayerAuthorizationRow.kind == kind)
+    return list(session.scalars(query.order_by(PayerAuthorizationRow.signed_at.desc())).all())
 
 
-def in_force(session: Session, user_id: str) -> PayerAuthorizationRow | None:
-    """Her live signature of the CURRENT version, if she has one.
+def in_force(
+    session: Session,
+    user_id: str,
+    kind: str = CREDENTIALING_AUTHORIZATION,
+) -> PayerAuthorizationRow | None:
+    """Her live signature of the CURRENT version of one kind, if she has one.
 
     Three things have to hold, and each rules out a different way of being
     wrong: she signed, she has not withdrawn it, and what she signed is what we
@@ -100,18 +134,23 @@ def in_force(session: Session, user_id: str) -> PayerAuthorizationRow | None:
     history and no longer permission — which is why this asks for the current
     version rather than merely for the newest row.
 
+    Asked about one kind, never about "any": the two documents authorise
+    different things, so a signed services agreement must not read as
+    permission to sign her name to a payer's form.
+
     ``None`` when the deployment bundles no document at all. That is the same
     answer as "she has not signed", and it is the right one: the gate this
     feeds should refuse either way rather than wave work through because a file
     is missing.
     """
-    version = current_version()
+    version = current_version(kind)
     if not version:
         return None
     return session.scalars(
         select(PayerAuthorizationRow)
         .where(
             PayerAuthorizationRow.user_id == user_id,
+            PayerAuthorizationRow.kind == kind,
             PayerAuthorizationRow.version == version,
             PayerAuthorizationRow.revoked_at.is_(None),
         )
@@ -119,27 +158,31 @@ def in_force(session: Session, user_id: str) -> PayerAuthorizationRow | None:
     ).first()
 
 
-def sign(
+def sign(  # noqa: PLR0913 — service deps + keyword-only signature fields
     session: Session,
     user_id: str,
     *,
     version: str,
     signed_name: str,
     at: datetime,
+    kind: str = CREDENTIALING_AUTHORIZATION,
 ) -> PayerAuthorizationRow:
     """Record her signature, with the text she was shown.
 
     Flushed, not committed — the caller owns the transaction.
 
-    Raises :class:`UnknownVersionError` if the version is not bundled. A
-    signature against text we cannot produce is not a record of anything.
+    Raises :class:`UnknownVersionError` if the version is not bundled for this
+    kind. A signature against text we cannot produce is not a record of
+    anything, and a version that exists under the other document is not this
+    one.
     """
-    text = read_version(version)
+    text = read_version(version, kind)
     if text is None:
-        raise UnknownVersionError(version)
+        raise UnknownVersionError(version, kind)
     row = PayerAuthorizationRow(
         id=str(uuid.uuid4()),
         user_id=user_id,
+        kind=kind,
         version=version,
         full_text=text,
         signed_name=signed_name,
@@ -159,9 +202,10 @@ def revoke(session: Session, user_id: str, *, at: datetime) -> int:
     it, both stay true — a record that erased itself on withdrawal could not
     answer for the period when the authority did hold.
 
-    Sweeps every unrevoked row rather than only the current version: she is
-    saying "stop acting for me", and leaving a superseded signature standing
-    would be reading that as narrowly as possible.
+    Sweeps every unrevoked row rather than only the current version, and every
+    kind rather than only the credentialing authorisation: she is saying "stop
+    acting for me", and leaving a superseded signature — or the agreement the
+    authority sits on — standing would be reading that as narrowly as possible.
     """
     live = session.scalars(
         select(PayerAuthorizationRow).where(
@@ -177,8 +221,9 @@ def revoke(session: Session, user_id: str, *, at: datetime) -> int:
 
 
 class UnknownVersionError(ValueError):
-    """A version this deployment does not bundle."""
+    """A version this deployment does not bundle for that kind."""
 
-    def __init__(self, version: str) -> None:
-        super().__init__(f"No payer authorisation version {version!r} is available.")
+    def __init__(self, version: str, kind: str = CREDENTIALING_AUTHORIZATION) -> None:
+        super().__init__(f"No {kind} version {version!r} is available.")
         self.version = version
+        self.kind = kind

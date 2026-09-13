@@ -581,12 +581,20 @@ class SignPayerAuthorizationPayload(BaseModel):
     accepted: bool
 
 
+#: These routes speak for ONE of the two documents: the narrow permission to
+#: sign her name to a payer's form. The services agreement is the other, and it
+#: gets its own surface when counsel has settled its text — deliberately not
+#: this one, because a single screen reporting "signed" for two documents that
+#: authorise different things is how a gate ends up open on the wrong one.
+_ROUTE_KIND = authorization.CREDENTIALING_AUTHORIZATION
+
+
 def _authorization_status(session: Session, user_id: str) -> PayerAuthorizationStatus:
-    version = authorization.current_version()
+    version = authorization.current_version(_ROUTE_KIND)
     if not version:
         return PayerAuthorizationStatus(available=False, signed=False)
 
-    live = authorization.in_force(session, user_id)
+    live = authorization.in_force(session, user_id, _ROUTE_KIND)
     if live is not None:
         return PayerAuthorizationStatus(
             available=True,
@@ -600,7 +608,11 @@ def _authorization_status(session: Session, user_id: str) -> PayerAuthorizationS
     # Not signed under the current version — but she may have signed an older
     # one, which is a different conversation from never having signed.
     previous = next(
-        (row for row in authorization.signatures_for(session, user_id) if row.revoked_at is None),
+        (
+            row
+            for row in authorization.signatures_for(session, user_id, _ROUTE_KIND)
+            if row.revoked_at is None
+        ),
         None,
     )
     return PayerAuthorizationStatus(
@@ -637,10 +649,10 @@ def read_payer_authorization(
     kept verbatim on her row and is the authority for anything already done
     under it; this endpoint is for reading, not for proving.
     """
-    wanted = version or authorization.current_version()
+    wanted = version or authorization.current_version(_ROUTE_KIND)
     if not wanted:
         raise NotFoundError("This deployment bundles no payer authorisation.")
-    text = authorization.read_version(wanted)
+    text = authorization.read_version(wanted, _ROUTE_KIND)
     if text is None:
         raise NotFoundError(f"No payer authorisation version {wanted}.")
     return text
@@ -676,6 +688,7 @@ def sign_payer_authorization(
             version=payload.version,
             signed_name=payload.signed_name.strip(),
             at=datetime.now(UTC),
+            kind=_ROUTE_KIND,
         )
     except authorization.UnknownVersionError as exc:
         raise NotFoundError(str(exc)) from exc
@@ -684,7 +697,9 @@ def sign_payer_authorization(
         AuditAction.PAYER_AUTHORIZATION_SIGNED,
         user,
         http_request,
-        changes={"version": row.version},
+        # Which document, not only which version. Once there are two, an entry
+        # naming a bare date cannot say what she actually authorised.
+        changes={"kind": row.kind, "version": row.version},
     )
     session.commit()
     return _authorization_status(session, user.id)

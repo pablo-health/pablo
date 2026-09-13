@@ -110,6 +110,7 @@ def _signature(user_id: str, **overrides: Any) -> Any:
     fields: dict[str, Any] = {
         "id": str(uuid.uuid4()),
         "user_id": user_id,
+        "kind": "credentialing_authorization",
         "version": "2026-09-13",
         "full_text": "# Payer authorisation\n\nThe wording she was shown.\n",
         "signed_name": "Ana Rivera",
@@ -170,6 +171,24 @@ def test_a_clinician_cannot_sign_on_somebody_elses_behalf(
     scoped = _TenantSession(engine, tenant_schema, _CLINICIAN_B)
     try:
         scoped.session.add(_signature(_CLINICIAN_A))
+        with pytest.raises(DBAPIError):
+            scoped.session.commit()
+    finally:
+        scoped.session.rollback()
+        scoped.close()
+
+
+def test_an_unrecognised_document_kind_is_refused(engine: Engine, tenant_schema: str) -> None:
+    """Schema-enforced, because a typo fails in the permissive direction.
+
+    A misspelled kind does not raise anywhere in the application: it writes a
+    row that no ``in_force`` query will ever match, which reads as "she has not
+    signed" and quietly shuts a gate she has in fact authorised. The database
+    is the only layer that can refuse it at the moment it is written.
+    """
+    scoped = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
+    try:
+        scoped.session.add(_signature(_CLINICIAN_A, kind="credentialling_authorisation"))
         with pytest.raises(DBAPIError):
             scoped.session.commit()
     finally:
