@@ -137,22 +137,20 @@ describe("what it will not let her do", () => {
     expect(screen.getByTestId("cutover-confirm")).toBeDisabled()
   })
 
-  it("starts unticked again for the next payer", () => {
+  it("starts unticked again for the next payer", async () => {
     // Otherwise a second payer's remittances move on a box she ticked about
-    // the first.
-    const { rerender } = render(
+    // the first. The card mounts this only while she is confirming, so closing
+    // it discards the tick — which this reproduces by unmounting rather than
+    // by toggling a prop, because that is what actually happens.
+    const user = userEvent.setup()
+    const { unmount } = render(
       <RemittanceCutoverDialog payer={payer()} open onOpenChange={() => {}} onConfirm={() => {}} />,
     )
+    await user.click(screen.getByTestId("cutover-understood"))
+    expect(screen.getByTestId("cutover-confirm")).toBeEnabled()
+    unmount()
 
-    rerender(
-      <RemittanceCutoverDialog
-        payer={payer()}
-        open={false}
-        onOpenChange={() => {}}
-        onConfirm={() => {}}
-      />,
-    )
-    rerender(
+    render(
       <RemittanceCutoverDialog
         payer={payer({ id: "p2", name: "Cigna" })}
         open

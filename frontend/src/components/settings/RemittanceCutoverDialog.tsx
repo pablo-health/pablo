@@ -2,7 +2,7 @@
 
 "use client"
 
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
@@ -56,13 +56,10 @@ export function RemittanceCutoverDialog({
   pending?: boolean
 }) {
   const { data: profile } = useBillingProfile()
+  // A fresh decision every time. The card mounts this only while she is
+  // confirming, so closing it discards the tick — which is the point: a second
+  // payer's remittances must not move on a box she ticked about the first.
   const [understood, setUnderstood] = useState(false)
-
-  // A fresh decision every time it opens. Carrying the tick over would mean a
-  // second payer's remittances moved on a box she ticked about the first.
-  useEffect(() => {
-    if (open) setUnderstood(false)
-  }, [open])
 
   const billingNpi = profile?.billing_npi?.trim()
   const taxIdLast4 = profile?.tax_id_last4
