@@ -18,10 +18,15 @@ vi.mock("@/hooks/usePreferences", () => ({
   useSavePreferences: () => ({ mutate: savePreferences, isPending: false }),
 }))
 
-// The later steps mount the settings cards for the billing profile and
-// appointment types, which fetch their own data. These tests are about routing
-// and resuming, so the cards stand in as markers — what they render is their
-// own tests' business.
+// Several steps mount components that fetch their own data: the settings cards
+// for the billing profile and appointment types, and — now that it leads the
+// credentialing routes — the NPI lookup. These tests are about routing and
+// resuming, so those stand in as markers; what they render is their own tests'
+// business.
+vi.mock("@/components/credentialing/NpiLookupStep", () => ({
+  NpiLookupStep: () => <div>npi lookup step</div>,
+}))
+
 vi.mock("../SetupSteps", () => ({
   PracticeIdentityStep: () => <div>practice identity step</div>,
   BillingContactStep: () => <div>billing contact step</div>,
@@ -81,10 +86,12 @@ describe("remembering where she stopped", () => {
 
     fireEvent.click(screen.getByText("My clients pay me directly"))
 
+    // The NPI lookup leads every route now, so the step she lands on after
+    // answering is the lookup rather than the first practice form.
     expect(savePreferences).toHaveBeenCalledWith(
       expect.objectContaining({
         billing_setup_route: "private_pay",
-        billing_setup_step: "identity",
+        billing_setup_step: "confirm",
       }),
     )
   })
@@ -153,13 +160,24 @@ describe("the steps she is shown", () => {
     expect(screen.queryByText("Payers")).not.toBeInTheDocument()
   })
 
-  it("adds no insurance steps for a private-pay practice", () => {
+  it("adds no payer or record steps for a private-pay practice", () => {
     render(<GetPaidWizard />)
 
     fireEvent.click(screen.getByText("My clients pay me directly"))
 
     expect(screen.queryByText("Payers")).not.toBeInTheDocument()
-    expect(screen.queryByText("What we found")).not.toBeInTheDocument()
+    expect(screen.queryByText("Your record")).not.toBeInTheDocument()
+  })
+
+  it("still looks up the NPI for a private-pay practice", () => {
+    // She bills nobody, and still needs it: superbill.py requires the
+    // rendering provider's NPI, so without one we cannot produce the document
+    // her client files for reimbursement.
+    render(<GetPaidWizard />)
+
+    fireEvent.click(screen.getByText("My clients pay me directly"))
+
+    expect(screen.getByText("What we found")).toBeInTheDocument()
   })
 
   it("adds the payer step, and no record steps, for someone already paneled", () => {
@@ -170,7 +188,17 @@ describe("the steps she is shown", () => {
     expect(screen.getByText("Payers")).toBeInTheDocument()
     // She is paneled. Nothing should walk her through credentialing she has
     // already done.
-    expect(screen.queryByText("What we found")).not.toBeInTheDocument()
+    expect(screen.queryByText("Your record")).not.toBeInTheDocument()
+  })
+
+  it("looks up the NPI for someone already paneled", () => {
+    // She files claims herself, and her individual NPI is the rendering
+    // provider on every one. This route used to have no NPI step at all.
+    render(<GetPaidWizard />)
+
+    fireEvent.click(screen.getByText("I’m already on insurance panels"))
+
+    expect(screen.getByText("What we found")).toBeInTheDocument()
   })
 
   it("adds the record steps for someone who wants a panel", () => {
