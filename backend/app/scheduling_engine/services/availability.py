@@ -337,9 +337,7 @@ class AvailabilityEngine:
                 rule, proposed_start, proposed_end
             ),
             RuleType.MAX_PER_DAY: lambda: self._check_max_per_day(rule, user_id, proposed_start),
-            RuleType.MAX_PER_WEEK: lambda: self._check_max_per_week(
-                rule, user_id, proposed_start
-            ),
+            RuleType.MAX_PER_WEEK: lambda: self._check_max_per_week(rule, user_id, proposed_start),
             RuleType.BUFFER_BEFORE: lambda: self._check_buffer_before(
                 rule, user_id, proposed_start, rule.params
             ),

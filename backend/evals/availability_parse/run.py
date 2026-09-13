@@ -39,17 +39,32 @@ import sys
 from datetime import date
 from typing import TYPE_CHECKING, Any
 
-from evals.availability_parse.cases import REFERENCE_DATE, EvalCase, ExpectedRule, all_cases
+from app.scheduling_engine.models.appointment_type import AppointmentType
+
+from evals.availability_parse.cases import (
+    PRACTICE_APPOINTMENT_TYPES,
+    REFERENCE_DATE,
+    EvalCase,
+    ExpectedRule,
+    all_cases,
+)
 
 if TYPE_CHECKING:
     from app.services.availability_parse_service import AvailabilityParseResult
 
+#: The owner every corpus appointment type belongs to. Nothing is stored, so
+#: this only has to be a value the parser never reads.
+_EVAL_USER_ID = "eval-clinician"
 
-def _canonical_key(rule: ExpectedRule) -> tuple[str, tuple[tuple[str, Any], ...]]:
+
+def _canonical_key(rule: ExpectedRule) -> tuple[str, tuple[tuple[str, Any], ...], str | None, bool]:
     """Order-independent identity for a rule, ignoring enforcement.
 
     Grading compares rule *sets* — "9 to 5 Monday through Thursday" expects
-    four rules in any order — so this is the key both sides reduce to.
+    four rules in any order — so this is the key both sides reduce to. The
+    appointment type is part of that identity: a cap on intakes and a cap
+    on everything are not the same rule, and grading only rule_type and
+    params would call them equal.
     """
 
     def _freeze(value: Any) -> Any:
@@ -57,7 +72,12 @@ def _canonical_key(rule: ExpectedRule) -> tuple[str, tuple[tuple[str, Any], ...]
             return tuple(_freeze(v) for v in value)
         return value
 
-    return (rule.rule_type, tuple(sorted((k, _freeze(v)) for k, v in rule.params.items())))
+    return (
+        rule.rule_type,
+        tuple(sorted((k, _freeze(v)) for k, v in rule.params.items())),
+        rule.appointment_type_id,
+        rule.allow_other_types,
+    )
 
 
 def _parse_one(phrasing: str) -> AvailabilityParseResult:
@@ -69,7 +89,16 @@ def _parse_one(phrasing: str) -> AvailabilityParseResult:
     return AvailabilityRuleParseService().parse(
         phrasing,
         reference_date=date.fromisoformat(REFERENCE_DATE),
+        appointment_types=_appointment_types(),
     )
+
+
+def _appointment_types() -> list[AppointmentType]:
+    """The corpus's stand-in settings page, as the parser wants it."""
+    return [
+        AppointmentType(id=type_id, user_id=_EVAL_USER_ID, name=name)
+        for type_id, name in PRACTICE_APPOINTMENT_TYPES
+    ]
 
 
 def _produced_rules(result: AvailabilityParseResult) -> list[ExpectedRule] | None:
@@ -77,7 +106,13 @@ def _produced_rules(result: AvailabilityParseResult) -> list[ExpectedRule] | Non
     if result.could_not_parse or not result.proposals:
         return None
     return [
-        ExpectedRule(rule_type=p.rule_type, params=p.params, enforcement=p.enforcement)
+        ExpectedRule(
+            rule_type=p.rule_type,
+            params=p.params,
+            enforcement=p.enforcement,
+            appointment_type_id=p.appointment_type_id,
+            allow_other_types=p.allow_other_types,
+        )
         for p in result.proposals
     ]
 

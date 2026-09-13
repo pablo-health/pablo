@@ -14,7 +14,10 @@ which is worse than falling through to the form — so the corpus is built
 so that refusing is never punished and guessing always is.
 
 Relative dates are resolved against a fixed anchor rather than the wall
-clock, so the same run produces the same verdict tomorrow.
+clock, so the same run produces the same verdict tomorrow. So are the
+practice's appointment types: a fixed list stands in for the settings
+page, and a case that names one grades the id the parser bound, so a
+prompt change cannot quietly stop binding it.
 """
 
 from __future__ import annotations
@@ -25,6 +28,16 @@ from typing import Any
 # Anchor "today" for the relative-date cases below. A real parse receives
 # this from request context; here it is pinned so the corpus is stable.
 REFERENCE_DATE = "2026-08-04"
+
+#: The appointment types the corpus parses against — a stand-in for what a
+#: practice has on its settings page. Names only ever resolve to these ids,
+#: and a sentence naming anything else must be refused rather than widened
+#: into a rule about every kind of appointment.
+PRACTICE_APPOINTMENT_TYPES: tuple[tuple[str, str], ...] = (
+    ("type-intake", "Intake"),
+    ("type-consultation", "Consultation"),
+    ("type-session", "Session"),
+)
 
 
 @dataclass(frozen=True)
@@ -39,6 +52,12 @@ class ExpectedRule:
     rule_type: str
     params: dict[str, Any] = field(default_factory=dict)
     enforcement: str = "hard"
+    #: Which of :data:`PRACTICE_APPOINTMENT_TYPES` the rule is scoped to,
+    #: or None for a practice-wide rule. Graded exactly, alongside params:
+    #: a rule bound to the wrong type is as wrong as the wrong hours.
+    appointment_type_id: str | None = None
+    #: False when the sentence hands this window to its type alone.
+    allow_other_types: bool = True
 
 
 @dataclass(frozen=True)
@@ -47,7 +66,8 @@ class EvalCase:
 
     ``expected=None`` means the phrasing must be refused. ``category``
     groups cases for reporting: ``positive``, ``ambiguous``,
-    ``out_of_scope``, ``date_token_gap``, or ``multi_intent``.
+    ``out_of_scope``, ``date_token_gap``, ``multi_intent``, or
+    ``unknown_appointment_type``.
 
     ``expected_exclusive`` grades the parser's top-level ``exclusive``
     flag (set when a sentence states a complete set of working hours,
@@ -751,5 +771,88 @@ def all_cases() -> list[EvalCase]:
             ExpectedRule("working_hours", {"day_of_week": 1, "start": "10:00", "end": "16:00"}),
             ExpectedRule("working_hours", {"day_of_week": 3, "start": "10:00", "end": "16:00"}),
             expected_exclusive=True,
+        ),
+        # ---------------------------------------------------------------
+        # Appointment types and weekly caps — the rule is the same rule,
+        # scoped to one of the practice's own types. A case here fails
+        # both ways: an unbound rule is wrong, and so is one bound to a
+        # type nobody named.
+        # ---------------------------------------------------------------
+        _positive(
+            "two_intakes_a_week",
+            "only two intakes a week",
+            "max_per_week scoped to Intake — the weekly cap and the type binding "
+            "together, and the sentence the whole feature exists for",
+            ExpectedRule("max_per_week", {"max": 2}, appointment_type_id="type-intake"),
+        ),
+        _positive(
+            "no_more_than_twenty_a_week",
+            "no more than 20 appointments a week",
+            "max_per_week with no type named — a weekly cap is practice-wide by "
+            "default, exactly as a daily one is",
+            ExpectedRule("max_per_week", {"max": 20}),
+        ),
+        _positive(
+            "one_consultation_a_day",
+            "at most one consultation a day",
+            "max_per_day scoped to Consultation — the type binding on a rule type "
+            "the parser already had, so a regression shows up as an unbound rule "
+            "rather than a missing one",
+            ExpectedRule("max_per_day", {"max": 1}, appointment_type_id="type-consultation"),
+        ),
+        _positive(
+            "intakes_tuesday_afternoons",
+            "I see intakes on Tuesday afternoons, 1 to 5",
+            "working_hours scoped to Intake and NOT exclusive — saying when a type "
+            "is offered says nothing about anybody else, so allow_other_types "
+            "stays true",
+            ExpectedRule(
+                "working_hours",
+                {"day_of_week": 1, "start": "13:00", "end": "17:00"},
+                appointment_type_id="type-intake",
+            ),
+        ),
+        _positive(
+            "tuesday_afternoons_intakes_only",
+            "Tuesday afternoons, 1 to 5, are for intakes only",
+            "the same window as intakes_tuesday_afternoons, claimed — 'for intakes "
+            "only' hands those minutes to Intake and no other type, which is a "
+            "different rule from the narrowing above and must not collapse into it",
+            ExpectedRule(
+                "working_hours",
+                {"day_of_week": 1, "start": "13:00", "end": "17:00"},
+                appointment_type_id="type-intake",
+                allow_other_types=False,
+            ),
+        ),
+        _refuse(
+            "only_intakes_on_tuesdays",
+            "I only do intakes on Tuesdays",
+            "narrowing versus claim, unresolvable from the sentence: it reads "
+            "either as 'intakes happen on Tuesdays and nowhere else' or as "
+            "'Tuesdays are for intakes and nothing else', and the two store "
+            "different rules — one leaves the window open to other types and one "
+            "closes it. Picking either silently writes a rule the therapist did "
+            "not state, so this must come back as a question",
+            "ambiguous",
+        ),
+        _refuse(
+            "two_intakes_a_week_on_tuesdays",
+            "two intakes a week on Tuesdays",
+            "one rule or two, unresolvable from the sentence: a weekly cap of two "
+            "intakes that happens to mention Tuesdays, or that cap PLUS Tuesday "
+            "hours for intakes. The second reading writes a working_hours rule "
+            "nobody asked for and, being exclusive of no other day, changes what "
+            "the calendar offers",
+            "ambiguous",
+        ),
+        _refuse(
+            "no_group_sessions_on_fridays",
+            "no group sessions on Fridays",
+            "a kind of appointment this practice does not have — the parser may "
+            "only bind a type from the practice's own list, and dropping the "
+            "unresolvable name would turn this into a rule blocking EVERY kind of "
+            "appointment on Fridays, which is not what was said",
+            "unknown_appointment_type",
         ),
     ]

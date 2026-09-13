@@ -18,9 +18,10 @@ the `params` keys the checkers in
 `app/scheduling_engine/services/availability.py` actually read — so
 nothing in the corpus asks for a rule the engine can't evaluate.
 
-The corpus is 74 cases: the original 14 plus a 60-case expansion drafted
-in two independent passes and merged by arbitration (see "On this
-expansion" below). 41 are parseable, 33 must refuse (55.4% / 44.6%).
+The corpus is 82 cases: the original 14, a 60-case expansion drafted in
+two independent passes and merged by arbitration (see "On this expansion"
+below), and 8 cases covering appointment types and weekly caps. 46 are
+parseable, 36 must refuse (56.1% / 43.9%).
 
 ### Case matrix
 
@@ -170,7 +171,35 @@ flag.
 | `nine_to_five_weekdays_except_wed_noon` | five `working_hours` rules, one overriding |
 | `only_tue_thu_10_to_4_exclusive` | two `working_hours` rules + `exclusive=true` |
 
-All eight rule types are covered many times over. Relative dates resolve
+**Appointment types and weekly caps** — a rule scoped to one of the
+practice's own types, and the readings that are not the parser's to
+settle. The corpus's practice has three types: `Intake`, `Consultation`
+and `Session`. A case here grades the bound `appointment_type_id`
+exactly, so a rule that comes back unbound — silently applying to every
+kind of appointment — is a hard failure, not a near miss.
+
+| case | expects |
+|---|---|
+| `two_intakes_a_week` | `max_per_week` scoped to `Intake` |
+| `no_more_than_twenty_a_week` | `max_per_week`, practice-wide |
+| `one_consultation_a_day` | `max_per_day` scoped to `Consultation` |
+| `intakes_tuesday_afternoons` | `working_hours` scoped to `Intake`, open to other types |
+| `tuesday_afternoons_intakes_only` | the same window, claimed for `Intake` alone |
+| `only_intakes_on_tuesdays` | refuse — narrowing or claim, and they store different rules |
+| `two_intakes_a_week_on_tuesdays` | refuse — one rule or two, no tiebreaker |
+| `no_group_sessions_on_fridays` | refuse — a type this practice does not have |
+
+The last three are the point of the group. "I only do intakes on
+Tuesdays" reads either as *intakes happen on Tuesdays and nowhere else*
+(a narrowing) or as *Tuesdays are for intakes and nothing else* (a claim
+on the window), and the two write different rules: one leaves Tuesday
+afternoon open to every other kind of appointment and one closes it.
+Nothing in the sentence decides between them, so the parser returns the
+question rather than a rule. Same for a type the practice has never
+configured — dropping the name would widen "no group sessions on
+Fridays" into a Friday blocked for everything.
+
+All nine rule types are covered many times over. Relative dates resolve
 against a fixed anchor (`cases.REFERENCE_DATE`) so the corpus stays
 deterministic.
 
@@ -273,7 +302,7 @@ boundary underneath it refuses.**
 ## Hard failures — recorded baseline
 
 Three consecutive runs against the live parser, 2026-08-30, each a full
-pass over all 74 cases:
+pass over all 74 cases at the time:
 
 ```
 run 1:  recall 40/41  correct refusals 30/33  hard failures 3  soft findings 0
@@ -415,6 +444,6 @@ scripts/run-availability-parse-eval.sh --case friday
 scripts/run-availability-parse-eval.sh --json
 ```
 
-Every case is a real model call, so a full run over all 74 cases takes
+Every case is a real model call, so a full run over all 82 cases takes
 roughly two minutes and costs what seventy-four flash-tier calls cost.
 `--list` needs neither credentials nor a project.
