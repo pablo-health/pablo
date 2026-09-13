@@ -100,3 +100,23 @@ export interface ChecklistAnswers {
   medicare_intent?: boolean | null
   medicaid_intent?: boolean | null
 }
+
+/**
+ * What the public NPI registry said about one number.
+ *
+ * `found: false` is an ordinary answer, not an error — ten digits are easy to
+ * mistype, and a registry that has never heard of the number is telling us
+ * something worth showing her.
+ */
+export interface NppesLookup {
+  npi: string
+  found: boolean
+  legal_name: string | null
+  credential: string | null
+  taxonomy_code: string | null
+  taxonomy_description: string | null
+  address_line1: string | null
+  city: string | null
+  state: string | null
+  postal_code: string | null
+}

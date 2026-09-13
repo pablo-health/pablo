@@ -1264,6 +1264,16 @@ class Settings(BaseSettings):
         ),
     )
 
+    nppes_base_url: str | None = Field(
+        default=None,
+        description=(
+            "Origin that answers the NPPES registry API, for a deployment "
+            "that should not call CMS directly — the end-to-end harness's "
+            "stand-in, or a caching proxy. Unset (the ordinary case) means "
+            "the public registry itself, which needs no key."
+        ),
+    )
+
     clearinghouse_webhook_secret: SecretStr = Field(
         default=SecretStr(""),
         description=(

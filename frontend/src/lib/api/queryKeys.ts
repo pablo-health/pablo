@@ -241,6 +241,9 @@ const baseQueryKeys = {
       [...baseQueryKeys.credentialing.all, "checklist", branch ?? {}] as const,
     confirmations: () =>
       [...baseQueryKeys.credentialing.all, "confirmations"] as const,
+    // Keyed by the number: looking up a corrected NPI must not read the
+    // previous number's answer out of the cache.
+    nppes: (npi: string) => [...baseQueryKeys.credentialing.all, "nppes", npi] as const,
   },
 
   // Admin query keys

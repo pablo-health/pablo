@@ -17,8 +17,9 @@
 import { describe, expect, it, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 import { CredentialingPage } from "../CredentialingPage"
+import { CredentialingStartPage } from "../CredentialingStartPage"
 import { findSettingsItem, settingsGroups } from "../../registry"
-import { CREDENTIALING_SETTINGS_ID } from "../../paths"
+import { CREDENTIALING_LEGACY_SETTINGS_ID, CREDENTIALING_SETTINGS_ID } from "../../paths"
 
 vi.mock("@/components/credentialing/CredentialingWizard", () => ({
   CredentialingWizard: () => <div data-testid="credentialing-wizard" />,
@@ -33,19 +34,36 @@ describe("the credentialing settings page", () => {
 })
 
 describe("where it lives", () => {
-  it("is reachable by its settings id", () => {
-    expect(findSettingsItem(CREDENTIALING_SETTINGS_ID)?.page).toBe(CredentialingPage)
+  it("is still reachable, under the deprecated id", () => {
+    // Deprecated, not deleted: this is the only surface that reaches Tier 1
+    // and Tier 2, and taking it away before its replacement exists would
+    // remove working screens.
+    expect(findSettingsItem(CREDENTIALING_LEGACY_SETTINGS_ID)?.page).toBe(CredentialingPage)
   })
 
-  it("sits under Billing, with the rest of getting paid", () => {
-    const billing = settingsGroups.find((group) => group.id === "billing")
+  it("says deprecated in its label, where someone will actually read it", () => {
+    expect(findSettingsItem(CREDENTIALING_LEGACY_SETTINGS_ID)?.label).toMatch(/deprecated/i)
+  })
 
-    expect(billing?.items.map((item) => item.id)).toContain(CREDENTIALING_SETTINGS_ID)
+  it("no longer owns the plain credentialing id — the new flow does", () => {
+    expect(findSettingsItem(CREDENTIALING_SETTINGS_ID)?.page).toBe(CredentialingStartPage)
+  })
+
+  it("both sit under Billing, with the rest of getting paid", () => {
+    const billing = settingsGroups.find((group) => group.id === "billing")
+    const ids = billing?.items.map((item) => item.id)
+
+    expect(ids).toContain(CREDENTIALING_SETTINGS_ID)
+    expect(ids).toContain(CREDENTIALING_LEGACY_SETTINGS_ID)
   })
 
   it("is in no other group", () => {
     const groupsHolding = settingsGroups
-      .filter((group) => group.items.some((item) => item.id === CREDENTIALING_SETTINGS_ID))
+      .filter((group) =>
+        group.items.some((item) =>
+          [CREDENTIALING_SETTINGS_ID, CREDENTIALING_LEGACY_SETTINGS_ID].includes(item.id)
+        )
+      )
       .map((group) => group.id)
 
     expect(groupsHolding).toEqual(["billing"])

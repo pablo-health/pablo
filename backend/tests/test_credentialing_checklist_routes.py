@@ -548,9 +548,9 @@ class TestTierZeroShowsWhatItIsAskingAbout:
     ) -> None:
         # legal_name and the three yes/no confirmations have no column
         # anywhere; the confirmation row IS the value for those.
-        _confirm(harness["client"], "legal_name", presented_value="Dana Okafor")
+        _confirm(harness["client"], "legal_name", presented_value="Test Therapist")
 
-        assert self._field(harness["client"], "legal_name")["current_value"] == "Dana Okafor"
+        assert self._field(harness["client"], "legal_name")["current_value"] == "Test Therapist"
 
     def test_the_questions_are_not_given_answers(self, harness: dict[str, Any]) -> None:
         # Tier 1 and Tier 2 ask; only Tier 0 confirms. A value appearing on a

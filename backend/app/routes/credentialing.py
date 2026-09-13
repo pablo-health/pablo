@@ -24,14 +24,15 @@ from typing import TYPE_CHECKING, Annotated
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
-from ..api_errors import BadRequestError, NotFoundError
+from ..api_errors import BadRequestError, NotFoundError, ServiceUnavailableError
 from ..auth.route_access import subscription_exempt
 from ..auth.service import get_current_user, get_tenant_context
-from ..credentialing import checklist, confirmations, government_ids, status
+from ..credentialing import checklist, confirmations, government_ids, nppes, status
 from ..db import get_db_session
 from ..db.models import CREDENTIAL_CONFIRMATION_SOURCES, ClinicianProfileRow
 from ..models import User
 from ..services.audit_service import AuditService, get_audit_service
+from ..settings import get_settings
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -297,3 +298,65 @@ def save_checklist_answers(
 def list_confirmation_sources(_exempt: SubscriptionExemptDep) -> list[str]:
     """The provenance vocabulary, so the surface never invents a label."""
     return list(CREDENTIAL_CONFIRMATION_SOURCES)
+
+
+class NppesLookupResponse(BaseModel):
+    """What the registry said about one NPI.
+
+    ``found`` false is an ordinary answer, not an error: people mistype a
+    ten-digit number, and a registry that has never heard of it is telling us
+    something useful. The screen asks her to check the number rather than
+    showing a failure.
+    """
+
+    npi: str
+    found: bool
+    legal_name: str | None = None
+    credential: str | None = None
+    taxonomy_code: str | None = None
+    taxonomy_description: str | None = None
+    address_line1: str | None = None
+    city: str | None = None
+    state: str | None = None
+    postal_code: str | None = None
+
+
+@router.get("/nppes/{npi}", response_model=NppesLookupResponse)
+def look_up_npi(
+    npi: str,
+    _user: UserDep,
+    _exempt: SubscriptionExemptDep,
+) -> NppesLookupResponse:
+    """Look one NPI up in the public NPI registry.
+
+    No audit entry, deliberately: NPPES is a public directory, the record is
+    the clinician's own, and nothing here reads or writes a patient. Adding an
+    audit row would put a non-PHI lookup in the stream a compliance officer
+    reads for disclosures, which makes that stream harder to trust, not easier.
+
+    Nothing is written. The answer is presented for her to confirm, and the
+    confirmation is what promotes it onto her record — see the Tier-0 design.
+    """
+    if not nppes.is_well_formed(npi):
+        raise BadRequestError("An NPI is ten digits")
+
+    try:
+        provider = nppes.look_up(npi, base_url=get_settings().nppes_base_url)
+    except nppes.NppesUnavailableError as exc:
+        raise ServiceUnavailableError("The NPI registry is not answering right now") from exc
+
+    if provider is None:
+        return NppesLookupResponse(npi=npi, found=False)
+
+    return NppesLookupResponse(
+        npi=provider.npi,
+        found=True,
+        legal_name=provider.legal_name,
+        credential=provider.credential,
+        taxonomy_code=provider.taxonomy_code,
+        taxonomy_description=provider.taxonomy_description,
+        address_line1=provider.address_line1,
+        city=provider.city,
+        state=provider.state,
+        postal_code=provider.postal_code,
+    )
