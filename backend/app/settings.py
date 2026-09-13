@@ -1005,18 +1005,6 @@ class Settings(BaseSettings):
         ),
     )
 
-    # NLI Model Settings
-    nli_model_path: str = Field(
-        default="cross-encoder/nli-deberta-v3-xsmall",
-        description="NLI model name or local path",
-    )
-
-    # MiniCheck Model Settings
-    minicheck_model_path: str = Field(
-        default="lytang/MiniCheck-RoBERTa-Large",
-        description="MiniCheck model name or local path for fact verification",
-    )
-
     # EHR Navigation Settings
     ehr_navigate_daily_limit: int = Field(
         default=50,

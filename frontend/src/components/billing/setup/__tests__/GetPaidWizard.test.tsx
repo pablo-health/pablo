@@ -1,8 +1,18 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 /**
- * Billing setup: the question every therapist answers, and the promise that
+ * Billing setup: the checklist every therapist answers, and the promise that
  * leaving mid-way costs her nothing.
+ *
+ * The bug classes here are about her ANSWER being lost or misread:
+ *
+ * - A tick that is accepted on screen and silently not saved, so she answers,
+ *   moves on, and meets the checklist again next time.
+ * - "Not seeing clients yet" reading back as "has not answered". It is a real
+ *   answer, and the only reason the stored shape is a list that can be empty
+ *   rather than a nullable route.
+ * - A clinician who answered the superseded single-select question being sent
+ *   back to an empty checklist, having already told us.
  */
 
 import { fireEvent, render, screen } from "@testing-library/react"
@@ -19,10 +29,9 @@ vi.mock("@/hooks/usePreferences", () => ({
 }))
 
 // Several steps mount components that fetch their own data: the settings cards
-// for the billing profile and appointment types, and — now that it leads the
-// credentialing routes — the NPI lookup. These tests are about routing and
-// resuming, so those stand in as markers; what they render is their own tests'
-// business.
+// for the billing profile and appointment types, and — now that it leads every
+// route — the NPI lookup. These tests are about answering and resuming, so
+// those stand in as markers; what they render is their own tests' business.
 vi.mock("@/components/credentialing/NpiLookupStep", () => ({
   NpiLookupStep: () => <div>npi lookup step</div>,
 }))
@@ -32,11 +41,7 @@ vi.mock("../SetupSteps", () => ({
   BillingContactStep: () => <div>billing contact step</div>,
   RatesStep: () => <div>rates step</div>,
   PayersStep: () => <h2>Payers</h2>,
-  PrivatePayDoneStep: () => <div>private pay done</div>,
-  AlreadyPaneledDoneStep: () => <div>already paneled done</div>,
   CredentialingRecordStep: () => <div>credentialing record step</div>,
-  WantsPanelsDoneStep: () => <div>wants panels done</div>,
-  PlatformToOwnDoneStep: () => <div>platform to own done</div>,
 }))
 
 function prefs(overrides: Partial<UserPreferences> = {}): UserPreferences {
@@ -54,164 +59,199 @@ function prefs(overrides: Partial<UserPreferences> = {}): UserPreferences {
   } as UserPreferences
 }
 
+const PLATFORM = /Headway, Alma, Rula/
+const SELF_PAY = /Clients pay me themselves/
+
 beforeEach(() => {
   vi.clearAllMocks()
   usePreferences.mockReturnValue({ data: prefs() })
 })
 
-describe("the first screen", () => {
+describe("the checklist", () => {
   it("asks how she is paid today, not what she wants", () => {
-    // Situational, not aspirational: the routing depends on what is true, and
-    // a question about wishes invites an answer about the next six months.
+    // Situational, not aspirational: a question about wishes invites an answer
+    // about the next six months and routes her on it.
     render(<GetPaidWizard />)
 
-    expect(screen.getByText("How do you get paid today?")).toBeInTheDocument()
+    expect(screen.getByText("How do clients pay you today?")).toBeInTheDocument()
     expect(screen.queryByText(/wish|would you like/i)).not.toBeInTheDocument()
   })
 
-  it("offers the four situations", () => {
+  it("lets several answers be true at once", () => {
+    // The whole reason for the redesign: a therapist on Headway who also sees
+    // clients privately could not describe herself with a single choice.
     render(<GetPaidWizard />)
 
-    expect(screen.getAllByRole("button", { pressed: false })).toHaveLength(4)
-    expect(screen.getByText("My clients pay me directly")).toBeInTheDocument()
+    fireEvent.click(screen.getByLabelText(PLATFORM))
+    fireEvent.click(screen.getByLabelText(SELF_PAY))
+
+    expect(screen.getByLabelText(PLATFORM)).toBeChecked()
+    expect(screen.getByLabelText(SELF_PAY)).toBeChecked()
   })
 
-  it("moves her on as soon as she picks one", () => {
+  it("names the platforms, because nobody says 'I'm on a platform'", () => {
     render(<GetPaidWizard />)
 
-    fireEvent.click(screen.getByText("My clients pay me directly"))
-
-    expect(screen.queryByText("How do you get paid today?")).not.toBeInTheDocument()
+    expect(screen.getByLabelText(PLATFORM)).toBeInTheDocument()
   })
-})
 
-describe("remembering where she stopped", () => {
-  it("saves the answer and the step she lands on", () => {
+  it("will not continue on no answer at all", () => {
     render(<GetPaidWizard />)
 
-    fireEvent.click(screen.getByText("My clients pay me directly"))
+    expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled()
+    expect(screen.getByText(/Pick at least one/)).toBeInTheDocument()
+  })
 
-    // The NPI lookup leads every route now, so the step she lands on after
-    // answering is the lookup rather than the first practice form.
+  it("saves nothing until she continues", () => {
+    // Ticking is not answering. This is the screen she is most likely to
+    // change her mind on mid-thought, and a box tried and untried again should
+    // leave no trace.
+    render(<GetPaidWizard />)
+
+    fireEvent.click(screen.getByLabelText(PLATFORM))
+
+    expect(savePreferences).not.toHaveBeenCalled()
+  })
+
+  it("saves what she ticked when she continues", () => {
+    render(<GetPaidWizard />)
+
+    fireEvent.click(screen.getByLabelText(PLATFORM))
+    fireEvent.click(screen.getByLabelText(SELF_PAY))
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }))
+
     expect(savePreferences).toHaveBeenCalledWith(
       expect.objectContaining({
-        billing_setup_route: "private_pay",
-        billing_setup_step: "confirm",
+        billing_setup_state: ["platform", "self_pay"],
+        billing_setup_step: "plan",
       }),
     )
   })
+})
 
-  it("opens where she left off, on the branch she chose", () => {
-    // Closing the tab mid-setup should cost her nothing.
-    usePreferences.mockReturnValue({
-      data: prefs({ billing_setup_route: "wants_panels", billing_setup_step: "payers" }),
-    })
-
+describe("not seeing clients yet", () => {
+  it("is saved as an answer, not as silence", () => {
+    // The empty list IS the answer. If this saved null she would be asked
+    // again next time, having already told us.
     render(<GetPaidWizard />)
 
-    expect(screen.queryByText("How do you get paid today?")).not.toBeInTheDocument()
-    // The step's own heading, not just its entry in the stepper — she is ON
-    // the payers step, not merely able to reach it.
-    expect(screen.getByRole("heading", { name: "Payers" })).toBeInTheDocument()
-  })
-
-  it("falls back to the start of her branch when the step no longer exists", () => {
-    // A step renamed or removed since she was last here must not strand her on
-    // a blank screen.
-    usePreferences.mockReturnValue({
-      data: prefs({ billing_setup_route: "private_pay", billing_setup_step: "a-step-we-deleted" }),
-    })
-
-    render(<GetPaidWizard />)
-
-    expect(screen.getByText("How do you get paid today?")).toBeInTheDocument()
-  })
-
-  it("records each step as she moves through", () => {
-    render(<GetPaidWizard />)
-
-    fireEvent.click(screen.getByText("My clients pay me directly"))
-    savePreferences.mockClear()
-    fireEvent.click(screen.getByRole("button", { name: "Back" }))
+    fireEvent.click(screen.getByRole("button", { name: /not seeing clients yet/i }))
 
     expect(savePreferences).toHaveBeenCalledWith(
-      expect.objectContaining({ billing_setup_step: "route" }),
+      expect.objectContaining({ billing_setup_state: [], billing_setup_step: "plan" }),
     )
   })
 
-  it("treats finishing later as settled, so she is never trapped here", () => {
-    // The same call the calendar wizard makes. She gets a card on the billing
-    // page instead, and can come back whenever.
+  it("moves her on rather than leaving her on the question", () => {
+    render(<GetPaidWizard />)
+
+    fireEvent.click(screen.getByRole("button", { name: /not seeing clients yet/i }))
+
+    expect(screen.getByText("Here's what we'll set up")).toBeInTheDocument()
+  })
+})
+
+describe("the plan screen", () => {
+  it("is where the credentialing ask lives, unticked", () => {
+    usePreferences.mockReturnValue({
+      data: prefs({ billing_setup_state: ["platform"], billing_setup_step: "plan" }),
+    })
+    render(<GetPaidWizard />)
+
+    expect(screen.getByTestId("wants-credentialing")).not.toBeChecked()
+  })
+
+  it("saves the ask as its own fact", () => {
+    usePreferences.mockReturnValue({
+      data: prefs({ billing_setup_state: ["platform"], billing_setup_step: "plan" }),
+    })
+    render(<GetPaidWizard />)
+
+    fireEvent.click(screen.getByTestId("wants-credentialing"))
+
+    expect(savePreferences).toHaveBeenCalledWith(
+      expect.objectContaining({ billing_setup_wants_credentialing: true }),
+    )
+  })
+
+  it("adds the screens an application needs, and only then", () => {
+    // Ticking it ADDS steps. It must not enable anything by itself.
+    usePreferences.mockReturnValue({
+      data: prefs({
+        billing_setup_state: ["platform"],
+        billing_setup_wants_credentialing: true,
+        billing_setup_step: "record",
+      }),
+    })
+    render(<GetPaidWizard />)
+
+    expect(screen.getByText("credentialing record step")).toBeInTheDocument()
+  })
+})
+
+describe("the platform clinician taking cash, end to end", () => {
+  it("walks the spine and is never asked about payers", () => {
+    // The case the redesign exists for. Her platform handles the insurance
+    // side, so being on one adds nothing — the tick buys restraint.
+    usePreferences.mockReturnValue({
+      data: prefs({ billing_setup_state: ["self_pay", "platform"] }),
+    })
+    render(<GetPaidWizard />)
+
+    expect(screen.queryByRole("heading", { name: "Payers" })).not.toBeInTheDocument()
+  })
+
+  it("resumes on the step she left, not at the checklist", () => {
+    usePreferences.mockReturnValue({
+      data: prefs({
+        billing_setup_state: ["self_pay", "platform"],
+        billing_setup_step: "rates",
+      }),
+    })
+    render(<GetPaidWizard />)
+
+    expect(screen.getByText("rates step")).toBeInTheDocument()
+  })
+})
+
+describe("a clinician who answered the superseded question", () => {
+  it("resumes from it rather than meeting an empty checklist", () => {
+    // Her old answer is read forward by the model. She has already told us
+    // she is on a platform and wants her own contracts; asking again would be
+    // the product forgetting.
+    usePreferences.mockReturnValue({
+      data: prefs({
+        billing_setup_state: ["platform"],
+        billing_setup_wants_credentialing: true,
+        billing_setup_step: "record",
+      }),
+    })
+    render(<GetPaidWizard />)
+
+    expect(screen.getByText("credentialing record step")).toBeInTheDocument()
+  })
+})
+
+describe("leaving mid-way", () => {
+  it("marks setup settled so the page stops opening on it", () => {
+    // A first-visit surface she cannot leave is a trap, not a wizard.
     const onSettled = vi.fn()
     render(<GetPaidWizard onSettled={onSettled} />)
 
-    fireEvent.click(screen.getByRole("button", { name: "Finish later" }))
+    fireEvent.click(screen.getByRole("button", { name: /finish later/i }))
 
     expect(savePreferences).toHaveBeenCalledWith(
       expect.objectContaining({ billing_setup_complete: true }),
     )
     expect(onSettled).toHaveBeenCalled()
   })
-})
 
-describe("the steps she is shown", () => {
-  it("shows only the shared spine before she answers", () => {
-    // A stepper that grew three entries the moment she clicked would make the
-    // choice feel like it cost her something.
+  it("stays inert until her saved answers are in hand", () => {
+    // `remember` cannot write without them, so a click landing first would be
+    // accepted on screen and silently not saved.
+    usePreferences.mockReturnValue({ data: undefined })
     render(<GetPaidWizard />)
 
-    expect(screen.getByText("Practice identity")).toBeInTheDocument()
-    expect(screen.getByText("Billing contact")).toBeInTheDocument()
-    expect(screen.queryByText("Payers")).not.toBeInTheDocument()
-  })
-
-  it("adds no payer or record steps for a private-pay practice", () => {
-    render(<GetPaidWizard />)
-
-    fireEvent.click(screen.getByText("My clients pay me directly"))
-
-    expect(screen.queryByText("Payers")).not.toBeInTheDocument()
-    expect(screen.queryByText("Your record")).not.toBeInTheDocument()
-  })
-
-  it("still looks up the NPI for a private-pay practice", () => {
-    // She bills nobody, and still needs it: superbill.py requires the
-    // rendering provider's NPI, so without one we cannot produce the document
-    // her client files for reimbursement.
-    render(<GetPaidWizard />)
-
-    fireEvent.click(screen.getByText("My clients pay me directly"))
-
-    expect(screen.getByText("What we found")).toBeInTheDocument()
-  })
-
-  it("adds the payer step, and no record steps, for someone already paneled", () => {
-    render(<GetPaidWizard />)
-
-    fireEvent.click(screen.getByText("I’m already on insurance panels"))
-
-    expect(screen.getByText("Payers")).toBeInTheDocument()
-    // She is paneled. Nothing should walk her through credentialing she has
-    // already done.
-    expect(screen.queryByText("Your record")).not.toBeInTheDocument()
-  })
-
-  it("looks up the NPI for someone already paneled", () => {
-    // She files claims herself, and her individual NPI is the rendering
-    // provider on every one. This route used to have no NPI step at all.
-    render(<GetPaidWizard />)
-
-    fireEvent.click(screen.getByText("I’m already on insurance panels"))
-
-    expect(screen.getByText("What we found")).toBeInTheDocument()
-  })
-
-  it("adds the record steps for someone who wants a panel", () => {
-    render(<GetPaidWizard />)
-
-    fireEvent.click(screen.getByText("I want to accept insurance, but I’m not on a panel yet"))
-
-    expect(screen.getByText("Payers")).toBeInTheDocument()
-    expect(screen.getByText("Your record")).toBeInTheDocument()
+    expect(screen.getByTestId("wizard-loading")).toBeInTheDocument()
   })
 })

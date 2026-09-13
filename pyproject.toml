@@ -45,15 +45,9 @@ reportlab = "^5.0.0"
 # (ak6m.2.3) — fitz is sufficient for v1.
 pymupdf = "^1.28.0"
 
-# NLI Verification — onnxruntime only; sentence-transformers (+ torch)
-# moved to optional nli group since verification is gated by
-# ENABLE_EMBEDDING_VERIFICATION env var.
-onnxruntime = ">=1.27.0"
-
 # Vectorized audio processing (VAD + channel downmix) for session
 # transcription — a 50-minute channel is ~144M samples, which pure-Python
-# sample loops cannot handle. Already present transitively via onnxruntime;
-# pinned explicitly because app code imports it directly.
+# sample loops cannot handle.
 numpy = ">=2.5.1"
 
 # iCal calendar feed parsing
@@ -312,7 +306,7 @@ ignore = [
 ]
 "backend/app/services/**/*.py" = [
     "PLR0913",  # Allow many arguments (service functions with multiple dependencies)
-    "PLC0415",  # Allow lazy imports for optional ML libraries (spacy, sentence_transformers, etc.)
+    "PLC0415",  # Allow lazy imports for optional/heavy libraries
 ]
 "backend/app/reliability/**/*.py" = [
     "PLR0913",  # call_with_retry/acall_with_retry's arg count is the approved public API shape
@@ -384,12 +378,6 @@ module = [
     "presidio_analyzer.*",
     "presidio_anonymizer.*",
     "faker.*",
-    "spacy.*",
-    "negspacy",
-    "negspacy.*",
-    "sentence_transformers.*",
-    "onnxruntime.*",
-    "torch.*",
     "datasets.*",
     "sklearn.*",
     "scipy.*",
@@ -417,6 +405,5 @@ addopts = [
     "--cov-report=html",
 ]
 markers = [
-    "spacy: tests requiring a spaCy model (en_core_web_lg)",
     "gcp: tests requiring GCP credentials / connectivity",
 ]

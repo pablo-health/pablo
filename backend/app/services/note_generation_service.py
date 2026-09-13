@@ -16,7 +16,6 @@ the hand-tuned clinical prompt migrated from the legacy plugin.
 
 import json
 import logging
-import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -349,74 +348,11 @@ class RegistryNoteGenerationService(NoteGenerationService):
                 max_segment_id=segment_count - 1,
             )
             logger.info("Source attribution completed: %d claims attributed", len(claims))
-
-            if os.getenv("ENABLE_EMBEDDING_VERIFICATION", "").lower() == "true":
-                _run_embedding_verification(claims, transcript_content)
         except Exception:
             logger.warning(
                 "Source attribution (Call 2) failed — SOAP note saved without source links",
                 exc_info=True,
             )
-
-
-def _run_embedding_verification(claims: dict[str, SOAPSentence], transcript_content: str) -> None:
-    """Re-rank Call-2 attributions with embedding + NLI signals.
-
-    Off by default — opt-in via ``ENABLE_EMBEDDING_VERIFICATION=true``.
-    Kept isolated so a missing optional dep / model file fails this
-    block alone without taking down the rest of source attribution.
-    """
-    try:
-        import re as _re
-
-        from ..settings import get_settings as _get_settings
-        from .embedding_service import GoogleEmbeddingService
-        from .nli_service import DeBERTaNLIService
-        from .signals import (
-            MINICHECK_AVAILABLE,
-            EmbeddingSimilaritySignal,
-            EntityConsistencySignal,
-            HedgingSignal,
-            MiniCheckSignal,
-            NegationSignal,
-            TemporalConsistencySignal,
-            TokenOverlapSignal,
-        )
-        from .source_verification_service import SourceVerificationService
-
-        segments = [
-            _re.sub(r"^\[\d{2}:\d{2}\]\s*\w+:\s*", "", line.strip())
-            for line in transcript_content.strip().splitlines()
-            if line.strip()
-        ]
-        claim_texts = {key: claim.text for key, claim in claims.items() if claim.text}
-        attribution_map = {key: claim.source_segment_ids for key, claim in claims.items()}
-
-        settings = _get_settings()
-        primary = [TokenOverlapSignal(), EmbeddingSimilaritySignal(), HedgingSignal()]
-        if MINICHECK_AVAILABLE:
-            primary.append(MiniCheckSignal(model_path=settings.minicheck_model_path))
-        verification_service = SourceVerificationService(
-            embedding_service=GoogleEmbeddingService(),
-            nli_service=DeBERTaNLIService(model_name=settings.nli_model_path),
-            primary_signals=primary,
-            safety_signals=[
-                NegationSignal(),
-                EntityConsistencySignal(),
-                TemporalConsistencySignal(),
-            ],
-        )
-        results = verification_service.verify_attributions(claim_texts, segments, attribution_map)
-        for result in results:
-            if result.claim_key in claims:
-                claim = claims[result.claim_key]
-                claim.confidence_score = result.confidence_score
-                claim.confidence_level = result.confidence_level
-                claim.possible_match_segment_ids = result.possible_match_segment_ids
-                claim.signal_used = result.signal_used
-        logger.info("Source verification completed: %d claims verified", len(results))
-    except Exception:
-        logger.warning("Source attribution verification failed", exc_info=True)
 
 
 def _coerce_content_to_soap_note(content: dict[str, Any]) -> SOAPNote:
