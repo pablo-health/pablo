@@ -28,7 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from ..db.models import CREDENTIAL_CONFIRMATION_SOURCES, CREDENTIAL_SUPERVISION_STATUSES
+from ..db.platform_models import CREDENTIAL_CONFIRMATION_SOURCES, CREDENTIAL_SUPERVISION_STATUSES
 
 
 class CaqhSection(StrEnum):

@@ -38,13 +38,8 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import and_, func, select
 
-from ..db.models import (
-    Base,
-    ClinicianProfileRow,
-    ComplianceDocumentRow,
-    CredentialDisclosureRow,
-    PracticeBillingProfileRow,
-)
+from ..db.models import Base, ClinicianProfileRow, ComplianceDocumentRow, PracticeBillingProfileRow
+from ..db.platform_models import CredentialDisclosureRow
 from ..services.practice_billing_profile import SINGLETON_ID
 from . import confirmations
 from .checklist import CHECKLIST_FIELDS, ChecklistField, FieldKind, Tier

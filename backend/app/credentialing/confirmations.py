@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import and_, select
 
-from ..db.models import CREDENTIAL_CONFIRMATION_SOURCES, CredentialConfirmationRow
+from ..db.platform_models import CREDENTIAL_CONFIRMATION_SOURCES, CredentialConfirmationRow
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
-from ..db.models import (
+from ..db.platform_models import (
     CredentialEducationRow,
     CredentialEmploymentRow,
     CredentialTrainingRow,
