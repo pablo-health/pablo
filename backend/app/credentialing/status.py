@@ -38,13 +38,20 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import and_, func, select
 
-from ..db.models import Base, ClinicianProfileRow, ComplianceDocumentRow, PracticeBillingProfileRow
-from ..db.platform_models import CredentialDisclosureRow
+from ..db import PLATFORM_SCHEMA
+from ..db.models import (
+    Base,
+    ClinicianProfileRow,
+    ComplianceDocumentRow,
+    PracticeBillingProfileRow,
+)
+from ..db.platform_models import CredentialDisclosureRow, PlatformBase
 from ..services.practice_billing_profile import SINGLETON_ID
 from . import confirmations
 from .checklist import CHECKLIST_FIELDS, ChecklistField, FieldKind, Tier
 
 if TYPE_CHECKING:
+    from sqlalchemy import Table
     from sqlalchemy.orm import Session
 
 #: Tables holding exactly one row per clinician, keyed by ``user_id`` rather
@@ -61,6 +68,27 @@ _PRACTICE_SCOPED_TABLES: frozenset[str] = frozenset({"practice_billing_profile"}
 def _table_and_column(field: ChecklistField) -> tuple[str, str | None]:
     table, _, column = field.target.partition(".")
     return table, column or None
+
+
+def _mapped_table(name: str) -> Table | None:
+    """Find a target's table, on whichever side of the schema line it sits.
+
+    A ``target`` names a table and not a schema, deliberately: the question set
+    describes what a field IS, and where that table lives is a storage decision
+    that has already changed once. Most of the credential record is in
+    ``platform`` and the rest of what the checklist reads is per-tenant, so the
+    lookup asks both registries. A schema-qualified metadata keys its tables as
+    ``schema.name``, which is why the second lookup has to spell that out.
+
+    Returning ``None`` still means "no such table", and every caller reads that
+    as unanswered — so a target that names nothing fails quietly. That is the
+    failure this function exists to stop being possible by accident, and
+    ``test_every_target_resolves`` is what keeps it impossible on purpose.
+    """
+    table = Base.metadata.tables.get(name)
+    if table is not None:
+        return table
+    return PlatformBase.metadata.tables.get(f"{PLATFORM_SCHEMA}.{name}")
 
 
 def _has_document(session: Session, user_id: str, document_type: str) -> bool:
@@ -104,7 +132,7 @@ def _is_answered(
     if field.kind is FieldKind.UPLOAD and table == "compliance_documents":
         return _has_document(session, user_id, field.key)
 
-    mapped = Base.metadata.tables.get(table)
+    mapped = _mapped_table(table)
     if mapped is None or "user_id" not in mapped.c:
         return False
 
