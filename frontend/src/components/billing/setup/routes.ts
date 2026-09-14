@@ -66,19 +66,18 @@ export interface CurrentStateOption {
 export const CURRENT_STATES: readonly CurrentStateOption[] = [
   {
     id: "self_pay",
-    label: "Clients pay me themselves",
-    detail:
-      "Card, cash, bank transfer, or a sliding scale — including clients who use superbills for out-of-network reimbursement.",
+    label: "Clients pay me directly",
+    detail: "By card, cash, or bank transfer. I may also give clients superbills.",
   },
   {
     id: "platform",
-    label: "Through Headway, Alma, Rula, Grow Therapy, SonderMind, or a similar service",
-    detail: "They handle the insurance side and pay me.",
+    label: "I see clients through a service like Headway, Alma, or Rula",
+    detail: "The service handles their insurance and pays me.",
   },
   {
     id: "own_insurance",
-    label: "Insurance I bill myself",
-    detail: "I'm in-network with at least one insurer and submit claims under my own name.",
+    label: "I bill insurance myself",
+    detail: "I have at least one contract in my own name and submit my own claims.",
   },
 ] as const
 

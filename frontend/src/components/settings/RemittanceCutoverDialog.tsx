@@ -68,10 +68,10 @@ export function RemittanceCutoverDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent data-testid="remittance-cutover">
         <DialogHeader>
-          <DialogTitle>Move {payer.name}&rsquo;s remittances to Pablo?</DialogTitle>
+          <DialogTitle>Send {payer.name}&rsquo;s payment reports to Pablo?</DialogTitle>
           <DialogDescription>
-            This files an enrollment asking {payer.name} to send its electronic remittance advice
-            here from now on.
+            An electronic remittance advice, or ERA, explains how a payer handled your claims and
+            what it paid. This request asks {payer.name} to start sending those reports to Pablo.
           </DialogDescription>
         </DialogHeader>
 
@@ -81,32 +81,32 @@ export function RemittanceCutoverDialog({
             {payer.name} &middot; ID {payer.payer_id}
           </dd>
 
-          <dt className="text-muted-foreground">Requested under</dt>
+          <dt className="text-muted-foreground">Billing details</dt>
           <dd className="m-0 text-foreground" data-testid="cutover-identity">
-            {billingNpi ? `NPI ${billingNpi}` : "no billing NPI on file"}
-            {taxIdLast4 ? `, tax ID ending ${taxIdLast4}` : ", no tax ID on file"}
+            {billingNpi ? `NPI ${billingNpi}` : "NPI missing"}
+            {taxIdLast4 ? `, tax ID ending in ${taxIdLast4}` : ", tax ID missing"}
           </dd>
 
-          <dt className="text-muted-foreground">Sent to</dt>
+          <dt className="text-muted-foreground">New destination</dt>
           <dd className="m-0 text-foreground">Pablo</dd>
         </dl>
 
         <p className="text-[12.5px] text-amber-800">
-          Anything receiving this payer&rsquo;s remittances today stops receiving them &mdash; an
-          old clearinghouse, a billing service, or a platform handling your insurance side. If
-          somebody posts your payments from those files, tell them before you do this.
+          This may stop the reports from going to the service, clearinghouse, or biller that
+          receives them today. If someone uses those reports to record your payments, check with
+          them before continuing.
         </p>
 
         {/* Said plainly rather than guessed at. See the class docstring. */}
         <p className="text-[12.5px] text-muted-foreground" data-testid="cutover-routing-unknown">
-          We can&rsquo;t tell from here whether {payer.name} routes remittances by NPI or by tax
-          ID. If it routes by tax ID, everyone billing under yours is affected, not only you.
+          We can&rsquo;t tell whether {payer.name} will make this change only for this NPI or for
+          every clinician using this tax ID. If other clinicians use the same tax ID, their
+          reports could move too.
         </p>
 
         {(!billingNpi || !taxIdLast4) && (
           <p className="text-[12.5px] text-destructive" data-testid="cutover-identity-missing">
-            Your practice identity is incomplete, so this would be filed under whatever is on file.
-            Fill it in first.
+            Add the missing billing details before sending this request.
           </p>
         )}
 
@@ -119,7 +119,7 @@ export function RemittanceCutoverDialog({
             data-testid="cutover-understood"
           />
           <Label htmlFor="cutover-understood" className="font-normal">
-            I know where this payer&rsquo;s remittances go today, and who needs to be told.
+            I know who receives these reports today and have checked what this change will affect.
           </Label>
         </div>
 
@@ -133,7 +133,7 @@ export function RemittanceCutoverDialog({
             disabled={!understood || pending || !billingNpi || !taxIdLast4}
             data-testid="cutover-confirm"
           >
-            {pending ? "Filing..." : "Move remittances to Pablo"}
+            {pending ? "Sending..." : "Send reports to Pablo"}
           </Button>
         </DialogFooter>
       </DialogContent>

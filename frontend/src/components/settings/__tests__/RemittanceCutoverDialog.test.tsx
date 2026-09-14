@@ -78,7 +78,7 @@ describe("what it tells her before anything moves", () => {
     )
 
     expect(screen.getByTestId("cutover-identity")).toHaveTextContent("NPI 1999999984")
-    expect(screen.getByTestId("cutover-identity")).toHaveTextContent("ending 9714")
+    expect(screen.getByTestId("cutover-identity")).toHaveTextContent("ending in 9714")
   })
 
   it("says what stops receiving them", () => {
@@ -86,7 +86,7 @@ describe("what it tells her before anything moves", () => {
       <RemittanceCutoverDialog payer={payer()} open onOpenChange={() => {}} onConfirm={() => {}} />,
     )
 
-    expect(screen.getByText(/stops receiving them/i)).toBeInTheDocument()
+    expect(screen.getByText(/may stop the reports from going to/i)).toBeInTheDocument()
   })
 
   it("admits it cannot tell how the payer routes them", () => {
@@ -96,7 +96,9 @@ describe("what it tells her before anything moves", () => {
       <RemittanceCutoverDialog payer={payer()} open onOpenChange={() => {}} onConfirm={() => {}} />,
     )
 
-    expect(screen.getByTestId("cutover-routing-unknown")).toHaveTextContent(/by NPI or by tax ID/i)
+    expect(screen.getByTestId("cutover-routing-unknown")).toHaveTextContent(
+      /only for this NPI or for every clinician using this tax ID/i,
+    )
   })
 })
 

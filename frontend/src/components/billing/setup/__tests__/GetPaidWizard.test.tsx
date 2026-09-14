@@ -59,8 +59,8 @@ function prefs(overrides: Partial<UserPreferences> = {}): UserPreferences {
   } as UserPreferences
 }
 
-const PLATFORM = /Headway, Alma, Rula/
-const SELF_PAY = /Clients pay me themselves/
+const PLATFORM = /a service like Headway, Alma, or Rula/
+const SELF_PAY = /Clients pay me directly/
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -99,7 +99,7 @@ describe("the checklist", () => {
     render(<GetPaidWizard />)
 
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled()
-    expect(screen.getByText(/Pick at least one/)).toBeInTheDocument()
+    expect(screen.getByText(/Choose at least one option/)).toBeInTheDocument()
   })
 
   it("saves nothing until she continues", () => {
@@ -147,7 +147,7 @@ describe("not seeing clients yet", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /not seeing clients yet/i }))
 
-    expect(screen.getByText("Here's what we'll set up")).toBeInTheDocument()
+    expect(screen.getByText("What Pablo will help you set up")).toBeInTheDocument()
   })
 })
 

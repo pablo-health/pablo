@@ -4,30 +4,38 @@
 
 import Link from "next/link"
 import { SetupStepHead } from "@/components/setup"
+import { billingProfileGaps } from "@/components/settings/billingProfileGaps"
+import { useSettingsUserStatus } from "@/components/settings/useSettingsPreferences"
+import { useBillingProfile } from "@/hooks/useBillingProfile"
 import type { CurrentStateId } from "./routes"
 
 /**
- * Where setup finishes, assembled from what she told us rather than chosen from
- * a list of endings.
+ * Where setup finishes, assembled from what was chosen AND from what is
+ * actually ready.
  *
- * There used to be one canned ending per route, which worked only while a
- * therapist could be exactly one thing. She can be several, so the ending is
- * composed the same way the flow is: a headline for her situation, then a line
- * per fact that is true of her.
+ * Two separate jobs, and the second is the one that used to be missing.
  *
- * Three things this screen must never do, each of which it did in some form
- * before:
+ * **Assembled, not chosen.** There was once a canned ending per route, which
+ * worked only while a therapist could be exactly one thing. Several can be
+ * true at once, so the ending is composed the way the flow is.
  *
- * - **Promise submission we are not authorised to make.** "We'll put your
- *   applications in" is only true once she has signed the authorisation, so
- *   the credentialing line says what Pablo prepares and tracks.
- * - **Imply she can bill insurance today** because setup finished. Setup being
- *   complete and being able to file a claim are different states, and §4 of the
- *   platform requirement exists because conflating them is how someone starts
- *   seeing clients expecting to be paid.
- * - **Suggest her platform arrangement has changed.** It has not, and the
- *   commonest fear about pointing a second system at your billing is exactly
- *   that it will quietly start moving money.
+ * **Honest about readiness.** The wizard lets every step be skipped — that is
+ * deliberate, and it means REACHING this screen proves nothing about whether
+ * the practice can be paid. So the completion wording asks
+ * ``billingProfileGaps``, the same helper the settings banner uses and the
+ * same fields a claim is refused without. "You're set up to bill" over a
+ * profile missing a tax id is the worst sentence on this screen: it sends
+ * someone off to see clients believing a thing that is not true.
+ *
+ * Three claims this screen may never make, each of which some earlier version
+ * made:
+ *
+ * - **Submission we are not authorised to make.** Pablo cannot sign anyone's
+ *   name to a payer's form until they have authorised it, so the credentialing
+ *   lines say prepare and track, and say the authorisation gate out loud.
+ * - **That finishing setup means insurance can be billed.** Being contracted
+ *   and being able to file a claim are different states.
+ * - **That a platform arrangement has changed.** It has not.
  */
 export function DoneStep({
   selected,
@@ -36,46 +44,65 @@ export function DoneStep({
   selected: readonly CurrentStateId[]
   wantsCredentialing: boolean
 }) {
+  const { data: profile } = useBillingProfile()
+  const { data: user } = useSettingsUserStatus()
+
   const onPlatform = selected.includes("platform")
   const billsInsurance = selected.includes("own_insurance")
-  const takesSelfPay = selected.includes("self_pay")
+  const takesDirectPay = selected.includes("self_pay")
   const seeingNobodyYet = selected.length === 0
+
+  const gaps = profile
+    ? billingProfileGaps(profile, {
+        npi_number: user?.npi_number ?? null,
+        taxonomy_code: user?.taxonomy_code ?? null,
+      })
+    : null
+  // Unknown counts as not-ready. Both reads are in flight for a moment, and
+  // claiming readiness we have not checked is the failure this whole section
+  // exists to avoid.
+  const profileReady = gaps !== null && gaps.claims.length === 0
+  const billingReady = profileReady && gaps !== null && gaps.clearinghouse.length === 0
+  // A superbill carries the rendering provider's NPI and cannot be produced
+  // without one — ``_RENDERING_PROVIDER_REQUIRED`` in superbill.py. Promising
+  // one to somebody who has not given us an NPI is discovered by a client
+  // asking for reimbursement paperwork.
+  const superbillReady = Boolean(user?.npi_number)
 
   return (
     <div className="space-y-5">
       <SetupStepHead
         eyebrow="On file"
-        title={title({ seeingNobodyYet, onPlatform, wantsCredentialing, billsInsurance })}
-        lede={lede({ seeingNobodyYet, onPlatform, wantsCredentialing })}
+        title={title({
+          seeingNobodyYet,
+          onPlatform,
+          wantsCredentialing,
+          billsInsurance,
+          billingReady,
+          profileReady,
+        })}
+        lede={lede({ seeingNobodyYet, onPlatform, wantsCredentialing, billsInsurance })}
       />
 
       <ul className="space-y-3 text-sm text-neutral-700">
-        {takesSelfPay && (
+        {takesDirectPay && (
           <li>
-            You can take payments today. Finalise a session and it appears in{" "}
-            <Link
-              href="/dashboard/billing"
-              className="font-medium underline underline-offset-4"
-            >
+            Finalize a session and it appears in{" "}
+            <Link href="/dashboard/billing" className="font-medium underline underline-offset-4">
               Billing
-            </Link>{" "}
-            to charge, and a client claiming it back from her own insurer gets a superbill your
-            practice details fill in.
+            </Link>
+            , ready to charge.
+          </li>
+        )}
+
+        {takesDirectPay && superbillReady && (
+          <li>
+            When a client needs a superbill, Pablo uses your practice information to prepare it.
           </li>
         )}
 
         {billsInsurance && (
           <>
-            <li>
-              Finalise a session and it lands in{" "}
-              <Link
-                href="/dashboard/billing"
-                className="font-medium underline underline-offset-4"
-              >
-                Unbilled
-              </Link>
-              . File the claim from there.
-            </li>
             <li>
               Enrollment requests sit with each payer until they answer. You do not need to chase
               them &mdash; if one wants something from you, it shows up on the payer in{" "}
@@ -89,63 +116,63 @@ export function DoneStep({
             </li>
             <li>
               A payer you are not enrolled with yet can still be billed by superbill, so a client
-              is never stuck waiting on paperwork between us and her insurer.
+              is never stuck waiting on paperwork between us and their insurer.
             </li>
           </>
         )}
 
         {wantsCredentialing && (
           <>
+            <li>Your NPI and credentialing information can be reused for each application.</li>
             <li>
-              Your NPI and the answers you just gave stay on your record, and are what every
-              application in your own name is filled in from.
-            </li>
-            <li>
-              Pablo prepares and tracks the applications. Where one needs something only you can
-              give &mdash; a signature, a document, a date &mdash; it appears in{" "}
+              Pablo prepares and tracks applications. If one needs your signature or a document,
+              you&rsquo;ll see it in{" "}
               <Link
                 href="/dashboard/settings/credentialing"
                 className="font-medium underline underline-offset-4"
               >
                 Credentialing
               </Link>
-              , so you never have to work out what is missing.
+              .
             </li>
+            <li>Pablo will not submit an application until you authorize it.</li>
             <li>
-              Billing insurance through Pablo starts only when you choose it and the payer setup is
-              ready. Getting contracted and being able to file a claim are different things, and we
-              will not blur them.
+              Billing a payer through Pablo is a later step. It begins only after your contract and
+              billing setup are ready.
             </li>
           </>
         )}
-
-        {seeingNobodyYet && (
-          <li>
-            When you start seeing clients, add how they pay you from{" "}
-            <Link
-              href="/dashboard/billing"
-              className="font-medium underline underline-offset-4"
-            >
-              Billing
-            </Link>
-            . Nothing you have entered has to be entered again.
-          </li>
-        )}
       </ul>
 
-      {/* Contextual, quiet, and it does not read her contract for her. Pablo
-          cannot know what her agreement says, so it points her at it rather
-          than interpreting it — and it sits below the fold of the good news
-          rather than dominating the screen. */}
-      {onPlatform && takesSelfPay && (
+      {/* Points at the agreement rather than reading it. Pablo cannot know what
+          it says, and an app that interprets somebody's contract for them is
+          worse than one that reminds them it exists. */}
+      {onPlatform && takesDirectPay && (
         <p className="text-[12.5px] text-muted-foreground" data-testid="platform-agreement-note">
-          Before seeing clients outside the service that pays you, it&rsquo;s worth checking your
-          agreement with them for anything that applies to your own practice.
+          Before seeing clients outside the service, check whether your agreement has any
+          restrictions that apply.
+        </p>
+      )}
+
+      {/* Said only when it is true. The wizard permits skipped fields, so the
+          honest ending for an incomplete profile is that the work is saved,
+          not that it is done. */}
+      {!profileReady && !seeingNobodyYet && (
+        <p className="text-[12.5px] text-muted-foreground" data-testid="setup-incomplete">
+          Finish the remaining items when you&rsquo;re ready to charge a client. You can see what is
+          still needed in{" "}
+          <Link
+            href="/dashboard/settings/billing-profile"
+            className="font-medium underline underline-offset-4"
+          >
+            Practice identity
+          </Link>
+          .
         </p>
       )}
 
       <p className="border-t border-border pt-4 text-sm text-muted-foreground">
-        {closing({ onPlatform, wantsCredentialing })}
+        {closing({ seeingNobodyYet, onPlatform, wantsCredentialing })}
       </p>
     </div>
   )
@@ -156,27 +183,56 @@ function title({
   onPlatform,
   wantsCredentialing,
   billsInsurance,
+  billingReady,
+  profileReady,
+}: {
+  seeingNobodyYet: boolean
+  onPlatform: boolean
+  wantsCredentialing: boolean
+  billsInsurance: boolean
+  billingReady: boolean
+  profileReady: boolean
+}): string {
+  if (seeingNobodyYet) return "Ready when you are"
+  if (onPlatform && wantsCredentialing) return "Build your own contracts without disrupting what works"
+  if (onPlatform) return "Set up for work outside the service"
+  if (wantsCredentialing) return "Your credentialing record is ready"
+  // Both of these used to be stated unconditionally, which made them a claim
+  // about readiness that arriving here does not support.
+  if (billsInsurance) return billingReady ? "You're set up to bill" : "Your billing setup is underway"
+  return profileReady ? "You're ready to take direct payments" : "Your direct-payment setup is saved"
+}
+
+function lede({
+  seeingNobodyYet,
+  onPlatform,
+  wantsCredentialing,
+  billsInsurance,
 }: {
   seeingNobodyYet: boolean
   onPlatform: boolean
   wantsCredentialing: boolean
   billsInsurance: boolean
 }): string {
-  if (seeingNobodyYet) return "Ready for your first client"
-  // Deliberately not "your record is yours, whatever the platform holds" — a
-  // strong line that implies we hold, retrieved, or can separate something the
-  // platform has. We cannot, and saying so would be a promise about somebody
-  // else's system.
-  if (onPlatform && wantsCredentialing) {
-    return "Your own practice can take shape while the platform keeps working"
+  if (seeingNobodyYet) {
+    return "What you entered is saved. You can finish setting up payments when you start seeing clients."
   }
-  if (onPlatform) return "Set up alongside the service that pays you"
-  if (wantsCredentialing) return "Pablo takes the applications from here"
-  if (billsInsurance) return "You're set up to bill"
-  return "You're set up to get paid"
+  if (onPlatform && wantsCredentialing) {
+    return "You can prepare for independent billing while the service continues handling your current clients."
+  }
+  if (onPlatform) {
+    return "Keep using the service for the clients it handles. Pablo can support the work you do outside it without changing that arrangement."
+  }
+  if (wantsCredentialing) {
+    return "You can prepare applications now and decide when you're ready to send them."
+  }
+  if (billsInsurance) {
+    return "We saved what you entered. Each payer shows what is ready and what still needs attention."
+  }
+  return "We saved what you entered."
 }
 
-function lede({
+function closing({
   seeingNobodyYet,
   onPlatform,
   wantsCredentialing,
@@ -185,32 +241,12 @@ function lede({
   onPlatform: boolean
   wantsCredentialing: boolean
 }): string {
-  if (seeingNobodyYet) {
-    return "Everything Pablo needs is on file. Add how clients pay you when you have your first."
-  }
-  if (wantsCredentialing) {
-    return onPlatform
-      ? "Contracts in your own name take months. You can build them without changing how your current clients are billed."
-      : "Contracts take months to come through, and none of it has to hold up seeing clients."
-  }
-  return "That's everything Pablo needs to get you paid for the work you do."
-}
-
-function closing({
-  onPlatform,
-  wantsCredentialing,
-}: {
-  onPlatform: boolean
-  wantsCredentialing: boolean
-}): string {
-  if (onPlatform && wantsCredentialing) {
-    return "Nothing here changes how you're billed today. When you're ready to bill independently, Pablo will walk you through the claims, payment and remittance setup before anything moves."
-  }
+  if (seeingNobodyYet) return "You won't need to start over."
   if (onPlatform) {
-    return "Keep using the service for the clients it handles. Pablo supports the work you do outside it without changing that arrangement."
+    return "Keep using the service for as long as it works for you. Before Pablo changes where a payer sends claims, payments, or payment reports, you'll see what will change and choose whether to continue."
   }
   if (wantsCredentialing) {
-    return "Nothing here has to be finished before you see clients. We'll come to you when we need something."
+    return "If an application needs your signature or a document, you'll see it in Credentialing."
   }
   return "If you ever want to bill insurance directly, setup picks up from here — most of what a payer asks for is already answered."
 }
