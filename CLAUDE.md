@@ -142,6 +142,28 @@ Four that are easy to get wrong:
    platform revision that lands without a regen leaves a fresh install
    short of whatever it added.
 
+   **Nothing builds a schema from ORM metadata any more, and the order
+   is load-bearing.** `create_all` used to run at boot and in the tenant
+   chain's `env.py`; both are gone. So:
+
+   - **The migrate job builds schemas, boot does not.** `ensure_schemas`
+     checks the platform schema exists and refuses to serve if it
+     doesn't. `python backend/bin/migrate.py` does both chains in order.
+   - **The platform chain runs before the tenant chain**, always. Tenant
+     revisions declare foreign keys into `platform.users` and create
+     nothing in that schema, so the tenant chain cannot run first — it
+     fails with `PlatformSchemaMissingError` naming the fix. That
+     ordering is explicit at every call site (`bin/migrate.py`, the
+     Makefile, both regen scripts, the test fixtures) rather than hidden
+     in `env.py`, because a nested `command.upgrade` inside an alembic
+     `env.py` tears down alembic's module-level proxies and dies with
+     `KeyError: 'config'`.
+   - **Platform DDL belongs in the platform chain**, not in a tenant
+     revision. A tenant revision that creates a platform index will be
+     re-run once per practice schema and will undo any platform-side
+     cleanup on the next fresh install — which is exactly what 15
+     duplicate indexes came from.
+
    **RLS enforcement** — every per-tenant table that carries a
    `user_id`, `patient_id`, or `id` column is force-RLS'd by
    `enable_rls_on_schema`. A newly-added table MUST have a policy

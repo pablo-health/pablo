@@ -35,6 +35,13 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    # This revision used to create indexes on a platform table here; the
+    # platform chain creates them now, from platform_template.sql. Each was a
+    # duplicate — the same table and columns already carried an index under
+    # the ORM naming convention, because ``CREATE INDEX IF NOT EXISTS``
+    # matches on name and so never noticed the twin standing beside it.
+    # alembic_platform b2c8d4e06f31 drops them; leaving the CREATEs here
+    # would put them straight back on every fresh install.
     op.execute(
         """
         CREATE TABLE IF NOT EXISTS platform.passkey_backup_codes (
@@ -45,10 +52,6 @@ def upgrade() -> None:
             consumed_at TIMESTAMPTZ
         )
         """
-    )
-    op.execute(
-        "CREATE INDEX IF NOT EXISTS ix_passkey_backup_codes_user_id "
-        "ON platform.passkey_backup_codes (user_id)"
     )
 
 

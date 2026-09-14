@@ -7,10 +7,12 @@ the working directory, so we chdir before delegating to the CLI.
 Default args = `upgrade head`. Override by passing args to the Cloud Run
 job (e.g. ``--args=backend/bin/migrate.py,downgrade,-1``).
 
-An upgrade runs the **platform** chain first and then the tenant chain, because
-tenant tables carry foreign keys into ``platform.users`` and ``platform.practices``
-and so cannot be built before the schema they reference. See
-``_run_platform_chain``.
+The platform chain runs first and the tenant chain second, because tenant tables
+carry foreign keys into ``platform.users`` and ``platform.practices`` and cannot
+be built before the schema they reference. That ordering lives in the tenant
+chain's own ``env.py``, which calls ``app.db.platform_bootstrap.bring_platform_to_head``
+before migrating — so it holds for every caller (`make migrate`, the template
+regen, the tests), not only for this entrypoint.
 
 After a successful upgrade this also moves a pre-provisioning deployment onto
 its own practice schema, if it is still on the template. See
@@ -62,49 +64,6 @@ def _is_upgrade(argv: list[str]) -> bool:
             continue
         return arg == "upgrade"
     return False
-
-
-def _run_platform_chain() -> None:
-    """Bring the ``platform`` schema to head, stamping first if it predates the chain.
-
-    Runs before the tenant chain: tenant tables reference ``platform.users`` and
-    ``platform.practices``, so the schema holding them has to be there first.
-
-    The stamp is the interesting half. The baseline applies a captured template
-    with plain ``CREATE TABLE`` — no ``IF NOT EXISTS``, so that it cannot run
-    green against a table that has already drifted — which means it must not be
-    run against a database that already has the schema, and almost every database
-    does. ``needs_baseline_stamp`` tells the two apart, and the stamp records
-    "you already have this" without touching a table.
-
-    Raises on failure rather than returning a code, so a platform chain that
-    cannot be applied stops the job before the tenant chain runs against a schema
-    it depends on.
-    """
-    # Imported here, not at module scope: ``app.db`` reads settings on import,
-    # and this module has to ``chdir`` into backend/ first so alembic's
-    # ``prepend_sys_path`` resolves.
-    from alembic import command  # noqa: PLC0415
-    from alembic.config import Config  # noqa: PLC0415
-    from app.db import get_engine  # noqa: PLC0415
-    from app.db.platform_bootstrap import (  # noqa: PLC0415
-        BASELINE_REVISION,
-        needs_baseline_stamp,
-    )
-
-    config = Config("alembic.ini", ini_section="platform")
-
-    engine = get_engine()
-    if needs_baseline_stamp(engine):
-        logger.info(
-            "Platform schema exists with no chain bookkeeping — stamping the "
-            "baseline (%s) rather than rebuilding it.",
-            BASELINE_REVISION,
-        )
-        command.stamp(config, BASELINE_REVISION)
-
-    logger.info("Running platform alembic upgrade head…")
-    command.upgrade(config, "head")
 
 
 def _run_single_practice_migration() -> int:
@@ -184,11 +143,19 @@ if __name__ == "__main__":
     # ``history`` is not asking to migrate anything — the same reasoning
     # ``_is_upgrade`` already encodes for the practice migration below.
     #
-    # Not guarded by try/except: if the platform schema cannot be brought to
-    # head, the tenant chain must not run against it, and the job should fail
-    # here with the traceback rather than further along with a missing table.
+    # Not guarded by try/except: the tenant chain declares foreign keys into
+    # ``platform.users``, so if the platform schema cannot be brought to head the
+    # job should fail here with the traceback rather than further along, on a
+    # constraint against a table nobody created.
     if _is_upgrade(args):
-        _run_platform_chain()
+        # Imported here, not at module scope: ``app.db`` reads settings on
+        # import, and this module has to ``chdir`` into backend/ first so
+        # alembic's ``prepend_sys_path`` resolves.
+        from app.db import get_engine
+        from app.db.platform_bootstrap import bring_platform_to_head
+
+        logger.info("Bringing the platform schema to head…")
+        bring_platform_to_head(get_engine())
 
     rc = main(argv=args)
     # ``alembic.config.main`` returns None on success and raises or returns

@@ -30,7 +30,8 @@ from . import (
     PLATFORM_SCHEMA,
     _validate_schema_name,
 )
-from .platform_models import PlatformBase, PracticeRow
+from .platform_bootstrap import require_platform_schema
+from .platform_models import PracticeRow
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -169,69 +170,58 @@ def _provision_core_schemas(engine: Engine) -> None:
 
 
 def ensure_schemas(engine: Engine) -> None:
-    """Create platform + default practice schemas if they don't exist.
+    """Provision this deployment's practice schemas. Does NOT build the platform schema.
 
     Called on application startup when database_backend=postgres.
     Idempotent — safe to call on every boot.
 
-    Schema evolution split:
+    Who owns what:
 
-    * **Bootstrap (here)** — ``CREATE SCHEMA IF NOT EXISTS`` for the
-      platform schema and ``PlatformBase.metadata.create_all`` so a
-      fresh DB has every table the current ORM expects. ``create_all``
-      is a no-op against tables that already exist; it does NOT alter
-      column types on tables that exist with stale shapes.
-    * **Platform column evolution** — owned by whatever deployment-level
-      alembic chain a downstream overlay chooses to run against the
-      platform schema (its own ``alembic_version`` bookkeeping).
-      Historically lived in a runtime patch
-      (``_migrate_platform_columns``) that ran on every boot; that
-      patch was absorbed into a deployment's own migration chain and
-      removed from this file. OSS itself has no platform alembic
-      chain, so a self-hosted install with no overlay migration chain
-      relies on ``create_all`` matching the ORM shape.
-    * **Tenant column evolution** — owned by the OSS tenant chain
-      (``backend/alembic/``) and fanned out per-tenant by the
-      deployment's own migration entrypoint /
+    * **The platform schema** — the platform chain
+      (``backend/alembic_platform/``), run by the migrate job. Boot only checks
+      that it is there, via :func:`require_platform_schema`, and refuses to
+      serve if it is not.
+
+      It used to be built here, by ``PlatformBase.metadata.create_all``, and
+      that is the arrangement this function was shaped around. ``create_all``
+      emits tables, columns and indexes and nothing else: a policy, a trigger, a
+      CHECK, a grant and a foreign key are all invisible to it. So every
+      platform object that needed one had to be re-installed underneath it by
+      hand, on the boot path, as a growing list of guards — and a table whose
+      column type changed was never altered at all, because ``create_all`` skips
+      a table that already exists. Building the schema from a captured template
+      and evolving it with migrations is what retired both problems.
+    * **Tenant schemas** — built here from ``tenant_template.sql`` by
+      :func:`create_practice_schema`, and evolved by the tenant chain
+      (``backend/alembic/``) fanned out per-tenant at deploy time by
       ``app.db.migrate_tenants.fan_out``.
 
     Concurrency: when Cloud Run starts multiple container instances
-    simultaneously (deployment rollout + min-instance warm-up overlap),
-    every instance races through this function. ``create_all`` checks
-    ``has_table`` before each CREATE, but the check-then-create window is
-    not atomic, so two instances can both observe "table missing" and
-    both emit ``CREATE TABLE`` — the loser gets ``DuplicateTable`` and
-    exits, failing the deploy. We serialize the mutation phase behind a
-    session-scoped Postgres advisory lock so only one instance runs the
-    create/migrate work at a time. The lock auto-releases when the
-    connection closes.
+    simultaneously (deployment rollout + min-instance warm-up overlap), every
+    instance races through this function, and provisioning a schema is not
+    atomic — two instances can both observe "schema missing" and both try to
+    build it, with the loser failing the deploy. The mutation phase is
+    serialized behind a session-scoped Postgres advisory lock so only one
+    instance runs it at a time. The lock auto-releases when the connection
+    closes.
     """
     with engine.connect() as conn:
         # pg_advisory_lock blocks until acquired. Cheap (in-memory in PG),
         # held only for the duration of provisioning (sub-second).
         conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": _PROVISIONING_LOCK_KEY})
         try:
-            conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {PLATFORM_SCHEMA}"))
-            conn.commit()
-
-            PlatformBase.metadata.create_all(engine)
-
-            # Platform-schema column evolution lives in a downstream
-            # deployment's own alembic chain, fanned out at deploy time by
-            # that deployment's migration entrypoint. The boot path used to
-            # run a runtime ``_migrate_platform_columns`` helper that
-            # issued ~17 ALTER TABLE statements with bare-except savepoints;
-            # that logic was absorbed into a deployment migration chain and
-            # deleted here.
-
-            # Pentest CHECK + immutability trigger on ``platform.practices``.
-            # Declarative DB guards, not column evolution — kept here until
-            # they can move into a deployment's own alembic chain alongside
-            # the ``is_pentest`` column itself.
-            _ensure_pentest_tenant_guards(engine)
-
-            # Same class, same reason: a guard ``create_all`` cannot carry.
-            _ensure_platform_row_security(engine)
+            # The platform schema is built by the migrate job, via
+            # ``backend/alembic_platform/``. Boot checks and refuses.
+            #
+            # It used to be built here, by ``PlatformBase.metadata.create_all``,
+            # and that is what this whole block used to be for. ``create_all``
+            # emits tables, columns and indexes and nothing else, so every
+            # platform object needing a policy, a trigger or a CHECK had to be
+            # re-installed underneath it by hand — a pentest guard, a row policy
+            # on ``panel_applications``, and a growing list. Those helpers are
+            # gone along with it; their DDL is in the chain, where a fresh
+            # install gets it from the captured template.
+            require_platform_schema(engine)
 
             _provision_core_schemas(engine)
 
@@ -303,101 +293,6 @@ def ensure_schemas(engine: Engine) -> None:
                 {"k": _PROVISIONING_LOCK_KEY},
             )
             conn.commit()
-
-
-def _ensure_pentest_tenant_guards(engine: Engine) -> None:
-    """Idempotent CHECK + trigger install for environments that bypass alembic."""
-    import logging
-
-    logger = logging.getLogger(__name__)
-
-    statements = [
-        "ALTER TABLE platform.practices DROP CONSTRAINT IF EXISTS practices_pentest_schema_name",
-        "ALTER TABLE platform.practices"
-        " ADD CONSTRAINT practices_pentest_schema_name"
-        r" CHECK (is_pentest = FALSE OR schema_name LIKE 'practice\_pentest\_%' ESCAPE '\')",
-        """
-        CREATE OR REPLACE FUNCTION platform.practices_pentest_immutable()
-        RETURNS trigger
-        LANGUAGE plpgsql
-        AS $$
-        BEGIN
-            IF OLD.is_pentest IS DISTINCT FROM NEW.is_pentest THEN
-                RAISE EXCEPTION
-                    'is_pentest is immutable; drop and recreate the tenant'
-                    USING ERRCODE = 'check_violation';
-            END IF;
-            RETURN NEW;
-        END;
-        $$
-        """,
-        "DROP TRIGGER IF EXISTS practices_pentest_immutable ON platform.practices",
-        "CREATE TRIGGER practices_pentest_immutable"
-        " BEFORE UPDATE OF is_pentest ON platform.practices"
-        " FOR EACH ROW"
-        " EXECUTE FUNCTION platform.practices_pentest_immutable()",
-    ]
-
-    with engine.connect() as conn:
-        for stmt in statements:
-            savepoint = conn.begin_nested()
-            try:
-                conn.execute(text(stmt))
-                savepoint.commit()
-            except Exception:
-                logger.exception("Pentest guard step failed: %s", stmt.split()[0:3])
-                savepoint.rollback()
-        conn.commit()
-
-
-def _ensure_platform_row_security(engine: Engine) -> None:
-    """Row security on the platform tables that need it, for every boot path.
-
-    ``platform.panel_applications`` is the first platform table whose rows
-    belong to one clinician rather than to the deployment, so it is the first
-    that RLS has to cover. Its migration enables it — but only on the path
-    where the migration is what creates the table.
-
-    There is another path, and it is the ordinary one for a self-hosted
-    install: ``ensure_schemas`` runs ``PlatformBase.metadata.create_all``, and
-    ``create_all`` emits the table and its indexes and nothing else. A policy
-    is not part of a SQLAlchemy model. So a deployment with no platform
-    alembic chain — which the docstring above describes as the expected OSS
-    case — gets the table with row security switched off, and one clinician's
-    applications become readable by every other. Nothing fails; the data is
-    simply open.
-
-    Idempotent, and belongs beside ``_ensure_pentest_tenant_guards`` for the
-    same stated reason: a declarative database guard that has to hold on the
-    boot paths that bypass alembic.
-    """
-    import logging
-
-    logger = logging.getLogger(__name__)
-
-    qualified = f"{PLATFORM_SCHEMA}.panel_applications"
-    statements = [
-        f"ALTER TABLE {qualified} ENABLE ROW LEVEL SECURITY",
-        # FORCE as well as ENABLE: the app connects as the table's owner, and
-        # an owner is exempt from its own policies unless forced. Without this
-        # line the policy below exists and does nothing.
-        f"ALTER TABLE {qualified} FORCE ROW LEVEL SECURITY",
-        f"DROP POLICY IF EXISTS rls_panel_application_owner ON {qualified}",
-        f"CREATE POLICY rls_panel_application_owner ON {qualified} "
-        "USING (user_id::text = current_setting('app.current_user_id', true)) "
-        "WITH CHECK (user_id::text = current_setting('app.current_user_id', true))",
-    ]
-
-    with engine.connect() as conn:
-        for stmt in statements:
-            savepoint = conn.begin_nested()
-            try:
-                conn.execute(text(stmt))
-                savepoint.commit()
-            except Exception:
-                logger.exception("Platform RLS step failed: %s", stmt.split()[0:4])
-                savepoint.rollback()
-        conn.commit()
 
 
 def _stamp_alembic_at_head(engine: Engine, schema_name: str) -> None:
@@ -571,10 +466,21 @@ def _apply_tenant_template(engine: Engine, schema_name: str) -> None:
         # SELECTs from ``patient_clinicians``). Defer body validation
         # until function execution, mirroring what pg_restore does.
         conn.execute(text("SET check_function_bodies = off"))
-        # exec_driver_sql sends the multi-statement string straight to
-        # psycopg2 — SQLAlchemy's ``text()`` would try to parse bind
-        # params and trip on dollar-quoted function bodies.
-        conn.exec_driver_sql(sql)
+        # Straight to a DBAPI cursor with NO parameter argument.
+        #
+        # ``text()`` is out because SQLAlchemy would parse bind params and trip
+        # on the dollar-quoted function bodies. ``exec_driver_sql`` is out too,
+        # and less obviously: it always hands the driver a parameter collection,
+        # which makes psycopg2 treat ``%`` as a placeholder. This file contains
+        # no ``%`` today, which is the only reason that worked — the first
+        # tenant-side CHECK written with LIKE would break provisioning with
+        # ``TypeError: immutabledict is not a sequence``, an error that names
+        # neither the percent sign nor this line. The platform template hit
+        # exactly that (its pentest CHECK renders as
+        # ``like_escape('practice\\_pentest\\_%', '\\')``), which is how the trap
+        # was found. psycopg2 only interpolates when parameters are passed.
+        cursor = conn.connection.cursor()
+        cursor.execute(sql)
 
 
 def _schema_has_tables(engine: Engine, schema_name: str) -> bool:

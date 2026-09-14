@@ -24,10 +24,16 @@ Three things are checked, and they are not the same thing:
    policy and its RLS switches, a trigger and its function, and 2 partial
    indexes on ``practices``.
 
-   This test is TRANSITIONAL. It is the proof for the cutover, and it should be
-   deleted in the change that removes ``create_all`` from the boot path — at
-   that point there is no "legacy shape" left to compare against, and (2) is the
-   gate that carries forward. See PABLO-k7it.
+   Nothing in production builds a schema that way any more — the fixture is the
+   only thing left that calls ``create_all`` on ``PlatformBase``, and it does so
+   deliberately, to pin the captured template against the shape it was taken
+   from. Keep it: without it, a later edit could quietly drop an object from the
+   template and only (2) would notice, and (2) cannot see a policy or a trigger.
+
+4. **Boot and the tenant chain both refuse** when the platform schema has not
+   been built. Neither builds it now, and a clear refusal is the difference
+   between "run the migrate job" and a crashloop whose first symptom is
+   ``relation "platform.users" does not exist`` inside a request.
 
 Requires ``DATABASE_URL`` + ``DATABASE_BACKEND=postgres`` and a role with
 ``CREATEDB``. Run: ``make test-integration``.
@@ -44,7 +50,14 @@ from typing import TYPE_CHECKING
 import pytest
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-from app.db.platform_bootstrap import BASELINE_REVISION, needs_baseline_stamp
+from app.db.platform_bootstrap import (
+    BASELINE_REVISION,
+    PlatformSchemaMissingError,
+    bring_platform_to_head,
+    needs_baseline_stamp,
+    require_platform_schema,
+)
+from app.db.platform_models import PlatformBase
 from sqlalchemy import create_engine, text
 
 from . import scratch_db
@@ -111,16 +124,50 @@ def empty_db() -> Iterator[str]:
 def legacy_db() -> Iterator[str]:
     """A throwaway database built the way a deploy built it before this chain.
 
-    The tenant chain's ``env.py`` runs ``PlatformBase.metadata.create_all`` and
-    then every tenant-chain migration on top, so ``alembic upgrade head`` on the
-    default section reproduces the whole of it.
+    ``create_all`` from the models, then every tenant-chain migration on top,
+    which is exactly what the tenant chain's ``env.py`` used to do — the
+    ``create_all`` call was in its bootstrap block, and is the reason the tenant
+    chain could satisfy its own foreign keys into ``platform.users``.
+
+    Reconstructed here rather than invoked: production no longer builds a schema
+    this way, and this fixture is the only thing left that does. That is the
+    point of it — it pins the captured template against the shape it was taken
+    from, so the baseline cannot quietly lose an object later.
     """
     db = scratch_db.scratch_name("pablo_platform_legacy")
     admin = create_engine(_db_url, isolation_level="AUTOCOMMIT")
     try:
         scratch_db.create(admin, db)
         url = scratch_db.swap_database(_db_url, db)
+
+        engine = create_engine(url)
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("CREATE SCHEMA IF NOT EXISTS platform"))
+            PlatformBase.metadata.create_all(engine)
+        finally:
+            engine.dispose()
+
+        # The tenant chain on top. Its platform-schema statements are all
+        # ``IF NOT EXISTS``, so they layer onto what create_all built — which is
+        # how the two builders came to disagree in the first place.
         _alembic(url, "upgrade", "head")
+
+        # And the duplicate indexes those revisions used to create. That DDL was
+        # removed from them in the same change that dropped the duplicates —
+        # otherwise the tenant chain put every one straight back — so replaying
+        # it here is the only way left to reconstruct what a database that ran
+        # those revisions actually carries. Without this the comparison below
+        # would pass while proving strictly less, and the drop revision would
+        # look like dead weight.
+        engine = create_engine(url)
+        try:
+            with engine.begin() as conn:
+                for name, target in _LEGACY_DUPLICATE_INDEXES.items():
+                    conn.exec_driver_sql(f"CREATE INDEX {name} ON platform.{target}")
+        finally:
+            engine.dispose()
+
         yield url
     finally:
         scratch_db.drop(admin, db)
@@ -311,29 +358,38 @@ def test_no_drift_between_the_chain_and_the_models(empty_db: str) -> None:
     _alembic(empty_db, "-n", "platform", "check")
 
 
+#: The 15 duplicate indexes ``b2c8d4e06f31`` drops, as ``name -> table(columns)``.
+#:
+#: Also the historical record of DDL that no longer exists anywhere else. Eight
+#: tenant-chain revisions used to create these; that was removed in the same
+#: change as the drop, because otherwise the tenant chain recreated every one
+#: immediately after the platform chain dropped it. So the legacy fixture has to
+#: replay them to reconstruct what a real database actually carries — verified
+#: against pablohealth-dev on 2026-09-14: all 15 present, definitions identical
+#: to their twins, every twin also present.
+_LEGACY_DUPLICATE_INDEXES: dict[str, str] = {
+    "ix_booking_links_user_id": "booking_links (user_id)",
+    "ix_claim_routes_practice_id": "claim_routes (practice_id)",
+    "ix_companion_devices_jkt": "companion_devices (jkt)",
+    "ix_companion_devices_user_id": "companion_devices (user_id)",
+    "ix_launch_intents_expires_at": "launch_intents (expires_at)",
+    "ix_launch_intents_user_id": "launch_intents (user_id)",
+    "ix_passkey_backup_codes_user_id": "passkey_backup_codes (user_id)",
+    "ix_passkey_challenges_expires_at": "passkey_challenges (expires_at)",
+    "ix_passkey_challenges_user_id": "passkey_challenges (user_id)",
+    "ix_passkey_credentials_user_id": "passkey_credentials (user_id)",
+    "ix_platform_audit_logs_action": "platform_audit_logs (action)",
+    "ix_platform_audit_logs_actor": "platform_audit_logs (actor_user_id)",
+    "ix_platform_audit_logs_tenant_schema": "platform_audit_logs (tenant_schema)",
+    "ix_platform_audit_logs_timestamp": 'platform_audit_logs ("timestamp")',
+    "ix_user_identities_user_id": "user_identities (user_id)",
+}
+
 #: The only objects the chain is allowed to be missing relative to the legacy
-#: shape: the 15 duplicate indexes that ``b2c8d4e06f31`` drops on purpose. Each
-#: is covered by a surviving twin on the same table and columns — the list of
-#: pairs is in that revision. Anything else missing is a fault in the baseline.
-_INTENTIONALLY_DROPPED_INDEXES = frozenset(
-    {
-        "ix_booking_links_user_id",
-        "ix_claim_routes_practice_id",
-        "ix_companion_devices_jkt",
-        "ix_companion_devices_user_id",
-        "ix_launch_intents_expires_at",
-        "ix_launch_intents_user_id",
-        "ix_passkey_backup_codes_user_id",
-        "ix_passkey_challenges_expires_at",
-        "ix_passkey_challenges_user_id",
-        "ix_passkey_credentials_user_id",
-        "ix_platform_audit_logs_action",
-        "ix_platform_audit_logs_actor",
-        "ix_platform_audit_logs_tenant_schema",
-        "ix_platform_audit_logs_timestamp",
-        "ix_user_identities_user_id",
-    }
-)
+#: shape. Each is covered by a surviving twin on the same table and columns — the
+#: list of pairs is in ``b2c8d4e06f31``. Anything else missing is a fault in the
+#: baseline.
+_INTENTIONALLY_DROPPED_INDEXES = frozenset(_LEGACY_DUPLICATE_INDEXES)
 
 
 def test_chain_matches_the_legacy_bootstrap(empty_db: str, legacy_db: str) -> None:
@@ -344,7 +400,8 @@ def test_chain_matches_the_legacy_bootstrap(empty_db: str, legacy_db: str) -> No
     indexes, and a test that merely allowed any divergence would also pass if the
     baseline had quietly lost the pentest trigger.
 
-    TRANSITIONAL — see the module docstring.
+    See the module docstring for why the legacy shape is reconstructed rather
+    than invoked.
     """
     _alembic(empty_db, "-n", "platform", "upgrade", "head")
 
@@ -474,3 +531,128 @@ def test_stamped_pre_chain_database_upgrades_to_head(legacy_db: str) -> None:
         "ix_platform_user_identities_user_id",
     ):
         assert twin in surviving, f"{twin} was dropped along with its duplicate"
+
+
+def test_the_tenant_chain_does_not_put_the_duplicates_back(empty_db: str) -> None:
+    """Running both chains in order leaves the duplicates dropped.
+
+    The regression this exists for: eight tenant-chain revisions used to create
+    these indexes with ``CREATE INDEX IF NOT EXISTS``, so on a fresh install the
+    platform chain dropped them and the tenant chain immediately recreated every
+    one. The repair looked fine in isolation and was undone by the next command.
+    """
+    _alembic(empty_db, "-n", "platform", "upgrade", "head")
+    _alembic(empty_db, "upgrade", "head")
+
+    engine = create_engine(empty_db)
+    try:
+        with engine.connect() as conn:
+            surviving = {
+                row[0]
+                for row in conn.execute(
+                    text("SELECT indexname FROM pg_indexes WHERE schemaname = 'platform'")
+                )
+            }
+    finally:
+        engine.dispose()
+
+    recreated = sorted(_INTENTIONALLY_DROPPED_INDEXES & surviving)
+    assert not recreated, (
+        "the tenant chain recreated indexes the platform chain dropped: "
+        f"{recreated}. A revision under backend/alembic/versions/ is still "
+        "creating them — the platform chain owns platform indexes now."
+    )
+
+
+# --- neither boot nor the tenant chain builds the platform schema ------------
+
+
+def test_boot_refuses_on_a_database_with_no_platform_schema(empty_db: str) -> None:
+    """``require_platform_schema`` raises, and says what to run.
+
+    Boot used to BUILD the schema here, with ``create_all``. That is what let a
+    platform table exist without the policy, trigger or CHECK that was supposed
+    to come with it, so boot now checks instead — and a deployment that cannot
+    serve should say why in one line rather than fail later inside a request.
+    """
+    engine = create_engine(empty_db)
+    try:
+        with pytest.raises(PlatformSchemaMissingError) as excinfo:
+            require_platform_schema(engine)
+    finally:
+        engine.dispose()
+
+    message = str(excinfo.value)
+    # The actionable part is the whole point of raising rather than returning.
+    assert "bin/migrate.py" in message
+    assert "alembic -n platform upgrade head" in message
+
+
+def test_bring_platform_to_head_builds_the_database_it_was_handed(empty_db: str) -> None:
+    """``bring_platform_to_head(engine)`` migrates that engine's database.
+
+    It did not, at first. ``command.upgrade`` lets env.py open its own connection
+    from ``settings.database_url``, so called against any database other than the
+    configured one — a scratch database in a test, most obviously — it migrated
+    the configured one instead and returned success, leaving the caller's database
+    untouched. Silent and in the wrong direction: the caller's next statement
+    fails, and the database that did change was not the one anybody asked about.
+    """
+    engine = create_engine(empty_db)
+    try:
+        bring_platform_to_head(engine, str(_BACKEND_DIR / "alembic.ini"))
+
+        with engine.connect() as conn:
+            tables = conn.execute(
+                text(
+                    "SELECT count(*) FROM information_schema.tables"
+                    " WHERE table_schema = 'platform' AND table_type = 'BASE TABLE'"
+                )
+            ).scalar_one()
+    finally:
+        engine.dispose()
+
+    assert tables > 15, (
+        f"the platform schema of the engine passed in has {tables} tables — "
+        "the chain ran somewhere else"
+    )
+
+
+def test_boot_is_satisfied_once_the_chain_has_run(empty_db: str) -> None:
+    _alembic(empty_db, "-n", "platform", "upgrade", "head")
+
+    engine = create_engine(empty_db)
+    try:
+        require_platform_schema(engine)  # must not raise
+    finally:
+        engine.dispose()
+
+
+def test_the_tenant_chain_refuses_without_the_platform_schema(empty_db: str) -> None:
+    """The tenant chain declares FKs into ``platform.users`` and creates nothing there.
+
+    It used to be self-sufficient only because ``create_all`` sat in its env.py
+    bootstrap — which is precisely how the platform schema came to be built from
+    ORM metadata. The dependency is now stated, and the failure names it.
+
+    Not ``_alembic``, which fails the test on a non-zero exit: here a non-zero
+    exit is the assertion.
+    """
+    env = {**os.environ, "DATABASE_URL": empty_db, "DATABASE_BACKEND": "postgres"}
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=_BACKEND_DIR,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0, (
+        "the tenant chain ran to completion against a database with no platform "
+        "schema, which means something is building it again"
+    )
+    combined = result.stdout + result.stderr
+    assert "PlatformSchemaMissingError" in combined, (
+        f"failed, but not with the check that explains why:\n{combined[-2000:]}"
+    )

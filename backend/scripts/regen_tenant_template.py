@@ -123,18 +123,24 @@ def _run_alembic_upgrade(database_url: str) -> None:
     env = os.environ.copy()
     env["DATABASE_URL"] = database_url
     env["DATABASE_BACKEND"] = "postgres"
-    result = subprocess.run(
-        ["poetry", "run", "alembic", "upgrade", "head"],
-        cwd=BACKEND_DIR,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        sys.stderr.write(result.stdout)
-        sys.stderr.write(result.stderr)
-        raise SystemExit(f"alembic upgrade head failed (exit {result.returncode})")
+
+    # Platform chain first. The tenant chain declares foreign keys into
+    # ``platform.users`` and creates nothing in that schema itself, so it cannot
+    # run against an empty database on its own — ``create_all`` in env.py used to
+    # cover for that, and no longer does.
+    for chain_args in (["-n", "platform", "upgrade", "head"], ["upgrade", "head"]):
+        result = subprocess.run(
+            [sys.executable, "-m", "alembic", *chain_args],
+            cwd=BACKEND_DIR,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            sys.stderr.write(result.stdout)
+            sys.stderr.write(result.stderr)
+            raise SystemExit(f"alembic {' '.join(chain_args)} failed (exit {result.returncode})")
 
 
 def _pg_dump_practice_schema(container) -> str:
