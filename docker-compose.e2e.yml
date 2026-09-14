@@ -144,6 +144,30 @@ services:
     networks:
       - e2e-net
 
+  # A SECOND practice, so cross-tenant isolation can be tested through the app
+  # rather than only at the integration layer. Runs once, after the backend is
+  # healthy -- which is the signal that migrations have run and the platform
+  # tables exist -- then exits.
+  #
+  # `--wait` treats a service that exits 0 as satisfied, so `make e2e-up`
+  # returns only once this has finished. The isolation specs therefore cannot
+  # start before the practice they need exists.
+  seed-second-practice:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.dev
+    command: ["python", "backend/scripts/e2e_seed_second_practice.py"]
+    environment:
+      - DATABASE_URL=postgresql://pablo:pablo_dev@postgres:5432/pablo
+      - ENVIRONMENT=development
+      - LOG_LEVEL=INFO
+    restart: "no"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - e2e-net
+
   frontend:
     build:
       context: ./frontend

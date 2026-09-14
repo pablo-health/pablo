@@ -12,13 +12,21 @@
  * `signedInPage` (per test): a page whose context starts from that saved
  * state, so a spec begins already signed in. `api` is a bearer client for
  * the same user, for "given X" setup calls.
+ *
+ * `otherPracticeApi` (per test): a bearer client for a user in a DIFFERENT
+ * practice, seeded at stack bring-up by
+ * backend/scripts/e2e_seed_second_practice.py. Only tenant-isolation specs
+ * should want it, and they must assert in BOTH directions — most of this
+ * product is scoped per user inside a practice, so "the other one cannot see
+ * mine" is true whether or not tenancy works. See
+ * specs/tenant-isolation.spec.ts, which explains the trap in full.
  */
 
 import { test as base, expect, type Page } from "@playwright/test"
 import { mkdirSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { ApiClient, createEmulatorUser } from "./api"
+import { ApiClient, createEmulatorUser, ensureEmulatorUser, signInWithPassword } from "./api"
 import { attachServerErrorGuard } from "./serverErrorGuard"
 import { BASE_URL } from "./stack"
 
@@ -32,12 +40,28 @@ export interface E2EUser {
 
 interface WorkerFixtures {
   onboardedUser: E2EUser
+  otherPracticeUser: E2EUser
 }
 
 interface TestFixtures {
   signedInPage: Page
   api: ApiClient
+  otherPracticeApi: ApiClient
 }
+
+/**
+ * Seeded by backend/scripts/e2e_seed_second_practice.py at stack bring-up,
+ * which writes this address's tenant mapping BEFORE it ever signs in. That
+ * ordering is the whole mechanism: the auto-provision path never overwrites an
+ * existing mapping, so this user lands in the second practice while everyone
+ * else lands in the default one.
+ *
+ * Fixed, not generated, because the seed script and this file have to agree on
+ * it without talking. Safe because the suite runs workers: 1 and `make
+ * e2e-down` drops the volume between runs.
+ */
+const SECOND_PRACTICE_EMAIL = "e2e-second-practice@example.com"
+const SECOND_PRACTICE_PASSWORD = "E2e-second-practice-password-long-enough"
 
 const AUTH_STATE_DIR = fileURLToPath(new URL("../.auth/", import.meta.url))
 
@@ -66,6 +90,37 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     },
     { scope: "worker" },
   ],
+
+  otherPracticeUser: [
+    async ({}, provide) => {
+      // Create-or-reuse, not create: this address is fixed, and Playwright
+      // starts a fresh worker after a failing test, which re-runs every
+      // worker-scoped fixture. A plain create would then hit EMAIL_EXISTS and
+      // turn one red test into a red file.
+      const { uid } = await ensureEmulatorUser(
+        SECOND_PRACTICE_EMAIL,
+        SECOND_PRACTICE_PASSWORD,
+      )
+      // No UI sign-in and no storage state: isolation is asserted at the API,
+      // where the tenant boundary actually lives. Driving a second browser
+      // context through /login would prove the login page works twice.
+      await provide({
+        email: SECOND_PRACTICE_EMAIL,
+        password: SECOND_PRACTICE_PASSWORD,
+        uid,
+        storageStatePath: "",
+      })
+    },
+    { scope: "worker" },
+  ],
+
+  otherPracticeApi: async ({ otherPracticeUser }, provide) => {
+    await provide(
+      new ApiClient(
+        await signInWithPassword(otherPracticeUser.email, otherPracticeUser.password),
+      ),
+    )
+  },
 
   storageState: async ({ onboardedUser }, provide) => {
     await provide(onboardedUser.storageStatePath)

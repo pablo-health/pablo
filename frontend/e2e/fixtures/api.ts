@@ -55,6 +55,32 @@ export async function createEmulatorUser(email: string, password: string): Promi
   return { uid: created.localId }
 }
 
+/**
+ * Create the user, or accept that it is already there.
+ *
+ * For the generated per-worker addresses `createEmulatorUser` is enough, since
+ * each is new. A FIXED address needs this: Playwright starts a fresh worker
+ * process after a failing test, every worker-scoped fixture runs again, and the
+ * emulator still holds the account from the first attempt — so the second
+ * attempt dies with EMAIL_EXISTS and turns one red test into a whole red file.
+ */
+export async function ensureEmulatorUser(
+  email: string,
+  password: string,
+): Promise<{ uid: string }> {
+  try {
+    return await createEmulatorUser(email, password)
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.includes("EMAIL_EXISTS")) throw error
+    const signedIn = await identityToolkit<SignUpResponse>("accounts:signInWithPassword", {
+      email,
+      password,
+      returnSecureToken: true,
+    })
+    return { uid: signedIn.localId }
+  }
+}
+
 /** An id token for an existing emulator user, for direct API calls. */
 export async function signInWithPassword(email: string, password: string): Promise<string> {
   const signedIn = await identityToolkit<SignInResponse>("accounts:signInWithPassword", {
