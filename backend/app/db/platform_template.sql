@@ -84,7 +84,7 @@ CREATE TABLE platform.credential_bank_accounts (
     verified_at timestamp with time zone,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
-    CONSTRAINT ck_credential_bank_accounts_account_type CHECK (((account_type)::text = ANY ((ARRAY['checking'::character varying, 'savings'::character varying])::text[])))
+    CONSTRAINT ck_credential_bank_accounts_account_type CHECK (((account_type)::text = ANY (ARRAY[('checking'::character varying)::text, ('savings'::character varying)::text])))
 );
 
 ALTER TABLE ONLY platform.credential_bank_accounts FORCE ROW LEVEL SECURITY;
@@ -101,7 +101,7 @@ CREATE TABLE platform.credential_confirmations (
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
     CONSTRAINT ck_credential_confirmations_corrected CHECK ((confirmed OR (correction IS NOT NULL))),
-    CONSTRAINT ck_credential_confirmations_source CHECK (((source)::text = ANY ((ARRAY['nppes'::character varying, 'pecos_public_file'::character varying, 'leie_sam'::character varying, 'clinician_profiles'::character varying, 'practice_billing_profile'::character varying])::text[])))
+    CONSTRAINT ck_credential_confirmations_source CHECK (((source)::text = ANY (ARRAY[('nppes'::character varying)::text, ('pecos_public_file'::character varying)::text, ('leie_sam'::character varying)::text, ('clinician_profiles'::character varying)::text, ('practice_billing_profile'::character varying)::text])))
 );
 
 ALTER TABLE ONLY platform.credential_confirmations FORCE ROW LEVEL SECURITY;
@@ -172,8 +172,8 @@ CREATE TABLE platform.credential_government_ids (
     medicaid_intent boolean,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
-    CONSTRAINT ck_credential_government_ids_supervision_status CHECK (((supervision_status IS NULL) OR ((supervision_status)::text = ANY ((ARRAY['independent'::character varying, 'supervised'::character varying])::text[])))),
-    CONSTRAINT ck_credential_government_ids_tax_id_type CHECK (((tax_id_type IS NULL) OR ((tax_id_type)::text = ANY ((ARRAY['ein'::character varying, 'ssn'::character varying])::text[]))))
+    CONSTRAINT ck_credential_government_ids_supervision_status CHECK (((supervision_status IS NULL) OR ((supervision_status)::text = ANY (ARRAY[('independent'::character varying)::text, ('supervised'::character varying)::text])))),
+    CONSTRAINT ck_credential_government_ids_tax_id_type CHECK (((tax_id_type IS NULL) OR ((tax_id_type)::text = ANY (ARRAY[('ein'::character varying)::text, ('ssn'::character varying)::text]))))
 );
 
 ALTER TABLE ONLY platform.credential_government_ids FORCE ROW LEVEL SECURITY;
@@ -212,8 +212,8 @@ CREATE TABLE platform.credential_licenses (
     document_id uuid,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
-    CONSTRAINT ck_credential_licenses_status CHECK (((status)::text = ANY ((ARRAY['active'::character varying, 'inactive'::character varying, 'expired'::character varying, 'suspended'::character varying, 'revoked'::character varying])::text[]))),
-    CONSTRAINT ck_credential_licenses_verification_source CHECK (((verification_source)::text = ANY ((ARRAY['self'::character varying, 'nppes'::character varying, 'board'::character varying])::text[])))
+    CONSTRAINT ck_credential_licenses_status CHECK (((status)::text = ANY (ARRAY[('active'::character varying)::text, ('inactive'::character varying)::text, ('expired'::character varying)::text, ('suspended'::character varying)::text, ('revoked'::character varying)::text]))),
+    CONSTRAINT ck_credential_licenses_verification_source CHECK (((verification_source)::text = ANY (ARRAY[('self'::character varying)::text, ('nppes'::character varying)::text, ('board'::character varying)::text])))
 );
 
 ALTER TABLE ONLY platform.credential_licenses FORCE ROW LEVEL SECURITY;
