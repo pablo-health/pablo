@@ -117,10 +117,52 @@ class PracticeRow(PlatformBase):
     # PlatformBase annotates __table_args__ as the dict-only shape; the
     # tuple form (needed for the CheckConstraint) trips mypy here, same
     # as DiagnosticDefinitionRow below.
+    #
+    # Everything below the edition CHECK already exists in every database and
+    # did NOT exist here, because the platform schema had no migration chain of
+    # its own: it was built by ``create_all`` from these models, and evolved by
+    # raw SQL in the *tenant* chain, so anything the raw SQL added was invisible
+    # to the model that supposedly described the table. Declaring them changes no
+    # DDL — the platform chain's baseline already carries them, captured — it
+    # makes ``alembic -n platform check`` able to pass, which is what turns
+    # "models and schema agree" into something CI can assert. See PABLO-k7it.
     __table_args__ = (  # type: ignore[assignment]
         CheckConstraint(
             "edition IN ('therapist', 'personal')",
             name="ck_practices_edition",
+        ),
+        # Added by ``a4f7e2c81b9d``.
+        CheckConstraint(
+            "provisioning_status IN ('in_progress', 'ready', 'failed')",
+            name="practices_provisioning_status_chk",
+        ),
+        # Added by ``d7a3f1c8e2b4``. Thirty days to seven years.
+        CheckConstraint(
+            "audio_retention_days >= 30 AND audio_retention_days <= 2555",
+            name="ck_practices_audio_retention_days_range",
+        ),
+        # Added by ``f1c8d4a92b65``, alongside the immutability trigger on
+        # ``is_pentest``. A pentest practice must live in a schema whose name
+        # says so, so that a guard reading the name cannot be fooled by a
+        # flag. ``like_escape`` is how Postgres renders the escaped LIKE this
+        # compares with; spelled the same way here so the stored and declared
+        # forms match rather than looking like a drift.
+        CheckConstraint(
+            r"is_pentest = false OR schema_name LIKE 'practice\_pentest\_%' ESCAPE '\'",
+            name="practices_pentest_schema_name",
+        ),
+        # Partial, because both columns are NULL for practically every row: the
+        # queries that use them are looking for the handful that are not.
+        # Created by ``d4f8a1c92e35`` and ``d7a3f1c8e2b4`` respectively.
+        Index(
+            "idx_practices_deleted_at",
+            "deleted_at",
+            postgresql_where=text("deleted_at IS NOT NULL"),
+        ),
+        Index(
+            "idx_practices_offboard_scheduled_at",
+            "offboard_scheduled_at",
+            postgresql_where=text("offboard_scheduled_at IS NOT NULL"),
         ),
         {"schema": PLATFORM_SCHEMA},
     )

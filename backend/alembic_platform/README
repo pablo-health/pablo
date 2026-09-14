@@ -1,0 +1,19 @@
+Migration chain for the ``platform`` schema — the single shared schema that
+holds practices, users, identities, booking links and the platform audit log.
+
+Run it with the ``platform`` section of ../alembic.ini:
+
+    poetry run alembic -n platform upgrade head
+    poetry run alembic -n platform revision --autogenerate -m "..."
+    poetry run alembic -n platform current
+
+Stamps land in ``platform.alembic_version_platform``. The tenant chain in
+../alembic/ is a separate graph with separate bookkeeping — see env.py here for
+why they are not one chain, and PABLO-k7it for why this one exists at all.
+
+After any revision that changes DDL, regenerate the fresh-install template and
+commit it alongside the revision:
+
+    poetry run python backend/scripts/regen_platform_schema.py
+
+CI enforces that the template matches this chain's head.

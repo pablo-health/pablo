@@ -95,13 +95,33 @@ Four that are easy to get wrong:
    SQLAlchemy model in `backend/app/db/models.py` (or
    `platform_models.py`) must include a same-commit Alembic migration.
    Don't land a model change and "add the migration later" — that
-   boots a broken dev env for everyone else. **Same commit, regenerate
-   the tenant template.** Any alembic revision that touches tenant DDL
-   (`backend/alembic/versions/`) requires regenerating
-   `backend/app/db/tenant_template.sql`:
+   boots a broken dev env for everyone else.
+
+   **Two chains, and the model tells you which one.** They are separate
+   graphs with separate bookkeeping, and a revision belongs to exactly
+   one:
+
+   | Model | Chain | Version table | Run with |
+   |---|---|---|---|
+   | `models.py` (per-tenant) | `backend/alembic/versions/` | `<practice_*>.alembic_version` | `alembic upgrade head` |
+   | `platform_models.py` (shared) | `backend/alembic_platform/versions/` | `platform.alembic_version_platform` | `alembic -n platform upgrade head` |
+
+   Put platform DDL in the platform chain, **not** the tenant chain.
+   The tenant chain is fanned out once per practice schema, so anything
+   platform-shaped in it executes once per tenant and has to be
+   hand-written idempotent to survive that; and because a new tenant is
+   built from the template and stamped rather than migrated, the chain
+   is not what builds anything on a fresh provision. 35 tenant-chain
+   revisions touch `platform.` for historical reasons — that is the
+   problem being unwound, not the pattern to copy (`PABLO-k7it`).
+
+   **Same commit, regenerate the template for whichever chain you
+   touched.** Both schemas are built from a captured template and
+   evolved by their chain:
 
    ```
-   poetry run python backend/scripts/regen_tenant_template.py
+   poetry run python backend/scripts/regen_tenant_template.py    # backend/alembic/
+   poetry run python backend/scripts/regen_platform_schema.py    # backend/alembic_platform/
    ```
 
    The template is the canonical schema applied to every freshly-
@@ -111,10 +131,16 @@ Four that are easy to get wrong:
    SQL) is invisible to `Base.metadata.create_all`; if you forget to
    regenerate, new tenants land at HEAD-stamped but **missing your
    DDL**, and every code path that touches it 500s. This is exactly
-   how patient-create regressed on 2026-05-17. CI should diff the
-   committed template against a freshly-regenerated copy — until
-   that check exists, regenerate manually and commit the resulting
-   `tenant_template.sql` alongside the migration.
+   how patient-create regressed on 2026-05-17. CI enforces this for
+   both templates: the `Tenant template matches alembic head` job
+   regenerates each one and fails on any diff.
+
+   The platform template is the same contract for the shared schema —
+   it carries the row policy, trigger, function, CHECK constraints and
+   partial indexes that no ORM model expresses, which is exactly why it
+   is a capture rather than something generated from the models. A
+   platform revision that lands without a regen leaves a fresh install
+   short of whatever it added.
 
    **RLS enforcement** — every per-tenant table that carries a
    `user_id`, `patient_id`, or `id` column is force-RLS'd by

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -78,9 +79,14 @@ def _alembic_upgrade_head(database_url: str) -> None:
         "DATABASE_URL": database_url,
         "DATABASE_BACKEND": "postgres",
     }
-    # poetry from PATH is fine in tests; no untrusted input here.
+    # ``sys.executable -m alembic`` rather than ``poetry run alembic``: in a git
+    # worktree poetry resolves no environment and falls through to whatever
+    # ``alembic`` is first on PATH, which on a machine with anaconda installed is
+    # a Python 3.10 that dies importing ``app.db`` with ``TypeError: 'type'
+    # object is not subscriptable``. Under pytest the running interpreter is
+    # already the right one, in CI and in a worktree alike.
     result = subprocess.run(
-        ["poetry", "run", "alembic", "upgrade", "head"],  # noqa: S607
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
         cwd=_BACKEND_DIR,
         env=env,
         capture_output=True,
@@ -107,8 +113,8 @@ def test_upgrade_head_succeeds_on_fresh_db(fresh_db: str) -> None:
 def _alembic(database_url: str, *args: str) -> None:
     """Run an arbitrary ``alembic`` command in a subprocess (see note above)."""
     env = {**os.environ, "DATABASE_URL": database_url, "DATABASE_BACKEND": "postgres"}
-    result = subprocess.run(  # noqa: S603 (trusted: hardcoded poetry/alembic, test-controlled args)
-        ["poetry", "run", "alembic", *args],  # noqa: S607
+    result = subprocess.run(  # noqa: S603 (trusted: this interpreter, test-controlled args)
+        [sys.executable, "-m", "alembic", *args],
         cwd=_BACKEND_DIR,
         env=env,
         capture_output=True,
