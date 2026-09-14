@@ -50,6 +50,29 @@ make format     # Auto-fix formatting
 - **DM Sans** for body, **Fraunces** for headings
 - See `docs/design-system/` for full design tokens
 
+## Writing copy a clinician will read
+
+**Before writing or editing any user-facing string — UI, empty state, error,
+onboarding — read [`docs/reference/copy-style.md`](docs/reference/copy-style.md).**
+
+The principle, so it is not a surprise: **keep the safety model, simplify what
+the reader sees.** Pablo touches how a clinician gets paid, so the reasoning
+behind a screen is usually careful. The failure mode is making every sentence
+carry that reasoning — long, defensive copy that exposes billing machinery
+early and starts contradicting itself. The reasoning goes in the code comment
+and the design doc. The screen gets the conclusion.
+
+Four that are easy to get wrong:
+
+- **Never claim readiness the system has not checked.** Reaching the end of a
+  flow is not being finished — ask the data.
+- **Never recite what will not happen.** It introduces machinery the reader had
+  not thought about and makes a safe default sound dangerous.
+- **Never imply someone should leave a service they use** (Headway, Alma, Rula
+  and the like). Staying is a good outcome.
+- **No gendered pronouns** for a clinician or client. Second person usually
+  solves it; otherwise *they*.
+
 ## Guardrails (load-bearing, don't skip)
 
 1. **Audit every PHI route.** New routes in `backend/app/routes/` that
