@@ -2,10 +2,16 @@
 
 """Enrolling the practice with payers (``app.claims.enrollment``).
 
-The lifecycle runs against a real SQLAlchemy session over in-memory SQLite
-with the four tables it touches, and a clearinghouse that answers from the
-recorded fixtures — the vendor's enrollment API refuses test-mode keys, so
-recorded answers are the only way this flow is exercised outside production.
+The lifecycle runs against a real provisioned practice schema and a
+clearinghouse that answers from the recorded fixtures — the vendor's
+enrollment API refuses test-mode keys, so recorded answers are the only way
+this flow is exercised outside production.
+
+The re-arm in particular needs the real database. ``refresh_enrollments``
+arms the session as whoever filed each request so the reminder it writes
+lands under that person's row policy; on a database with no ``set_config``
+the tests handed in an arm that did nothing, which made the claim they were
+named for unfalsifiable.
 
 What is pinned down:
 
@@ -27,10 +33,14 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+from alembic import command
+from alembic.config import Config
 from app.claims import enrollment
 from app.claims.enrollment import (
     BillingProfileIncompleteError,
@@ -48,18 +58,19 @@ from app.claims.enrollment import (
     transactions_to_file,
 )
 from app.claims.events import compliance_item_type
+from app.db import arm_current_user_id, set_tenant_schema
 from app.db.models import (
     ComplianceItemRow,
     PayerEnrollmentRow,
     PayerRow,
     PracticeBillingProfileRow,
 )
+from app.db.provisioning import create_practice_schema
 from app.models.claims_transport import Enrollment, Payer
 from app.services.practice_billing_profile import SINGLETON_ID, update_billing_profile
 from app.settings import get_settings
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, create_engine, select, text
 from sqlalchemy.orm import Session
-
 from tests.enrollment_fakes import (
     INSTRUCTIONS,
     PROVIDER_ID,
@@ -68,14 +79,25 @@ from tests.enrollment_fakes import (
     FakeClearinghouse,
     enrollment_fixture,
 )
-from tests.sqlite_engine import sqlite_engine
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-_USER_ID = "11111111-1111-4111-8111-111111111111"
-_OTHER_USER_ID = "22222222-2222-4222-8222-222222222222"
-_PAYER_ROW_ID = "33333333-3333-4333-8333-333333333333"
+_DB_URL = os.environ.get("DATABASE_URL", "")
+pytestmark = pytest.mark.skipif(
+    not _DB_URL or os.environ.get("DATABASE_BACKEND") != "postgres",
+    reason=(
+        "PostgreSQL not configured. Set DATABASE_URL and "
+        "DATABASE_BACKEND=postgres; testcontainers should set both."
+    ),
+)
+
+_SUFFIX = uuid.uuid4().hex[:8]
+_SCHEMA = f"practice_test_enrlife_{_SUFFIX}"
+
+_USER_ID = str(uuid.uuid4())
+_OTHER_USER_ID = str(uuid.uuid4())
+_PAYER_ROW_ID = str(uuid.uuid4())
 _NOW = datetime(2026, 9, 6, 15, 30, tzinfo=UTC)
 
 _PROFILE = {
@@ -91,16 +113,8 @@ _PROFILE = {
     "contact_email": "billing@example.com",
 }
 
-_TABLES = (
-    PracticeBillingProfileRow.__table__,
-    PayerRow.__table__,
-    PayerEnrollmentRow.__table__,
-    ComplianceItemRow.__table__,
-)
-
-
-def _no_arm(_session: Session, _user_id: str) -> None:
-    """SQLite has no RLS GUC to arm."""
+#: Emptied between tests; the schema outlives them.
+_TABLES = ("compliance_items", "payer_enrollments", "payers", "practice_billing_profile")
 
 
 @pytest.fixture(autouse=True)
@@ -118,16 +132,44 @@ def _refresh_floor() -> Iterator[None]:
     reset_refresh_floor()
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def engine() -> Iterator[Engine]:
-    with sqlite_engine(_TABLES) as eng:
-        yield eng
+    """The real database, migrated, with a practice schema of this module's own."""
+    backend_dir = Path(__file__).resolve().parents[2]
+    cfg = Config(str(backend_dir / "alembic.ini"))
+    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
+    command.upgrade(cfg, "head")
+    eng = create_engine(_DB_URL, pool_pre_ping=True)
+    create_practice_schema(eng, _SCHEMA)
+    yield eng
+    with eng.connect() as conn:
+        conn.execute(text(f'DROP SCHEMA IF EXISTS "{_SCHEMA}" CASCADE'))
+        conn.commit()
+    eng.dispose()
 
 
 @pytest.fixture
 def session(engine: Engine) -> Iterator[Session]:
+    """One session, scoped to the schema and armed as the clinician.
+
+    The arm is the caller's; several tests below hand work to
+    ``refresh_enrollments``, which re-arms as whoever filed the request. That
+    is the behaviour under test, so nothing here tries to hold it still.
+    """
     with Session(engine) as session:
-        yield session
+        set_tenant_schema(session, _SCHEMA)
+        arm_current_user_id(session, _USER_ID)
+        try:
+            yield session
+        finally:
+            session.rollback()
+    # On its own connection, and TRUNCATE rather than DELETE: by the end of a
+    # test the session may be armed as someone else entirely, and rows written
+    # under that principal are invisible to a DELETE issued under this one.
+    with engine.connect() as conn:
+        qualified = ", ".join(f"{_SCHEMA}.{name}" for name in _TABLES)
+        conn.execute(text(f"TRUNCATE {qualified} CASCADE"))
+        conn.commit()
 
 
 def _seed_profile(session: Session, **overrides: str | None) -> None:
@@ -390,9 +432,7 @@ class TestEnrollIfNew:
         yield client
         enrollment.register_clearinghouse_client_factory(None)
 
-    def test_files_for_a_payer_with_nothing_on_file(
-        self, session: Session, clearinghouse: FakeClearinghouse
-    ) -> None:
+    def test_files_for_a_payer_with_nothing_on_file(self, session: Session) -> None:
         _seed_profile(session)
         payer = _seed_payer(session)
 
@@ -465,11 +505,11 @@ class TestPayerStatusMirror:
             *_listing_for(session, "LIVE", "835"),
             *_listing_for(session, "PROVISIONING", "837P"),
         ]
-        refresh_enrollments(session, client, arm=_no_arm)
+        refresh_enrollments(session, client)
         assert payer.enrollment_status == "pending"
 
         client.listing = _listing_for(session, "LIVE", "835", "837P")
-        refresh_enrollments(session, client, arm=_no_arm)
+        refresh_enrollments(session, client)
         assert payer.enrollment_status == "active"
 
     @pytest.mark.parametrize(
@@ -588,7 +628,7 @@ class TestTransactionChoice:
         request_enrollments(session, client, payer_row_id=payer.id, user_id=_USER_ID)
 
         client.listing = _listing_for(session, "LIVE", "837P", "270")
-        refresh_enrollments(session, client, arm=_no_arm)
+        refresh_enrollments(session, client)
 
         assert payer.enrollment_status == "active"
 
@@ -759,8 +799,8 @@ class TestActionRequired:
         payer, client = self._filed(session)
         client.listing = _listing_for(session, "PROVIDER_ACTION_REQUIRED", "835")
 
-        assert refresh_enrollments(session, client, arm=_no_arm) == 1
-        assert refresh_enrollments(session, client, arm=_no_arm) == 0
+        assert refresh_enrollments(session, client) == 1
+        assert refresh_enrollments(session, client) == 0
 
         row = _rows(session)["835"]
         assert row.status == "provider_action_required"
@@ -779,10 +819,10 @@ class TestActionRequired:
     def test_moving_on_resolves_the_reminder(self, session: Session) -> None:
         payer, client = self._filed(session)
         client.listing = _listing_for(session, "PROVIDER_ACTION_REQUIRED", "835")
-        refresh_enrollments(session, client, arm=_no_arm)
+        refresh_enrollments(session, client)
 
         client.listing = _listing_for(session, "LIVE", "835")
-        refresh_enrollments(session, client, arm=_no_arm)
+        refresh_enrollments(session, client)
 
         row = _rows(session)["835"]
         assert row.status == "live"
@@ -795,7 +835,7 @@ class TestActionRequired:
         payer, client = self._filed(session)
         client.listing = _listing_for(session, "REJECTED", "835")
 
-        refresh_enrollments(session, client, arm=_no_arm)
+        refresh_enrollments(session, client)
 
         assert payer.enrollment_status == "error"
         assert _rows(session)["835"].status == "rejected"
@@ -807,7 +847,7 @@ class TestActionRequired:
         client.listing = _listing_for(session, "PROVIDER_ACTION_REQUIRED", "835")
 
         with caplog.at_level(logging.DEBUG):
-            refresh_enrollments(session, client, arm=_no_arm)
+            refresh_enrollments(session, client)
 
         assert _rows(session)["835"].instructions is not None
         assert "EFT" not in caplog.text
@@ -849,8 +889,8 @@ class TestRefresh:
         request_enrollments(session, client, payer_row_id=payer.id, user_id=_USER_ID)
         client.listing = _listing_for(session, "LIVE", "835")
 
-        refresh_enrollments(session, client, arm=_no_arm)
-        refresh_enrollments(session, client, arm=_no_arm)
+        refresh_enrollments(session, client)
+        refresh_enrollments(session, client)
 
         assert len(client.calls_named("list_enrollments")) == 1
 
@@ -863,7 +903,7 @@ class TestRefresh:
         request_enrollments(session, client, payer_row_id=payer.id, user_id=_USER_ID)
         client.listing = _listing_for(session, "LIVE", "835")
 
-        refresh_enrollments(session, client, arm=_no_arm)
+        refresh_enrollments(session, client)
 
         [filters] = client.calls_named("list_enrollments")
         assert filters.providerIds == [PROVIDER_ID]
@@ -879,7 +919,7 @@ class TestRefresh:
         payer.clearinghouse_payer_id = None
         session.flush()
 
-        refresh_enrollments(session, client, arm=_no_arm)
+        refresh_enrollments(session, client)
 
         [filters] = client.calls_named("list_enrollments")
         assert filters.providerIds == [PROVIDER_ID]
@@ -902,7 +942,7 @@ class TestRefresh:
     def test_pages_through_the_listing_until_the_vendor_has_no_more(self, session: Session) -> None:
         client = self._two_open_requests(session)
 
-        assert refresh_enrollments(session, client, arm=_no_arm) == 2
+        assert refresh_enrollments(session, client) == 2
 
         first, second = client.calls_named("list_enrollments")
         assert first.pageToken is None
@@ -917,7 +957,7 @@ class TestRefresh:
         monkeypatch.setattr(enrollment, "MAX_LIST_PAGES", 1)
 
         with caplog.at_level(logging.WARNING):
-            assert refresh_enrollments(session, client, arm=_no_arm) == 1
+            assert refresh_enrollments(session, client) == 1
 
         assert len(client.calls_named("list_enrollments")) == 1
         assert "payer_enrollment_listing_truncated" in caplog.text
@@ -933,7 +973,7 @@ class TestRefresh:
         request_enrollments(session, client, payer_row_id=payer.id, user_id=_USER_ID)
         client.listing = [enrollment_fixture(vendor_id="someone-elses", status="LIVE")]
 
-        assert refresh_enrollments(session, client, arm=_no_arm) == 0
+        assert refresh_enrollments(session, client) == 0
         assert _rows(session)["835"].status == "stedi_action_required"
 
     def test_an_unrecognised_vendor_status_is_skipped(
@@ -946,7 +986,7 @@ class TestRefresh:
         client.listing = _listing_for(session, "SOMETHING_NEW", "835")
 
         with caplog.at_level(logging.WARNING):
-            assert refresh_enrollments(session, client, arm=_no_arm) == 0
+            assert refresh_enrollments(session, client) == 0
 
         assert "payer_enrollment_status_unrecognised" in caplog.text
 
@@ -963,9 +1003,7 @@ class TestRefreshThrottle:
         client, _payer = self._one_open_request(session)
         client.listing = _listing_for(session, "LIVE", "835")
 
-        outcome = refresh_enrollments_throttled(
-            session, client, practice_id="practice-1", arm=_no_arm
-        )
+        outcome = refresh_enrollments_throttled(session, client, practice_id="practice-1")
 
         assert outcome.changed == 1
         assert outcome.throttled is False
@@ -975,13 +1013,9 @@ class TestRefreshThrottle:
     def test_a_second_press_inside_the_floor_reuses_the_answer(self, session: Session) -> None:
         client, _payer = self._one_open_request(session)
         client.listing = _listing_for(session, "LIVE", "835")
-        first = refresh_enrollments_throttled(
-            session, client, practice_id="practice-1", arm=_no_arm
-        )
+        first = refresh_enrollments_throttled(session, client, practice_id="practice-1")
 
-        second = refresh_enrollments_throttled(
-            session, client, practice_id="practice-1", arm=_no_arm
-        )
+        second = refresh_enrollments_throttled(session, client, practice_id="practice-1")
 
         assert second.changed == first.changed
         assert second.checked_at == first.checked_at
@@ -996,12 +1030,10 @@ class TestRefreshThrottle:
         # missing vendor call as well as the floor would.
         client, _payer = self._one_open_request(session)
         client.listing = _listing_for(session, "PROVISIONING", "835")
-        refresh_enrollments_throttled(session, client, practice_id="practice-1", arm=_no_arm)
+        refresh_enrollments_throttled(session, client, practice_id="practice-1")
         monkeypatch.setattr(enrollment, "REFRESH_FLOOR_SECONDS", 0)
 
-        outcome = refresh_enrollments_throttled(
-            session, client, practice_id="practice-1", arm=_no_arm
-        )
+        outcome = refresh_enrollments_throttled(session, client, practice_id="practice-1")
 
         assert outcome.throttled is False
         assert len(client.calls_named("list_enrollments")) == 2
@@ -1009,11 +1041,9 @@ class TestRefreshThrottle:
     def test_the_floor_is_per_practice(self, session: Session) -> None:
         client, _payer = self._one_open_request(session)
         client.listing = _listing_for(session, "PROVISIONING", "835")
-        refresh_enrollments_throttled(session, client, practice_id="practice-1", arm=_no_arm)
+        refresh_enrollments_throttled(session, client, practice_id="practice-1")
 
-        outcome = refresh_enrollments_throttled(
-            session, client, practice_id="practice-2", arm=_no_arm
-        )
+        outcome = refresh_enrollments_throttled(session, client, practice_id="practice-2")
 
         assert outcome.throttled is False
         assert len(client.calls_named("list_enrollments")) == 2

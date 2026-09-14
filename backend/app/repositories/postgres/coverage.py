@@ -14,6 +14,7 @@ and a second copy beside it would only drift.
 
 from __future__ import annotations
 
+import uuid
 from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
@@ -26,6 +27,22 @@ from ..coverage import ActiveCoverageExistsError, PatientCoverageRepository, Pay
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+
+def _is_uuid(value: str) -> bool:
+    """True iff ``value`` is a syntactically valid UUID string.
+
+    Both primary keys here are ``uuid`` columns, so handing Postgres anything
+    else raises rather than returning no rows. A path parameter that is not a
+    UUID names nothing, which is a miss — the same reading
+    ``PostgresPatientRepository`` takes.
+    """
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
+
 
 _PAYER_FIELDS = (
     "name",
@@ -95,6 +112,8 @@ class PostgresPayerRepository(PayerRepository):
         return [_to_payer(row) for row in rows]
 
     def get(self, payer_row_id: str) -> Payer | None:
+        if not _is_uuid(payer_row_id):
+            return None
         row = self._session.get(PayerRow, payer_row_id)
         return _to_payer(row) if row is not None else None
 
@@ -133,6 +152,8 @@ class PostgresPatientCoverageRepository(PatientCoverageRepository):
         self._session = session
 
     def get(self, coverage_id: str) -> PatientCoverage | None:
+        if not _is_uuid(coverage_id):
+            return None
         row = self._session.get(PatientCoverageRow, coverage_id)
         return _to_coverage(row) if row is not None else None
 

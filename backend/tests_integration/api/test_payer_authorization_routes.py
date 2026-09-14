@@ -20,40 +20,58 @@ Bug classes covered:
 * **Signing something she was not shown.** The version comes back in the
   payload precisely so a document published mid-read cannot be signed blind.
 
-Runs the real router over an in-memory SQLite session, with the document
-directory pointed at a tmpdir — the real documents live in the managed
-deployment's overlay, not in this repository.
+Runs the real router against a real provisioned practice schema, with the
+document directory pointed at a tmpdir — the real documents live in the
+managed deployment's overlay, not in this repository. The signature table is
+per-tenant and row-secured, so the schema and the armed principal are part of
+what makes a read return anything at all.
 """
 
 from __future__ import annotations
 
+import os
+import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from alembic import command
+from alembic.config import Config
 from app.api_errors import register_exception_handlers
 from app.auth.route_access import subscription_exempt
 from app.auth.service import get_current_user, get_tenant_context
 from app.credentialing import authorization
-from app.db import get_db_session
-from app.db.models import Base, PayerAuthorizationRow
+from app.db import arm_current_user_id, get_db_session, set_tenant_schema
+from app.db.models import PayerAuthorizationRow
+from app.db.provisioning import create_practice_schema
 from app.models import User
 from app.routes import credentialing as credentialing_routes
 from app.services.audit_service import AuditService, InMemoryAuditRepository, get_audit_service
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
-
-from tests.sqlite_engine import sqlite_engine
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from pathlib import Path
 
-    from sqlalchemy import Engine
+    from sqlalchemy.engine import Engine
 
-_USER_ID = "11111111-1111-4111-8111-111111111111"
-_OTHER_USER_ID = "22222222-2222-4222-8222-222222222222"
+_DB_URL = os.environ.get("DATABASE_URL", "")
+pytestmark = pytest.mark.skipif(
+    not _DB_URL or os.environ.get("DATABASE_BACKEND") != "postgres",
+    reason=(
+        "PostgreSQL not configured. Set DATABASE_URL and "
+        "DATABASE_BACKEND=postgres; testcontainers should set both."
+    ),
+)
+
+_SUFFIX = uuid.uuid4().hex[:8]
+_SCHEMA = f"practice_test_payerauth_{_SUFFIX}"
+
+_USER_ID = str(uuid.uuid4())
+_OTHER_USER_ID = str(uuid.uuid4())
 _URL = "/api/credentialing/payer-authorization"
 
 _V1 = "2026-01-01"
@@ -87,15 +105,27 @@ def _publish(documents: Path, version: str, text: str) -> None:
     (documents / f"PAYER-AUTH-{version}.md").write_text(text)
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def engine() -> Iterator[Engine]:
-    with sqlite_engine([Base.metadata.tables["payer_authorizations"]]) as eng:
-        yield eng
+    """The real database, migrated, with a practice schema of this module's own."""
+    backend_dir = Path(__file__).resolve().parents[2]
+    cfg = Config(str(backend_dir / "alembic.ini"))
+    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
+    command.upgrade(cfg, "head")
+    eng = create_engine(_DB_URL, pool_pre_ping=True)
+    create_practice_schema(eng, _SCHEMA)
+    yield eng
+    with eng.connect() as conn:
+        conn.execute(text(f'DROP SCHEMA IF EXISTS "{_SCHEMA}" CASCADE'))
+        conn.commit()
+    eng.dispose()
 
 
 @pytest.fixture
 def harness(engine: Engine, documents: Path) -> Iterator[dict[str, Any]]:
     session = Session(engine)
+    set_tenant_schema(session, _SCHEMA)
+    arm_current_user_id(session, _USER_ID)
     audit_repo = InMemoryAuditRepository()
     audit = AuditService(audit_repo)
     app = FastAPI()
@@ -115,6 +145,10 @@ def harness(engine: Engine, documents: Path) -> Iterator[dict[str, Any]]:
             "audit": audit_repo,
         }
     finally:
+        # The schema outlives each test, so each one clears up after itself.
+        session.rollback()
+        session.execute(text(f"DELETE FROM {_SCHEMA}.payer_authorizations"))  # noqa: S608 — schema name, not user input
+        session.commit()
         session.close()
 
 

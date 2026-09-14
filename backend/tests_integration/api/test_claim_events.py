@@ -2,21 +2,29 @@
 
 """Tests for the claim lifecycle event seam (``app.claims.events``).
 
-The listener tests run against a real SQLAlchemy session over in-memory
-SQLite with only the ``compliance_items`` table created, so "the caller's
-transaction still commits" and "one row per event" are checked against a
-database rather than a fake.
+The listener tests run against a real provisioned practice schema, so "the
+caller's transaction still commits" and "one row per event" are checked
+against the database that will actually run them — reminders land on a
+row-secured table, and a listener that wrote rows nobody could read back
+would look identical to one that worked.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
+from contextlib import contextmanager
 from datetime import UTC, date, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, get_args
 
 import pytest
+from alembic import command
+from alembic.config import Config
+from app.auth.route_access import subscription_exempt
+from app.auth.service import get_current_user, get_tenant_context
 from app.claims import events
 from app.claims.events import (
     COMPLIANCE_ITEM_TYPES,
@@ -33,21 +41,36 @@ from app.claims.events import (
     resolve_compliance_reminder,
 )
 from app.compliance import get_template, list_templates_for_edition
-from app.db import _reset_search_path_on_checkin
+from app.db import arm_current_user_id, set_tenant_schema
 from app.db.models import ComplianceItemRow
-from app.main import app
+from app.db.provisioning import create_practice_schema
+from app.models import User
 from app.repositories import get_compliance_item_repository
 from app.repositories.postgres.compliance_item import PostgresComplianceItemRepository
-from sqlalchemy import Engine, create_engine, event, select
+from app.routes import compliance as compliance_routes
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from sqlalchemy import Engine, create_engine, select, text
 from sqlalchemy.orm import Session
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from fastapi.testclient import TestClient
+_DB_URL = os.environ.get("DATABASE_URL", "")
+pytestmark = pytest.mark.skipif(
+    not _DB_URL or os.environ.get("DATABASE_BACKEND") != "postgres",
+    reason=(
+        "PostgreSQL not configured. Set DATABASE_URL and "
+        "DATABASE_BACKEND=postgres; testcontainers should set both."
+    ),
+)
 
-_USER_ID = "11111111-1111-4111-8111-111111111111"
-_CLAIM_ID = "22222222-2222-4222-8222-222222222222"
+_SUFFIX = uuid.uuid4().hex[:8]
+_SCHEMA = f"practice_test_claimev_{_SUFFIX}"
+
+_USER_ID = str(uuid.uuid4())
+_OTHER_USER_ID = str(uuid.uuid4())
+_CLAIM_ID = str(uuid.uuid4())
 _CONTROL_NUMBER = "PCN20260906ABC"
 _OCCURRED_AT = datetime(2026, 9, 6, 15, 30, tzinfo=UTC)
 
@@ -111,22 +134,43 @@ def _event(kind: ClaimEventKind = "rejected", **overrides: object) -> ClaimEvent
     return ClaimEvent(**fields)  # type: ignore[arg-type]  # overrides are test-typed
 
 
-@pytest.fixture
-def engine() -> Iterator[Engine]:
-    """In-memory SQLite with only ``compliance_items`` created.
+@pytest.fixture(scope="module")
+def _database() -> Iterator[Engine]:
+    """The real database, migrated, with a practice schema of this module's own."""
+    backend_dir = Path(__file__).resolve().parents[2]
+    cfg = Config(str(backend_dir / "alembic.ini"))
+    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
+    command.upgrade(cfg, "head")
+    eng = create_engine(_DB_URL, pool_pre_ping=True)
+    create_practice_schema(eng, _SCHEMA)
+    yield eng
+    with eng.connect() as conn:
+        conn.execute(text(f'DROP SCHEMA IF EXISTS "{_SCHEMA}" CASCADE'))
+        conn.commit()
+    eng.dispose()
 
-    The pool-checkin hook in ``app.db`` issues a Postgres ``SET search_path``
-    that SQLite cannot parse, so it is detached for the life of this engine
-    and put back afterwards.
+
+@pytest.fixture
+def engine(_database: Engine) -> Iterator[Engine]:
+    """The same engine, emptied of reminders between tests."""
+    yield _database
+    with _database.connect() as conn:
+        conn.execute(text(f"TRUNCATE {_SCHEMA}.compliance_items CASCADE"))
+        conn.commit()
+
+
+@contextmanager
+def _session(engine: Engine) -> Iterator[Session]:
+    """A session scoped to the schema and armed as the clinician.
+
+    Every session in this module goes through here. A reminder is written
+    under a row policy keyed on the clinician, so an unarmed session would
+    write nothing readable and fail in a way that looks like a listener bug.
     """
-    event.remove(Engine, "checkin", _reset_search_path_on_checkin)
-    eng = create_engine("sqlite://")
-    ComplianceItemRow.__table__.create(eng)  # type: ignore[attr-defined]  # SQLAlchemy declarative attr
-    try:
-        yield eng
-    finally:
-        eng.dispose()
-        event.listen(Engine, "checkin", _reset_search_path_on_checkin)
+    with Session(engine) as session:
+        set_tenant_schema(session, _SCHEMA)
+        arm_current_user_id(session, _USER_ID)
+        yield session
 
 
 @pytest.fixture
@@ -139,7 +183,7 @@ def listeners() -> Iterator[None]:
 
 
 def _reminders(engine: Engine) -> list[ComplianceItemRow]:
-    with Session(engine) as session:
+    with _session(engine) as session:
         return list(session.execute(select(ComplianceItemRow)).scalars().all())
 
 
@@ -153,7 +197,7 @@ def test_listeners_run_in_registration_order(engine: Engine) -> None:
     register_claim_event_listener(lambda _s, _e: calls.append("second"))
     register_claim_event_listener(lambda _s, _e: calls.append("third"))
 
-    with Session(engine) as session:
+    with _session(engine) as session:
         emit(session, _event())
 
     assert calls == ["first", "second", "third"]
@@ -161,7 +205,7 @@ def test_listeners_run_in_registration_order(engine: Engine) -> None:
 
 @pytest.mark.usefixtures("listeners")
 def test_emit_with_no_listeners_is_a_no_op(engine: Engine) -> None:
-    with Session(engine) as session:
+    with _session(engine) as session:
         emit(session, _event())
 
 
@@ -181,7 +225,7 @@ def test_raising_listener_is_logged_and_the_rest_still_run(
     register_claim_event_listener(explodes)
     register_claim_event_listener(lambda _s, _e: calls.append("after"))
 
-    with caplog.at_level(logging.WARNING, logger="app.claims.events"), Session(engine) as session:
+    with caplog.at_level(logging.WARNING, logger="app.claims.events"), _session(engine) as session:
         emit(session, _event("denied"))
 
     assert calls == ["after"]
@@ -204,7 +248,7 @@ def test_raising_listener_does_not_stop_the_callers_commit(engine: Engine) -> No
     register_claim_event_listener(explodes)
     register_claim_event_listener(compliance_reminder_listener)
 
-    with Session(engine) as session:
+    with _session(engine) as session:
         # The caller's own state change, recorded before the event fires.
         session.add(
             ComplianceItemRow(
@@ -270,11 +314,11 @@ def test_default_listener_writes_one_reminder_per_kind_and_control_number(
 ) -> None:
     register_claim_event_listener(compliance_reminder_listener)
 
-    with Session(engine) as session:
+    with _session(engine) as session:
         emit(session, _event("denied"))
         emit(session, _event("denied"))
         session.commit()
-    with Session(engine) as session:
+    with _session(engine) as session:
         emit(session, _event("denied"))
         session.commit()
 
@@ -295,7 +339,7 @@ def test_default_listener_writes_one_reminder_per_kind_and_control_number(
 def test_same_control_number_different_kinds_get_separate_reminders(engine: Engine) -> None:
     register_claim_event_listener(compliance_reminder_listener)
 
-    with Session(engine) as session:
+    with _session(engine) as session:
         emit(session, _event("rejected"))
         emit(session, _event("denied"))
         emit(session, _event("rejected", control_number="OTHER-CLAIM"))
@@ -313,7 +357,7 @@ def test_same_control_number_different_kinds_get_separate_reminders(engine: Engi
 def test_paid_writes_no_reminder(engine: Engine) -> None:
     register_claim_event_listener(compliance_reminder_listener)
 
-    with Session(engine) as session:
+    with _session(engine) as session:
         emit(session, _event("paid"))
         session.commit()
 
@@ -324,7 +368,7 @@ def test_paid_writes_no_reminder(engine: Engine) -> None:
 def test_reminder_without_a_deadline_is_due_a_week_after_the_event(engine: Engine) -> None:
     register_claim_event_listener(compliance_reminder_listener)
 
-    with Session(engine) as session:
+    with _session(engine) as session:
         emit(session, _event("stalled", payer_name=None))
         session.commit()
 
@@ -338,7 +382,7 @@ def test_reminder_without_a_deadline_is_due_a_week_after_the_event(engine: Engin
 def test_enrollment_reminder_carries_the_payers_instructions(engine: Engine) -> None:
     register_claim_event_listener(compliance_reminder_listener)
 
-    with Session(engine) as session:
+    with _session(engine) as session:
         emit(session, _event("enrollment_action_required"))
         session.commit()
 
@@ -356,11 +400,11 @@ def test_enrollment_reminder_carries_the_payers_instructions(engine: Engine) -> 
 def test_find_claim_reminder_returns_the_row_the_listener_wrote(engine: Engine) -> None:
     register_claim_event_listener(compliance_reminder_listener)
 
-    with Session(engine) as session:
+    with _session(engine) as session:
         emit(session, _event("denied"))
         session.commit()
 
-    with Session(engine) as session:
+    with _session(engine) as session:
         row = find_claim_reminder(session, kind="denied", control_number=_CONTROL_NUMBER)
 
     assert row is not None
@@ -372,16 +416,16 @@ def test_find_claim_reminder_returns_the_row_the_listener_wrote(engine: Engine) 
 def test_find_claim_reminder_misses_another_claim_or_kind(engine: Engine) -> None:
     register_claim_event_listener(compliance_reminder_listener)
 
-    with Session(engine) as session:
+    with _session(engine) as session:
         emit(session, _event("denied"))
         session.commit()
 
-    with Session(engine) as session:
+    with _session(engine) as session:
         assert find_claim_reminder(session, kind="denied", control_number="OTHER-CLAIM") is None
         assert find_claim_reminder(session, kind="rejected", control_number=_CONTROL_NUMBER) is None
         assert (
             find_claim_reminder(
-                session, kind="denied", control_number=_CONTROL_NUMBER, user_id="someone-else"
+                session, kind="denied", control_number=_CONTROL_NUMBER, user_id=_OTHER_USER_ID
             )
             is None
         )
@@ -391,11 +435,11 @@ def test_find_claim_reminder_misses_another_claim_or_kind(engine: Engine) -> Non
 def test_resolving_completes_the_reminder_the_lookup_returns(engine: Engine) -> None:
     register_claim_event_listener(compliance_reminder_listener)
 
-    with Session(engine) as session:
+    with _session(engine) as session:
         emit(session, _event("enrollment_action_required"))
         session.commit()
 
-    with Session(engine) as session:
+    with _session(engine) as session:
         assert resolve_compliance_reminder(
             session,
             kind="enrollment_action_required",
@@ -404,7 +448,7 @@ def test_resolving_completes_the_reminder_the_lookup_returns(engine: Engine) -> 
         )
         session.commit()
 
-    with Session(engine) as session:
+    with _session(engine) as session:
         row = find_claim_reminder(
             session, kind="enrollment_action_required", control_number=_CONTROL_NUMBER
         )
@@ -427,7 +471,13 @@ def test_every_actionable_kind_has_a_compliance_template() -> None:
 
 
 @pytest.mark.parametrize("item_type", COMPLIANCE_ITEM_TYPES)
-def test_compliance_route_accepts_claim_item_types(client: TestClient, item_type: str) -> None:
+def test_compliance_route_accepts_claim_item_types(item_type: str) -> None:
+    """Every kind the listener can write is a kind the route will accept.
+
+    A schema question, not a storage one — the repository is counted rather
+    than queried — so this one runs on a router of its own with no database
+    behind it.
+    """
     created: list[object] = []
 
     class _Repo:
@@ -435,14 +485,25 @@ def test_compliance_route_accepts_claim_item_types(client: TestClient, item_type
             created.append(item)
             return item
 
-    app.dependency_overrides[get_compliance_item_repository] = _Repo
-    try:
-        response = client.post(
-            "/api/compliance",
-            json={"item_type": item_type, "label": "Claim PCN20260 denied by Aetna"},
-        )
-    finally:
-        app.dependency_overrides.pop(get_compliance_item_repository, None)
+    now = datetime.now(UTC)
+    api = FastAPI()
+    api.include_router(compliance_routes.router)
+    api.dependency_overrides[get_current_user] = lambda: User(
+        id=_USER_ID,
+        email="therapist@example.com",
+        name="Test Therapist",
+        created_at=now,
+        baa_accepted_at=now,
+        baa_version="2024-01-01",
+    )
+    api.dependency_overrides[get_tenant_context] = lambda: None
+    api.dependency_overrides[subscription_exempt] = lambda: None
+    api.dependency_overrides[get_compliance_item_repository] = _Repo
+
+    response = TestClient(api, raise_server_exceptions=False).post(
+        "/api/compliance",
+        json={"item_type": item_type, "label": "Claim PCN20260 denied by Aetna"},
+    )
 
     assert response.status_code == 201, response.text
     assert response.json()["item_type"] == item_type
@@ -451,7 +512,7 @@ def test_compliance_route_accepts_claim_item_types(client: TestClient, item_type
 
 def test_postgres_repository_reads_what_the_listener_wrote(engine: Engine) -> None:
     """The dashboard reads reminders through the repository; the listener's rows fit it."""
-    with Session(engine) as session:
+    with _session(engine) as session:
         compliance_reminder_listener(session, _event("deadline_missed"))
         session.commit()
         [item] = PostgresComplianceItemRepository(session).list_by_user(_USER_ID)

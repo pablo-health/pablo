@@ -9,9 +9,12 @@
 * ``GET  .../enrollments/{transaction}/documents/{id}`` — where to fetch a
   PDF from, and only for a document that is on this practice's enrollment.
 
-Runs the payer router over an in-memory SQLite session against the shared
-enrollment fake, which takes documents through the vendor's two steps and
-refuses a completion naming one whose bytes never arrived.
+Runs the payer router against a real provisioned practice schema and the
+shared enrollment fake, which takes documents through the vendor's two steps
+and refuses a completion naming one whose bytes never arrived. The routes arm
+the session as whoever filed the request, and that arm is a Postgres GUC — on
+a substitute database it was a no-op the harness supplied, which meant these
+routes ran here in a configuration production never sees.
 """
 
 from __future__ import annotations
@@ -19,23 +22,23 @@ from __future__ import annotations
 import base64
 import json
 import os
+import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from alembic import command
+from alembic.config import Config
 from app.auth.service import (
     TenantContext,
     get_tenant_context,
     require_active_subscription,
 )
 from app.claims import enrollment
-from app.db import get_db_session
-from app.db.models import (
-    ComplianceItemRow,
-    PayerEnrollmentRow,
-    PayerRow,
-    PracticeBillingProfileRow,
-)
+from app.db import arm_current_user_id, get_db_session, set_tenant_schema
+from app.db.models import PayerEnrollmentRow
+from app.db.provisioning import create_practice_schema
 from app.models import User
 from app.repositories import get_payer_repository
 from app.repositories.postgres.coverage import PostgresPayerRepository
@@ -45,17 +48,31 @@ from app.services.practice_billing_profile import update_billing_profile
 from app.settings import get_settings
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
-
 from tests.enrollment_fakes import ENROLLMENTS_BASE, TEST_PAYER_ID, FakeClearinghouse
-from tests.sqlite_engine import sqlite_engine
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from sqlalchemy import Engine
+    from sqlalchemy.engine import Engine
 
-_USER_ID = "11111111-1111-4111-8111-111111111111"
+_DB_URL = os.environ.get("DATABASE_URL", "")
+pytestmark = pytest.mark.skipif(
+    not _DB_URL or os.environ.get("DATABASE_BACKEND") != "postgres",
+    reason=(
+        "PostgreSQL not configured. Set DATABASE_URL and "
+        "DATABASE_BACKEND=postgres; testcontainers should set both."
+    ),
+)
+
+_SUFFIX = uuid.uuid4().hex[:8]
+_SCHEMA = f"practice_test_enrtask_{_SUFFIX}"
+
+#: Emptied between tests; the schema outlives them.
+_TABLES = ("compliance_items", "payer_enrollments", "payers", "practice_billing_profile")
+
+_USER_ID = str(uuid.uuid4())
 _SIGNED_FORM_TASK = "01a0a1b2-3c4d-7e5f-8a6b-7c8d9e0f1a2b"
 _A_PDF = b"%PDF-1.7\nsigned\n%%EOF\n"
 
@@ -85,7 +102,7 @@ def _user() -> User:
 
 
 def _tenant() -> TenantContext:
-    return TenantContext(user_id=_USER_ID, practice_id="practice-1", practice_schema="practice_x")
+    return TenantContext(user_id=_USER_ID, practice_id="practice-1", practice_schema=_SCHEMA)
 
 
 @pytest.fixture(autouse=True)
@@ -96,21 +113,20 @@ def _encryption_key(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     get_settings.cache_clear()
 
 
-def _no_arm(_session: Session, _user_id: str) -> None:
-    """The RLS arm, on a database that has no GUC to arm."""
-
-
-@pytest.fixture
+@pytest.fixture(scope="module")
 def engine() -> Iterator[Engine]:
-    with sqlite_engine(
-        [
-            PracticeBillingProfileRow.__table__,
-            PayerRow.__table__,
-            PayerEnrollmentRow.__table__,
-            ComplianceItemRow.__table__,
-        ]
-    ) as eng:
-        yield eng
+    """The real database, migrated, with a practice schema of this module's own."""
+    backend_dir = Path(__file__).resolve().parents[2]
+    cfg = Config(str(backend_dir / "alembic.ini"))
+    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
+    command.upgrade(cfg, "head")
+    eng = create_engine(_DB_URL, pool_pre_ping=True)
+    create_practice_schema(eng, _SCHEMA)
+    yield eng
+    with eng.connect() as conn:
+        conn.execute(text(f'DROP SCHEMA IF EXISTS "{_SCHEMA}" CASCADE'))
+        conn.commit()
+    eng.dispose()
 
 
 @pytest.fixture
@@ -119,6 +135,8 @@ def harness(engine: Engine) -> Iterator[dict[str, Any]]:
     clearinghouse = FakeClearinghouse()
     enrollment.register_clearinghouse_client_factory(lambda _practice_id: clearinghouse)
     session = Session(engine)
+    set_tenant_schema(session, _SCHEMA)
+    arm_current_user_id(session, _USER_ID)
     payers = PostgresPayerRepository(session)
     payer = payers.create(
         # The recorded directory requires an enrollment for remittance alone,
@@ -137,9 +155,6 @@ def harness(engine: Engine) -> Iterator[dict[str, Any]]:
     app.dependency_overrides[get_tenant_context] = _tenant
     app.dependency_overrides[get_payer_repository] = lambda: payers
     app.dependency_overrides[get_db_session] = lambda: session
-    # SQLite has no ``set_config``, so the RLS arm is a no-op here; what it
-    # guards is exercised in the Postgres suite.
-    app.dependency_overrides[coverage_routes.get_principal_armer] = lambda: _no_arm
     client = TestClient(app)
     client.post(f"/api/payers/{payer.id}/enrollments")
     clearinghouse.wants_a_signed_form("enr-0001")
@@ -155,6 +170,10 @@ def harness(engine: Engine) -> Iterator[dict[str, Any]]:
             "links": f"/api/payers/{payer.id}/enrollments/835/tasks/{_SIGNED_FORM_TASK}/links",
         }
     finally:
+        session.rollback()
+        for table in _TABLES:
+            session.execute(text(f"DELETE FROM {_SCHEMA}.{table}"))  # noqa: S608 — schema name, not user input
+        session.commit()
         session.close()
         enrollment.register_clearinghouse_client_factory(None)
 

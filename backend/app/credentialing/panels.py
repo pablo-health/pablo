@@ -7,19 +7,28 @@ operator surface rather than from her — a clinician who could set her own
 application to ``effective`` would be recording a fact she is not the source
 of.
 
+The table is PLATFORM-scoped, because the surface that reads it most is an
+operator working across every practice at once. Her own view is not weakened by
+that: ``platform.panel_applications`` carries row-level security on
+``app.current_user_id``, so the ``user_id`` filter below is the same answer
+stated twice rather than the only thing standing between her and a colleague's
+applications.
+
 The payer's name is joined rather than stored, so an insurer renamed in
-Settings is renamed everywhere it appears at once.
+Settings is renamed everywhere it appears at once. ``payers`` is per-tenant, so
+that join resolves through the request's ``search_path`` — which is set to her
+practice schema, and is why this read needs no practice filter of its own.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
-from ..db.models import PanelApplicationRow, PayerRow
+from ..db.models import PayerRow
+from ..db.platform_models import PlatformPanelApplicationRow
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -36,7 +45,7 @@ SETTLED_STATUSES: frozenset[str] = frozenset({"effective", "denied"})
 class PanelApplication:
     """One application, with the payer's name resolved."""
 
-    row: PanelApplicationRow
+    row: PlatformPanelApplicationRow
     payer_name: str
 
     @property
@@ -49,19 +58,10 @@ class PanelApplication:
         return self.row.status in SETTLED_STATUSES
 
     def days_since_submitted(self, now: datetime) -> int | None:
-        """How long it has been sitting with the payer, or ``None`` if unfiled.
-
-        The column is ``TIMESTAMP WITH TIME ZONE`` and Postgres hands back an
-        aware value, but SQLite — which the route tests run on — drops the
-        offset and returns a naive one. Subtracting the two raises, so the
-        stored value is read as UTC when it arrives without an offset. That is
-        what it always was; only the carrier forgot.
-        """
+        """How long it has been sitting with the payer, or ``None`` if unfiled."""
         submitted = self.row.submitted_at
         if submitted is None:
             return None
-        if submitted.tzinfo is None:
-            submitted = submitted.replace(tzinfo=UTC)
         return (now - submitted).days
 
 
@@ -79,15 +79,15 @@ def list_for(session: Session, user_id: str) -> list[PanelApplication]:
     and putting those above a dated one would bury the dated one.
     """
     rows = session.execute(
-        select(PanelApplicationRow, PayerRow.name)
-        .join(PayerRow, PayerRow.id == PanelApplicationRow.payer_id)
-        .where(PanelApplicationRow.user_id == user_id)
+        select(PlatformPanelApplicationRow, PayerRow.name)
+        .join(PayerRow, PayerRow.id == PlatformPanelApplicationRow.payer_id)
+        .where(PlatformPanelApplicationRow.user_id == user_id)
         .order_by(
-            PanelApplicationRow.status.in_(SETTLED_STATUSES),
-            (PanelApplicationRow.action_owner != "therapist"),
-            PanelApplicationRow.due_at.is_(None),
-            PanelApplicationRow.due_at,
-            PanelApplicationRow.created_at,
+            PlatformPanelApplicationRow.status.in_(SETTLED_STATUSES),
+            (PlatformPanelApplicationRow.action_owner != "therapist"),
+            PlatformPanelApplicationRow.due_at.is_(None),
+            PlatformPanelApplicationRow.due_at,
+            PlatformPanelApplicationRow.created_at,
         )
     ).all()
     return [PanelApplication(row=row, payer_name=payer_name) for row, payer_name in rows]

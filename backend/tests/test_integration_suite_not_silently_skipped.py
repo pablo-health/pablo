@@ -165,7 +165,8 @@ def test_deleting_the_backend_advertisement_is_caught() -> None:
         "-q",
         env_overrides={
             "DATABASE_URL": "postgresql://pablo:pablo_dev@localhost:5432/pablo",
-            "DATABASE_BACKEND": "sqlite",  # what a broken bootstrap leaves behind
+            # Anything but "postgres" — a bootstrap that forgot to say so.
+            "DATABASE_BACKEND": "unset-by-a-broken-bootstrap",
             PLACEHOLDER_MARKER_ENV: None,
         },
     )

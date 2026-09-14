@@ -7,8 +7,8 @@ force-RLS'd with the ``has_patient_access`` policy like the claims it
 belongs to. The outbox then runs the way the scheduled job runs it — a
 tenant session armed as the claim's owner, the clearinghouse answered
 from recorded fixtures, the default event listener in place — and proves
-what SQLite cannot: the rejection a worker raises lands as a compliance
-reminder under that clinician's row policy, visible to them and to nobody
+that the rejection a worker raises lands as a compliance reminder under
+that clinician's row policy, visible to them and to nobody
 else; the pending marker written before the submission call survives a
 crash and is replayed with the same key; and the two uniqueness rules the
 acknowledgement paths rely on are enforced by the database, not only by

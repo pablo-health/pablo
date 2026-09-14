@@ -111,7 +111,6 @@ from ..claims.enrollment import (
     ONE_CLICK,
     BillingProfileIncompleteError,
     PayerNotInDirectoryError,
-    PrincipalArmer,
     clearinghouse_client_for_practice,
     enroll_if_new,
     enrollment_process,
@@ -223,16 +222,6 @@ def get_clearinghouse_client(
     return clearinghouse_client_for_practice(ctx.practice_id)
 
 
-def get_principal_armer() -> PrincipalArmer:
-    """How a route arms the session as a principal other than the caller.
-
-    A dependency for the same reason the enrollment trigger is one: the
-    payer tests run on SQLite, which has no ``set_config``, so they hand in
-    a no-op. Production always gets the real GUC arm.
-    """
-    return arm_current_user_id
-
-
 def get_billing_identity(user: CurrentUser) -> BillingIdentity | None:
     """Who the 270 is asked as: the practice's billing NPI, else the clinician's."""
     return load_billing_identity(get_db_session(), user)
@@ -255,7 +244,6 @@ def get_enrollment_trigger(
 
 EnrollmentTrigger = Annotated["Callable[[str, str], None]", Depends(get_enrollment_trigger)]
 Clearinghouse = Annotated[ClearinghouseClient | None, Depends(get_clearinghouse_client)]
-Armer = Annotated["PrincipalArmer", Depends(get_principal_armer)]
 
 
 def _to_payer_response(payer: Payer) -> PayerResponse:
@@ -608,11 +596,10 @@ def _read_enrollment(
     client: ClearinghouseClient,
     row: PayerEnrollmentRow,
     user_id: str,
-    arm: PrincipalArmer,
 ) -> Enrollment:
     """The enrollment as the clearinghouse has it now, with the row brought up to it."""
     try:
-        enrollment = refresh_enrollment(session, client, row, arm=arm)
+        enrollment = refresh_enrollment(session, client, row)
     except ClearinghouseUnavailableError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_CLEARINGHOUSE_BUSY
@@ -624,7 +611,7 @@ def _read_enrollment(
     # The refresh arms the session as whoever filed the request, so that the
     # reminder a status change writes lands under their row policy. Whoever is
     # reading the tasks is somebody else as often as not; hand it back.
-    arm(session, user_id)
+    arm_current_user_id(session, user_id)
     return enrollment
 
 
@@ -724,7 +711,6 @@ def get_enrollment_tasks(
     payers: PayersRepo,
     session: DbSession,
     client: Clearinghouse,
-    arm: Armer,
     ctx: TenantContext = Depends(get_tenant_context),
 ) -> EnrollmentTaskListResponse:
     """What the payer is still waiting on, read from the clearinghouse.
@@ -737,7 +723,7 @@ def get_enrollment_tasks(
     """
     row = _require_enrollment_row(session, payers, payer_row_id, transaction_type)
     reachable = _require_clearinghouse(client)
-    enrollment = _read_enrollment(session, reachable, row, ctx.user_id, arm)
+    enrollment = _read_enrollment(session, reachable, row, ctx.user_id)
     return _tasks_response(row, enrollment, reachable)
 
 
@@ -752,7 +738,6 @@ def answer_enrollment_task(
     payers: PayersRepo,
     session: DbSession,
     client: Clearinghouse,
-    arm: Armer,
     values: Annotated[str, Form()] = "{}",
     document_fields: Annotated[list[str] | None, Form()] = None,
     documents: Annotated[list[UploadFile] | None, File()] = None,
@@ -775,7 +760,7 @@ def answer_enrollment_task(
     text = _typed_answers(values)
     uploads = _uploads(document_fields, documents)
 
-    enrollment = _read_enrollment(session, reachable, row, ctx.user_id, arm)
+    enrollment = _read_enrollment(session, reachable, row, ctx.user_id)
     task = next(
         (item for item in enrollment.tasks if item.id == task_id and item.needs_the_practice),
         None,
@@ -804,9 +789,7 @@ def answer_enrollment_task(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=_CLEARINGHOUSE_REFUSED
         ) from exc
 
-    return _tasks_response(
-        row, _read_enrollment(session, reachable, row, ctx.user_id, arm), reachable
-    )
+    return _tasks_response(row, _read_enrollment(session, reachable, row, ctx.user_id), reachable)
 
 
 @payers_router.get(
@@ -821,7 +804,6 @@ def resolve_enrollment_task_link(
     payers: PayersRepo,
     session: DbSession,
     client: Clearinghouse,
-    arm: Armer,
     ctx: TenantContext = Depends(get_tenant_context),
 ) -> EnrollmentDocumentUrlResponse:
     """Open a task link the clearinghouse hosts: the short-lived URL to fetch it from.
@@ -834,7 +816,7 @@ def resolve_enrollment_task_link(
     """
     row = _require_enrollment_row(session, payers, payer_row_id, transaction_type)
     reachable = _require_clearinghouse(client)
-    enrollment = _read_enrollment(session, reachable, row, ctx.user_id, arm)
+    enrollment = _read_enrollment(session, reachable, row, ctx.user_id)
     task = next((item for item in enrollment.tasks if item.id == task_id), None)
     manual = task.definition.manualTask if task and task.definition else None
     links = manual.links if manual else []
@@ -866,7 +848,6 @@ def get_enrollment_document_url(
     payers: PayersRepo,
     session: DbSession,
     client: Clearinghouse,
-    arm: Armer,
     ctx: TenantContext = Depends(get_tenant_context),
 ) -> EnrollmentDocumentUrlResponse:
     """Where to fetch one of this enrollment's PDFs — the form to sign, or the signed one back.
@@ -878,7 +859,7 @@ def get_enrollment_document_url(
     """
     row = _require_enrollment_row(session, payers, payer_row_id, transaction_type)
     reachable = _require_clearinghouse(client)
-    enrollment = _read_enrollment(session, reachable, row, ctx.user_id, arm)
+    enrollment = _read_enrollment(session, reachable, row, ctx.user_id)
     if enrollment.document(document_id) is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=_DOCUMENT_NOT_ON_ENROLLMENT
