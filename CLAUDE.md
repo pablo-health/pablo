@@ -159,10 +159,15 @@ Four that are easy to get wrong:
      `env.py` tears down alembic's module-level proxies and dies with
      `KeyError: 'config'`.
    - **Platform DDL belongs in the platform chain**, not in a tenant
-     revision. A tenant revision that creates a platform index will be
-     re-run once per practice schema and will undo any platform-side
-     cleanup on the next fresh install — which is exactly what 15
-     duplicate indexes came from.
+     revision. A tenant revision touching `platform.` is re-run once per
+     practice schema, so it must be idempotent by hand, and it runs
+     *after* the platform chain — so it can silently undo platform-side
+     work on every fresh install. That is where 15 duplicate indexes
+     came from, and why the revision that drops them has to sit at the
+     end of the tenant chain rather than in the platform chain: the
+     eight revisions that create them are there, and they run second.
+     35 tenant revisions still touch `platform.` for historical reasons.
+     Don't add the 36th (`PABLO-k7it`).
 
    **RLS enforcement** — every per-tenant table that carries a
    `user_id`, `patient_id`, or `id` column is force-RLS'd by

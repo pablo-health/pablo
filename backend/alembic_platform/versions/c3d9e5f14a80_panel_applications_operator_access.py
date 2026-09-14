@@ -26,7 +26,7 @@ Idempotent, and safe to run before or after ``c4d81e6a2f09``: both spell the sam
 ``DROP POLICY IF EXISTS`` then ``CREATE POLICY``.
 
 Revision ID: c3d9e5f14a80
-Revises: b2c8d4e06f31
+Revises: a1b7c3d95e24
 Create Date: 2026-09-14
 """
 
@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 __all__ = ["branch_labels", "depends_on", "down_revision", "revision"]
 
 revision: str = "c3d9e5f14a80"
-down_revision: str | Sequence[str] | None = "b2c8d4e06f31"
+down_revision: str | Sequence[str] | None = "a1b7c3d95e24"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

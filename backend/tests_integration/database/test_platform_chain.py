@@ -79,6 +79,11 @@ _BACKEND_DIR = Path(__file__).resolve().parents[2]
 #: Excluded from the comparison rather than special-cased inside each query.
 _VERSION_TABLE = "alembic_version_platform"
 
+#: The tenant-chain revision immediately before ``d8f3b6c04e17``, the
+#: duplicate-index cleanup. The legacy fixture stops here, because that is where
+#: every real database currently stands.
+_LAST_REVISION_BEFORE_THE_CLEANUP = "c4d81e6a2f09"
+
 
 def _alembic(database_url: str, *args: str) -> None:
     """Run alembic in a subprocess against ``database_url``.
@@ -148,25 +153,18 @@ def legacy_db() -> Iterator[str]:
         finally:
             engine.dispose()
 
-        # The tenant chain on top. Its platform-schema statements are all
-        # ``IF NOT EXISTS``, so they layer onto what create_all built — which is
-        # how the two builders came to disagree in the first place.
-        _alembic(url, "upgrade", "head")
-
-        # And the duplicate indexes those revisions used to create. That DDL was
-        # removed from them in the same change that dropped the duplicates —
-        # otherwise the tenant chain put every one straight back — so replaying
-        # it here is the only way left to reconstruct what a database that ran
-        # those revisions actually carries. Without this the comparison below
-        # would pass while proving strictly less, and the drop revision would
-        # look like dead weight.
-        engine = create_engine(url)
-        try:
-            with engine.begin() as conn:
-                for name, target in _LEGACY_DUPLICATE_INDEXES.items():
-                    conn.exec_driver_sql(f"CREATE INDEX {name} ON platform.{target}")
-        finally:
-            engine.dispose()
+        # The tenant chain on top, stopping one revision short of head — at
+        # ``c4d81e6a2f09``, the last revision before the duplicate-index cleanup.
+        # Its platform-schema statements are all ``IF NOT EXISTS``, so they layer
+        # onto what create_all built, which is how the two builders came to
+        # disagree in the first place.
+        #
+        # Stopping there is what makes this a reconstruction of a REAL database
+        # rather than an approximation of one: every deployment has run these
+        # revisions and none has yet run the cleanup, so this is the shape dev and
+        # prod are in today. Running to head would drop the duplicates and leave
+        # the comparison below proving strictly less.
+        _alembic(url, "upgrade", _LAST_REVISION_BEFORE_THE_CLEANUP)
 
         yield url
     finally:
@@ -358,38 +356,34 @@ def test_no_drift_between_the_chain_and_the_models(empty_db: str) -> None:
     _alembic(empty_db, "-n", "platform", "check")
 
 
-#: The 15 duplicate indexes ``b2c8d4e06f31`` drops, as ``name -> table(columns)``.
+#: The 15 duplicate indexes ``d8f3b6c04e17`` drops.
 #:
-#: Also the historical record of DDL that no longer exists anywhere else. Eight
-#: tenant-chain revisions used to create these; that was removed in the same
-#: change as the drop, because otherwise the tenant chain recreated every one
-#: immediately after the platform chain dropped it. So the legacy fixture has to
-#: replay them to reconstruct what a real database actually carries — verified
-#: against pablohealth-dev on 2026-09-14: all 15 present, definitions identical
-#: to their twins, every twin also present.
-_LEGACY_DUPLICATE_INDEXES: dict[str, str] = {
-    "ix_booking_links_user_id": "booking_links (user_id)",
-    "ix_claim_routes_practice_id": "claim_routes (practice_id)",
-    "ix_companion_devices_jkt": "companion_devices (jkt)",
-    "ix_companion_devices_user_id": "companion_devices (user_id)",
-    "ix_launch_intents_expires_at": "launch_intents (expires_at)",
-    "ix_launch_intents_user_id": "launch_intents (user_id)",
-    "ix_passkey_backup_codes_user_id": "passkey_backup_codes (user_id)",
-    "ix_passkey_challenges_expires_at": "passkey_challenges (expires_at)",
-    "ix_passkey_challenges_user_id": "passkey_challenges (user_id)",
-    "ix_passkey_credentials_user_id": "passkey_credentials (user_id)",
-    "ix_platform_audit_logs_action": "platform_audit_logs (action)",
-    "ix_platform_audit_logs_actor": "platform_audit_logs (actor_user_id)",
-    "ix_platform_audit_logs_tenant_schema": "platform_audit_logs (tenant_schema)",
-    "ix_platform_audit_logs_timestamp": 'platform_audit_logs ("timestamp")',
-    "ix_user_identities_user_id": "user_identities (user_id)",
-}
-
-#: The only objects the chain is allowed to be missing relative to the legacy
-#: shape. Each is covered by a surviving twin on the same table and columns — the
-#: list of pairs is in ``b2c8d4e06f31``. Anything else missing is a fault in the
-#: baseline.
-_INTENTIONALLY_DROPPED_INDEXES = frozenset(_LEGACY_DUPLICATE_INDEXES)
+#: Each is covered by a surviving twin on the same table and columns — the list of
+#: pairs is in that revision. Verified against pablohealth-dev on 2026-09-14: all
+#: 15 present, each definition identical to its twin's, every twin also present,
+#: and no other duplicate groups anywhere in the platform schema.
+#:
+#: They are the only objects the chain-built schema is allowed to be missing
+#: relative to the legacy one. Anything else missing is a fault in the baseline.
+_INTENTIONALLY_DROPPED_INDEXES = frozenset(
+    {
+        "ix_booking_links_user_id",
+        "ix_claim_routes_practice_id",
+        "ix_companion_devices_jkt",
+        "ix_companion_devices_user_id",
+        "ix_launch_intents_expires_at",
+        "ix_launch_intents_user_id",
+        "ix_passkey_backup_codes_user_id",
+        "ix_passkey_challenges_expires_at",
+        "ix_passkey_challenges_user_id",
+        "ix_passkey_credentials_user_id",
+        "ix_platform_audit_logs_action",
+        "ix_platform_audit_logs_actor",
+        "ix_platform_audit_logs_tenant_schema",
+        "ix_platform_audit_logs_timestamp",
+        "ix_user_identities_user_id",
+    }
+)
 
 
 def test_chain_matches_the_legacy_bootstrap(empty_db: str, legacy_db: str) -> None:
@@ -500,13 +494,16 @@ def test_a_stamped_database_does_not_ask_to_be_stamped_again(legacy_db: str) -> 
 
 
 def test_stamped_pre_chain_database_upgrades_to_head(legacy_db: str) -> None:
-    """The whole path a real deployment takes: stamp, then upgrade.
+    """The whole path a real deployment takes: stamp, then both chains in order.
 
-    The payoff is the duplicate-index repair actually running — the baseline is
-    skipped as already-present, and the revision after it does the work.
+    Both chains, because the duplicate-index repair is the payoff and it lives at
+    the end of the TENANT chain — it has to, since eight revisions in that chain
+    create the indexes and that chain runs second. A drop on the platform side is
+    undone a moment later on every fresh install.
     """
     _alembic(legacy_db, "-n", "platform", "stamp", "a1b7c3d95e24")
     _alembic(legacy_db, "-n", "platform", "upgrade", "head")
+    _alembic(legacy_db, "upgrade", "head")
 
     engine = create_engine(legacy_db)
     try:
@@ -536,10 +533,12 @@ def test_stamped_pre_chain_database_upgrades_to_head(legacy_db: str) -> None:
 def test_the_tenant_chain_does_not_put_the_duplicates_back(empty_db: str) -> None:
     """Running both chains in order leaves the duplicates dropped.
 
-    The regression this exists for: eight tenant-chain revisions used to create
-    these indexes with ``CREATE INDEX IF NOT EXISTS``, so on a fresh install the
-    platform chain dropped them and the tenant chain immediately recreated every
-    one. The repair looked fine in isolation and was undone by the next command.
+    The regression this exists for: eight tenant-chain revisions create these
+    indexes with ``CREATE INDEX IF NOT EXISTS``, and the tenant chain runs second.
+    With the cleanup on the platform side, a fresh install dropped fifteen and
+    then recreated every one — the repair looked correct in isolation and was
+    undone by the next command. It is at the end of the tenant chain for exactly
+    that reason, and this is the test that says so.
     """
     _alembic(empty_db, "-n", "platform", "upgrade", "head")
     _alembic(empty_db, "upgrade", "head")
