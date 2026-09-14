@@ -202,6 +202,22 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+      # Two things at once, and the second is the load-bearing one.
+      #
+      # Ordering: the suite signs in and immediately expects a second practice
+      # to exist, so the frontend has no business accepting traffic before the
+      # seeding that creates it has finished.
+      #
+      # And ``up --wait`` returns when every service is *running or healthy*. A
+      # container that has exited is neither, so a one-shot service failed the
+      # step no matter what it exited with — the log read "seed-second-practice
+      # exited (0)" and then "exit code 1", and every branch was red on this
+      # job from the day the seeder landed. Naming it here as
+      # ``service_completed_successfully`` is what tells compose the exit was
+      # the point. A non-zero exit still fails the stack, which is correct: a
+      # suite that needs the second practice should not run without it.
+      seed-second-practice:
+        condition: service_completed_successfully
 
   firebase-auth:
     build:
