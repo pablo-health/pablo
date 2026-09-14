@@ -286,6 +286,129 @@ class PlatformUserPreferencesRow(PlatformBase):
     preferences: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
 
 
+#: Where an application to join a payer's panel stands.
+#:
+#: Not the same thing as ``payers.enrollment_status``, and the two are easy to
+#: confuse. That one is the ELECTRONIC connection — whether 837/835/270 can be
+#: exchanged with a payer she is already contracted with. This one is whether
+#: the payer will contract with her at all. A clinician can be enrolled for
+#: transactions with a payer whose panel she is not on, and vice versa.
+#:
+#: ``info_requested`` is the load-bearing one. A payer info request carries a
+#: 30-60 day fuse and a missed one kills the application outright, which is
+#: why it is the status whose deadline matters most.
+PANEL_APPLICATION_STATUSES: tuple[str, ...] = (
+    "researching",
+    "caqh_ready",
+    "submitted",
+    "in_review",
+    "info_requested",
+    "contract_received",
+    "effective",
+    "closed_panel_appeal",
+    "denied",
+    "recredentialing",
+)
+
+#: Whose move it is. The column the concierge model turns on: with Pablo
+#: running the applications, the default owner is ``pablo`` and the clinician
+#: hears from us only when she genuinely has to act. Without it the board can
+#: only nag her about everything, which is the process she was trying to stop
+#: carrying.
+PANEL_ACTION_OWNERS: tuple[str, ...] = ("pablo", "therapist")
+
+
+def _sql_in_list(values: tuple[str, ...]) -> str:
+    """Render a tuple as a SQL IN-list for a CHECK constraint.
+
+    A local copy rather than an import from ``models``: the platform models
+    must not depend on the tenant models, and this is one line.
+    """
+    return ", ".join(f"'{v}'" for v in values)
+
+
+class PlatformPanelApplicationRow(PlatformBase):
+    """One application to join a payer's panel, and whose move it is.
+
+    **Platform-scoped, and the only platform table with row-level security.**
+
+    It lived in each practice schema first, which was the wrong shape for what
+    reads it. Pablo runs the applications, so the primary consumer is an
+    operator working across every practice at once — and a per-tenant table
+    makes that a scan of every schema in the database. On an environment with
+    a hundred-odd practices that is a catalog scan plus a union with a branch
+    per schema, to answer a question about a few dozen rows.
+
+    Moving it here makes that one indexed query. The isolation it had as a
+    per-tenant table is kept rather than traded away: RLS is enabled below
+    with the same ``app.current_user_id`` predicate the practice schemas use,
+    so a clinician still sees only her own applications and the database is
+    still the thing enforcing it. The operator reaches across by a policy
+    naming ``pablo_credentialing_ops`` — one role, one table, NOBYPASSRLS.
+
+    That isolation is not decoration. This table accumulates exactly the facts
+    somebody would rather their colleagues did not browse: which panels
+    rejected her, what she is appealing, how long she has been waiting.
+
+    PHI-free — an application is about a clinician and an insurer, and no
+    patient appears in it.
+
+    ``payer_id`` refers to a row in the PRACTICE schema's ``payers`` table and
+    therefore carries no foreign key: a platform table cannot reference a
+    per-tenant one. ``practice_id`` is what makes that resolvable — it says
+    which schema the payer lives in, and it is what the operator surface
+    groups by to resolve names for the practices that actually have
+    applications rather than for every practice that exists.
+    """
+
+    __tablename__ = "panel_applications"
+    # PlatformBase annotates __table_args__ as the dict-only shape; the tuple
+    # form (needed for the constraints and indexes) trips mypy here, same as
+    # PracticeRow above.
+    __table_args__ = (  # type: ignore[assignment]
+        CheckConstraint(
+            f"status IN ({_sql_in_list(PANEL_APPLICATION_STATUSES)})",
+            name="ck_panel_applications_status",
+        ),
+        CheckConstraint(
+            f"action_owner IN ({_sql_in_list(PANEL_ACTION_OWNERS)})",
+            name="ck_panel_applications_action_owner",
+        ),
+        # One live application per payer per clinician. A second one is a
+        # recredentialing years later, not a duplicate — so this is not unique.
+        Index("ix_panel_applications_user_id", "user_id"),
+        Index("ix_panel_applications_practice_id", "practice_id"),
+        {"schema": PLATFORM_SCHEMA},
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    #: Whose panel application this is, and what RLS scopes on. A group
+    #: practice credentials each clinician separately.
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    #: Which practice, so ``payer_id`` can be resolved in the right schema.
+    practice_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    #: A ``payers.id`` in that practice's schema. No FK — see the class
+    #: docstring.
+    payer_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="researching")
+    action_owner: Mapped[str] = mapped_column(String(16), nullable=False, default="pablo")
+    #: What the current status is waiting on, and by when. NULL when nothing
+    #: is pending — a submitted application with no answer yet is waiting on
+    #: the payer's own clock, not on a date we set.
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: What she is waiting for, in words she can act on. Shown to her verbatim
+    #: when the owner is hers, so it is written for her, not for us.
+    awaiting: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: The payer's own application or reference number, which is what any
+    #: phone call about it will start by asking for.
+    reference: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    effective_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class PlatformAllowedEmailRow(PlatformBase):
     __tablename__ = "allowed_emails"
     __table_args__ = {"schema": PLATFORM_SCHEMA}

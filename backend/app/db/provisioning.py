@@ -230,6 +230,9 @@ def ensure_schemas(engine: Engine) -> None:
             # the ``is_pentest`` column itself.
             _ensure_pentest_tenant_guards(engine)
 
+            # Same class, same reason: a guard ``create_all`` cannot carry.
+            _ensure_platform_row_security(engine)
+
             _provision_core_schemas(engine)
 
             # Per-tenant schema evolution belongs in the alembic chain
@@ -343,6 +346,56 @@ def _ensure_pentest_tenant_guards(engine: Engine) -> None:
                 savepoint.commit()
             except Exception:
                 logger.exception("Pentest guard step failed: %s", stmt.split()[0:3])
+                savepoint.rollback()
+        conn.commit()
+
+
+def _ensure_platform_row_security(engine: Engine) -> None:
+    """Row security on the platform tables that need it, for every boot path.
+
+    ``platform.panel_applications`` is the first platform table whose rows
+    belong to one clinician rather than to the deployment, so it is the first
+    that RLS has to cover. Its migration enables it — but only on the path
+    where the migration is what creates the table.
+
+    There is another path, and it is the ordinary one for a self-hosted
+    install: ``ensure_schemas`` runs ``PlatformBase.metadata.create_all``, and
+    ``create_all`` emits the table and its indexes and nothing else. A policy
+    is not part of a SQLAlchemy model. So a deployment with no platform
+    alembic chain — which the docstring above describes as the expected OSS
+    case — gets the table with row security switched off, and one clinician's
+    applications become readable by every other. Nothing fails; the data is
+    simply open.
+
+    Idempotent, and belongs beside ``_ensure_pentest_tenant_guards`` for the
+    same stated reason: a declarative database guard that has to hold on the
+    boot paths that bypass alembic.
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    qualified = f"{PLATFORM_SCHEMA}.panel_applications"
+    statements = [
+        f"ALTER TABLE {qualified} ENABLE ROW LEVEL SECURITY",
+        # FORCE as well as ENABLE: the app connects as the table's owner, and
+        # an owner is exempt from its own policies unless forced. Without this
+        # line the policy below exists and does nothing.
+        f"ALTER TABLE {qualified} FORCE ROW LEVEL SECURITY",
+        f"DROP POLICY IF EXISTS rls_panel_application_owner ON {qualified}",
+        f"CREATE POLICY rls_panel_application_owner ON {qualified} "
+        "USING (user_id::text = current_setting('app.current_user_id', true)) "
+        "WITH CHECK (user_id::text = current_setting('app.current_user_id', true))",
+    ]
+
+    with engine.connect() as conn:
+        for stmt in statements:
+            savepoint = conn.begin_nested()
+            try:
+                conn.execute(text(stmt))
+                savepoint.commit()
+            except Exception:
+                logger.exception("Platform RLS step failed: %s", stmt.split()[0:4])
                 savepoint.rollback()
         conn.commit()
 

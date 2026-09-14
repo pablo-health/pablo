@@ -11,7 +11,10 @@
 * progress is reported per tier, with no overall figure to render a stopped
   Tier 1 as half done.
 
-Runs the real router over an in-memory SQLite session.
+Runs the real router against a real provisioned practice schema. The intake
+tables are per-tenant and row-secured, so both the reads and the "this is
+hers alone" claims below are decided by the database rather than by the
+harness.
 """
 
 from __future__ import annotations
@@ -20,15 +23,18 @@ import base64
 import os
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from alembic import command
+from alembic.config import Config
 from app.api_errors import register_exception_handlers
 from app.auth.route_access import subscription_exempt
 from app.auth.service import get_current_user, get_tenant_context
 from app.credentialing import confirmations, government_ids
 from app.credentialing.checklist import CHECKLIST_FIELDS, Tier, applicable, fields_for_tier
-from app.db import get_db_session
+from app.db import arm_current_user_id, get_db_session, set_tenant_schema
 from app.db.models import (
     Base,
     ClinicianProfileRow,
@@ -41,23 +47,35 @@ from app.db.models import (
     PayerRow,
     PracticeBillingProfileRow,
 )
+from app.db.provisioning import create_practice_schema
 from app.models import User
 from app.routes import credentialing as credentialing_routes
 from app.services.audit_service import AuditService, InMemoryAuditRepository
 from app.settings import get_settings
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
-
-from tests.sqlite_engine import sqlite_engine
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from sqlalchemy import Engine
+    from sqlalchemy.engine import Engine
 
-_USER_ID = "11111111-1111-4111-8111-111111111111"
-_OTHER_USER_ID = "22222222-2222-4222-8222-222222222222"
+_DB_URL = os.environ.get("DATABASE_URL", "")
+pytestmark = pytest.mark.skipif(
+    not _DB_URL or os.environ.get("DATABASE_BACKEND") != "postgres",
+    reason=(
+        "PostgreSQL not configured. Set DATABASE_URL and "
+        "DATABASE_BACKEND=postgres; testcontainers should set both."
+    ),
+)
+
+_SUFFIX = uuid.uuid4().hex[:8]
+_SCHEMA = f"practice_test_checklist_{_SUFFIX}"
+
+_USER_ID = str(uuid.uuid4())
+_OTHER_USER_ID = str(uuid.uuid4())
 _URL = "/api/credentialing/checklist"
 
 
@@ -73,14 +91,14 @@ def _user() -> User:
 
 
 #: Every table the question set writes into, derived from the targets rather
-#: than listed — a retargeted field brings its table along instead of failing
-#: here with a missing-table error nobody can read.
-def _intake_tables() -> list[Any]:
+#: than listed — a retargeted field brings its table along instead of being
+#: left behind by a cleanup that never heard of it.
+def _intake_tables() -> list[str]:
     names = {f.target.partition(".")[0] for f in CHECKLIST_FIELDS}
     # ``payers`` is not a target — a participation row points at it, and the
     # fixture needs one to point at.
     names.add("payers")
-    return [Base.metadata.tables[n] for n in sorted(names) if n in Base.metadata.tables]
+    return sorted(n for n in names if n in Base.metadata.tables)
 
 
 @pytest.fixture(autouse=True)
@@ -91,15 +109,27 @@ def _encryption_key(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     get_settings.cache_clear()
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def engine() -> Iterator[Engine]:
-    with sqlite_engine(_intake_tables()) as eng:
-        yield eng
+    """The real database, migrated, with a practice schema of this module's own."""
+    backend_dir = Path(__file__).resolve().parents[2]
+    cfg = Config(str(backend_dir / "alembic.ini"))
+    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
+    command.upgrade(cfg, "head")
+    eng = create_engine(_DB_URL, pool_pre_ping=True)
+    create_practice_schema(eng, _SCHEMA)
+    yield eng
+    with eng.connect() as conn:
+        conn.execute(text(f'DROP SCHEMA IF EXISTS "{_SCHEMA}" CASCADE'))
+        conn.commit()
+    eng.dispose()
 
 
 @pytest.fixture
 def harness(engine: Engine) -> Iterator[dict[str, Any]]:
     session = Session(engine)
+    set_tenant_schema(session, _SCHEMA)
+    arm_current_user_id(session, _USER_ID)
     app = FastAPI()
     # The same handlers main.py installs, so an APIError arrives as the status
     # it names rather than as a 500 this harness invented.
@@ -113,7 +143,34 @@ def harness(engine: Engine) -> Iterator[dict[str, Any]]:
     try:
         yield {"client": client, "session": session}
     finally:
+        session.rollback()
         session.close()
+        # TRUNCATE rather than DELETE: rows written by the colleague below are
+        # invisible to a session armed as her, so a DELETE here would leave
+        # them for the next test to find.
+        _wipe(engine)
+
+
+def _wipe(engine: Engine) -> None:
+    """Empty every intake table in this module's schema."""
+    qualified = ", ".join(f"{_SCHEMA}.{name}" for name in _intake_tables())
+    with engine.connect() as conn:
+        conn.execute(text(f"TRUNCATE {qualified} CASCADE"))
+        conn.commit()
+
+
+def _as_colleague(engine: Engine, record: Any) -> None:
+    """Write one row as a second clinician, on a session armed as her.
+
+    Not on the caller's session: the table's WITH CHECK policy refuses a row
+    whose ``user_id`` is not the armed principal, which is the point — the
+    colleague's record has to be made the way a colleague would make it.
+    """
+    with Session(engine) as other:
+        set_tenant_schema(other, _SCHEMA)
+        arm_current_user_id(other, _OTHER_USER_ID)
+        record(other)
+        other.commit()
 
 
 def _confirm(client: TestClient, field_key: str, **overrides: Any) -> Any:
@@ -316,31 +373,37 @@ class TestOneCliniciansIntakeIsHerOwn:
 
         Row-level security enforces this in Postgres; the query is scoped by
         ``user_id`` as well, so a misconfigured GUC cannot turn a read of her
-        record into a read of everyone's.
+        record into a read of everyone's. Both belts are live here, which is
+        why the colleague's row is written on a session armed as the
+        colleague — her own session's policy would refuse to write it.
         """
-        confirmations.record(
-            harness["session"],
-            _OTHER_USER_ID,
-            field_key="npi_number",
-            source="nppes",
-            confirmed=True,
-            presented_value="someone else's",
+        _as_colleague(
+            harness["session"].get_bind(),
+            lambda s: confirmations.record(
+                s,
+                _OTHER_USER_ID,
+                field_key="npi_number",
+                source="nppes",
+                confirmed=True,
+                presented_value="someone else's",
+            ),
         )
-        harness["session"].commit()
 
         listed = harness["client"].get(f"{_URL}/confirmations").json()
 
         assert listed == []
 
     def test_another_clinicians_answers_do_not_count_as_hers(self, harness: dict[str, Any]) -> None:
-        confirmations.record(
-            harness["session"],
-            _OTHER_USER_ID,
-            field_key="exclusion_clearance",
-            source="leie_sam",
-            confirmed=True,
+        _as_colleague(
+            harness["session"].get_bind(),
+            lambda s: confirmations.record(
+                s,
+                _OTHER_USER_ID,
+                field_key="exclusion_clearance",
+                source="leie_sam",
+                confirmed=True,
+            ),
         )
-        harness["session"].commit()
 
         fields = harness["client"].get(_URL).json()["fields"]
 
@@ -433,6 +496,10 @@ def _answer_tier_one(harness: dict[str, Any]) -> None:
         updated_at=now,
     )
     session.add(payer)
+    # Flushed before the participation that points at it. Not belt-and-braces:
+    # the unit of work does not reliably order these two on its own, and the
+    # foreign key is real, so the participation insert would be refused.
+    session.flush()
     session.add(
         PayerParticipationRow(
             id=str(uuid.uuid4()),

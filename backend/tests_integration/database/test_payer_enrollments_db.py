@@ -8,10 +8,10 @@ un-policied like ``payers`` (its boundary is the tenant schema).
 
 The lifecycle then runs the way the daily job runs it — a tenant session,
 the clearinghouse answered from recorded fixtures, the session armed as
-each request's owner — and proves the one thing SQLite cannot: a status
-change to ``provider_action_required`` raised from a worker lands as a
-compliance reminder under that clinician's row policy, visible to them and
-to nobody else, with a real NOSUPERUSER NOBYPASSRLS role (see conftest.py).
+each request's owner — and proves that a status change to
+``provider_action_required`` raised from a worker lands as a compliance
+reminder under that clinician's row policy, visible to them and to nobody
+else, with a real NOSUPERUSER NOBYPASSRLS role (see conftest.py).
 Non-vacuous: "B sees nothing" follows "A sees the row".
 
 Run: ``make test-integration``.

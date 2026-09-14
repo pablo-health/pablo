@@ -42,6 +42,30 @@ if TYPE_CHECKING:
 # before any app module is imported either way.
 os.environ["AUDIT_DUAL_WRITE_ENABLED"] = "false"
 
+# Same placement, same reason: before any app module is imported. ``Settings``
+# is built once and cached, and outside ``development`` the app installs a
+# trusted-host guard that answers 400 to the ``testserver`` Host every
+# TestClient sends — so a suite that reaches settings first gets 400 on routes
+# that need no auth at all, which reads as a broken route rather than a
+# mis-set environment.
+#
+# ``tests/conftest.py`` has had this line all along; this file never did, and
+# got away with it because the one module that cares
+# (``api/test_dpop_e2e.py``) sets it at ITS import. That only holds while that
+# module is the first to touch settings — an ordering nothing enforces, and
+# which any new module importing ``app.*`` ahead of it quietly breaks.
+# ``setdefault``, so an explicit environment still wins.
+os.environ.setdefault("ENVIRONMENT", "development")
+
+# And the other half of the same ordering problem. ``api/test_dpop_e2e.py``
+# needs the middleware enforcing, and says so at its own import for want of
+# anywhere better; when it loses the race the middleware waves every proof
+# through and each of that module's rejection tests reports 200 where it wanted
+# 401 — a failure that accuses the middleware of the one thing it did not do.
+# Requests without ``X-Install-ID`` are untouched either way, so no other
+# module here changes behaviour.
+os.environ.setdefault("ENABLE_DPOP_VALIDATION", "true")
+
 
 class _PgState:
     container = None  # type: ignore[var-annotated]
@@ -195,6 +219,39 @@ def _release_fastapi_dependency_caches() -> Iterator[None]:
     """
     yield
     clear_fastapi_dependency_caches()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_rls_principal() -> Iterator[None]:
+    """Put the tenant and principal ContextVars back the way the test found them.
+
+    ``set_tenant_schema`` and ``arm_current_user_id`` stash the practice schema
+    and the clinician on ContextVars that the pool-checkout listener re-applies
+    to every connection it hands out. In the app that is exactly right and the
+    request middleware clears them at the end of the request; here there is no
+    middleware, so a test that arms a session leaves the next module's
+    connections pointed at a schema it has never heard of — usually one this
+    module has just dropped.
+
+    It surfaces far from the cause: the symptom is an unrelated module writing
+    a row that then cannot be read back, which reads as a bug in whatever it
+    was testing. Cheaper to reset here, once, than to remember it nine times.
+    """
+    from app.db import (  # noqa: PLC0415
+        _current_patient_id,
+        _current_tenant_schema,
+        _current_user_id,
+    )
+
+    tenant = _current_tenant_schema.get()
+    user = _current_user_id.get()
+    patient = _current_patient_id.get()
+    try:
+        yield
+    finally:
+        _current_tenant_schema.set(tenant)
+        _current_user_id.set(user)
+        _current_patient_id.set(patient)
 
 
 @pytest.fixture

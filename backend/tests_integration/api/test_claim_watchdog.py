@@ -3,29 +3,51 @@
 """The watchdog (``app.claims.watchdog``): timeouts and the deadline ladder.
 
 Each timeout row of the state table is a test; the reminder a stall
-writes is checked against a real ``compliance_items`` table for carrying
+writes is checked against a real provisioned practice schema for carrying
 the control number, the state and the age and nothing about the person;
 and the deadline ladder is run repeatedly to prove each rung fires once.
+
+Most of this runs against the pipeline fakes and needs no database. The one
+test that does needs the real one: the reminder lands on a row-secured table,
+and the leak sentinel it asserts is only worth anything if the row was
+actually written and actually read back.
 """
 
 from __future__ import annotations
 
+import os
+import uuid
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+from alembic import command
+from alembic.config import Config
 from app.claims.events import compliance_reminder_listener, register_claim_event_listener
 from app.claims.watchdog import run_watchdog
-from app.db import _reset_search_path_on_checkin
+from app.db import arm_current_user_id, set_tenant_schema
 from app.db.models import ComplianceItemRow
-from sqlalchemy import Engine, create_engine, event, select
+from app.db.provisioning import create_practice_schema
+from sqlalchemy import Engine, create_engine, select, text
 from sqlalchemy.orm import Session
-
 from tests.claims_fixtures import SERVICE_DATE, USER_ID, line
 from tests.claims_pipeline_fakes import NOW, PipelineHarness, make_harness, restore_listeners
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+_DB_URL = os.environ.get("DATABASE_URL", "")
+pytestmark = pytest.mark.skipif(
+    not _DB_URL or os.environ.get("DATABASE_BACKEND") != "postgres",
+    reason=(
+        "PostgreSQL not configured. Set DATABASE_URL and "
+        "DATABASE_BACKEND=postgres; testcontainers should set both."
+    ),
+)
+
+_SUFFIX = uuid.uuid4().hex[:8]
+_SCHEMA = f"practice_test_watchdog_{_SUFFIX}"
 
 
 @pytest.fixture
@@ -132,16 +154,20 @@ def test_states_with_no_clock_are_left_alone(harness: PipelineHarness, state: st
 # --- the reminder a stall writes, on a real table ----------------------------------
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def reminders_engine() -> Iterator[Engine]:
-    event.remove(Engine, "checkin", _reset_search_path_on_checkin)
-    engine = create_engine("sqlite://")
-    ComplianceItemRow.__table__.create(engine)  # type: ignore[attr-defined]  # SQLAlchemy declarative attr
-    try:
-        yield engine
-    finally:
-        engine.dispose()
-        event.listen(Engine, "checkin", _reset_search_path_on_checkin)
+    """The real database, migrated, with a practice schema of this module's own."""
+    backend_dir = Path(__file__).resolve().parents[2]
+    cfg = Config(str(backend_dir / "alembic.ini"))
+    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
+    command.upgrade(cfg, "head")
+    engine = create_engine(_DB_URL, pool_pre_ping=True)
+    create_practice_schema(engine, _SCHEMA)
+    yield engine
+    with engine.connect() as conn:
+        conn.execute(text(f'DROP SCHEMA IF EXISTS "{_SCHEMA}" CASCADE'))
+        conn.commit()
+    engine.dispose()
 
 
 def test_the_stalled_reminder_carries_no_patient_identifiers(
@@ -152,6 +178,8 @@ def test_the_stalled_reminder_carries_no_patient_identifiers(
         harness, state="submitted", submitted_at=_at(6), control_number="STALLED00001"
     )
     with Session(reminders_engine) as session:
+        set_tenant_schema(session, _SCHEMA)
+        arm_current_user_id(session, USER_ID)
         harness.pipeline.session = session
         _run(harness)
         session.commit()

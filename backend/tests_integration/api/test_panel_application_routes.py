@@ -13,36 +13,58 @@ component.
 this endpoint and the screen rendering it must not be able to disagree about
 whether she owes anything.
 
-Runs the real router over an in-memory SQLite session.
+Runs the real router against a real provisioned practice schema. The query
+under test crosses the tenant/platform line — ``payers`` is per-tenant,
+``panel_applications`` is platform-scoped and row-secured — and neither half of
+that survives a substitute database: the join resolves through the session's
+``search_path``, what limits the rows to hers is a row-level-security policy,
+and whether NULLs sort first or last is a backend decision rather than a
+portable one.
 """
 
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from alembic import command
+from alembic.config import Config
 from app.api_errors import register_exception_handlers
 from app.auth.route_access import subscription_exempt
 from app.auth.service import get_current_user, get_tenant_context
-from app.db import get_db_session
-from app.db.models import Base, PanelApplicationRow, PayerRow
+from app.db import arm_current_user_id, get_db_session, set_tenant_schema
+from app.db.models import PayerRow
+from app.db.platform_models import PlatformPanelApplicationRow
+from app.db.provisioning import create_practice_schema
 from app.models import User
 from app.routes import credentialing as credentialing_routes
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
-
-from tests.sqlite_engine import sqlite_engine
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from sqlalchemy import Engine
+    from sqlalchemy.engine import Engine
 
-_USER_ID = "11111111-1111-4111-8111-111111111111"
-_OTHER_USER_ID = "22222222-2222-4222-8222-222222222222"
+_DB_URL = os.environ.get("DATABASE_URL", "")
+pytestmark = pytest.mark.skipif(
+    not _DB_URL or os.environ.get("DATABASE_BACKEND") != "postgres",
+    reason=(
+        "PostgreSQL not configured. Set DATABASE_URL and "
+        "DATABASE_BACKEND=postgres; testcontainers should set both."
+    ),
+)
+
+_SUFFIX = uuid.uuid4().hex[:8]
+_SCHEMA = f"practice_test_panels_{_SUFFIX}"
+_PRACTICE_ID = f"practice-panels-{_SUFFIX}"
+_USER_ID = str(uuid.uuid4())
 _URL = "/api/credentialing/panel-applications"
 
 _NOW = datetime(2026, 9, 13, 12, 0, tzinfo=UTC)
@@ -59,16 +81,33 @@ def _user() -> User:
     )
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def engine() -> Iterator[Engine]:
-    tables = [Base.metadata.tables[n] for n in ("payers", "panel_applications")]
-    with sqlite_engine(tables) as eng:
-        yield eng
+    backend_dir = Path(__file__).resolve().parents[2]
+    cfg = Config(str(backend_dir / "alembic.ini"))
+    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
+    command.upgrade(cfg, "head")
+    eng = create_engine(_DB_URL, pool_pre_ping=True)
+    create_practice_schema(eng, _SCHEMA)
+    yield eng
+    with eng.connect() as conn:
+        conn.execute(text(f'DROP SCHEMA IF EXISTS "{_SCHEMA}" CASCADE'))
+        conn.commit()
+    eng.dispose()
 
 
 @pytest.fixture
 def harness(engine: Engine) -> Iterator[dict[str, Any]]:
+    """A session scoped and armed the way a request arrives.
+
+    Arming is not ceremony here: the app connects as a role that does not
+    bypass row security, so an unarmed session reads the platform table as
+    empty and every assertion below would be asserting about an empty board.
+    """
     session = Session(engine)
+    set_tenant_schema(session, _SCHEMA)
+    arm_current_user_id(session, _USER_ID)
+
     app = FastAPI()
     register_exception_handlers(app)
     app.include_router(credentialing_routes.router)
@@ -80,6 +119,12 @@ def harness(engine: Engine) -> Iterator[dict[str, Any]]:
     try:
         yield {"client": client, "session": session}
     finally:
+        # The schema and the platform table outlive each test, so each one
+        # clears up after itself rather than inheriting the last one's board.
+        session.rollback()
+        session.execute(text("DELETE FROM platform.panel_applications"))
+        session.execute(text(f"DELETE FROM {_SCHEMA}.payers"))  # noqa: S608 — schema name, not user input
+        session.commit()
         session.close()
 
 
@@ -98,6 +143,10 @@ def _application(session: Session, payer_name: str, **overrides: Any) -> str:
     fields: dict[str, Any] = {
         "id": row_id,
         "user_id": _USER_ID,
+        # Which practice the payer belongs to. The application is
+        # platform-scoped now, so this is what says which schema to resolve
+        # its payer in.
+        "practice_id": _PRACTICE_ID,
         "payer_id": _payer(session, payer_name),
         "status": "submitted",
         "action_owner": "pablo",
@@ -105,7 +154,7 @@ def _application(session: Session, payer_name: str, **overrides: Any) -> str:
         "updated_at": _NOW,
     }
     fields.update(overrides)
-    session.add(PanelApplicationRow(**fields))
+    session.add(PlatformPanelApplicationRow(**fields))
     session.commit()
     return row_id
 
@@ -171,9 +220,11 @@ class TestTheOrderIsTheArgument:
     ) -> None:
         """NULL due_at means no deadline WE set, not a deadline of zero.
 
-        SQL sorts NULLs first by default on some backends, which would put
-        every undated row above every dated one and bury the deadline that
-        actually kills an application when it passes.
+        Postgres sorts NULLs LAST ascending by default — which happens to be
+        what this screen wants — but the query says so explicitly, because the
+        default is a backend's choice and the consequence of the other one is
+        every undated row burying the deadline that kills an application when
+        it passes.
         """
         _application(harness["session"], "No deadline", action_owner="therapist", due_at=None)
         _application(
@@ -268,14 +319,33 @@ class TestWhatEachRowSays:
 
 class TestSheSeesOnlyHerOwn:
     def test_a_colleagues_application_does_not_come_back(self, harness: dict[str, Any]) -> None:
-        """RLS refuses it in Postgres; this proves the query does not ask for it.
+        """The isolation claim, on a database that can actually refuse.
 
-        The two are not redundant. SQLite enforces no policy, so a query that
-        dropped the ``user_id`` filter would pass every other test in this file
-        and fail only in production, where the policy is the thing standing
-        between a clinician and which panels rejected her colleague.
+        It used to be asserted against an engine with no row security, where a
+        filter the query no longer has and a policy that had never run were
+        indistinguishable. Here the row is written by a second, separately
+        armed session and the policy is the only thing standing between it and
+        the response.
         """
-        _application(harness["session"], "Hers", user_id=_USER_ID)
-        _application(harness["session"], "His", user_id=_OTHER_USER_ID)
+        colleague = str(uuid.uuid4())
+        with Session(harness["session"].get_bind()) as other:
+            set_tenant_schema(other, _SCHEMA)
+            arm_current_user_id(other, colleague)
+            payer_id = _payer(other, "Colleague's payer")
+            other.add(
+                PlatformPanelApplicationRow(
+                    id=str(uuid.uuid4()),
+                    user_id=colleague,
+                    practice_id=_PRACTICE_ID,
+                    payer_id=payer_id,
+                    status="submitted",
+                    action_owner="therapist",
+                    created_at=_NOW,
+                    updated_at=_NOW,
+                )
+            )
+            other.commit()
 
-        assert _names(harness["client"].get(_URL).json()) == ["Hers"]
+        body = harness["client"].get(_URL).json()
+
+        assert body == {"data": [], "needs_you": 0}

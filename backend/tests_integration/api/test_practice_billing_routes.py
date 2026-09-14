@@ -9,37 +9,55 @@
   the response carries the clearinghouse's id;
 * an incomplete save registers nothing and still succeeds.
 
-Runs the real router over an in-memory SQLite session with the clearinghouse
-answered from recorded fixtures.
+Runs the real router against a real provisioned practice schema, with the
+clearinghouse answered from recorded fixtures. The profile table is
+per-tenant and row-secured, so a substitute database would prove the handler
+and nothing about where the row actually lands.
 """
 
 from __future__ import annotations
 
 import base64
 import os
+import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from alembic import command
+from alembic.config import Config
 from app.auth.service import TenantContext, get_tenant_context, require_active_subscription
 from app.claims import enrollment
-from app.db.models import PracticeBillingProfileRow
+from app.db import arm_current_user_id, set_tenant_schema
+from app.db.provisioning import create_practice_schema
 from app.models import User
 from app.routes import practice_billing as practice_billing_routes
 from app.settings import get_settings
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
-
 from tests.enrollment_fakes import PROVIDER_ID, FakeClearinghouse
-from tests.sqlite_engine import sqlite_engine
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from sqlalchemy import Engine
+    from sqlalchemy.engine import Engine
 
-_USER_ID = "11111111-1111-4111-8111-111111111111"
+_DB_URL = os.environ.get("DATABASE_URL", "")
+pytestmark = pytest.mark.skipif(
+    not _DB_URL or os.environ.get("DATABASE_BACKEND") != "postgres",
+    reason=(
+        "PostgreSQL not configured. Set DATABASE_URL and "
+        "DATABASE_BACKEND=postgres; testcontainers should set both."
+    ),
+)
+
+_SUFFIX = uuid.uuid4().hex[:8]
+_SCHEMA = f"practice_test_billing_{_SUFFIX}"
+
+_USER_ID = str(uuid.uuid4())
 
 _COMPLETE = {
     "legal_name": "Pablo Health Test Provider",
@@ -67,7 +85,7 @@ def _user() -> User:
 
 
 def _tenant() -> TenantContext:
-    return TenantContext(user_id=_USER_ID, practice_id="practice-1", practice_schema="practice_x")
+    return TenantContext(user_id=_USER_ID, practice_id="practice-1", practice_schema=_SCHEMA)
 
 
 @pytest.fixture(autouse=True)
@@ -78,10 +96,20 @@ def _encryption_key(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     get_settings.cache_clear()
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def engine() -> Iterator[Engine]:
-    with sqlite_engine([PracticeBillingProfileRow.__table__]) as eng:
-        yield eng
+    """The real database, migrated, with a practice schema of this module's own."""
+    backend_dir = Path(__file__).resolve().parents[2]
+    cfg = Config(str(backend_dir / "alembic.ini"))
+    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
+    command.upgrade(cfg, "head")
+    eng = create_engine(_DB_URL, pool_pre_ping=True)
+    create_practice_schema(eng, _SCHEMA)
+    yield eng
+    with eng.connect() as conn:
+        conn.execute(text(f'DROP SCHEMA IF EXISTS "{_SCHEMA}" CASCADE'))
+        conn.commit()
+    eng.dispose()
 
 
 @pytest.fixture
@@ -97,6 +125,8 @@ def harness(
     engine: Engine, clearinghouse: FakeClearinghouse, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[dict[str, Any]]:
     session = Session(engine)
+    set_tenant_schema(session, _SCHEMA)
+    arm_current_user_id(session, _USER_ID)
     app = FastAPI()
     app.include_router(practice_billing_routes.router)
     app.dependency_overrides[require_active_subscription] = _user
@@ -108,6 +138,10 @@ def harness(
     try:
         yield {"client": client, "session": session, "clearinghouse": clearinghouse}
     finally:
+        # The schema outlives each test, so each one clears up after itself.
+        session.rollback()
+        session.execute(text(f"DELETE FROM {_SCHEMA}.practice_billing_profile"))  # noqa: S608 — schema name, not user input
+        session.commit()
         session.close()
 
 

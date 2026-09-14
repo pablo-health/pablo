@@ -8,20 +8,24 @@
 * Putting a plan on file for a payer calls the enrollment trigger; editing
   a plan calls it only when the payer changed.
 
-The payer routes run on an in-memory SQLite session (the enrollment flow
-reads and writes ORM rows directly) with the clearinghouse answered from
-recorded fixtures; the coverage routes keep their in-memory repositories
-and swap the trigger for a recorder.
+The payer routes run against a real provisioned practice schema (the
+enrollment flow reads and writes ORM rows directly) with the clearinghouse
+answered from recorded fixtures; the coverage routes keep their in-memory
+repositories and swap the trigger for a recorder.
 """
 
 from __future__ import annotations
 
 import base64
 import os
+import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from alembic import command
+from alembic.config import Config
 from app.auth.service import (
     TenantContext,
     get_tenant_context,
@@ -30,13 +34,8 @@ from app.auth.service import (
 )
 from app.claims import enrollment
 from app.claims.eligibility import EligibilityAutoCheck, get_eligibility_auto_check
-from app.db import get_db_session
-from app.db.models import (
-    ComplianceItemRow,
-    PayerEnrollmentRow,
-    PayerRow,
-    PracticeBillingProfileRow,
-)
+from app.db import arm_current_user_id, get_db_session, set_tenant_schema
+from app.db.provisioning import create_practice_schema
 from app.models import User
 from app.models.patient import Patient
 from app.repositories import (
@@ -54,18 +53,32 @@ from app.services.practice_billing_profile import update_billing_profile
 from app.settings import get_settings
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
-
 from tests.enrollment_fakes import TEST_PAYER_ID, FakeClearinghouse
-from tests.sqlite_engine import sqlite_engine
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from sqlalchemy import Engine
+    from sqlalchemy.engine import Engine
 
-_USER_ID = "11111111-1111-4111-8111-111111111111"
-_PATIENT_ID = "44444444-4444-4444-8444-444444444444"
+_DB_URL = os.environ.get("DATABASE_URL", "")
+pytestmark = pytest.mark.skipif(
+    not _DB_URL or os.environ.get("DATABASE_BACKEND") != "postgres",
+    reason=(
+        "PostgreSQL not configured. Set DATABASE_URL and "
+        "DATABASE_BACKEND=postgres; testcontainers should set both."
+    ),
+)
+
+_SUFFIX = uuid.uuid4().hex[:8]
+_SCHEMA = f"practice_test_enrroutes_{_SUFFIX}"
+
+#: Emptied between tests; the schema outlives them.
+_TABLES = ("compliance_items", "payer_enrollments", "payers", "practice_billing_profile")
+
+_USER_ID = str(uuid.uuid4())
+_PATIENT_ID = str(uuid.uuid4())
 
 _PROFILE = {
     "legal_name": "Pablo Health Test Provider",
@@ -93,7 +106,7 @@ def _user() -> User:
 
 
 def _tenant() -> TenantContext:
-    return TenantContext(user_id=_USER_ID, practice_id="practice-1", practice_schema="practice_x")
+    return TenantContext(user_id=_USER_ID, practice_id="practice-1", practice_schema=_SCHEMA)
 
 
 @pytest.fixture(autouse=True)
@@ -111,20 +124,23 @@ def _refresh_floor() -> Iterator[None]:
     enrollment.reset_refresh_floor()
 
 
-# --- the payer endpoints, over SQLite ------------------------------------------
+# --- the payer endpoints, against the real database ----------------------------
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def engine() -> Iterator[Engine]:
-    with sqlite_engine(
-        [
-            PracticeBillingProfileRow.__table__,
-            PayerRow.__table__,
-            PayerEnrollmentRow.__table__,
-            ComplianceItemRow.__table__,
-        ]
-    ) as eng:
-        yield eng
+    """The real database, migrated, with a practice schema of this module's own."""
+    backend_dir = Path(__file__).resolve().parents[2]
+    cfg = Config(str(backend_dir / "alembic.ini"))
+    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
+    command.upgrade(cfg, "head")
+    eng = create_engine(_DB_URL, pool_pre_ping=True)
+    create_practice_schema(eng, _SCHEMA)
+    yield eng
+    with eng.connect() as conn:
+        conn.execute(text(f'DROP SCHEMA IF EXISTS "{_SCHEMA}" CASCADE'))
+        conn.commit()
+    eng.dispose()
 
 
 @pytest.fixture
@@ -138,6 +154,8 @@ def clearinghouse() -> Iterator[FakeClearinghouse]:
 @pytest.fixture
 def payer_harness(engine: Engine, clearinghouse: FakeClearinghouse) -> Iterator[dict[str, Any]]:
     session = Session(engine)
+    set_tenant_schema(session, _SCHEMA)
+    arm_current_user_id(session, _USER_ID)
     payers = PostgresPayerRepository(session)
     # The recorded directory requires an enrollment for remittance alone, and
     # remittance is the one a payer starts switched off for — so a harness
@@ -158,6 +176,10 @@ def payer_harness(engine: Engine, clearinghouse: FakeClearinghouse) -> Iterator[
     try:
         yield {"client": client, "session": session, "payer": payer, "clearinghouse": clearinghouse}
     finally:
+        session.rollback()
+        for table in _TABLES:
+            session.execute(text(f"DELETE FROM {_SCHEMA}.{table}"))  # noqa: S608 — schema name, not user input
+        session.commit()
         session.close()
 
 
@@ -260,9 +282,9 @@ class TestRefreshEnrollmentsRoute:
 
     The throttle and vendor-listing mechanics belong to
     ``refresh_enrollments_throttled`` itself (``TestRefreshThrottle`` in
-    ``test_payer_enrollment.py``, over SQLite with a no-op RLS arm); the real
-    ``arm_current_user_id`` issues a Postgres-only ``set_config`` call, so
-    this route is exercised here with that function replaced.
+    ``test_payer_enrollment.py``); what is left for the route is choosing a
+    client, mapping the outcome and mapping the failures, so the refresh
+    function is replaced here and only those three things are asserted.
     """
 
     def test_reports_the_outcome_and_arms_by_practice(
