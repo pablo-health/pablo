@@ -34,9 +34,9 @@ from app.auth.route_access import subscription_exempt
 from app.auth.service import get_current_user, get_tenant_context
 from app.credentialing import confirmations, government_ids
 from app.credentialing.checklist import CHECKLIST_FIELDS, Tier, applicable, fields_for_tier
+from app.credentialing.status import _mapped_table
 from app.db import arm_current_user_id, get_db_session, set_tenant_schema
 from app.db.models import (
-    Base,
     ClinicianProfileRow,
     ComplianceDocumentRow,
     PayerParticipationRow,
@@ -95,12 +95,26 @@ def _user() -> User:
 #: Every table the question set writes into, derived from the targets rather
 #: than listed — a retargeted field brings its table along instead of being
 #: left behind by a cleanup that never heard of it.
-def _intake_tables() -> list[str]:
+def _intake_tables() -> list[tuple[str, str]]:
+    """Every table the checklist writes into, as ``(schema, name)``.
+
+    Resolved through the reader's own resolver rather than against
+    ``Base.metadata``. Filtering on the tenant metadata is what this used to
+    do, and when the credential record moved to ``platform`` those eleven
+    silently dropped off the list the fixture wipes — so a confirmation
+    written by one test was still there for the next, which read as the API
+    returning a row nobody had posted.
+    """
     names = {f.target.partition(".")[0] for f in CHECKLIST_FIELDS}
     # ``payers`` is not a target — a participation row points at it, and the
     # fixture needs one to point at.
     names.add("payers")
-    return sorted(n for n in names if n in Base.metadata.tables)
+    resolved = []
+    for name in sorted(names):
+        table = _mapped_table(name)
+        if table is not None:
+            resolved.append((table.schema or _SCHEMA, name))
+    return resolved
 
 
 @pytest.fixture(autouse=True)
@@ -147,17 +161,36 @@ def harness(engine: Engine) -> Iterator[dict[str, Any]]:
     finally:
         session.rollback()
         session.close()
-        # TRUNCATE rather than DELETE: rows written by the colleague below are
-        # invisible to a session armed as her, so a DELETE here would leave
-        # them for the next test to find.
         _wipe(engine)
 
 
 def _wipe(engine: Engine) -> None:
-    """Empty every intake table in this module's schema."""
-    qualified = ", ".join(f"{_SCHEMA}.{name}" for name in _intake_tables())
+    """Empty every intake table this module writes to, wherever it lives.
+
+    The tenant tables are TRUNCATEd, which is what this always did and for the
+    reason it always did: rows written by the colleague are invisible to a
+    session armed as anyone else, so a DELETE would leave them for the next
+    test to find.
+
+    The platform tables cannot be truncated, because they are not this
+    module's to empty — they are shared with every other module in the run, and
+    a TRUNCATE would reach rows this module never wrote. So those are deleted
+    per clinician instead, armed as each in turn: the policy then scopes the
+    delete to exactly the rows that clinician could have written, which is the
+    same set the TRUNCATE was reaching for and none of the rest.
+    """
+    tenant = [f"{schema}.{name}" for schema, name in _intake_tables() if schema == _SCHEMA]
+    platform = [f"{schema}.{name}" for schema, name in _intake_tables() if schema != _SCHEMA]
     with engine.connect() as conn:
-        conn.execute(text(f"TRUNCATE {qualified} CASCADE"))
+        if tenant:
+            conn.execute(text(f"TRUNCATE {', '.join(tenant)} CASCADE"))
+        for user_id in (_USER_ID, _OTHER_USER_ID):
+            conn.execute(
+                text("SELECT set_config('app.current_user_id', :uid, false)"),
+                {"uid": user_id},
+            )
+            for qualified in platform:
+                conn.execute(text(f"DELETE FROM {qualified}"))  # noqa: S608
         conn.commit()
 
 
@@ -447,6 +480,7 @@ def _answer_tier_one(harness: dict[str, Any]) -> None:
         CredentialLicenseRow(
             id=str(uuid.uuid4()),
             user_id=_USER_ID,
+            practice_id=_SCHEMA,
             license_type="LPC",
             license_number="GA-12345",
             state="GA",
@@ -458,6 +492,7 @@ def _answer_tier_one(harness: dict[str, Any]) -> None:
         CredentialLiabilityPolicyRow(
             id=str(uuid.uuid4()),
             user_id=_USER_ID,
+            practice_id=_SCHEMA,
             carrier_name="CPH",
             policy_number="P-1",
             document_id=document.id,
@@ -481,6 +516,7 @@ def _answer_tier_one(harness: dict[str, Any]) -> None:
         CredentialBankAccountRow(
             id=str(uuid.uuid4()),
             user_id=_USER_ID,
+            practice_id=_SCHEMA,
             account_holder_name="Test Therapist",
             routing_number_encrypted="ciphertext",
             account_number_encrypted="ciphertext",
