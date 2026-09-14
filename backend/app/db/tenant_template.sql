@@ -346,30 +346,6 @@ CREATE TABLE __TENANT_SCHEMA__.compliance_items (
 
 
 
-CREATE TABLE __TENANT_SCHEMA__.contracted_rates (
-    id uuid NOT NULL,
-    participation_id uuid NOT NULL,
-    user_id uuid NOT NULL,
-    cpt character varying(10) NOT NULL,
-    modifier character varying(8) DEFAULT ''::character varying NOT NULL,
-    basis character varying(16) NOT NULL,
-    amount_cents integer,
-    percent numeric(7,3),
-    mpfs_amount_cents integer,
-    effective_date date NOT NULL,
-    end_date date,
-    source_document_id uuid,
-    created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL,
-    CONSTRAINT ck_contracted_rates_amount CHECK (((amount_cents IS NULL) OR (amount_cents >= 0))),
-    CONSTRAINT ck_contracted_rates_basis CHECK (((basis)::text = ANY ((ARRAY['fixed'::character varying, 'percent_of_mpfs'::character varying])::text[]))),
-    CONSTRAINT ck_contracted_rates_basis_fields CHECK (((((basis)::text = 'fixed'::text) AND (amount_cents IS NOT NULL) AND (percent IS NULL)) OR (((basis)::text = 'percent_of_mpfs'::text) AND (percent IS NOT NULL) AND (amount_cents IS NULL)))),
-    CONSTRAINT ck_contracted_rates_date_order CHECK (((end_date IS NULL) OR (end_date >= effective_date))),
-    CONSTRAINT ck_contracted_rates_percent CHECK (((percent IS NULL) OR (percent > (0)::numeric)))
-);
-
-
-
 CREATE TABLE __TENANT_SCHEMA__.diagnostic_assessments (
     id uuid NOT NULL,
     patient_id uuid NOT NULL,
@@ -690,22 +666,6 @@ CREATE TABLE __TENANT_SCHEMA__.patients (
 
 
 
-CREATE TABLE __TENANT_SCHEMA__.payer_authorizations (
-    id uuid NOT NULL,
-    user_id uuid NOT NULL,
-    kind character varying(40) NOT NULL,
-    version character varying(20) NOT NULL,
-    full_text text NOT NULL,
-    signed_name character varying(200) NOT NULL,
-    signed_at timestamp with time zone NOT NULL,
-    revoked_at timestamp with time zone,
-    created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL,
-    CONSTRAINT ck_payer_authorizations_kind CHECK (((kind)::text = ANY ((ARRAY['credentialing_authorization'::character varying, 'services_agreement'::character varying])::text[])))
-);
-
-
-
 CREATE TABLE __TENANT_SCHEMA__.payer_enrollments (
     payer_id uuid NOT NULL,
     transaction_type character varying(4) NOT NULL,
@@ -717,40 +677,6 @@ CREATE TABLE __TENANT_SCHEMA__.payer_enrollments (
     updated_at timestamp with time zone NOT NULL,
     CONSTRAINT ck_payer_enrollments_status CHECK (((status)::text = ANY ((ARRAY['draft'::character varying, 'stedi_action_required'::character varying, 'provider_action_required'::character varying, 'provisioning'::character varying, 'live'::character varying, 'rejected'::character varying, 'canceled'::character varying])::text[]))),
     CONSTRAINT ck_payer_enrollments_transaction_type CHECK (((transaction_type)::text = ANY ((ARRAY['837P'::character varying, '270'::character varying, '835'::character varying])::text[])))
-);
-
-
-
-CREATE TABLE __TENANT_SCHEMA__.payer_participation_events (
-    id uuid NOT NULL,
-    participation_id uuid NOT NULL,
-    user_id uuid NOT NULL,
-    from_status character varying(24),
-    to_status character varying(24) NOT NULL,
-    occurred_at timestamp with time zone NOT NULL,
-    note text,
-    detail jsonb NOT NULL,
-    created_at timestamp with time zone NOT NULL,
-    CONSTRAINT ck_payer_participation_events_from_status CHECK (((from_status IS NULL) OR ((from_status)::text = ANY ((ARRAY['out_of_network'::character varying, 'application_submitted'::character varying, 'credentialed'::character varying, 'contracted'::character varying, 'in_network'::character varying, 'single_case_agreement'::character varying, 'denied'::character varying, 'terminated'::character varying])::text[])))),
-    CONSTRAINT ck_payer_participation_events_to_status CHECK (((to_status)::text = ANY ((ARRAY['out_of_network'::character varying, 'application_submitted'::character varying, 'credentialed'::character varying, 'contracted'::character varying, 'in_network'::character varying, 'single_case_agreement'::character varying, 'denied'::character varying, 'terminated'::character varying])::text[])))
-);
-
-
-
-CREATE TABLE __TENANT_SCHEMA__.payer_participations (
-    id uuid NOT NULL,
-    user_id uuid NOT NULL,
-    payer_id uuid NOT NULL,
-    status character varying(24) NOT NULL,
-    credentialed_at date,
-    contracted_at date,
-    effective_date date,
-    termination_date date,
-    recredentialing_due_at date,
-    provider_id_with_payer character varying(80),
-    created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL,
-    CONSTRAINT ck_payer_participations_status CHECK (((status)::text = ANY ((ARRAY['out_of_network'::character varying, 'application_submitted'::character varying, 'credentialed'::character varying, 'contracted'::character varying, 'in_network'::character varying, 'single_case_agreement'::character varying, 'denied'::character varying, 'terminated'::character varying])::text[])))
 );
 
 
@@ -1209,18 +1135,8 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patients
 
 
 
-ALTER TABLE ONLY __TENANT_SCHEMA__.payer_authorizations
-    ADD CONSTRAINT payer_authorizations_pkey PRIMARY KEY (id);
-
-
-
 ALTER TABLE ONLY __TENANT_SCHEMA__.payers
     ADD CONSTRAINT payers_pkey PRIMARY KEY (id);
-
-
-
-ALTER TABLE ONLY __TENANT_SCHEMA__.contracted_rates
-    ADD CONSTRAINT pk_contracted_rates PRIMARY KEY (id);
 
 
 
@@ -1231,16 +1147,6 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.llm_usage
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.payer_enrollments
     ADD CONSTRAINT pk_payer_enrollments PRIMARY KEY (payer_id, transaction_type);
-
-
-
-ALTER TABLE ONLY __TENANT_SCHEMA__.payer_participation_events
-    ADD CONSTRAINT pk_payer_participation_events PRIMARY KEY (id);
-
-
-
-ALTER TABLE ONLY __TENANT_SCHEMA__.payer_participations
-    ADD CONSTRAINT pk_payer_participations PRIMARY KEY (id);
 
 
 
@@ -1321,16 +1227,6 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.claim_lines
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.claims
     ADD CONSTRAINT ux_claims_control_number UNIQUE (control_number);
-
-
-
-ALTER TABLE ONLY __TENANT_SCHEMA__.contracted_rates
-    ADD CONSTRAINT ux_contracted_rates_participation_code_date UNIQUE (participation_id, cpt, modifier, effective_date);
-
-
-
-ALTER TABLE ONLY __TENANT_SCHEMA__.payer_participations
-    ADD CONSTRAINT ux_payer_participations_user_payer UNIQUE (user_id, payer_id);
 
 
 
@@ -1475,14 +1371,6 @@ CREATE INDEX ix_compliance_items_user_id ON __TENANT_SCHEMA__.compliance_items U
 
 
 
-CREATE INDEX ix_contracted_rates_participation_id ON __TENANT_SCHEMA__.contracted_rates USING btree (participation_id);
-
-
-
-CREATE INDEX ix_contracted_rates_user_id ON __TENANT_SCHEMA__.contracted_rates USING btree (user_id);
-
-
-
 CREATE INDEX ix_diagnostic_assessments_appointment_id ON __TENANT_SCHEMA__.diagnostic_assessments USING btree (appointment_id);
 
 
@@ -1595,27 +1483,7 @@ CREATE INDEX ix_patients_last_name_lower ON __TENANT_SCHEMA__.patients USING btr
 
 
 
-CREATE INDEX ix_payer_authorizations_user_id ON __TENANT_SCHEMA__.payer_authorizations USING btree (user_id);
-
-
-
 CREATE INDEX ix_payer_enrollments_vendor_request_id ON __TENANT_SCHEMA__.payer_enrollments USING btree (vendor_request_id);
-
-
-
-CREATE INDEX ix_payer_participation_events_participation_id ON __TENANT_SCHEMA__.payer_participation_events USING btree (participation_id);
-
-
-
-CREATE INDEX ix_payer_participation_events_user_id ON __TENANT_SCHEMA__.payer_participation_events USING btree (user_id);
-
-
-
-CREATE INDEX ix_payer_participations_payer_id ON __TENANT_SCHEMA__.payer_participations USING btree (payer_id);
-
-
-
-CREATE INDEX ix_payer_participations_user_id ON __TENANT_SCHEMA__.payer_participations USING btree (user_id);
 
 
 
@@ -1838,16 +1706,6 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.claims
 
 
 
-ALTER TABLE ONLY __TENANT_SCHEMA__.contracted_rates
-    ADD CONSTRAINT fk_contracted_rates_participation_id FOREIGN KEY (participation_id) REFERENCES __TENANT_SCHEMA__.payer_participations(id) ON DELETE CASCADE;
-
-
-
-ALTER TABLE ONLY __TENANT_SCHEMA__.contracted_rates
-    ADD CONSTRAINT fk_contracted_rates_source_document_id FOREIGN KEY (source_document_id) REFERENCES __TENANT_SCHEMA__.compliance_documents(id) ON DELETE SET NULL;
-
-
-
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_charges
     ADD CONSTRAINT fk_patient_charges_claim_id_claims FOREIGN KEY (claim_id) REFERENCES __TENANT_SCHEMA__.claims(id) ON DELETE SET NULL;
 
@@ -1865,16 +1723,6 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_coverage
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.payer_enrollments
     ADD CONSTRAINT fk_payer_enrollments_payer_id_payers FOREIGN KEY (payer_id) REFERENCES __TENANT_SCHEMA__.payers(id) ON DELETE CASCADE;
-
-
-
-ALTER TABLE ONLY __TENANT_SCHEMA__.payer_participation_events
-    ADD CONSTRAINT fk_payer_participation_events_participation_id FOREIGN KEY (participation_id) REFERENCES __TENANT_SCHEMA__.payer_participations(id) ON DELETE CASCADE;
-
-
-
-ALTER TABLE ONLY __TENANT_SCHEMA__.payer_participations
-    ADD CONSTRAINT fk_payer_participations_payer_id FOREIGN KEY (payer_id) REFERENCES __TENANT_SCHEMA__.payers(id) ON DELETE CASCADE;
 
 
 

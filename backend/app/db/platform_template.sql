@@ -70,6 +70,31 @@ CREATE TABLE platform.companion_devices (
     revoked_at timestamp with time zone
 );
 
+CREATE TABLE platform.contracted_rates (
+    id uuid NOT NULL,
+    participation_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    practice_id character varying(128) NOT NULL,
+    cpt character varying(10) NOT NULL,
+    modifier character varying(8) NOT NULL,
+    basis character varying(16) NOT NULL,
+    amount_cents integer,
+    percent numeric(7,3),
+    mpfs_amount_cents integer,
+    effective_date date NOT NULL,
+    end_date date,
+    source_document_id uuid,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_contracted_rates_amount CHECK (((amount_cents IS NULL) OR (amount_cents >= 0))),
+    CONSTRAINT ck_contracted_rates_basis CHECK (((basis)::text = ANY (ARRAY[('fixed'::character varying)::text, ('percent_of_mpfs'::character varying)::text]))),
+    CONSTRAINT ck_contracted_rates_basis_fields CHECK (((((basis)::text = 'fixed'::text) AND (amount_cents IS NOT NULL) AND (percent IS NULL)) OR (((basis)::text = 'percent_of_mpfs'::text) AND (percent IS NOT NULL) AND (amount_cents IS NULL)))),
+    CONSTRAINT ck_contracted_rates_date_order CHECK (((end_date IS NULL) OR (end_date >= effective_date))),
+    CONSTRAINT ck_contracted_rates_percent CHECK (((percent IS NULL) OR (percent > (0)::numeric)))
+);
+
+ALTER TABLE ONLY platform.contracted_rates FORCE ROW LEVEL SECURITY;
+
 CREATE TABLE platform.credential_bank_accounts (
     id uuid NOT NULL,
     user_id uuid NOT NULL,
@@ -362,6 +387,57 @@ CREATE TABLE platform.passkey_credentials (
     revoked_at timestamp with time zone
 );
 
+CREATE TABLE platform.payer_authorizations (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    kind character varying(40) NOT NULL,
+    version character varying(20) NOT NULL,
+    full_text text NOT NULL,
+    signed_name character varying(200) NOT NULL,
+    signed_at timestamp with time zone NOT NULL,
+    revoked_at timestamp with time zone,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_payer_authorizations_kind CHECK (((kind)::text = ANY (ARRAY[('credentialing_authorization'::character varying)::text, ('services_agreement'::character varying)::text])))
+);
+
+ALTER TABLE ONLY platform.payer_authorizations FORCE ROW LEVEL SECURITY;
+
+CREATE TABLE platform.payer_participation_events (
+    id uuid NOT NULL,
+    participation_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    from_status character varying(24),
+    to_status character varying(24) NOT NULL,
+    occurred_at timestamp with time zone NOT NULL,
+    note text,
+    detail jsonb NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_payer_participation_events_from_status CHECK (((from_status IS NULL) OR ((from_status)::text = ANY (ARRAY[('out_of_network'::character varying)::text, ('application_submitted'::character varying)::text, ('credentialed'::character varying)::text, ('contracted'::character varying)::text, ('in_network'::character varying)::text, ('single_case_agreement'::character varying)::text, ('denied'::character varying)::text, ('terminated'::character varying)::text])))),
+    CONSTRAINT ck_payer_participation_events_to_status CHECK (((to_status)::text = ANY (ARRAY[('out_of_network'::character varying)::text, ('application_submitted'::character varying)::text, ('credentialed'::character varying)::text, ('contracted'::character varying)::text, ('in_network'::character varying)::text, ('single_case_agreement'::character varying)::text, ('denied'::character varying)::text, ('terminated'::character varying)::text])))
+);
+
+ALTER TABLE ONLY platform.payer_participation_events FORCE ROW LEVEL SECURITY;
+
+CREATE TABLE platform.payer_participations (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    practice_id character varying(128) NOT NULL,
+    payer_id uuid NOT NULL,
+    status character varying(24) NOT NULL,
+    credentialed_at date,
+    contracted_at date,
+    effective_date date,
+    termination_date date,
+    recredentialing_due_at date,
+    provider_id_with_payer character varying(80),
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_payer_participations_status CHECK (((status)::text = ANY (ARRAY[('out_of_network'::character varying)::text, ('application_submitted'::character varying)::text, ('credentialed'::character varying)::text, ('contracted'::character varying)::text, ('in_network'::character varying)::text, ('single_case_agreement'::character varying)::text, ('denied'::character varying)::text, ('terminated'::character varying)::text])))
+);
+
+ALTER TABLE ONLY platform.payer_participations FORCE ROW LEVEL SECURITY;
+
 CREATE TABLE platform.platform_audit_logs (
     id uuid NOT NULL,
     "timestamp" timestamp with time zone NOT NULL,
@@ -488,6 +564,9 @@ ALTER TABLE ONLY platform.claim_routes
 ALTER TABLE ONLY platform.companion_devices
     ADD CONSTRAINT companion_devices_pkey PRIMARY KEY (install_id);
 
+ALTER TABLE ONLY platform.contracted_rates
+    ADD CONSTRAINT contracted_rates_pkey PRIMARY KEY (id);
+
 ALTER TABLE ONLY platform.credential_bank_accounts
     ADD CONSTRAINT credential_bank_accounts_pkey PRIMARY KEY (id);
 
@@ -545,6 +624,15 @@ ALTER TABLE ONLY platform.passkey_challenges
 ALTER TABLE ONLY platform.passkey_credentials
     ADD CONSTRAINT passkey_credentials_pkey PRIMARY KEY (credential_id);
 
+ALTER TABLE ONLY platform.payer_authorizations
+    ADD CONSTRAINT payer_authorizations_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY platform.payer_participation_events
+    ADD CONSTRAINT payer_participation_events_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY platform.payer_participations
+    ADD CONSTRAINT payer_participations_pkey PRIMARY KEY (id);
+
 ALTER TABLE ONLY platform.platform_audit_logs
     ADD CONSTRAINT platform_audit_logs_pkey PRIMARY KEY (id);
 
@@ -581,6 +669,9 @@ ALTER TABLE ONLY platform.users
 ALTER TABLE ONLY platform.users
     ADD CONSTRAINT users_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY platform.contracted_rates
+    ADD CONSTRAINT ux_contracted_rates_participation_code_date UNIQUE (participation_id, cpt, modifier, effective_date);
+
 ALTER TABLE ONLY platform.credential_confirmations
     ADD CONSTRAINT ux_credential_confirmations_user_field UNIQUE (user_id, field_key);
 
@@ -590,9 +681,18 @@ ALTER TABLE ONLY platform.credential_disclosures
 ALTER TABLE ONLY platform.credential_licenses
     ADD CONSTRAINT ux_credential_licenses_user_state_number UNIQUE (user_id, state, license_number);
 
+ALTER TABLE ONLY platform.payer_participations
+    ADD CONSTRAINT ux_payer_participations_user_practice_payer UNIQUE (user_id, practice_id, payer_id);
+
 CREATE INDEX idx_practices_deleted_at ON platform.practices USING btree (deleted_at) WHERE (deleted_at IS NOT NULL);
 
 CREATE INDEX idx_practices_offboard_scheduled_at ON platform.practices USING btree (offboard_scheduled_at) WHERE (offboard_scheduled_at IS NOT NULL);
+
+CREATE INDEX ix_contracted_rates_participation_id ON platform.contracted_rates USING btree (participation_id);
+
+CREATE INDEX ix_contracted_rates_practice_id ON platform.contracted_rates USING btree (practice_id);
+
+CREATE INDEX ix_contracted_rates_user_id ON platform.contracted_rates USING btree (user_id);
 
 CREATE INDEX ix_credential_bank_accounts_user_id ON platform.credential_bank_accounts USING btree (user_id);
 
@@ -615,6 +715,18 @@ CREATE INDEX ix_diagnostic_definitions_code_active ON platform.diagnostic_defini
 CREATE INDEX ix_panel_applications_practice_id ON platform.panel_applications USING btree (practice_id);
 
 CREATE INDEX ix_panel_applications_user_id ON platform.panel_applications USING btree (user_id);
+
+CREATE INDEX ix_payer_authorizations_user_id ON platform.payer_authorizations USING btree (user_id);
+
+CREATE INDEX ix_payer_participation_events_participation_id ON platform.payer_participation_events USING btree (participation_id);
+
+CREATE INDEX ix_payer_participation_events_user_id ON platform.payer_participation_events USING btree (user_id);
+
+CREATE INDEX ix_payer_participations_payer_id ON platform.payer_participations USING btree (payer_id);
+
+CREATE INDEX ix_payer_participations_practice_id ON platform.payer_participations USING btree (practice_id);
+
+CREATE INDEX ix_payer_participations_user_id ON platform.payer_participations USING btree (user_id);
 
 CREATE INDEX ix_platform_booking_links_user_id ON platform.booking_links USING btree (user_id);
 
@@ -666,6 +778,14 @@ ALTER TABLE ONLY platform.booking_links
 ALTER TABLE ONLY platform.companion_devices
     ADD CONSTRAINT companion_devices_user_id_fkey FOREIGN KEY (user_id) REFERENCES platform.users(id) ON DELETE CASCADE;
 
+ALTER TABLE ONLY platform.contracted_rates
+    ADD CONSTRAINT contracted_rates_participation_id_fkey FOREIGN KEY (participation_id) REFERENCES platform.payer_participations(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY platform.payer_participation_events
+    ADD CONSTRAINT payer_participation_events_participation_id_fkey FOREIGN KEY (participation_id) REFERENCES platform.payer_participations(id) ON DELETE CASCADE;
+
+ALTER TABLE platform.contracted_rates ENABLE ROW LEVEL SECURITY;
+
 ALTER TABLE platform.credential_bank_accounts ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE platform.credential_confirmations ENABLE ROW LEVEL SECURITY;
@@ -690,6 +810,14 @@ ALTER TABLE platform.credential_training ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE platform.panel_applications ENABLE ROW LEVEL SECURITY;
 
+ALTER TABLE platform.payer_authorizations ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE platform.payer_participation_events ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE platform.payer_participations ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY rls_credential_owner ON platform.contracted_rates USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
 CREATE POLICY rls_credential_owner ON platform.credential_bank_accounts USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
 
 CREATE POLICY rls_credential_owner ON platform.credential_confirmations USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
@@ -711,5 +839,11 @@ CREATE POLICY rls_credential_owner ON platform.credential_references USING (((us
 CREATE POLICY rls_credential_owner ON platform.credential_service_locations USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
 
 CREATE POLICY rls_credential_owner ON platform.credential_training USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+CREATE POLICY rls_credential_owner ON platform.payer_authorizations USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+CREATE POLICY rls_credential_owner ON platform.payer_participation_events USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+CREATE POLICY rls_credential_owner ON platform.payer_participations USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
 
 CREATE POLICY rls_panel_application_owner ON platform.panel_applications USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
