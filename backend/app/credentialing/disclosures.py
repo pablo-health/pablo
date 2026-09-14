@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import and_, select
 
-from ..db.models import CredentialDisclosureRow
+from ..db.platform_models import CredentialDisclosureRow
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session

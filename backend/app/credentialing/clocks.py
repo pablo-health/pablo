@@ -26,11 +26,8 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import and_, select
 
-from ..db.models import (
-    ComplianceItemRow,
-    CredentialLiabilityPolicyRow,
-    CredentialLicenseRow,
-)
+from ..db.models import ComplianceItemRow
+from ..db.platform_models import CredentialLiabilityPolicyRow, CredentialLicenseRow
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session

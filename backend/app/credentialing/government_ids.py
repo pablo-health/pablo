@@ -23,7 +23,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
 
-from ..db.models import CredentialGovernmentIdRow
+from ..db.platform_models import CredentialGovernmentIdRow
 from ..models.audit import AuditAction, ResourceType
 from ..services.token_encryption import decrypt_tokens, encrypt_tokens
 

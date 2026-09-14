@@ -356,6 +356,29 @@ def test_no_drift_between_the_chain_and_the_models(empty_db: str) -> None:
     _alembic(empty_db, "-n", "platform", "check")
 
 
+#: The clinician's credential record, which ``b6e2f8a41c37`` creates here and
+#: the legacy shape never had — it lived in each practice schema until then, so
+#: a bootstrap that reconstructs the pre-chain platform schema cannot contain
+#: it. This is the mirror of the dropped-index allowance below: the chain is
+#: permitted to have gained exactly these, and nothing else.
+#:
+#: Matched by name prefix rather than listed table by table, because every
+#: object each one brings — its indexes, CHECK constraints, row policies and RLS
+#: switches — is equally absent from legacy, and enumerating them would be a
+#: second copy of the migration that goes stale the first time a column moves.
+_CREDENTIAL_RECORD_PREFIX = "credential_"
+
+
+def _is_credential_record(item: object) -> bool:
+    """Does this schema object belong to the credential record?
+
+    ``item`` is whatever a reader yields — a bare name, or a tuple whose first
+    element is the table. Both shapes appear in ``_READERS``.
+    """
+    first = item[0] if isinstance(item, tuple) else item
+    return isinstance(first, str) and first.startswith(_CREDENTIAL_RECORD_PREFIX)
+
+
 #: The 15 duplicate indexes ``d8f3b6c04e17`` drops.
 #:
 #: Each is covered by a surviving twin on the same table and columns — the list of
@@ -415,6 +438,8 @@ def test_chain_matches_the_legacy_bootstrap(empty_db: str, legacy_db: str) -> No
                 unexpected.append(f"{label}: in legacy, MISSING from chain: {item}")
 
             for item in sorted(chain - legacy, key=str):
+                if _is_credential_record(item):
+                    continue
                 unexpected.append(f"{label}: in chain, absent from legacy: {item}")
     finally:
         chain_engine.dispose()

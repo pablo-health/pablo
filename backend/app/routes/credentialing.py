@@ -38,7 +38,8 @@ from ..credentialing import (
     status,
 )
 from ..db import get_db_session
-from ..db.models import CREDENTIAL_CONFIRMATION_SOURCES, ClinicianProfileRow
+from ..db.models import ClinicianProfileRow
+from ..db.platform_models import CREDENTIAL_CONFIRMATION_SOURCES
 from ..models import User
 from ..models.audit import AuditAction
 from ..services.audit_service import AuditService, get_audit_service
@@ -47,7 +48,7 @@ from ..settings import get_settings
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
-    from ..db.models import CredentialConfirmationRow
+    from ..db.platform_models import CredentialConfirmationRow
 
 # The credential tables live in the tenant schema with RLS keyed on
 # ``app.current_user_id``, so the GUC is armed at router level before any

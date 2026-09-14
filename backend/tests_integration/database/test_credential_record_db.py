@@ -66,6 +66,11 @@ _CREDENTIAL_TABLES = (
     "credential_disclosures",
     "credential_service_locations",
     "credential_bank_accounts",
+)
+
+#: Her payer relationships, still per-tenant. They move next, with the payer
+#: foreign key that entangles them.
+_PARTICIPATION_TABLES = (
     "payer_participations",
     "payer_participation_events",
 )
@@ -184,9 +189,18 @@ def _payer(session: Session, name: str, *, carveout_of: str | None = None) -> st
 
 
 class TestProvisioning:
-    """AC 1. Provisioning applies the template, so the template must have them."""
+    """Where the credential record lives, and what guards it there.
 
-    def test_a_fresh_tenant_carries_every_table(self, engine: Engine, tenant_schema: str) -> None:
+    It is platform-scoped: Pablo runs credentialing, so the operator reads these
+    across practices, and held per-tenant that is a scan of every schema in the
+    database to answer a question about one person. The isolation that came free
+    from the schema boundary is bought back with row security, which is what the
+    last test here checks — moving the table without it would have traded a
+    guarantee for a convenience.
+    """
+
+    def test_a_fresh_tenant_carries_none_of_them(self, engine: Engine, tenant_schema: str) -> None:
+        """Two homes for one record is the state worth making impossible."""
         with engine.connect() as conn:
             present = set(
                 conn.execute(
@@ -196,15 +210,15 @@ class TestProvisioning:
                     {"s": tenant_schema},
                 ).scalars()
             )
-        missing = sorted(set(_CREDENTIAL_TABLES) - present)
-        assert not missing, (
-            f"missing from a freshly-provisioned tenant: {missing}. "
+        left = sorted(set(_CREDENTIAL_TABLES) & present)
+        assert not left, (
+            f"still provisioned per-tenant: {left}. "
             "Re-run backend/scripts/regen_tenant_template.py and commit the result."
         )
 
-    def test_nothing_landed_in_the_platform_schema(self, engine: Engine) -> None:
+    def test_every_table_is_in_the_platform_schema(self, engine: Engine) -> None:
         with engine.connect() as conn:
-            leaked = sorted(
+            present = set(
                 conn.execute(
                     text(
                         "SELECT table_name FROM information_schema.tables "
@@ -213,11 +227,36 @@ class TestProvisioning:
                     {"names": list(_CREDENTIAL_TABLES)},
                 ).scalars()
             )
-        assert not leaked, f"credential tables must be tenant-scoped: {leaked}"
+        missing = sorted(set(_CREDENTIAL_TABLES) - present)
+        assert not missing, (
+            f"missing from the platform schema: {missing}. "
+            "Re-run backend/scripts/regen_platform_schema.py and commit the result."
+        )
 
-    def test_every_table_is_force_rls_with_a_policy(
+    def test_the_participation_tables_have_not_moved_yet(
         self, engine: Engine, tenant_schema: str
     ) -> None:
+        """Stated so the half-done state is deliberate rather than discovered."""
+        with engine.connect() as conn:
+            present = set(
+                conn.execute(
+                    text(
+                        "SELECT table_name FROM information_schema.tables WHERE table_schema = :s"
+                    ),
+                    {"s": tenant_schema},
+                ).scalars()
+            )
+        missing = sorted(set(_PARTICIPATION_TABLES) - present)
+        assert not missing, f"expected these to still be per-tenant: {missing}"
+
+    def test_every_table_is_force_rls_with_a_policy(self, engine: Engine) -> None:
+        """The isolation the schema boundary used to give for free.
+
+        FORCE as well as ENABLE: the app connects as the table owner, and an
+        owner is exempt from its own policies unless forced. Without it every
+        assertion about isolation below would pass whether or not the policy
+        worked.
+        """
         with engine.connect() as conn:
             posture = {
                 name: (rls, forced)
@@ -225,15 +264,14 @@ class TestProvisioning:
                     text(
                         "SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity "
                         "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
-                        "WHERE n.nspname = :s AND c.relname = ANY(:names)"
+                        "WHERE n.nspname = 'platform' AND c.relname = ANY(:names)"
                     ),
-                    {"s": tenant_schema, "names": list(_CREDENTIAL_TABLES)},
+                    {"names": list(_CREDENTIAL_TABLES)},
                 ).all()
             }
             policied = set(
                 conn.execute(
-                    text("SELECT tablename FROM pg_policies WHERE schemaname = :s"),
-                    {"s": tenant_schema},
+                    text("SELECT tablename FROM pg_policies WHERE schemaname = 'platform'"),
                 ).scalars()
             )
 
@@ -246,7 +284,7 @@ class TestClinicianIsolation:
     """One clinician's credential record is not another's, under a real role."""
 
     def test_b_cannot_read_as_licence(self, engine: Engine, tenant_schema: str) -> None:
-        from app.db.models import CredentialLicenseRow  # noqa: PLC0415
+        from app.db.platform_models import CredentialLicenseRow  # noqa: PLC0415
 
         now = datetime.now(UTC)
         scoped_a = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
@@ -255,6 +293,7 @@ class TestClinicianIsolation:
                 CredentialLicenseRow(
                     id=str(uuid.uuid4()),
                     user_id=_CLINICIAN_A,
+                    practice_id=tenant_schema,
                     license_type="LCSW",
                     license_number="MI-000123",
                     state="MI",
@@ -347,10 +386,7 @@ class TestEncryptedIdentifiers:
         # connection sees zero rows, which would make this assertion pass
         # vacuously. Arming it reads the same row the owner reads; what is being
         # bypassed is the ORM, not the isolation boundary.
-        query = (
-            f"SELECT * FROM {tenant_schema}.credential_government_ids "  # noqa: S608
-            "WHERE user_id = :uid"
-        )
+        query = "SELECT * FROM platform.credential_government_ids WHERE user_id = :uid"
         with engine.connect() as conn:
             conn.execute(
                 text("SELECT set_config('app.current_user_id', :uid, false)"),
@@ -703,7 +739,7 @@ class TestDisclosureVersioning:
 
     def test_the_schema_refuses_it_too(self, engine: Engine, tenant_schema: str) -> None:
         """Defense in depth: the service check is not the only thing holding."""
-        from app.db.models import CredentialDisclosureRow  # noqa: PLC0415
+        from app.db.platform_models import CredentialDisclosureRow  # noqa: PLC0415
         from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
 
         now = datetime.now(UTC)
@@ -734,7 +770,8 @@ class TestClocksArePropsedNotWritten:
 
     def test_propose_changes_nothing(self, engine: Engine, tenant_schema: str) -> None:
         from app.credentialing import clocks  # noqa: PLC0415
-        from app.db.models import ComplianceItemRow, CredentialLicenseRow  # noqa: PLC0415
+        from app.db.models import ComplianceItemRow  # noqa: PLC0415
+        from app.db.platform_models import CredentialLicenseRow  # noqa: PLC0415
 
         now = datetime.now(UTC)
         scoped = _TenantSession(engine, tenant_schema, _CLINICIAN_B)
@@ -743,6 +780,7 @@ class TestClocksArePropsedNotWritten:
                 CredentialLicenseRow(
                     id=str(uuid.uuid4()),
                     user_id=_CLINICIAN_B,
+                    practice_id=tenant_schema,
                     license_type="LPC",
                     license_number="OH-555000",
                     state="OH",
@@ -795,7 +833,7 @@ class TestClocksArePropsedNotWritten:
     def test_the_soonest_licence_expiry_wins(self, engine: Engine, tenant_schema: str) -> None:
         """One clock, several licences: the first lapse is the one that matters."""
         from app.credentialing import clocks  # noqa: PLC0415
-        from app.db.models import CredentialLicenseRow  # noqa: PLC0415
+        from app.db.platform_models import CredentialLicenseRow  # noqa: PLC0415
 
         now = datetime.now(UTC)
         user_id = str(uuid.uuid4())
@@ -810,6 +848,7 @@ class TestClocksArePropsedNotWritten:
                     CredentialLicenseRow(
                         id=str(uuid.uuid4()),
                         user_id=user_id,
+                        practice_id=tenant_schema,
                         license_type="LCSW",
                         license_number=number,
                         state=state,
@@ -839,7 +878,7 @@ class TestClocksArePropsedNotWritten:
     ) -> None:
         """A revoked licence has a problem a renewal nudge is the wrong answer to."""
         from app.credentialing import clocks  # noqa: PLC0415
-        from app.db.models import CredentialLicenseRow  # noqa: PLC0415
+        from app.db.platform_models import CredentialLicenseRow  # noqa: PLC0415
 
         now = datetime.now(UTC)
         user_id = str(uuid.uuid4())
@@ -849,6 +888,7 @@ class TestClocksArePropsedNotWritten:
                 CredentialLicenseRow(
                     id=str(uuid.uuid4()),
                     user_id=user_id,
+                    practice_id=tenant_schema,
                     license_type="LPC",
                     license_number="XX-9",
                     state="XX",
@@ -868,7 +908,7 @@ class TestClocksArePropsedNotWritten:
 
 class TestOnePrimaryLicence:
     def test_a_second_primary_is_refused(self, engine: Engine, tenant_schema: str) -> None:
-        from app.db.models import CredentialLicenseRow  # noqa: PLC0415
+        from app.db.platform_models import CredentialLicenseRow  # noqa: PLC0415
         from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
 
         now = datetime.now(UTC)
@@ -880,6 +920,7 @@ class TestOnePrimaryLicence:
                     CredentialLicenseRow(
                         id=str(uuid.uuid4()),
                         user_id=user_id,
+                        practice_id=tenant_schema,
                         license_type="LCSW",
                         license_number=number,
                         state=state,

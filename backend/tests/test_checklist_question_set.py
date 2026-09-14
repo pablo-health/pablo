@@ -20,7 +20,6 @@ from app.credentialing.checklist import (
     Tier,
 )
 from app.credentialing.field_map import FIELD_MAP_PATH, render
-from app.db.models import Base
 
 #: The ordinary applicant: independently licensed, does not prescribe. The
 #: counts in the design are quoted for her, so the tests quote them for her too.
@@ -225,15 +224,24 @@ class TestTheWholeSet:
         at write time, and the mapping doc generated from it would document a
         place nothing lands. ``table.column`` is a scalar, a bare ``table`` a
         repeating group.
+
+        Resolution goes through ``status._mapped_table`` rather than through a
+        merged view built here. Targets span two schemas now — the credential
+        record is platform-scoped, ``clinician_profiles`` and the billing
+        profile stay per-tenant — and an earlier version of this test merged
+        both metadatas itself. It passed while ``_is_answered`` was still
+        looking in only one of them, so every credential field read as
+        unanswered and Tier 1 could not complete. A guard holding its own map
+        can only confirm its own map. Asking the reader's resolver is what
+        makes a green here mean the reader can find it.
         """
-        tables = Base.metadata.tables
+        from app.credentialing.status import _mapped_table  # noqa: PLC0415
+
         unresolved = []
         for field in CHECKLIST_FIELDS:
-            if "." in field.target:
-                table, column = field.target.split(".", 1)
-                ok = table in tables and column in tables[table].c
-            else:
-                ok = field.target in tables
+            name, _, column = field.target.partition(".")
+            table = _mapped_table(name)
+            ok = table is not None and (not column or column in table.c)
             if not ok:
                 unresolved.append((field.key, field.target))
         assert not unresolved, f"targets with nowhere to land: {unresolved}"

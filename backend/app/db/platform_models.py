@@ -12,17 +12,19 @@ live in saas_models.py.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     Index,
     Integer,
     LargeBinary,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -358,6 +360,58 @@ PANEL_APPLICATION_STATUSES: tuple[str, ...] = (
 #: only nag her about everything, which is the process she was trying to stop
 #: carrying.
 PANEL_ACTION_OWNERS: tuple[str, ...] = ("pablo", "therapist")
+
+
+# --- The credentialing vocabulary ---------------------------------------
+#
+# Moved here with the tables that use them. They are referenced by the
+# CHECK constraints below and by ``app.credentialing``; nothing in the
+# tenant models uses them any more.
+
+#: How a stored credential fact was established. ``self`` is what she told us
+#: and the default for anything typed into a form; ``nppes`` and ``board``
+#: mean a public source was read and agreed. Only the latter two are worth
+#: anything to a payer, so provenance is a column, not an assumption.
+CREDENTIAL_VERIFICATION_SOURCES: tuple[str, ...] = ("self", "nppes", "board")
+
+#: Where a licence stands with its issuing board — distinct from whether the
+#: expiry date has passed. A licence can be ``active`` with a date in the past
+#: while a renewal processes, and ``suspended`` with a date years out.
+CREDENTIAL_LICENSE_STATUSES: tuple[str, ...] = (
+    "active",
+    "inactive",
+    "expired",
+    "suspended",
+    "revoked",
+)
+
+#: Which number the clinician files taxes under. Mirrors
+#: ``practice_billing_profile.tax_id_type`` — the practice has a billing
+#: identity and each clinician has her own, which for a solo practice is the
+#: same number in two places.
+CREDENTIAL_TAX_ID_TYPES: tuple[str, ...] = ("ein", "ssn")
+
+#: What kind of account EFT lands in — the one field a payer's enrollment form
+#: asks for that cannot be read off a voided cheque.
+CREDENTIAL_BANK_ACCOUNT_TYPES: tuple[str, ...] = ("checking", "savings")
+
+#: Whether she practises on her own licence or under someone else's. Not a
+#: detail of the licence: an associate is a different applicant, most payers
+#: will not panel her at all, and the ones that do credential her supervisor
+#: alongside her. The intake asks it before anything else for that reason.
+CREDENTIAL_SUPERVISION_STATUSES: tuple[str, ...] = ("independent", "supervised")
+
+#: Where a pre-filled value came from, for the fields the intake confirms
+#: rather than asks. A payer application distinguishes self-reported from
+#: verified, so the provenance is worth as much as the value — the same reason
+#: ``credential_licenses.verification_source`` exists.
+CREDENTIAL_CONFIRMATION_SOURCES: tuple[str, ...] = (
+    "nppes",
+    "pecos_public_file",
+    "leie_sam",
+    "clinician_profiles",
+    "practice_billing_profile",
+)
 
 
 def _sql_in_list(values: tuple[str, ...]) -> str:
@@ -842,3 +896,523 @@ class ProcessedPaymentEventRow(PlatformBase):
     #: When the processor says the event happened, when it told us.
     event_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+# --- The credentialing record ----------------------------------------------
+#
+# Pablo runs credentialing as a concierge service, so the operator has to read
+# a clinician's licences, education, employment and panel participations to
+# file an application on her behalf. Inside each practice schema that is a scan
+# of every schema in the database to answer a question about one person;
+# ``panel_applications`` moved here first for the same reason and these are the
+# rest of the same surface.
+#
+# Every one is row-scoped by ``user_id`` and therefore rides the existing
+# ``app.current_user_id`` GUC exactly as ``panel_applications`` does — ENABLE
+# plus FORCE plus an owner policy, with the operator reaching across by a
+# second policy naming ``pablo_credentialing_ops``. The isolation is not
+# decoration: these hold what somebody would least like a colleague to browse
+# — a disclosure, a malpractice history, which panels said no.
+#
+# PHI-free by construction. Every row is about a clinician; no patient appears
+# in any of them.
+#
+# Only three of them carry ``practice_id``, and that is deliberate. It exists
+# to say which practice schema resolves a ``document_id``, because the vault
+# stayed per-tenant and a platform table cannot reference one — so the column
+# is on the three that point at a document and nowhere else.
+#
+# The temptation is to stamp it on all of them for symmetry. That would put the
+# practice back into the identity of a record whose whole argument is that it
+# belongs to the clinician: her degree was not "filed under" a practice, and
+# when she works at a second one the question has no answer. A column with no
+# job is not free — it invites a query that scopes by it and a reader who
+# believes that scoping means something.
+#
+# All three lose it when the vault follows and the foreign key comes back
+# properly (PABLO-g7oe).
+
+
+class CredentialEducationRow(PlatformBase):
+    """One degree: where, in what, and when.
+
+    The professional degree is the one a payer verifies with the school; the
+    undergraduate one is asked for and rarely checked. Both are rows.
+    """
+
+    __tablename__ = "credential_education"
+    __table_args__ = (  # type: ignore[assignment]
+        Index("ix_credential_education_user_id", "user_id"),
+        {"schema": PLATFORM_SCHEMA},
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    institution: Mapped[str] = mapped_column(String(255), nullable=False)
+    degree: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    field_of_study: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # ISO 3166-1 alpha-2. Asked for because a degree earned abroad routes the
+    # application differently.
+    country: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CredentialTrainingRow(PlatformBase):
+    """Post-degree training: internship, practicum, residency, fellowship.
+
+    Separate from ``credential_education`` because the questions differ — a
+    training entry names a supervisor and a specialty — and because a payer's
+    form separates them too.
+    """
+
+    __tablename__ = "credential_training"
+    __table_args__ = (  # type: ignore[assignment]
+        Index("ix_credential_training_user_id", "user_id"),
+        {"schema": PLATFORM_SCHEMA},
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    # Free text, same reason as ``license_type``.
+    program_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    institution: Mapped[str] = mapped_column(String(255), nullable=False)
+    specialty: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    supervisor_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CredentialEmploymentRow(PlatformBase):
+    """Work history, which a payer reads as a continuous timeline.
+
+    ``end_date`` NULL means current. ``preceding_gap_explanation`` explains the
+    gap immediately BEFORE this row's ``start_date``.
+
+    There is no ``has_gap`` flag. Whether a gap exists is a fact about two
+    dates, so it is derived from the ordered rows on every ask
+    (``app.credentialing.employment.gaps``) — a stored copy drifts the first
+    time someone corrects a date, leaving an explanation attached to a gap
+    that is no longer there.
+    """
+
+    __tablename__ = "credential_employment"
+    __table_args__ = (  # type: ignore[assignment]
+        Index("ix_credential_employment_user_id", "user_id"),
+        {"schema": PLATFORM_SCHEMA},
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    employer_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    position: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    address_line1: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    address_line2: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    city: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    state: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    postal_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    preceding_gap_explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CredentialReferenceRow(PlatformBase):
+    """A professional reference. Payers ask for three, and contact them.
+
+    ``years_known`` is a column because a reference of under a year is
+    routinely rejected — catching that before the application goes out is the
+    difference between a fixable form and a sixty-day stall.
+    """
+
+    __tablename__ = "credential_references"
+    __table_args__ = (  # type: ignore[assignment]
+        Index("ix_credential_references_user_id", "user_id"),
+        {"schema": PLATFORM_SCHEMA},
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    full_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    title: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    credential: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    organization: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    relationship: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    years_known: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CredentialDisclosureRow(PlatformBase):
+    """One answered disclosure question, pinned to the wording she answered.
+
+    The attestation questions — malpractice history, licence action, criminal
+    history — get reworded by the bodies that ask them. ``question_key`` names
+    the question, ``question_version`` names the wording, and the pair is what
+    she attested to. Without the version a rewording silently changes the
+    meaning of a stored ``true``. So two versions of one key coexist rather
+    than the new one replacing the old.
+
+    A ``true`` answer always carries an explanation, enforced in the schema:
+    an unexplained yes is not an answer a payer accepts, and learning that at
+    submission time costs a review cycle.
+    """
+
+    __tablename__ = "credential_disclosures"
+    __table_args__ = (  # type: ignore[assignment]
+        CheckConstraint(
+            "answer IS NOT TRUE OR explanation IS NOT NULL",
+            name="ck_credential_disclosures_explained",
+        ),
+        UniqueConstraint(
+            "user_id",
+            "question_key",
+            "question_version",
+            name="ux_credential_disclosures_user_key_version",
+        ),
+        {"schema": PLATFORM_SCHEMA},
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    question_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    question_version: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    answer: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    answered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CredentialGovernmentIdRow(PlatformBase):
+    """The clinician's government identifiers — one row per clinician.
+
+    Deliberately its own table rather than columns on ``clinician_profiles``:
+    SSN, date of birth and tax id are the highest-sensitivity fields in the
+    schema, and isolating them gives the class exactly one access path to
+    audit. Everything that reads a value here goes through
+    ``app.credentialing.government_ids``, which records the read.
+
+    Encrypted with the same AES-256-GCM helper the calendar tokens and the
+    practice's billing tax id already use (``app.services.token_encryption``).
+    The ``*_last4`` columns are in the clear on purpose: a form needs to show
+    which number is on file, and four digits are not the identifier. There is
+    no ``dob_last4`` — a partial date of birth is either the whole fact or
+    useless, so seeing it means decrypting it, which is audited.
+
+    ``business_structure`` and ``sole_proprietor`` look like one question and
+    are two: the first is the entity type on the tax return, the second a
+    filing status a payer's W-9 section asks about independently — and a
+    single-member LLC answers yes to it.
+    """
+
+    __tablename__ = "credential_government_ids"
+    __table_args__ = (  # type: ignore[assignment]
+        CheckConstraint(
+            f"tax_id_type IS NULL OR tax_id_type IN ({_sql_in_list(CREDENTIAL_TAX_ID_TYPES)})",
+            name="ck_credential_government_ids_tax_id_type",
+        ),
+        CheckConstraint(
+            "supervision_status IS NULL OR supervision_status IN "
+            f"({_sql_in_list(CREDENTIAL_SUPERVISION_STATUSES)})",
+            name="ck_credential_government_ids_supervision_status",
+        ),
+        {"schema": PLATFORM_SCHEMA},
+    )
+
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    ssn_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ssn_last4: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    dob_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tax_id_type: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    tax_id_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tax_id_last4: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    # The organisation NPI, when the clinician bills as an entity rather than
+    # as herself. The individual (type 1) NPI lives on clinician_profiles.
+    type2_npi: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    business_structure: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    sole_proprietor: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # The supervision fork's answer, and it has to live somewhere a
+    # supervision_relationships row does not: the intake asks it first, before
+    # there is a supervisor to name, precisely so the rest of the question set
+    # can branch on it.
+    supervision_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Unencrypted on purpose — a CAQH number identifies a profile in a
+    # directory the payers already read, not the clinician.
+    caqh_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Intent, not enrollment status. Enrollment is a payer_participations row
+    # with dates; these two say only that she wants the application filed, and
+    # they are what turns a checklist on.
+    medicare_intent: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    medicaid_intent: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CredentialLicenseRow(PlatformBase):
+    """Every licence the clinician holds, in every state.
+
+    ``clinician_profiles.license_number`` / ``license_state`` remain the
+    primary licence and the one a claim is filed under; this holds the full
+    set, with the primary mirrored as ``is_primary``. Multi-state is ordinary
+    — telehealth and the compacts — and an application asks for all of them.
+
+    ``expiration_date`` is what the ``license`` compliance clock derives FROM,
+    never the reverse. ``app.credentialing.clocks`` proposes; she confirms.
+    """
+
+    __tablename__ = "credential_licenses"
+    __table_args__ = (  # type: ignore[assignment]
+        CheckConstraint(
+            f"status IN ({_sql_in_list(CREDENTIAL_LICENSE_STATUSES)})",
+            name="ck_credential_licenses_status",
+        ),
+        CheckConstraint(
+            f"verification_source IN ({_sql_in_list(CREDENTIAL_VERIFICATION_SOURCES)})",
+            name="ck_credential_licenses_verification_source",
+        ),
+        UniqueConstraint(
+            "user_id",
+            "state",
+            "license_number",
+            name="ux_credential_licenses_user_state_number",
+        ),
+        # Partial, because a unique constraint on (user_id, is_primary) would
+        # also forbid a second NON-primary licence — the ordinary case.
+        Index(
+            "ux_credential_licenses_one_primary",
+            "user_id",
+            unique=True,
+            postgresql_where=text("is_primary"),
+        ),
+        Index("ix_credential_licenses_user_id", "user_id"),
+        {"schema": PLATFORM_SCHEMA},
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    #: Which practice schema resolves ``document_id``. The vault stayed
+    #: per-tenant, so the pointer needs somewhere to be resolved; this is
+    #: the only reason the column is here, and it goes when the vault
+    #: follows (PABLO-g7oe).
+    practice_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    # Free text: the abbreviations differ by state and discipline (LMFT,
+    # LCSW, LPCC, PMHNP-BC), and a new one shouldn't need a migration. Same
+    # posture as ``compliance_items.item_type``.
+    license_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    license_number: Mapped[str] = mapped_column(String(100), nullable=False)
+    state: Mapped[str] = mapped_column(String(2), nullable=False)
+    issue_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    expiration_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    verification_source: Mapped[str] = mapped_column(String(8), nullable=False, default="self")
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    document_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CredentialLiabilityPolicyRow(PlatformBase):
+    """A malpractice policy: carrier, limits, dates, and the COI behind it.
+
+    A payer asks for the per-occurrence and aggregate limits, not just that
+    coverage exists, and refuses an application below its floor — so the
+    numbers are columns, in cents like every other amount here.
+
+    Superseded policies stay rather than being replaced: an application asks
+    for continuous coverage history, and a gap in it is a disclosure question.
+    """
+
+    __tablename__ = "credential_liability_policies"
+    __table_args__ = (  # type: ignore[assignment]
+        Index("ix_credential_liability_policies_user_id", "user_id"),
+        Index(
+            "ux_credential_liability_policies_one_current",
+            "user_id",
+            unique=True,
+            postgresql_where=text("is_current"),
+        ),
+        {"schema": PLATFORM_SCHEMA},
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    #: Which practice schema resolves ``document_id``. The vault stayed
+    #: per-tenant, so the pointer needs somewhere to be resolved; this is
+    #: the only reason the column is here, and it goes when the vault
+    #: follows (PABLO-g7oe).
+    practice_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    carrier_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    policy_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    per_occurrence_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    aggregate_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    effective_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    expiration_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    is_current: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    document_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CredentialConfirmationRow(PlatformBase):
+    """What the clinician was shown, where it came from, and whether it is right.
+
+    The intake's first tier asks nothing. It fills fields from NPPES, the
+    public PECOS file, the exclusion lists and what the practice already
+    stores, and asks her only to confirm them. A confirm surface that records
+    nothing is theatre, so each of those fields leaves a row here: a payer
+    application distinguishes self-reported data from verified data, and
+    "confirmed on this date, against this source" is what puts a value on the
+    right side of that line.
+
+    Not ``credential_disclosures``, which is the obvious-looking home and the
+    wrong one. That table's check requires an explanation whenever the answer
+    is ``true`` — correct for an attestation, backwards here, where ``true``
+    means "this is right" and needs nothing further while ``false`` is the
+    answer carrying a correction. The check below is that constraint's mirror
+    image.
+
+    ``presented_value`` is the value she saw, stored as text whatever its type.
+    For a field with a home column — the NPI, the taxonomy code — the column
+    remains the record and this is a snapshot, so a later divergence between
+    what she confirmed and what the row now says is visible rather than
+    inferred. For the handful of Tier-0 fields with no home column — the
+    exclusion-list clearance, the "no hospital affiliations" the portal asks
+    everyone — this IS the record.
+
+    One row per ``(user_id, field_key)``: re-confirming is an update, because
+    the question is always "is this right now", never a history of answers.
+    ``credential_disclosures`` keeps versions for the opposite reason — the
+    wording it pins can change underneath a stored ``true``.
+    """
+
+    __tablename__ = "credential_confirmations"
+    __table_args__ = (  # type: ignore[assignment]
+        CheckConstraint(
+            f"source IN ({_sql_in_list(CREDENTIAL_CONFIRMATION_SOURCES)})",
+            name="ck_credential_confirmations_source",
+        ),
+        CheckConstraint(
+            "confirmed OR correction IS NOT NULL",
+            name="ck_credential_confirmations_corrected",
+        ),
+        UniqueConstraint(
+            "user_id",
+            "field_key",
+            name="ux_credential_confirmations_user_field",
+        ),
+        {"schema": PLATFORM_SCHEMA},
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    #: A ``ChecklistField.key`` from ``app.credentialing.checklist``. Free text at
+    #: the schema level so adding a Tier-0 field is not a migration.
+    field_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    presented_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    correction: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CredentialServiceLocationRow(PlatformBase):
+    """A place the clinician sees clients, as a payer directory would list it.
+
+    The apparently cosmetic fields are not: ``accepts_new_patients`` is the
+    most-complained-about wrong entry in every payer directory, ``languages``
+    and ``ada_accessible`` are how a member filters, and ``hours`` is what a
+    network-adequacy audit checks. ``telehealth_only`` marks an address that
+    exists for the paperwork and not a door anyone walks through.
+
+    ``hours`` and ``languages`` are JSONB: read and written whole, never
+    queried by element, and shaped by the payer rather than by us.
+    """
+
+    __tablename__ = "credential_service_locations"
+    __table_args__ = (  # type: ignore[assignment]
+        Index("ix_credential_service_locations_user_id", "user_id"),
+        Index(
+            "ux_credential_service_locations_one_primary",
+            "user_id",
+            unique=True,
+            postgresql_where=text("is_primary"),
+        ),
+        {"schema": PLATFORM_SCHEMA},
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    address_line1: Mapped[str] = mapped_column(String(255), nullable=False)
+    address_line2: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    city: Mapped[str] = mapped_column(String(100), nullable=False)
+    state: Mapped[str] = mapped_column(String(2), nullable=False)
+    postal_code: Mapped[str] = mapped_column(String(20), nullable=False)
+    phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    fax: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    accepts_new_patients: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    hours: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    ada_accessible: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    languages: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    telehealth_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CredentialBankAccountRow(PlatformBase):
+    """Where EFT lands, and the voided cheque that proves it.
+
+    Encrypted like the government ids and read through the same audited path.
+    ``*_last4`` is in the clear so a form can show which account is on file —
+    a routing number is public information about a bank; what is worth
+    protecting is its pairing with an account number.
+    """
+
+    __tablename__ = "credential_bank_accounts"
+    __table_args__ = (  # type: ignore[assignment]
+        CheckConstraint(
+            f"account_type IN ({_sql_in_list(CREDENTIAL_BANK_ACCOUNT_TYPES)})",
+            name="ck_credential_bank_accounts_account_type",
+        ),
+        Index("ix_credential_bank_accounts_user_id", "user_id"),
+        {"schema": PLATFORM_SCHEMA},
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    #: Which practice schema resolves ``document_id``. The vault stayed
+    #: per-tenant, so the pointer needs somewhere to be resolved; this is
+    #: the only reason the column is here, and it goes when the vault
+    #: follows (PABLO-g7oe).
+    practice_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    account_holder_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    routing_number_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    routing_number_last4: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    account_number_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    account_number_last4: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    account_type: Mapped[str] = mapped_column(String(8), nullable=False)
+    document_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False),
+        nullable=True,
+    )
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
