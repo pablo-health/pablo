@@ -134,8 +134,11 @@ db-up:
 db-down:
 	docker compose stop postgres
 
-# Run Alembic migrations (practice schema)
+# Run Alembic migrations: platform schema first, then practice schemas. The
+# tenant chain declares foreign keys into platform.users and creates nothing in
+# that schema itself, so the order is load-bearing rather than tidy.
 db-migrate:
+	cd backend && DATABASE_BACKEND=postgres DATABASE_URL=postgresql://pablo:pablo_dev@localhost:5432/pablo poetry run alembic -n platform upgrade head
 	cd backend && DATABASE_BACKEND=postgres DATABASE_URL=postgresql://pablo:pablo_dev@localhost:5432/pablo poetry run alembic upgrade head
 
 # Generate a new Alembic migration

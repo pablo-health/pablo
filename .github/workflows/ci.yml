@@ -141,16 +141,26 @@ jobs:
         # silently produce two heads and break ``alembic upgrade head``
         # for every downstream consumer. Catch it at PR time instead of
         # after the merge.
+        #
+        # Both chains, separately: the tenant chain in backend/alembic/ and the
+        # platform chain in backend/alembic_platform/. They are independent
+        # graphs with independent bookkeeping, so each has to have exactly one
+        # head of its own, and a fork in the newer one would otherwise go
+        # unnoticed until a deploy ran it.
         run: |
           cd backend
-          heads=$(poetry run alembic heads | grep -c "(head)")
-          if [ "$heads" -ne 1 ]; then
-            echo "::error::Alembic has $heads heads — needs a merge migration."
-            echo "::error::Run \`poetry run alembic merge -m '<msg>' heads\` and commit the generated revision."
-            poetry run alembic heads
-            exit 1
-          fi
-          echo "Single head, good."
+          # ``-n alembic`` names the default section explicitly, so one loop
+          # covers both chains.
+          for section in alembic platform; do
+            heads=$(poetry run alembic -n "$section" heads | grep -c "(head)")
+            if [ "$heads" -ne 1 ]; then
+              echo "::error::The $section chain has $heads heads — needs a merge migration."
+              echo "::error::Run \`poetry run alembic -n $section merge -m '<msg>' heads\` and commit it."
+              poetry run alembic -n "$section" heads
+              exit 1
+            fi
+            echo "$section chain: single head, good."
+          done
 
       - name: Test (pytest)
         if: steps.classify.outputs.substantive != 'false'
@@ -246,6 +256,11 @@ jobs:
     # The regen script runs alembic upgrade head + pg_dump in a
     # disposable Postgres via testcontainers; we then ``git diff``
     # the committed template against the regen output.
+    # NOTE: this job now checks BOTH templates (tenant and platform), so the
+    # display name below undersells it. Left alone on purpose: the name is the
+    # required-check name in the branch ruleset, and changing it here without
+    # changing it there leaves the required check permanently pending. Renaming
+    # both together is a deliberate two-step for a human.
     name: Tenant template matches alembic head
     runs-on: ubuntu-latest
     steps:
@@ -317,6 +332,25 @@ jobs:
             echo "::error::tenant_template.sql is out of sync with alembic head."
             echo "::error::Run: poetry run python backend/scripts/regen_tenant_template.py"
             echo "::error::Then commit the updated backend/app/db/tenant_template.sql."
+            exit 1
+          fi
+
+      # The platform schema has the same contract as the tenant schema: a
+      # captured template builds it, a chain evolves it, and the two have to
+      # agree. Steps in this job rather than a job of their own — the Docker
+      # image, poetry and testcontainers are already set up here, so this costs
+      # seconds, while a separate job costs a billed minute.
+      - name: Regenerate platform template (testcontainers Postgres)
+        if: steps.classify.outputs.substantive != 'false'
+        run: poetry run python backend/scripts/regen_platform_schema.py
+
+      - name: Fail if platform template drifted from its chain head
+        if: steps.classify.outputs.substantive != 'false'
+        run: |
+          if ! git diff --exit-code backend/app/db/platform_template.sql; then
+            echo "::error::platform_template.sql is out of sync with the platform chain."
+            echo "::error::Run: poetry run python backend/scripts/regen_platform_schema.py"
+            echo "::error::Then commit the updated backend/app/db/platform_template.sql."
             exit 1
           fi
 

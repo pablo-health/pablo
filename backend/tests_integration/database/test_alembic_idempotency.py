@@ -3,15 +3,32 @@
 """Regression: alembic upgrade must be idempotent against drifted DBs.
 
 Migration ``f1c8d4a92b65`` (v0.9.3.10) failed on ``pablohealth-dev``
-with ``DuplicateTable`` because ``backend/alembic/env.py`` calls
-``PlatformBase.metadata.create_all(connection)`` *before* alembic runs.
-That pre-creates ``platform.practices.is_pentest`` and
-``platform.platform_audit_logs`` from the ORM model — the migration
-must skip already-present objects so it can land cleanly on dev/prod
-DBs that already have them.
+with ``DuplicateTable`` because ``backend/alembic/env.py`` used to call
+``PlatformBase.metadata.create_all(connection)`` *before* alembic ran.
+That pre-created ``platform.practices.is_pentest`` and
+``platform.platform_audit_logs`` from the ORM model, so the migration
+had to skip already-present objects to land at all.
 
-These tests spin up a throwaway database, run ``alembic upgrade head``
-in a subprocess (so settings/env state is fresh), and verify success.
+That call is gone — the platform schema is built by its own chain from a
+captured template — but the requirement it created has outlived it and is
+still worth testing. Every existing database was built the old way, so
+the migrations that ran against a ``create_all``-built schema have to stay
+able to, and ``IF NOT EXISTS`` is load-bearing in each of them.
+
+These tests spin up a throwaway database with the platform schema at head
+(the fixture runs that chain; the tenant chain cannot run without it),
+then run ``alembic upgrade head`` in a subprocess so settings/env state is
+fresh, and verify success.
+
+There used to be a second test here that hand-built ``platform.practices``
+and ``platform.platform_audit_logs`` on an otherwise empty database, to
+reproduce a partially-migrated one. It is gone, and nothing is lost with
+it: the platform chain now builds the whole schema before the tenant chain
+runs, so "these objects already exist when the migration reaches them" is
+no longer a case to simulate — it is the only case, exercised on every run
+by the test below. The database that test used to construct can no longer
+exist either, since the check in front of the tenant chain rejects a
+platform schema holding two tables out of twenty.
 
 Requires:
   - ``DATABASE_URL`` + ``DATABASE_BACKEND=postgres``
@@ -24,6 +41,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -50,7 +68,14 @@ def _swap_db(url: str, db_name: str) -> str:
 
 @pytest.fixture
 def fresh_db() -> Iterator[str]:
-    """Create a unique throwaway database; drop it after the test.
+    """A unique throwaway database with the platform schema built and nothing else.
+
+    The platform chain runs here because the tenant chain cannot run without it:
+    the tenant chain declares foreign keys into ``platform.users`` and creates
+    nothing in that schema itself. It used to be able to, because
+    ``create_all`` sat in its ``env.py`` bootstrap — which is exactly the coupling
+    the platform chain removed. Every caller now runs the platform chain first,
+    and for this module the fixture is that caller.
 
     The drop does not terminate connections. Doing so needs superuser or
     pg_signal_backend, and the role this suite runs as is deliberately
@@ -60,7 +85,9 @@ def fresh_db() -> Iterator[str]:
     admin = create_engine(_db_url, isolation_level="AUTOCOMMIT")
     try:
         scratch_db.create(admin, db)
-        yield _swap_db(_db_url, db)
+        url = _swap_db(_db_url, db)
+        _alembic(url, "-n", "platform", "upgrade", "head")
+        yield url
     finally:
         scratch_db.drop(admin, db)
         admin.dispose()
@@ -78,9 +105,17 @@ def _alembic_upgrade_head(database_url: str) -> None:
         "DATABASE_URL": database_url,
         "DATABASE_BACKEND": "postgres",
     }
-    # poetry from PATH is fine in tests; no untrusted input here.
+    # ``sys.executable -m alembic`` rather than ``poetry run alembic``: in a git
+    # worktree poetry resolves no environment and falls through to whatever
+    # ``alembic`` is first on PATH, which on a machine with anaconda installed is
+    # a Python 3.10 that dies importing ``app.db`` with ``TypeError: 'type'
+    # object is not subscriptable``. Under pytest the running interpreter is
+    # already the right one, in CI and in a worktree alike.
+    #
+    # Tenant chain only. The platform chain it depends on is already at head —
+    # the ``fresh_db`` fixture runs it, for the reason given there.
     result = subprocess.run(
-        ["poetry", "run", "alembic", "upgrade", "head"],  # noqa: S607
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
         cwd=_BACKEND_DIR,
         env=env,
         capture_output=True,
@@ -96,10 +131,10 @@ def _alembic_upgrade_head(database_url: str) -> None:
 def test_upgrade_head_succeeds_on_fresh_db(fresh_db: str) -> None:
     """Fresh DB → ``alembic upgrade head`` succeeds.
 
-    ``env.py`` runs ``PlatformBase.metadata.create_all`` before
-    migrations, so the platform tables exist *before* alembic gets to
-    ``f1c8d4a92b65``. A non-idempotent migration would raise
-    ``DuplicateColumn`` / ``DuplicateTable`` here.
+    The platform chain has already built the platform tables, so alembic reaches
+    ``f1c8d4a92b65`` with its objects in place — the same situation
+    ``create_all`` used to create, and the same thing a non-idempotent migration
+    would trip over with ``DuplicateColumn`` / ``DuplicateTable``.
     """
     _alembic_upgrade_head(fresh_db)
 
@@ -107,8 +142,8 @@ def test_upgrade_head_succeeds_on_fresh_db(fresh_db: str) -> None:
 def _alembic(database_url: str, *args: str) -> None:
     """Run an arbitrary ``alembic`` command in a subprocess (see note above)."""
     env = {**os.environ, "DATABASE_URL": database_url, "DATABASE_BACKEND": "postgres"}
-    result = subprocess.run(  # noqa: S603 (trusted: hardcoded poetry/alembic, test-controlled args)
-        ["poetry", "run", "alembic", *args],  # noqa: S607
+    result = subprocess.run(  # noqa: S603 (trusted: this interpreter, test-controlled args)
+        [sys.executable, "-m", "alembic", *args],
         cwd=_BACKEND_DIR,
         env=env,
         capture_output=True,
@@ -258,53 +293,3 @@ def test_phase_c_converts_deployment_defined_user_fk_columns(fresh_db: str) -> N
     uploaded_by, new_user_id = row
     assert uploaded_by == new_user_id
     assert uploaded_by != _LEGACY_UID
-
-
-def test_upgrade_idempotent_after_simulated_drift(fresh_db: str) -> None:
-    """Pre-create the conflicting platform objects exactly as a partial
-    prior run would have left them, then upgrade head."""
-    eng = create_engine(fresh_db)
-    try:
-        with eng.begin() as conn:
-            conn.execute(text("CREATE SCHEMA IF NOT EXISTS platform"))
-            conn.execute(
-                text(
-                    """
-                    CREATE TABLE platform.practices (
-                        id VARCHAR(128) PRIMARY KEY,
-                        name VARCHAR(255) NOT NULL,
-                        schema_name VARCHAR(128) UNIQUE NOT NULL,
-                        tenant_id VARCHAR(128) UNIQUE,
-                        owner_email VARCHAR(255) NOT NULL,
-                        owner_user_id VARCHAR(128) DEFAULT '',
-                        product VARCHAR(20) DEFAULT 'pablo',
-                        status VARCHAR(20) DEFAULT 'active',
-                        is_active BOOLEAN DEFAULT TRUE,
-                        created_at TIMESTAMP WITH TIME ZONE NOT NULL,
-                        is_pentest BOOLEAN NOT NULL DEFAULT false
-                    )
-                    """
-                )
-            )
-            conn.execute(
-                text(
-                    """
-                    CREATE TABLE platform.platform_audit_logs (
-                        id VARCHAR(128) PRIMARY KEY,
-                        timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
-                        expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
-                        actor_user_id VARCHAR(128) NOT NULL,
-                        action VARCHAR(50) NOT NULL,
-                        resource_type VARCHAR(30) NOT NULL,
-                        resource_id VARCHAR(128) NOT NULL,
-                        tenant_schema VARCHAR(128),
-                        ip_address VARCHAR(45),
-                        user_agent TEXT,
-                        details JSONB
-                    )
-                    """
-                )
-            )
-    finally:
-        eng.dispose()
-    _alembic_upgrade_head(fresh_db)
