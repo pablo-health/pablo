@@ -148,9 +148,21 @@ if __name__ == "__main__":
     # job should fail here with the traceback rather than further along, on a
     # constraint against a table nobody created.
     if _is_upgrade(args):
-        # Imported here, not at module scope: ``app.db`` reads settings on
-        # import, and this module has to ``chdir`` into backend/ first so
-        # alembic's ``prepend_sys_path`` resolves.
+        # ``app`` is importable here only because of the line above this block.
+        #
+        # ``prepend_sys_path = .`` in alembic.ini is what normally puts backend/
+        # on the path, and alembic applies it when IT loads the config — which
+        # happens in ``main()``, below. ``_run_single_practice_migration`` imports
+        # ``app.db`` after that call and so never noticed; this block runs before
+        # it and died with ``ModuleNotFoundError: No module named 'app'``, which
+        # would have taken the Cloud Run migrate job down on the next deploy.
+        # Relying on another component's side effect for something this module
+        # needs itself is the same mistake, one layer up, as the one this change
+        # is unwinding.
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+        # Imported here rather than at module scope: ``app.db`` reads settings on
+        # import, and the chdir above has to happen first.
         from app.db import get_engine
         from app.db.platform_bootstrap import bring_platform_to_head
 
