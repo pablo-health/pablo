@@ -21,7 +21,8 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import and_, select
 
-from ..db.models import (
+from ..db import current_practice_schema
+from ..db.platform_models import (
     PARTICIPATION_STATUSES,
     PayerParticipationEventRow,
     PayerParticipationRow,
@@ -92,11 +93,18 @@ class ParticipationSnapshot:
 
 
 def get(session: Session, user_id: str, payer_id: str) -> PayerParticipationRow | None:
-    """This clinician's row for this payer, or ``None`` when she has never applied."""
+    """This clinician's row for this payer here, or ``None`` if she never applied.
+
+    Scoped to the practice as well as to her. ``payer_id`` names a row in one
+    practice's ``payers`` table, so without the practice this asks a question
+    that spans several and, once she works in two, gets several answers — the
+    unique key says the same thing.
+    """
     return session.execute(
         select(PayerParticipationRow).where(
             and_(
                 PayerParticipationRow.user_id == user_id,
+                PayerParticipationRow.practice_id == current_practice_schema(session),
                 PayerParticipationRow.payer_id == payer_id,
             )
         )
@@ -173,6 +181,7 @@ def transition(  # noqa: PLR0913 — service deps + keyword-only audit fields
         row = PayerParticipationRow(
             id=str(uuid.uuid4()),
             user_id=user.id,
+            practice_id=current_practice_schema(session),
             payer_id=payer_id,
             status=to_status,
             created_at=now,
@@ -248,11 +257,16 @@ def history(session: Session, participation_id: str) -> list[PayerParticipationE
 
 
 def credentialed_not_contracted(session: Session, user_id: str) -> list[PayerParticipationRow]:
-    """Panels this clinician is verified for and cannot bill under.
+    """Panels this clinician is verified for and cannot bill under, here.
 
     The query the tracker exists for. Kept here rather than in a route so the
     definition of the trap state lives beside the state machine that produces
     it, and so a reminder job and a dashboard cannot drift on what it means.
+
+    Scoped to the current practice, which is what it silently was when the
+    table lived in one. That is the right reading and not merely the compatible
+    one: being contracted somewhere else does not let her bill here, so a panel
+    from another practice in this list would describe a trap she is not in.
     """
     return list(
         session.execute(
@@ -260,6 +274,7 @@ def credentialed_not_contracted(session: Session, user_id: str) -> list[PayerPar
             .where(
                 and_(
                     PayerParticipationRow.user_id == user_id,
+                    PayerParticipationRow.practice_id == current_practice_schema(session),
                     PayerParticipationRow.status.in_(sorted(_CREDENTIALED_STATUSES)),
                     PayerParticipationRow.status.not_in(sorted(_CONTRACTED_STATUSES)),
                 )
