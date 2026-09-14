@@ -39,7 +39,6 @@ from app.db import arm_current_user_id, get_db_session, set_tenant_schema
 from app.db.models import (
     ClinicianProfileRow,
     ComplianceDocumentRow,
-    PayerParticipationRow,
     PayerRow,
     PracticeBillingProfileRow,
 )
@@ -48,6 +47,7 @@ from app.db.platform_models import (
     CredentialLiabilityPolicyRow,
     CredentialLicenseRow,
     CredentialServiceLocationRow,
+    PayerParticipationRow,
 )
 from app.db.provisioning import create_practice_schema
 from app.models import User
@@ -542,6 +542,7 @@ def _answer_tier_one(harness: dict[str, Any]) -> None:
         PayerParticipationRow(
             id=str(uuid.uuid4()),
             user_id=_USER_ID,
+            practice_id=_SCHEMA,
             payer_id=payer.id,
             status="in_network",
             created_at=now,

@@ -68,11 +68,12 @@ _CREDENTIAL_TABLES = (
     "credential_bank_accounts",
 )
 
-#: Her payer relationships, still per-tenant. They move next, with the payer
-#: foreign key that entangles them.
+#: Her payer relationships, which followed the credential record over.
 _PARTICIPATION_TABLES = (
+    "payer_authorizations",
     "payer_participations",
     "payer_participation_events",
+    "contracted_rates",
 )
 
 #: Deliberately distinctive, so a substring search for them in the raw row is
@@ -233,21 +234,31 @@ class TestProvisioning:
             "Re-run backend/scripts/regen_platform_schema.py and commit the result."
         )
 
-    def test_the_participation_tables_have_not_moved_yet(
-        self, engine: Engine, tenant_schema: str
-    ) -> None:
-        """Stated so the half-done state is deliberate rather than discovered."""
+    def test_the_participation_tables_moved_too(self, engine: Engine, tenant_schema: str) -> None:
+        """They were stated as not-yet-moved while that was true. Now they are."""
         with engine.connect() as conn:
-            present = set(
+            in_platform = set(
                 conn.execute(
                     text(
-                        "SELECT table_name FROM information_schema.tables WHERE table_schema = :s"
+                        "SELECT table_name FROM information_schema.tables "
+                        "WHERE table_schema = 'platform' AND table_name = ANY(:names)"
                     ),
-                    {"s": tenant_schema},
+                    {"names": list(_PARTICIPATION_TABLES)},
                 ).scalars()
             )
-        missing = sorted(set(_PARTICIPATION_TABLES) - present)
-        assert not missing, f"expected these to still be per-tenant: {missing}"
+            in_tenant = set(
+                conn.execute(
+                    text(
+                        "SELECT table_name FROM information_schema.tables "
+                        "WHERE table_schema = :s AND table_name = ANY(:names)"
+                    ),
+                    {"s": tenant_schema, "names": list(_PARTICIPATION_TABLES)},
+                ).scalars()
+            )
+        assert not sorted(set(_PARTICIPATION_TABLES) - in_platform), (
+            f"missing from platform: {sorted(set(_PARTICIPATION_TABLES) - in_platform)}"
+        )
+        assert not sorted(in_tenant), f"still provisioned per-tenant: {sorted(in_tenant)}"
 
     def test_every_table_is_force_rls_with_a_policy(self, engine: Engine) -> None:
         """The isolation the schema boundary used to give for free.
