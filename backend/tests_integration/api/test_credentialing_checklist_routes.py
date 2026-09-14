@@ -39,13 +39,15 @@ from app.db.models import (
     Base,
     ClinicianProfileRow,
     ComplianceDocumentRow,
+    PayerParticipationRow,
+    PayerRow,
+    PracticeBillingProfileRow,
+)
+from app.db.platform_models import (
     CredentialBankAccountRow,
     CredentialLiabilityPolicyRow,
     CredentialLicenseRow,
     CredentialServiceLocationRow,
-    PayerParticipationRow,
-    PayerRow,
-    PracticeBillingProfileRow,
 )
 from app.db.provisioning import create_practice_schema
 from app.models import User

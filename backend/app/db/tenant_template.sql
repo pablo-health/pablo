@@ -370,206 +370,6 @@ CREATE TABLE __TENANT_SCHEMA__.contracted_rates (
 
 
 
-CREATE TABLE __TENANT_SCHEMA__.credential_bank_accounts (
-    id uuid NOT NULL,
-    user_id uuid NOT NULL,
-    account_holder_name character varying(255) NOT NULL,
-    routing_number_encrypted text NOT NULL,
-    routing_number_last4 character varying(4),
-    account_number_encrypted text NOT NULL,
-    account_number_last4 character varying(4),
-    account_type character varying(8) NOT NULL,
-    document_id uuid,
-    verified_at timestamp with time zone,
-    created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL,
-    CONSTRAINT ck_credential_bank_accounts_account_type CHECK (((account_type)::text = ANY ((ARRAY['checking'::character varying, 'savings'::character varying])::text[])))
-);
-
-
-
-CREATE TABLE __TENANT_SCHEMA__.credential_confirmations (
-    id uuid NOT NULL,
-    user_id uuid NOT NULL,
-    field_key character varying(64) NOT NULL,
-    source character varying(32) NOT NULL,
-    presented_value text,
-    confirmed boolean NOT NULL,
-    correction text,
-    confirmed_at timestamp with time zone NOT NULL,
-    created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL,
-    CONSTRAINT ck_credential_confirmations_corrected CHECK ((confirmed OR (correction IS NOT NULL))),
-    CONSTRAINT ck_credential_confirmations_source CHECK (((source)::text = ANY ((ARRAY['nppes'::character varying, 'pecos_public_file'::character varying, 'leie_sam'::character varying, 'clinician_profiles'::character varying, 'practice_billing_profile'::character varying])::text[])))
-);
-
-
-
-CREATE TABLE __TENANT_SCHEMA__.credential_disclosures (
-    id uuid NOT NULL,
-    user_id uuid NOT NULL,
-    question_key character varying(64) NOT NULL,
-    question_version smallint NOT NULL,
-    answer boolean NOT NULL,
-    explanation text,
-    answered_at timestamp with time zone NOT NULL,
-    created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL,
-    CONSTRAINT ck_credential_disclosures_explained CHECK (((answer IS NOT TRUE) OR (explanation IS NOT NULL)))
-);
-
-
-
-CREATE TABLE __TENANT_SCHEMA__.credential_education (
-    id uuid NOT NULL,
-    user_id uuid NOT NULL,
-    institution character varying(255) NOT NULL,
-    degree character varying(100),
-    field_of_study character varying(255),
-    start_date date,
-    end_date date,
-    country character varying(2),
-    created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL
-);
-
-
-
-CREATE TABLE __TENANT_SCHEMA__.credential_employment (
-    id uuid NOT NULL,
-    user_id uuid NOT NULL,
-    employer_name character varying(255) NOT NULL,
-    "position" character varying(255),
-    address_line1 character varying(255),
-    address_line2 character varying(255),
-    city character varying(100),
-    state character varying(2),
-    postal_code character varying(20),
-    start_date date NOT NULL,
-    end_date date,
-    preceding_gap_explanation text,
-    created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL
-);
-
-
-
-CREATE TABLE __TENANT_SCHEMA__.credential_government_ids (
-    user_id uuid NOT NULL,
-    ssn_encrypted text,
-    ssn_last4 character varying(4),
-    dob_encrypted text,
-    tax_id_type character varying(3),
-    tax_id_encrypted text,
-    tax_id_last4 character varying(4),
-    type2_npi character varying(20),
-    business_structure character varying(40),
-    sole_proprietor boolean,
-    created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL,
-    supervision_status character varying(16),
-    caqh_id character varying(32),
-    medicare_intent boolean,
-    medicaid_intent boolean,
-    CONSTRAINT ck_credential_government_ids_supervision_status CHECK (((supervision_status IS NULL) OR ((supervision_status)::text = ANY ((ARRAY['independent'::character varying, 'supervised'::character varying])::text[])))),
-    CONSTRAINT ck_credential_government_ids_tax_id_type CHECK (((tax_id_type IS NULL) OR ((tax_id_type)::text = ANY ((ARRAY['ein'::character varying, 'ssn'::character varying])::text[]))))
-);
-
-
-
-CREATE TABLE __TENANT_SCHEMA__.credential_liability_policies (
-    id uuid NOT NULL,
-    user_id uuid NOT NULL,
-    carrier_name character varying(255) NOT NULL,
-    policy_number character varying(100),
-    per_occurrence_cents bigint,
-    aggregate_cents bigint,
-    effective_date date,
-    expiration_date date,
-    is_current boolean NOT NULL,
-    document_id uuid,
-    created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL
-);
-
-
-
-CREATE TABLE __TENANT_SCHEMA__.credential_licenses (
-    id uuid NOT NULL,
-    user_id uuid NOT NULL,
-    license_type character varying(50) NOT NULL,
-    license_number character varying(100) NOT NULL,
-    state character varying(2) NOT NULL,
-    issue_date date,
-    expiration_date date,
-    status character varying(16) NOT NULL,
-    is_primary boolean NOT NULL,
-    verification_source character varying(8) NOT NULL,
-    verified_at timestamp with time zone,
-    document_id uuid,
-    created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL,
-    CONSTRAINT ck_credential_licenses_status CHECK (((status)::text = ANY ((ARRAY['active'::character varying, 'inactive'::character varying, 'expired'::character varying, 'suspended'::character varying, 'revoked'::character varying])::text[]))),
-    CONSTRAINT ck_credential_licenses_verification_source CHECK (((verification_source)::text = ANY ((ARRAY['self'::character varying, 'nppes'::character varying, 'board'::character varying])::text[])))
-);
-
-
-
-CREATE TABLE __TENANT_SCHEMA__.credential_references (
-    id uuid NOT NULL,
-    user_id uuid NOT NULL,
-    full_name character varying(255) NOT NULL,
-    title character varying(100),
-    credential character varying(100),
-    organization character varying(255),
-    email character varying(255),
-    phone character varying(32),
-    relationship character varying(100),
-    years_known smallint,
-    created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL
-);
-
-
-
-CREATE TABLE __TENANT_SCHEMA__.credential_service_locations (
-    id uuid NOT NULL,
-    user_id uuid NOT NULL,
-    name character varying(255),
-    address_line1 character varying(255) NOT NULL,
-    address_line2 character varying(255),
-    city character varying(100) NOT NULL,
-    state character varying(2) NOT NULL,
-    postal_code character varying(20) NOT NULL,
-    phone character varying(32),
-    fax character varying(32),
-    is_primary boolean NOT NULL,
-    accepts_new_patients boolean NOT NULL,
-    hours jsonb,
-    ada_accessible boolean,
-    languages jsonb,
-    telehealth_only boolean NOT NULL,
-    created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL
-);
-
-
-
-CREATE TABLE __TENANT_SCHEMA__.credential_training (
-    id uuid NOT NULL,
-    user_id uuid NOT NULL,
-    program_type character varying(50) NOT NULL,
-    institution character varying(255) NOT NULL,
-    specialty character varying(255),
-    start_date date,
-    end_date date,
-    supervisor_name character varying(255),
-    created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL
-);
-
-
-
 CREATE TABLE __TENANT_SCHEMA__.diagnostic_assessments (
     id uuid NOT NULL,
     patient_id uuid NOT NULL,
@@ -1424,61 +1224,6 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.contracted_rates
 
 
 
-ALTER TABLE ONLY __TENANT_SCHEMA__.credential_bank_accounts
-    ADD CONSTRAINT pk_credential_bank_accounts PRIMARY KEY (id);
-
-
-
-ALTER TABLE ONLY __TENANT_SCHEMA__.credential_confirmations
-    ADD CONSTRAINT pk_credential_confirmations PRIMARY KEY (id);
-
-
-
-ALTER TABLE ONLY __TENANT_SCHEMA__.credential_disclosures
-    ADD CONSTRAINT pk_credential_disclosures PRIMARY KEY (id);
-
-
-
-ALTER TABLE ONLY __TENANT_SCHEMA__.credential_education
-    ADD CONSTRAINT pk_credential_education PRIMARY KEY (id);
-
-
-
-ALTER TABLE ONLY __TENANT_SCHEMA__.credential_employment
-    ADD CONSTRAINT pk_credential_employment PRIMARY KEY (id);
-
-
-
-ALTER TABLE ONLY __TENANT_SCHEMA__.credential_government_ids
-    ADD CONSTRAINT pk_credential_government_ids PRIMARY KEY (user_id);
-
-
-
-ALTER TABLE ONLY __TENANT_SCHEMA__.credential_liability_policies
-    ADD CONSTRAINT pk_credential_liability_policies PRIMARY KEY (id);
-
-
-
-ALTER TABLE ONLY __TENANT_SCHEMA__.credential_licenses
-    ADD CONSTRAINT pk_credential_licenses PRIMARY KEY (id);
-
-
-
-ALTER TABLE ONLY __TENANT_SCHEMA__.credential_references
-    ADD CONSTRAINT pk_credential_references PRIMARY KEY (id);
-
-
-
-ALTER TABLE ONLY __TENANT_SCHEMA__.credential_service_locations
-    ADD CONSTRAINT pk_credential_service_locations PRIMARY KEY (id);
-
-
-
-ALTER TABLE ONLY __TENANT_SCHEMA__.credential_training
-    ADD CONSTRAINT pk_credential_training PRIMARY KEY (id);
-
-
-
 ALTER TABLE ONLY __TENANT_SCHEMA__.llm_usage
     ADD CONSTRAINT pk_llm_usage PRIMARY KEY (user_id, feature_key, period_yyyymm, model);
 
@@ -1581,21 +1326,6 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.claims
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.contracted_rates
     ADD CONSTRAINT ux_contracted_rates_participation_code_date UNIQUE (participation_id, cpt, modifier, effective_date);
-
-
-
-ALTER TABLE ONLY __TENANT_SCHEMA__.credential_confirmations
-    ADD CONSTRAINT ux_credential_confirmations_user_field UNIQUE (user_id, field_key);
-
-
-
-ALTER TABLE ONLY __TENANT_SCHEMA__.credential_disclosures
-    ADD CONSTRAINT ux_credential_disclosures_user_key_version UNIQUE (user_id, question_key, question_version);
-
-
-
-ALTER TABLE ONLY __TENANT_SCHEMA__.credential_licenses
-    ADD CONSTRAINT ux_credential_licenses_user_state_number UNIQUE (user_id, state, license_number);
 
 
 
@@ -1750,38 +1480,6 @@ CREATE INDEX ix_contracted_rates_participation_id ON __TENANT_SCHEMA__.contracte
 
 
 CREATE INDEX ix_contracted_rates_user_id ON __TENANT_SCHEMA__.contracted_rates USING btree (user_id);
-
-
-
-CREATE INDEX ix_credential_bank_accounts_user_id ON __TENANT_SCHEMA__.credential_bank_accounts USING btree (user_id);
-
-
-
-CREATE INDEX ix_credential_education_user_id ON __TENANT_SCHEMA__.credential_education USING btree (user_id);
-
-
-
-CREATE INDEX ix_credential_employment_user_id ON __TENANT_SCHEMA__.credential_employment USING btree (user_id);
-
-
-
-CREATE INDEX ix_credential_liability_policies_user_id ON __TENANT_SCHEMA__.credential_liability_policies USING btree (user_id);
-
-
-
-CREATE INDEX ix_credential_licenses_user_id ON __TENANT_SCHEMA__.credential_licenses USING btree (user_id);
-
-
-
-CREATE INDEX ix_credential_references_user_id ON __TENANT_SCHEMA__.credential_references USING btree (user_id);
-
-
-
-CREATE INDEX ix_credential_service_locations_user_id ON __TENANT_SCHEMA__.credential_service_locations USING btree (user_id);
-
-
-
-CREATE INDEX ix_credential_training_user_id ON __TENANT_SCHEMA__.credential_training USING btree (user_id);
 
 
 
@@ -2017,18 +1715,6 @@ CREATE UNIQUE INDEX ux_chat_messages_conversation_sequence ON __TENANT_SCHEMA__.
 
 
 
-CREATE UNIQUE INDEX ux_credential_liability_policies_one_current ON __TENANT_SCHEMA__.credential_liability_policies USING btree (user_id) WHERE is_current;
-
-
-
-CREATE UNIQUE INDEX ux_credential_licenses_one_primary ON __TENANT_SCHEMA__.credential_licenses USING btree (user_id) WHERE is_primary;
-
-
-
-CREATE UNIQUE INDEX ux_credential_service_locations_one_primary ON __TENANT_SCHEMA__.credential_service_locations USING btree (user_id) WHERE is_primary;
-
-
-
 CREATE UNIQUE INDEX ux_notes_session_id ON __TENANT_SCHEMA__.notes USING btree (session_id) WHERE (session_id IS NOT NULL);
 
 
@@ -2159,21 +1845,6 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.contracted_rates
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.contracted_rates
     ADD CONSTRAINT fk_contracted_rates_source_document_id FOREIGN KEY (source_document_id) REFERENCES __TENANT_SCHEMA__.compliance_documents(id) ON DELETE SET NULL;
-
-
-
-ALTER TABLE ONLY __TENANT_SCHEMA__.credential_bank_accounts
-    ADD CONSTRAINT fk_credential_bank_accounts_document_id FOREIGN KEY (document_id) REFERENCES __TENANT_SCHEMA__.compliance_documents(id) ON DELETE SET NULL;
-
-
-
-ALTER TABLE ONLY __TENANT_SCHEMA__.credential_liability_policies
-    ADD CONSTRAINT fk_credential_liability_policies_document_id FOREIGN KEY (document_id) REFERENCES __TENANT_SCHEMA__.compliance_documents(id) ON DELETE SET NULL;
-
-
-
-ALTER TABLE ONLY __TENANT_SCHEMA__.credential_licenses
-    ADD CONSTRAINT fk_credential_licenses_document_id FOREIGN KEY (document_id) REFERENCES __TENANT_SCHEMA__.compliance_documents(id) ON DELETE SET NULL;
 
 
 

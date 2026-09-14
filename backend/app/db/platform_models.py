@@ -917,9 +917,20 @@ class ProcessedPaymentEventRow(PlatformBase):
 # PHI-free by construction. Every row is about a clinician; no patient appears
 # in any of them.
 #
-# ``practice_id`` says which practice schema resolves this row's ``payer_id``
-# and ``document_id``. Those live in per-tenant tables that stay put, so the
-# columns carry no foreign key — a platform table cannot reference one.
+# Only three of them carry ``practice_id``, and that is deliberate. It exists
+# to say which practice schema resolves a ``document_id``, because the vault
+# stayed per-tenant and a platform table cannot reference one — so the column
+# is on the three that point at a document and nowhere else.
+#
+# The temptation is to stamp it on all of them for symmetry. That would put the
+# practice back into the identity of a record whose whole argument is that it
+# belongs to the clinician: her degree was not "filed under" a practice, and
+# when she works at a second one the question has no answer. A column with no
+# job is not free — it invites a query that scopes by it and a reader who
+# believes that scoping means something.
+#
+# All three lose it when the vault follows and the foreign key comes back
+# properly (PABLO-g7oe).
 
 
 class CredentialEducationRow(PlatformBase):
@@ -930,15 +941,13 @@ class CredentialEducationRow(PlatformBase):
     """
 
     __tablename__ = "credential_education"
-    __table_args__ = (
+    __table_args__ = (  # type: ignore[assignment]
         Index("ix_credential_education_user_id", "user_id"),
         {"schema": PLATFORM_SCHEMA},
     )
 
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
-    #: Which practice she filed under. See the note above the block.
-    practice_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     institution: Mapped[str] = mapped_column(String(255), nullable=False)
     degree: Mapped[str | None] = mapped_column(String(100), nullable=True)
     field_of_study: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -960,15 +969,13 @@ class CredentialTrainingRow(PlatformBase):
     """
 
     __tablename__ = "credential_training"
-    __table_args__ = (
+    __table_args__ = (  # type: ignore[assignment]
         Index("ix_credential_training_user_id", "user_id"),
         {"schema": PLATFORM_SCHEMA},
     )
 
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
-    #: Which practice she filed under. See the note above the block.
-    practice_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     # Free text, same reason as ``license_type``.
     program_type: Mapped[str] = mapped_column(String(50), nullable=False)
     institution: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -994,15 +1001,13 @@ class CredentialEmploymentRow(PlatformBase):
     """
 
     __tablename__ = "credential_employment"
-    __table_args__ = (
+    __table_args__ = (  # type: ignore[assignment]
         Index("ix_credential_employment_user_id", "user_id"),
         {"schema": PLATFORM_SCHEMA},
     )
 
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
-    #: Which practice she filed under. See the note above the block.
-    practice_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     employer_name: Mapped[str] = mapped_column(String(255), nullable=False)
     position: Mapped[str | None] = mapped_column(String(255), nullable=True)
     address_line1: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -1026,15 +1031,13 @@ class CredentialReferenceRow(PlatformBase):
     """
 
     __tablename__ = "credential_references"
-    __table_args__ = (
+    __table_args__ = (  # type: ignore[assignment]
         Index("ix_credential_references_user_id", "user_id"),
         {"schema": PLATFORM_SCHEMA},
     )
 
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
-    #: Which practice she filed under. See the note above the block.
-    practice_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     title: Mapped[str | None] = mapped_column(String(100), nullable=True)
     credential: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -1063,7 +1066,7 @@ class CredentialDisclosureRow(PlatformBase):
     """
 
     __tablename__ = "credential_disclosures"
-    __table_args__ = (
+    __table_args__ = (  # type: ignore[assignment]
         CheckConstraint(
             "answer IS NOT TRUE OR explanation IS NOT NULL",
             name="ck_credential_disclosures_explained",
@@ -1079,8 +1082,6 @@ class CredentialDisclosureRow(PlatformBase):
 
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
-    #: Which practice she filed under. See the note above the block.
-    practice_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     question_key: Mapped[str] = mapped_column(String(64), nullable=False)
     question_version: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     answer: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -1113,7 +1114,7 @@ class CredentialGovernmentIdRow(PlatformBase):
     """
 
     __tablename__ = "credential_government_ids"
-    __table_args__ = (
+    __table_args__ = (  # type: ignore[assignment]
         CheckConstraint(
             f"tax_id_type IS NULL OR tax_id_type IN ({_sql_in_list(CREDENTIAL_TAX_ID_TYPES)})",
             name="ck_credential_government_ids_tax_id_type",
@@ -1127,8 +1128,6 @@ class CredentialGovernmentIdRow(PlatformBase):
     )
 
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
-    #: Which practice she filed under. See the note above the block.
-    practice_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     ssn_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     ssn_last4: Mapped[str | None] = mapped_column(String(4), nullable=True)
     dob_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -1170,7 +1169,7 @@ class CredentialLicenseRow(PlatformBase):
     """
 
     __tablename__ = "credential_licenses"
-    __table_args__ = (
+    __table_args__ = (  # type: ignore[assignment]
         CheckConstraint(
             f"status IN ({_sql_in_list(CREDENTIAL_LICENSE_STATUSES)})",
             name="ck_credential_licenses_status",
@@ -1199,7 +1198,10 @@ class CredentialLicenseRow(PlatformBase):
 
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
-    #: Which practice she filed under. See the note above the block.
+    #: Which practice schema resolves ``document_id``. The vault stayed
+    #: per-tenant, so the pointer needs somewhere to be resolved; this is
+    #: the only reason the column is here, and it goes when the vault
+    #: follows (PABLO-g7oe).
     practice_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     # Free text: the abbreviations differ by state and discipline (LMFT,
     # LCSW, LPCC, PMHNP-BC), and a new one shouldn't need a migration. Same
@@ -1233,7 +1235,7 @@ class CredentialLiabilityPolicyRow(PlatformBase):
     """
 
     __tablename__ = "credential_liability_policies"
-    __table_args__ = (
+    __table_args__ = (  # type: ignore[assignment]
         Index("ix_credential_liability_policies_user_id", "user_id"),
         Index(
             "ux_credential_liability_policies_one_current",
@@ -1246,7 +1248,10 @@ class CredentialLiabilityPolicyRow(PlatformBase):
 
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
-    #: Which practice she filed under. See the note above the block.
+    #: Which practice schema resolves ``document_id``. The vault stayed
+    #: per-tenant, so the pointer needs somewhere to be resolved; this is
+    #: the only reason the column is here, and it goes when the vault
+    #: follows (PABLO-g7oe).
     practice_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     carrier_name: Mapped[str] = mapped_column(String(255), nullable=False)
     policy_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -1296,7 +1301,7 @@ class CredentialConfirmationRow(PlatformBase):
     """
 
     __tablename__ = "credential_confirmations"
-    __table_args__ = (
+    __table_args__ = (  # type: ignore[assignment]
         CheckConstraint(
             f"source IN ({_sql_in_list(CREDENTIAL_CONFIRMATION_SOURCES)})",
             name="ck_credential_confirmations_source",
@@ -1315,8 +1320,6 @@ class CredentialConfirmationRow(PlatformBase):
 
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
-    #: Which practice she filed under. See the note above the block.
-    practice_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     #: A ``ChecklistField.key`` from ``app.credentialing.checklist``. Free text at
     #: the schema level so adding a Tier-0 field is not a migration.
     field_key: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -1343,7 +1346,7 @@ class CredentialServiceLocationRow(PlatformBase):
     """
 
     __tablename__ = "credential_service_locations"
-    __table_args__ = (
+    __table_args__ = (  # type: ignore[assignment]
         Index("ix_credential_service_locations_user_id", "user_id"),
         Index(
             "ux_credential_service_locations_one_primary",
@@ -1356,8 +1359,6 @@ class CredentialServiceLocationRow(PlatformBase):
 
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
-    #: Which practice she filed under. See the note above the block.
-    practice_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     address_line1: Mapped[str] = mapped_column(String(255), nullable=False)
     address_line2: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -1386,7 +1387,7 @@ class CredentialBankAccountRow(PlatformBase):
     """
 
     __tablename__ = "credential_bank_accounts"
-    __table_args__ = (
+    __table_args__ = (  # type: ignore[assignment]
         CheckConstraint(
             f"account_type IN ({_sql_in_list(CREDENTIAL_BANK_ACCOUNT_TYPES)})",
             name="ck_credential_bank_accounts_account_type",
@@ -1397,7 +1398,10 @@ class CredentialBankAccountRow(PlatformBase):
 
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
-    #: Which practice she filed under. See the note above the block.
+    #: Which practice schema resolves ``document_id``. The vault stayed
+    #: per-tenant, so the pointer needs somewhere to be resolved; this is
+    #: the only reason the column is here, and it goes when the vault
+    #: follows (PABLO-g7oe).
     practice_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     account_holder_name: Mapped[str] = mapped_column(String(255), nullable=False)
     routing_number_encrypted: Mapped[str] = mapped_column(Text, nullable=False)

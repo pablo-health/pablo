@@ -246,7 +246,7 @@ class TestClinicianIsolation:
     """One clinician's credential record is not another's, under a real role."""
 
     def test_b_cannot_read_as_licence(self, engine: Engine, tenant_schema: str) -> None:
-        from app.db.models import CredentialLicenseRow  # noqa: PLC0415
+        from app.db.platform_models import CredentialLicenseRow  # noqa: PLC0415
 
         now = datetime.now(UTC)
         scoped_a = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
@@ -703,7 +703,7 @@ class TestDisclosureVersioning:
 
     def test_the_schema_refuses_it_too(self, engine: Engine, tenant_schema: str) -> None:
         """Defense in depth: the service check is not the only thing holding."""
-        from app.db.models import CredentialDisclosureRow  # noqa: PLC0415
+        from app.db.platform_models import CredentialDisclosureRow  # noqa: PLC0415
         from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
 
         now = datetime.now(UTC)
@@ -734,7 +734,8 @@ class TestClocksArePropsedNotWritten:
 
     def test_propose_changes_nothing(self, engine: Engine, tenant_schema: str) -> None:
         from app.credentialing import clocks  # noqa: PLC0415
-        from app.db.models import ComplianceItemRow, CredentialLicenseRow  # noqa: PLC0415
+        from app.db.models import ComplianceItemRow  # noqa: PLC0415
+        from app.db.platform_models import CredentialLicenseRow  # noqa: PLC0415
 
         now = datetime.now(UTC)
         scoped = _TenantSession(engine, tenant_schema, _CLINICIAN_B)
@@ -795,7 +796,7 @@ class TestClocksArePropsedNotWritten:
     def test_the_soonest_licence_expiry_wins(self, engine: Engine, tenant_schema: str) -> None:
         """One clock, several licences: the first lapse is the one that matters."""
         from app.credentialing import clocks  # noqa: PLC0415
-        from app.db.models import CredentialLicenseRow  # noqa: PLC0415
+        from app.db.platform_models import CredentialLicenseRow  # noqa: PLC0415
 
         now = datetime.now(UTC)
         user_id = str(uuid.uuid4())
@@ -839,7 +840,7 @@ class TestClocksArePropsedNotWritten:
     ) -> None:
         """A revoked licence has a problem a renewal nudge is the wrong answer to."""
         from app.credentialing import clocks  # noqa: PLC0415
-        from app.db.models import CredentialLicenseRow  # noqa: PLC0415
+        from app.db.platform_models import CredentialLicenseRow  # noqa: PLC0415
 
         now = datetime.now(UTC)
         user_id = str(uuid.uuid4())
@@ -868,7 +869,7 @@ class TestClocksArePropsedNotWritten:
 
 class TestOnePrimaryLicence:
     def test_a_second_primary_is_refused(self, engine: Engine, tenant_schema: str) -> None:
-        from app.db.models import CredentialLicenseRow  # noqa: PLC0415
+        from app.db.platform_models import CredentialLicenseRow  # noqa: PLC0415
         from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
 
         now = datetime.now(UTC)

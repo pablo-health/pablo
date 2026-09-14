@@ -21,6 +21,7 @@ from app.credentialing.checklist import (
 )
 from app.credentialing.field_map import FIELD_MAP_PATH, render
 from app.db.models import Base
+from app.db.platform_models import PlatformBase
 
 #: The ordinary applicant: independently licensed, does not prescribe. The
 #: counts in the design are quoted for her, so the tests quote them for her too.
@@ -226,7 +227,14 @@ class TestTheWholeSet:
         place nothing lands. ``table.column`` is a scalar, a bare ``table`` a
         repeating group.
         """
-        tables = Base.metadata.tables
+        # Targets span both schemas now: the credential record is
+        # platform-scoped (the operator reads it across practices) while
+        # ``clinician_profiles`` and the billing profile stay per-tenant. A
+        # target resolves if it names a real column in either, which is what
+        # the write path does — so the check follows the write path rather
+        # than assuming one home.
+        tables = dict(Base.metadata.tables)
+        tables.update({table.name: table for table in PlatformBase.metadata.tables.values()})
         unresolved = []
         for field in CHECKLIST_FIELDS:
             if "." in field.target:

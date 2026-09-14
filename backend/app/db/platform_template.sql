@@ -70,6 +70,209 @@ CREATE TABLE platform.companion_devices (
     revoked_at timestamp with time zone
 );
 
+CREATE TABLE platform.credential_bank_accounts (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    practice_id character varying(128) NOT NULL,
+    account_holder_name character varying(255) NOT NULL,
+    routing_number_encrypted text NOT NULL,
+    routing_number_last4 character varying(4),
+    account_number_encrypted text NOT NULL,
+    account_number_last4 character varying(4),
+    account_type character varying(8) NOT NULL,
+    document_id uuid,
+    verified_at timestamp with time zone,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_credential_bank_accounts_account_type CHECK (((account_type)::text = ANY ((ARRAY['checking'::character varying, 'savings'::character varying])::text[])))
+);
+
+ALTER TABLE ONLY platform.credential_bank_accounts FORCE ROW LEVEL SECURITY;
+
+CREATE TABLE platform.credential_confirmations (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    field_key character varying(64) NOT NULL,
+    source character varying(32) NOT NULL,
+    presented_value text,
+    confirmed boolean NOT NULL,
+    correction text,
+    confirmed_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_credential_confirmations_corrected CHECK ((confirmed OR (correction IS NOT NULL))),
+    CONSTRAINT ck_credential_confirmations_source CHECK (((source)::text = ANY ((ARRAY['nppes'::character varying, 'pecos_public_file'::character varying, 'leie_sam'::character varying, 'clinician_profiles'::character varying, 'practice_billing_profile'::character varying])::text[])))
+);
+
+ALTER TABLE ONLY platform.credential_confirmations FORCE ROW LEVEL SECURITY;
+
+CREATE TABLE platform.credential_disclosures (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    question_key character varying(64) NOT NULL,
+    question_version smallint NOT NULL,
+    answer boolean NOT NULL,
+    explanation text,
+    answered_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_credential_disclosures_explained CHECK (((answer IS NOT TRUE) OR (explanation IS NOT NULL)))
+);
+
+ALTER TABLE ONLY platform.credential_disclosures FORCE ROW LEVEL SECURITY;
+
+CREATE TABLE platform.credential_education (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    institution character varying(255) NOT NULL,
+    degree character varying(100),
+    field_of_study character varying(255),
+    start_date date,
+    end_date date,
+    country character varying(2),
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL
+);
+
+ALTER TABLE ONLY platform.credential_education FORCE ROW LEVEL SECURITY;
+
+CREATE TABLE platform.credential_employment (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    employer_name character varying(255) NOT NULL,
+    "position" character varying(255),
+    address_line1 character varying(255),
+    address_line2 character varying(255),
+    city character varying(100),
+    state character varying(2),
+    postal_code character varying(20),
+    start_date date NOT NULL,
+    end_date date,
+    preceding_gap_explanation text,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL
+);
+
+ALTER TABLE ONLY platform.credential_employment FORCE ROW LEVEL SECURITY;
+
+CREATE TABLE platform.credential_government_ids (
+    user_id uuid NOT NULL,
+    ssn_encrypted text,
+    ssn_last4 character varying(4),
+    dob_encrypted text,
+    tax_id_type character varying(3),
+    tax_id_encrypted text,
+    tax_id_last4 character varying(4),
+    type2_npi character varying(20),
+    business_structure character varying(40),
+    sole_proprietor boolean,
+    supervision_status character varying(16),
+    caqh_id character varying(32),
+    medicare_intent boolean,
+    medicaid_intent boolean,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_credential_government_ids_supervision_status CHECK (((supervision_status IS NULL) OR ((supervision_status)::text = ANY ((ARRAY['independent'::character varying, 'supervised'::character varying])::text[])))),
+    CONSTRAINT ck_credential_government_ids_tax_id_type CHECK (((tax_id_type IS NULL) OR ((tax_id_type)::text = ANY ((ARRAY['ein'::character varying, 'ssn'::character varying])::text[]))))
+);
+
+ALTER TABLE ONLY platform.credential_government_ids FORCE ROW LEVEL SECURITY;
+
+CREATE TABLE platform.credential_liability_policies (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    practice_id character varying(128) NOT NULL,
+    carrier_name character varying(255) NOT NULL,
+    policy_number character varying(100),
+    per_occurrence_cents bigint,
+    aggregate_cents bigint,
+    effective_date date,
+    expiration_date date,
+    is_current boolean NOT NULL,
+    document_id uuid,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL
+);
+
+ALTER TABLE ONLY platform.credential_liability_policies FORCE ROW LEVEL SECURITY;
+
+CREATE TABLE platform.credential_licenses (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    practice_id character varying(128) NOT NULL,
+    license_type character varying(50) NOT NULL,
+    license_number character varying(100) NOT NULL,
+    state character varying(2) NOT NULL,
+    issue_date date,
+    expiration_date date,
+    status character varying(16) NOT NULL,
+    is_primary boolean NOT NULL,
+    verification_source character varying(8) NOT NULL,
+    verified_at timestamp with time zone,
+    document_id uuid,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_credential_licenses_status CHECK (((status)::text = ANY ((ARRAY['active'::character varying, 'inactive'::character varying, 'expired'::character varying, 'suspended'::character varying, 'revoked'::character varying])::text[]))),
+    CONSTRAINT ck_credential_licenses_verification_source CHECK (((verification_source)::text = ANY ((ARRAY['self'::character varying, 'nppes'::character varying, 'board'::character varying])::text[])))
+);
+
+ALTER TABLE ONLY platform.credential_licenses FORCE ROW LEVEL SECURITY;
+
+CREATE TABLE platform.credential_references (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    full_name character varying(255) NOT NULL,
+    title character varying(100),
+    credential character varying(100),
+    organization character varying(255),
+    email character varying(255),
+    phone character varying(32),
+    relationship character varying(100),
+    years_known smallint,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL
+);
+
+ALTER TABLE ONLY platform.credential_references FORCE ROW LEVEL SECURITY;
+
+CREATE TABLE platform.credential_service_locations (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    name character varying(255),
+    address_line1 character varying(255) NOT NULL,
+    address_line2 character varying(255),
+    city character varying(100) NOT NULL,
+    state character varying(2) NOT NULL,
+    postal_code character varying(20) NOT NULL,
+    phone character varying(32),
+    fax character varying(32),
+    is_primary boolean NOT NULL,
+    accepts_new_patients boolean NOT NULL,
+    hours jsonb,
+    ada_accessible boolean,
+    languages jsonb,
+    telehealth_only boolean NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL
+);
+
+ALTER TABLE ONLY platform.credential_service_locations FORCE ROW LEVEL SECURITY;
+
+CREATE TABLE platform.credential_training (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    program_type character varying(50) NOT NULL,
+    institution character varying(255) NOT NULL,
+    specialty character varying(255),
+    start_date date,
+    end_date date,
+    supervisor_name character varying(255),
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL
+);
+
+ALTER TABLE ONLY platform.credential_training FORCE ROW LEVEL SECURITY;
+
 CREATE TABLE platform.diagnostic_definitions (
     id uuid NOT NULL,
     code character varying(40) NOT NULL,
@@ -285,6 +488,39 @@ ALTER TABLE ONLY platform.claim_routes
 ALTER TABLE ONLY platform.companion_devices
     ADD CONSTRAINT companion_devices_pkey PRIMARY KEY (install_id);
 
+ALTER TABLE ONLY platform.credential_bank_accounts
+    ADD CONSTRAINT credential_bank_accounts_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY platform.credential_confirmations
+    ADD CONSTRAINT credential_confirmations_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY platform.credential_disclosures
+    ADD CONSTRAINT credential_disclosures_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY platform.credential_education
+    ADD CONSTRAINT credential_education_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY platform.credential_employment
+    ADD CONSTRAINT credential_employment_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY platform.credential_government_ids
+    ADD CONSTRAINT credential_government_ids_pkey PRIMARY KEY (user_id);
+
+ALTER TABLE ONLY platform.credential_liability_policies
+    ADD CONSTRAINT credential_liability_policies_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY platform.credential_licenses
+    ADD CONSTRAINT credential_licenses_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY platform.credential_references
+    ADD CONSTRAINT credential_references_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY platform.credential_service_locations
+    ADD CONSTRAINT credential_service_locations_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY platform.credential_training
+    ADD CONSTRAINT credential_training_pkey PRIMARY KEY (id);
+
 ALTER TABLE ONLY platform.diagnostic_definitions
     ADD CONSTRAINT diagnostic_definitions_pkey PRIMARY KEY (id);
 
@@ -345,9 +581,34 @@ ALTER TABLE ONLY platform.users
 ALTER TABLE ONLY platform.users
     ADD CONSTRAINT users_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY platform.credential_confirmations
+    ADD CONSTRAINT ux_credential_confirmations_user_field UNIQUE (user_id, field_key);
+
+ALTER TABLE ONLY platform.credential_disclosures
+    ADD CONSTRAINT ux_credential_disclosures_user_key_version UNIQUE (user_id, question_key, question_version);
+
+ALTER TABLE ONLY platform.credential_licenses
+    ADD CONSTRAINT ux_credential_licenses_user_state_number UNIQUE (user_id, state, license_number);
+
 CREATE INDEX idx_practices_deleted_at ON platform.practices USING btree (deleted_at) WHERE (deleted_at IS NOT NULL);
 
 CREATE INDEX idx_practices_offboard_scheduled_at ON platform.practices USING btree (offboard_scheduled_at) WHERE (offboard_scheduled_at IS NOT NULL);
+
+CREATE INDEX ix_credential_bank_accounts_user_id ON platform.credential_bank_accounts USING btree (user_id);
+
+CREATE INDEX ix_credential_education_user_id ON platform.credential_education USING btree (user_id);
+
+CREATE INDEX ix_credential_employment_user_id ON platform.credential_employment USING btree (user_id);
+
+CREATE INDEX ix_credential_liability_policies_user_id ON platform.credential_liability_policies USING btree (user_id);
+
+CREATE INDEX ix_credential_licenses_user_id ON platform.credential_licenses USING btree (user_id);
+
+CREATE INDEX ix_credential_references_user_id ON platform.credential_references USING btree (user_id);
+
+CREATE INDEX ix_credential_service_locations_user_id ON platform.credential_service_locations USING btree (user_id);
+
+CREATE INDEX ix_credential_training_user_id ON platform.credential_training USING btree (user_id);
 
 CREATE INDEX ix_diagnostic_definitions_code_active ON platform.diagnostic_definitions USING btree (code, active);
 
@@ -362,6 +623,12 @@ CREATE INDEX ix_platform_claim_routes_practice_id ON platform.claim_routes USING
 CREATE INDEX ix_platform_companion_devices_jkt ON platform.companion_devices USING btree (jkt);
 
 CREATE INDEX ix_platform_companion_devices_user_id ON platform.companion_devices USING btree (user_id);
+
+CREATE INDEX ix_platform_credential_bank_accounts_practice_id ON platform.credential_bank_accounts USING btree (practice_id);
+
+CREATE INDEX ix_platform_credential_liability_policies_practice_id ON platform.credential_liability_policies USING btree (practice_id);
+
+CREATE INDEX ix_platform_credential_licenses_practice_id ON platform.credential_licenses USING btree (practice_id);
 
 CREATE INDEX ix_platform_launch_intents_expires_at ON platform.launch_intents USING btree (expires_at);
 
@@ -385,6 +652,12 @@ CREATE INDEX ix_platform_platform_audit_logs_timestamp ON platform.platform_audi
 
 CREATE INDEX ix_platform_user_identities_user_id ON platform.user_identities USING btree (user_id);
 
+CREATE UNIQUE INDEX ux_credential_liability_policies_one_current ON platform.credential_liability_policies USING btree (user_id) WHERE is_current;
+
+CREATE UNIQUE INDEX ux_credential_licenses_one_primary ON platform.credential_licenses USING btree (user_id) WHERE is_primary;
+
+CREATE UNIQUE INDEX ux_credential_service_locations_one_primary ON platform.credential_service_locations USING btree (user_id) WHERE is_primary;
+
 CREATE TRIGGER practices_pentest_immutable BEFORE UPDATE OF is_pentest ON platform.practices FOR EACH ROW EXECUTE FUNCTION platform.practices_pentest_immutable();
 
 ALTER TABLE ONLY platform.booking_links
@@ -393,6 +666,50 @@ ALTER TABLE ONLY platform.booking_links
 ALTER TABLE ONLY platform.companion_devices
     ADD CONSTRAINT companion_devices_user_id_fkey FOREIGN KEY (user_id) REFERENCES platform.users(id) ON DELETE CASCADE;
 
+ALTER TABLE platform.credential_bank_accounts ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE platform.credential_confirmations ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE platform.credential_disclosures ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE platform.credential_education ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE platform.credential_employment ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE platform.credential_government_ids ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE platform.credential_liability_policies ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE platform.credential_licenses ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE platform.credential_references ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE platform.credential_service_locations ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE platform.credential_training ENABLE ROW LEVEL SECURITY;
+
 ALTER TABLE platform.panel_applications ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY rls_credential_owner ON platform.credential_bank_accounts USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+CREATE POLICY rls_credential_owner ON platform.credential_confirmations USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+CREATE POLICY rls_credential_owner ON platform.credential_disclosures USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+CREATE POLICY rls_credential_owner ON platform.credential_education USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+CREATE POLICY rls_credential_owner ON platform.credential_employment USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+CREATE POLICY rls_credential_owner ON platform.credential_government_ids USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+CREATE POLICY rls_credential_owner ON platform.credential_liability_policies USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+CREATE POLICY rls_credential_owner ON platform.credential_licenses USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+CREATE POLICY rls_credential_owner ON platform.credential_references USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+CREATE POLICY rls_credential_owner ON platform.credential_service_locations USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+CREATE POLICY rls_credential_owner ON platform.credential_training USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
 
 CREATE POLICY rls_panel_application_owner ON platform.panel_applications USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));

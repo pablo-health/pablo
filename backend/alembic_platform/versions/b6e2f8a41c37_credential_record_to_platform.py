@@ -108,7 +108,6 @@ def _create_tables() -> None:
         """
         CREATE TABLE IF NOT EXISTS platform.credential_government_ids (
             user_id UUID NOT NULL,
-            practice_id VARCHAR(128) NOT NULL,
             ssn_encrypted TEXT,
             ssn_last4 VARCHAR(4),
             dob_encrypted TEXT,
@@ -130,12 +129,6 @@ def _create_tables() -> None:
             CONSTRAINT ck_credential_government_ids_supervision_status CHECK (
                 supervision_status IS NULL OR supervision_status IN ('independent', 'supervised'))
         )
-        """
-    )
-    op.execute(
-        """
-        CREATE INDEX IF NOT EXISTS ix_platform_credential_government_ids_practice_id
-            ON platform.credential_government_ids (practice_id)
         """
     )
     op.execute(
@@ -227,7 +220,6 @@ def _create_tables() -> None:
         CREATE TABLE IF NOT EXISTS platform.credential_education (
             id UUID NOT NULL,
             user_id UUID NOT NULL,
-            practice_id VARCHAR(128) NOT NULL,
             institution VARCHAR(255) NOT NULL,
             degree VARCHAR(100),
             field_of_study VARCHAR(255),
@@ -248,16 +240,9 @@ def _create_tables() -> None:
     )
     op.execute(
         """
-        CREATE INDEX IF NOT EXISTS ix_platform_credential_education_practice_id
-            ON platform.credential_education (practice_id)
-        """
-    )
-    op.execute(
-        """
         CREATE TABLE IF NOT EXISTS platform.credential_training (
             id UUID NOT NULL,
             user_id UUID NOT NULL,
-            practice_id VARCHAR(128) NOT NULL,
             program_type VARCHAR(50) NOT NULL,
             institution VARCHAR(255) NOT NULL,
             specialty VARCHAR(255),
@@ -278,16 +263,9 @@ def _create_tables() -> None:
     )
     op.execute(
         """
-        CREATE INDEX IF NOT EXISTS ix_platform_credential_training_practice_id
-            ON platform.credential_training (practice_id)
-        """
-    )
-    op.execute(
-        """
         CREATE TABLE IF NOT EXISTS platform.credential_employment (
             id UUID NOT NULL,
             user_id UUID NOT NULL,
-            practice_id VARCHAR(128) NOT NULL,
             employer_name VARCHAR(255) NOT NULL,
             position VARCHAR(255),
             address_line1 VARCHAR(255),
@@ -312,16 +290,9 @@ def _create_tables() -> None:
     )
     op.execute(
         """
-        CREATE INDEX IF NOT EXISTS ix_platform_credential_employment_practice_id
-            ON platform.credential_employment (practice_id)
-        """
-    )
-    op.execute(
-        """
         CREATE TABLE IF NOT EXISTS platform.credential_references (
             id UUID NOT NULL,
             user_id UUID NOT NULL,
-            practice_id VARCHAR(128) NOT NULL,
             full_name VARCHAR(255) NOT NULL,
             title VARCHAR(100),
             credential VARCHAR(100),
@@ -344,16 +315,9 @@ def _create_tables() -> None:
     )
     op.execute(
         """
-        CREATE INDEX IF NOT EXISTS ix_platform_credential_references_practice_id
-            ON platform.credential_references (practice_id)
-        """
-    )
-    op.execute(
-        """
         CREATE TABLE IF NOT EXISTS platform.credential_disclosures (
             id UUID NOT NULL,
             user_id UUID NOT NULL,
-            practice_id VARCHAR(128) NOT NULL,
             question_key VARCHAR(64) NOT NULL,
             question_version SMALLINT NOT NULL,
             answer BOOLEAN NOT NULL,
@@ -371,16 +335,9 @@ def _create_tables() -> None:
     )
     op.execute(
         """
-        CREATE INDEX IF NOT EXISTS ix_platform_credential_disclosures_practice_id
-            ON platform.credential_disclosures (practice_id)
-        """
-    )
-    op.execute(
-        """
         CREATE TABLE IF NOT EXISTS platform.credential_confirmations (
             id UUID NOT NULL,
             user_id UUID NOT NULL,
-            practice_id VARCHAR(128) NOT NULL,
             field_key VARCHAR(64) NOT NULL,
             source VARCHAR(32) NOT NULL,
             presented_value TEXT,
@@ -402,16 +359,9 @@ def _create_tables() -> None:
     )
     op.execute(
         """
-        CREATE INDEX IF NOT EXISTS ix_platform_credential_confirmations_practice_id
-            ON platform.credential_confirmations (practice_id)
-        """
-    )
-    op.execute(
-        """
         CREATE TABLE IF NOT EXISTS platform.credential_service_locations (
             id UUID NOT NULL,
             user_id UUID NOT NULL,
-            practice_id VARCHAR(128) NOT NULL,
             name VARCHAR(255),
             address_line1 VARCHAR(255) NOT NULL,
             address_line2 VARCHAR(255),
@@ -436,12 +386,6 @@ def _create_tables() -> None:
         """
         CREATE INDEX IF NOT EXISTS ix_credential_service_locations_user_id
             ON platform.credential_service_locations (user_id)
-        """
-    )
-    op.execute(
-        """
-        CREATE INDEX IF NOT EXISTS ix_platform_credential_service_locations_practice_id
-            ON platform.credential_service_locations (practice_id)
         """
     )
     op.execute(

@@ -233,7 +233,7 @@ class TestTheSchemaEnforcesTheMirrorRule:
     def test_a_confirmation_is_one_row_per_field(self, engine: Engine, tenant_schema: str) -> None:
         """Re-confirming updates. The question is "is this right now"."""
         from app.credentialing import confirmations  # noqa: PLC0415
-        from app.db.models import CredentialConfirmationRow  # noqa: PLC0415
+        from app.db.platform_models import CredentialConfirmationRow  # noqa: PLC0415
 
         scoped = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
         try:
@@ -332,12 +332,14 @@ def _seed_tier_one(session: Session, user_id: str) -> None:
     from app.credentialing import government_ids  # noqa: PLC0415
     from app.db.models import (  # noqa: PLC0415
         ComplianceDocumentRow,
+        PayerParticipationRow,
+        PayerRow,
+    )
+    from app.db.platform_models import (  # noqa: PLC0415
         CredentialBankAccountRow,
         CredentialLiabilityPolicyRow,
         CredentialLicenseRow,
         CredentialServiceLocationRow,
-        PayerParticipationRow,
-        PayerRow,
     )
 
     now = datetime.now(UTC)
