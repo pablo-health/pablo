@@ -57,8 +57,16 @@ class TestTierZeroNeverAsks:
         assert not _uploads(_for(Tier.CONFIRM))
 
     def test_the_confirmations_are_roughly_the_fourteen_the_design_counts(self) -> None:
-        assert len(_for(Tier.CONFIRM)) == 13
-        assert len(_for(Tier.CONFIRM, supervised=False, prescriber=True)) == 14
+        """Two short of the design's count, and deliberately.
+
+        ``medicare_enrollment`` and ``exclusion_clearance`` were removed: both
+        claimed a lookup — PECOS, and the LEIE/SAM exclusion lists — that
+        nothing in the tree performed. A confirm tier is the one place a count
+        must not be met by keeping a card nobody fills in. They return when
+        there is a check behind them; see the comment in ``checklist.py``.
+        """
+        assert len(_for(Tier.CONFIRM)) == 11
+        assert len(_for(Tier.CONFIRM, supervised=False, prescriber=True)) == 12
 
 
 class TestTierOneIsClaimsReadyAndStoppable:
@@ -291,7 +299,7 @@ class TestCaqhShape:
 
         The doc is generated, so a question set that changed without it is a
         doc that describes a surface nobody ships. Regenerate with
-        ``poetry run python backend/scripts/regen_intake_field_map.py``.
+        ``poetry run python backend/scripts/regen_checklist_field_map.py``.
         """
         assert FIELD_MAP_PATH.read_text(encoding="utf-8") == render(), (
             "docs/reference/caqh-checklist-field-map.md is stale — regenerate it"

@@ -123,14 +123,14 @@ test.describe("credentialing checklist", () => {
   })
 
   test("confirming answers a question that has nowhere else to live", async ({ api }) => {
-    await api.put(`${INTAKE}/confirmations/exclusion_clearance`, {
-      source: "leie_sam",
+    await api.put(`${INTAKE}/confirmations/hospital_affiliations_none`, {
+      source: "clinician_profiles",
       confirmed: true,
       presented_value: "true",
     })
 
     const checklist = await api.get<ChecklistSurface>(INTAKE)
-    const cleared = checklist.fields.find((f) => f.key === "exclusion_clearance")
+    const cleared = checklist.fields.find((f) => f.key === "hospital_affiliations_none")
 
     expect(cleared?.answered).toBe(true)
   })

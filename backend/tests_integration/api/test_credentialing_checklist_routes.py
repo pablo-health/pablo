@@ -330,12 +330,12 @@ class TestTierZeroConfirmations:
     def test_confirming_answers_the_question(self, harness: dict[str, Any]) -> None:
         """A Tier-0 field with no home column is answered by its confirmation."""
         before = harness["client"].get(_URL).json()["fields"]
-        assert not next(f for f in before if f["key"] == "exclusion_clearance")["answered"]
+        assert not next(f for f in before if f["key"] == "hospital_affiliations_none")["answered"]
 
-        _confirm(harness["client"], "exclusion_clearance")
+        _confirm(harness["client"], "hospital_affiliations_none")
 
         after = harness["client"].get(_URL).json()["fields"]
-        assert next(f for f in after if f["key"] == "exclusion_clearance")["answered"]
+        assert next(f for f in after if f["key"] == "hospital_affiliations_none")["answered"]
 
 
 class TestStoppingAfterTierOne:
@@ -434,15 +434,15 @@ class TestOneCliniciansIntakeIsHerOwn:
             lambda s: confirmations.record(
                 s,
                 _OTHER_USER_ID,
-                field_key="exclusion_clearance",
-                source="leie_sam",
+                field_key="hospital_affiliations_none",
+                source="clinician_profiles",
                 confirmed=True,
             ),
         )
 
         fields = harness["client"].get(_URL).json()["fields"]
 
-        assert not next(f for f in fields if f["key"] == "exclusion_clearance")["answered"]
+        assert not next(f for f in fields if f["key"] == "hospital_affiliations_none")["answered"]
 
 
 def _answer_tier_one(harness: dict[str, Any]) -> None:
