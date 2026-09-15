@@ -276,7 +276,7 @@ CREATE TABLE __TENANT_SCHEMA__.claim_reminders (
     completed_at timestamp with time zone,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
-    CONSTRAINT ck_claim_reminders_kind CHECK (((kind)::text = ANY ((ARRAY['rejected'::character varying, 'denied'::character varying, 'partial'::character varying, 'stalled'::character varying, 'deadline_approaching'::character varying, 'deadline_missed'::character varying, 'enrollment_action_required'::character varying, 'unmatched_remittance'::character varying, 'remittance_held'::character varying])::text[])))
+    CONSTRAINT ck_claim_reminders_kind CHECK (((kind)::text = ANY ((ARRAY['rejected'::character varying, 'denied'::character varying, 'partial'::character varying, 'stalled'::character varying, 'deadline_approaching'::character varying, 'deadline_missed'::character varying, 'unmatched_remittance'::character varying, 'remittance_held'::character varying])::text[])))
 );
 
 
