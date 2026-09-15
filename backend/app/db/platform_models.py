@@ -13,6 +13,7 @@ live in saas_models.py.
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger,
@@ -24,6 +25,7 @@ from sqlalchemy import (
     Index,
     Integer,
     LargeBinary,
+    Numeric,
     SmallInteger,
     String,
     Text,
@@ -1414,5 +1416,352 @@ class CredentialBankAccountRow(PlatformBase):
         nullable=True,
     )
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+#: Where this clinician stands with one payer's panel. A state machine with an
+#: effective date, never a boolean, because credentialing and contracting are
+#: two processes: ``credentialed`` means the payer verified her, ``contracted``
+#: means a participation agreement carrying a fee schedule exists, and
+#: ``in_network`` means both as of ``effective_date``. A practice can sit in
+#: ``credentialed`` for years believing it is paneled — separating the two is
+#: what makes that gap visible.
+#:
+#: ``single_case_agreement`` is the side door: a one-off in-network rate for
+#: one client, agreed without paneling, so it implies none of the others.
+PARTICIPATION_STATUSES: tuple[str, ...] = (
+    "out_of_network",
+    "application_submitted",
+    "credentialed",
+    "contracted",
+    "in_network",
+    "single_case_agreement",
+    "denied",
+    "terminated",
+)
+
+#: How a contracted rate is expressed. A fee schedule arrives with the contract
+#: and is one of these two shapes: a table of amounts per code, or a percentage
+#: of the Medicare physician fee schedule for the practice's locality.
+CONTRACTED_RATE_BASES: tuple[str, ...] = ("fixed", "percent_of_mpfs")
+
+
+class PayerAuthorizationRow(PlatformBase):
+    """Her signature authorising Pablo to speak to payers on her behalf.
+
+    Shaped after the BAA (``routes/users.py::accept_baa``) because it is the
+    same kind of object: a versioned agreement, accepted in the product, with
+    the text she saw kept beside the acceptance. It differs from the BAA in
+    three ways that each matter.
+
+    **Per-clinician, not per-practice.** The BAA is between Pablo and the
+    covered entity, so it snapshots onto the practice row. This authorises us
+    to act for HER, under HER NPI, on HER applications — the same reasoning
+    that made ``panel_applications`` row-scoped rather than practice-wide.
+
+    **One row per signature, never edited.** A signature is an event. Signing a
+    new version adds a row; it does not overwrite the old one. That is what
+    lets us answer "what authority did you hold when you rang Aetna in March"
+    with the version in force in March rather than the one in force today.
+
+    **``full_text`` is the point, not an audit nicety.** A row saying she
+    accepted version ``2026-09-13`` is worth nothing once that file is edited.
+    A payer or a licensing board asking what authority we claimed needs the
+    words, and the words have to be the ones she was shown.
+
+    ``revoked_at`` exists because an authorisation to act for someone with
+    third parties that she cannot withdraw is not an authorisation, it is a
+    trap. Revoking sets the timestamp and leaves everything else alone: what
+    she signed, and that she signed it, both remain true.
+
+    PHI-free — this is about a clinician and an insurer, and no patient
+    appears in it.
+
+    Platform-scoped, and the docstring above already argued for it before the
+    move: this authorises us to act for HER, under HER NPI, on HER
+    applications. An authority that stopped at a practice boundary would mean
+    re-signing on joining a second practice to grant permission she has
+    already granted — and would leave the operator unable to answer "what
+    authority did we hold" without knowing which practice to ask.
+    """
+
+    __tablename__ = "payer_authorizations"
+    # PlatformBase annotates __table_args__ as the dict-only shape; the
+    # tuple form trips mypy here, same as PracticeRow above.
+    __table_args__ = (  # type: ignore[assignment]
+        # No unique constraint on (user_id, kind, version). Re-signing the same
+        # version after a revocation is a real sequence, and the second
+        # signature is a different event from the first.
+        CheckConstraint(
+            "kind IN ('credentialing_authorization', 'services_agreement')",
+            name="ck_payer_authorizations_kind",
+        ),
+        Index("ix_payer_authorizations_user_id", "user_id"),
+        {"schema": PLATFORM_SCHEMA},
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    #: Which document this signature is of. Two of them authorise different
+    #: things — the services agreement is the commercial relationship, the
+    #: credentialing authorisation is the narrow permission to sign her name to
+    #: a payer's form — so they are counted separately and never stand in for
+    #: one another. Schema-enforced, because a typo here would read as a
+    #: missing signature and silently shut a gate rather than open one.
+    kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    #: The dated version she signed, e.g. ``"2026-09-13"`` — the filename stem
+    #: of the document, the same scheme the BAA uses. Each kind carries its own
+    #: series, so the pair ``(kind, version)`` is what identifies a document.
+    version: Mapped[str] = mapped_column(String(20), nullable=False)
+    #: The document as she was shown it. See the class docstring.
+    full_text: Mapped[str] = mapped_column(Text, nullable=False)
+    #: The name she signed under, captured at signing rather than read back
+    #: from the user row later — a clinician who marries and changes her legal
+    #: name did not retroactively sign under the new one.
+    signed_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    signed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    #: When she withdrew it. NULL while it stands.
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class PayerParticipationRow(PlatformBase):
+    """Whether THIS CLINICIAN is on THIS PAYER's panel, and since when.
+
+    Not ``payers.enrollment_status`` or ``payer_enrollments``, which are the
+    practice's ELECTRONIC connection to a payer (837/835/270). Different fact,
+    different party, and the two move independently in every combination: this
+    row is about a person and a panel, those are about a practice and a pipe.
+
+    Unique on ``(user_id, practice_id, payer_id)``, which is why panel status
+    cannot be a column on ``payers``: in a group practice each clinician holds
+    her own status against the same payer.
+
+    ``payer_id`` refers to a row in the PRACTICE schema's ``payers`` table and
+    therefore carries no foreign key, exactly as ``panel_applications`` does —
+    a platform table cannot reference a per-tenant one, and ``payers`` belongs
+    per-tenant because it holds the practice's own electronic enrollment state
+    with that insurer, which two practices hold differently for the same
+    company. ``practice_id`` is what makes ``payer_id`` resolvable.
+
+    That is also why the practice is in the unique key and did not used to be.
+    The same insurer is a different uuid in every practice's ``payers`` table,
+    so ``(user_id, payer_id)`` stopped identifying what it identified when both
+    sides lived in one schema. This is not a relaxation: panel participation is
+    contracted per billing entity, so a clinician working in two practices
+    genuinely holds two statuses against the same insurer, and the old key
+    could not have expressed that.
+
+    The behavioural carve-out needs nothing here — a carve-out is already its
+    own ``payers`` row with ``is_carveout`` and ``carveout_of``, so being
+    in-network with a health plan and out-of-network with the entity
+    administering its behavioural benefits is two rows against two payers.
+    Likewise state: a payer row already knows it is BCBS of Michigan.
+
+    ``status`` never moves without a ``payer_participation_events`` row
+    recording the move. ``app.credentialing.participation`` is the only thing
+    that should write this column.
+    """
+
+    __tablename__ = "payer_participations"
+    # PlatformBase annotates __table_args__ as the dict-only shape; the
+    # tuple form trips mypy here, same as PracticeRow above.
+    __table_args__ = (  # type: ignore[assignment]
+        CheckConstraint(
+            f"status IN ({_sql_in_list(PARTICIPATION_STATUSES)})",
+            name="ck_payer_participations_status",
+        ),
+        UniqueConstraint(
+            "user_id",
+            "practice_id",
+            "payer_id",
+            name="ux_payer_participations_user_practice_payer",
+        ),
+        Index("ix_payer_participations_payer_id", "payer_id"),
+        Index("ix_payer_participations_user_id", "user_id"),
+        Index("ix_payer_participations_practice_id", "practice_id"),
+        {"schema": PLATFORM_SCHEMA},
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    #: Which practice, so ``payer_id`` can be resolved in the right schema.
+    practice_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    #: A ``payers.id`` in that practice's schema. No FK — see the class
+    #: docstring. The ``ondelete="CASCADE"`` this column used to carry is gone
+    #: with it: deleting a payer row no longer erases the participation
+    #: history, which is the better outcome anyway. A panel she was on and a
+    #: payer the practice stopped filing with are different facts, and losing
+    #: the first because of the second silently rewrites when she was
+    #: in-network.
+    payer_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="out_of_network")
+    # ``credentialed_at`` set with ``contracted_at`` NULL is the
+    # credentialed-but-not-contracted trap the tracker exists to surface.
+    credentialed_at: Mapped[date | None] = mapped_column(Date, nullable=True)
+    contracted_at: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # The payer's date, not ours — routinely weeks after the contract signs.
+    effective_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    termination_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Usually three years out. Missing it terminates the panel silently.
+    recredentialing_due_at: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # The id the PAYER knows her by. Not her NPI; what a status call is keyed on.
+    provider_id_with_payer: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class PayerParticipationEventRow(PlatformBase):
+    """One transition of one participation, with the moment it happened.
+
+    The current status answers "where does this panel sit"; only the history
+    answers "when did it go quiet" — and an application that has not moved in
+    ninety days is the ordinary failure mode of paneling, invisible to a table
+    that stores only the latest value.
+
+    Carries ``user_id`` beside ``participation_id`` for the same reason
+    ``claim_events`` carries ``patient_id`` beside ``claim_id``: the row is
+    isolated by its parent's predicate without the policy engine learning a
+    join.
+
+    ``detail`` holds identifiers about the PROCESS — a reviewer's reference
+    number, which queue a form went into. Never anything about a client.
+    """
+
+    __tablename__ = "payer_participation_events"
+    # PlatformBase annotates __table_args__ as the dict-only shape; the
+    # tuple form trips mypy here, same as PracticeRow above.
+    __table_args__ = (  # type: ignore[assignment]
+        CheckConstraint(
+            f"to_status IN ({_sql_in_list(PARTICIPATION_STATUSES)})",
+            name="ck_payer_participation_events_to_status",
+        ),
+        CheckConstraint(
+            f"from_status IS NULL OR from_status IN ({_sql_in_list(PARTICIPATION_STATUSES)})",
+            name="ck_payer_participation_events_from_status",
+        ),
+        Index("ix_payer_participation_events_participation_id", "participation_id"),
+        Index("ix_payer_participation_events_user_id", "user_id"),
+        {"schema": PLATFORM_SCHEMA},
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    participation_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("platform.payer_participations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    # NULL on the row that records a participation coming into existence.
+    from_status: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    to_status: Mapped[str] = mapped_column(String(24), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    detail: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ContractedRateRow(PlatformBase):
+    """What a payer agreed to pay this clinician for one code.
+
+    The fee schedule arrives WITH the contract, after credentialing approval —
+    so a rate hangs off a ``payer_participations`` row rather than off the payer,
+    and only exists once that participation reached ``contracted``.
+
+    Rates are versioned by ``effective_date`` and never edited in place: a
+    schedule that changes is a new row, and the old one stays so a claim from
+    last year still reads against the rate that was in force when it was filed.
+    ``end_date`` NULL means "still current".
+
+    ``basis`` is what makes this two columns rather than one.
+    ``fixed`` reads ``amount_cents``; ``percent_of_mpfs`` reads ``percent``
+    against ``mpfs_amount_cents``. The Medicare amount is a column and not a
+    lookup because this codebase ships no fee schedule and fetching one is its
+    own project — the practice enters the locality amount from the schedule the
+    payer supplied. A percentage-basis row with no ``mpfs_amount_cents`` is
+    therefore a real and expected state, and the variance reports it as not
+    computable rather than guessing at a number somebody could bill on.
+
+    ``modifier`` is NOT NULL and defaults to the empty string, which is the
+    unmodified code. A nullable column would read better and break the unique
+    constraint: NULLs are distinct in Postgres, so two "no modifier" rates for
+    the same code and date would both be accepted, and the report would then
+    have to choose between them.
+
+    Carries ``user_id`` beside ``participation_id`` for the same reason
+    ``payer_participation_events`` does — the row takes its parent's
+    row-ownership policy without the policy engine learning a join.
+
+    ``practice_id`` is here for one job and one only: ``source_document_id``
+    names a row in a practice schema's vault, and without the practice there is
+    no way to know which vault. The events table alongside this one carries no
+    such column, because it points at no document — a ``practice_id`` with
+    nothing to resolve invites a query that scopes by it and a reader who
+    believes that scoping means something.
+    """
+
+    __tablename__ = "contracted_rates"
+    # PlatformBase annotates __table_args__ as the dict-only shape; the
+    # tuple form trips mypy here, same as PracticeRow above.
+    __table_args__ = (  # type: ignore[assignment]
+        CheckConstraint(
+            f"basis IN ({_sql_in_list(CONTRACTED_RATE_BASES)})",
+            name="ck_contracted_rates_basis",
+        ),
+        # Each basis needs its own number and must not carry the other's, so a
+        # row cannot be ambiguous about which arm computed it.
+        CheckConstraint(
+            "(basis = 'fixed' AND amount_cents IS NOT NULL AND percent IS NULL) OR "
+            "(basis = 'percent_of_mpfs' AND percent IS NOT NULL AND amount_cents IS NULL)",
+            name="ck_contracted_rates_basis_fields",
+        ),
+        CheckConstraint(
+            "amount_cents IS NULL OR amount_cents >= 0", name="ck_contracted_rates_amount"
+        ),
+        CheckConstraint("percent IS NULL OR percent > 0", name="ck_contracted_rates_percent"),
+        CheckConstraint(
+            "end_date IS NULL OR end_date >= effective_date",
+            name="ck_contracted_rates_date_order",
+        ),
+        UniqueConstraint(
+            "participation_id",
+            "cpt",
+            "modifier",
+            "effective_date",
+            name="ux_contracted_rates_participation_code_date",
+        ),
+        Index("ix_contracted_rates_participation_id", "participation_id"),
+        Index("ix_contracted_rates_user_id", "user_id"),
+        Index("ix_contracted_rates_practice_id", "practice_id"),
+        {"schema": PLATFORM_SCHEMA},
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    participation_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("platform.payer_participations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    #: Which practice, so ``source_document_id`` can be resolved in the right
+    #: schema. See the class docstring.
+    practice_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    cpt: Mapped[str] = mapped_column(String(10), nullable=False)
+    modifier: Mapped[str] = mapped_column(String(8), nullable=False, default="")
+    basis: Mapped[str] = mapped_column(String(16), nullable=False)
+    amount_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Percent of the Medicare fee schedule, e.g. 85.000. Over 100 is ordinary
+    # for a well-negotiated behavioural contract.
+    percent: Mapped[Decimal | None] = mapped_column(Numeric(7, 3), nullable=True)
+    mpfs_amount_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    effective_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    #: The fee schedule the payer supplied, in the practice's vault. No
+    #: foreign key: ``compliance_documents`` stayed per-tenant and a platform
+    #: table cannot reference one. ``practice_id`` is what resolves it, and is
+    #: the only reason that column is on this table and not on the events.
+    source_document_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

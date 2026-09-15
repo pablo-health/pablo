@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
-from ..db.models import PayerAuthorizationRow
+from ..db.platform_models import PayerAuthorizationRow
 
 if TYPE_CHECKING:
     from datetime import datetime

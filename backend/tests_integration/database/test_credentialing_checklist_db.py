@@ -379,7 +379,6 @@ def _seed_tier_one(session: Session, user_id: str, practice_id: str) -> None:
     from app.credentialing import government_ids  # noqa: PLC0415
     from app.db.models import (  # noqa: PLC0415
         ComplianceDocumentRow,
-        PayerParticipationRow,
         PayerRow,
     )
     from app.db.platform_models import (  # noqa: PLC0415
@@ -387,6 +386,7 @@ def _seed_tier_one(session: Session, user_id: str, practice_id: str) -> None:
         CredentialLiabilityPolicyRow,
         CredentialLicenseRow,
         CredentialServiceLocationRow,
+        PayerParticipationRow,
     )
 
     now = datetime.now(UTC)
@@ -482,6 +482,7 @@ def _seed_tier_one(session: Session, user_id: str, practice_id: str) -> None:
         PayerParticipationRow(
             id=str(uuid.uuid4()),
             user_id=user_id,
+            practice_id=practice_id,
             payer_id=payer.id,
             status="in_network",
             effective_date=date(2026, 1, 1),
