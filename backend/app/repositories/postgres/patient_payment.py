@@ -19,7 +19,11 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from ...db.models import PatientChargeRow, PatientPaymentMethodRow
+from ...db.models import (
+    COLLECTING_CHARGE_KINDS,
+    PatientChargeRow,
+    PatientPaymentMethodRow,
+)
 from ...models.payments import CardOnFile, PatientCharge
 from ...utcnow import utc_now
 from ..patient_payment import PatientPaymentRepository, PaymentAlreadyInFlightError
@@ -213,6 +217,16 @@ class PostgresPatientPaymentRepository(PatientPaymentRepository):
         method: str | None = None,
         payment_reference: str | None = None,
     ) -> PatientCharge:
+        # The table enforces this, but an IntegrityError names a constraint
+        # from inside a flush — a long way from the call that got it wrong,
+        # and in a fixture it surfaces as a setup error rather than as a
+        # failure that says what happened. Same rule, said at the call site.
+        if (kind in COLLECTING_CHARGE_KINDS) != (method is not None):
+            raise ValueError(
+                f"kind={kind!r} and method={method!r} disagree: the kinds that "
+                f"collect money ({', '.join(COLLECTING_CHARGE_KINDS)}) must name "
+                "one, and no other kind may."
+            )
         row = PatientChargeRow(
             id=uuid.uuid4().hex,
             patient_id=patient_id,
