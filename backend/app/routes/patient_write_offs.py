@@ -258,7 +258,7 @@ def record_payment(
         # unlabelled "other" is the row nobody can account for later.
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Say how the money arrived — a payment recorded as 'other' needs a reference.",
+            detail="Say what this payment was — one recorded as 'other' needs a reference.",
         )
 
     charge = payments.add_ledger_row(

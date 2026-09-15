@@ -74,7 +74,7 @@ describe("RecordPaymentDialog", () => {
     await chooseMethod(user, "Something else")
     await user.click(screen.getByRole("button", { name: /record payment/i }))
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(/how the money arrived/i)
+    expect(await screen.findByRole("alert")).toHaveTextContent(/what this payment was/i)
     expect(mockRecordPayment).not.toHaveBeenCalled()
   })
 

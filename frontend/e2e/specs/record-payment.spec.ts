@@ -89,13 +89,13 @@ test("a payment recorded as 'other' has to say what it was", async ({ signedInPa
   await page.getByRole("option", { name: "Something else" }).click()
   await page.getByRole("button", { name: "Record payment" }).click()
 
-  await expect(page.getByRole("alert")).toContainText(/how the money arrived/i)
+  await expect(page.getByRole("alert")).toContainText(/what this payment was/i)
 
   // Refused before anything was written — the ledger is untouched, not
   // holding a row the database would have rejected anyway.
   expect(await api.get<LedgerRow[]>(`/api/patients/${patient.id}/charges`)).toHaveLength(0)
 
-  await page.getByLabel("How it arrived").fill("Zelle, 14 Mar")
+  await page.getByLabel("Details").fill("Zelle, 14 Mar")
   await page.getByRole("button", { name: "Record payment" }).click()
 
   await expect

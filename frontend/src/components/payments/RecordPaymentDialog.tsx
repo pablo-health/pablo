@@ -54,11 +54,15 @@ const METHOD_LABELS: Record<RecordableMethod, string> = {
   other: "Something else",
 }
 
-/** Only `other` has to be labelled — the rest are already self-describing. */
+/** Only `other` has to be labelled — the rest are already self-describing.
+ *
+ * None of these may repeat the select's own label. Two controls answering to
+ * the same name is ambiguous to anything addressing the form by label, a
+ * screen reader included. */
 const REFERENCE_LABELS: Record<RecordableMethod, string> = {
   cash: "Reference",
   check: "Check number",
-  other: "How it arrived",
+  other: "Details",
 }
 
 const REFERENCE_PLACEHOLDERS: Record<RecordableMethod, string> = {
@@ -113,7 +117,7 @@ export function RecordPaymentDialog({
       return
     }
     if (method === "other" && !reference.trim()) {
-      setProblem("Say how the money arrived.")
+      setProblem("Say what this payment was.")
       return
     }
     setProblem(null)
