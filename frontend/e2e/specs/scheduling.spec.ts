@@ -1,11 +1,36 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 import { test, expect } from "../fixtures/auth"
-import { givePatient, markCalendarSetupComplete } from "../fixtures/scenarios"
+import { givePatient, giveWorkingHours, markCalendarSetupComplete } from "../fixtures/scenarios"
+
+/** The slot this test books, and the hours it books inside. */
+const BOOKS_AT = "10:00"
+const OPENS_AT = "09:00"
+const CLOSES_AT = "17:00"
 
 test("a clinician books and cancels an appointment", async ({ signedInPage: page, api }) => {
   const patient = await givePatient(api)
   await markCalendarSetupComplete(api)
+
+  const tomorrow = new Date()
+  tomorrow.setDate(tomorrow.getDate() + 1)
+
+  // Declare the hours this test books within, rather than inheriting whatever
+  // a freshly provisioned practice happens to have. Booking outside the
+  // practice's working hours is not refused — it raises an override dialog
+  // (#1103, "Ask the clinician instead of refusing the booking") that sits on
+  // top of this form and swallows the submit. The spec then waits for a POST
+  // that will never be made and reports the wait, three minutes later,
+  // instead of the dialog that caused it.
+  //
+  // `day_of_week` is MONDAY-based, matching the engine's `date.weekday()`;
+  // JS `getDay()` is Sunday-based. This is the second weekday trap in this
+  // test — see the week-view note further down for the first.
+  await giveWorkingHours(api, (tomorrow.getDay() + 6) % 7, {
+    start: OPENS_AT,
+    end: CLOSES_AT,
+  })
+
   await page.goto("/dashboard/calendar")
   await page.getByRole("button", { name: /new appointment/i }).click()
 
@@ -16,14 +41,12 @@ test("a clinician books and cancels an appointment", async ({ signedInPage: page
     .getByRole("option", { name: `${patient.last_name}, ${patient.first_name}` })
     .click()
 
-  const tomorrow = new Date()
-  tomorrow.setDate(tomorrow.getDate() + 1)
   await page
     .getByLabel("Date", { exact: true })
     .fill(
       `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, "0")}-${String(tomorrow.getDate()).padStart(2, "0")}`,
     )
-  await page.getByLabel("Time", { exact: true }).fill("10:00")
+  await page.getByLabel("Time", { exact: true }).fill(BOOKS_AT)
 
   const created = page.waitForResponse(
     (response) =>
