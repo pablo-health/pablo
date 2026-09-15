@@ -20,6 +20,7 @@ without a test key, like the rest of this lane.
 from __future__ import annotations
 
 import time
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from app.claims.remittance import posting_for
@@ -37,6 +38,17 @@ _CHARGED_CENTS = 15_000
 
 _ADJUDICATION_TIMEOUT_SECONDS = 240
 _POLL_INTERVAL_SECONDS = 10
+
+#: How far back to read the remittance feed while waiting for a claim this
+#: test filed moments ago.
+#:
+#: Deliberately far narrower than ``DEFAULT_LOOKBACK``'s fourteen days. That
+#: default is right in production, where a practice wants its recent
+#: remittances; it is wrong here, where the account is shared with every
+#: previous run of this lane and the feed is read oldest-first under a page
+#: cap. An hour covers the vendor's test-mode adjudication with room to
+#: spare, and contains nothing any earlier run left behind.
+_FEED_LOOKBACK = timedelta(hours=1)
 
 
 def _wait_for_adjudication(timelines: SdkClaimTimelines, claim_id: str) -> ClaimTimeline:
@@ -124,7 +136,24 @@ def test_the_payer_says_what_it_did_with_each_service(live: LiveClient) -> None:
     while True:
         # A fresh source each time: the scan is cached for a pass on purpose,
         # so re-asking the same one would answer from the first empty scan.
-        detail = FeedRemittanceDetails(live.adapter).detail_for(control_number)
+        #
+        # AND A NARROW WINDOW, which is the whole reason this test can pass
+        # twice. The default lookback is fourteen days, which is right for a
+        # practice reading its own remittances and wrong here: every run of
+        # this lane files a claim into the SAME shared test-mode account, so
+        # the fourteen-day window fills with our own previous runs. The feed
+        # pages oldest-first and stops at twenty pages, so once that residue
+        # exceeds the cap the newest remittance is the one never read — and
+        # the newest is exactly the one we just created and are waiting for.
+        # It then polls until the timeout, having never looked.
+        #
+        # ``remittance_feed_pages_exhausted ... newest_unread=true`` in the
+        # log is that happening, and the warning beside it already said the
+        # fix: a narrower lookback, not a higher page cap. The claim was
+        # filed seconds ago; an hour is generous.
+        detail = FeedRemittanceDetails(live.adapter, lookback=_FEED_LOOKBACK).detail_for(
+            control_number
+        )
         if detail is not None:
             break
         assert time.monotonic() < deadline, (
