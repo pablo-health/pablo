@@ -57,7 +57,6 @@ from app.claims.enrollment import (
     sync_provider_record,
     transactions_to_file,
 )
-from app.claims.events import compliance_item_type
 from app.db import arm_current_user_id, set_tenant_schema
 from app.db.models import (
     ComplianceItemRow,
@@ -214,6 +213,13 @@ def _rows(session: Session) -> dict[str, PayerEnrollmentRow]:
 
 
 def _reminders(session: Session) -> list[ComplianceItemRow]:
+    """Enrollment reminders are compliance items, and stay so.
+
+    A payer wanting the practice to sign something has no claim and no
+    patient behind it — the event carries a synthesised claim id — so it is
+    the one claim-event kind that did NOT move to ``claim_reminders`` when
+    the rest did. See ``app.claims.events.NON_CLAIM_KINDS``.
+    """
     return list(session.execute(select(ComplianceItemRow)).scalars().all())
 
 
@@ -811,7 +817,7 @@ class TestActionRequired:
         assert "Forward the signed form" not in row.instructions  # the vendor's own task
         [reminder] = _reminders(session)
         assert reminder.user_id == _USER_ID
-        assert reminder.item_type == compliance_item_type("enrollment_action_required")
+        assert reminder.item_type == "claim_enrollment_action_required"
         assert INSTRUCTIONS in (reminder.notes or "")
         assert reminder.completed_at is None
         assert payer.enrollment_status == "pending"

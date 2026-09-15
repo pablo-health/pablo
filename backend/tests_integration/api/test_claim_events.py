@@ -23,33 +23,25 @@ from typing import TYPE_CHECKING, get_args
 import pytest
 from alembic import command
 from alembic.config import Config
-from app.auth.route_access import subscription_exempt
-from app.auth.service import get_current_user, get_tenant_context
 from app.claims import events
 from app.claims.events import (
-    COMPLIANCE_ITEM_TYPES,
+    CLAIM_BACKED_KINDS,
+    NON_CLAIM_KINDS,
+    REMINDER_KINDS,
     ClaimEvent,
     ClaimEventDetail,
     ClaimEventKind,
     CodeRef,
     clear_claim_event_listeners,
-    compliance_item_type,
     compliance_reminder_listener,
     emit,
     find_claim_reminder,
     register_claim_event_listener,
     resolve_compliance_reminder,
 )
-from app.compliance import get_template, list_templates_for_edition
 from app.db import arm_current_user_id, set_tenant_schema
-from app.db.models import ComplianceItemRow
+from app.db.models import CLAIM_REMINDER_KINDS, ClaimReminderRow, ComplianceItemRow
 from app.db.provisioning import create_practice_schema
-from app.models import User
-from app.repositories import get_compliance_item_repository
-from app.repositories.postgres.compliance_item import PostgresComplianceItemRepository
-from app.routes import compliance as compliance_routes
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 from sqlalchemy import Engine, create_engine, select, text
 from sqlalchemy.orm import Session
 
@@ -72,6 +64,9 @@ _USER_ID = str(uuid.uuid4())
 _OTHER_USER_ID = str(uuid.uuid4())
 _CLAIM_ID = str(uuid.uuid4())
 _CONTROL_NUMBER = "PCN20260906ABC"
+_OTHER_CLAIM_ID = str(uuid.uuid4())
+_OTHER_CONTROL_NUMBER = "OTHER-CLAIM"
+_PATIENT_ID = str(uuid.uuid4())
 _OCCURRED_AT = datetime(2026, 9, 6, 15, 30, tzinfo=UTC)
 
 _ALL_KINDS: tuple[ClaimEventKind, ...] = get_args(ClaimEventKind)
@@ -143,6 +138,7 @@ def _database() -> Iterator[Engine]:
     command.upgrade(cfg, "head")
     eng = create_engine(_DB_URL, pool_pre_ping=True)
     create_practice_schema(eng, _SCHEMA)
+    _seed_claims(eng)
     yield eng
     with eng.connect() as conn:
         conn.execute(text(f'DROP SCHEMA IF EXISTS "{_SCHEMA}" CASCADE'))
@@ -150,11 +146,82 @@ def _database() -> Iterator[Engine]:
     eng.dispose()
 
 
+def _seed_claims(eng: Engine) -> None:
+    """A client, a grant, a payer, a coverage and two claims.
+
+    None of this was needed when a reminder was a compliance item: the row
+    named its claim in a line of text, so the claim never had to exist. It was
+    a plain uuid nobody had inserted, and every test in this module passed
+    against it. That is what a foreign key buys — the reminder cannot point at
+    a claim that was never filed.
+    """
+    with eng.begin() as conn:
+        conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
+        conn.execute(text("SELECT set_config('app.current_user_id', :u, false)"), {"u": _USER_ID})
+        conn.execute(
+            text(
+                "INSERT INTO patients (id, first_name, last_name, first_name_lower, "
+                "last_name_lower, status, session_count, created_at, updated_at) "
+                "VALUES (CAST(:pid AS uuid), 'Test', 'Patient', 'test', 'patient', "
+                "'active', 0, now(), now())"
+            ),
+            {"pid": _PATIENT_ID},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO patient_clinicians (patient_id, user_id, granted_by) "
+                "VALUES (CAST(:pid AS uuid), :u, :u)"
+            ),
+            {"pid": _PATIENT_ID, "u": _USER_ID},
+        )
+        payer_id = str(uuid.uuid4())
+        conn.execute(
+            text(
+                "INSERT INTO payers (id, name, payer_id, created_at, updated_at) "
+                "VALUES (CAST(:id AS uuid), 'Aetna', 'AETNA', now(), now())"
+            ),
+            {"id": payer_id},
+        )
+        coverage_id = str(uuid.uuid4())
+        conn.execute(
+            text(
+                "INSERT INTO patient_coverage (id, patient_id, payer_id, member_id, "
+                "subscriber_relationship, active, created_at, updated_at) "
+                "VALUES (CAST(:id AS uuid), CAST(:pid AS uuid), CAST(:payer AS uuid), "
+                "'123456789', 'self', true, now(), now())"
+            ),
+            {"id": coverage_id, "pid": _PATIENT_ID, "payer": payer_id},
+        )
+        for claim_id, control in (
+            (_CLAIM_ID, _CONTROL_NUMBER),
+            (_OTHER_CLAIM_ID, _OTHER_CONTROL_NUMBER),
+        ):
+            conn.execute(
+                text(
+                    "INSERT INTO claims (id, control_number, patient_id, coverage_id, "
+                    "payer_id, state, frequency_code, total_charge_cents, "
+                    "total_paid_cents, diagnosis_codes, billing_snapshot, "
+                    "subscriber_snapshot, created_at, updated_at) "
+                    "VALUES (CAST(:id AS uuid), :cn, CAST(:pid AS uuid), "
+                    "CAST(:cov AS uuid), CAST(:payer AS uuid), 'submitted', '1', "
+                    "10000, 0, '[]'::jsonb, '{}'::jsonb, '{}'::jsonb, now(), now())"
+                ),
+                {
+                    "id": claim_id,
+                    "cn": control,
+                    "pid": _PATIENT_ID,
+                    "cov": coverage_id,
+                    "payer": payer_id,
+                },
+            )
+
+
 @pytest.fixture
 def engine(_database: Engine) -> Iterator[Engine]:
     """The same engine, emptied of reminders between tests."""
     yield _database
     with _database.connect() as conn:
+        conn.execute(text(f"TRUNCATE {_SCHEMA}.claim_reminders CASCADE"))
         conn.execute(text(f"TRUNCATE {_SCHEMA}.compliance_items CASCADE"))
         conn.commit()
 
@@ -182,9 +249,9 @@ def listeners() -> Iterator[None]:
     register_claim_event_listener(compliance_reminder_listener)
 
 
-def _reminders(engine: Engine) -> list[ComplianceItemRow]:
+def _reminders(engine: Engine) -> list[ClaimReminderRow]:
     with _session(engine) as session:
-        return list(session.execute(select(ComplianceItemRow)).scalars().all())
+        return list(session.execute(select(ClaimReminderRow)).scalars().all())
 
 
 # --- registry ------------------------------------------------------------------
@@ -266,8 +333,12 @@ def test_raising_listener_does_not_stop_the_callers_commit(engine: Engine) -> No
         emit(session, _event("rejected"))
         session.commit()
 
-    rows = _reminders(engine)
-    assert sorted(r.item_type for r in rows) == ["claim_rejected", "license"]
+    # The caller's own row survived the exploding listener, and the reminder
+    # the surviving listener wrote is in its own table beside it.
+    with _session(engine) as session:
+        items = list(session.execute(select(ComplianceItemRow)).scalars().all())
+    assert [i.item_type for i in items] == ["license"]
+    assert [r.kind for r in _reminders(engine)] == ["rejected"]
 
 
 # --- event shape ---------------------------------------------------------------
@@ -323,15 +394,15 @@ def test_default_listener_writes_one_reminder_per_kind_and_control_number(
         session.commit()
 
     [row] = _reminders(engine)
-    assert row.user_id == _USER_ID
-    assert row.item_type == "claim_denied"
+    assert row.claim_id == _CLAIM_ID
+    assert row.patient_id == _PATIENT_ID
+    assert row.kind == "denied"
     assert row.label == "Claim PCN20260 denied by Aetna, by 2026-12-05"
     assert row.due_date == date(2026, 12, 5)
-    assert row.notes is not None
-    assert row.notes.splitlines() == [
-        f"Claim control number: {_CONTROL_NUMBER}",
-        "Precertification/authorization absent; Claim information is inconsistent",
-    ]
+    # The control number is gone from the notes. It was only ever there
+    # because the lookup needed somewhere to find it, and the claim_id above
+    # is that somewhere now. What is left is what the payer said.
+    assert row.notes == ("Precertification/authorization absent; Claim information is inconsistent")
     assert row.completed_at is None
 
 
@@ -342,15 +413,20 @@ def test_same_control_number_different_kinds_get_separate_reminders(engine: Engi
     with _session(engine) as session:
         emit(session, _event("rejected"))
         emit(session, _event("denied"))
-        emit(session, _event("rejected", control_number="OTHER-CLAIM"))
+        emit(
+            session,
+            _event("rejected", control_number=_OTHER_CONTROL_NUMBER, claim_id=_OTHER_CLAIM_ID),
+        )
         session.commit()
 
     rows = _reminders(engine)
-    assert sorted((r.item_type, r.notes.splitlines()[0] if r.notes else "") for r in rows) == [
-        ("claim_denied", f"Claim control number: {_CONTROL_NUMBER}"),
-        ("claim_rejected", "Claim control number: OTHER-CLAIM"),
-        ("claim_rejected", f"Claim control number: {_CONTROL_NUMBER}"),
-    ]
+    assert sorted((r.kind, r.claim_id) for r in rows) == sorted(
+        [
+            ("denied", _CLAIM_ID),
+            ("rejected", _CLAIM_ID),
+            ("rejected", _OTHER_CLAIM_ID),
+        ]
+    )
 
 
 @pytest.mark.usefixtures("listeners")
@@ -375,22 +451,36 @@ def test_reminder_without_a_deadline_is_due_a_week_after_the_event(engine: Engin
     [row] = _reminders(engine)
     assert row.due_date == date(2026, 9, 13)
     assert row.label == "Claim PCN20260 stalled at payer"
-    assert row.notes == f"Claim control number: {_CONTROL_NUMBER}"
+    # Nothing but the control number used to be here, so now there is nothing.
+    assert row.notes is None
 
 
 @pytest.mark.usefixtures("listeners")
-def test_enrollment_reminder_carries_the_payers_instructions(engine: Engine) -> None:
+def test_enrollment_reminder_is_a_compliance_item_and_keeps_the_instructions(
+    engine: Engine,
+) -> None:
+    """The one kind that did not move, and why it writes a different row.
+
+    A payer wanting the practice to sign something has no claim and no
+    patient. ``app.claims.enrollment`` emits it with a ``claim_id`` of
+    ``f"{payer_id}:{transaction_type}"`` — a string that has never named a
+    claim — so there is no foreign key to hang it on. It stays where the
+    practice's own obligations live, and keeps the control-number marker in
+    its notes because a vendor request id is all it has to find itself by.
+    """
     register_claim_event_listener(compliance_reminder_listener)
 
     with _session(engine) as session:
         emit(session, _event("enrollment_action_required"))
         session.commit()
 
-    [row] = _reminders(engine)
-    assert row.item_type == "claim_enrollment_action_required"
-    assert row.label == "Claim PCN20260 enrollment action needed for Aetna"
-    assert row.notes is not None
-    assert row.notes.endswith("Sign and return the EFT authorization form.")
+    assert _reminders(engine) == []
+    with _session(engine) as session:
+        [item] = list(session.execute(select(ComplianceItemRow)).scalars().all())
+    assert item.item_type == "claim_enrollment_action_required"
+    assert item.label == "Claim PCN20260 enrollment action needed for Aetna"
+    assert item.notes is not None
+    assert item.notes.endswith("Sign and return the EFT authorization form.")
 
 
 # --- finding a reminder --------------------------------------------------------
@@ -408,8 +498,8 @@ def test_find_claim_reminder_returns_the_row_the_listener_wrote(engine: Engine) 
         row = find_claim_reminder(session, kind="denied", control_number=_CONTROL_NUMBER)
 
     assert row is not None
-    assert row.item_type == "claim_denied"
-    assert row.user_id == _USER_ID
+    assert row.kind == "denied"
+    assert row.claim_id == _CLAIM_ID
 
 
 @pytest.mark.usefixtures("listeners")
@@ -421,14 +511,11 @@ def test_find_claim_reminder_misses_another_claim_or_kind(engine: Engine) -> Non
         session.commit()
 
     with _session(engine) as session:
-        assert find_claim_reminder(session, kind="denied", control_number="OTHER-CLAIM") is None
-        assert find_claim_reminder(session, kind="rejected", control_number=_CONTROL_NUMBER) is None
         assert (
-            find_claim_reminder(
-                session, kind="denied", control_number=_CONTROL_NUMBER, user_id=_OTHER_USER_ID
-            )
+            find_claim_reminder(session, kind="denied", control_number=_OTHER_CONTROL_NUMBER)
             is None
         )
+        assert find_claim_reminder(session, kind="rejected", control_number=_CONTROL_NUMBER) is None
 
 
 @pytest.mark.usefixtures("listeners")
@@ -436,86 +523,61 @@ def test_resolving_completes_the_reminder_the_lookup_returns(engine: Engine) -> 
     register_claim_event_listener(compliance_reminder_listener)
 
     with _session(engine) as session:
-        emit(session, _event("enrollment_action_required"))
+        emit(session, _event("remittance_held"))
         session.commit()
 
     with _session(engine) as session:
         assert resolve_compliance_reminder(
             session,
-            kind="enrollment_action_required",
+            kind="remittance_held",
             control_number=_CONTROL_NUMBER,
             user_id=_USER_ID,
         )
         session.commit()
 
     with _session(engine) as session:
-        row = find_claim_reminder(
-            session, kind="enrollment_action_required", control_number=_CONTROL_NUMBER
-        )
+        row = find_claim_reminder(session, kind="remittance_held", control_number=_CONTROL_NUMBER)
     assert row is not None
     assert row.completed_at is not None
 
 
-# --- compliance template catalog -----------------------------------------------
+# --- the vocabulary the column enforces ----------------------------------------
 
 
-def test_every_actionable_kind_has_a_compliance_template() -> None:
-    expected = tuple(compliance_item_type(kind) for kind in _ALL_KINDS if kind != "paid")
-    assert expected == COMPLIANCE_ITEM_TYPES
-    visible = {t.item_type for t in list_templates_for_edition("core")}
-    for item_type in COMPLIANCE_ITEM_TYPES:
-        template = get_template(item_type)
-        assert template is not None, item_type
-        assert template.multi_instance, item_type
-        assert item_type in visible
+def test_every_actionable_kind_is_one_the_column_accepts() -> None:
+    """Two lists of kinds, and they have to agree.
 
-
-@pytest.mark.parametrize("item_type", COMPLIANCE_ITEM_TYPES)
-def test_compliance_route_accepts_claim_item_types(item_type: str) -> None:
-    """Every kind the listener can write is a kind the route will accept.
-
-    A schema question, not a storage one — the repository is counted rather
-    than queried — so this one runs on a router of its own with no database
-    behind it.
+    This used to assert that every kind had a COMPLIANCE TEMPLATE, because a
+    reminder was a ``claim_*`` compliance item and a kind with no template
+    rendered as nothing on the dashboard. Reminders have their own table now,
+    so the list that must agree is the CHECK constraint on ``kind`` — and it
+    fails louder than a missing template did: that showed a clinician nothing,
+    this refuses the insert.
     """
-    created: list[object] = []
+    expected = tuple(kind for kind in _ALL_KINDS if kind != "paid")
 
-    class _Repo:
-        def create(self, item: object) -> object:
-            created.append(item)
-            return item
-
-    now = datetime.now(UTC)
-    api = FastAPI()
-    api.include_router(compliance_routes.router)
-    api.dependency_overrides[get_current_user] = lambda: User(
-        id=_USER_ID,
-        email="therapist@example.com",
-        name="Test Therapist",
-        created_at=now,
-        baa_accepted_at=now,
-        baa_version="2024-01-01",
-    )
-    api.dependency_overrides[get_tenant_context] = lambda: None
-    api.dependency_overrides[subscription_exempt] = lambda: None
-    api.dependency_overrides[get_compliance_item_repository] = _Repo
-
-    response = TestClient(api, raise_server_exceptions=False).post(
-        "/api/compliance",
-        json={"item_type": item_type, "label": "Claim PCN20260 denied by Aetna"},
-    )
-
-    assert response.status_code == 201, response.text
-    assert response.json()["item_type"] == item_type
-    assert len(created) == 1
+    assert expected == REMINDER_KINDS
+    # The claim-backed subset is what the column constrains. The difference
+    # between the two lists is exactly the kinds with no claim behind them,
+    # which stay compliance items.
+    assert set(CLAIM_BACKED_KINDS) == set(CLAIM_REMINDER_KINDS)
+    assert set(REMINDER_KINDS) - set(CLAIM_BACKED_KINDS) == set(NON_CLAIM_KINDS)
 
 
-def test_postgres_repository_reads_what_the_listener_wrote(engine: Engine) -> None:
-    """The dashboard reads reminders through the repository; the listener's rows fit it."""
+def test_the_claims_surface_reads_what_the_listener_wrote(engine: Engine) -> None:
+    """Billing reads reminders through ``app.claims.reminders``; the rows fit it.
+
+    It reads them with the claim's control number attached, because that is
+    the handle a person uses to find the claim in a payer's portal — and
+    looking it up per row is how a list becomes N+1 queries.
+    """
+    from app.claims import reminders  # noqa: PLC0415
+
     with _session(engine) as session:
         compliance_reminder_listener(session, _event("deadline_missed"))
         session.commit()
-        [item] = PostgresComplianceItemRepository(session).list_by_user(_USER_ID)
+        [(row, control_number)] = reminders.list_open(session)
 
-    assert item.item_type == "claim_deadline_missed"
-    assert item.label == "Claim PCN20260 filing deadline missed with Aetna, by 2026-09-01"
+    assert row.kind == "deadline_missed"
+    assert control_number == _CONTROL_NUMBER
+    assert row.label == "Claim PCN20260 filing deadline missed with Aetna, by 2026-09-01"

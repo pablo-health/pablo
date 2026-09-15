@@ -9,6 +9,8 @@ import {
   correctClaim,
   fetchClaim,
   listClaims,
+  completeClaimReminder,
+  listClaimReminders,
   listRemittanceHolds,
   resolveRemittanceHold,
   validateClaim,
@@ -23,6 +25,7 @@ import type {
   ClaimTrackerResponse,
   RemittanceHold,
   RemittanceHoldFinding,
+  ClaimReminderListResponse,
   RemittanceHoldListResponse,
   ValidateClaimResponse,
 } from "@/types/claims"
@@ -94,6 +97,30 @@ export function useCheckClaimStatus(token?: string) {
 }
 
 /** Remittances whose own numbers disagreed, so a client bill is waiting. */
+/** What the clinician's claims still need her to do. */
+export function useClaimReminders(token?: string) {
+  return useAuthQuery<ClaimReminderListResponse>({
+    queryKey: queryKeys.claims.reminders(),
+    queryFn: () => listClaimReminders(token),
+  })
+}
+
+/**
+ * Mark a reminder done.
+ *
+ * Invalidates the reminder list only. Completing one says the person has
+ * dealt with it; it does not move the claim, and pretending otherwise by
+ * refetching the tracker would suggest it had.
+ */
+export function useCompleteClaimReminder(token?: string) {
+  return useAuthMutation({
+    mutationFn: (reminderId: string) => completeClaimReminder(reminderId, token),
+    onSuccess: (_data, _variables, queryClient) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.claims.reminders() })
+    },
+  })
+}
+
 export function useRemittanceHolds(token?: string) {
   return useAuthQuery<RemittanceHoldListResponse>({
     queryKey: queryKeys.claims.holds(),

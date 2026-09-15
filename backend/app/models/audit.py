@@ -298,6 +298,15 @@ class AuditAction(StrEnum):
     CLAIM_REMITTANCE_HOLDS_LISTED = "claim_remittance_holds_listed"
     CLAIM_REMITTANCE_HOLD_ACKNOWLEDGED = "claim_remittance_hold_acknowledged"
     CLAIM_REMITTANCE_HOLD_RESOLVED = "claim_remittance_hold_resolved"
+    # What a claim still needs a person to do — a rejection to answer, a
+    # deadline to beat. These lived on the compliance dashboard until
+    # 2026-09, filed as ``claim_*`` compliance items, and were never audited
+    # there: that surface is the clinician's own credentials and is exempt.
+    # They are about a patient's claim, so on this path they are audited like
+    # every other claim read. The `changes` payload carries reminder ids,
+    # kinds and the claims they belong to; never a name or a diagnosis.
+    CLAIM_REMINDERS_LISTED = "claim_reminders_listed"
+    CLAIM_REMINDER_COMPLETED = "claim_reminder_completed"
     # The tracker: every claim the clinician can see, in one read. One row
     # naming the claims it listed (ids and control numbers), like the CSV
     # export does.

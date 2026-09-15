@@ -18,11 +18,19 @@ commits or rolls back with that change. A listener that raises is logged
 and skipped; it never prevents the next listener from running or the
 caller's transaction from committing.
 
-The one listener shipped here writes a compliance reminder, so out of the
-box every actionable claim event lands on the clinician's compliance
-dashboard next to their license renewal and CAQH attestation. A listener
-that wants to enrich or resolve that reminder rather than write its own
-finds it with :func:`find_claim_reminder`.
+The one listener shipped here writes a claim reminder, so out of the box
+every actionable claim event lands on the clinician's compliance dashboard
+next to their license renewal and CAQH attestation. A listener that wants to
+enrich or resolve that reminder rather than write its own finds it with
+:func:`find_claim_reminder`.
+
+Those reminders used to be ``compliance_items`` rows carrying the claim's
+control number in the first line of ``notes``, because there was nowhere else
+to put it. ``notes`` is editable, and the compliance route replaces it
+wholesale, so editing a note severed the only link a reminder had to its claim
+— after which this module could not find it, filed another, and filed another
+on every tick after that. :class:`app.db.models.ClaimReminderRow` replaced the
+string with a foreign key and the convention with a unique constraint.
 
 An event carries identifiers, codes and dates only. It never carries a
 member id, a date of birth, a diagnosis code or a subscriber name, so a
@@ -40,7 +48,7 @@ from typing import TYPE_CHECKING, Literal, get_args
 
 from sqlalchemy import select
 
-from ..db.models import ComplianceItemRow
+from ..db.models import ClaimReminderRow, ClaimRow, ComplianceItemRow
 from ..utcnow import utc_now
 
 if TYPE_CHECKING:
@@ -205,12 +213,39 @@ _KIND_PHRASES: dict[ClaimEventKind, str] = {
 }
 
 
+#: The kinds raised with no claim behind them, and the reason the listener
+#: has two arms.
+#:
+#: ``enrollment_action_required`` is not a claim event, whatever its type says.
+#: It is raised when a PAYER wants the practice to sign or attest something —
+#: ``app.claims.enrollment`` and ``app.claims.eligibility`` both emit it with a
+#: ``claim_id`` of ``f"{payer_id}:{transaction_type}"`` and the vendor's request
+#: id as the control number. Neither field names a claim, and there is no
+#: patient anywhere in it.
+#:
+#: So it stays a ``compliance_items`` row: it belongs to the practice's payer
+#: relationship, like a licence belongs to the clinician. Everything else here
+#: is about one patient's claim and goes to ``claim_reminders``, where a
+#: foreign key can hold it.
+#:
+#: The line is simply: is there a patient behind this?
+NON_CLAIM_KINDS: tuple[str, ...] = ("enrollment_action_required",)
+
+
 def compliance_item_type(kind: ClaimEventKind) -> str:
-    """The ``compliance_items.item_type`` a claim event of ``kind`` is filed under."""
+    """The ``compliance_items.item_type`` a non-claim event is filed under."""
     return f"claim_{kind}"
 
 
 def _control_number_marker(control_number: str) -> str:
+    """How a non-claim reminder names the request it belongs to.
+
+    A string in ``notes``, which is the arrangement every claim reminder has
+    just been moved off — a clinician editing the note severs the link and the
+    next tick files a duplicate. It survives here because a payer-enrollment
+    request has no claim to key on and inventing one was out of scope for the
+    change that moved the rest. Tracked rather than quietly kept.
+    """
     return f"Claim control number: {control_number}"
 
 
@@ -226,9 +261,16 @@ def _label(event: ClaimEvent) -> str:
     return label
 
 
-def _notes(event: ClaimEvent) -> str:
+def _notes(event: ClaimEvent, *, with_marker: bool = False) -> str | None:
+    """What the payer said, for a person to read.
+
+    A claim reminder's notes no longer lead with the control number: that was
+    only ever there because the lookup needed somewhere to find it, and a
+    foreign key does that now. The non-claim arm still passes
+    ``with_marker=True``, because it has nothing else to find its row by.
+    """
     detail = event.detail
-    lines = [_control_number_marker(event.control_number)]
+    lines = [_control_number_marker(event.control_number)] if with_marker else []
     descriptions = [
         code.description or f"{code.system.upper()} {code.code}" for code in detail.codes
     ]
@@ -236,24 +278,13 @@ def _notes(event: ClaimEvent) -> str:
         lines.append("; ".join(descriptions))
     if detail.payer_instructions:
         lines.append(detail.payer_instructions)
-    return "\n".join(lines)
+    return "\n".join(lines) or None
 
 
-def find_claim_reminder(
-    session: Session,
-    *,
-    kind: ClaimEventKind,
-    control_number: str,
-    user_id: str | None = None,
+def _find_compliance_reminder(
+    session: Session, *, kind: ClaimEventKind, control_number: str, user_id: str | None
 ) -> ComplianceItemRow | None:
-    """The reminder written for this (kind, control number), if any.
-
-    The control number is kept on the first line of ``notes``; there is no
-    column for it because the reminder is the only place it is needed.
-    That format is this module's business, so this is how a listener that
-    wants to enrich or resolve the default listener's reminder finds it.
-    Pass ``user_id`` to narrow the search to one clinician's reminders.
-    """
+    """The non-claim arm's lookup: a prefix match on ``notes``, as it was."""
     query = (
         select(ComplianceItemRow)
         .where(ComplianceItemRow.item_type == compliance_item_type(kind))
@@ -269,8 +300,72 @@ def find_claim_reminder(
     return session.execute(query).scalar_one_or_none()
 
 
+def find_claim_reminder(
+    session: Session,
+    *,
+    kind: ClaimEventKind,
+    control_number: str,
+    user_id: str | None = None,
+) -> ClaimReminderRow | None:
+    """The reminder written for this (kind, claim), if any.
+
+    Looked up through the claim's control number, which is unique, and then by
+    foreign key — so a listener that wants to enrich or resolve the default
+    listener's reminder finds it without knowing how any text is formatted.
+
+    ``user_id`` is accepted and ignored, and kept only so the existing callers
+    read unchanged. It narrowed the search when a reminder was addressed to one
+    clinician; a reminder is now isolated by the same ``has_patient_access``
+    policy as the claim it is about, so the session either can see the claim or
+    cannot see any of it.
+    """
+    del user_id
+    query = (
+        select(ClaimReminderRow)
+        .join(ClaimRow, ClaimRow.id == ClaimReminderRow.claim_id)
+        .where(ClaimRow.control_number == control_number)
+        .where(ClaimReminderRow.kind == kind)
+        .limit(1)
+    )
+    return session.execute(query).scalar_one_or_none()
+
+
+def _write_compliance_reminder(session: Session, event: ClaimEvent) -> None:
+    """The non-claim arm: a ``compliance_items`` row, as it always was.
+
+    Reached only by :data:`NON_CLAIM_KINDS` — a payer wanting the practice to
+    sign or attest something. There is no claim and no patient, so there is no
+    foreign key to hang it on and nothing for ``has_patient_access`` to key on
+    either. It belongs to the practice, like a licence belongs to a clinician.
+    """
+    existing = _find_compliance_reminder(
+        session,
+        kind=event.kind,
+        control_number=event.control_number,
+        user_id=event.user_id,
+    )
+    if existing is not None:
+        return
+    now = utc_now()
+    due_date = event.detail.deadline_date or (event.occurred_at + _REMINDER_DUE_IN).date()
+    session.add(
+        ComplianceItemRow(
+            id=str(uuid.uuid4()),
+            user_id=event.user_id,
+            item_type=compliance_item_type(event.kind),
+            label=_label(event),
+            due_date=due_date,
+            notes=_notes(event, with_marker=True),
+            completed_at=None,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    session.flush()
+
+
 def compliance_reminder_listener(session: Session, event: ClaimEvent) -> None:
-    """Write one compliance reminder per actionable event.
+    """Write one reminder per actionable event, in whichever table fits it.
 
     A paid claim needs nothing from anyone, so it writes no reminder.
     Everything else gets exactly one row per (kind, control number): a
@@ -279,11 +374,20 @@ def compliance_reminder_listener(session: Session, event: ClaimEvent) -> None:
     """
     if event.kind == "paid":
         return
+    if event.kind in NON_CLAIM_KINDS:
+        _write_compliance_reminder(session, event)
+        return
+    claim = session.get(ClaimRow, event.claim_id)
+    if claim is None:
+        # The claim is gone, or this session cannot see it. Either way there is
+        # nothing to hang a reminder on, and a reminder about a claim nobody
+        # can open helps no one.
+        logger.warning("claim_reminder skipped kind=%s: claim not visible", event.kind)
+        return
     existing = find_claim_reminder(
         session,
         kind=event.kind,
         control_number=event.control_number,
-        user_id=event.user_id,
     )
     if existing is not None:
         return
@@ -291,10 +395,11 @@ def compliance_reminder_listener(session: Session, event: ClaimEvent) -> None:
     now = utc_now()
     due_date = detail.deadline_date or (event.occurred_at + _REMINDER_DUE_IN).date()
     session.add(
-        ComplianceItemRow(
+        ClaimReminderRow(
             id=str(uuid.uuid4()),
-            user_id=event.user_id,
-            item_type=compliance_item_type(event.kind),
+            claim_id=claim.id,
+            patient_id=claim.patient_id,
+            kind=event.kind,
             label=_label(event),
             due_date=due_date,
             notes=_notes(event),
@@ -318,7 +423,13 @@ def resolve_compliance_reminder(
     was never written (a deployment that routes events elsewhere), is left
     alone.
     """
-    row = find_claim_reminder(session, kind=kind, control_number=control_number, user_id=user_id)
+    row: ComplianceItemRow | ClaimReminderRow | None
+    if kind in NON_CLAIM_KINDS:
+        row = _find_compliance_reminder(
+            session, kind=kind, control_number=control_number, user_id=user_id
+        )
+    else:
+        row = find_claim_reminder(session, kind=kind, control_number=control_number)
     if row is None or row.completed_at is not None:
         return False
     now = utc_now()
@@ -328,11 +439,16 @@ def resolve_compliance_reminder(
     return True
 
 
-COMPLIANCE_ITEM_TYPES: tuple[str, ...] = tuple(
-    compliance_item_type(kind) for kind in get_args(ClaimEventKind) if kind != "paid"
-)
-"""Every ``item_type`` the default listener can write. The compliance
-template catalog carries one template per entry so the compliance routes
-accept and list them."""
+REMINDER_KINDS: tuple[str, ...] = tuple(k for k in get_args(ClaimEventKind) if k != "paid")
+"""Every kind the default listener writes a reminder for, in either table.
+
+``paid`` is the only exception: a claim that paid needs nothing from anyone."""
+
+CLAIM_BACKED_KINDS: tuple[str, ...] = tuple(k for k in REMINDER_KINDS if k not in NON_CLAIM_KINDS)
+"""The subset that becomes a ``claim_reminders`` row.
+
+Kept in step with ``app.db.models.CLAIM_REMINDER_KINDS``, the database's copy
+of the same list — a test asserts the two agree, because a kind the column's
+CHECK constraint refuses is a reminder that raises instead of landing."""
 
 register_claim_event_listener(compliance_reminder_listener)

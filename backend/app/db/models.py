@@ -2730,6 +2730,102 @@ class RemittanceHoldRow(Base):
     finding: Mapped[str | None] = mapped_column(String(24), nullable=True)
 
 
+#: What a claim can put on somebody's list.
+#:
+#: NOT the same vocabulary as :data:`CLAIM_EVENT_KINDS` above, and the two are
+#: deliberately separate. That one is the receipt ledger — every hop a claim
+#: took, including the ones nobody acts on. This one is the subset a person has
+#: to do something about.
+#:
+#: Two kinds from :class:`app.claims.events.ClaimEventKind` are missing, for
+#: different reasons. ``paid`` needs nothing from anyone. And
+#: ``enrollment_action_required`` has no claim behind it at all — it is raised
+#: when a PAYER wants the practice to sign something, with a synthesised
+#: ``claim_id`` and the vendor's request id for a control number — so it stays
+#: a ``compliance_items`` row, where the practice's own obligations live. See
+#: ``app.claims.events.NON_CLAIM_KINDS``.
+CLAIM_REMINDER_KINDS: tuple[str, ...] = (
+    "rejected",
+    "denied",
+    "partial",
+    "stalled",
+    "deadline_approaching",
+    "deadline_missed",
+    "unmatched_remittance",
+    "remittance_held",
+)
+
+
+class ClaimReminderRow(Base):
+    """One thing a claim needs a person to do, on the dashboard beside her licence.
+
+    Claim alerts have appeared on the compliance dashboard since the pipeline
+    learned to raise them, and they used to be ``compliance_items`` rows — a
+    table whose every other row is about the clinician herself. That cost three
+    things, and this table exists to get them back.
+
+    **A real link to the claim.** The old row held the claim's control number in
+    the first line of its ``notes`` and nowhere else, so finding the reminder
+    for a claim meant a prefix match on free text. ``notes`` is editable
+    through the compliance routes, which replace it wholesale, so a clinician
+    tidying her own note severed the link — and the pipeline, finding nothing,
+    filed a second reminder on the next tick, and every tick after that. The
+    foreign key cannot be typed over.
+
+    **A constraint instead of a convention.** One reminder per ``(claim, kind)``
+    is now the database's rule rather than a read-then-write check with a race
+    in the middle. Note this is coarser than :class:`ClaimEventRow`'s
+    ``(claim, kind, deadline_kind, rung)`` on purpose: the ladder raises a
+    receipt at fourteen days, seven, two and zero, and she wants one line about
+    the deadline, not four.
+
+    **The isolation its subject already has.** Carries ``patient_id`` and no
+    ``user_id``, exactly as ``remittance_holds`` and ``claim_lines`` do, so the
+    standard ``has_patient_access`` policy applies and the clinician who owns
+    the claim is the one who sees the reminder. Every other row about a claim is
+    isolated that way; this one was isolated by ``user_id`` instead, which meant
+    a row naming a patient's claim followed a different rule from the claim.
+
+    ``label`` and ``notes`` are a snapshot of what was true when the event
+    landed — the payer's name, the codes it sent, its own wording of what it
+    wants. They are not re-derived, because the point of a receipt is what it
+    said at the time. ``notes`` stays editable; it simply no longer carries
+    anything the system reads back.
+
+    No clinical content. The label names a payer and a claim's control number,
+    the notes carry CARC/RARC descriptions from a public list and the payer's
+    instructions. No name, no diagnosis, no date of service.
+    """
+
+    __tablename__ = "claim_reminders"
+    __table_args__ = (
+        CheckConstraint(
+            f"kind IN ({_sql_in_list(CLAIM_REMINDER_KINDS)})",
+            name="ck_claim_reminders_kind",
+        ),
+        UniqueConstraint("claim_id", "kind", name="ux_claim_reminders_claim_kind"),
+        Index("ix_claim_reminders_patient_id", "patient_id"),
+        Index("ix_claim_reminders_due_date", "due_date"),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    claim_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("claims.id", ondelete="CASCADE"), nullable=False
+    )
+    # A copy of the claim's, never different from it — the same arrangement
+    # ``claim_lines`` documents, so the policy engine needs no join.
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("patients.id", ondelete="CASCADE"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    label: Mapped[str] = mapped_column(String(255), nullable=False)
+    due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 # ---------------------------------------------------------------------------
 # The clinician's credential record — the structured facts behind the
 # compliance clocks. ``compliance_items`` already tracks WHEN a licence
