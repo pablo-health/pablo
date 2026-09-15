@@ -18,8 +18,8 @@
 import { describe, expect, it } from "vitest"
 import { CURRENT_STATES, type CurrentStateId, stepsForState } from "../routes"
 
-const ids = (state: CurrentStateId[] | null, wants = false) =>
-  stepsForState(state, wants).map((s) => s.id)
+const ids = (state: CurrentStateId[] | null, wants = false, wantsCard = false) =>
+  stepsForState(state, wants, wantsCard).map((s) => s.id)
 
 const ALL: CurrentStateId[] = ["self_pay", "platform", "own_insurance"]
 
@@ -168,5 +168,39 @@ describe("the options themselves", () => {
     // otherwise know which line is theirs.
     const selfPay = CURRENT_STATES.find((o) => o.id === "self_pay")
     expect(selfPay?.detail).toContain("superbill")
+  })
+})
+
+describe("taking card payments", () => {
+  it("is absent until she asks for it", () => {
+    // The ask lives on the plan screen, not in this list: it is about what she
+    // WANTS, and nothing about how she is paid today implies it on its own.
+    for (const state of everySubset()) {
+      expect(ids(state)).not.toContain("payments")
+    }
+  })
+
+  it("adds a step wherever she asks, whatever else is true", () => {
+    // Same rule as every other tick on this wizard: an answer only ever ADDS.
+    // A clinician on a platform who also wants to take card is an ordinary
+    // practice, not a contradiction.
+    for (const state of everySubset()) {
+      expect(ids(state, false, true)).toContain("payments")
+    }
+  })
+
+  it("collects the money question after the one about what a session is worth", () => {
+    // How she collects follows what she charges. Asking first would be asking
+    // her to set up a till before deciding what anything costs.
+    const walked = ids(["self_pay"], false, true)
+    expect(walked.indexOf("payments")).toBeGreaterThan(walked.indexOf("rates"))
+  })
+
+  it("leaves the credentialing branch where it was", () => {
+    // The two wants are independent. Asking for one must not move or drop the
+    // screens the other adds.
+    const withBoth = ids(["own_insurance"], true, true)
+    const withoutCard = ids(["own_insurance"], true, false)
+    expect(withBoth.filter((id) => id !== "payments")).toEqual(withoutCard)
   })
 })

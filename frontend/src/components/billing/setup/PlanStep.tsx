@@ -5,6 +5,7 @@
 import { SetupStepHead } from "@/components/setup"
 import { Button } from "@/components/ui/button"
 import type { CurrentStateId } from "./routes"
+import { HAS_PAYMENTS_SETUP } from "./setupSlots.extensions"
 
 /**
  * What each tick means we are about to set up, in her terms rather than ours.
@@ -35,13 +36,17 @@ const PLAN_LINES: Record<CurrentStateId, string> = {
 export function PlanStep({
   selected,
   wantsCredentialing,
+  wantsCardPayments,
   onToggleCredentialing,
+  onToggleCardPayments,
   onBack,
   onContinue,
 }: {
   selected: readonly CurrentStateId[]
   wantsCredentialing: boolean
+  wantsCardPayments: boolean
   onToggleCredentialing: (next: boolean) => void
+  onToggleCardPayments: (next: boolean) => void
   onBack: () => void
   onContinue: () => void
 }) {
@@ -72,6 +77,38 @@ export function PlanStep({
         <p className="text-[12.5px] text-muted-foreground" data-testid="platform-untouched">
           This won&rsquo;t change how the service handles your current clients or payments.
         </p>
+      )}
+
+      {/* Offered wherever a deployment can actually connect a processor. When
+          it cannot, the row is absent rather than present-and-inert: a tick
+          that leads to a blank screen is worse than never being asked.
+
+          UNLIKE the credentialing row below, this one arrives ticked for a
+          self-pay practice — and that is not the pre-ticking the comment below
+          argues against. Screen 1's self-pay option reads "Card, cash, bank
+          transfer"; a clinician who chose it HAS said she takes card, so the
+          tick carries her own answer forward. Nothing on screen 1 implies
+          credentialing, which is why pre-ticking that one would be inventing
+          an answer rather than reading one. */}
+      {HAS_PAYMENTS_SETUP && (
+        <label className="flex cursor-pointer gap-3 rounded-xl border border-border bg-card p-4">
+          <input
+            type="checkbox"
+            checked={wantsCardPayments}
+            onChange={(e) => onToggleCardPayments(e.target.checked)}
+            className="mt-0.5 h-4 w-4 shrink-0 rounded-[3px] border-neutral-400 accent-neutral-900"
+            data-testid="wants-card-payments"
+          />
+          <span>
+            <span className="block text-sm font-medium text-neutral-900">
+              I want clients to be able to pay by card
+            </span>
+            <span className="mt-1 block text-sm text-muted-foreground">
+              Connect a payment processor and every invoice carries a payment link. You can set
+              this up now or later.
+            </span>
+          </span>
+        </label>
       )}
 
       <label className="flex cursor-pointer gap-3 rounded-xl border border-border bg-card p-4">

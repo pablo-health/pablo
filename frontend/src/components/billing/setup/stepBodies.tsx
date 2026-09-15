@@ -5,6 +5,7 @@
 import type { ComponentType } from "react"
 import { NpiLookupStep } from "@/components/credentialing/NpiLookupStep"
 import { DoneStep } from "./DoneStep"
+import { PaymentsStep } from "./PaymentsStep"
 import { PlanStep } from "./PlanStep"
 import { RouteStep } from "./RouteStep"
 import {
@@ -19,8 +20,10 @@ import type { CurrentStateId, StepId } from "./routes"
 export interface StepBodyProps {
   selected: readonly CurrentStateId[]
   wantsCredentialing: boolean
+  wantsCardPayments: boolean
   onToggle: (id: CurrentStateId) => void
   onToggleCredentialing: (next: boolean) => void
+  onToggleCardPayments: (next: boolean) => void
   onContinue: () => void
   onBack: () => void
   onNoClients: () => void
@@ -53,11 +56,21 @@ export const STEP_BODIES: Record<StepId, ComponentType<StepBodyProps>> = {
       onNoClients={onNoClients}
     />
   ),
-  plan: ({ selected, wantsCredentialing, onToggleCredentialing, onBack, onContinue }) => (
+  plan: ({
+    selected,
+    wantsCredentialing,
+    wantsCardPayments,
+    onToggleCredentialing,
+    onToggleCardPayments,
+    onBack,
+    onContinue,
+  }) => (
     <PlanStep
       selected={selected}
       wantsCredentialing={wantsCredentialing}
+      wantsCardPayments={wantsCardPayments}
       onToggleCredentialing={onToggleCredentialing}
+      onToggleCardPayments={onToggleCardPayments}
       onBack={onBack}
       onContinue={onContinue}
     />
@@ -65,6 +78,7 @@ export const STEP_BODIES: Record<StepId, ComponentType<StepBodyProps>> = {
   identity: () => <PracticeIdentityStep />,
   contact: () => <BillingContactStep />,
   rates: () => <RatesStep />,
+  payments: ({ onContinue, onBack }) => <PaymentsStep onContinue={onContinue} onBack={onBack} />,
   payers: () => <PayersStep />,
   confirm: () => <NpiLookupStep />,
   record: () => <CredentialingRecordStep />,
