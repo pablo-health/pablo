@@ -2,13 +2,13 @@
 
 "use client"
 
-import { useCallback, useMemo, useState } from "react"
+import { useCallback, useMemo } from "react"
 import { SetupNav, SetupWizardShell } from "@/components/setup"
 import { Skeleton } from "@/components/ui/skeleton"
 import { usePreferences, useSavePreferences } from "@/hooks/usePreferences"
 import { type CurrentStateId, stepsForState } from "./routes"
-import { HAS_PAYMENTS_SETUP } from "./setupSlots.extensions"
 import { STEP_BODIES } from "./stepBodies"
+import { useBillingSetupDraft } from "./useBillingSetupDraft"
 
 interface GetPaidWizardProps {
   /** Called after setup is marked done, so a host page can stop showing it. */
@@ -48,127 +48,71 @@ export function GetPaidWizard({ onSettled }: GetPaidWizardProps) {
   const { data: preferences } = usePreferences()
   const savePreferences = useSavePreferences()
 
-  const savedState = (preferences?.billing_setup_state ?? null) as CurrentStateId[] | null
-  const savedWants = preferences?.billing_setup_wants_credentialing ?? false
-  const savedCard = preferences?.billing_setup_wants_card_payments
+  // What she has done in this sitting laid over what was stored, so the screen
+  // reacts immediately rather than waiting for the save to land. The merge and
+  // the one default it applies live in `resolveAnswers`, which is pure.
+  const { answers, apply, settle: persistSettled } = useBillingSetupDraft(
+    preferences,
+    savePreferences.mutate,
+  )
 
-  const [state, setState] = useState<CurrentStateId[] | null>(null)
-  const [wants, setWants] = useState<boolean | null>(null)
-  const [wantsCard, setWantsCard] = useState<boolean | null>(null)
-  const [stepId, setStepId] = useState<string | null>(null)
+  const steps = stepsForState(answers.state, answers.wantsCredentialing, answers.wantsCardPayments)
 
-  // What she has done in this sitting wins over what was stored, so the screen
-  // reacts immediately rather than waiting for the save to land.
-  const activeState = state ?? savedState
-
-  // A self-pay practice arrives with this ticked, because screen 1's self-pay
-  // option is "Card, cash, bank transfer" — she has already said she takes
-  // card, and the plan screen is showing her what that answer bought. It is a
-  // DEFAULT, not a decision: `savedCard` wins the moment she has an opinion,
-  // including when she unticks it, which is why the stored value is nullable
-  // rather than a bool defaulting to false.
-  const defaultCard = (activeState ?? []).includes("self_pay")
-  const activeWants = wants ?? savedWants
-  const activeWantsCard =
-    HAS_PAYMENTS_SETUP && (wantsCard ?? savedCard ?? defaultCard)
-  const steps = stepsForState(activeState, activeWants, activeWantsCard)
-
-  const activeStepId = stepId ?? preferences?.billing_setup_step ?? "route"
   // An unknown id — a step renamed, or one she no longer walks because she
   // unticked what added it — falls back to the start rather than a blank
   // screen.
   const activeIndex = Math.max(
     0,
-    steps.findIndex((step) => step.id === activeStepId),
-  )
-
-  const remember = useCallback(
-    (next: {
-      state?: CurrentStateId[]
-      wantsCredentialing?: boolean
-      wantsCardPayments?: boolean
-      step?: string
-      complete?: boolean
-    }) => {
-      if (!preferences) return
-      savePreferences.mutate({
-        ...preferences,
-        ...(next.state !== undefined ? { billing_setup_state: next.state } : {}),
-        ...(next.wantsCredentialing !== undefined
-          ? { billing_setup_wants_credentialing: next.wantsCredentialing }
-          : {}),
-        ...(next.wantsCardPayments !== undefined
-          ? { billing_setup_wants_card_payments: next.wantsCardPayments }
-          : {}),
-        ...(next.step !== undefined ? { billing_setup_step: next.step } : {}),
-        ...(next.complete !== undefined ? { billing_setup_complete: next.complete } : {}),
-      })
-    },
-    [preferences, savePreferences],
+    steps.findIndex((step) => step.id === answers.step),
   )
 
   const goTo = useCallback(
     (index: number) => {
       const target = steps[index]
       if (!target) return
-      setStepId(target.id)
-      remember({ step: target.id })
+      apply({ type: "goTo", step: target.id })
     },
-    [steps, remember],
+    [steps, apply],
   )
 
-  // Ticking is not answering. Nothing is saved until Continue, so a box tried
-  // and untried again leaves no trace — and the checklist is the one screen
-  // where she is most likely to change her mind mid-thought.
-  const toggle = useCallback((id: CurrentStateId) => {
-    setState((current) => {
-      const base = current ?? []
-      return base.includes(id) ? base.filter((x) => x !== id) : [...base, id]
-    })
-  }, [])
+  const toggle = useCallback(
+    (id: CurrentStateId) => apply({ type: "toggleState", id }),
+    [apply],
+  )
 
-  const confirmChecklist = useCallback(() => {
-    const chosen = state ?? savedState ?? []
-    setState(chosen)
-    setStepId("plan")
-    remember({ state: chosen, step: "plan" })
-  }, [state, savedState, remember])
+  const confirmChecklist = useCallback(
+    () => apply({ type: "answerChecklist", state: answers.state ?? [] }),
+    [apply, answers.state],
+  )
 
   // Her real answer, not an absence of one. An empty list is what "not seeing
   // clients yet" means, and it must never read back as "has not answered" —
   // which is exactly why the stored value is a list that can be empty rather
   // than a nullable route.
-  const noClientsYet = useCallback(() => {
-    setState([])
-    setStepId("plan")
-    remember({ state: [], step: "plan" })
-  }, [remember])
-
-  const toggleCredentialing = useCallback(
-    (next: boolean) => {
-      setWants(next)
-      remember({ wantsCredentialing: next })
-    },
-    [remember],
+  const noClientsYet = useCallback(
+    () => apply({ type: "answerChecklist", state: [] }),
+    [apply],
   )
 
-  // Written on every toggle, including when she turns it OFF. The default
-  // above only applies while she has no stored opinion, so a self-pay
-  // clinician who unticks this must leave a `false` behind — otherwise the
-  // default re-ticks it the next time she opens the wizard and the step she
-  // just declined comes back.
+  const toggleCredentialing = useCallback(
+    (value: boolean) => apply({ type: "wantsCredentialing", value }),
+    [apply],
+  )
+
+  // Written on every toggle, including when she turns it OFF. The default in
+  // `resolveAnswers` only applies while she has no stored opinion, so a
+  // self-pay clinician who unticks this must leave a `false` behind —
+  // otherwise the default re-ticks it next time and the step she just declined
+  // comes back.
   const toggleCardPayments = useCallback(
-    (next: boolean) => {
-      setWantsCard(next)
-      remember({ wantsCardPayments: next })
-    },
-    [remember],
+    (value: boolean) => apply({ type: "wantsCardPayments", value }),
+    [apply],
   )
 
   const settle = useCallback(() => {
-    remember({ complete: true })
+    persistSettled()
     onSettled?.()
-  }, [remember, onSettled])
+  }, [persistSettled, onSettled])
 
   const current = useMemo(() => steps[activeIndex], [steps, activeIndex])
   const Body = STEP_BODIES[current?.id ?? "route"]
@@ -219,9 +163,9 @@ export function GetPaidWizard({ onSettled }: GetPaidWizardProps) {
       }
     >
       <Body
-        selected={activeState ?? []}
-        wantsCredentialing={activeWants}
-        wantsCardPayments={activeWantsCard}
+        selected={answers.state ?? []}
+        wantsCredentialing={answers.wantsCredentialing}
+        wantsCardPayments={answers.wantsCardPayments}
         onToggle={toggle}
         onToggleCredentialing={toggleCredentialing}
         onToggleCardPayments={toggleCardPayments}
