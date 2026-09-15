@@ -304,3 +304,36 @@ export interface RemittanceHoldListResponse {
   data: RemittanceHold[]
   total: number
 }
+
+/**
+ * One thing a claim still needs a person to do.
+ *
+ * These used to arrive as ``claim_*`` compliance items, beside a licence
+ * renewal. They are their own record now, because they are about one client's
+ * claim rather than about the clinician.
+ */
+export type ClaimReminderKind =
+  | "rejected"
+  | "denied"
+  | "partial"
+  | "stalled"
+  | "deadline_approaching"
+  | "deadline_missed"
+  | "unmatched_remittance"
+  | "remittance_held"
+
+export interface ClaimReminder {
+  id: string
+  claim_id: string
+  control_number: string
+  kind: ClaimReminderKind
+  label: string
+  due_date: string | null
+  notes: string | null
+  completed_at: string | null
+}
+
+export interface ClaimReminderListResponse {
+  data: ClaimReminder[]
+  total: number
+}

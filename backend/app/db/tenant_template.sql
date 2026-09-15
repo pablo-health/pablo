@@ -265,6 +265,22 @@ CREATE TABLE __TENANT_SCHEMA__.claim_lines (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.claim_reminders (
+    id uuid NOT NULL,
+    claim_id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    kind character varying(32) NOT NULL,
+    label character varying(255) NOT NULL,
+    due_date date,
+    notes text,
+    completed_at timestamp with time zone,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_claim_reminders_kind CHECK (((kind)::text = ANY ((ARRAY['rejected'::character varying, 'denied'::character varying, 'partial'::character varying, 'stalled'::character varying, 'deadline_approaching'::character varying, 'deadline_missed'::character varying, 'enrollment_action_required'::character varying, 'unmatched_remittance'::character varying, 'remittance_held'::character varying])::text[])))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.claims (
     id uuid NOT NULL,
     control_number character varying(17) NOT NULL,
@@ -1119,6 +1135,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.claim_lines
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.claim_reminders
+    ADD CONSTRAINT claim_reminders_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.claims
     ADD CONSTRAINT claims_pkey PRIMARY KEY (id);
 
@@ -1324,6 +1345,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.claim_lines
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.claim_reminders
+    ADD CONSTRAINT ux_claim_reminders_claim_kind UNIQUE (claim_id, kind);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.claims
     ADD CONSTRAINT ux_claims_control_number UNIQUE (control_number);
 
@@ -1457,6 +1483,14 @@ CREATE INDEX ix_claim_lines_claim_id ON __TENANT_SCHEMA__.claim_lines USING btre
 
 
 CREATE INDEX ix_claim_lines_patient_id ON __TENANT_SCHEMA__.claim_lines USING btree (patient_id);
+
+
+
+CREATE INDEX ix_claim_reminders_due_date ON __TENANT_SCHEMA__.claim_reminders USING btree (due_date);
+
+
+
+CREATE INDEX ix_claim_reminders_patient_id ON __TENANT_SCHEMA__.claim_reminders USING btree (patient_id);
 
 
 
@@ -1775,6 +1809,16 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.chat_conversations
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.chat_messages
     ADD CONSTRAINT chat_messages_conversation_id_fkey FOREIGN KEY (conversation_id) REFERENCES __TENANT_SCHEMA__.chat_conversations(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.claim_reminders
+    ADD CONSTRAINT claim_reminders_claim_id_fkey FOREIGN KEY (claim_id) REFERENCES __TENANT_SCHEMA__.claims(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.claim_reminders
+    ADD CONSTRAINT claim_reminders_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
 
 
 

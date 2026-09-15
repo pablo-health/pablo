@@ -409,3 +409,176 @@ class TestNonGranteeIsIsolated:
             ).scalar_one()
             assert hidden == 0
             conn.rollback()
+
+
+class TestClaimReminders:
+    """The table that replaced a control number kept in a text field.
+
+    A claim's alert used to be a ``compliance_items`` row whose only link to
+    the claim was the first line of ``notes`` — a column the compliance route
+    replaces wholesale on every edit. Editing a note severed the link, the
+    pipeline found nothing, and filed another reminder on that tick and every
+    tick after it.
+
+    What is proved here is the part that cannot be proved without Postgres:
+    that the foreign key and the unique constraint exist and bite, and that a
+    reminder is hidden from a clinician with no grant on the client — the same
+    policy its claim has, which is the whole reason it left a
+    clinician-scoped table.
+    """
+
+    def test_fresh_tenant_has_the_table_forced_rls_with_the_patient_policy(
+        self, engine: Engine, tenant_schema: str
+    ) -> None:
+        with engine.connect() as conn:
+            posture = conn.execute(
+                text(
+                    "SELECT c.relrowsecurity, c.relforcerowsecurity "
+                    "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                    "WHERE n.nspname = :s AND c.relname = 'claim_reminders'"
+                ),
+                {"s": tenant_schema},
+            ).one()
+            assert posture == (True, True)
+
+            policies = conn.execute(
+                text(
+                    "SELECT policyname FROM pg_policies "
+                    "WHERE schemaname = :s AND tablename = 'claim_reminders'"
+                ),
+                {"s": tenant_schema},
+            ).scalars()
+            assert "rls_patient_access" in set(policies)
+
+    def test_one_reminder_per_claim_and_kind(
+        self, engine: Engine, tenant_schema: str, patient_id: str, coverage_ids: tuple[str, str]
+    ) -> None:
+        """The constraint the old arrangement could not have.
+
+        Dedupe used to be a prefix match on free text, so two writers could
+        both find nothing and both insert. Here the second one cannot.
+        """
+        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+
+        coverage_id, payer_id = coverage_ids
+        session, s_tok, u_tok = _session(engine, tenant_schema, _CLINICIAN_A)
+        try:
+            claim_row = _insert_claim(session, patient_id, coverage_id, payer_id)
+            _insert_reminder(session, claim_row, "rejected")
+            session.flush()
+
+            _insert_reminder(session, claim_row, "rejected")
+            with pytest.raises(IntegrityError):
+                session.flush()
+            session.rollback()
+        finally:
+            _release(session, s_tok, u_tok)
+
+    def test_a_clinician_with_no_grant_sees_no_reminder(
+        self, engine: Engine, tenant_schema: str, patient_id: str, coverage_ids: tuple[str, str]
+    ) -> None:
+        """Non-vacuous: A sees it first, so an empty table cannot pass for isolation."""
+        coverage_id, payer_id = coverage_ids
+        session, s_tok, u_tok = _session(engine, tenant_schema, _CLINICIAN_A)
+        try:
+            claim_row = _insert_claim(session, patient_id, coverage_id, payer_id)
+            _insert_reminder(session, claim_row, "denied")
+            session.commit()
+        finally:
+            _release(session, s_tok, u_tok)
+
+        with engine.connect() as conn:
+            conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
+            conn.execute(
+                text("SELECT set_config('app.current_user_id', :u, false)"),
+                {"u": _CLINICIAN_A},
+            )
+            visible = conn.execute(
+                text("SELECT count(*) FROM claim_reminders WHERE patient_id = CAST(:p AS uuid)"),
+                {"p": patient_id},
+            ).scalar_one()
+            assert visible >= 1
+
+            conn.execute(
+                text("SELECT set_config('app.current_user_id', :u, false)"),
+                {"u": _CLINICIAN_B},
+            )
+            hidden = conn.execute(
+                text("SELECT count(*) FROM claim_reminders WHERE patient_id = CAST(:p AS uuid)"),
+                {"p": patient_id},
+            ).scalar_one()
+            assert hidden == 0
+            conn.rollback()
+
+    def test_deleting_the_claim_takes_its_reminders(
+        self, engine: Engine, tenant_schema: str, patient_id: str, coverage_ids: tuple[str, str]
+    ) -> None:
+        """The orphan the old arrangement left behind.
+
+        A compliance item naming a deleted claim's control number stayed on the
+        dashboard forever, because nothing connected the two. The cascade is
+        what a foreign key buys.
+        """
+        coverage_id, payer_id = coverage_ids
+        session, s_tok, u_tok = _session(engine, tenant_schema, _CLINICIAN_A)
+        try:
+            claim_row = _insert_claim(session, patient_id, coverage_id, payer_id)
+            _insert_reminder(session, claim_row, "stalled")
+            session.flush()
+
+            session.execute(
+                text("DELETE FROM claims WHERE id = CAST(:c AS uuid)"), {"c": claim_row.id}
+            )
+            left = session.execute(
+                text("SELECT count(*) FROM claim_reminders WHERE claim_id = CAST(:c AS uuid)"),
+                {"c": claim_row.id},
+            ).scalar_one()
+            assert left == 0
+            session.rollback()
+        finally:
+            _release(session, s_tok, u_tok)
+
+
+def _insert_claim(session: Any, patient_id: str, coverage_id: str, payer_id: str) -> Any:
+    """A claim row, straight onto the session, for a reminder to hang off."""
+    from app.db.models import ClaimRow  # noqa: PLC0415
+
+    built = _claim(patient_id, coverage_id, payer_id)
+    now = datetime.now(UTC)
+    row = ClaimRow(
+        id=built.id,
+        control_number=built.control_number,
+        patient_id=patient_id,
+        coverage_id=coverage_id,
+        payer_id=payer_id,
+        state="submitted",
+        frequency_code="1",
+        total_charge_cents=10_000,
+        total_paid_cents=0,
+        diagnosis_codes=[],
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(row)
+    session.flush()
+    return row
+
+
+def _insert_reminder(session: Any, claim_row: Any, kind: str) -> Any:
+    from app.db.models import ClaimReminderRow  # noqa: PLC0415
+
+    now = datetime.now(UTC)
+    row = ClaimReminderRow(
+        id=str(uuid.uuid4()),
+        claim_id=claim_row.id,
+        patient_id=claim_row.patient_id,
+        kind=kind,
+        label=f"Claim {claim_row.control_number[:8]} {kind}",
+        due_date=None,
+        notes=None,
+        completed_at=None,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(row)
+    return row
