@@ -147,19 +147,27 @@ def _vendor_error(exc: Exception, message: str) -> Exception | None:
 
     ``None`` for anything that is not one of them, which the caller reports
     as unavailable.
+
+    The SDK sends no error envelope, so the vendor's name for the failure is
+    the exception's own class name; it is carried through as ``code`` so the
+    several SDK exceptions that share one of our classes stay tellable apart
+    in a log — ``AuthenticationFailedException`` from ``ForbiddenException``
+    above all, since one means the key is wrong and the other means it is
+    right and may not do this.
     """
+    code = type(exc).__name__
     match exc:
         case sdk_models.InvalidRequestException() | sdk_models.ContentTooLargeException():
-            return ClearinghouseValidationError(message)
+            return ClearinghouseValidationError(message, code=code)
         case sdk_models.AuthenticationFailedException() | sdk_models.ForbiddenException():
-            return ClearinghouseAccessDeniedError(message)
+            return ClearinghouseAccessDeniedError(message, code=code)
         case sdk_models.NotFoundException():
-            return ClearinghouseNotFoundError(message)
+            return ClearinghouseNotFoundError(message, code=code)
         case sdk_models.TooManyRequestsException():
-            return ClearinghouseRateLimitedError(message)
+            return ClearinghouseRateLimitedError(message, code=code)
         case sdk_models.ConflictException():
             return ClearinghouseInFlightError(
-                message, retry_after=getattr(exc, "retry_after", None)
+                message, retry_after=getattr(exc, "retry_after", None), code=code
             )
         case _:
             return None
