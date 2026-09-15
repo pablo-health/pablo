@@ -30,6 +30,7 @@ const mockUsePatientCard = vi.fn()
 const mockChargeBalance = vi.fn()
 const mockFetchStatement = vi.fn()
 const mockCreateWriteOff = vi.fn()
+const mockRecordPayment = vi.fn()
 
 vi.mock("@/hooks/usePayments", () => ({
   usePatientBalance: (...args: unknown[]) => mockUsePatientBalance(...args),
@@ -41,6 +42,10 @@ vi.mock("@/hooks/usePayments", () => ({
   }),
   useCreateWriteOff: () => ({
     mutate: mockCreateWriteOff,
+    isPending: false,
+  }),
+  useRecordPayment: () => ({
+    mutate: mockRecordPayment,
     isPending: false,
   }),
 }))
@@ -103,6 +108,8 @@ function charge(overrides: Partial<ChargeResponse> = {}): ChargeResponse {
     claim_id: null,
     write_off_reason: null,
     note: null,
+    method: "card",
+    payment_reference: null,
     settled_by_charge_id: null,
     created_at: "2026-05-24T10:00:00Z",
     updated_at: null,

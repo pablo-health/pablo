@@ -138,6 +138,8 @@ def _to_charge_response(charge: PatientCharge) -> ChargeResponse:
         claim_id=charge.claim_id,
         write_off_reason=charge.write_off_reason,
         note=charge.note,
+        method=charge.method,
+        payment_reference=charge.payment_reference,
         settled_by_charge_id=charge.settled_by_charge_id,
         created_at=charge.created_at,
         updated_at=charge.updated_at,
