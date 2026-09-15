@@ -3,6 +3,8 @@
 "use client"
 
 import { usePanelApplications } from "@/hooks/useCredentialingChecklist"
+import { usePreferences } from "@/hooks/usePreferences"
+import { RequestReceived } from "./RequestReceived"
 import type {
   PanelApplication,
   PanelApplicationStatus,
@@ -23,6 +25,11 @@ import type {
  */
 export function PanelApplications() {
   const { data, isLoading, isError } = usePanelApplications()
+  // Whether she has ASKED, which is a different fact from whether anything has
+  // been filed and is the only way to tell an empty board apart from a board
+  // belonging to someone who never wanted one. The wizard writes it; the
+  // operator queue reads it; until now nothing showed it back to her.
+  const { data: preferences } = usePreferences()
 
   if (isLoading) {
     return <p className="text-sm text-muted-foreground">Loading…</p>
@@ -39,11 +46,13 @@ export function PanelApplications() {
     )
   }
 
-  // Nothing at all, rather than "no applications yet". This sits above the
-  // screen that STARTS credentialing, and telling a clinician who has not
-  // begun that she has no applications is telling her what she just did.
+  // Nothing filed yet, and what to show depends on whether she asked for any
+  // of this. A clinician who has not begun is still told nothing — saying "no
+  // applications" to someone who never wanted one is telling her what she just
+  // did. One who HAS asked gets the acknowledgement, because for her the empty
+  // board is not "nothing to see", it is days of silence after a request.
   if (data.data.length === 0) {
-    return null
+    return preferences?.billing_setup_wants_credentialing ? <RequestReceived /> : null
   }
 
   // The API has already put hers first; this only splits the list it returned,
