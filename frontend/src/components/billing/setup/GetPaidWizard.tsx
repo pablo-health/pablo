@@ -7,6 +7,7 @@ import { SetupNav, SetupWizardShell } from "@/components/setup"
 import { Skeleton } from "@/components/ui/skeleton"
 import { usePreferences, useSavePreferences } from "@/hooks/usePreferences"
 import { type CurrentStateId, stepsForState } from "./routes"
+import { HAS_PAYMENTS_SETUP } from "./setupSlots.extensions"
 import { STEP_BODIES } from "./stepBodies"
 
 interface GetPaidWizardProps {
@@ -49,16 +50,28 @@ export function GetPaidWizard({ onSettled }: GetPaidWizardProps) {
 
   const savedState = (preferences?.billing_setup_state ?? null) as CurrentStateId[] | null
   const savedWants = preferences?.billing_setup_wants_credentialing ?? false
+  const savedCard = preferences?.billing_setup_wants_card_payments
 
   const [state, setState] = useState<CurrentStateId[] | null>(null)
   const [wants, setWants] = useState<boolean | null>(null)
+  const [wantsCard, setWantsCard] = useState<boolean | null>(null)
   const [stepId, setStepId] = useState<string | null>(null)
 
   // What she has done in this sitting wins over what was stored, so the screen
   // reacts immediately rather than waiting for the save to land.
   const activeState = state ?? savedState
+
+  // A self-pay practice arrives with this ticked, because screen 1's self-pay
+  // option is "Card, cash, bank transfer" — she has already said she takes
+  // card, and the plan screen is showing her what that answer bought. It is a
+  // DEFAULT, not a decision: `savedCard` wins the moment she has an opinion,
+  // including when she unticks it, which is why the stored value is nullable
+  // rather than a bool defaulting to false.
+  const defaultCard = (activeState ?? []).includes("self_pay")
   const activeWants = wants ?? savedWants
-  const steps = stepsForState(activeState, activeWants)
+  const activeWantsCard =
+    HAS_PAYMENTS_SETUP && (wantsCard ?? savedCard ?? defaultCard)
+  const steps = stepsForState(activeState, activeWants, activeWantsCard)
 
   const activeStepId = stepId ?? preferences?.billing_setup_step ?? "route"
   // An unknown id — a step renamed, or one she no longer walks because she
@@ -73,6 +86,7 @@ export function GetPaidWizard({ onSettled }: GetPaidWizardProps) {
     (next: {
       state?: CurrentStateId[]
       wantsCredentialing?: boolean
+      wantsCardPayments?: boolean
       step?: string
       complete?: boolean
     }) => {
@@ -82,6 +96,9 @@ export function GetPaidWizard({ onSettled }: GetPaidWizardProps) {
         ...(next.state !== undefined ? { billing_setup_state: next.state } : {}),
         ...(next.wantsCredentialing !== undefined
           ? { billing_setup_wants_credentialing: next.wantsCredentialing }
+          : {}),
+        ...(next.wantsCardPayments !== undefined
+          ? { billing_setup_wants_card_payments: next.wantsCardPayments }
           : {}),
         ...(next.step !== undefined ? { billing_setup_step: next.step } : {}),
         ...(next.complete !== undefined ? { billing_setup_complete: next.complete } : {}),
@@ -131,6 +148,19 @@ export function GetPaidWizard({ onSettled }: GetPaidWizardProps) {
     (next: boolean) => {
       setWants(next)
       remember({ wantsCredentialing: next })
+    },
+    [remember],
+  )
+
+  // Written on every toggle, including when she turns it OFF. The default
+  // above only applies while she has no stored opinion, so a self-pay
+  // clinician who unticks this must leave a `false` behind — otherwise the
+  // default re-ticks it the next time she opens the wizard and the step she
+  // just declined comes back.
+  const toggleCardPayments = useCallback(
+    (next: boolean) => {
+      setWantsCard(next)
+      remember({ wantsCardPayments: next })
     },
     [remember],
   )
@@ -191,8 +221,10 @@ export function GetPaidWizard({ onSettled }: GetPaidWizardProps) {
       <Body
         selected={activeState ?? []}
         wantsCredentialing={activeWants}
+        wantsCardPayments={activeWantsCard}
         onToggle={toggle}
         onToggleCredentialing={toggleCredentialing}
+        onToggleCardPayments={toggleCardPayments}
         onContinue={current?.id === "route" ? confirmChecklist : () => goTo(activeIndex + 1)}
         onBack={() => goTo(activeIndex - 1)}
         onNoClients={noClientsYet}
