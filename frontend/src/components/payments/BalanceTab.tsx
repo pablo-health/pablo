@@ -18,7 +18,7 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { AlertCircle, Check, CreditCard, FileText, ReceiptText } from "lucide-react"
+import { AlertCircle, Banknote, Check, CreditCard, FileText, ReceiptText } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
@@ -30,6 +30,7 @@ import {
   declineReason,
   formatBalanceLine,
   formatChargeDate,
+  paymentMethodLabel,
 } from "@/lib/paymentDisplay"
 import {
   useChargeBalance,
@@ -38,6 +39,7 @@ import {
   usePatientCharges,
 } from "@/hooks/usePayments"
 import type { ChargeResponse, VisitBalanceResponse } from "@/types/payments"
+import { RecordPaymentDialog } from "./RecordPaymentDialog"
 import { WriteOffDialog } from "./WriteOffDialog"
 
 interface BalanceTabProps {
@@ -59,6 +61,7 @@ export function BalanceTab({ patientId }: BalanceTabProps) {
   const [statementError, setStatementError] = useState<string | null>(null)
   const [downloading, setDownloading] = useState(false)
   const [writeOffOpen, setWriteOffOpen] = useState(false)
+  const [recordPaymentOpen, setRecordPaymentOpen] = useState(false)
 
   if (balance.isLoading) {
     return (
@@ -144,6 +147,16 @@ export function BalanceTab({ patientId }: BalanceTabProps) {
               Write off
             </Button>
           )}
+          {/* Not gated on a balance, a card, or the processor being set up
+              at all: this is money that has already changed hands, and a
+              client paying ahead for a block of sessions owes nothing at the
+              moment they hand over the cheque. */}
+          {!readOnly && (
+            <Button variant="outline" onClick={() => setRecordPaymentOpen(true)}>
+              <Banknote className="mr-2 h-4 w-4" />
+              Record payment
+            </Button>
+          )}
           {!readOnly && !cardsUnavailable && owed > 0 && (
             <Button
               onClick={handleCharge}
@@ -161,7 +174,8 @@ export function BalanceTab({ patientId }: BalanceTabProps) {
 
       {!readOnly && !cardsUnavailable && owed > 0 && !card.data?.chargeable && (
         <p className="text-sm text-neutral-500">
-          No card on file for this client, so the balance cannot be charged here.
+          No card on file for this client, so the balance cannot be charged here. If
+          they have paid you another way, record it.
         </p>
       )}
 
@@ -198,6 +212,14 @@ export function BalanceTab({ patientId }: BalanceTabProps) {
           balanceCents={owed}
           open={writeOffOpen}
           onOpenChange={setWriteOffOpen}
+        />
+      )}
+      {!readOnly && (
+        <RecordPaymentDialog
+          patientId={patientId}
+          balanceCents={owed}
+          open={recordPaymentOpen}
+          onOpenChange={setRecordPaymentOpen}
         />
       )}
     </div>
@@ -251,6 +273,15 @@ function LedgerRow({ charge }: { charge: ChargeResponse }) {
           <span className="text-sm font-medium text-neutral-900">
             {chargeKindLabel(charge.kind)}
           </span>
+          {/* Only when it is not a card — see `paymentMethodLabel`. The
+              reference rides along because a cheque number is the thing a
+              practice reconciling against its bank is actually looking for. */}
+          {paymentMethodLabel(charge.method) && (
+            <span className="shrink-0 text-xs text-neutral-500">
+              {paymentMethodLabel(charge.method)}
+              {charge.payment_reference ? ` · ${charge.payment_reference}` : ""}
+            </span>
+          )}
           {charge.claim_id && (
             <Link
               href={`/dashboard/billing/claims/${charge.claim_id}`}

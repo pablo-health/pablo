@@ -61,6 +61,12 @@ class PatientCharge(BaseModel):
     claim_id: str | None = None
     write_off_reason: str | None = None
     note: str | None = None
+    # How the money arrived — see ``app.db.models.PAYMENT_METHODS``. None on
+    # the kinds that do not collect, and on a row read from before the column
+    # existed. ``payment_reference`` is how the practice finds the payment in
+    # its own records; unlike ``note`` it carries no clinical content.
+    method: str | None = None
+    payment_reference: str | None = None
     settled_by_charge_id: str | None = None
     amount_cents: int
     currency: str
@@ -155,6 +161,28 @@ class CreateWriteOffRequest(BaseModel):
     note: str | None = Field(default=None, max_length=2000)
 
 
+class RecordPaymentRequest(BaseModel):
+    """Money the practice took itself, recorded after the fact.
+
+    ``method`` is checked at the route against ``app.db.models.PAYMENT_METHODS``
+    rather than typed as a ``Literal`` here, for the same reason
+    :class:`CreateWriteOffRequest` checks its reason there: one list to update
+    instead of two that drift. ``card`` is refused by the route — a card
+    charge goes through the processor, and accepting one here would let a
+    practice write "paid by card" onto a ledger no processor ever saw.
+
+    ``reference`` is how the practice finds the payment again — a cheque
+    number, a transfer date. Short, and deliberately not ``note``: this one
+    can appear on a statement the client hands to a payer, so it must not
+    become somewhere to write about the client.
+    """
+
+    amount_cents: int = Field(gt=0, le=MAX_CHARGE_CENTS)
+    method: str = Field(min_length=1, max_length=16)
+    reference: str | None = Field(default=None, max_length=64)
+    note: str | None = Field(default=None, max_length=2000)
+
+
 class ChargeAmountResponse(BaseModel):
     """What a charge sent without an explicit amount would come to.
 
@@ -189,6 +217,8 @@ class ChargeResponse(BaseModel):
     claim_id: str | None = None
     write_off_reason: str | None = None
     note: str | None = None
+    method: str | None = None
+    payment_reference: str | None = None
     settled_by_charge_id: str | None = None
     created_at: datetime
     updated_at: datetime | None = None
