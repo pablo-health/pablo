@@ -63,6 +63,7 @@ from ..claims.clearinghouse import (
     ClearinghouseRateLimitedError,
     ClearinghouseReportUnreadableError,
     ClearinghouseUnavailableError,
+    describe_error,
 )
 from ..claims.fanout import ingest_transaction_event
 from ..claims.webhooks import (
@@ -132,9 +133,9 @@ async def clearinghouse_webhook(
         outcome = await asyncio.to_thread(ingest_transaction_event, event)
     except (ClearinghouseUnavailableError, ClearinghouseRateLimitedError) as exc:
         logger.warning(
-            "clearinghouse_webhook_vendor_unavailable event=%s error=%s",
+            "clearinghouse_webhook_vendor_unavailable event=%s %s",
             event.id,
-            type(exc).__name__,
+            describe_error(exc),
         )
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE, "could not fetch the transaction; please retry"

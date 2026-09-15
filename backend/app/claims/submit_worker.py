@@ -57,6 +57,7 @@ from .clearinghouse import (
     ClearinghouseTransactionSettingError,
     ClearinghouseUnavailableError,
     ClearinghouseValidationError,
+    describe_error,
 )
 from .receipts import move, owned_by_principal, reject, stall
 from .wire import ClaimMappingError, to_submission_request
@@ -202,9 +203,9 @@ def _reconcile(  # noqa: PLR0913 — keyword-only collaborators
         filed = _filed_in_feed(client, claim, since=pending_at - _FEED_LOOKBACK)
     except ClearinghouseError as exc:
         logger.info(
-            "claim_reconcile_deferred control_number=%s error=%s",
+            "claim_reconcile_deferred control_number=%s %s",
             claim.control_number,
-            type(exc).__name__,
+            describe_error(exc),
         )
         summary.deferred += 1
         return
@@ -295,15 +296,22 @@ def _attempt(  # noqa: PLR0913 — keyword-only collaborators
         result = client.submit_claim(request, idempotency_key=key)
     except _TRANSIENT_FAILURES as exc:
         logger.info(
-            "claim_submit_deferred control_number=%s error=%s",
+            "claim_submit_deferred control_number=%s %s",
             claim.control_number,
-            type(exc).__name__,
+            describe_error(exc),
         )
         summary.deferred += 1
         return
     except ClearinghouseError as exc:
         code, description = _refusal(exc)
-        logger.warning("claim_submit_refused control_number=%s code=%s", claim.control_number, code)
+        # Our refusal code says what the practice must do; the vendor's says
+        # which of the several answers behind one of our classes this was.
+        logger.warning(
+            "claim_submit_refused control_number=%s code=%s %s",
+            claim.control_number,
+            code,
+            describe_error(exc),
+        )
         stall(pipeline, claim, code=code, description=description)
         summary.stalled += 1
         return

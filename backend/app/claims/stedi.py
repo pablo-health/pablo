@@ -220,33 +220,35 @@ def _raise_for_error_envelope(response: httpx.Response) -> NoReturn:
     except ValueError:
         body = None
 
-    code = body.get("code") if body else None
+    raw_code = body.get("code") if body else None
+    code = str(raw_code) if isinstance(raw_code, str) and raw_code else None
     message = str(body.get("message", "")) if body else ""
 
     if code == _ACCOUNT_NOT_PROVISIONED:
-        raise ClearinghouseNotProvisionedError(message or "account not provisioned")
+        raise ClearinghouseNotProvisionedError(message or "account not provisioned", code=code)
     if code == _INVALID_REQUEST_BODY:
-        raise ClearinghouseValidationError(message or "invalid request body")
+        raise ClearinghouseValidationError(message or "invalid request body", code=code)
     if response.status_code == _HTTP_UNPROCESSABLE or code == _REQUEST_CHANGED:
         raise ClearinghouseRequestChangedError(
-            message or "idempotency key reused with a different request"
+            message or "idempotency key reused with a different request", code=code
         )
     if response.status_code == _HTTP_FORBIDDEN:
-        raise ClearinghouseAccessDeniedError(message or "access denied")
+        raise ClearinghouseAccessDeniedError(message or "access denied", code=code)
     if response.status_code == _HTTP_NOT_FOUND:
-        raise ClearinghouseNotFoundError(message or "not found")
+        raise ClearinghouseNotFoundError(message or "not found", code=code)
     if response.status_code == _HTTP_CONFLICT:
         raise ClearinghouseInFlightError(
             message or "a request with this idempotency key is still in flight",
             retry_after=_retry_after_seconds(response),
+            code=code,
         )
     if response.status_code == _HTTP_BAD_REQUEST and "transaction setting" in message.lower():
-        raise ClearinghouseTransactionSettingError(message)
+        raise ClearinghouseTransactionSettingError(message, code=code)
     if response.status_code == _HTTP_BAD_REQUEST:
-        raise ClearinghouseValidationError(message or "bad request")
+        raise ClearinghouseValidationError(message or "bad request", code=code)
 
     raise ClearinghouseUnavailableError(
-        f"unexpected clearinghouse response: {response.status_code}"
+        f"unexpected clearinghouse response: {response.status_code}", code=code
     )
 
 

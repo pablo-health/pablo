@@ -20,7 +20,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from app.claims.clearinghouse import ClearinghouseUnavailableError
+from app.claims.clearinghouse import (
+    ClearinghouseAccessDeniedError,
+    ClearinghouseUnavailableError,
+)
 from app.claims.enrollment_tasks import (
     Answer,
     DocumentRejectedError,
@@ -250,6 +253,44 @@ class TestATaskThatWantsAPdf:
             )
 
         assert "complete" not in client.steps
+
+    def test_a_refused_upload_logs_the_vendors_code_and_sentence(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The enrollment surface keeps the vendor's own words.
+
+        Nothing patient-shaped is ever sent to the enrollment API — it takes
+        practice identity and a form — so the vendor has nothing of a
+        patient's to quote back, and the sentence it does send is the whole
+        answer. This is the log line that used to read
+        ``error=ClearinghouseAccessDeniedError`` and stop.
+        """
+
+        class _Denies(_Clearinghouse):
+            def upload_enrollment_document(self, *args: Any, **kwargs: Any) -> Any:
+                raise ClearinghouseAccessDeniedError(
+                    "Access Denied - This functionality is not available in Test Mode.",
+                    code="access_denied",
+                )
+
+        task = _task({"key": "ENROLLMENT_FORM", "label": "Signed PDF", "fieldType": "DOCUMENT"})
+
+        with caplog.at_level("WARNING"), pytest.raises(DocumentRejectedError):
+            answer_task(
+                _Denies(),  # type: ignore[arg-type] — a structural stand-in, as above
+                _enrollment(),
+                task,
+                Answer(documents={"ENROLLMENT_FORM": Upload("signed.pdf", PDF)}),
+                poll=Poll(sleep=lambda _: None),
+            )
+
+        [line] = [
+            r.getMessage()
+            for r in caplog.records
+            if "enrollment_document_upload_failed" in r.getMessage()
+        ]
+        assert "code=access_denied" in line
+        assert "not available in Test Mode" in line
 
     def test_an_upload_the_store_refuses_never_completes_the_task(self) -> None:
         class _Refuses(_Clearinghouse):
