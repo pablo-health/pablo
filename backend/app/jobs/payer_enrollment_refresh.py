@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
 
-from ..claims.clearinghouse import ClearinghouseError
+from ..claims.clearinghouse import ClearinghouseError, describe_error_with_message
 from ..claims.enrollment import (
     MAX_REFRESH_PER_TENANT,
     OPEN_REQUEST_STATUSES,
@@ -78,9 +78,9 @@ def refresh_tenant(schema: str, client: ClearinghouseClient, *, limit: int) -> i
     except ClearinghouseError as exc:
         session.rollback()
         logger.warning(
-            "payer_enrollment_refresh_tenant_failed schema=%s error=%s",
+            "payer_enrollment_refresh_tenant_failed schema=%s %s",
             schema,
-            type(exc).__name__,
+            describe_error_with_message(exc),
         )
         return 0
     finally:

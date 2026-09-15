@@ -37,7 +37,33 @@ if TYPE_CHECKING:
 
 
 class ClearinghouseError(Exception):
-    """Base for every typed error the adapter raises."""
+    """Base for every typed error the adapter raises.
+
+    ``code`` is how the vendor named this failure. Over ``httpx`` that is the
+    ``code`` in its error envelope — ``access_denied``,
+    ``INVALID_REQUEST_BODY``, ``ACCOUNT_NOT_PROVISIONED`` and the rest. Over
+    its SDK, which sends no such envelope, it is the SDK exception's class
+    name, which is the same thing in a different wire format: a fixed token
+    from a short list, naming the failure and quoting nothing from the
+    request.
+
+    Either way the adapter reads it to pick which of these classes to raise
+    and then keeps it, because the class is coarser than the code. One class
+    stands for several vendor answers a person would act on differently:
+    :class:`ClearinghouseAccessDeniedError` is raised for an envelope's
+    ``access_denied``, for the SDK's ``AuthenticationFailedException`` (the
+    key is wrong) and for its ``ForbiddenException`` (the key is right and
+    may not do this) — three different problems that, without the code, all
+    reach the log as one word.
+
+    ``None`` means the vendor named nothing, which is the honest answer for
+    the errors we raise ourselves — a timeout, a body the SDK could not
+    read — rather than a code invented to fill the field.
+    """
+
+    def __init__(self, message: str, *, code: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class ClearinghouseValidationError(ClearinghouseError):
@@ -96,8 +122,8 @@ class ClearinghouseInFlightError(ClearinghouseError):
     itself — the caller owns that decision.
     """
 
-    def __init__(self, message: str, *, retry_after: float | None) -> None:
-        super().__init__(message)
+    def __init__(self, message: str, *, retry_after: float | None, code: str | None = None) -> None:
+        super().__init__(message, code=code)
         self.retry_after = retry_after
 
 
@@ -123,6 +149,44 @@ class ClearinghouseReportUnreadableError(ClearinghouseError):
 class ClearinghouseUnavailableError(ClearinghouseError):
     """The call could not be completed: a network failure, a timeout, or a
     5xx that survived the retry budget."""
+
+
+def describe_error(exc: ClearinghouseError) -> str:
+    """``error=<class> code=<vendor code>``, for a log line on any surface.
+
+    Safe to log wherever the adapter is called. The vendor's code is a fixed
+    token from a short list, never free text and never anything it read out
+    of the request.
+
+    The class alone — which is what these log lines used to carry — is too
+    coarse to act on: :class:`ClearinghouseAccessDeniedError` covers both
+    "this key may not use this API at all" and "this key may not file
+    claims", and the code is the only thing that separates them.
+    """
+    return f"error={type(exc).__name__} code={exc.code or 'none'}"
+
+
+def describe_error_with_message(exc: ClearinghouseError) -> str:
+    """:func:`describe_error` plus the vendor's own sentence.
+
+    **Only for calls whose REQUEST carries no patient data** — provider
+    registration, enrollment, the payer directory. Those send practice
+    identity (legal name, NPI, tax id, a practice contact) and nothing else,
+    so the vendor has no patient data to quote back and the sentence is safe
+    to keep.
+
+    Claim submission and eligibility do send patient data, and a vendor
+    validation message can name the field it objected to; "subscriber
+    memberId is invalid" is one wording away from putting a member id in
+    stdout, which guardrail 5 forbids. Those call sites use
+    :func:`describe_error`, and get their field-level detail from the
+    ``SubmissionFinding`` list the adapter already parses instead.
+
+    The split is structural rather than a filter on the text: which endpoint
+    was called is known for certain at the call site, whereas a scrubber
+    would have to be trusted against every message the vendor might invent.
+    """
+    return f"{describe_error(exc)} message={exc!s}"
 
 
 class ClearinghouseClient(Protocol):

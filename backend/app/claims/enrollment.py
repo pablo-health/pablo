@@ -80,7 +80,11 @@ from ..services.coverage_intake import UNKNOWN_PAYER_ID
 from ..services.practice_billing_profile import SINGLETON_ID
 from ..services.token_encryption import decrypt_tokens
 from ..utcnow import utc_now
-from .clearinghouse import ClearinghouseClient, ClearinghouseError
+from .clearinghouse import (
+    ClearinghouseClient,
+    ClearinghouseError,
+    describe_error_with_message,
+)
 from .credentials import get_clearinghouse_credential_provider
 from .events import ClaimEvent, ClaimEventDetail, emit, resolve_compliance_reminder
 
@@ -279,7 +283,9 @@ def sync_provider_record(session: Session, practice_id: str | None) -> str | Non
     except BillingProfileIncompleteError:
         return None
     except ClearinghouseError as exc:
-        logger.warning("clearinghouse_provider_registration_failed error=%s", type(exc).__name__)
+        logger.warning(
+            "clearinghouse_provider_registration_failed %s", describe_error_with_message(exc)
+        )
         return None
 
 
@@ -527,9 +533,9 @@ def enroll_if_new(
         logger.info("payer_enrollment_skipped_unknown_payer payer_id=%s", exc.payer_id)
     except ClearinghouseError as exc:
         logger.warning(
-            "payer_enrollment_request_failed payer_row_id=%s error=%s",
+            "payer_enrollment_request_failed payer_row_id=%s %s",
             payer_row_id,
-            type(exc).__name__,
+            describe_error_with_message(exc),
         )
 
 

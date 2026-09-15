@@ -179,3 +179,26 @@ class TestErrorTranslation:
 
         assert isinstance(translated, ClearinghouseInFlightError)
         assert translated.retry_after == 12.0
+
+    def test_the_two_refusals_that_share_a_class_stay_tellable_apart(self) -> None:
+        """The SDK sends no error envelope, so its class name is the code.
+
+        Both of these become ``ClearinghouseAccessDeniedError`` and they are
+        not the same problem: one says the key is wrong, the other says the
+        key is right and may not do this. Collapsing them into one word was
+        the loss this carries the code to undo.
+        """
+        wrong_key = translate_sdk_error(sdk_models.AuthenticationFailedException("who"))
+        not_allowed = translate_sdk_error(sdk_models.ForbiddenException("no"))
+
+        assert isinstance(wrong_key, ClearinghouseAccessDeniedError)
+        assert isinstance(not_allowed, ClearinghouseAccessDeniedError)
+        assert wrong_key.code == "AuthenticationFailedException"
+        assert not_allowed.code == "ForbiddenException"
+
+    def test_an_error_the_vendor_never_named_carries_no_code(self) -> None:
+        """A transport failure is ours to describe, so there is nothing to carry."""
+        translated = translate_sdk_error(CallError("transport"))
+
+        assert isinstance(translated, ClearinghouseUnavailableError)
+        assert translated.code is None
