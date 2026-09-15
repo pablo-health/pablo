@@ -63,6 +63,8 @@ def _to_charge(row: PatientChargeRow) -> PatientCharge:
         claim_id=row.claim_id,
         write_off_reason=row.write_off_reason,
         note=row.note,
+        method=row.method,
+        payment_reference=row.payment_reference,
         settled_by_charge_id=row.settled_by_charge_id,
         amount_cents=row.amount_cents,
         currency=row.currency,
@@ -167,6 +169,12 @@ class PostgresPatientPaymentRepository(PatientPaymentRepository):
             amount_cents=amount_cents,
             currency=currency,
             status="pending",
+            # This path exists to call the processor, so the method is known
+            # before the outcome is. It is not conditional on success: a
+            # declined card is still how the practice tried to be paid, and a
+            # ``failed`` row with no method could not satisfy the kind/method
+            # constraint anyway.
+            method="card",
             created_by_user_id=user_id,
             created_at=utc_now(),
         )
@@ -202,6 +210,8 @@ class PostgresPatientPaymentRepository(PatientPaymentRepository):
         claim_id: str | None = None,
         write_off_reason: str | None = None,
         note: str | None = None,
+        method: str | None = None,
+        payment_reference: str | None = None,
     ) -> PatientCharge:
         row = PatientChargeRow(
             id=uuid.uuid4().hex,
@@ -211,6 +221,8 @@ class PostgresPatientPaymentRepository(PatientPaymentRepository):
             claim_id=claim_id,
             write_off_reason=write_off_reason,
             note=note,
+            method=method,
+            payment_reference=payment_reference,
             amount_cents=amount_cents,
             currency=currency,
             # No processor was called, so there is nothing to reconcile: the

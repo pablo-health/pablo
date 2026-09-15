@@ -544,8 +544,13 @@ CREATE TABLE __TENANT_SCHEMA__.patient_charges (
     write_off_reason character varying(24),
     note text,
     settled_by_charge_id character varying(128),
+    method character varying(16),
+    payment_reference character varying(64),
     CONSTRAINT ck_patient_charges_amount_positive CHECK ((amount_cents > 0)),
     CONSTRAINT ck_patient_charges_kind CHECK (((kind)::text = ANY ((ARRAY['session'::character varying, 'copay'::character varying, 'payment'::character varying, 'patient_resp'::character varying, 'contractual_adjustment'::character varying, 'write_off'::character varying, 'credit'::character varying])::text[]))),
+    CONSTRAINT ck_patient_charges_method CHECK (((method IS NULL) OR ((method)::text = ANY ((ARRAY['card'::character varying, 'cash'::character varying, 'check'::character varying, 'other'::character varying])::text[])))),
+    CONSTRAINT ck_patient_charges_method_kind CHECK ((((kind)::text = ANY ((ARRAY['session'::character varying, 'copay'::character varying, 'payment'::character varying])::text[])) = (method IS NOT NULL))),
+    CONSTRAINT ck_patient_charges_other_has_reference CHECK ((((method)::text IS DISTINCT FROM 'other'::text) OR (payment_reference IS NOT NULL))),
     CONSTRAINT ck_patient_charges_status CHECK (((status)::text = ANY ((ARRAY['pending'::character varying, 'succeeded'::character varying, 'failed'::character varying, 'refunded'::character varying, 'disputed'::character varying, 'dispute_lost'::character varying])::text[]))),
     CONSTRAINT ck_patient_charges_write_off_reason CHECK (((write_off_reason IS NULL) OR ((write_off_reason)::text = ANY ((ARRAY['hardship'::character varying, 'small_balance'::character varying, 'courtesy'::character varying, 'error'::character varying])::text[])))),
     CONSTRAINT ck_patient_charges_write_off_reason_kind CHECK ((((kind)::text = 'write_off'::text) = (write_off_reason IS NOT NULL)))

@@ -1743,6 +1743,28 @@ CHARGE_KINDS: tuple[str, ...] = (
 #: a copay means somebody set the wrong kind.
 WRITE_OFF_REASONS: tuple[str, ...] = ("hardship", "small_balance", "courtesy", "error")
 
+#: How the money arrived, for the kinds that collect it. ``card`` is a charge
+#: this system put through the processor; everything else is money the practice
+#: took by some means of its own and is recording after the fact.
+#:
+#: Deliberately a short closed set with ``other`` as the escape hatch rather
+#: than an entry per instrument. Zelle, a card terminal the practice owns, an
+#: employer's cheque for an EAP session and whatever replaces them next year
+#: are all ``other`` plus a ``payment_reference``, which keeps the set from
+#: growing a migration every time a practice meets a new one.
+#:
+#: This says how the money arrived, NOT what card is on file — that is
+#: ``patient_payment_methods``, a different question with a different answer.
+PAYMENT_METHODS: tuple[str, ...] = ("card", "cash", "check", "other")
+
+#: The kinds a payment method can describe. The rest of ``CHARGE_KINDS`` are
+#: statements about what is owed or forgiven rather than money changing hands:
+#: a ``contractual_adjustment`` is an amount nobody ever pays, a ``write_off``
+#: is money the practice decided not to collect, and a ``credit`` is a balance
+#: held rather than a transfer. Asking how any of those was paid has no answer,
+#: so the constraint below forbids the question rather than inventing one.
+COLLECTING_CHARGE_KINDS: tuple[str, ...] = ("session", "copay", "payment")
+
 
 class PatientPaymentMethodRow(Base):
     """The card a practice keeps on file for one client — processor ids only.
@@ -1834,6 +1856,28 @@ class PatientChargeRow(Base):
             f"write_off_reason IS NULL OR write_off_reason IN ({_sql_in_list(WRITE_OFF_REASONS)})",
             name="ck_patient_charges_write_off_reason",
         ),
+        # A payment method is a fact about money arriving, so it exists on
+        # exactly the kinds that collect and nowhere else. Both halves matter,
+        # the same way they do for write_off_reason above: a method on a
+        # contractual adjustment is a claim that somebody paid an amount
+        # nobody ever pays, and a collecting row with no method cannot say how
+        # the practice was paid — which is the whole point of the column.
+        CheckConstraint(
+            f"(kind IN ({_sql_in_list(COLLECTING_CHARGE_KINDS)})) = (method IS NOT NULL)",
+            name="ck_patient_charges_method_kind",
+        ),
+        CheckConstraint(
+            f"method IS NULL OR method IN ({_sql_in_list(PAYMENT_METHODS)})",
+            name="ck_patient_charges_method",
+        ),
+        # An unlabelled "other" is the row nobody can account for six months
+        # later — the same reasoning as ck_patient_charges_write_off_reason_kind.
+        # Only ``other`` is held to it: cash needs no reference, and a card's
+        # reference is its payment intent.
+        CheckConstraint(
+            "method IS DISTINCT FROM 'other' OR payment_reference IS NOT NULL",
+            name="ck_patient_charges_other_has_reference",
+        ),
         # Money is integer minor units and a charge is for a positive amount; a
         # refund is a status transition on this row, never a negative charge.
         # This holds for EVERY kind: a contractual adjustment and a credit are
@@ -1910,6 +1954,18 @@ class PatientChargeRow(Base):
     # never to a payer, and never logged: a clinician explaining a hardship
     # write-off will write clinical context into it.
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # How the money arrived — see ``PAYMENT_METHODS``. NULL on the kinds that
+    # do not collect, which the table's constraints enforce rather than
+    # leaving to callers.
+    method: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
+    # How the practice can find this payment in its own records: a cheque
+    # number, "Zelle 14 Mar", the terminal's reference. Short, and NOT
+    # ``note``: this one appears on a statement the client may hand to their
+    # payer, so it must stay a transaction identifier. Anything a clinician
+    # would write about the client belongs in ``note``, which no payer sees.
+    payment_reference: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     # The charge that settled this row, for an owed row (``patient_resp``,
     # ``session``) paid off by a later collection. Soft reference to another

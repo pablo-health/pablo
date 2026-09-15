@@ -111,12 +111,19 @@ class PatientPaymentRepository(ABC):
         claim_id: str | None = None,
         write_off_reason: str | None = None,
         note: str | None = None,
+        method: str | None = None,
+        payment_reference: str | None = None,
     ) -> PatientCharge:
         """Record a ledger row that no card charge produced, and commit it.
 
         Remittance postings, adjustments, write-offs and credits have no
         payment intent behind them, so the row is written ``succeeded`` in its
         final form.
+
+        Also the path for money the practice took itself — a cheque, cash, a
+        transfer — where ``kind`` is a collecting one and ``method`` says how
+        it arrived. Those two travel together: the table refuses a collecting
+        kind with no method, and a method on anything else.
         """
 
     @abstractmethod

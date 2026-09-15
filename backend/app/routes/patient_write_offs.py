@@ -1,6 +1,18 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Write-offs: money a practice decides not to collect.
+"""Two ledger rows a practice writes itself: a write-off, and a payment it took.
+
+Both are money events with no processor behind them, which is what puts them
+together here and apart from ``patient_payments``: nothing in this module
+contacts Stripe, and every row it writes is final the moment it is written.
+
+``POST /api/patients/{patient_id}/payments`` records money the practice
+already has — a cheque, cash, a transfer. Without it a practice that does not
+put clients' cards on file cannot record being paid at all: the balance never
+clears, and the statement that reads the same ledger tells the client they
+have paid nothing.
+
+Write-offs: money a practice decides not to collect.
 
 ``POST /api/patients/{patient_id}/write-offs`` adds one ``write_off`` row to
 the client's ledger. Three gates keep it from being an unlogged discount:
@@ -32,9 +44,9 @@ from pydantic import BaseModel
 
 from ..auth.service import require_baa_acceptance
 from ..db import get_db_session
-from ..db.models import DEFAULT_CHARGE_CURRENCY, WRITE_OFF_REASONS
+from ..db.models import DEFAULT_CHARGE_CURRENCY, PAYMENT_METHODS, WRITE_OFF_REASONS
 from ..models.audit import AuditAction, ResourceType
-from ..models.payments import ChargeResponse, CreateWriteOffRequest
+from ..models.payments import ChargeResponse, CreateWriteOffRequest, RecordPaymentRequest
 from ..payments.balance import outcome_is_known, patient_balance
 from ..repositories import (
     get_patient_coverage_repository,
@@ -189,6 +201,86 @@ def create_write_off(
             "reason": payload.reason,
             "amount_cents": payload.amount_cents,
             "claim_ids": _outstanding_claim_ids(ledger),
+        },
+    )
+    return _to_charge_response(charge)
+
+
+@router.post("/{patient_id}/payments", response_model=ChargeResponse)
+def record_payment(
+    patient_id: str,
+    payload: RecordPaymentRequest,
+    request: Request,
+    user: CurrentUser,
+    payments: PaymentsRepo,
+    patients: PatientsRepo,
+    audit: AuditService = Depends(get_audit_service),
+) -> ChargeResponse:
+    """Record money the practice took outside this system.
+
+    A cheque at the end of a session, cash, a bank transfer. The row is
+    written ``succeeded`` in its final form because it already happened —
+    there is no processor to wait for and nothing to reconcile against, which
+    is also why it never takes the one-pending-payment lock that stops a
+    double-clicked card charge going through twice.
+
+    Deliberately NOT gated on the balance — the one thing this route has in
+    common with a charge rather than with a write-off. A client may pay ahead,
+    and a client may pay more than they owe; both are ordinary, and both net
+    correctly through arithmetic that already lets a balance go negative
+    rather than clamping it. Refusing an overpayment here would make the
+    ledger disagree with the bank, which is the wrong one to protect.
+
+    404 for a client the caller cannot see, matching every other route in this
+    family. 422 for a method outside the fixed set, for ``card``, and for
+    ``other`` with no reference.
+    """
+    _require_patient(patients, patient_id, user.id)
+
+    if payload.method not in PAYMENT_METHODS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Unknown payment method: {payload.method!r}.",
+        )
+    if payload.method == "card":
+        # A card row in this ledger is one a processor answered for. A
+        # hand-written "paid by card" would read identically on a statement
+        # while having no charge, no fee and nothing to reconcile against — so
+        # the one method this route refuses is the one that has a real path.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Charge the card on file instead — a card payment is recorded "
+            "when it goes through, not afterwards.",
+        )
+    if payload.method == "other" and not payload.reference:
+        # The constraint says the same thing, but a 422 explaining it beats an
+        # IntegrityError, and the reason is the same one write-offs give: an
+        # unlabelled "other" is the row nobody can account for later.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Say how the money arrived — a payment recorded as 'other' needs a reference.",
+        )
+
+    charge = payments.add_ledger_row(
+        patient_id=patient_id,
+        kind="payment",
+        amount_cents=payload.amount_cents,
+        currency=DEFAULT_CHARGE_CURRENCY,
+        user_id=user.id,
+        method=payload.method,
+        payment_reference=payload.reference,
+        note=payload.note,
+    )
+    audit.log(
+        AuditAction.PATIENT_PAYMENT_RECORDED,
+        user,
+        request,
+        resource_type=ResourceType.PATIENT,
+        resource_id=patient_id,
+        changes={
+            "charge_id": charge.id,
+            "method": payload.method,
+            "amount_cents": payload.amount_cents,
         },
     )
     return _to_charge_response(charge)

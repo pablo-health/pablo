@@ -68,6 +68,14 @@ export interface ChargeResponse {
   claim_id: string | null
   write_off_reason: string | null
   note: string | null
+  /** How the money arrived. `null` on the kinds that collect nothing. */
+  method: PaymentMethod | null
+  /**
+   * How the practice finds this payment in its own records — a cheque
+   * number, a transfer date. Unlike `note` it carries no clinical content,
+   * so it is the one that may appear on a statement.
+   */
+  payment_reference: string | null
   /** Which charge paid this bill off. Provenance, not arithmetic. */
   settled_by_charge_id: string | null
   created_at: string
@@ -109,6 +117,29 @@ export type ChargeableKind = Extract<ChargeKind, "session" | "copay">
  * policy on the billing profile; `hardship` and `error` are not.
  */
 export type WriteOffReason = "hardship" | "small_balance" | "courtesy" | "error"
+
+/**
+ * How money reached the practice.
+ *
+ * `card` is a charge this system put through the processor and is never
+ * something the clinician picks — recording a card payment by hand would put
+ * a row on the ledger that looks charged and has no charge behind it. The
+ * other three are money the practice took itself and is writing down after
+ * the fact.
+ */
+export type PaymentMethod = "card" | "cash" | "check" | "other"
+
+/** The methods a clinician can actually choose, in the order they are shown. */
+export const RECORDABLE_PAYMENT_METHODS = ["cash", "check", "other"] as const
+
+/** Money the practice already took, recorded after the fact. */
+export interface RecordPaymentRequest {
+  amount_cents: number
+  method: (typeof RECORDABLE_PAYMENT_METHODS)[number]
+  /** Required for `other`, optional otherwise. */
+  reference?: string
+  note?: string
+}
 
 /** A practice-initiated write-off: money it has decided not to collect. */
 export interface CreateWriteOffRequest {

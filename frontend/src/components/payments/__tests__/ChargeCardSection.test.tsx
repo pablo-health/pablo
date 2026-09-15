@@ -54,6 +54,8 @@ function charge(overrides: Partial<ChargeResponse> = {}): ChargeResponse {
     claim_id: null,
     write_off_reason: null,
     note: null,
+    method: "card",
+    payment_reference: null,
     settled_by_charge_id: null,
     created_at: "2026-05-24T10:00:00Z",
     updated_at: "2026-05-24T10:00:01Z",

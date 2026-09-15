@@ -17,6 +17,7 @@ import type {
   ChargeResponse,
   CreateChargeRequest,
   CreateWriteOffRequest,
+  RecordPaymentRequest,
 } from "@/types/payments"
 import { ApiError, buildApiUrl, get, getAuthHeader, post } from "./client"
 
@@ -159,6 +160,22 @@ export async function createWriteOff(
   token?: string,
 ): Promise<ChargeResponse> {
   return post<ChargeResponse>(`/api/patients/${patientId}/write-offs`, data, token)
+}
+
+/**
+ * Record money the practice already took — a cheque, cash, a transfer.
+ *
+ * Nothing is charged here and no card is needed, which is the point: a
+ * practice that does not keep clients' cards on file has no other way to say
+ * it was paid. The amount is deliberately not capped at the balance — paying
+ * ahead is ordinary, and the resulting credit is real.
+ */
+export async function recordPayment(
+  patientId: string,
+  data: RecordPaymentRequest,
+  token?: string,
+): Promise<ChargeResponse> {
+  return post<ChargeResponse>(`/api/patients/${patientId}/payments`, data, token)
 }
 
 /** The client's statement, as a PDF blob. */
