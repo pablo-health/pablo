@@ -8,6 +8,26 @@ const BOOKS_AT = "10:00"
 const OPENS_AT = "09:00"
 const CLOSES_AT = "17:00"
 
+/**
+ * The practice's timezone, which this test types wall-clock times in.
+ *
+ * The booking form sends what the BROWSER makes of "10:00", and the engine
+ * asks whether that instant falls inside the practice's working hours, which
+ * are practice-local. Leave the browser on the runner's timezone and those
+ * two are only the same clock by luck: on a UTC runner "10:00" becomes 06:00
+ * for a New York practice — outside every plausible working day, and the
+ * booking raises an override dialog that silently swallows the submit.
+ *
+ * That is why this test passed on a developer's machine in US/Eastern and
+ * failed for three minutes on CI. Pinning it here makes the time typed and
+ * the time evaluated the same time, whoever runs it.
+ *
+ * Must match the clinician default in `app.models.user`.
+ */
+const PRACTICE_TIMEZONE = "America/New_York"
+
+test.use({ timezoneId: PRACTICE_TIMEZONE })
+
 test("a clinician books and cancels an appointment", async ({ signedInPage: page, api }) => {
   const patient = await givePatient(api)
   await markCalendarSetupComplete(api)
