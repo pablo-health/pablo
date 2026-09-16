@@ -982,11 +982,43 @@ class ComplianceItemRow(Base):
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
     item_type: Mapped[str] = mapped_column(String(50), nullable=False)
     label: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_ref: Mapped[str | None] = mapped_column(String(128))
+    """What an automatically-filed row belongs to, for the filer to find again.
+
+    NULL on everything a person entered, which is almost every row: a licence
+    renewal is not raised by anything and nothing needs to look it up.
+
+    Set by :mod:`app.claims.events` on a payer-enrollment reminder, to the
+    vendor's request id it arrives with (``ClaimEvent.control_number`` — the
+    field names a claim for every other kind, and for this one there is no
+    claim). That reminder used to be found by a prefix of ``notes``, which the
+    compliance update route replaces wholesale, so a clinician tidying her own
+    note severed the link and the next refresh filed a duplicate. A column the
+    route does not write cannot be edited away.
+
+    Unique per ``(user_id, item_type)`` where it is set — see
+    ``ux_compliance_items_source_ref``, which is what makes the duplicate
+    impossible rather than merely unlikely.
+    """
     due_date: Mapped[date | None] = mapped_column(Date)
     notes: Mapped[str | None] = mapped_column(Text)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        # One automatically-filed row per thing per clinician. Partial, because
+        # ``source_ref`` is NULL on everything a person entered and several
+        # licences with no source are not a conflict.
+        Index(
+            "ux_compliance_items_source_ref",
+            "user_id",
+            "item_type",
+            "source_ref",
+            unique=True,
+            postgresql_where=text("source_ref IS NOT NULL"),
+        ),
+    )
 
 
 class ComplianceDocumentRow(Base):

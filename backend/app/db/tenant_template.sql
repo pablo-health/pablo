@@ -357,7 +357,8 @@ CREATE TABLE __TENANT_SCHEMA__.compliance_items (
     notes text,
     completed_at timestamp with time zone,
     created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL
+    updated_at timestamp with time zone NOT NULL,
+    source_ref character varying(128)
 );
 
 
@@ -1751,6 +1752,10 @@ CREATE UNIQUE INDEX uq_appointments_user_start_active ON __TENANT_SCHEMA__.appoi
 
 
 CREATE UNIQUE INDEX ux_chat_messages_conversation_sequence ON __TENANT_SCHEMA__.chat_messages USING btree (conversation_id, sequence);
+
+
+
+CREATE UNIQUE INDEX ux_compliance_items_source_ref ON __TENANT_SCHEMA__.compliance_items USING btree (user_id, item_type, source_ref) WHERE (source_ref IS NOT NULL);
 
 
 

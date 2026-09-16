@@ -32,6 +32,11 @@ wholesale, so editing a note severed the only link a reminder had to its claim
 on every tick after that. :class:`app.db.models.ClaimReminderRow` replaced the
 string with a foreign key and the convention with a unique constraint.
 
+The enrollment arm kept the string a while longer, having no claim to point a
+foreign key at, and kept the bug with it. It now keys on
+``compliance_items.source_ref`` — a column the compliance route does not write,
+unique per clinician and kind — so neither arm can be edited into filing twice.
+
 An event carries identifiers, codes and dates only. It never carries a
 member id, a date of birth, a diagnosis code or a subscriber name, so a
 listener can forward it to a surface that must not hold clinical detail.
@@ -237,18 +242,6 @@ def compliance_item_type(kind: ClaimEventKind) -> str:
     return f"claim_{kind}"
 
 
-def _control_number_marker(control_number: str) -> str:
-    """How a non-claim reminder names the request it belongs to.
-
-    A string in ``notes``, which is the arrangement every claim reminder has
-    just been moved off — a clinician editing the note severs the link and the
-    next tick files a duplicate. It survives here because a payer-enrollment
-    request has no claim to key on and inventing one was out of scope for the
-    change that moved the rest. Tracked rather than quietly kept.
-    """
-    return f"Claim control number: {control_number}"
-
-
 def _label(event: ClaimEvent) -> str:
     detail = event.detail
     phrase = _KIND_PHRASES[event.kind].format(
@@ -261,16 +254,16 @@ def _label(event: ClaimEvent) -> str:
     return label
 
 
-def _notes(event: ClaimEvent, *, with_marker: bool = False) -> str | None:
+def _notes(event: ClaimEvent) -> str | None:
     """What the payer said, for a person to read.
 
-    A claim reminder's notes no longer lead with the control number: that was
-    only ever there because the lookup needed somewhere to find it, and a
-    foreign key does that now. The non-claim arm still passes
-    ``with_marker=True``, because it has nothing else to find its row by.
+    Nothing but that. Notes used to lead with the control number, on both arms,
+    because the lookup needed somewhere to find it — a foreign key does that
+    for a claim reminder now and ``source_ref`` for an enrollment one, so the
+    field holds only what it says it holds.
     """
     detail = event.detail
-    lines = [_control_number_marker(event.control_number)] if with_marker else []
+    lines: list[str] = []
     descriptions = [
         code.description or f"{code.system.upper()} {code.code}" for code in detail.codes
     ]
@@ -284,15 +277,18 @@ def _notes(event: ClaimEvent, *, with_marker: bool = False) -> str | None:
 def _find_compliance_reminder(
     session: Session, *, kind: ClaimEventKind, control_number: str, user_id: str | None
 ) -> ComplianceItemRow | None:
-    """The non-claim arm's lookup: a prefix match on ``notes``, as it was."""
+    """The non-claim arm's lookup, by the column the clinician cannot edit.
+
+    ``source_ref`` holds the vendor request id the reminder was raised for. It
+    was the first line of ``notes`` until 2026-09, and the compliance update
+    route replaces ``notes`` wholesale — so editing a note severed the link,
+    this returned nothing, and the refresh filed a second reminder for a
+    request that already had one.
+    """
     query = (
         select(ComplianceItemRow)
         .where(ComplianceItemRow.item_type == compliance_item_type(kind))
-        .where(
-            ComplianceItemRow.notes.startswith(
-                _control_number_marker(control_number), autoescape=True
-            )
-        )
+        .where(ComplianceItemRow.source_ref == control_number)
         .limit(1)
     )
     if user_id is not None:
@@ -337,6 +333,9 @@ def _write_compliance_reminder(session: Session, event: ClaimEvent) -> None:
     sign or attest something. There is no claim and no patient, so there is no
     foreign key to hang it on and nothing for ``has_patient_access`` to key on
     either. It belongs to the practice, like a licence belongs to a clinician.
+
+    What it does have is the vendor's request id, which goes in ``source_ref``
+    so the next refresh finds this row instead of writing another beside it.
     """
     existing = _find_compliance_reminder(
         session,
@@ -354,8 +353,9 @@ def _write_compliance_reminder(session: Session, event: ClaimEvent) -> None:
             user_id=event.user_id,
             item_type=compliance_item_type(event.kind),
             label=_label(event),
+            source_ref=event.control_number,
             due_date=due_date,
-            notes=_notes(event, with_marker=True),
+            notes=_notes(event),
             completed_at=None,
             created_at=now,
             updated_at=now,
