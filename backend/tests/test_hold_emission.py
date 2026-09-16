@@ -266,7 +266,32 @@ class TestTheScheduledRunEmitsOnce:
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
         """A run that says nothing must mean the tick is gone, not that it
-        went badly — otherwise the absence signal fires on the wrong thing."""
+        went badly — otherwise the absence signal fires on the wrong thing.
+
+        The fatal case is now one that happens before any practice does:
+        enumerating them at all. A single practice failing is contained (see
+        below), so it is no longer a way to kill the run.
+        """
+
+        def boom(*, max_tenants: int):
+            raise RuntimeError("the database went away")
+
+        monkeypatch.setattr(job, "active_practices", boom)
+
+        with caplog.at_level(logging.INFO), pytest.raises(RuntimeError):
+            job.run_pipeline(["remit"])
+
+        assert len(_events(caplog, HEARTBEAT_EVENT)) == 1
+
+    def test_a_failing_practice_is_contained_and_still_beats_once(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """One practice failing neither ends the run nor doubles the heartbeat.
+
+        The heartbeat is per run, and a contained failure is still a run — so
+        a reader watching for one line a tick sees exactly one, and the pass
+        reports the failure in its counters rather than by dying.
+        """
         context = PracticeContext(schema="p0", practice_id="p0", client=object(), user_ids=["u1"])
         monkeypatch.setattr(
             job, "active_practices", lambda *, max_tenants: iter([context][:max_tenants])
@@ -277,7 +302,8 @@ class TestTheScheduledRunEmitsOnce:
 
         monkeypatch.setattr(job, "run_practice", boom)
 
-        with caplog.at_level(logging.INFO), pytest.raises(RuntimeError):
-            job.run_pipeline(["remit"])
+        with caplog.at_level(logging.INFO):
+            totals = job.run_pipeline(["remit"])
 
+        assert totals["practice_errors"] == 1
         assert len(_events(caplog, HEARTBEAT_EVENT)) == 1

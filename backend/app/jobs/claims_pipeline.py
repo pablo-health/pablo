@@ -207,7 +207,20 @@ def run_pipeline(
     try:
         for practice in active_practices(max_tenants=max_tenants):
             totals["practices"] += 1
-            totals.update(run_practice(practice, stages, max_per_tenant=max_per_tenant))
+            try:
+                totals.update(run_practice(practice, stages, max_per_tenant=max_per_tenant))
+            except Exception:
+                # One practice must not end the pass. `for_each_clinician`
+                # already isolates a single clinician, but the per-practice
+                # preamble — the billing profile read, the remittance
+                # timelines — runs outside that guard, so a schema missing a
+                # table raised here and abandoned every practice AFTER it in
+                # schema order. Claims filing is how a practice gets paid, so
+                # the blast radius of one malformed tenant was everyone's
+                # money. The heartbeat in the `finally` below fired anyway,
+                # leaving an aborted run looking like a quiet one.
+                totals["practice_errors"] += 1
+                logger.exception("claims_pipeline_practice_failed schema=%s", practice.schema)
     finally:
         # Exactly one per run, in a finally, because the line a reader
         # watches for is worth more when the run went badly than when it
