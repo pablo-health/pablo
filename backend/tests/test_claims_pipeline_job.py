@@ -144,6 +144,28 @@ def test_one_failing_practice_does_not_stop_the_rest(
     assert b.get(b_claim.id).state == "submitted"
 
 
+def test_the_fan_out_asks_for_real_practices_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nobody is owed money by a practice that exists to exercise a signup.
+
+    The sweep is bounded, and costs a credential lookup plus a roster read
+    per tenant before one can even be ruled out — so a suite that provisions
+    a practice per run would otherwise crowd real practices out of the pass.
+    """
+    asked: dict[str, object] = {}
+
+    def registry(_engine: object, *, include_pentest: bool = True) -> list[tuple[str, str]]:
+        asked["include_pentest"] = include_pentest
+        return []
+
+    monkeypatch.setattr(fanout, "get_engine", object)
+    monkeypatch.setattr(fanout, "list_active_practice_registry", registry)
+
+    assert list(fanout.active_practices(max_tenants=10)) == []
+    assert asked["include_pentest"] is False
+
+
 def test_a_practice_that_cannot_be_resolved_is_skipped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -158,7 +180,7 @@ def test_a_practice_that_cannot_be_resolved_is_skipped(
     monkeypatch.setattr(
         fanout,
         "list_active_practice_registry",
-        lambda _engine: [("practice_a", "a"), ("practice_b", "b")],
+        lambda _engine, **_kwargs: [("practice_a", "a"), ("practice_b", "b")],
     )
 
     def client_for(practice_id: str | None) -> object:
