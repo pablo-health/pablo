@@ -405,7 +405,7 @@ CREATE TABLE platform.practices (
     edition character varying(20) DEFAULT 'therapist'::character varying NOT NULL,
     CONSTRAINT ck_practices_audio_retention_days_range CHECK (((audio_retention_days >= 30) AND (audio_retention_days <= 2555))),
     CONSTRAINT ck_practices_edition CHECK (((edition)::text = ANY (ARRAY[('therapist'::character varying)::text, ('personal'::character varying)::text]))),
-    CONSTRAINT practices_pentest_schema_name CHECK (((is_pentest = false) OR ((schema_name)::text ~~ like_escape('practice\_pentest\_%'::text, '\'::text)))),
+    CONSTRAINT practices_pentest_schema_name CHECK ((is_pentest = ((schema_name)::text ~~ like_escape('practice\_pentest\_%'::text, '\'::text)))),
     CONSTRAINT practices_provisioning_status_chk CHECK (((provisioning_status)::text = ANY (ARRAY[('in_progress'::character varying)::text, ('ready'::character varying)::text, ('failed'::character varying)::text])))
 );
 

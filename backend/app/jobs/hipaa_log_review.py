@@ -213,8 +213,14 @@ def _list_practice_schemas(*, include_pentest: bool = False) -> list[str]:
 
 
 def _assert_schema_flag_consistency() -> list[str]:
-    # Re-verify invariants the CHECK/trigger enforce at write time;
-    # superuser UPDATE or manual SQL could bypass them.
+    # Re-verify at read time what the CHECK constraint holds at write time.
+    # The two cases below look identical in a LEFT JOIN and are not the same
+    # problem, so they are asked separately and reported in their own words —
+    # a registered practice whose flag disagrees with its name is a write that
+    # should have been impossible, while a pentest-named schema with no
+    # registry row at all is leftover DDL from a tenant whose row was deleted
+    # and whose schema was not. Reporting the second as the first sends a
+    # reader looking for tampering that did not happen.
     from sqlalchemy import text  # noqa: PLC0415
 
     from ..db import get_engine  # noqa: PLC0415
@@ -225,14 +231,31 @@ def _assert_schema_flag_consistency() -> list[str]:
             text(
                 r"SELECT s.schema_name"
                 r" FROM information_schema.schemata s"
-                r" LEFT JOIN platform.practices p"
+                r" JOIN platform.practices p"
                 r"   ON p.schema_name = s.schema_name"
                 r" WHERE s.schema_name LIKE 'practice\_pentest\_%' ESCAPE '\'"
-                r"   AND (p.is_pentest IS NULL OR p.is_pentest = FALSE)"
+                r"   AND p.is_pentest = FALSE"
             )
         ).fetchall()
         for (schema,) in mismatched_schemas:
             violations.append(f"schema={schema} matches pentest pattern but is_pentest is not TRUE")
+
+        orphaned_schemas = conn.execute(
+            text(
+                r"SELECT s.schema_name"
+                r" FROM information_schema.schemata s"
+                r" LEFT JOIN platform.practices p"
+                r"   ON p.schema_name = s.schema_name"
+                r" WHERE s.schema_name LIKE 'practice\_pentest\_%' ESCAPE '\'"
+                r"   AND p.schema_name IS NULL"
+            )
+        ).fetchall()
+        for (schema,) in orphaned_schemas:
+            violations.append(
+                f"schema={schema} matches pentest pattern but has no platform.practices row"
+                " — an orphaned schema, most likely a tenant deleted from the registry"
+                " whose schema was left behind"
+            )
 
         mismatched_flags = conn.execute(
             text(
@@ -253,10 +276,17 @@ def _notify_invariant_violations(violations: list[str], gcs_bucket: str | None) 
     body = "# HIPAA Log Review — Platform Invariant Violations\n\n"
     body += "**Severity: HIGH**\n\n"
     body += (
-        "Schema-name / ``is_pentest`` flag divergence detected. DB "
-        "CHECK + trigger should make this impossible; if you see this "
-        "report, something bypassed them (superuser UPDATE or direct SQL). "
-        "Investigate immediately.\n\n"
+        "Schema-name / ``is_pentest`` divergence detected. Each line below "
+        "says which kind it is, because they have different causes and only "
+        "one of them implicates a write.\n\n"
+        "A registered practice whose flag disagrees with its name is a write "
+        "the CHECK constraint should have refused — worth investigating how "
+        "it was made. A pentest-named schema with no registry row is not "
+        "that: it is DDL left behind by a tenant removed from the registry, "
+        "and it wants cleaning up rather than investigating.\n\n"
+        "Either way the flag is what every consumer filters synthetic "
+        "tenants on, so while this stands, the named schemas are reviewed as "
+        "though their activity were real clinical activity.\n\n"
     )
     body += "## Violations\n\n"
     for v in violations:
