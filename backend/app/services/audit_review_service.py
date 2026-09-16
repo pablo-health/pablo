@@ -29,6 +29,8 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    import re
+
     from ..repositories.audit import AuditRepository
     from ..repositories.patient import PatientRepository
     from ..repositories.session import TherapySessionRepository
@@ -171,6 +173,7 @@ class AuditReviewService:
         internal_actor_user_ids: set[str] | None = None,
         authorized_user_ids: set[str] | None = None,
         review_mode: str = "daily",
+        internal_actor_email_pattern: re.Pattern[str] | None = None,
     ) -> ReviewPayload:
         """Build the full review payload.
 
@@ -178,6 +181,14 @@ class AuditReviewService:
         raise is computed here (per-row flags + per-user aggregates). The
         model's job is to *summarise and prioritise* these signals, not to
         find anomalies in raw rows.
+
+        ``internal_actor_email_pattern`` registers automated identities by
+        the shape of their address instead of by id. A reserved test identity
+        is minted fresh per run, so a fixed id list can never name one: the
+        list stays correct for the standing service accounts and goes stale
+        the moment the identity is ephemeral. The caller supplies the pattern
+        and is responsible for the environment guard, so a real signup can
+        never talk its way into this set.
 
         ``internal_actor_user_ids`` flags traffic from authorized automated
         actors (scheduled internal scans, test/E2E identities). Matching
@@ -204,6 +215,10 @@ class AuditReviewService:
         # the payload.
         unique_user_ids = {e["user_id"] for e in entries}
         unique_patient_ids = {e["patient_id"] for e in entries if e.get("patient_id")}
+
+        internal_actors = internal_actors | self._ids_matching_email(
+            unique_user_ids, internal_actor_email_pattern
+        )
 
         user_surnames = self._user_surnames(unique_user_ids)
         patient_last_names = self._patient_last_names(unique_user_ids, unique_patient_ids)
@@ -545,6 +560,25 @@ class AuditReviewService:
         }
 
     # ---------- repo lookups ----------
+
+    def _ids_matching_email(self, user_ids: set[str], pattern: re.Pattern[str] | None) -> set[str]:
+        """The subset of ``user_ids`` whose address matches ``pattern``.
+
+        Returns empty — reading nothing at all — when no pattern is given,
+        which is how a deployment that registers no address shape (and
+        production, where the caller withholds it) pays nothing for this.
+        The address is compared casefolded because the reserved shapes are
+        written lowercase and an address is not case-sensitive in practice.
+        """
+        if pattern is None:
+            return set()
+        matched: set[str] = set()
+        for uid in user_ids:
+            user = self._users.get(uid)
+            email = getattr(user, "email", None)
+            if email and pattern.match(email.casefold()):
+                matched.add(uid)
+        return matched
 
     def _user_surnames(self, user_ids: set[str]) -> dict[str, str | None]:
         out: dict[str, str | None] = {}
