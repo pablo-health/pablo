@@ -295,6 +295,34 @@ class TestMultiTenantRun:
             hipaa_log_review.run()
         mock_notify.assert_called_once()
 
+    def test_invariant_report_does_not_assert_tampering(self) -> None:
+        """Two causes look alike in the data and must not read alike.
+
+        A registered practice whose flag disagrees with its name is a write
+        that should have been refused. A pentest-named schema with no registry
+        row is DDL left behind by a deleted tenant. Reporting the second as
+        the first sends a reader hunting a superuser UPDATE that never
+        happened, which is the false-assurance failure in reverse.
+        """
+        violations = [
+            "schema=practice_pentest_aaaa matches pentest pattern but is_pentest is not TRUE",
+            "schema=practice_pentest_bbbb matches pentest pattern but has no"
+            " platform.practices row — an orphaned schema, most likely a tenant"
+            " deleted from the registry whose schema was left behind",
+        ]
+        with (
+            patch.object(hipaa_log_review, "_write_report", return_value="gs://b/r.md") as write,
+            patch.object(hipaa_log_review, "_notify_high_finding"),
+        ):
+            hipaa_log_review._notify_invariant_violations(violations, gcs_bucket=None)
+
+        body = write.call_args.args[0]
+        assert "something bypassed" not in body
+        assert "orphaned schema" in body
+        # Still a HIGH, and still says why it matters while it stands.
+        assert "**Severity: HIGH**" in body
+        assert "filters synthetic" in body
+
     def test_one_tenant_failure_does_not_abort_others(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
         """HIPAA § 164.308(a)(1)(ii)(D) says review must run; one broken tenant
         must not skip the rest. Exit code reflects partial failure."""

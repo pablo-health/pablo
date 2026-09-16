@@ -143,14 +143,19 @@ class PracticeRow(PlatformBase):
             "audio_retention_days >= 30 AND audio_retention_days <= 2555",
             name="ck_practices_audio_retention_days_range",
         ),
-        # Added by ``f1c8d4a92b65``, alongside the immutability trigger on
-        # ``is_pentest``. A pentest practice must live in a schema whose name
-        # says so, so that a guard reading the name cannot be fooled by a
-        # flag. ``like_escape`` is how Postgres renders the escaped LIKE this
+        # Added by ``f1c8d4a92b65`` alongside the immutability trigger on
+        # ``is_pentest``; widened to an equivalence by ``d8e4a6b02f19``. A
+        # pentest practice must live in a schema whose name says so, so that a
+        # guard reading the name cannot be fooled by a flag — and a schema so
+        # named must carry the flag, so that the many consumers which exclude
+        # synthetic tenants by FLAG cannot be fooled by a name. Held one way
+        # only, the second case went unnoticed: tenants predating the column
+        # took ``false`` from its default and were reviewed as real practices.
+        # ``like_escape`` is how Postgres renders the escaped LIKE this
         # compares with; spelled the same way here so the stored and declared
         # forms match rather than looking like a drift.
         CheckConstraint(
-            r"is_pentest = false OR schema_name LIKE 'practice\_pentest\_%' ESCAPE '\'",
+            r"is_pentest = (schema_name LIKE 'practice\_pentest\_%' ESCAPE '\')",
             name="practices_pentest_schema_name",
         ),
         # Partial, because both columns are NULL for practically every row: the
