@@ -4,7 +4,8 @@
 
 Each practice is visited once, each of its clinicians in their own unit of
 work, the stages in order; ``--max-tenants`` bounds the run; a clinician
-whose unit of work fails does not stop the next one.
+whose unit of work fails does not stop the next one, and neither does a
+whole practice that fails or cannot be resolved at all.
 """
 
 from __future__ import annotations
@@ -112,6 +113,65 @@ def test_a_single_stage_can_be_run(practices: dict[str, Any]) -> None:
 def test_the_cli_maps_its_flags(practices: dict[str, Any]) -> None:
     assert job.run(["--stage", "status", "--max-tenants", "1", "--max-per-tenant", "3"]) == 0
     assert {schema for schema, _ in practices["visited"]} == {"practice_a"}
+
+
+def test_one_failing_practice_does_not_stop_the_rest(
+    practices: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A practice whose preamble raises must not abandon the practices after it.
+
+    The per-practice preamble — the billing profile read, the remittance
+    timelines — runs outside ``for_each_clinician``'s per-clinician guard. So
+    a schema missing a table raised straight out of the loop body and the
+    fan-out stopped at that practice's position in schema order, leaving
+    every later practice unfiled while the heartbeat still reported.
+    """
+    b: PipelineHarness = practices["harnesses"]["practice_b"]
+    b_claim = b.add(state="validated")
+
+    def account_for(practice: PracticeContext) -> Any:
+        if practice.schema == "practice_a":
+            raise RuntimeError('relation "practice_billing_profiles" does not exist')
+        return ACCOUNT
+
+    monkeypatch.setattr(job, "_account_for", account_for)
+
+    totals = job.run_pipeline()
+
+    assert totals["practices"] == 2
+    assert totals["practice_errors"] == 1
+    # The practice after the failure still filed.
+    assert b.get(b_claim.id).state == "submitted"
+
+
+def test_a_practice_that_cannot_be_resolved_is_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Resolution raises inside the generator, out of reach of the caller's guard.
+
+    ``active_practices`` resolves each practice with a credential lookup and a
+    roster read. Both run while the generator is being advanced, so a raise
+    there cannot be caught by a ``try`` in the consuming loop's body — it
+    would truncate the iteration instead.
+    """
+    monkeypatch.setattr(fanout, "get_engine", object)
+    monkeypatch.setattr(
+        fanout,
+        "list_active_practice_registry",
+        lambda _engine: [("practice_a", "a"), ("practice_b", "b")],
+    )
+
+    def client_for(practice_id: str | None) -> object:
+        if practice_id == "a":
+            raise RuntimeError("credential lookup failed")
+        return object()
+
+    monkeypatch.setattr(fanout, "clearinghouse_client_for_practice", client_for)
+    monkeypatch.setattr(fanout, "practice_user_ids", lambda _practice_id: [USER_ID])
+
+    resolved = list(fanout.active_practices(max_tenants=10))
+
+    assert [practice.schema for practice in resolved] == ["practice_b"]
 
 
 def test_a_later_stage_failing_cannot_undo_an_earlier_stage(
