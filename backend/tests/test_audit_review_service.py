@@ -2,6 +2,7 @@
 
 """Tests for AuditReviewService — composes signals on top of the audit repo."""
 
+import re
 from datetime import UTC, datetime, timedelta
 
 import app.services.audit_review_service as audit_review_service_mod
@@ -568,6 +569,101 @@ class TestInternalActorAnnotation:
         alerts = [a for a in payload.user_aggregates if a["alert"] == "bulk_delete"]
         assert len(alerts) == 1
         assert alerts[0]["is_internal_actor"] is True
+
+
+class TestInternalActorByEmailPattern:
+    """A reserved identity is minted per run, so an id list can never name it.
+
+    Registering by address shape is what makes an ephemeral automated actor
+    recognisable at all; without it every run of a test suite reads as a
+    brand-new account doing machine-paced work against fresh records, which
+    is indistinguishable from the insider-threat shape the review exists to
+    catch.
+    """
+
+    E2E = re.compile(r"^e2etest-[0-9a-f]{8}@pablo\.health$")
+
+    def _viewed(self, audit_repo, user_id: str) -> None:
+        audit_repo.append(
+            AuditLogEntry(
+                user_id=user_id,
+                action=AuditAction.PATIENT_VIEWED.value,
+                resource_type=ResourceType.PATIENT.value,
+                resource_id="p1",
+                patient_id="p1",
+            )
+        )
+
+    def test_matching_address_is_an_internal_actor(self, service, audit_repo, user_repo) -> None:
+        user_repo.update(
+            User(
+                id="runner",
+                email="e2etest-deadbeef@pablo.health",
+                name="Runner",
+                created_at=datetime.now(UTC),
+            )
+        )
+        self._viewed(audit_repo, "runner")
+
+        payload = service.compute_payload(internal_actor_email_pattern=self.E2E)
+
+        assert payload.entries[0]["is_internal_actor"] is True
+
+    def test_a_real_address_is_never_matched(self, service, audit_repo, user_repo) -> None:
+        user_repo.update(
+            User(
+                id="u1",
+                email="therapist@example.com",
+                name="U",
+                created_at=datetime.now(UTC),
+            )
+        )
+        self._viewed(audit_repo, "u1")
+
+        payload = service.compute_payload(internal_actor_email_pattern=self.E2E)
+
+        assert payload.entries[0]["is_internal_actor"] is False
+
+    def test_a_lookalike_address_is_never_matched(self, service, audit_repo, user_repo) -> None:
+        """The pattern is anchored and names a domain the deployment owns.
+
+        An address that merely starts the same, or wears the prefix on some
+        other domain, must not inherit the exemption — that is the whole
+        reason this is a pinned pattern and not a substring test.
+        """
+        for index, address in enumerate(
+            (
+                "e2etest-deadbeef@attacker.example",
+                "not-e2etest-deadbeef@pablo.health",
+                "e2etest-deadbeef@pablo.health.attacker.example",
+                "e2etest-zzzzzzzz@pablo.health",
+            )
+        ):
+            user_id = f"look{index}"
+            user_repo.update(
+                User(id=user_id, email=address, name="L", created_at=datetime.now(UTC))
+            )
+            self._viewed(audit_repo, user_id)
+
+        payload = service.compute_payload(internal_actor_email_pattern=self.E2E)
+
+        assert [entry["is_internal_actor"] for entry in payload.entries] == [False] * 4
+
+    def test_withholding_the_pattern_registers_nobody(self, service, audit_repo, user_repo) -> None:
+        """Production withholds the pattern, so the same address is ordinary."""
+        user_repo.update(
+            User(
+                id="runner",
+                email="e2etest-deadbeef@pablo.health",
+                name="Runner",
+                created_at=datetime.now(UTC),
+            )
+        )
+        self._viewed(audit_repo, "runner")
+
+        payload = service.compute_payload(internal_actor_email_pattern=None)
+
+        assert payload.entries[0]["is_internal_actor"] is False
 
 
 # A wide window so fixed-date rows below are always in-range; baseline stays
