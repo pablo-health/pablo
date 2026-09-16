@@ -24,7 +24,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import String, Uuid, bindparam, delete, func, or_, select, text
+from sqlalchemy import Select, String, Uuid, bindparam, delete, func, or_, select, text
+from sqlalchemy.sql.elements import ColumnElement
 
 from ...db.models import ChatConversationRow, ChatMessageRow, PatientClinicianRow
 from ...models import ChatConversation, ChatMessage
@@ -58,6 +59,38 @@ def _grant_filters(user_id: str) -> tuple:
             PatientClinicianRow.expires_at.is_(None),
             PatientClinicianRow.expires_at > utc_now(),
         ),
+    )
+
+
+def _clinician_owned() -> ColumnElement[bool]:
+    """Predicate excluding patient-initiated conversations from clinician reads.
+
+    Both kinds of conversation live in this table and carry the same
+    ``patient_id``, so every clinician query that filters on the patient
+    would otherwise return the patient's own between-visit chats too.
+    Whether the care team should see those — and in what form, summarised
+    or verbatim, with what consent — is a decision the report-back work
+    owns. Until it makes that decision, this surface does not quietly
+    start disclosing them.
+
+    A no-op against existing data: every row predating the nullable
+    ``owner_user_id`` has an owner.
+    """
+    return ChatConversationRow.owner_user_id.is_not(None)
+
+
+def _patient_owned(patient_id: str) -> tuple[ColumnElement[bool], ColumnElement[bool]]:
+    """Predicates for "this conversation is one the calling patient started".
+
+    Both halves are required. ``patient_id`` alone also matches the
+    clinician's conversations *about* this patient, which are not the
+    patient's to read; ``owner_user_id IS NULL`` alone would match every
+    other patient's. The RLS policy tests the same pair independently —
+    see ``_patient_principal_predicate_for`` in ``app.db``.
+    """
+    return (
+        ChatConversationRow.patient_id == patient_id,
+        ChatConversationRow.owner_user_id.is_(None),
     )
 
 
@@ -154,6 +187,7 @@ class PostgresChatRepository(ChatRepository):
             )
             .where(
                 ChatConversationRow.id == conversation_id,
+                _clinician_owned(),
                 *_grant_filters(user_id),
             )
         ).scalar_one_or_none()
@@ -176,7 +210,7 @@ class PostgresChatRepository(ChatRepository):
         if not self._has_access(patient_id, user_id):
             return [], 0
 
-        conditions = [ChatConversationRow.patient_id == patient_id]
+        conditions = [ChatConversationRow.patient_id == patient_id, _clinician_owned()]
         if caller_feature_key is not None:
             conditions.append(ChatConversationRow.caller_feature_key == caller_feature_key)
         if not include_archived:
@@ -222,6 +256,7 @@ class PostgresChatRepository(ChatRepository):
             )
             .where(
                 ChatMessageRow.conversation_id == conversation_id,
+                _clinician_owned(),
                 *_grant_filters(user_id),
             )
             .order_by(ChatMessageRow.sequence.asc())
@@ -254,6 +289,7 @@ class PostgresChatRepository(ChatRepository):
             )
             .where(
                 ChatMessageRow.conversation_id == conversation_id,
+                _clinician_owned(),
                 *_grant_filters(user_id),
             )
         )
@@ -293,7 +329,11 @@ class PostgresChatRepository(ChatRepository):
         return conversation
 
     def update_conversation(self, conversation: ChatConversation, user_id: str) -> ChatConversation:
-        if not self._has_access(conversation.patient_id, user_id):
+        if conversation.owner_user_id is None or not self._has_access(
+            conversation.patient_id, user_id
+        ):
+            # An owner-less conversation is the patient's; the clinician
+            # verbs do not reach it. See ``_clinician_owned``.
             raise PatientAccessDeniedError(conversation.patient_id, user_id)
         row = self._session.get(ChatConversationRow, conversation.id)
         if row is None:
@@ -301,7 +341,7 @@ class PostgresChatRepository(ChatRepository):
             # upsert-style fallback to match the pre-#170 contract.
             row = ChatConversationRow()
             self._session.add(row)
-        elif not self._has_access(row.patient_id, user_id):
+        elif row.owner_user_id is None or not self._has_access(row.patient_id, user_id):
             # Defense-in-depth: if the on-disk patient_id differs from
             # the in-memory conversation (e.g. caller forged it), check
             # the DB-side value too. Either grant denies the write.
@@ -309,6 +349,163 @@ class PostgresChatRepository(ChatRepository):
         _conversation_to_row(conversation, row)
         self._session.flush()
         return conversation
+
+    # --- patient-principal path ---
+    #
+    # No ``patient_clinicians`` join anywhere in this block: a patient has
+    # no row in that table, and reaching for the clinician verbs here would
+    # return empty results rather than fail, which is the shape of bug that
+    # reads as "the feature is broken" for weeks before anyone calls it a
+    # security question. ``patient_id`` always comes from the resolved
+    # principal. RLS tests the same ownership pair underneath.
+
+    def get_patient_conversation(
+        self, conversation_id: str, patient_id: str
+    ) -> ChatConversation | None:
+        row = self._session.execute(
+            select(ChatConversationRow).where(
+                ChatConversationRow.id == conversation_id,
+                *_patient_owned(patient_id),
+            )
+        ).scalar_one_or_none()
+        return _row_to_conversation(row) if row is not None else None
+
+    def list_patient_conversations(
+        self,
+        *,
+        patient_id: str,
+        include_archived: bool = False,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> tuple[list[ChatConversation], int]:
+        conditions = list(_patient_owned(patient_id))
+        if not include_archived:
+            conditions.append(ChatConversationRow.archived_at.is_(None))
+
+        total = (
+            self._session.scalar(
+                select(func.count()).select_from(ChatConversationRow).where(*conditions)
+            )
+            or 0
+        )
+        rows = (
+            self._session.execute(
+                select(ChatConversationRow)
+                .where(*conditions)
+                .order_by(
+                    ChatConversationRow.last_turn_at.desc().nullslast(),
+                    ChatConversationRow.created_at.desc(),
+                )
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+            .scalars()
+            .all()
+        )
+        return [_row_to_conversation(r) for r in rows], total
+
+    def _patient_message_query(
+        self, conversation_id: str, patient_id: str
+    ) -> Select[tuple[ChatMessageRow]]:
+        return (
+            select(ChatMessageRow)
+            .join(
+                ChatConversationRow,
+                ChatConversationRow.id == ChatMessageRow.conversation_id,
+            )
+            .where(
+                ChatMessageRow.conversation_id == conversation_id,
+                *_patient_owned(patient_id),
+            )
+        )
+
+    def list_patient_messages(self, conversation_id: str, patient_id: str) -> list[ChatMessage]:
+        rows = (
+            self._session.execute(
+                self._patient_message_query(conversation_id, patient_id).order_by(
+                    ChatMessageRow.sequence.asc()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [_row_to_message(r) for r in rows]
+
+    def list_patient_messages_windowed(
+        self, conversation_id: str, patient_id: str, *, head: int = 2, tail: int = 30
+    ) -> list[ChatMessage]:
+        if head < 0 or tail < 0:
+            raise ValueError("head and tail must be non-negative")
+        base = self._patient_message_query(conversation_id, patient_id)
+
+        head_rows: list[ChatMessageRow] = []
+        if head:
+            head_rows = list(
+                self._session.execute(base.order_by(ChatMessageRow.sequence.asc()).limit(head))
+                .scalars()
+                .all()
+            )
+        tail_rows: list[ChatMessageRow] = []
+        if tail:
+            tail_rows = list(
+                self._session.execute(base.order_by(ChatMessageRow.sequence.desc()).limit(tail))
+                .scalars()
+                .all()
+            )
+        by_seq: dict[int, ChatMessageRow] = {}
+        for row in (*head_rows, *tail_rows):
+            by_seq[row.sequence] = row
+        return [_row_to_message(by_seq[seq]) for seq in sorted(by_seq)]
+
+    def add_patient_conversation(
+        self, conversation: ChatConversation, patient_id: str
+    ) -> ChatConversation:
+        if conversation.patient_id != patient_id or conversation.owner_user_id is not None:
+            raise PatientAccessDeniedError(conversation.patient_id, patient_id)
+        row = ChatConversationRow()
+        _conversation_to_row(conversation, row)
+        self._session.add(row)
+        self._session.flush()
+        return conversation
+
+    def update_patient_conversation(
+        self, conversation: ChatConversation, patient_id: str
+    ) -> ChatConversation:
+        if conversation.patient_id != patient_id or conversation.owner_user_id is not None:
+            raise PatientAccessDeniedError(conversation.patient_id, patient_id)
+        row = self._session.get(ChatConversationRow, conversation.id)
+        if row is None:
+            raise PatientAccessDeniedError(conversation.patient_id, patient_id)
+        # Test the on-disk row too: the in-memory object could have been
+        # handed to us with a patient_id the caller chose.
+        if row.patient_id != patient_id or row.owner_user_id is not None:
+            raise PatientAccessDeniedError(row.patient_id, patient_id)
+        _conversation_to_row(conversation, row)
+        self._session.flush()
+        return conversation
+
+    def delete_patient_conversation(self, conversation_id: str, patient_id: str) -> int:
+        row = self._session.get(ChatConversationRow, conversation_id)
+        if row is None or row.patient_id != patient_id or row.owner_user_id is not None:
+            return 0
+        count = (
+            self._session.scalar(
+                select(func.count())
+                .select_from(ChatMessageRow)
+                .where(ChatMessageRow.conversation_id == conversation_id)
+            )
+            or 0
+        )
+        # The FK cascades, but delete explicitly for the same reason the
+        # clinician path does — test doubles and non-enforcing backends.
+        self._session.execute(
+            delete(ChatMessageRow).where(ChatMessageRow.conversation_id == conversation_id)
+        )
+        self._session.execute(
+            delete(ChatConversationRow).where(ChatConversationRow.id == conversation_id)
+        )
+        self._session.flush()
+        return count
 
     def next_sequence(self, conversation_id: str) -> int:
         # Lock the parent conversation row so concurrent message inserts
@@ -357,7 +554,9 @@ class PostgresChatRepository(ChatRepository):
         # NotesRepository.delete: missing row OR no grant → return 0
         # (treat as "nothing to do") without telling the caller which.
         row = self._session.get(ChatConversationRow, conversation_id)
-        if row is None or not self._has_access(row.patient_id, user_id):
+        if row is None or row.owner_user_id is None:
+            return 0
+        if not self._has_access(row.patient_id, user_id):
             return 0
         # Count messages before delete so the caller can surface it
         # (e.g. in the audit log payload).

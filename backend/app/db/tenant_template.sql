@@ -186,7 +186,7 @@ CREATE TABLE __TENANT_SCHEMA__.availability_rules (
 CREATE TABLE __TENANT_SCHEMA__.chat_conversations (
     id uuid NOT NULL,
     patient_id uuid NOT NULL,
-    owner_user_id uuid NOT NULL,
+    owner_user_id uuid,
     title character varying(200) NOT NULL,
     caller_system_prompt text NOT NULL,
     caller_feature_key character varying(64) NOT NULL,

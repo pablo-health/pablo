@@ -1113,7 +1113,14 @@ class ChatConversationRow(Base):
 
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
-    owner_user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
+    # NULL means the patient started this conversation themselves — there is
+    # no clinician actor to record. Not a sentinel id, deliberately: a
+    # sentinel reads as a real clinician to every query that does not know
+    # better, whereas NULL forces the "no owner" case to be handled on
+    # purpose. It is also half the patient row test, since "conversations
+    # about me" and "conversations I started" are otherwise the same set —
+    # see ``_patient_principal_predicate_for`` in ``app.db``.
+    owner_user_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False), index=True)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     caller_system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     caller_feature_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)

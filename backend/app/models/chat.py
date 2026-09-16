@@ -27,11 +27,17 @@ class ChatConversation:
     insert — a clinician who wants a different system prompt creates a
     new conversation. This preserves the audit guarantee that every
     turn in a conversation was generated under one declared prompt.
+
+    ``owner_user_id`` is ``None`` when the patient started the
+    conversation themselves; there is no clinician actor to name. It is
+    not an access proxy on either surface, but it *is* what separates
+    the two: a clinician's chats about a patient and a patient's own
+    chats both carry that patient's ``patient_id``.
     """
 
     id: str
     patient_id: str
-    owner_user_id: str
+    owner_user_id: str | None
     title: str
     caller_system_prompt: str
     caller_feature_key: str
