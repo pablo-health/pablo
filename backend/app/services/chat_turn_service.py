@@ -100,6 +100,42 @@ class TurnContext:
     user_message: str
     source_selection: dict[str, object] | None
     model: str
+    patient_principal: bool = False
+    """True when the patient themselves is the actor, not a clinician.
+
+    Changes which repository verbs the history read uses, and nothing
+    else. It has to be stated rather than inferred from
+    ``requesting_user_id`` holding a patient id, because the failure mode
+    of guessing wrong is silent: the clinician verbs join through
+    ``patient_clinicians``, a patient matches no row there, so a patient
+    turn taking the clinician path gets an empty history on every turn
+    and the assistant answers each message as though it were the first.
+    No error, no log — just an assistant with no memory.
+
+    Deliberately separate from :attr:`ground_in_chart`. The two happen to
+    coincide on today's patient surface, but they are different
+    questions: one is "who is asking", the other is "may the chart be
+    read for this turn", and a clinician asking something general is a
+    perfectly good reason to answer no to the second while the first
+    stays clinician.
+    """
+
+    ground_in_chart: bool = True
+    """Whether this turn may read the patient's chart at all.
+
+    A flag rather than an empty ``source_selection``, because an empty
+    selection does not mean what it looks like it means: ``{}`` is falsy,
+    so it falls through to :func:`default_source_selection`, which pulls
+    medications, the most recent intake, three progress notes, the
+    treatment plan, the safety plan, labs and vitals. A caller trying to
+    say "no chart" by passing an empty dict gets the *entire* default
+    bundle — and on a patient-facing surface that is clinician-authored
+    material flowing back to the patient it was written about.
+
+    So "no grounding" is stated positively and checked before the
+    selection is consulted. Set ``False`` on any surface where the reader
+    is not the chart's author.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -292,46 +328,55 @@ class ChatTurnService:
         # Assemble context. Pasted-text overflow is the only structural
         # failure the bundler raises; everything else is silently
         # truncated and reported in the manifest.
-        selection = context.source_selection or default_source_selection()
-        try:
-            # Content-free retrieval span: records which chart documents fed
-            # this turn (ids + token estimates only — never their text), as a
-            # RETRIEVER span sitting beside the gateway's LLM span.
-            with retrieval_span(operation="chat_context") as retrieval_rec:
-                bundle: ContextBundle = assemble_context_bundle(
-                    notes_repo=self._notes_repo,
-                    patient_documents_repo=self._patient_documents_repo,
-                    medication_repo=self._medication_repo,
-                    patient_id=context.patient_id,
-                    user_id=context.requesting_user_id,
-                    selection=selection,
-                    # Relevance-order patient documents against the turn's
-                    # question so the most relevant docs survive truncation.
-                    query=user_text,
+        if context.ground_in_chart:
+            selection = context.source_selection or default_source_selection()
+            try:
+                # Content-free retrieval span: records which chart documents fed
+                # this turn (ids + token estimates only — never their text), as a
+                # RETRIEVER span sitting beside the gateway's LLM span.
+                with retrieval_span(operation="chat_context") as retrieval_rec:
+                    bundle = assemble_context_bundle(
+                        notes_repo=self._notes_repo,
+                        patient_documents_repo=self._patient_documents_repo,
+                        medication_repo=self._medication_repo,
+                        patient_id=context.patient_id,
+                        user_id=context.requesting_user_id,
+                        selection=selection,
+                        # Relevance-order patient documents against the turn's
+                        # question so the most relevant docs survive truncation.
+                        query=user_text,
+                    )
+                    retrieval_rec.set_documents(
+                        [
+                            RetrievedDocumentRef(
+                                document_id=doc.document_id,
+                                source=doc.source_key,
+                                tokens_est=doc.tokens_est,
+                            )
+                            for doc in bundle.documents
+                        ]
+                    )
+                    retrieval_rec.set_context_tokens(bundle.total_tokens_est)
+            except ContextOverflowError as exc:
+                yield _error_event(
+                    code="context_too_large",
+                    message=str(exc),
                 )
-                retrieval_rec.set_documents(
-                    [
-                        RetrievedDocumentRef(
-                            document_id=doc.document_id,
-                            source=doc.source_key,
-                            tokens_est=doc.tokens_est,
-                        )
-                        for doc in bundle.documents
-                    ]
+                return
+            except InvalidSelectionError as exc:
+                yield _error_event(
+                    code="invalid_selection",
+                    message=str(exc),
                 )
-                retrieval_rec.set_context_tokens(bundle.total_tokens_est)
-        except ContextOverflowError as exc:
-            yield _error_event(
-                code="context_too_large",
-                message=str(exc),
-            )
-            return
-        except InvalidSelectionError as exc:
-            yield _error_event(
-                code="invalid_selection",
-                message=str(exc),
-            )
-            return
+                return
+        else:
+            # Short-circuit ahead of the bundler rather than handing it an
+            # empty selection — see TurnContext.ground_in_chart for why an
+            # empty selection is the opposite of what it reads as. No chart
+            # source is opened at all, so none of its content can reach the
+            # prompt, and the manifest records that the turn was ungrounded
+            # rather than that every source happened to come back empty.
+            bundle = ContextBundle(text="", manifest={"grounded": False}, total_tokens_est=0)
 
         # Persist the user message. The sequence call locks the parent
         # row in Postgres (design doc §14), so the assistant row's
@@ -373,6 +418,7 @@ class ChatTurnService:
             context.conversation_id,
             user_id=context.requesting_user_id,
             exclude_message_ids={user_message.id, assistant_message.id},
+            patient_principal=context.patient_principal,
         )
         input_tokens_estimate = _estimate_input_tokens(
             system_prompt=system_prompt,
@@ -672,14 +718,26 @@ class ChatTurnService:
         *,
         user_id: str,
         exclude_message_ids: set[str],
+        patient_principal: bool = False,
     ) -> list[UserAssistantTurn]:
         # Windowed read: the opening turn + the most-recent turns, not the
         # whole conversation. The two just-created rows for this turn (the
         # user message and the empty assistant placeholder) sit at the tail
         # and are filtered out via ``exclude_message_ids``.
-        messages = self._chat_repo.list_messages_windowed(
-            conversation_id, user_id, head=PRIOR_TURNS_HEAD, tail=PRIOR_TURNS_TAIL
-        )
+        #
+        # The two branches differ only in which ownership test the read
+        # applies — grant-based for a clinician, own-conversation for a
+        # patient. Calling the wrong one returns [] rather than raising,
+        # which is why the caller states the principal instead of the
+        # repository inferring it.
+        if patient_principal:
+            messages = self._chat_repo.list_patient_messages_windowed(
+                conversation_id, user_id, head=PRIOR_TURNS_HEAD, tail=PRIOR_TURNS_TAIL
+            )
+        else:
+            messages = self._chat_repo.list_messages_windowed(
+                conversation_id, user_id, head=PRIOR_TURNS_HEAD, tail=PRIOR_TURNS_TAIL
+            )
         # When the window stitched a head slice to a tail slice across a
         # gap, mark the head-side sequence so we can splice in an elision
         # marker once — telling the model history was dropped.

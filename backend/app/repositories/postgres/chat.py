@@ -25,7 +25,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Select, String, Uuid, bindparam, delete, func, or_, select, text
-from sqlalchemy.sql.elements import ColumnElement
 
 from ...db.models import ChatConversationRow, ChatMessageRow, PatientClinicianRow
 from ...models import ChatConversation, ChatMessage
@@ -37,6 +36,7 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from sqlalchemy.orm import Session
+    from sqlalchemy.sql.elements import ColumnElement
 
 
 _HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindparams(
