@@ -258,7 +258,24 @@ def _adjudicated_claim(  # noqa: PLR0913 — keyword-only claim fields, not a ca
 
 
 class TestProvisioning:
-    def test_a_fresh_tenant_carries_the_table(self, engine: Engine, tenant_schema: str) -> None:
+    """Where a fee schedule lives, and what guards it there."""
+
+    def test_it_is_in_the_platform_schema(self, engine: Engine) -> None:
+        with engine.connect() as conn:
+            present = set(
+                conn.execute(
+                    text(
+                        "SELECT table_name FROM information_schema.tables "
+                        "WHERE table_schema = 'platform' AND table_name = 'contracted_rates'"
+                    )
+                ).scalars()
+            )
+        assert present == {"contracted_rates"}, (
+            "missing from the platform schema — re-run "
+            "backend/scripts/regen_platform_schema.py and commit the result"
+        )
+
+    def test_a_fresh_tenant_carries_no_copy_of_it(self, engine: Engine, tenant_schema: str) -> None:
         with engine.connect() as conn:
             present = set(
                 conn.execute(
@@ -269,48 +286,44 @@ class TestProvisioning:
                     {"s": tenant_schema},
                 ).scalars()
             )
-        assert present == {"contracted_rates"}, (
-            "missing from a freshly-provisioned tenant — re-run "
+        assert present == set(), (
+            "still provisioned per-tenant — re-run "
             "backend/scripts/regen_tenant_template.py and commit the result"
         )
 
-    def test_it_is_force_rls_with_a_policy(self, engine: Engine, tenant_schema: str) -> None:
+    def test_it_is_force_rls_with_a_policy(self, engine: Engine) -> None:
+        """Worth more here than it was per-tenant.
+
+        A rate is what one payer agreed to pay one clinician, and inside a
+        practice schema two clinicians were already separated by the schema
+        whatever the policy said. In platform the policy is the only thing
+        between them — and FORCE is what makes it apply to the owner the app
+        connects as.
+        """
         with engine.connect() as conn:
             posture = conn.execute(
                 text(
                     "SELECT c.relrowsecurity, c.relforcerowsecurity "
                     "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
-                    "WHERE n.nspname = :s AND c.relname = 'contracted_rates'"
-                ),
-                {"s": tenant_schema},
+                    "WHERE n.nspname = 'platform' AND c.relname = 'contracted_rates'"
+                )
             ).one()
             policies = set(
                 conn.execute(
                     text(
                         "SELECT policyname FROM pg_policies "
-                        "WHERE schemaname = :s AND tablename = 'contracted_rates'"
-                    ),
-                    {"s": tenant_schema},
+                        "WHERE schemaname = 'platform' AND tablename = 'contracted_rates'"
+                    )
                 ).scalars()
             )
         assert posture == (True, True)
         assert policies, "force-RLS'd with no policy is a silent deny-all"
 
-    def test_it_is_not_in_the_platform_schema(self, engine: Engine) -> None:
-        with engine.connect() as conn:
-            leaked = conn.execute(
-                text(
-                    "SELECT table_name FROM information_schema.tables "
-                    "WHERE table_schema = 'platform' AND table_name = 'contracted_rates'"
-                )
-            ).scalars()
-        assert list(leaked) == []
-
 
 class TestClinicianIsolation:
     def test_b_cannot_read_as_rates(self, engine: Engine, tenant_schema: str) -> None:
         from app.credentialing import rates  # noqa: PLC0415
-        from app.db.models import ContractedRateRow  # noqa: PLC0415
+        from app.db.platform_models import ContractedRateRow  # noqa: PLC0415
 
         scoped_a = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
         try:
@@ -343,7 +356,7 @@ class TestTheSchemaRefusesAnAmbiguousRow:
     def test_a_fixed_rate_carrying_a_percent_is_refused(
         self, engine: Engine, tenant_schema: str
     ) -> None:
-        from app.db.models import ContractedRateRow  # noqa: PLC0415
+        from app.db.platform_models import ContractedRateRow  # noqa: PLC0415
         from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
 
         now = datetime.now(UTC)

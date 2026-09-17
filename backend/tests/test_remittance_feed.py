@@ -56,8 +56,13 @@ class _FakeClearinghouse:
     ) -> TransactionPage:
         index = 0 if page_token is None else int(page_token)
         self.list_calls += 1
-        body = dict(self._pages[index])
-        body["nextPageToken"] = str(index + 1) if index + 1 < len(self._pages) else None
+        # The vendor's feed never closes. Every page carries a token — past
+        # the last transaction the page is empty and the token is the same
+        # cursor again, for polling later. A fake that hands back ``None``
+        # at the end describes a feed that does not exist, and a reader that
+        # passes against it can still walk the page cap against the real one.
+        body = dict(self._pages[index]) if index < len(self._pages) else {"items": []}
+        body["nextPageToken"] = str(min(index + 1, len(self._pages)))
         return TransactionPage.model_validate(body)
 
     def get_remittance_report(self, transaction_id: str) -> dict[str, Any]:
@@ -115,7 +120,9 @@ class TestHowOftenItAsks:
             details.detail_for(_control_number())
             details.detail_for("NOSUCHCLAIM")
 
-        assert client.list_calls == 1
+        # One scan: the page that has the remittance, and the empty page
+        # after it that says the feed has nothing more. Never a third.
+        assert client.list_calls == 2
         assert len(client.report_calls) == 1
 
     def test_a_pass_that_adjudicates_nothing_reads_nothing(self) -> None:
@@ -133,7 +140,20 @@ class TestHowOftenItAsks:
 
         details.detail_for(_control_number())
 
+        # Two pages of transactions, then the empty page that says so.
+        assert client.list_calls == 3
+
+    def test_an_empty_page_is_the_end_however_many_tokens_the_feed_offers(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        client = _FakeClearinghouse([_feed_page()])
+        details = FeedRemittanceDetails(client, max_pages=20)  # type: ignore[arg-type]
+
+        with caplog.at_level("WARNING"):
+            details.detail_for(_control_number())
+
         assert client.list_calls == 2
+        assert "remittance_feed_pages_exhausted" not in caplog.text
 
     def test_it_stops_rather_than_walking_a_whole_history(self) -> None:
         client = _FakeClearinghouse([_feed_page()] * 10)

@@ -104,7 +104,7 @@ class _TenantSession:
 
 
 def _signature(user_id: str, **overrides: Any) -> Any:
-    from app.db.models import PayerAuthorizationRow  # noqa: PLC0415
+    from app.db.platform_models import PayerAuthorizationRow  # noqa: PLC0415
 
     now = datetime.now(UTC)
     fields: dict[str, Any] = {
@@ -122,8 +122,27 @@ def _signature(user_id: str, **overrides: Any) -> Any:
     return PayerAuthorizationRow(**fields)
 
 
-def test_a_fresh_tenant_carries_the_table(engine: Engine, tenant_schema: str) -> None:
-    """Provisioning applies the TEMPLATE, not the chain — so it has to be regenerated."""
+def test_the_table_is_in_the_platform_schema(engine: Engine) -> None:
+    """Her authority for Pablo to act for her follows her, not her practice.
+
+    The signature authorises us to act under HER npi on HER applications. An
+    authority that stopped at a practice boundary would mean re-signing on
+    joining a second practice to grant a permission she had already granted,
+    and would leave "what authority did we hold in March" unanswerable without
+    first knowing which practice to ask.
+    """
+    with engine.connect() as conn:
+        exists = conn.execute(
+            text(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_schema = 'platform' AND table_name = 'payer_authorizations'"
+            )
+        ).scalar()
+    assert exists == 1
+
+
+def test_a_fresh_tenant_carries_no_copy_of_it(engine: Engine, tenant_schema: str) -> None:
+    """Provisioning applies the TEMPLATE, so the template had to be regenerated."""
     with engine.connect() as conn:
         exists = conn.execute(
             text(
@@ -132,12 +151,12 @@ def test_a_fresh_tenant_carries_the_table(engine: Engine, tenant_schema: str) ->
             ),
             {"schema": tenant_schema},
         ).scalar()
-    assert exists == 1
+    assert exists is None, "two homes for one signature is the state worth avoiding"
 
 
 def test_one_clinician_cannot_read_anothers_signature(engine: Engine, tenant_schema: str) -> None:
     """What authority Pablo holds over a named person is not a colleague's business."""
-    from app.db.models import PayerAuthorizationRow  # noqa: PLC0415
+    from app.db.platform_models import PayerAuthorizationRow  # noqa: PLC0415
 
     scoped = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
     try:

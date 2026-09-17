@@ -43,6 +43,7 @@ from app.db import arm_current_user_id, set_tenant_schema
 from app.db.models import CLAIM_REMINDER_KINDS, ClaimReminderRow, ComplianceItemRow
 from app.db.provisioning import create_practice_schema
 from sqlalchemy import Engine, create_engine, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 if TYPE_CHECKING:
@@ -465,8 +466,7 @@ def test_enrollment_reminder_is_a_compliance_item_and_keeps_the_instructions(
     patient. ``app.claims.enrollment`` emits it with a ``claim_id`` of
     ``f"{payer_id}:{transaction_type}"`` — a string that has never named a
     claim — so there is no foreign key to hang it on. It stays where the
-    practice's own obligations live, and keeps the control-number marker in
-    its notes because a vendor request id is all it has to find itself by.
+    practice's own obligations live, and finds itself again by ``source_ref``.
     """
     register_claim_event_listener(compliance_reminder_listener)
 
@@ -479,8 +479,115 @@ def test_enrollment_reminder_is_a_compliance_item_and_keeps_the_instructions(
         [item] = list(session.execute(select(ComplianceItemRow)).scalars().all())
     assert item.item_type == "claim_enrollment_action_required"
     assert item.label == "Claim PCN20260 enrollment action needed for Aetna"
-    assert item.notes is not None
-    assert item.notes.endswith("Sign and return the EFT authorization form.")
+    assert item.source_ref == _CONTROL_NUMBER
+    # The vendor request id is in its own column now, so notes carry only what
+    # the payer said — no marker line above it.
+    assert item.notes == "Sign and return the EFT authorization form."
+
+
+@pytest.mark.usefixtures("listeners")
+def test_editing_the_notes_does_not_cause_a_second_enrollment_reminder(
+    engine: Engine,
+) -> None:
+    """The bug this column exists to close.
+
+    The reminder used to be found by ``notes`` starting with the request id,
+    and the compliance update route replaces ``notes`` wholesale. So a
+    clinician writing herself a note where the marker had been severed the only
+    link the row had, and the next refresh filed another one — and another on
+    every refresh after that.
+    """
+    register_claim_event_listener(compliance_reminder_listener)
+
+    with _session(engine) as session:
+        emit(session, _event("enrollment_action_required"))
+        session.commit()
+
+    # She opens the reminder and replaces the note with her own words, exactly
+    # as the compliance update route does.
+    with _session(engine) as session:
+        [item] = list(session.execute(select(ComplianceItemRow)).scalars().all())
+        item.notes = "Called Aetna, form is in the post."
+        session.commit()
+
+    # The payer still wants the form, so the refresh emits it again.
+    with _session(engine) as session:
+        emit(session, _event("enrollment_action_required"))
+        session.commit()
+
+    with _session(engine) as session:
+        items = list(session.execute(select(ComplianceItemRow)).scalars().all())
+    assert len(items) == 1
+    assert items[0].notes == "Called Aetna, form is in the post."
+
+
+@pytest.mark.usefixtures("listeners")
+def test_a_second_enrollment_reminder_for_the_same_request_is_refused_by_the_database(
+    engine: Engine,
+) -> None:
+    """Not merely unlikely — impossible.
+
+    The listener checks before it writes, which is what stops the duplicate in
+    practice. This is the backstop under it: were a second writer to slip past
+    that check, the partial unique index refuses the row rather than letting
+    the dashboard grow a second copy.
+    """
+    register_claim_event_listener(compliance_reminder_listener)
+
+    with _session(engine) as session:
+        emit(session, _event("enrollment_action_required"))
+        session.commit()
+
+    now = datetime(2026, 9, 6, 16, 0, tzinfo=UTC)
+    with _session(engine) as session:
+        session.add(
+            ComplianceItemRow(
+                id=str(uuid.uuid4()),
+                user_id=_USER_ID,
+                item_type="claim_enrollment_action_required",
+                label="A second copy of the same request",
+                source_ref=_CONTROL_NUMBER,
+                due_date=None,
+                notes=None,
+                completed_at=None,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        with pytest.raises(IntegrityError):
+            session.commit()
+
+
+@pytest.mark.usefixtures("listeners")
+def test_items_a_person_entered_do_not_collide_with_each_other(engine: Engine) -> None:
+    """The index is partial, and this is why.
+
+    A clinician has one licence row, and may well have several of something
+    else. None of them is raised by anything, so none has a ``source_ref``, and
+    NULLs must not be made to conflict.
+    """
+    now = datetime(2026, 9, 6, 16, 0, tzinfo=UTC)
+    with _session(engine) as session:
+        for label in ("BAA — Twilio", "BAA — Google"):
+            session.add(
+                ComplianceItemRow(
+                    id=str(uuid.uuid4()),
+                    user_id=_USER_ID,
+                    item_type="baa",
+                    label=label,
+                    source_ref=None,
+                    due_date=None,
+                    notes=None,
+                    completed_at=None,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        session.commit()
+
+    with _session(engine) as session:
+        items = list(session.execute(select(ComplianceItemRow)).scalars().all())
+    assert len(items) == 2
 
 
 # --- finding a reminder --------------------------------------------------------

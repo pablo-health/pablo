@@ -43,7 +43,7 @@ from app.auth.route_access import subscription_exempt
 from app.auth.service import get_current_user, get_tenant_context
 from app.credentialing import authorization
 from app.db import arm_current_user_id, get_db_session, set_tenant_schema
-from app.db.models import PayerAuthorizationRow
+from app.db.platform_models import PayerAuthorizationRow
 from app.db.provisioning import create_practice_schema
 from app.models import User
 from app.routes import credentialing as credentialing_routes
@@ -145,9 +145,12 @@ def harness(engine: Engine, documents: Path) -> Iterator[dict[str, Any]]:
             "audit": audit_repo,
         }
     finally:
-        # The schema outlives each test, so each one clears up after itself.
+        # The table outlives each test, and now outlives this module too: it
+        # is in platform rather than in this module's own schema. The session
+        # is armed as this harness's clinician, so the row policy scopes the
+        # delete to her rows and leaves every other module's alone.
         session.rollback()
-        session.execute(text(f"DELETE FROM {_SCHEMA}.payer_authorizations"))  # noqa: S608 — schema name, not user input
+        session.execute(text("DELETE FROM platform.payer_authorizations"))
         session.commit()
         session.close()
 

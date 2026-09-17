@@ -366,17 +366,42 @@ def test_no_drift_between_the_chain_and_the_models(empty_db: str) -> None:
 #: object each one brings — its indexes, CHECK constraints, row policies and RLS
 #: switches — is equally absent from legacy, and enumerating them would be a
 #: second copy of the migration that goes stale the first time a column moves.
-_CREDENTIAL_RECORD_PREFIX = "credential_"
+#: Tables the chain creates in ``platform`` that the legacy bootstrap — a
+#: snapshot taken before either move — could not know about. Listed rather than
+#: matched by prefix: ``credential_`` used to cover all of them, and would have
+#: gone on silently absorbing any future table named that way, while these four
+#: share no prefix at all. Editing this set is how the move gets acknowledged.
+_MOVED_TO_PLATFORM = frozenset(
+    {
+        # b6e2f8a41c37 — the clinician's credential record.
+        "credential_government_ids",
+        "credential_licenses",
+        "credential_liability_policies",
+        "credential_education",
+        "credential_training",
+        "credential_employment",
+        "credential_references",
+        "credential_disclosures",
+        "credential_confirmations",
+        "credential_service_locations",
+        "credential_bank_accounts",
+        # a7c4e9b21f58 — her payer relationships.
+        "payer_authorizations",
+        "payer_participations",
+        "payer_participation_events",
+        "contracted_rates",
+    }
+)
 
 
 def _is_credential_record(item: object) -> bool:
-    """Does this schema object belong to the credential record?
+    """Does this schema object belong to a table that moved to platform?
 
     ``item`` is whatever a reader yields — a bare name, or a tuple whose first
     element is the table. Both shapes appear in ``_READERS``.
     """
     first = item[0] if isinstance(item, tuple) else item
-    return isinstance(first, str) and first.startswith(_CREDENTIAL_RECORD_PREFIX)
+    return isinstance(first, str) and first in _MOVED_TO_PLATFORM
 
 
 #: The 15 duplicate indexes ``d8f3b6c04e17`` drops.
