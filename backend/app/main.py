@@ -66,6 +66,7 @@ from .routes import (
     passkey,
     patient_appointments,
     patient_booking,
+    patient_chat,
     patient_documents,
     patient_payments,
     patient_statements,
@@ -282,6 +283,7 @@ app.include_router(diagnostic_assessments_router)
 app.include_router(patient_diagnostic_assessments_router)
 if settings.enable_patient_chat:
     app.include_router(chat.router)
+    app.include_router(patient_chat.router)
 # Companion launch-intent handoff. Mounted only when the flag is on so
 # /api/launch/* returns 404 until the desktop companions ship the
 # verified-link redemption path. See docs/design/companion-thin-client.md.

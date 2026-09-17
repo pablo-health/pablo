@@ -98,6 +98,7 @@ from ..services.chat_turn_service import (
     ChatTurnService,
     TurnConcurrencyError,
     TurnContext,
+    TurnStreamEvent,
 )
 from ..settings import Settings, get_settings
 
@@ -633,8 +634,18 @@ async def send_message(
             detail="Another turn is already in progress for this conversation.",
         ) from exc
 
+    return sse_response(collected)
+
+
+def sse_response(events: list[TurnStreamEvent]) -> StreamingResponse:
+    """Replay already-collected turn events as an SSE body.
+
+    Shared with the patient-principal router, which drains the turn the
+    same way and for the same reason.
+    """
+
     async def _sse() -> AsyncGenerator[bytes]:  # type: ignore[name-defined]
-        for event in collected:
+        for event in events:
             payload = json.dumps(event.data, default=str)
             yield f"event: {event.kind}\ndata: {payload}\n\n".encode()
 
@@ -759,4 +770,5 @@ __all__ = [
     "get_patient_document_repository_dep",
     "get_patient_repository_dep",
     "router",
+    "sse_response",
 ]
