@@ -44,7 +44,7 @@ when a tenant is cloned from it, but the template does carry the column
 definition, so the nullability change belongs in the regen.
 
 Revision ID: c7d21b9e4a05
-Revises: f2a91c37b6d4
+Revises: 23ca2ee26c74
 Create Date: 2026-09-16
 """
 
@@ -63,7 +63,7 @@ if TYPE_CHECKING:
 __all__ = ["branch_labels", "depends_on", "down_revision", "revision"]
 
 revision: str = "c7d21b9e4a05"
-down_revision: str | Sequence[str] | None = "f2a91c37b6d4"
+down_revision: str | Sequence[str] | None = "23ca2ee26c74"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
