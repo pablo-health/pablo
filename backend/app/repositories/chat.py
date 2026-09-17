@@ -435,8 +435,7 @@ class InMemoryChatRepository(ChatRepository):
         rows = [
             c
             for c in self._conversations.values()
-            if self._patient_owns(c, patient_id)
-            and (include_archived or c.archived_at is None)
+            if self._patient_owns(c, patient_id) and (include_archived or c.archived_at is None)
         ]
         rows.sort(key=lambda c: c.last_turn_at or c.created_at, reverse=True)
         total = len(rows)

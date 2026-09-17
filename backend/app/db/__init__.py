@@ -1108,9 +1108,7 @@ def _patient_principal_predicate_for(
     inherits both halves of the test above by construction.
     """
     if table_name == "chat_conversations":
-        return (
-            f"{_patient_principal_predicate(key_column)} AND {qualified}.owner_user_id IS NULL"
-        )
+        return f"{_patient_principal_predicate(key_column)} AND {qualified}.owner_user_id IS NULL"
     if table_name == "chat_messages":
         # ``schema_name`` and ``qualified`` are validated identifiers (see
         # ``_validate_schema_name``) composed with fixed table names; the

@@ -150,8 +150,32 @@ EXEMPT_RLS_FORCED_TABLES: frozenset[str] = frozenset()
 
 
 def _columns_for_rls(table: object) -> set[str]:
-    """Return the subset of columns enable_rls_on_schema queries for."""
-    return {c.name for c in table.columns} & {"user_id", "patient_id", "id"}  # type: ignore[union-attr]
+    """Return the columns ``enable_rls_on_schema`` needs to see for this table.
+
+    The clinician policy branches switch on ``{user_id, patient_id, id}``,
+    so those are what decide the *shape*. But the patient arm additionally
+    checks that the column a table is registered on is actually present,
+    and registrations are not limited to those three — ``chat_messages``
+    is registered on ``conversation_id``, because it has no owning column
+    of its own and is scoped through its parent conversation.
+
+    Intersecting to the three would therefore make this fake disagree with
+    production, where ``_apply_patient_principal_policies`` is handed the
+    table's FULL column set (its docstring says so, and says why). The
+    disagreement fails in the direction that wastes the most time: the
+    function raises "registered on X but that column is not present", the
+    loop below catches RuntimeError, and the failure reports itself as a
+    missing policy branch — which is a different bug entirely.
+    """
+    names = {c.name for c in table.columns}  # type: ignore[union-attr]
+    shape_columns = names & {"user_id", "patient_id", "id"}
+    registered_on = {
+        col
+        for registry in (PATIENT_READABLE_TABLES, PATIENT_WRITABLE_TABLES)
+        for tbl, col in registry.items()
+        if tbl == table.name  # type: ignore[union-attr]
+    }
+    return shape_columns | (registered_on & names)
 
 
 def test_every_real_tenant_table_is_classified() -> None:
@@ -176,8 +200,13 @@ def test_every_real_tenant_table_is_classified() -> None:
         try:
             session = _FakeSession({table_name: cols})
             enable_rls_on_schema(session, "practice_test")  # type: ignore[arg-type]
-        except RuntimeError:
-            unclassified.append(table_name)
+        except RuntimeError as exc:
+            # Carry the real message. ``enable_rls_on_schema`` raises
+            # RuntimeError for more than one reason — no policy branch, but
+            # also a patient registration naming a column the table does not
+            # have — and reporting every one as "no policy defined" sends the
+            # reader to the wrong fix.
+            unclassified.append(f"{table_name} ({exc})")
 
     assert not unclassified, (
         f"enable_rls_on_schema has no RLS policy defined for: {unclassified}. "
