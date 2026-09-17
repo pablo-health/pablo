@@ -328,6 +328,7 @@ class ChatTurnService:
         # Assemble context. Pasted-text overflow is the only structural
         # failure the bundler raises; everything else is silently
         # truncated and reported in the manifest.
+        selection: dict[str, object] | None = None
         if context.ground_in_chart:
             selection = context.source_selection or default_source_selection()
             try:
@@ -388,7 +389,9 @@ class ChatTurnService:
             sequence=user_sequence,
             role="user",
             content=user_text,
-            source_selection=dict(selection),
+            # ``None`` on an ungrounded turn: no selection was consulted, and
+            # recording ``{}`` would read as "everything default" later.
+            source_selection=dict(selection) if selection is not None else None,
             context_manifest=bundle.manifest,
             created_at=utc_now(),
         )
@@ -409,11 +412,17 @@ class ChatTurnService:
         )
         self._chat_repo.add_message(assistant_message)
 
-        # Build prompt envelope (design doc §8).
-        system_prompt = _compose_system_prompt(
-            caller_system_prompt=context.caller_system_prompt,
-            context_text=bundle.text,
-        )
+        # Build prompt envelope (design doc §8). An ungrounded turn gets the
+        # caller prompt alone: the envelope's empty-chart marker would tell
+        # the model it has a chart that happens to be empty, which is the
+        # wrong claim on a surface that never opens one.
+        if context.ground_in_chart:
+            system_prompt = _compose_system_prompt(
+                caller_system_prompt=context.caller_system_prompt,
+                context_text=bundle.text,
+            )
+        else:
+            system_prompt = context.caller_system_prompt.strip()
         prior_turns = self._load_prior_turns(
             context.conversation_id,
             user_id=context.requesting_user_id,
