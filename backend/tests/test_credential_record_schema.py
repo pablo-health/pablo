@@ -16,12 +16,14 @@ from datetime import date
 
 from app.credentialing import employment
 from app.db.models import (
-    PARTICIPATION_STATUSES,
     Base,
-    PayerParticipationRow,
     PayerRow,
 )
-from app.db.platform_models import PlatformBase
+from app.db.platform_models import (
+    PARTICIPATION_STATUSES,
+    PayerParticipationRow,
+    PlatformBase,
+)
 
 #: The clinician's credential record, which is platform-scoped. Named
 #: explicitly rather than derived from a prefix so that renaming one is a
@@ -42,11 +44,17 @@ CREDENTIAL_TABLES: frozenset[str] = frozenset(
     }
 )
 
-#: Her payer relationships, still per-tenant. They move next, with the payer
-#: foreign key that entangles them; until then they are asserted where they are
-#: rather than where they are going.
+#: Her payer relationships, which followed the credential record to platform.
+#: Separate from CREDENTIAL_TABLES because the practice_id rule reads
+#: differently here: ``payer_participations`` carries one to resolve a payer
+#: rather than a document, which is the one place that column has a second job.
 PARTICIPATION_TABLES: frozenset[str] = frozenset(
-    {"payer_participations", "payer_participation_events"}
+    {
+        "payer_authorizations",
+        "payer_participations",
+        "payer_participation_events",
+        "contracted_rates",
+    }
 )
 
 
@@ -176,17 +184,43 @@ class TestDocumentsLiveInTheVault:
 
 
 class TestParticipationShape:
-    def test_unique_on_user_and_payer(self) -> None:
+    def test_unique_on_user_practice_and_payer(self) -> None:
+        """The practice belongs in the key, and did not used to.
+
+        ``(user_id, payer_id)`` identified one participation per clinician per
+        payer while both sides lived in the same practice schema. From
+        ``platform`` it identifies nothing: the same insurer is a different
+        uuid in every practice's ``payers`` table. Widening it is also the
+        truer statement — panel participation is contracted per billing entity,
+        so a clinician working in two practices holds two statuses against the
+        same insurer, which the old key could not express.
+        """
         constraints = {
             tuple(c.name for c in constraint.columns)
             for constraint in PayerParticipationRow.__table__.constraints
             if constraint.__class__.__name__ == "UniqueConstraint"
         }
-        assert ("user_id", "payer_id") in constraints
+        assert ("user_id", "practice_id", "payer_id") in constraints
+        assert ("user_id", "payer_id") not in constraints, (
+            "the two-column key would let one practice's row block another's"
+        )
 
-    def test_foreign_keys_to_payers(self) -> None:
-        targets = {str(fk.column) for fk in PayerParticipationRow.__table__.c.payer_id.foreign_keys}
-        assert targets == {"payers.id"}
+    def test_payer_id_carries_no_foreign_key_and_practice_id_resolves_it(self) -> None:
+        """``payers`` stays per-tenant, so the reference cannot be enforced.
+
+        It holds the practice's own electronic enrollment state with an
+        insurer, which two practices hold differently for the same company. A
+        platform table cannot reference a per-tenant one, so the constraint is
+        gone and ``practice_id`` is what says which schema to resolve
+        ``payer_id`` in — the shape ``panel_applications`` already uses.
+        """
+        payer_id = PayerParticipationRow.__table__.c.payer_id
+        assert not payer_id.foreign_keys, (
+            "a platform table cannot reference the per-tenant payers table"
+        )
+        assert "practice_id" in PayerParticipationRow.__table__.c, (
+            "without practice_id, payer_id names a row in no particular schema"
+        )
 
     def test_no_carve_out_or_state_column_of_its_own(self) -> None:
         """Both are already properties of the payer row; duplicating them drifts.
@@ -212,8 +246,22 @@ class TestParticipationShape:
         }
 
     def test_events_carry_user_id_for_isolation_without_a_join(self) -> None:
-        names = {c.name for c in Base.metadata.tables["payer_participation_events"].columns}
+        names = {c.name for c in _platform_table("payer_participation_events").columns}
         assert {"user_id", "participation_id"} <= names
+
+    def test_only_the_rate_carries_practice_id_among_the_children(self) -> None:
+        """``practice_id`` earns its place by resolving a document, or it goes.
+
+        ``contracted_rates`` points at the fee schedule in the practice's
+        vault, so it needs to know which vault. The events point at nothing,
+        so they do not carry the column — and a ``practice_id`` with no
+        reference to resolve invites a query that scopes by it and a reader who
+        believes that scoping means something.
+        """
+        events = {c.name for c in _platform_table("payer_participation_events").columns}
+        rates = {c.name for c in _platform_table("contracted_rates").columns}
+        assert "practice_id" not in events
+        assert {"practice_id", "source_document_id"} <= rates
 
 
 class TestTheNameCollisionIsDocumented:

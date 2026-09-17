@@ -379,6 +379,30 @@ def release_db_connection() -> None:
         session.commit()
 
 
+def current_practice_schema(session: Session) -> str:
+    """Which practice schema this session is pointed at.
+
+    Asked of the connection rather than of the ContextVar that set it. The
+    ContextVar does not survive a sync route's hop to the threadpool, and this
+    value lands in a NOT NULL column on a platform table — so getting it wrong
+    files a row under the wrong practice, which no error anywhere would report.
+    ``current_schema()`` is the head of the search path, which is exactly the
+    practice the request is scoped to.
+
+    Raises rather than falling back to the template schema: a caller that
+    reaches here without a tenant is a caller about to write a row belonging to
+    nobody, and the cheapest place to stop that is here.
+    """
+    schema = session.execute(text("SELECT current_schema()")).scalar()
+    if not schema or schema == DEFAULT_PRACTICE_SCHEMA:
+        msg = (
+            "No practice schema on this session — refusing to resolve a "
+            f"practice_id (current_schema() = {schema!r}). Call set_tenant_schema first."
+        )
+        raise RuntimeError(msg)
+    return str(schema)
+
+
 def assert_tenant_schema_set() -> None:
     """Verify the session's search_path is NOT the default 'practice' schema.
 
