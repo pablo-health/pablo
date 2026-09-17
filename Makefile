@@ -311,5 +311,10 @@ pentest-image-push:
 .PHONY: test-clearinghouse-live
 test-clearinghouse-live:
 	@echo "Running the live clearinghouse lane (needs CLEARINGHOUSE_LIVE_API_KEY, test mode)..."
+	# --timeout overrides the 60s in pyproject's addopts, which is sized for
+	# unit tests. The round-trip tests here wait on the vendor's test payer to
+	# adjudicate a real claim (~45s on a good day) and budget 180-240s for it;
+	# under the unit-test ceiling the lane fails on the vendor's ordinary pace.
 	cd backend && DATABASE_URL=postgresql://pablo:pablo_dev@localhost:5432/pablo \
-		poetry run pytest tests_integration/clearinghouse_live/ -v --no-cov --tb=short -p no:cacheprovider
+		poetry run pytest tests_integration/clearinghouse_live/ -v --no-cov --tb=short -p no:cacheprovider \
+		--timeout=300
