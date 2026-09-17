@@ -96,7 +96,12 @@ class ChatConversationResponse(BaseModel):
 
     id: str
     patient_id: str
-    owner_user_id: str
+    # ``None`` only for a patient-initiated conversation, which this
+    # clinician-facing shape never carries today — the clinician repository
+    # filters those out. Typed honestly rather than narrowed, so that if a
+    # later change does surface them here, the callers that assume a
+    # clinician id fail typechecking instead of at runtime.
+    owner_user_id: str | None
     title: str
     caller_feature_key: str
     default_source_selection: dict[str, Any] | None = None

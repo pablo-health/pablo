@@ -192,6 +192,16 @@ class AuditAction(StrEnum):
     CHAT_CONVERSATION_PURGED = "chat_conversation_purged"
     CHAT_CHART_PROMOTION = "chat_chart_promotion"
     CHAT_TURN_BLOCKED = "chat_turn_blocked"
+    # One row PER TURN, and deliberately exempt from the read-coalescing
+    # that collapses repeated clinician reads. The clinician surface
+    # audits lifecycle only, because a clinician reading their own
+    # patient's chart is the expected case and the per-turn detail lives
+    # on the chat_messages rows. On the patient-principal surface the
+    # actor is the subject, there is no clinician in the room to be
+    # accountable, and "how often did this person talk to it, and when"
+    # is itself the reviewable fact — so each turn gets its own row.
+    # Metadata only: conversation id and turn sequence, never content.
+    CHAT_TURN = "chat_turn"
 
     # Patient document upload (THERAPY-ak6m.2). UPLOAD_INITIATED fires
     # when a signed PUT URL is minted and the placeholder row inserted;

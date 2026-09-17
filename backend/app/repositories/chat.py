@@ -127,6 +127,88 @@ class ChatRepository(ABC):
         contract on :meth:`NotesRepository.delete`.
         """
 
+    # ------------------------------------------------------------------
+    # Patient-principal path
+    # ------------------------------------------------------------------
+    #
+    # Separate verbs rather than an extra argument on the ones above, and
+    # the duplication is the point. The clinician verbs key on a grant in
+    # ``patient_clinicians``; these key on the calling patient owning the
+    # row. Threading a "which principal is this?" flag through the shared
+    # verbs would put both authorization models in one body, where the
+    # wrong branch is one edit away and reads as a plausible refactor.
+    #
+    # Every one of these takes ``patient_id`` from the resolved principal —
+    # never from client input — and every one tests ``owner_user_id IS
+    # NULL`` as well. "Conversations about me" and "conversations I
+    # started" are different sets that share a ``patient_id``, and only the
+    # second is this surface's.
+
+    @abstractmethod
+    def get_patient_conversation(
+        self, conversation_id: str, patient_id: str
+    ) -> ChatConversation | None:
+        """Fetch a patient-initiated conversation the patient owns, else ``None``.
+
+        ``None`` covers absent, owned-by-a-clinician, and belonging-to-
+        another-patient without distinguishing them — the same
+        no-existence-oracle contract as :meth:`get_conversation`.
+        """
+
+    @abstractmethod
+    def list_patient_conversations(
+        self,
+        *,
+        patient_id: str,
+        include_archived: bool = False,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> tuple[list[ChatConversation], int]:
+        """List the conversations this patient started. Never any other kind."""
+
+    @abstractmethod
+    def list_patient_messages(self, conversation_id: str, patient_id: str) -> list[ChatMessage]:
+        """Messages of a patient-owned conversation, ``[]`` if not theirs."""
+
+    @abstractmethod
+    def list_patient_messages_windowed(
+        self, conversation_id: str, patient_id: str, *, head: int = 2, tail: int = 30
+    ) -> list[ChatMessage]:
+        """Windowed history read for the patient turn loop.
+
+        Same window contract as :meth:`list_messages_windowed`; same
+        ownership test as the rest of this block. The turn service needs
+        this one rather than the clinician verb — a patient id matches no
+        row in ``patient_clinicians``, so the clinician verb would return
+        an empty history on every turn and the assistant would answer each
+        message as if it were the first.
+        """
+
+    @abstractmethod
+    def add_patient_conversation(
+        self, conversation: ChatConversation, patient_id: str
+    ) -> ChatConversation:
+        """Insert a patient-initiated conversation.
+
+        Raises :class:`PatientAccessDeniedError` if the row does not belong
+        to ``patient_id`` or carries a clinician owner — a patient may not
+        create a conversation attributed to someone else.
+        """
+
+    @abstractmethod
+    def update_patient_conversation(
+        self, conversation: ChatConversation, patient_id: str
+    ) -> ChatConversation:
+        """Persist archive/un-archive. Raises if the row is not this patient's."""
+
+    @abstractmethod
+    def delete_patient_conversation(self, conversation_id: str, patient_id: str) -> int:
+        """Hard-delete a patient-owned conversation. Returns the message count.
+
+        ``0`` when absent or not this patient's — the soft-fail contract
+        :meth:`delete_conversation` uses, for the same reason.
+        """
+
     @abstractmethod
     def next_sequence(self, conversation_id: str) -> int:
         """Return the next sequence number for a new message in this conversation.
@@ -222,11 +304,23 @@ class InMemoryChatRepository(ChatRepository):
 
     # --- reads ---
 
+    def _patient_owns(self, conv: ChatConversation | None, patient_id: str) -> bool:
+        """The patient-path row test: theirs, and started by them."""
+        return conv is not None and conv.patient_id == patient_id and conv.owner_user_id is None
+
     def get_conversation(
         self, conversation_id: str, user_id: str = _TEST_DEFAULT_USER
     ) -> ChatConversation | None:
         conv = self._conversations.get(conversation_id)
         if conv is None:
+            return None
+        # A patient's own conversation is not part of the clinician surface.
+        # Surfacing between-visit chat to the care team is a decision for the
+        # report-back work to make deliberately, with whatever summarisation
+        # and consent it decides on — not something this surface should start
+        # doing as a side effect of the two kinds of conversation sharing a
+        # table and a patient_id.
+        if conv.owner_user_id is None:
             return None
         if not self._can_access(conv.patient_id, user_id):
             return None
@@ -248,6 +342,9 @@ class InMemoryChatRepository(ChatRepository):
             c
             for c in self._conversations.values()
             if c.patient_id == patient_id
+            # See get_conversation: patient-initiated chats are not on the
+            # clinician surface.
+            and c.owner_user_id is not None
             and (caller_feature_key is None or c.caller_feature_key == caller_feature_key)
             and (include_archived or c.archived_at is None)
         ]
@@ -262,8 +359,8 @@ class InMemoryChatRepository(ChatRepository):
     def list_messages(
         self, conversation_id: str, user_id: str = _TEST_DEFAULT_USER
     ) -> list[ChatMessage]:
-        conv = self._conversations.get(conversation_id)
-        if conv is None or not self._can_access(conv.patient_id, user_id):
+        conv = self.get_conversation(conversation_id, user_id)
+        if conv is None:
             return []
         msgs = list(self._messages.get(conversation_id, []))
         msgs.sort(key=lambda m: m.sequence)
@@ -279,8 +376,8 @@ class InMemoryChatRepository(ChatRepository):
     ) -> list[ChatMessage]:
         if head < 0 or tail < 0:
             raise ValueError("head and tail must be non-negative")
-        conv = self._conversations.get(conversation_id)
-        if conv is None or not self._can_access(conv.patient_id, user_id):
+        conv = self.get_conversation(conversation_id, user_id)
+        if conv is None:
             return []
         msgs = sorted(self._messages.get(conversation_id, []), key=lambda m: m.sequence)
         head_rows = msgs[:head] if head else []
@@ -304,14 +401,93 @@ class InMemoryChatRepository(ChatRepository):
     def update_conversation(
         self, conversation: ChatConversation, user_id: str = _TEST_DEFAULT_USER
     ) -> ChatConversation:
-        if not self._can_access(conversation.patient_id, user_id):
+        if conversation.owner_user_id is None or not self._can_access(
+            conversation.patient_id, user_id
+        ):
             raise PatientAccessDeniedError(conversation.patient_id, user_id)
         self._conversations[conversation.id] = conversation
         return conversation
 
     def delete_conversation(self, conversation_id: str, user_id: str = _TEST_DEFAULT_USER) -> int:
+        conv = self.get_conversation(conversation_id, user_id)
+        if conv is None:
+            return 0
+        msgs = self._messages.pop(conversation_id, [])
+        self._conversations.pop(conversation_id, None)
+        return len(msgs)
+
+    # --- patient-principal path ---
+
+    def get_patient_conversation(
+        self, conversation_id: str, patient_id: str
+    ) -> ChatConversation | None:
         conv = self._conversations.get(conversation_id)
-        if conv is None or not self._can_access(conv.patient_id, user_id):
+        return conv if self._patient_owns(conv, patient_id) else None
+
+    def list_patient_conversations(
+        self,
+        *,
+        patient_id: str,
+        include_archived: bool = False,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> tuple[list[ChatConversation], int]:
+        rows = [
+            c
+            for c in self._conversations.values()
+            if self._patient_owns(c, patient_id) and (include_archived or c.archived_at is None)
+        ]
+        rows.sort(key=lambda c: c.last_turn_at or c.created_at, reverse=True)
+        total = len(rows)
+        start = (page - 1) * page_size
+        return rows[start : start + page_size], total
+
+    def list_patient_messages(self, conversation_id: str, patient_id: str) -> list[ChatMessage]:
+        if self.get_patient_conversation(conversation_id, patient_id) is None:
+            return []
+        msgs = list(self._messages.get(conversation_id, []))
+        msgs.sort(key=lambda m: m.sequence)
+        return msgs
+
+    def list_patient_messages_windowed(
+        self, conversation_id: str, patient_id: str, *, head: int = 2, tail: int = 30
+    ) -> list[ChatMessage]:
+        if head < 0 or tail < 0:
+            raise ValueError("head and tail must be non-negative")
+        if self.get_patient_conversation(conversation_id, patient_id) is None:
+            return []
+        msgs = sorted(self._messages.get(conversation_id, []), key=lambda m: m.sequence)
+        head_rows = msgs[:head] if head else []
+        tail_rows = msgs[-tail:] if tail else []
+        by_seq: dict[int, ChatMessage] = {}
+        for m in (*head_rows, *tail_rows):
+            by_seq[m.sequence] = m
+        return [by_seq[s] for s in sorted(by_seq)]
+
+    def add_patient_conversation(
+        self, conversation: ChatConversation, patient_id: str
+    ) -> ChatConversation:
+        if not self._patient_owns(conversation, patient_id):
+            raise PatientAccessDeniedError(conversation.patient_id, patient_id)
+        self._conversations[conversation.id] = conversation
+        self._messages.setdefault(conversation.id, [])
+        return conversation
+
+    def update_patient_conversation(
+        self, conversation: ChatConversation, patient_id: str
+    ) -> ChatConversation:
+        if not self._patient_owns(conversation, patient_id):
+            raise PatientAccessDeniedError(conversation.patient_id, patient_id)
+        # Re-test the stored row, not just the passed one: the caller could
+        # hand us an object whose patient_id was reassigned in memory.
+        stored = self._conversations.get(conversation.id)
+        if stored is not None and not self._patient_owns(stored, patient_id):
+            raise PatientAccessDeniedError(stored.patient_id, patient_id)
+        self._conversations[conversation.id] = conversation
+        return conversation
+
+    def delete_patient_conversation(self, conversation_id: str, patient_id: str) -> int:
+        if self.get_patient_conversation(conversation_id, patient_id) is None:
             return 0
         msgs = self._messages.pop(conversation_id, [])
         self._conversations.pop(conversation_id, None)

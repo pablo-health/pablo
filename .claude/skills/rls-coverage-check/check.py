@@ -38,7 +38,12 @@ if str(BACKEND) not in sys.path:
 # Import the app modules (no DB connection needed — Base.metadata is built
 # at import time by the ORM declarative machinery).
 # ---------------------------------------------------------------------------
-from app.db import enable_rls_on_schema, rls_forced_tenant_tables  # noqa: E402  # isort: skip
+from app.db import (  # noqa: E402  # isort: skip
+    PATIENT_READABLE_TABLES,
+    PATIENT_WRITABLE_TABLES,
+    enable_rls_on_schema,
+    rls_forced_tenant_tables,
+)
 from app.db.models import Base  # noqa: E402  # isort: skip
 
 
@@ -83,8 +88,23 @@ class _FakeSession:
 
 
 def _columns_for_rls(table: object) -> set[str]:
-    """Return the subset of columns enable_rls_on_schema queries for."""
-    return {c.name for c in table.columns} & {"user_id", "patient_id", "id"}  # type: ignore[union-attr]
+    """Return the columns enable_rls_on_schema needs to see for this table.
+
+    The clinician policy branches switch on ``{user_id, patient_id, id}``,
+    but the patient arm also checks that the column a table is registered
+    on is present — and registrations are not limited to those three
+    (``chat_messages`` is registered on ``conversation_id``). Mirrors
+    ``_columns_for_rls`` in ``test_enable_rls_policy_coverage.py``.
+    """
+    names = {c.name for c in table.columns}  # type: ignore[union-attr]
+    shape_columns = names & {"user_id", "patient_id", "id"}
+    registered_on = {
+        col
+        for registry in (PATIENT_READABLE_TABLES, PATIENT_WRITABLE_TABLES)
+        for tbl, col in registry.items()
+        if tbl == table.name  # type: ignore[union-attr]
+    }
+    return shape_columns | (registered_on & names)
 
 
 # ---------------------------------------------------------------------------

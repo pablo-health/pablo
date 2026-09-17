@@ -1023,6 +1023,18 @@ PATIENT_READABLE_TABLES: dict[str, str] = {
     # can consult those rules, not to a row policy that only knows who is
     # asking.
     "appointments": "patient_id",
+    # A patient reads the conversations they THEMSELVES started, not every
+    # conversation about them. ``patient_id`` alone would match both, since
+    # a clinician's chat about a patient carries that patient's id too — so
+    # this pair gets a bespoke predicate that also requires the row to be
+    # patient-initiated. See ``_patient_principal_predicate_for``.
+    "chat_conversations": "patient_id",
+    # ``chat_messages`` carries neither ``patient_id`` nor ``user_id``; it is
+    # scoped by its parent conversation, which is the column named here. The
+    # predicate builder reads that as "join to the parent" rather than as a
+    # direct column comparison — the only entry where the registered column
+    # is a foreign key rather than the owning patient's id.
+    "chat_messages": "conversation_id",
 }
 
 # Of those, the ones a patient may also WRITE. Read and write stay separate
@@ -1041,7 +1053,15 @@ PATIENT_READABLE_TABLES: dict[str, str] = {
 # ``has_patient_access`` on its own first INSERT) and now requires an armed
 # ``app.current_user_id`` — which a patient principal never sets — instead
 # of admitting everyone.
-PATIENT_WRITABLE_TABLES: dict[str, str] = {"outcome_measures": "patient_id"}
+PATIENT_WRITABLE_TABLES: dict[str, str] = {
+    "outcome_measures": "patient_id",
+    # A patient starts their own conversations and archives or purges them,
+    # so the conversation row is writable. The turn loop then writes the
+    # message rows — the user's turn and the assistant's reply — which is
+    # why ``chat_messages`` is writable too rather than append-by-clinician.
+    "chat_conversations": "patient_id",
+    "chat_messages": "conversation_id",
+}
 
 
 def register_overlay_patient_scoped(
@@ -1082,6 +1102,51 @@ def _patient_principal_predicate(key_column: str) -> str:
     could use to distinguish states.
     """
     return f"{key_column}::text = current_setting('app.current_patient_id', true)"
+
+
+def _patient_principal_predicate_for(
+    table_name: str, key_column: str, schema_name: str, qualified: str
+) -> str:
+    """The patient row test for one table, bespoke where the shape demands it.
+
+    Most tables are owned by a patient through a plain column and take
+    :func:`_patient_principal_predicate` unchanged. The two chat tables are
+    not, and each is a different kind of not.
+
+    ``chat_conversations`` carries the right column but the wrong meaning.
+    Its ``patient_id`` names the conversation's *subject*, and a clinician's
+    chat about a patient is subject to that same patient — so the plain
+    predicate would let a patient read the clinician's conversations about
+    them, which is the opposite of what a patient-facing surface should
+    disclose. ``owner_user_id IS NULL`` is what distinguishes the rows the
+    patient started (the column is nullable precisely to carry that
+    distinction), so it joins the predicate here.
+
+    The route layer tests the same thing independently, and deliberately:
+    a policy is a backstop for a route that forgot, and a route check is a
+    backstop for a schema that was migrated without its policies. Neither
+    is the reason to skip the other.
+
+    ``chat_messages`` has no owning column at all — not ``patient_id``, not
+    ``user_id`` — so it is scoped through the parent conversation, and
+    inherits both halves of the test above by construction.
+    """
+    if table_name == "chat_conversations":
+        return f"{_patient_principal_predicate(key_column)} AND {qualified}.owner_user_id IS NULL"
+    if table_name == "chat_messages":
+        # ``schema_name`` and ``qualified`` are validated identifiers (see
+        # ``_validate_schema_name``) composed with fixed table names; the
+        # only interpolation is ours, never a caller's.
+        parent = f"{schema_name}.chat_conversations"
+        owns = "c.patient_id::text = current_setting('app.current_patient_id', true)"
+        # Every identifier below is validated (see _validate_schema_name) or
+        # a literal table name; no caller input reaches the string.
+        return (
+            f"EXISTS (SELECT 1 FROM {parent} c "  # noqa: S608
+            f"WHERE c.id = {qualified}.{key_column} "
+            f"AND {owns} AND c.owner_user_id IS NULL)"
+        )
+    return _patient_principal_predicate(key_column)
 
 
 def _apply_patient_principal_policies(
@@ -1125,7 +1190,7 @@ def _apply_patient_principal_policies(
             f"nothing — fix the registration or the table."
         )
 
-    predicate = _patient_principal_predicate(key_column)
+    predicate = _patient_principal_predicate_for(table_name, key_column, schema_name, qualified)
     session.execute(
         text(f"CREATE POLICY rls_patient_self_read ON {qualified} FOR SELECT USING ({predicate})")
     )
