@@ -15,12 +15,16 @@ the deployment's own practice is a practice like any other.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 from sqlalchemy import create_engine, text
 
 from . import scratch_db
+
+#: backend/, which holds alembic.ini and both migration trees.
+_BACKEND_DIR = Path(__file__).resolve().parents[2]
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -45,7 +49,14 @@ def booted_engine() -> Iterator[Engine]:
     than imitated. It runs against a scratch database so a fresh install is
     genuinely fresh — the shared one has already been booted by every other
     suite.
+
+    "Fresh install" now means *migrated, not yet booted*, which is what a real
+    one is: the migrate job builds the platform schema and then the revision
+    rolls out. Boot itself no longer builds it — it checks and refuses — so the
+    platform chain runs here first. Skipping it would test a state no deployment
+    is ever in.
     """
+    from app.db.platform_bootstrap import bring_platform_to_head  # noqa: PLC0415
     from app.db.provisioning import ensure_schemas  # noqa: PLC0415
 
     scratch = scratch_db.scratch_name("pablo_boot")
@@ -53,6 +64,7 @@ def booted_engine() -> Iterator[Engine]:
     scratch_db.create(admin, scratch)
 
     eng = create_engine(scratch_db.swap_database(_DB_URL, scratch), pool_pre_ping=True)
+    bring_platform_to_head(eng, str(_BACKEND_DIR / "alembic.ini"))
     ensure_schemas(eng)
     yield eng
     eng.dispose()

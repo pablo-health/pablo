@@ -345,6 +345,7 @@ const baseQueryKeys = {
     details: () => [...baseQueryKeys.claims.all, "detail"] as const,
     detail: (claimId: string) => [...baseQueryKeys.claims.details(), claimId] as const,
     holds: () => [...baseQueryKeys.claims.all, "holds"] as const,
+    reminders: () => [...baseQueryKeys.claims.all, "reminders"] as const,
   },
 
   // Booking link query keys

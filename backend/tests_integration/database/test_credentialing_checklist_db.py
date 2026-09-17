@@ -52,6 +52,19 @@ pytestmark = pytest.mark.skipif(
 _CLINICIAN_A = "5e7b4e2c-ad4a-5ebf-c1af-af6c9e5a5e05"
 _CLINICIAN_B = "6f8c5f3d-be5b-5fca-d2bf-bf7daf6b6f06"
 
+#: The part of the credential record this module writes to. Needed by name
+#: because these live in ``platform`` now: dropping the practice schema at the
+#: end of a test no longer takes the rows with it, and the next test inherits
+#: them. See ``_clear_platform_record``.
+_PLATFORM_RECORD_TABLES = (
+    "credential_confirmations",
+    "credential_government_ids",
+    "credential_licenses",
+    "credential_liability_policies",
+    "credential_service_locations",
+    "credential_bank_accounts",
+)
+
 #: The columns the checklist added to the identifier row. Listed rather than
 #: derived so that dropping one is a decision made here too.
 _NEW_IDENTIFIER_COLUMNS = (
@@ -86,6 +99,27 @@ def engine() -> Iterator[Engine]:
         eng.dispose()
 
 
+def _clear_platform_record(engine: Engine, *user_ids: str) -> None:
+    """Remove what dropping the practice schema no longer removes.
+
+    Arming ``app.current_user_id`` is not optional here. The tables are FORCE
+    RLS'd and the test role does not bypass, so an unarmed ``DELETE`` matches no
+    rows, reports success, and leaves the module cleaning nothing — which is
+    worse than not cleaning at all, because it looks like it worked. Arming it
+    per clinician also means the delete is scoped by the same policy the tests
+    are checking: it can only reach rows that clinician could have read.
+    """
+    with engine.connect() as conn:
+        for user_id in user_ids:
+            conn.execute(
+                text("SELECT set_config('app.current_user_id', :uid, false)"),
+                {"uid": user_id},
+            )
+            for table in _PLATFORM_RECORD_TABLES:
+                conn.execute(text(f"DELETE FROM platform.{table}"))  # noqa: S608
+        conn.commit()
+
+
 @pytest.fixture
 def tenant_schema(engine: Engine) -> Iterator[str]:
     from app.db.provisioning import create_practice_schema  # noqa: PLC0415
@@ -96,7 +130,12 @@ def tenant_schema(engine: Engine) -> Iterator[str]:
 
     schema = f"practice_test_checklist_{uuid.uuid4().hex[:8]}"
     create_practice_schema(engine, schema)
+    # Before as well as after: a test that fails partway through still owes the
+    # next one a clean record, and the teardown it skipped is exactly the one
+    # that would have provided it.
+    _clear_platform_record(engine, _CLINICIAN_A, _CLINICIAN_B)
     yield schema
+    _clear_platform_record(engine, _CLINICIAN_A, _CLINICIAN_B)
     with engine.connect() as conn:
         conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
         conn.commit()
@@ -146,11 +185,21 @@ def _audit_for(session: Session) -> Any:
 
 
 class TestProvisioning:
-    """A fresh tenant, not a migrated one."""
+    """Where the checklist's answers live, and what guards them there."""
 
-    def test_a_fresh_tenant_carries_the_confirmation_table(
-        self, engine: Engine, tenant_schema: str
-    ) -> None:
+    def test_the_confirmation_table_is_in_the_platform_schema(self, engine: Engine) -> None:
+        with engine.connect() as conn:
+            present = conn.scalar(
+                text(
+                    "SELECT count(*) FROM information_schema.tables "
+                    "WHERE table_schema = 'platform' "
+                    "AND table_name = 'credential_confirmations'"
+                ),
+            )
+        assert present == 1
+
+    def test_a_fresh_tenant_carries_no_copy_of_it(self, engine: Engine, tenant_schema: str) -> None:
+        """One record, one home. A per-tenant copy would answer differently."""
         with engine.connect() as conn:
             present = conn.scalar(
                 text(
@@ -159,42 +208,40 @@ class TestProvisioning:
                 ),
                 {"schema": tenant_schema},
             )
-        assert present == 1
+        assert present == 0
 
-    def test_a_fresh_tenant_carries_the_new_identifier_columns(
-        self, engine: Engine, tenant_schema: str
-    ) -> None:
+    def test_the_identifier_row_carries_the_new_columns(self, engine: Engine) -> None:
         with engine.connect() as conn:
             rows = conn.execute(
                 text(
                     "SELECT column_name FROM information_schema.columns "
-                    "WHERE table_schema = :schema "
+                    "WHERE table_schema = 'platform' "
                     "AND table_name = 'credential_government_ids'"
                 ),
-                {"schema": tenant_schema},
             ).scalars()
             columns = set(rows)
         assert set(_NEW_IDENTIFIER_COLUMNS) <= columns
 
-    def test_the_confirmation_table_is_force_rls_with_a_policy(
-        self, engine: Engine, tenant_schema: str
-    ) -> None:
-        """A forced table with no policy is a silent deny-all, not a safe default."""
+    def test_the_confirmation_table_is_force_rls_with_a_policy(self, engine: Engine) -> None:
+        """A forced table with no policy is a silent deny-all, not a safe default.
+
+        This matters more than it did per-tenant. The schema boundary used to
+        stand between two clinicians in different practices whatever the policy
+        said; in ``platform`` the policy is the only thing standing there.
+        """
         with engine.connect() as conn:
             forced = conn.scalar(
                 text(
                     "SELECT c.relforcerowsecurity FROM pg_class c "
                     "JOIN pg_namespace n ON n.oid = c.relnamespace "
-                    "WHERE n.nspname = :schema AND c.relname = 'credential_confirmations'"
+                    "WHERE n.nspname = 'platform' AND c.relname = 'credential_confirmations'"
                 ),
-                {"schema": tenant_schema},
             )
             policies = conn.scalar(
                 text(
                     "SELECT count(*) FROM pg_policies "
-                    "WHERE schemaname = :schema AND tablename = 'credential_confirmations'"
+                    "WHERE schemaname = 'platform' AND tablename = 'credential_confirmations'"
                 ),
-                {"schema": tenant_schema},
             )
         assert forced is True
         assert policies is not None
@@ -233,7 +280,7 @@ class TestTheSchemaEnforcesTheMirrorRule:
     def test_a_confirmation_is_one_row_per_field(self, engine: Engine, tenant_schema: str) -> None:
         """Re-confirming updates. The question is "is this right now"."""
         from app.credentialing import confirmations  # noqa: PLC0415
-        from app.db.models import CredentialConfirmationRow  # noqa: PLC0415
+        from app.db.platform_models import CredentialConfirmationRow  # noqa: PLC0415
 
         scoped = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
         try:
@@ -279,7 +326,7 @@ class TestTierOneCompletesAgainstTheTenantRecord:
 
         scoped_a = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
         try:
-            _seed_tier_one(scoped_a.session, _CLINICIAN_A)
+            _seed_tier_one(scoped_a.session, _CLINICIAN_A, tenant_schema)
             scoped_a.session.commit()
 
             answered = status.answered_keys(scoped_a.session, _CLINICIAN_A)
@@ -309,8 +356,8 @@ class TestTierOneCompletesAgainstTheTenantRecord:
             confirmations.record(
                 scoped_a.session,
                 _CLINICIAN_A,
-                field_key="exclusion_clearance",
-                source="leie_sam",
+                field_key="hospital_affiliations_none",
+                source="clinician_profiles",
                 confirmed=True,
             )
             scoped_a.session.commit()
@@ -327,17 +374,19 @@ class TestTierOneCompletesAgainstTheTenantRecord:
             scoped_b.close()
 
 
-def _seed_tier_one(session: Session, user_id: str) -> None:
+def _seed_tier_one(session: Session, user_id: str, practice_id: str) -> None:
     """Every required Tier-1 answer, written the way the routes write them."""
     from app.credentialing import government_ids  # noqa: PLC0415
     from app.db.models import (  # noqa: PLC0415
         ComplianceDocumentRow,
+        PayerRow,
+    )
+    from app.db.platform_models import (  # noqa: PLC0415
         CredentialBankAccountRow,
         CredentialLiabilityPolicyRow,
         CredentialLicenseRow,
         CredentialServiceLocationRow,
         PayerParticipationRow,
-        PayerRow,
     )
 
     now = datetime.now(UTC)
@@ -367,6 +416,7 @@ def _seed_tier_one(session: Session, user_id: str) -> None:
         CredentialLicenseRow(
             id=str(uuid.uuid4()),
             user_id=user_id,
+            practice_id=practice_id,
             license_type="LPC",
             license_number=f"GA-{uuid.uuid4().hex[:6]}",
             state="GA",
@@ -382,6 +432,7 @@ def _seed_tier_one(session: Session, user_id: str) -> None:
         CredentialLiabilityPolicyRow(
             id=str(uuid.uuid4()),
             user_id=user_id,
+            practice_id=practice_id,
             carrier_name="CPH & Associates",
             policy_number="P-100200",
             document_id=document.id,
@@ -407,6 +458,7 @@ def _seed_tier_one(session: Session, user_id: str) -> None:
         CredentialBankAccountRow(
             id=str(uuid.uuid4()),
             user_id=user_id,
+            practice_id=practice_id,
             account_holder_name="Test Clinician",
             routing_number_encrypted="ciphertext",
             account_number_encrypted="ciphertext",
@@ -430,6 +482,7 @@ def _seed_tier_one(session: Session, user_id: str) -> None:
         PayerParticipationRow(
             id=str(uuid.uuid4()),
             user_id=user_id,
+            practice_id=practice_id,
             payer_id=payer.id,
             status="in_network",
             effective_date=date(2026, 1, 1),

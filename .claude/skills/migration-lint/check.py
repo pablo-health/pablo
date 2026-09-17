@@ -6,9 +6,17 @@
 Three checks, all pure file and git inspection — no database, no container —
 so this is fast enough to run before every push:
 
-1. **Models ship with migrations** (CLAUDE.md guardrail #4). If a model file
-   (``models.py`` / ``platform_models.py``) is in the diff, at least one ``A``
-   (added) file under ``backend/alembic/versions/`` must be in it too.
+1. **Models ship with migrations** (CLAUDE.md guardrail #4). If a model file is
+   in the diff, an ``A`` (added) revision must be in it too — in the chain that
+   owns that model, which is the part worth being strict about:
+
+   * ``models.py`` (per-tenant) → ``backend/alembic/versions/``
+   * ``platform_models.py`` (shared) → ``backend/alembic_platform/versions/``
+
+   A platform model change is NOT satisfied by a revision in the tenant chain.
+   That chain is fanned out once per practice schema, and a new tenant is built
+   from the template and stamped rather than migrated, so a platform revision
+   living there runs N times on upgrade and never at all on a fresh provision.
 
    "In the diff" means the SCHEMA changed, not the file. A model file whose
    only edit is a comment or a docstring is compared by AST against the base
@@ -21,11 +29,13 @@ so this is fast enough to run before every push:
    knowingly stale comment, and a guard that fires on correct work is a guard
    people learn to wave through.
 
-2. **The chain has exactly one head.** ``down_revision`` makes the versions
+2. **Each chain has exactly one head.** ``down_revision`` makes a versions
    directory a linked list, so two branches cut from the same parent leave it
    with two heads. Git merges both without complaint and alembic then refuses
    to run at all. Nothing in a file-overlap review predicts this — the two
    migrations are two different files — so it has to be checked structurally.
+   Both chains, independently: they are separate graphs, and a fork in either
+   one breaks only that one.
 
 3. **A migration touching a tenant table regenerates the template.**
    Provisioning applies ``tenant_template.sql``, not the chain, so a migration
@@ -54,13 +64,24 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-MODEL_FILES: frozenset[str] = frozenset(
-    {
-        "backend/app/db/models.py",
-        "backend/app/db/platform_models.py",
-    }
-)
-MIGRATIONS_PREFIX = "backend/alembic/versions/"
+
+TENANT_MIGRATIONS_PREFIX = "backend/alembic/versions/"
+PLATFORM_MIGRATIONS_PREFIX = "backend/alembic_platform/versions/"
+
+#: Which chain owns each model file. They are separate graphs with separate
+#: bookkeeping, and a revision belongs to exactly one, so a change to
+#: ``platform_models.py`` is NOT satisfied by a revision in the tenant chain —
+#: that revision would be fanned out once per practice schema and would never run
+#: on a fresh provision. See CLAUDE.md guardrail #4.
+MODEL_CHAINS: dict[str, str] = {
+    "backend/app/db/models.py": TENANT_MIGRATIONS_PREFIX,
+    "backend/app/db/platform_models.py": PLATFORM_MIGRATIONS_PREFIX,
+}
+MODEL_FILES: frozenset[str] = frozenset(MODEL_CHAINS)
+
+#: Every chain that must independently have exactly one head.
+MIGRATION_PREFIXES: tuple[str, ...] = (TENANT_MIGRATIONS_PREFIX, PLATFORM_MIGRATIONS_PREFIX)
+
 TENANT_TEMPLATE = "backend/app/db/tenant_template.sql"
 
 # ``revision`` / ``down_revision`` assignments in a migration module. Both are
@@ -153,9 +174,9 @@ def _name_status(base: str | None, staged: bool) -> list[tuple[str, str]]:
     return out
 
 
-def _load_chain() -> dict[str, tuple[list[str], str]]:
-    """Map every revision in the working tree to ``(parents, filename)``."""
-    versions = REPO_ROOT / MIGRATIONS_PREFIX
+def _load_chain(prefix: str) -> dict[str, tuple[list[str], str]]:
+    """Map every revision under ``prefix`` to ``(parents, filename)``."""
+    versions = REPO_ROOT / prefix
     chain: dict[str, tuple[list[str], str]] = {}
     for path in sorted(versions.glob("*.py")):
         if path.name == "__init__.py":
@@ -170,26 +191,29 @@ def _load_chain() -> dict[str, tuple[list[str], str]]:
     return chain
 
 
-def _check_single_head(chain: dict[str, tuple[list[str], str]]) -> int:
-    """Fail when the versions directory has more than one head."""
+def _check_single_head(prefix: str, chain: dict[str, tuple[list[str], str]]) -> int:
+    """Fail when one chain's versions directory has more than one head."""
     if not chain:
-        print("migration-lint: no migrations found - skipping chain check.")
+        print(f"migration-lint: no migrations found under {prefix} - skipping chain check.")
         return 0
 
     referenced = {parent for parents, _ in chain.values() for parent in parents}
     heads = sorted(rev for rev in chain if rev not in referenced)
 
     if len(heads) == 1:
-        print(f"migration-lint: OK - single alembic head ({heads[0]}, {chain[heads[0]][1]}).")
+        print(
+            f"migration-lint: OK - single alembic head in {prefix} "
+            f"({heads[0]}, {chain[heads[0]][1]})."
+        )
         return 0
 
     if not heads:
-        _fail("migration-lint: FAIL - no alembic head; the chain has a cycle.")
+        _fail(f"migration-lint: FAIL - no alembic head in {prefix}; the chain has a cycle.")
         return 1
 
     _fail(
-        f"migration-lint: FAIL - {len(heads)} alembic heads. Two branches were "
-        "cut from the same parent, so the chain forked:"
+        f"migration-lint: FAIL - {len(heads)} alembic heads in {prefix}. Two "
+        "branches were cut from the same parent, so the chain forked:"
     )
     for head in heads:
         _fail(f"  - {head}  ({chain[head][1]})")
@@ -349,18 +373,29 @@ def main() -> int:
     touched_models = [path for status, path in changes if path in MODEL_FILES and status in {"A", "M"}]
     prose_only = [p for p in touched_models if _schema_unchanged(p, args.base, args.staged)]
     changed_models = [p for p in touched_models if p not in prose_only]
-    added_migrations = [
-        path
-        for status, path in changes
-        if path.startswith(MIGRATIONS_PREFIX)
-        and status == "A"
-        and path.endswith(".py")
-        and not path.endswith("__init__.py")
-    ]
+
+    def _added_under(prefix: str) -> list[str]:
+        return [
+            path
+            for status, path in changes
+            if path.startswith(prefix)
+            and status == "A"
+            and path.endswith(".py")
+            and not path.endswith("__init__.py")
+        ]
+
+    added_migrations = {prefix: _added_under(prefix) for prefix in MIGRATION_PREFIXES}
 
     failed = 0
 
-    # 1. Models ship with migrations (guardrail #4).
+    # 1. Models ship with migrations (guardrail #4), in the chain that owns them.
+    #    A platform model change needs a platform revision: a revision in the
+    #    tenant chain would be fanned out once per practice schema and would never
+    #    run on a fresh provision, so it is not the same promise.
+    unsatisfied = [
+        path for path in changed_models if not added_migrations[MODEL_CHAINS[path]]
+    ]
+
     if not changed_models:
         if prose_only:
             print(
@@ -371,34 +406,47 @@ def main() -> int:
                 print(f"  prose only: {m}")
         else:
             print("migration-lint: no model changes - nothing to check.")
-    elif added_migrations:
+    elif not unsatisfied:
+        total = sum(len(v) for v in added_migrations.values())
         print(
             f"migration-lint: OK - {len(changed_models)} model file(s) changed, "
-            f"{len(added_migrations)} new migration(s) added."
+            f"{total} new migration(s) added."
         )
         for m in changed_models:
-            print(f"  model:     {m}")
-        for m in added_migrations:
-            print(f"  migration: {m}")
+            print(f"  model:     {m}  -> {MODEL_CHAINS[m]}")
+        for prefix in MIGRATION_PREFIXES:
+            for m in added_migrations[prefix]:
+                print(f"  migration: {m}")
     else:
         _fail("migration-lint: FAIL - model files changed without a new migration:")
-        for m in changed_models:
-            _fail(f"  - {m}")
+        for m in unsatisfied:
+            _fail(f"  - {m}  (needs a revision under {MODEL_CHAINS[m]})")
         _fail(
-            "\nGenerate one in the same commit:\n"
-            '  cd backend && poetry run alembic revision --autogenerate -m "<short description>"\n'
-            "then review the emitted file under backend/alembic/versions/ before committing.\n"
-            "See CLAUDE.md guardrail #4."
+            "\nGenerate one in the same commit, against the chain that owns the model:\n"
+            "  cd backend\n"
+            '  poetry run alembic revision --autogenerate -m "<short description>"'
+            "               # models.py\n"
+            '  poetry run alembic -n platform revision --autogenerate -m "<short description>"'
+            "  # platform_models.py\n"
+            "then review the emitted file before committing, and regenerate that\n"
+            "chain's template. See CLAUDE.md guardrail #4."
         )
         failed = 1
 
-    # 2. The chain has exactly one head. Checked against the working tree rather
-    #    than the diff: on a pull request the checkout is already main merged
-    #    with the branch, which is the state a fork would actually break.
-    failed |= _check_single_head(_load_chain())
+    # 2. Each chain has exactly one head — separate graphs, so separately. Checked
+    #    against the working tree rather than the diff: on a pull request the
+    #    checkout is already main merged with the branch, which is the state a fork
+    #    would actually break.
+    for prefix in MIGRATION_PREFIXES:
+        failed |= _check_single_head(prefix, _load_chain(prefix))
 
-    # 3. A migration touching a tenant table regenerates the template.
-    failed |= _check_template_regenerated(changes, added_migrations)
+    # 3. A migration touching a tenant table regenerates the tenant template.
+    #    Tenant chain only. The platform template has a stronger gate already —
+    #    the ``Tenant template matches alembic head`` job regenerates it for real
+    #    and diffs — so inferring from table names here would add a second,
+    #    weaker opinion. It would also need the inverse of ``_tables_touched``,
+    #    which exists to *exclude* platform-schema statements.
+    failed |= _check_template_regenerated(changes, added_migrations[TENANT_MIGRATIONS_PREFIX])
 
     return failed
 

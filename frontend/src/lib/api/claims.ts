@@ -23,6 +23,8 @@ import {
   type ClaimTrackerResponse,
   type RemittanceHoldFinding,
   type RemittanceHold,
+  type ClaimReminder,
+  type ClaimReminderListResponse,
   type RemittanceHoldListResponse,
   type ValidateClaimResponse,
 } from "@/types/claims"
@@ -125,6 +127,19 @@ export function blockedClaimsFrom(error: unknown): ClaimExportFinding[] | null {
 }
 
 /** Every remittance still withholding one of this clinician's client bills. */
+/** Everything the clinician's claims still need her to do, soonest first. */
+export async function listClaimReminders(token?: string): Promise<ClaimReminderListResponse> {
+  return get<ClaimReminderListResponse>(`${CLAIMS}/reminders`, token)
+}
+
+/** Mark one done. Idempotent — completing a completed reminder is a no-op. */
+export async function completeClaimReminder(
+  reminderId: string,
+  token?: string,
+): Promise<ClaimReminder> {
+  return post<ClaimReminder>(`${CLAIMS}/reminders/${reminderId}/complete`, {}, token)
+}
+
 export async function listRemittanceHolds(token?: string): Promise<RemittanceHoldListResponse> {
   return get<RemittanceHoldListResponse>(`${CLAIMS}/holds`, token)
 }

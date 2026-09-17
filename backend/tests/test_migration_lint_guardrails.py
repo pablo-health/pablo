@@ -23,6 +23,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 _SCRIPT = Path(__file__).resolve().parents[2] / ".claude" / "skills" / "migration-lint" / "check.py"
 _spec = importlib.util.spec_from_file_location("migration_lint_check", _SCRIPT)
 assert _spec is not None
@@ -35,33 +37,73 @@ def _chain(*entries: tuple[str, list[str]]) -> dict[str, tuple[list[str], str]]:
     return {rev: (parents, f"{rev}_test.py") for rev, parents in entries}
 
 
+#: Any prefix will do for the synthetic cases — it only reaches the messages.
+_ANY = "backend/alembic/versions/"
+
+
 class TestSingleHead:
     def test_linear_chain_passes(self) -> None:
         chain = _chain(("a", []), ("b", ["a"]), ("c", ["b"]))
-        assert lint._check_single_head(chain) == 0
+        assert lint._check_single_head(_ANY, chain) == 0
 
     def test_fork_fails(self) -> None:
         # Two branches cut from "a" — exactly the shape that leaves alembic
         # with two heads after both merge.
         chain = _chain(("a", []), ("b", ["a"]), ("c", ["a"]))
-        assert lint._check_single_head(chain) == 1
+        assert lint._check_single_head(_ANY, chain) == 1
 
     def test_merge_revision_rejoins_the_chain(self) -> None:
         # A merge revision names both parents, so the fork is resolved and the
         # merge point is the single head.
         chain = _chain(("a", []), ("b", ["a"]), ("c", ["a"]), ("m", ["b", "c"]))
-        assert lint._check_single_head(chain) == 0
+        assert lint._check_single_head(_ANY, chain) == 0
 
     def test_empty_chain_is_not_a_failure(self) -> None:
-        assert lint._check_single_head({}) == 0
+        assert lint._check_single_head(_ANY, {}) == 0
 
     def test_cycle_fails(self) -> None:
         chain = _chain(("a", ["b"]), ("b", ["a"]))
-        assert lint._check_single_head(chain) == 1
+        assert lint._check_single_head(_ANY, chain) == 1
 
-    def test_real_repository_has_one_head(self) -> None:
-        # The check that actually matters: main must never carry a fork.
-        assert lint._check_single_head(lint._load_chain()) == 0
+    @pytest.mark.parametrize("prefix", lint.MIGRATION_PREFIXES)
+    def test_real_repository_has_one_head_per_chain(self, prefix: str) -> None:
+        # The check that actually matters: main must never carry a fork. Once per
+        # chain, because they are separate graphs and a fork in one says nothing
+        # about the other.
+        assert lint._check_single_head(prefix, lint._load_chain(prefix)) == 0
+
+    def test_both_chains_are_actually_populated(self) -> None:
+        """Guards the parametrize above from passing on an empty directory.
+
+        ``_check_single_head`` returns 0 for an empty chain, so a typo in a prefix
+        would make the test above green while checking nothing at all.
+        """
+        for prefix in lint.MIGRATION_PREFIXES:
+            assert lint._load_chain(prefix), f"no revisions found under {prefix}"
+
+
+class TestModelChainMapping:
+    """A model change must be paired with a revision in the chain that owns it.
+
+    Not pedantry about directories: the tenant chain is fanned out once per
+    practice schema, and a fresh tenant is built from the template and stamped
+    rather than migrated, so a platform revision living there would run once per
+    tenant on upgrade and never at all on a fresh provision.
+    """
+
+    def test_every_model_file_maps_to_a_chain(self) -> None:
+        assert set(lint.MODEL_FILES) == set(lint.MODEL_CHAINS)
+
+    def test_the_two_models_map_to_different_chains(self) -> None:
+        tenant = lint.MODEL_CHAINS["backend/app/db/models.py"]
+        platform = lint.MODEL_CHAINS["backend/app/db/platform_models.py"]
+        assert tenant != platform
+        assert tenant in lint.MIGRATION_PREFIXES
+        assert platform in lint.MIGRATION_PREFIXES
+
+    def test_each_mapped_chain_directory_exists(self) -> None:
+        for prefix in lint.MODEL_CHAINS.values():
+            assert (lint.REPO_ROOT / prefix).is_dir(), f"{prefix} is not a directory"
 
 
 class TestTablesTouched:

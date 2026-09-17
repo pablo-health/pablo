@@ -133,6 +133,12 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      # Nothing builds a schema at boot any more, so the backend cannot start
+      # until the migrate job has finished. A non-zero exit there fails the stack,
+      # which is right: a backend that cannot see its schema refuses to serve, and
+      # would only fail a moment later and less clearly.
+      migrate:
+        condition: service_completed_successfully
       firebase-auth:
         condition: service_healthy
       fake-clearinghouse:
@@ -152,6 +158,36 @@ services:
   # `--wait` treats a service that exits 0 as satisfied, so `make e2e-up`
   # returns only once this has finished. The isolation specs therefore cannot
   # start before the practice they need exists.
+  # Schemas, before anything tries to serve from them.
+  #
+  # This stack used to need no migrate step: ``ensure_schemas`` built the
+  # platform schema at boot with ``PlatformBase.metadata.create_all``, and the
+  # backend container bootstrapped its own database on the way up. That is gone —
+  # ``create_all`` emits tables, columns and indexes and nothing else, so a schema
+  # built that way silently lacked every policy, trigger and CHECK that is not
+  # expressible as a model. Boot now checks and refuses, which is what the stack
+  # hit: `PlatformSchemaMissingError ... 0 platform table(s) present`, backend
+  # unhealthy, every dependent service stuck behind it.
+  #
+  # So the stack does what a deployment does — runs the migrate job first. One
+  # entrypoint, both chains, in the order the tenant chain's foreign keys require.
+  migrate:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.dev
+    command: ["python", "backend/bin/migrate.py"]
+    environment:
+      - DATABASE_BACKEND=postgres
+      - DATABASE_URL=postgresql://pablo:pablo_dev@postgres:5432/pablo
+      - ENVIRONMENT=development
+      - LOG_LEVEL=INFO
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - e2e-net
+
   seed-second-practice:
     build:
       context: .

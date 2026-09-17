@@ -7,6 +7,13 @@ the working directory, so we chdir before delegating to the CLI.
 Default args = `upgrade head`. Override by passing args to the Cloud Run
 job (e.g. ``--args=backend/bin/migrate.py,downgrade,-1``).
 
+The platform chain runs first and the tenant chain second, because tenant tables
+carry foreign keys into ``platform.users`` and ``platform.practices`` and cannot
+be built before the schema they reference. That ordering lives in the tenant
+chain's own ``env.py``, which calls ``app.db.platform_bootstrap.bring_platform_to_head``
+before migrating — so it holds for every caller (`make migrate`, the template
+regen, the tests), not only for this entrypoint.
+
 After a successful upgrade this also moves a pre-provisioning deployment onto
 its own practice schema, if it is still on the template. See
 ``_run_single_practice_migration`` for why that belongs here rather than in the
@@ -130,6 +137,38 @@ if __name__ == "__main__":
     from alembic.config import main
 
     args = sys.argv[1:] or ["upgrade", "head"]
+
+    # Platform chain first, and only when moving forward. A ``downgrade`` is not
+    # an instruction to upgrade a different schema, and an operator running
+    # ``history`` is not asking to migrate anything — the same reasoning
+    # ``_is_upgrade`` already encodes for the practice migration below.
+    #
+    # Not guarded by try/except: the tenant chain declares foreign keys into
+    # ``platform.users``, so if the platform schema cannot be brought to head the
+    # job should fail here with the traceback rather than further along, on a
+    # constraint against a table nobody created.
+    if _is_upgrade(args):
+        # ``app`` is importable here only because of the line above this block.
+        #
+        # ``prepend_sys_path = .`` in alembic.ini is what normally puts backend/
+        # on the path, and alembic applies it when IT loads the config — which
+        # happens in ``main()``, below. ``_run_single_practice_migration`` imports
+        # ``app.db`` after that call and so never noticed; this block runs before
+        # it and died with ``ModuleNotFoundError: No module named 'app'``, which
+        # would have taken the Cloud Run migrate job down on the next deploy.
+        # Relying on another component's side effect for something this module
+        # needs itself is the same mistake, one layer up, as the one this change
+        # is unwinding.
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+        # Imported here rather than at module scope: ``app.db`` reads settings on
+        # import, and the chdir above has to happen first.
+        from app.db import get_engine
+        from app.db.platform_bootstrap import bring_platform_to_head
+
+        logger.info("Bringing the platform schema to head…")
+        bring_platform_to_head(get_engine())
+
     rc = main(argv=args)
     # ``alembic.config.main`` returns None on success and raises or returns
     # non-zero otherwise; treat anything falsy as success so the practice

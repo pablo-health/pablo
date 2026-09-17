@@ -147,6 +147,16 @@ class UserPreferences(BaseModel):
     # wish into a description of today is exactly what made the old single
     # answer unable to describe a platform clinician.
     billing_setup_wants_credentialing: bool = False
+    # Whether she wants clients to be able to pay by card. A want, like the
+    # field above, and stored the same way for the same reason.
+    #
+    # NULLABLE, unlike its neighbour, and the difference carries meaning: None
+    # is "has not said", and the wizard defaults it ON for a practice whose
+    # clients already pay it directly. A plain ``False`` default would be
+    # indistinguishable from her having declined, so unticking the box would
+    # not survive — the default would switch it back on the next time she
+    # opened the wizard, and the step she just declined would reappear.
+    billing_setup_wants_card_payments: bool | None = None
     # Where she had got to, as the step's ID rather than its position. An index
     # would quietly point at the wrong screen the first time a step is inserted
     # ahead of it; an id either resolves or falls back to the start of her

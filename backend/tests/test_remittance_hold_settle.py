@@ -20,15 +20,15 @@ from types import SimpleNamespace
 
 import pytest
 from app.claims.events import (
+    REMINDER_KINDS,
     ClaimEvent,
     clear_claim_event_listeners,
-    compliance_item_type,
     compliance_reminder_listener,
     register_claim_event_listener,
 )
 from app.claims.holds import settle
 from app.claims.remittance import apply_posting, posting_for
-from app.compliance.templates import _TEMPLATES
+from app.db.models import CLAIM_REMINDER_KINDS
 from app.models.claims_holds import RemittanceHold
 from app.models.claims_responses import Adjustment, RemittanceClaim, RemittanceLine
 from app.models.claims_timeline import ClaimTimeline, TimelinePayment
@@ -364,13 +364,18 @@ class TestTheHoldReachesTheClinicianAsWork:
 
         assert len([e for e in seen if e.kind == "remittance_held"]) == 1
 
-    def test_the_event_kind_has_a_compliance_template_to_land_in(self) -> None:
-        """A kind with no template writes a reminder the dashboard cannot
-        render, which is a reminder nobody sees."""
-        item_type = compliance_item_type("remittance_held")
+    def test_the_event_kind_is_one_the_column_accepts(self) -> None:
+        """A kind the CHECK constraint refuses raises instead of landing.
 
-        assert item_type == "claim_remittance_held"
-        assert any(t.item_type == item_type for t in _TEMPLATES)
+        This used to assert a compliance TEMPLATE existed, because the
+        reminder was a ``claim_*`` compliance item and a kind with no template
+        rendered as nothing. The reminder has its own table now, so the thing
+        that must agree is the column's constraint — and it fails louder,
+        which is an improvement: a missing template showed a clinician
+        nothing, a refused insert stops the listener.
+        """
+        assert "remittance_held" in CLAIM_REMINDER_KINDS
+        assert "remittance_held" in REMINDER_KINDS
 
     def test_the_default_listener_writes_one_reminder_per_hold(self) -> None:
         """Guards the wording too: a reminder that does not say the client
@@ -378,9 +383,14 @@ class TestTheHoldReachesTheClinicianAsWork:
         clear_claim_event_listeners()
         register_claim_event_listener(compliance_reminder_listener)
         added: list[object] = []
+        # The listener reads the claim now, because a reminder carries a real
+        # foreign key to it and the patient id the claim's own RLS policy is
+        # keyed on — rather than the control number in a line of text, which
+        # is what a clinician editing her notes used to be able to erase.
         session = SimpleNamespace(
             add=added.append,
             flush=lambda: None,
+            get=lambda _model, _pk: SimpleNamespace(id="claim-1", patient_id="pat-1"),
             execute=lambda _q: SimpleNamespace(scalar_one_or_none=lambda: None),
         )
         event = ClaimEvent(
@@ -397,10 +407,15 @@ class TestTheHoldReachesTheClinicianAsWork:
         compliance_reminder_listener(session, event)
 
         [row] = added
-        assert row.item_type == "claim_remittance_held"
+        assert row.kind == "remittance_held"
+        assert row.claim_id == "claim-1"
+        assert row.patient_id == "pat-1"
         assert "Aetna" in row.label
         assert "not billed" in row.label
-        assert "CLM1" in row.notes
+        # The control number is in the label, where a person reads it. It is
+        # deliberately NOT in the notes any more: that is where the old dedupe
+        # key lived, and the foreign key above replaced it.
+        assert "CLM1" in row.label
 
 
 class TestTheRoutesAreReachable:

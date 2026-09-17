@@ -28,7 +28,9 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import and_, select
 
-from ..db.models import ClaimLineRow, ClaimRow, ContractedRateRow, PayerParticipationRow
+from ..db import current_practice_schema
+from ..db.models import ClaimLineRow, ClaimRow
+from ..db.platform_models import ContractedRateRow, PayerParticipationRow
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -245,6 +247,10 @@ def record_rate(  # noqa: PLR0913 — service deps + keyword-only rate fields
         id=str(uuid.uuid4()),
         participation_id=participation.id,
         user_id=participation.user_id,
+        # Taken from the participation rather than resolved again: a rate
+        # belongs to the practice whose contract produced it, so inheriting it
+        # makes the two impossible to disagree.
+        practice_id=participation.practice_id,
         cpt=cpt,
         modifier=modifier,
         basis=basis,
@@ -265,7 +271,13 @@ def record_rate(  # noqa: PLR0913 — service deps + keyword-only rate fields
 def rates_for(
     session: Session, user_id: str, payer_id: str, cpt: str, modifier: str = ""
 ) -> list[Rate]:
-    """Every rate on file for one clinician, payer and code."""
+    """Every rate on file for one clinician, payer and code, in this practice.
+
+    The practice has to be in it now that these live in ``platform``: a fee
+    schedule is what one payer agreed to pay under one contract, and reading
+    another practice's alongside it would produce a variance report comparing
+    claims filed here against rates negotiated somewhere else.
+    """
     rows = (
         session.execute(
             select(ContractedRateRow)
@@ -276,6 +288,7 @@ def rates_for(
             .where(
                 and_(
                     ContractedRateRow.user_id == user_id,
+                    ContractedRateRow.practice_id == current_practice_schema(session),
                     PayerParticipationRow.payer_id == payer_id,
                     ContractedRateRow.cpt == cpt,
                     ContractedRateRow.modifier == modifier,

@@ -44,7 +44,6 @@ the ones with no home column anywhere else.
 | `primary_license_state` | 0 · confirm | choice | `clinician_profiles.license_state` | required | everyone | `clinician_profiles` | — |
 | `dea_number` | 0 · confirm | text | `clinician_profiles.dea_number` | required | prescribers | `clinician_profiles` | — |
 | `billing_npi` | 0 · confirm | text | `practice_billing_profile.billing_npi` | optional | everyone | `practice_billing_profile` | — |
-| `medicare_enrollment` | 0 · confirm | boolean | `credential_confirmations.presented_value` | optional | everyone | `pecos_public_file` | — |
 | `supervision_status` | 1 · claims-ready | choice | `credential_government_ids.supervision_status` | required | everyone | — | — |
 | `licenses` | 1 · claims-ready | collection | `credential_licenses` | required | everyone | — | — |
 | `supervisor` | 1 · claims-ready | text | `supervision_relationships.supervisor_name` | required | supervised | — | — |
@@ -125,7 +124,6 @@ the ones with no home column anywhere else.
 
 | Key | Tier | Kind | Target | Required | Applies to | Pre-filled from | Written via |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `exclusion_clearance` | 0 · confirm | boolean | `credential_confirmations.presented_value` | required | everyone | `leie_sam` | — |
 | `disclosure_license_action` | 2 · credentialing | boolean | `credential_disclosures` | required | everyone | — | `app.credentialing.disclosures` |
 | `disclosure_malpractice_claim` | 2 · credentialing | boolean | `credential_disclosures` | required | everyone | — | `app.credentialing.disclosures` |
 | `disclosure_criminal_history` | 2 · credentialing | boolean | `credential_disclosures` | required | everyone | — | `app.credentialing.disclosures` |

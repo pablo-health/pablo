@@ -19,7 +19,11 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from ...db.models import PatientChargeRow, PatientPaymentMethodRow
+from ...db.models import (
+    COLLECTING_CHARGE_KINDS,
+    PatientChargeRow,
+    PatientPaymentMethodRow,
+)
 from ...models.payments import CardOnFile, PatientCharge
 from ...utcnow import utc_now
 from ..patient_payment import PatientPaymentRepository, PaymentAlreadyInFlightError
@@ -63,6 +67,8 @@ def _to_charge(row: PatientChargeRow) -> PatientCharge:
         claim_id=row.claim_id,
         write_off_reason=row.write_off_reason,
         note=row.note,
+        method=row.method,
+        payment_reference=row.payment_reference,
         settled_by_charge_id=row.settled_by_charge_id,
         amount_cents=row.amount_cents,
         currency=row.currency,
@@ -167,6 +173,12 @@ class PostgresPatientPaymentRepository(PatientPaymentRepository):
             amount_cents=amount_cents,
             currency=currency,
             status="pending",
+            # This path exists to call the processor, so the method is known
+            # before the outcome is. It is not conditional on success: a
+            # declined card is still how the practice tried to be paid, and a
+            # ``failed`` row with no method could not satisfy the kind/method
+            # constraint anyway.
+            method="card",
             created_by_user_id=user_id,
             created_at=utc_now(),
         )
@@ -202,7 +214,19 @@ class PostgresPatientPaymentRepository(PatientPaymentRepository):
         claim_id: str | None = None,
         write_off_reason: str | None = None,
         note: str | None = None,
+        method: str | None = None,
+        payment_reference: str | None = None,
     ) -> PatientCharge:
+        # The table enforces this, but an IntegrityError names a constraint
+        # from inside a flush — a long way from the call that got it wrong,
+        # and in a fixture it surfaces as a setup error rather than as a
+        # failure that says what happened. Same rule, said at the call site.
+        if (kind in COLLECTING_CHARGE_KINDS) != (method is not None):
+            raise ValueError(
+                f"kind={kind!r} and method={method!r} disagree: the kinds that "
+                f"collect money ({', '.join(COLLECTING_CHARGE_KINDS)}) must name "
+                "one, and no other kind may."
+            )
         row = PatientChargeRow(
             id=uuid.uuid4().hex,
             patient_id=patient_id,
@@ -211,6 +235,8 @@ class PostgresPatientPaymentRepository(PatientPaymentRepository):
             claim_id=claim_id,
             write_off_reason=write_off_reason,
             note=note,
+            method=method,
+            payment_reference=payment_reference,
             amount_cents=amount_cents,
             currency=currency,
             # No processor was called, so there is nothing to reconcile: the

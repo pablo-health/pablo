@@ -98,24 +98,35 @@ def list_active_tenant_schemas(engine: Engine) -> list[str]:
     return [row[0] for row in rows if row[0] != DEFAULT_PRACTICE_SCHEMA]
 
 
-def list_active_practice_registry(engine: Engine) -> list[tuple[str, str]]:
+def list_active_practice_registry(
+    engine: Engine, *, include_pentest: bool = True
+) -> list[tuple[str, str]]:
     """Return ``(schema_name, practice_id)`` for every active practice row.
 
     Unlike :func:`list_active_tenant_schemas`, this **includes** the template
     ``practice`` schema so solo/Core installs (and any row whose
     ``schema_name`` is the template) participate in scheduled jobs that need
     to fan out across all live practice DB schemas.
+
+    ``include_pentest=False`` drops synthetic tenants, for a caller doing work
+    that only means something for a real practice. It defaults to including
+    them because some fan-outs must reach every schema that exists — a
+    synthetic tenant still needs its DDL and still needs its retention honoured
+    — so dropping them is a decision each caller makes rather than a default
+    imposed on all of them.
     """
+    sql = (
+        # Operator migration: only the PLATFORM_SCHEMA constant interpolated (noqa S608).
+        # nosemgrep
+        f"SELECT schema_name, id FROM {PLATFORM_SCHEMA}.practices"  # noqa: S608
+        " WHERE is_active = TRUE"
+    )
+    if not include_pentest:
+        sql += " AND is_pentest = FALSE"
+    sql += " ORDER BY schema_name"
+
     with engine.connect() as conn:
-        rows = conn.execute(
-            # Operator migration: only the PLATFORM_SCHEMA constant interpolated (noqa S608).
-            # nosemgrep
-            text(
-                f"SELECT schema_name, id FROM {PLATFORM_SCHEMA}.practices"  # noqa: S608
-                " WHERE is_active = TRUE"
-                " ORDER BY schema_name"
-            )
-        ).fetchall()
+        rows = conn.execute(text(sql)).fetchall()
     return [(row[0], row[1]) for row in rows]
 
 

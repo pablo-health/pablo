@@ -2,26 +2,25 @@ name: Clearinghouse live suite
 
 # Runs backend/tests_integration/clearinghouse_live/ against the
 # clearinghouse's test mode with a clearinghouse test key. Every run makes
-# real vendor calls and submits test claims, so this is deliberately not on
-# every push: weekly to catch vendor drift, on pull requests that change the
-# adapter, the fixtures, the suite or this workflow, and on demand.
+# real vendor calls and submits test claims.
+#
+# Not on pull requests. This lane answers "does the vendor still behave the
+# way the recordings under backend/tests/fixtures/clearinghouse say" — a
+# question about the world, which no diff can change and which therefore
+# should not put a red X on one. The recorded fixtures prove our code on
+# every pull request; this lane is what keeps those recordings honest, so it
+# runs daily, and on demand before anything that ships onto the vendor.
 on:
   schedule:
-    - cron: "0 10 * * 1" # Mondays 10:00 UTC
+    - cron: "0 10 * * *" # daily 10:00 UTC
   workflow_dispatch:
-  pull_request:
-    paths:
-      - backend/app/claims/**
-      - backend/tests_integration/clearinghouse_live/**
-      - backend/tests/fixtures/clearinghouse/**
-      - .github/workflows/clearinghouse-live.yml
 
 permissions:
   contents: read
 
 # Two runs must never submit test claims at the same time: the round-trip
 # test finds its own transactions in a shared polling feed. Queue instead
-# of cancelling so a scheduled run is never lost to a pull request.
+# of cancelling so a scheduled run is never lost to a manual one.
 concurrency:
   group: clearinghouse-live
   cancel-in-progress: false
@@ -81,12 +80,14 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-  # File a tracking issue when the scheduled (weekly) run fails, so vendor
-  # drift doesn't just sit red until someone happens to check the Actions tab.
+  # File a tracking issue when a run fails, so vendor drift doesn't just sit
+  # red until someone happens to check the Actions tab. Covers the daily run
+  # and a manual one alike: a dispatch ahead of a release is the run whose
+  # failure most needs a record, not the one that can go unnoticed.
   notify-failure:
-    name: Notify on scheduled failure
+    name: Notify on failure
     needs: [live]
-    if: ${{ failure() && github.event_name == 'schedule' }}
+    if: ${{ failure() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     permissions:
       issues: write

@@ -293,6 +293,11 @@ export interface UserPreferences {
    * schedule — folding a wish into a description of today is what made the
    * single answer unable to describe a platform clinician. */
   billing_setup_wants_credentialing?: boolean
+  /** Whether she wants clients to be able to pay by card. Nullable on
+   * purpose: `null` is "has not said", and the wizard defaults it on for a
+   * practice whose clients already pay it directly. A plain `false` would be
+   * indistinguishable from having declined, so unticking would not survive. */
+  billing_setup_wants_card_payments?: boolean | null
   /** Where she had got to, as the step's id rather than its position — an
    * index would point at the wrong screen once a step is inserted ahead of
    * it. An unknown id falls back to the start of her branch. */

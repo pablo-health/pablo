@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.db import DEFAULT_PRACTICE_SCHEMA, PLATFORM_SCHEMA
 from app.db.models import Base
-from app.db.platform_models import PlatformBase
+from app.db.platform_bootstrap import require_platform_schema
 from app.diagnostics.seed import seed_diagnostic_reference_data
 from app.settings import get_settings
 
@@ -39,7 +39,9 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
-platform_metadata = PlatformBase.metadata
+#: Deliberately absent: a ``platform_metadata`` alias for ``PlatformBase.metadata``.
+#: This chain no longer builds the platform schema from ORM metadata — see the
+#: bootstrap block in ``run_migrations_online``.
 
 settings = get_settings()
 
@@ -95,20 +97,38 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
 
-    # Bootstrap schemas + platform tables in their own committed transaction,
-    # then open a fresh connection for alembic. Mixing manual connection.commit()
-    # with alembic's context.begin_transaction() on the same connection causes
-    # the final run_migrations()/stamp write to be rolled back under SQLAlchemy 2.x.
+    # Bootstrap schemas in their own committed transaction, then open a fresh
+    # connection for alembic. Mixing manual connection.commit() with alembic's
+    # context.begin_transaction() on the same connection causes the final
+    # run_migrations()/stamp write to be rolled back under SQLAlchemy 2.x.
     with connectable.begin() as connection:
         connection.execute(text(f"CREATE SCHEMA IF NOT EXISTS {PLATFORM_SCHEMA}"))
         connection.execute(text(f"CREATE SCHEMA IF NOT EXISTS {DEFAULT_PRACTICE_SCHEMA}"))
-        platform_metadata.create_all(connection)
-        # Seed bundled diagnostic reference data into the platform tables
-        # (idempotent). Runs only on the deploy-time bootstrap path, not the
-        # per-tenant fan-out (which returns early above).
-        with Session(bind=connection) as seed_session:
-            seed_diagnostic_reference_data(seed_session)
-            seed_session.flush()
+
+    # This chain depends on the platform chain having run, and always has:
+    # nothing in backend/alembic/versions/ creates ``platform.users``, but
+    # several revisions declare foreign keys into it. ``create_all`` used to
+    # satisfy that dependency here as a side effect, which is how the platform
+    # schema came to be built from ORM metadata — tables, columns and indexes,
+    # and none of the policies, triggers or constraints that were supposed to
+    # come with them.
+    #
+    # The dependency is now stated rather than met in passing. It is deliberately
+    # NOT met by running the platform chain from here: alembic's ``context`` and
+    # ``op`` are module-level proxies, so a nested ``command.upgrade`` tears down
+    # the outer environment's globals on exit and the whole run dies with
+    # ``KeyError: 'config'``. Every caller therefore runs the platform chain
+    # first — ``bin/migrate.py``, the template regen, the Makefile, the tests —
+    # and this check is what makes forgetting it say so.
+    require_platform_schema(connectable)
+
+    # Seed bundled diagnostic reference data into the platform tables
+    # (idempotent). Runs only on the deploy-time bootstrap path, not the
+    # per-tenant fan-out (which returns early above), and only once the
+    # platform chain has built the tables it writes to.
+    with connectable.begin() as connection, Session(bind=connection) as seed_session:
+        seed_diagnostic_reference_data(seed_session)
+        seed_session.flush()
 
     with connectable.connect() as connection:
         connection.execute(text(f"SET search_path = {target_schema}, {PLATFORM_SCHEMA}, public"))

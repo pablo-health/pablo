@@ -379,8 +379,8 @@ def _seed_charge(engine: Engine, practice: Practice, payment_intent_id: str) -> 
         conn.execute(
             text(
                 "INSERT INTO patient_charges (id, patient_id, kind, amount_cents, currency, "
-                "status, stripe_payment_intent_id, created_by_user_id, created_at) "
-                "VALUES (:id, CAST(:pid AS uuid), 'session', 12500, 'usd', 'pending', "
+                "status, method, stripe_payment_intent_id, created_by_user_id, created_at) "
+                "VALUES (:id, CAST(:pid AS uuid), 'session', 12500, 'usd', 'pending', 'card', "
                 ":pi, :uid, now())"
             ),
             {
@@ -805,9 +805,9 @@ class TestPaymentOrdering:
             connection.execute(
                 text(
                     "INSERT INTO patient_charges (id, patient_id, kind, amount_cents, "
-                    "currency, status, stripe_payment_intent_id, created_by_user_id, "
+                    "currency, status, method, stripe_payment_intent_id, created_by_user_id, "
                     "created_at) VALUES (:id, CAST(:pid AS uuid), 'session', 12500, 'usd', "
-                    "'pending', :pi, :uid, now())"
+                    "'pending', 'card', :pi, :uid, now())"
                 ),
                 {
                     "id": charge_id,

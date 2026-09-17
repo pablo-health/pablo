@@ -178,6 +178,46 @@ def pytest_configure(config: pytest.Config) -> None:
     os.environ["DATABASE_URL"] = pablo_url
     os.environ["DATABASE_BACKEND"] = "postgres"
 
+    _build_platform_schema(pablo_url)
+
+
+def _build_platform_schema(database_url: str) -> None:
+    """Build the platform schema once per session, the way production builds it.
+
+    Boot does not build it — ``ensure_schemas`` checks and refuses — so anything
+    that constructs the app needs it to exist first. Before the platform chain
+    existed, ``ensure_schemas`` built it itself with
+    ``PlatformBase.metadata.create_all``, and this suite inherited that for free.
+
+    Running the real chain rather than ``create_all`` is the point, not a
+    formality: the chain applies the captured template, so fixtures get the row
+    policy on ``panel_applications``, the pentest trigger and its function, and
+    the CHECK constraints on ``practices`` — none of which any ORM model can
+    express, and all of which a ``create_all``-built schema silently lacks. Tests
+    running against a shape production never has is how the drift this chain
+    removes went unnoticed for so long.
+    """
+    import subprocess  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    backend_dir = Path(__file__).resolve().parents[1]
+    env = {**os.environ, "DATABASE_URL": database_url, "DATABASE_BACKEND": "postgres"}
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", "-n", "platform", "upgrade", "head"],
+        cwd=backend_dir,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        msg = (
+            "Could not build the platform schema for the integration suite.\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
+        raise RuntimeError(msg)
+
 
 def pytest_unconfigure(config: pytest.Config) -> None:
     if _PgState.container is not None:

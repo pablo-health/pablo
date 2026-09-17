@@ -101,17 +101,39 @@ def practice_user_ids(practice_id: str | None) -> list[str]:
 
 
 def active_practices(*, max_tenants: int) -> Iterator[PracticeContext]:
-    """The practices with a clearinghouse configured, in schema order."""
-    for schema, practice_id in list_active_practice_registry(get_engine())[:max_tenants]:
-        client = clearinghouse_client_for_practice(practice_id)
-        if client is None:
+    """The practices with a clearinghouse configured, in schema order.
+
+    Synthetic tenants are excluded. Nobody is owed money by a practice that
+    exists to exercise a signup, and the sweep is not free per tenant: each
+    one costs a credential lookup and a roster read before it can even be
+    ruled out. A test suite that provisions a practice per run therefore
+    charges the fan-out for every run it has ever made, and the whole sweep
+    is bounded by ``max_tenants`` — so once the synthetic ones outnumber the
+    limit, they crowd real practices out of the pass entirely.
+
+    A practice that cannot be described is skipped rather than allowed to
+    end the iteration. Resolving one costs a credential lookup and a roster
+    read, and a raise from either propagates out of the generator itself —
+    where a caller's per-practice ``try`` cannot reach it — so one bad
+    tenant would silently truncate the fan-out at its position in schema
+    order.
+    """
+    registry = list_active_practice_registry(get_engine(), include_pentest=False)
+    for schema, practice_id in registry[:max_tenants]:
+        try:
+            client = clearinghouse_client_for_practice(practice_id)
+            if client is None:
+                continue
+            context = PracticeContext(
+                schema=schema,
+                practice_id=practice_id,
+                client=client,
+                user_ids=practice_user_ids(practice_id),
+            )
+        except Exception:
+            logger.exception("claims_fanout_practice_unresolvable schema=%s", schema)
             continue
-        yield PracticeContext(
-            schema=schema,
-            practice_id=practice_id,
-            client=client,
-            user_ids=practice_user_ids(practice_id),
-        )
+        yield context
 
 
 def load_submission_account(session: Session, practice_id: str | None) -> SubmissionAccount | None:

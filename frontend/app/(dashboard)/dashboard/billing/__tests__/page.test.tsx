@@ -38,7 +38,14 @@ vi.mock("@/components/settings/useSettingsPreferences", () => ({
 }))
 vi.mock("@/hooks/useCoverage", () => ({ usePayers: () => ({ data: { data: [], total: 0 } }) }))
 vi.mock("@/hooks/useBilling", () => ({ useUnbilledQueue: () => ({ data: { items: [] } }) }))
-vi.mock("@/hooks/useClaims", () => ({ useClaims: () => ({ data: { data: [], total: 0 } }) }))
+vi.mock("@/hooks/useClaims", () => ({
+  useClaims: () => ({ data: { data: [], total: 0 } }),
+  // The page also mounts ClaimReminders above the tabs, for the same reason it
+  // mounts RemittanceHolds there: noticing that a payer wants something should
+  // not depend on picking the right tab. Empty here so it renders nothing.
+  useClaimReminders: () => ({ data: { data: [], total: 0 }, isLoading: false, isError: false }),
+  useCompleteClaimReminder: () => ({ mutate: vi.fn(), isPending: false }),
+}))
 
 describe("BillingPage", () => {
   it("shows the checklist above the tracker without replacing it", async () => {

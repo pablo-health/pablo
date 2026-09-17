@@ -20,7 +20,6 @@ from app.credentialing.checklist import (
     Tier,
 )
 from app.credentialing.field_map import FIELD_MAP_PATH, render
-from app.db.models import Base
 
 #: The ordinary applicant: independently licensed, does not prescribe. The
 #: counts in the design are quoted for her, so the tests quote them for her too.
@@ -58,8 +57,16 @@ class TestTierZeroNeverAsks:
         assert not _uploads(_for(Tier.CONFIRM))
 
     def test_the_confirmations_are_roughly_the_fourteen_the_design_counts(self) -> None:
-        assert len(_for(Tier.CONFIRM)) == 13
-        assert len(_for(Tier.CONFIRM, supervised=False, prescriber=True)) == 14
+        """Two short of the design's count, and deliberately.
+
+        ``medicare_enrollment`` and ``exclusion_clearance`` were removed: both
+        claimed a lookup — PECOS, and the LEIE/SAM exclusion lists — that
+        nothing in the tree performed. A confirm tier is the one place a count
+        must not be met by keeping a card nobody fills in. They return when
+        there is a check behind them; see the comment in ``checklist.py``.
+        """
+        assert len(_for(Tier.CONFIRM)) == 11
+        assert len(_for(Tier.CONFIRM, supervised=False, prescriber=True)) == 12
 
 
 class TestTierOneIsClaimsReadyAndStoppable:
@@ -225,15 +232,24 @@ class TestTheWholeSet:
         at write time, and the mapping doc generated from it would document a
         place nothing lands. ``table.column`` is a scalar, a bare ``table`` a
         repeating group.
+
+        Resolution goes through ``status._mapped_table`` rather than through a
+        merged view built here. Targets span two schemas now — the credential
+        record is platform-scoped, ``clinician_profiles`` and the billing
+        profile stay per-tenant — and an earlier version of this test merged
+        both metadatas itself. It passed while ``_is_answered`` was still
+        looking in only one of them, so every credential field read as
+        unanswered and Tier 1 could not complete. A guard holding its own map
+        can only confirm its own map. Asking the reader's resolver is what
+        makes a green here mean the reader can find it.
         """
-        tables = Base.metadata.tables
+        from app.credentialing.status import _mapped_table  # noqa: PLC0415
+
         unresolved = []
         for field in CHECKLIST_FIELDS:
-            if "." in field.target:
-                table, column = field.target.split(".", 1)
-                ok = table in tables and column in tables[table].c
-            else:
-                ok = field.target in tables
+            name, _, column = field.target.partition(".")
+            table = _mapped_table(name)
+            ok = table is not None and (not column or column in table.c)
             if not ok:
                 unresolved.append((field.key, field.target))
         assert not unresolved, f"targets with nowhere to land: {unresolved}"
@@ -283,7 +299,7 @@ class TestCaqhShape:
 
         The doc is generated, so a question set that changed without it is a
         doc that describes a surface nobody ships. Regenerate with
-        ``poetry run python backend/scripts/regen_intake_field_map.py``.
+        ``poetry run python backend/scripts/regen_checklist_field_map.py``.
         """
         assert FIELD_MAP_PATH.read_text(encoding="utf-8") == render(), (
             "docs/reference/caqh-checklist-field-map.md is stale — regenerate it"

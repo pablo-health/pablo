@@ -19,6 +19,7 @@ from app.db.migrate_tenants import (
     TenantStatus,
     aggregate_exit_code,
     fan_out,
+    list_active_practice_registry,
     summarize,
 )
 
@@ -142,3 +143,50 @@ def test_summarize_lists_failed_schema_names() -> None:
 def test_summarize_no_failed_section_when_clean() -> None:
     results = [TenantResult("a", TenantStatus.ALREADY_AT_HEAD)]
     assert "failed_schemas" not in summarize(results)
+
+
+class _CapturingEngine:
+    """Records the SQL a registry read issues, and returns no rows."""
+
+    def __init__(self) -> None:
+        self.statements: list[str] = []
+
+    def connect(self) -> _CapturingEngine:
+        return self
+
+    def execute(self, statement: object) -> _CapturingEngine:
+        self.statements.append(str(statement))
+        return self
+
+    def fetchall(self) -> list[tuple[str, str]]:
+        return []
+
+    def __enter__(self) -> _CapturingEngine:
+        return self
+
+    def __exit__(self, *_exc: object) -> bool:
+        return False
+
+
+def test_registry_excludes_synthetic_tenants_in_the_query() -> None:
+    """The exclusion must reach SQL, not be applied to the rows afterwards.
+
+    A caller that filtered after reading would still pay the per-tenant cost
+    the exclusion exists to avoid, and — because callers slice the result to
+    a maximum — synthetic rows would still consume that budget and crowd real
+    practices out of the pass.
+    """
+    engine = _CapturingEngine()
+
+    list_active_practice_registry(cast("Engine", engine), include_pentest=False)
+
+    assert "is_pentest = FALSE" in engine.statements[0]
+
+
+def test_registry_includes_every_tenant_by_default() -> None:
+    """Some fan-outs must reach every schema that exists, so this is opt-in."""
+    engine = _CapturingEngine()
+
+    list_active_practice_registry(cast("Engine", engine))
+
+    assert "is_pentest" not in engine.statements[0]

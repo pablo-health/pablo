@@ -262,6 +262,33 @@ def test_a_permanent_refusal_stalls_the_claim_with_the_reason(
     assert _run(harness).stalled == 0, "a stalled claim is not retried"
 
 
+def test_the_submission_log_carries_the_vendors_code_and_not_its_sentence(
+    harness: PipelineHarness, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Guardrail 5 at the surface that sends patient data.
+
+    A claim carries a patient, so a vendor validation message could quote a
+    member id or a name straight back out of it. The code says which refusal
+    this was and quotes nothing, so the code is what the log gets — this is
+    the call site the split in ``describe_error`` exists for.
+    """
+    harness.add(state="validated")
+    harness.client.answers.append(
+        ClearinghouseNotProvisionedError(
+            "subscriber.memberId W123456789 is not enrolled",
+            code="ACCOUNT_NOT_PROVISIONED",
+        )
+    )
+
+    with caplog.at_level("WARNING"):
+        _run(harness)
+
+    [line] = [r.getMessage() for r in caplog.records if "claim_submit_refused" in r.getMessage()]
+    assert "code=ACCOUNT_NOT_PROVISIONED" in line
+    assert "W123456789" not in line
+    assert "subscriber.memberId" not in line
+
+
 def test_a_claim_the_transport_cannot_build_is_stalled_without_a_call(
     harness: PipelineHarness,
 ) -> None:

@@ -16,16 +16,18 @@ from datetime import date
 
 from app.credentialing import employment
 from app.db.models import (
-    PARTICIPATION_STATUSES,
     Base,
-    PayerParticipationRow,
     PayerRow,
 )
-from app.db.platform_models import PlatformBase
+from app.db.platform_models import (
+    PARTICIPATION_STATUSES,
+    PayerParticipationRow,
+    PlatformBase,
+)
 
-#: Every table this change introduced. Named explicitly rather than derived from
-#: a prefix so that renaming one is a decision somebody makes here, not a silent
-#: drop in coverage.
+#: The clinician's credential record, which is platform-scoped. Named
+#: explicitly rather than derived from a prefix so that renaming one is a
+#: decision somebody makes here, not a silent drop in coverage.
 CREDENTIAL_TABLES: frozenset[str] = frozenset(
     {
         "credential_government_ids",
@@ -39,43 +41,95 @@ CREDENTIAL_TABLES: frozenset[str] = frozenset(
         "credential_confirmations",
         "credential_service_locations",
         "credential_bank_accounts",
+    }
+)
+
+#: Her payer relationships, which followed the credential record to platform.
+#: Separate from CREDENTIAL_TABLES because the practice_id rule reads
+#: differently here: ``payer_participations`` carries one to resolve a payer
+#: rather than a document, which is the one place that column has a second job.
+PARTICIPATION_TABLES: frozenset[str] = frozenset(
+    {
+        "payer_authorizations",
         "payer_participations",
         "payer_participation_events",
+        "contracted_rates",
     }
 )
 
 
-class TestTenantScoped:
-    def test_every_table_is_in_the_practice_metadata(self) -> None:
-        missing = sorted(CREDENTIAL_TABLES - set(Base.metadata.tables))
-        assert not missing, f"not declared on the practice Base: {missing}"
+def _platform_table(name: str):  # type: ignore[no-untyped-def]
+    """The platform table of that name, whatever schema key it is filed under."""
+    return next(t for t in PlatformBase.metadata.tables.values() if t.name == name)
 
-    def test_no_table_landed_in_the_platform_schema(self) -> None:
-        """The scoping decision, asserted rather than remembered.
 
-        An earlier draft of this work put the credential record in the platform
-        schema so a credentialing account could exist with no practice. That was
-        reversed: the document vault and ``clinician_profiles`` are both
-        practice-schema, so a platform record would have forked the identity
-        core. The accepted cost is that a credential record does not follow a
-        clinician between practices.
-        """
-        leaked = sorted(CREDENTIAL_TABLES & set(PlatformBase.metadata.tables))
-        assert not leaked, f"credential tables must not be platform-scoped: {leaked}"
+class TestPlatformScoped:
+    """The scoping decision, asserted rather than remembered — and it reversed.
+
+    This file used to assert the opposite, and explained why: the document vault
+    and ``clinician_profiles`` are per-tenant, so a platform record forks the
+    identity core, and the accepted cost was that a credential record does not
+    follow a clinician between practices.
+
+    That reasoning was sound for what it knew. What changed is that Pablo runs
+    credentialing as a concierge service: the operator has to read these across
+    practices to file an application on somebody's behalf, and held per-tenant
+    that is a scan of every schema in the database to answer a question about
+    one person. The cost the old decision accepted turned out to be the feature.
+
+    ``panel_applications`` moved first, for the same reason; these are the rest
+    of the same surface. The identity core did not in fact fork — what forked is
+    the document reference, which loses its foreign key and is tracked to be put
+    back (PABLO-g7oe).
+    """
+
+    def test_every_table_is_in_the_platform_metadata(self) -> None:
+        present = {t.name for t in PlatformBase.metadata.tables.values()}
+        missing = sorted(CREDENTIAL_TABLES - present)
+        assert not missing, f"not declared on PlatformBase: {missing}"
+
+    def test_none_are_left_in_the_practice_metadata(self) -> None:
+        """Two homes for one record is the state worth making impossible."""
+        left = sorted(CREDENTIAL_TABLES & set(Base.metadata.tables))
+        assert not left, f"still declared per-tenant as well: {left}"
 
     def test_every_table_carries_user_id(self) -> None:
-        """Which is what gives each one the direct-ownership RLS policy.
+        """Which is what gives each one its owner policy.
 
-        A table here without ``user_id`` but with an ``id`` would be force-RLS'd
-        with no policy — a silent deny-all that fails every provisioning test
-        far from its cause.
+        The row predicate is ``user_id = app.current_user_id``, the same one the
+        practice schemas use. A table here without it would be force-RLS'd with
+        nothing to match on — a silent deny-all, failing far from its cause.
         """
         without = sorted(
             name
             for name in CREDENTIAL_TABLES
-            if "user_id" not in {c.name for c in Base.metadata.tables[name].columns}
+            if "user_id" not in {c.name for c in _platform_table(name).columns}
         )
         assert not without, f"no user_id, so no row policy: {without}"
+
+    def test_practice_id_is_only_on_the_tables_that_point_at_a_document(self) -> None:
+        """The column has one job, and only three tables give it one.
+
+        ``practice_id`` says which practice schema resolves a ``document_id``,
+        because the vault stayed per-tenant and a platform table cannot
+        reference one. A table with no document has nothing to resolve.
+
+        Asserted both ways round on purpose. Adding it everywhere for symmetry
+        would put the practice back into the identity of a record whose whole
+        argument is that it belongs to the clinician — her degree was not filed
+        under a practice, and once she works at two the question has no answer.
+        A column with no job invites a query that scopes by it and a reader who
+        believes that scoping means something.
+        """
+        for name in sorted(CREDENTIAL_TABLES):
+            columns = {c.name for c in _platform_table(name).columns}
+            has_document = "document_id" in columns
+            has_practice = "practice_id" in columns
+            assert has_practice == has_document, (
+                f"{name}: document_id={has_document} but practice_id={has_practice}. "
+                "The column exists to resolve a document and for nothing else — "
+                "carry both or neither."
+            )
 
 
 class TestNoSecondDeaColumn:
@@ -94,17 +148,28 @@ class TestNoSecondDeaColumn:
 
 
 class TestDocumentsLiveInTheVault:
-    def test_every_document_reference_is_a_vault_foreign_key(self) -> None:
+    def test_a_document_reference_carries_no_foreign_key(self) -> None:
+        """Not an oversight — a platform table cannot reference a per-tenant one.
+
+        ``compliance_documents`` stayed behind, so the constraint had to go and
+        the column stayed. This asserts the absence deliberately, because an
+        absent foreign key looks exactly like a forgotten one: the next person
+        to notice should find this test rather than "fix" it.
+
+        It comes back when the compliance cluster follows (PABLO-g7oe), and this
+        test inverts again at that point.
+        """
         for name in sorted(CREDENTIAL_TABLES):
-            table = Base.metadata.tables[name]
+            table = _platform_table(name)
             if "document_id" not in {c.name for c in table.columns}:
                 continue
             targets = {
                 str(fk.column)
                 for fk in table.c.document_id.foreign_keys  # type: ignore[attr-defined]
             }
-            assert targets == {"compliance_documents.id"}, (
-                f"{name}.document_id points at {sorted(targets)}, not the existing compliance vault"
+            assert not targets, (
+                f"{name}.document_id has a foreign key to {sorted(targets)}; a platform "
+                "table cannot reference a per-tenant one, so this cannot work"
             )
 
     def test_no_table_stores_file_bytes(self) -> None:
@@ -112,24 +177,50 @@ class TestDocumentsLiveInTheVault:
         byteish = {
             f"{name}.{column.name}"
             for name in sorted(CREDENTIAL_TABLES)
-            for column in Base.metadata.tables[name].columns
+            for column in _platform_table(name).columns
             if column.type.__class__.__name__ in {"LargeBinary", "BLOB", "BYTEA"}
         }
         assert not byteish, f"file bytes belong in the vault, not here: {sorted(byteish)}"
 
 
 class TestParticipationShape:
-    def test_unique_on_user_and_payer(self) -> None:
+    def test_unique_on_user_practice_and_payer(self) -> None:
+        """The practice belongs in the key, and did not used to.
+
+        ``(user_id, payer_id)`` identified one participation per clinician per
+        payer while both sides lived in the same practice schema. From
+        ``platform`` it identifies nothing: the same insurer is a different
+        uuid in every practice's ``payers`` table. Widening it is also the
+        truer statement — panel participation is contracted per billing entity,
+        so a clinician working in two practices holds two statuses against the
+        same insurer, which the old key could not express.
+        """
         constraints = {
             tuple(c.name for c in constraint.columns)
             for constraint in PayerParticipationRow.__table__.constraints
             if constraint.__class__.__name__ == "UniqueConstraint"
         }
-        assert ("user_id", "payer_id") in constraints
+        assert ("user_id", "practice_id", "payer_id") in constraints
+        assert ("user_id", "payer_id") not in constraints, (
+            "the two-column key would let one practice's row block another's"
+        )
 
-    def test_foreign_keys_to_payers(self) -> None:
-        targets = {str(fk.column) for fk in PayerParticipationRow.__table__.c.payer_id.foreign_keys}
-        assert targets == {"payers.id"}
+    def test_payer_id_carries_no_foreign_key_and_practice_id_resolves_it(self) -> None:
+        """``payers`` stays per-tenant, so the reference cannot be enforced.
+
+        It holds the practice's own electronic enrollment state with an
+        insurer, which two practices hold differently for the same company. A
+        platform table cannot reference a per-tenant one, so the constraint is
+        gone and ``practice_id`` is what says which schema to resolve
+        ``payer_id`` in — the shape ``panel_applications`` already uses.
+        """
+        payer_id = PayerParticipationRow.__table__.c.payer_id
+        assert not payer_id.foreign_keys, (
+            "a platform table cannot reference the per-tenant payers table"
+        )
+        assert "practice_id" in PayerParticipationRow.__table__.c, (
+            "without practice_id, payer_id names a row in no particular schema"
+        )
 
     def test_no_carve_out_or_state_column_of_its_own(self) -> None:
         """Both are already properties of the payer row; duplicating them drifts.
@@ -155,8 +246,22 @@ class TestParticipationShape:
         }
 
     def test_events_carry_user_id_for_isolation_without_a_join(self) -> None:
-        names = {c.name for c in Base.metadata.tables["payer_participation_events"].columns}
+        names = {c.name for c in _platform_table("payer_participation_events").columns}
         assert {"user_id", "participation_id"} <= names
+
+    def test_only_the_rate_carries_practice_id_among_the_children(self) -> None:
+        """``practice_id`` earns its place by resolving a document, or it goes.
+
+        ``contracted_rates`` points at the fee schedule in the practice's
+        vault, so it needs to know which vault. The events point at nothing,
+        so they do not carry the column — and a ``practice_id`` with no
+        reference to resolve invites a query that scopes by it and a reader who
+        believes that scoping means something.
+        """
+        events = {c.name for c in _platform_table("payer_participation_events").columns}
+        rates = {c.name for c in _platform_table("contracted_rates").columns}
+        assert "practice_id" not in events
+        assert {"practice_id", "source_document_id"} <= rates
 
 
 class TestTheNameCollisionIsDocumented:
@@ -183,7 +288,7 @@ class TestEmploymentGapsAreDerived:
     """AC 9. Gaps come from the dates, so they cannot disagree with them."""
 
     def test_no_stored_gap_flag(self) -> None:
-        names = {c.name for c in Base.metadata.tables["credential_employment"].columns}
+        names = {c.name for c in _platform_table("credential_employment").columns}
         assert "has_gap" not in names
         assert "preceding_gap_explanation" in names
 

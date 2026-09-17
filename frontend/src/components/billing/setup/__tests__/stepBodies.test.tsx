@@ -91,12 +91,18 @@ const CASES = everySubset().flatMap((state) =>
 
 function noop() {}
 
-function props(selected: CurrentStateId[], wantsCredentialing: boolean) {
+function props(
+  selected: CurrentStateId[],
+  wantsCredentialing: boolean,
+  wantsCardPayments = false,
+) {
   return {
     selected,
     wantsCredentialing,
+    wantsCardPayments,
     onToggle: noop,
     onToggleCredentialing: noop,
+    onToggleCardPayments: noop,
     onContinue: noop,
     onBack: noop,
     onNoClients: noop,

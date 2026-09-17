@@ -254,6 +254,16 @@ class AuditAction(StrEnum):
     # amount and the claim ids the balance was standing against — never a
     # diagnosis or a payer's member id.
     PATIENT_WRITE_OFF_CREATED = "patient_write_off_created"
+    # Money the practice took outside this system — a cheque, cash, a
+    # transfer — recorded after the fact. A separate action from
+    # PATIENT_CHARGE_CREATED on purpose: that one says a clinician asked a
+    # processor to move money and the processor's record corroborates it,
+    # while this one is the practice's own unverifiable assertion that it was
+    # paid. They answer different questions in an audit, so they must not
+    # collapse into one event. The `changes` payload carries the ledger row
+    # id, the method and the amount — never the reference text, which is free
+    # text a clinician can type anything into.
+    PATIENT_PAYMENT_RECORDED = "patient_payment_recorded"
 
     # Coverage on file. A client's plan — payer, member id, subscriber — is
     # protected health information about a named person, so reading or
@@ -288,6 +298,15 @@ class AuditAction(StrEnum):
     CLAIM_REMITTANCE_HOLDS_LISTED = "claim_remittance_holds_listed"
     CLAIM_REMITTANCE_HOLD_ACKNOWLEDGED = "claim_remittance_hold_acknowledged"
     CLAIM_REMITTANCE_HOLD_RESOLVED = "claim_remittance_hold_resolved"
+    # What a claim still needs a person to do — a rejection to answer, a
+    # deadline to beat. These lived on the compliance dashboard until
+    # 2026-09, filed as ``claim_*`` compliance items, and were never audited
+    # there: that surface is the clinician's own credentials and is exempt.
+    # They are about a patient's claim, so on this path they are audited like
+    # every other claim read. The `changes` payload carries reminder ids,
+    # kinds and the claims they belong to; never a name or a diagnosis.
+    CLAIM_REMINDERS_LISTED = "claim_reminders_listed"
+    CLAIM_REMINDER_COMPLETED = "claim_reminder_completed"
     # The tracker: every claim the clinician can see, in one read. One row
     # naming the claims it listed (ids and control numbers), like the CSV
     # export does.

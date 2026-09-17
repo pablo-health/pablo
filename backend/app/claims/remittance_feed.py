@@ -164,9 +164,16 @@ class FeedRemittanceDetails:
                 if item.direction == "INBOUND"
                 and item.transaction_set == REMITTANCE_TRANSACTION_SET
             )
-            page_token = page.nextPageToken
-            if not page_token:
+            # An empty page is the end of what the feed holds right now, and
+            # it is the ONLY end the feed signals. The vendor's polling
+            # endpoint returns a nextPageToken on every page, an empty one
+            # included — there it is the same cursor again, meant for coming
+            # back later to find what arrived since. Reading "token present"
+            # as "more to read" turns every pass into a walk to the page cap,
+            # however narrow the window and however little is in it.
+            if not page.items or not page.nextPageToken:
                 return ids
+            page_token = page.nextPageToken
         # Worth being loud about: the feed pages oldest-first, so stopping
         # here means the NEWEST remittances in the window were not read, and
         # those are the ones a pass is most likely to be asking about. The
