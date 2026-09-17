@@ -25,11 +25,17 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from ..models import ChatConversation
+from ..prompts.patient_chat import get_patient_chat_system_prompt
 from ..utcnow import utc_now
 
 if TYPE_CHECKING:
     from ..models import ChatMessage
     from ..repositories import ChatRepository
+
+# The ``caller_feature_key`` every patient-initiated conversation carries.
+# One key for the whole surface: the clinician key varies by which feature
+# opened the chat, whereas a patient has exactly one way in.
+PATIENT_CHAT_FEATURE_KEY = "patient_chat"
 
 
 class ChatConversationNotFoundError(Exception):
@@ -161,3 +167,81 @@ class ChatService:
         ``archive=True``.
         """
         return self._repo.delete_conversation(conversation_id, user_id)
+
+    # ------------------------------------------------------------------
+    # Patient-principal path
+    # ------------------------------------------------------------------
+    #
+    # Separate verbs, mirroring the repository: the clinician verbs above
+    # authorize through a ``patient_clinicians`` grant, these through the
+    # calling patient owning the row. ``patient_id`` always comes from the
+    # resolved principal, never from a request body.
+
+    def get_patient_conversation(self, conversation_id: str, patient_id: str) -> ChatConversation:
+        conv = self._repo.get_patient_conversation(conversation_id, patient_id)
+        if conv is None:
+            raise ChatConversationNotFoundError(conversation_id)
+        return conv
+
+    def list_patient_messages(self, conversation_id: str, patient_id: str) -> list[ChatMessage]:
+        return self._repo.list_patient_messages(conversation_id, patient_id)
+
+    def list_patient_conversations(
+        self,
+        *,
+        patient_id: str,
+        include_archived: bool = False,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> tuple[list[ChatConversation], int]:
+        return self._repo.list_patient_conversations(
+            patient_id=patient_id,
+            include_archived=include_archived,
+            page=page,
+            page_size=page_size,
+        )
+
+    def create_patient_conversation(
+        self, *, patient_id: str, title: str | None
+    ) -> ChatConversation:
+        """Start a conversation the patient owns.
+
+        No owner, by definition; the prompt is the patient surface's own,
+        resolved server-side so a client can never supply one; and no
+        default source selection, because the surface never reads the
+        chart (see ``TurnContext.ground_in_chart``).
+        """
+        resolved_title = (title or "").strip()[:200] or "New chat"
+        conversation = ChatConversation(
+            id=str(uuid.uuid4()),
+            patient_id=patient_id,
+            owner_user_id=None,
+            title=resolved_title,
+            caller_system_prompt=get_patient_chat_system_prompt(),
+            caller_feature_key=PATIENT_CHAT_FEATURE_KEY,
+            default_source_selection=None,
+            created_at=utc_now(),
+        )
+        return self._repo.add_patient_conversation(conversation, patient_id)
+
+    def update_patient_conversation(
+        self,
+        conversation_id: str,
+        patient_id: str,
+        *,
+        title: str | None = None,
+        archive: bool | None = None,
+    ) -> ChatConversation:
+        """Title and archive state are the only things a patient may change."""
+        conv = self.get_patient_conversation(conversation_id, patient_id)
+        if title is not None:
+            conv.title = title.strip()[:200] or conv.title
+        if archive is True and conv.archived_at is None:
+            conv.archived_at = utc_now()
+        elif archive is False:
+            conv.archived_at = None
+        return self._repo.update_patient_conversation(conv, patient_id)
+
+    def delete_patient_conversation(self, conversation_id: str, patient_id: str) -> int:
+        """Hard-delete a patient-owned conversation. Returns the message count."""
+        return self._repo.delete_patient_conversation(conversation_id, patient_id)

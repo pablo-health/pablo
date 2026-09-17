@@ -1063,6 +1063,15 @@ PATIENT_WRITABLE_TABLES: dict[str, str] = {
     "chat_messages": "conversation_id",
 }
 
+# Of the writable ones, the ones a patient may also DELETE. A third registry
+# rather than a widening of "writable", because the two chat tables are the
+# only case where the patient owns the row outright and purging it is the
+# feature: a patient who deletes a conversation expects it gone, not
+# archived. ``outcome_measures`` stays out — a screener result is part of
+# the clinical record once submitted, and the write arm exists so the form
+# can save it, not so it can be withdrawn.
+PATIENT_DELETABLE_TABLES: frozenset[str] = frozenset({"chat_conversations", "chat_messages"})
+
 
 def register_overlay_patient_scoped(
     table_name: str, key_column: str = "patient_id", *, writable: bool = False
@@ -1218,6 +1227,20 @@ def _apply_patient_principal_policies(
             )
         )
         logger.info("RLS (patient self-write on %s) enabled on %s", key_column, qualified)
+
+    if table_name in PATIENT_DELETABLE_TABLES:
+        # DELETE is the quiet one. With no DELETE policy the row is simply
+        # not visible to the command, so a purge deletes zero rows without
+        # an error and the caller is told it succeeded. The arm makes the
+        # patient's own rows deletable and nothing else: the predicate is
+        # the same ownership pair the read arm uses.
+        session.execute(
+            text(
+                f"CREATE POLICY rls_patient_self_delete ON {qualified} "
+                f"FOR DELETE USING ({predicate})"
+            )
+        )
+        logger.info("RLS (patient self-delete on %s) enabled on %s", key_column, qualified)
 
 
 def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant-table shape
@@ -1388,6 +1411,7 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
         session.execute(text(f"DROP POLICY IF EXISTS rls_patient_self_read ON {qualified}"))
         session.execute(text(f"DROP POLICY IF EXISTS rls_patient_self_write ON {qualified}"))
         session.execute(text(f"DROP POLICY IF EXISTS rls_patient_self_insert ON {qualified}"))
+        session.execute(text(f"DROP POLICY IF EXISTS rls_patient_self_delete ON {qualified}"))
 
         # Additive: created before the clinician shape is chosen, because
         # several of those branches ``continue``. Permissive policies OR

@@ -58,6 +58,15 @@ from .patient import (
     PatientResponse,
     UpdatePatientRequest,
 )
+from .patient_chat_api import (
+    CreatePatientChatConversationRequest,
+    PatientChatConversationDetailResponse,
+    PatientChatConversationListResponse,
+    PatientChatConversationResponse,
+    PatientChatMessageResponse,
+    SendPatientChatMessageRequest,
+    UpdatePatientChatConversationRequest,
+)
 from .patient_document import DocumentCategory, ExtractionStatus, PatientDocument
 from .scheduling import (
     AppointmentListResponse,
@@ -150,6 +159,7 @@ __all__ = [
     "CreateAppointmentRequest",
     "CreateAvailabilityRuleRequest",
     "CreateChatConversationRequest",
+    "CreatePatientChatConversationRequest",
     "CreatePatientRequest",
     "CreateRecurringAppointmentRequest",
     "CreateStandaloneNoteRequest",
@@ -176,6 +186,10 @@ __all__ = [
     "NoteResponse",
     "ObjectiveNote",
     "Patient",
+    "PatientChatConversationDetailResponse",
+    "PatientChatConversationListResponse",
+    "PatientChatConversationResponse",
+    "PatientChatMessageResponse",
     "PatientDocument",
     "PatientExportData",
     "PatientListResponse",
@@ -196,6 +210,7 @@ __all__ = [
     "ScheduleSessionRequest",
     "SecurityGuideStatusResponse",
     "SendChatMessageRequest",
+    "SendPatientChatMessageRequest",
     "SessionListResponse",
     "SessionResponse",
     "SessionSource",
@@ -217,6 +232,7 @@ __all__ = [
     "UpdateChatConversationRequest",
     "UpdateEhrRouteStepRequest",
     "UpdateNoteEditsRequest",
+    "UpdatePatientChatConversationRequest",
     "UpdatePatientRequest",
     "UpdateProfessionalInfoRequest",
     "UpdateSessionMetadataRequest",

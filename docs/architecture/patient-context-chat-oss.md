@@ -1259,9 +1259,38 @@ doesn't re-litigate from scratch.
 
 ---
 
-## §19. References
+## §19. The patient-principal surface
+
+`/api/patient/chat` is the same primitive with the patient as the actor.
+It shares the tables, the turn service and the flag, and differs in the
+three places that follow from who is asking:
+
+| | Clinician surface (`/api/chat`) | Patient surface (`/api/patient/chat`) |
+|---|---|---|
+| Principal | `TenantContext` via `require_baa_acceptance` | `PatientContext` via `get_patient_context`, `STEPPED_UP` required |
+| Row test | `has_patient_access(patient_id, user_id)` | `patient_id = principal AND owner_user_id IS NULL` |
+| Chart | grounded per `source_selection` | never: `ground_in_chart=False` |
+| Prompt | `prompts.chat`, provider-aware, client may supply | `prompts.patient_chat`, server-side only |
+| Audit | lifecycle events | lifecycle events **and one row per turn** (`CHAT_TURN`) |
+| Delete | clinician `ALL` policy | `rls_patient_self_delete`, chat tables only |
+
+The two kinds of conversation share a `patient_id`, so `owner_user_id IS
+NULL` is what tells them apart, and it is tested in three places that must
+agree: the row policy (`_patient_principal_predicate_for`), the patient
+repository verbs, and the clinician verbs, which exclude patient-initiated
+rows. Whether the care team should ever see a patient's between-visit chat
+is a product decision for the report-back work, not a side effect of a
+shared table.
+
+Nothing in the patient routes' inputs names a patient. A conversation id
+that belongs to another patient, or to a clinician's chat about this one,
+is a 404 indistinguishable from a typo.
+
+## §20. References
 
 - `backend/app/routes/chat.py` — route layer.
+- `backend/app/routes/patient_chat.py` — patient-principal route layer (§19).
+- `backend/app/prompts/patient_chat.py` — the patient surface's prompt and its floors.
 - `backend/app/services/chat_service.py` — lifecycle business logic.
 - `backend/app/services/chat_turn_service.py` — streaming turn orchestrator.
 - `backend/app/services/chat_context_bundler.py` — source loaders + manifest.
