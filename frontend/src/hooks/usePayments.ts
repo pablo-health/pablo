@@ -10,6 +10,7 @@ import type {
   ChargeResponse,
   CreateChargeRequest,
   CreateWriteOffRequest,
+  RecordPaymentRequest,
 } from "@/types/payments"
 import {
   chargeBalance,
@@ -20,6 +21,7 @@ import {
   fetchChargeAmount,
   fetchPatientBalance,
   listCharges,
+  recordPayment,
   startCardSetup,
 } from "@/lib/api/payments"
 import { queryKeys } from "@/lib/api/queryKeys"
@@ -161,6 +163,24 @@ export function useCreateWriteOff(token?: string) {
     { patientId: string; data: CreateWriteOffRequest }
   >({
     mutationFn: ({ patientId, data }) => createWriteOff(patientId, data, token),
+    invalidateKeys: ({ patientId }) => [
+      queryKeys.payments.charges(patientId),
+      queryKeys.payments.balance(patientId),
+      queryKeys.billing.balances(),
+    ],
+  })
+}
+
+/**
+ * Record money the practice already took.
+ *
+ * Invalidates the same three keys a charge does. The money moved before this
+ * call rather than because of it, but the figures it changes are the same
+ * ones — and the balance is the whole reason the route exists.
+ */
+export function useRecordPayment(token?: string) {
+  return useAuthMutation<ChargeResponse, { patientId: string; data: RecordPaymentRequest }>({
+    mutationFn: ({ patientId, data }) => recordPayment(patientId, data, token),
     invalidateKeys: ({ patientId }) => [
       queryKeys.payments.charges(patientId),
       queryKeys.payments.balance(patientId),

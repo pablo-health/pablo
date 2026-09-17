@@ -14,6 +14,7 @@ export type StepId =
   | "identity"
   | "contact"
   | "rates"
+  | "payments"
   | "payers"
   | "confirm"
   | "record"
@@ -121,6 +122,20 @@ const DONE_STEP: SetupStep = {
   caption: "That's everything Pablo needs.",
 }
 
+/**
+ * Connecting a processor, so an invoice can actually be paid.
+ *
+ * Sits after the practice steps deliberately: she has just said what a session
+ * is worth, and how she collects it is the sentence that follows. Asking before
+ * the rates are in hand would be asking her to set up a till before she has
+ * decided what anything costs.
+ */
+const PAYMENTS_STEP: SetupStep = {
+  id: "payments",
+  label: "Card payments",
+  caption: "Clients pay an invoice by card.",
+}
+
 const PAYER_STEP: SetupStep = {
   id: "payers",
   label: "Payers",
@@ -183,11 +198,16 @@ const RECORD_STEP: SetupStep = {
 export function stepsForState(
   state: readonly CurrentStateId[] | null,
   wantsCredentialing = false,
+  wantsCardPayments = false,
 ): readonly SetupStep[] {
   if (state === null) return [ROUTE_STEP]
 
   const steps: SetupStep[] = [ROUTE_STEP, PLAN_STEP, LOOKUP_STEP, ...PRACTICE_STEPS]
 
+  // Only when she asked, and only where a deployment can actually deliver it.
+  // The caller resolves both — see `wantsCardPayments` in GetPaidWizard, which
+  // is already false wherever `HAS_PAYMENTS_SETUP` is.
+  if (wantsCardPayments) steps.push(PAYMENTS_STEP)
   // Which payers she can bill is a question for someone who bills insurers
   // herself, or is about to. It is never asked because she is on a platform:
   // the platform's payers are the platform's business.

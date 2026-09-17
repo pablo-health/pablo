@@ -23,8 +23,12 @@ export const TIERS: TierCopy[] = [
   {
     id: "tier_0_confirm",
     label: "Check what we know",
+    // "We already know these" rather than "We looked these up", because one of
+    // these cards is pre-answered from her profile rather than fetched, and a
+    // blurb has to be true of every card under it. Each card names its own
+    // source anyway, which is the honest place to say where a value came from.
     blurb:
-      "We looked these up. Tell us if anything is wrong — there is nothing to type.",
+      "We already know these. Tell us if anything is wrong — there is nothing to type.",
   },
   {
     id: "tier_1_claims_ready",

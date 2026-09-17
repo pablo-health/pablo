@@ -23,10 +23,22 @@ import { PanelApplications } from "../PanelApplications"
 import type { PanelApplication } from "@/types/credentialing"
 
 const usePanelApplications = vi.hoisted(() => vi.fn())
+const usePreferences = vi.hoisted(() => vi.fn())
 
 vi.mock("@/hooks/useCredentialingChecklist", () => ({
   usePanelApplications: () => usePanelApplications(),
 }))
+
+vi.mock("@/hooks/usePreferences", () => ({
+  usePreferences: () => usePreferences(),
+}))
+
+/** Whether she ticked the credentialing box in the billing setup wizard. */
+function asked(wants: boolean) {
+  usePreferences.mockReturnValue({
+    data: { billing_setup_wants_credentialing: wants },
+  })
+}
 
 function application(overrides: Partial<PanelApplication> = {}): PanelApplication {
   return {
@@ -64,6 +76,9 @@ function loaded(data: PanelApplication[], needsYou?: number) {
 
 beforeEach(() => {
   usePanelApplications.mockReset()
+  usePreferences.mockReset()
+  // Default to somebody who never asked, so a test that cares has to say so.
+  asked(false)
 })
 
 describe("before the answer arrives", () => {
@@ -99,6 +114,70 @@ describe("a clinician who has not started", () => {
 
     const { container } = render(<PanelApplications />)
 
+    expect(container).toBeEmptyDOMElement()
+  })
+})
+
+/**
+ * The gap between asking and an operator filing the first application, which
+ * is a human act and may be days later. An empty board is the right answer for
+ * somebody who never asked and the wrong one for somebody who did.
+ */
+describe("a clinician who asked and is waiting for the first application", () => {
+  it("is told the request reached us, rather than shown nothing", () => {
+    loaded([])
+    asked(true)
+
+    render(<PanelApplications />)
+
+    expect(
+      screen.getByTestId("credentialing-request-received"),
+    ).toBeInTheDocument()
+    expect(screen.getByText(/request is with us/i)).toBeInTheDocument()
+  })
+
+  it("is promised no date, because the payer owns the clock", () => {
+    loaded([])
+    asked(true)
+
+    const { container } = render(<PanelApplications />)
+
+    // Any duration at all would be a promise we cannot keep — she would start
+    // measuring us against it the day she read it.
+    expect(container.textContent).not.toMatch(/\d+\s*(day|week|month|business)/i)
+    expect(container.textContent).not.toMatch(/within|by the end of|turnaround/i)
+  })
+
+  it("does not claim an update will be sent, because nothing sends one yet", () => {
+    loaded([])
+    asked(true)
+
+    const { container } = render(<PanelApplications />)
+
+    expect(container.textContent).not.toMatch(/keep you (updated|posted)|we.ll email|notify you/i)
+  })
+
+  it("gives way to the real board the moment there is one", () => {
+    loaded([application({ payer_name: "Aetna" })])
+    asked(true)
+
+    render(<PanelApplications />)
+
+    // One surface, not two competing ones.
+    expect(
+      screen.queryByTestId("credentialing-request-received"),
+    ).not.toBeInTheDocument()
+    expect(screen.getByText("Aetna")).toBeInTheDocument()
+  })
+
+  it("survives preferences not having loaded yet", () => {
+    loaded([])
+    usePreferences.mockReturnValue({ data: undefined })
+
+    const { container } = render(<PanelApplications />)
+
+    // Undefined is not "she asked". Showing an acknowledgement to someone who
+    // never asked is worse than showing nothing for one render.
     expect(container).toBeEmptyDOMElement()
   })
 })

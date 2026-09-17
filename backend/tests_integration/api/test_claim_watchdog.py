@@ -27,7 +27,7 @@ from alembic.config import Config
 from app.claims.events import compliance_reminder_listener, register_claim_event_listener
 from app.claims.watchdog import run_watchdog
 from app.db import arm_current_user_id, set_tenant_schema
-from app.db.models import ComplianceItemRow
+from app.db.models import ClaimReminderRow
 from app.db.provisioning import create_practice_schema
 from sqlalchemy import Engine, create_engine, select, text
 from sqlalchemy.orm import Session
@@ -170,6 +170,90 @@ def reminders_engine() -> Iterator[Engine]:
     engine.dispose()
 
 
+def _seed_claim(engine: Engine, created: object) -> None:
+    """Put the harness's in-memory claim into the schema, with its client.
+
+    Through an armed session rather than a bare connection: ``patients`` has
+    an INSERT policy that requires ``app.current_user_id`` to be set, which is
+    what ``arm_current_user_id`` does and what the app itself relies on.
+    """
+    from app.db.models import (  # noqa: PLC0415
+        ClaimRow,
+        PatientClinicianRow,
+        PatientCoverageRow,
+        PatientRow,
+        PayerRow,
+    )
+
+    now = datetime.now(UTC)
+    with Session(engine) as session:
+        set_tenant_schema(session, _SCHEMA)
+        arm_current_user_id(session, USER_ID)
+        session.add(
+            PatientRow(
+                id=created.patient_id,  # type: ignore[attr-defined]
+                first_name="Test",
+                last_name="Patient",
+                first_name_lower="test",
+                last_name_lower="patient",
+                status="active",
+                session_count=0,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.flush()
+        session.add(
+            PatientClinicianRow(
+                patient_id=created.patient_id,  # type: ignore[attr-defined]
+                user_id=USER_ID,
+                granted_by=USER_ID,
+            )
+        )
+        session.add(
+            PayerRow(
+                id=created.payer_id,  # type: ignore[attr-defined]
+                name="Aetna",
+                payer_id="AETNA",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.flush()
+        session.add(
+            PatientCoverageRow(
+                id=created.coverage_id,  # type: ignore[attr-defined]
+                patient_id=created.patient_id,  # type: ignore[attr-defined]
+                payer_id=created.payer_id,  # type: ignore[attr-defined]
+                member_id="123456789",
+                subscriber_relationship="self",
+                active=True,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.flush()
+        session.add(
+            ClaimRow(
+                id=created.id,  # type: ignore[attr-defined]
+                control_number=created.control_number,  # type: ignore[attr-defined]
+                patient_id=created.patient_id,  # type: ignore[attr-defined]
+                coverage_id=created.coverage_id,  # type: ignore[attr-defined]
+                payer_id=created.payer_id,  # type: ignore[attr-defined]
+                state="submitted",
+                frequency_code="1",
+                total_charge_cents=10_000,
+                total_paid_cents=0,
+                diagnosis_codes=[],
+                billing_snapshot={},
+                subscriber_snapshot={},
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.commit()
+
+
 def test_the_stalled_reminder_carries_no_patient_identifiers(
     harness: PipelineHarness, reminders_engine: Engine
 ) -> None:
@@ -177,17 +261,21 @@ def test_the_stalled_reminder_carries_no_patient_identifiers(
     created = _far_future_service(
         harness, state="submitted", submitted_at=_at(6), control_number="STALLED00001"
     )
+    # The harness keeps its claim in memory; the reminder now needs a real one,
+    # because it carries a foreign key to it rather than its control number in
+    # a line of text. So the row the fake invented is put where the constraint
+    # can see it.
+    _seed_claim(reminders_engine, created)
     with Session(reminders_engine) as session:
         set_tenant_schema(session, _SCHEMA)
         arm_current_user_id(session, USER_ID)
         harness.pipeline.session = session
         _run(harness)
         session.commit()
-        rows = list(session.execute(select(ComplianceItemRow)).scalars().all())
+        rows = list(session.execute(select(ClaimReminderRow)).scalars().all())
 
     [row] = rows
-    assert row.user_id == USER_ID
-    assert row.item_type == "claim_stalled"
+    assert row.kind == "stalled"
     assert created.control_number[:8] in row.label  # type: ignore[attr-defined]
     assert "stalled" in row.label
     assert "6 days" in (row.notes or "")

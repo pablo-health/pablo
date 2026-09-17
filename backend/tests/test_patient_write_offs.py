@@ -86,6 +86,8 @@ class _FakePayments:
         claim_id: str | None = None,
         write_off_reason: str | None = None,
         note: str | None = None,
+        method: str | None = None,
+        payment_reference: str | None = None,
     ) -> PatientCharge:
         self._next_id += 1
         charge = PatientCharge(
@@ -96,6 +98,8 @@ class _FakePayments:
             claim_id=claim_id,
             write_off_reason=write_off_reason,
             note=note,
+            method=method,
+            payment_reference=payment_reference,
             amount_cents=amount_cents,
             currency=currency,
             status="succeeded",

@@ -611,3 +611,44 @@ class TestErrorMapping:
 
         with pytest.raises(ClearinghouseUnavailableError):
             client.search_payers("anything")
+
+    @pytest.mark.parametrize(
+        ("fixture_name", "status_code", "expected_code"),
+        [
+            ("error_access_denied.json", 403, "access_denied"),
+            ("error_invalid_request_body.json", 400, "INVALID_REQUEST_BODY"),
+            ("error_account_not_provisioned.json", 400, "ACCOUNT_NOT_PROVISIONED"),
+            ("error_request_changed.json", 422, "REQUEST_CHANGED"),
+        ],
+    )
+    def test_the_vendors_own_code_survives_onto_the_exception(
+        self, fixture_name: str, status_code: int, expected_code: str
+    ) -> None:
+        """Read off captured envelopes, so the codes are the vendor's spelling.
+
+        The adapter reads ``code`` to choose which exception to raise and
+        used to drop it there. It is the only thing that separates the
+        several vendor answers behind one of our classes, so it is kept.
+        """
+        fixture = _fixture(fixture_name)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response(fixture, status_code=status_code)
+
+        client = _client_for(handler)
+
+        with pytest.raises(ClearinghouseError) as raised:
+            client.list_enrollments(EnrollmentFilters())
+
+        assert raised.value.code == expected_code
+
+    def test_an_envelope_with_no_code_leaves_it_unset(self) -> None:
+        """A 5xx carries no envelope; ``None`` is the honest answer."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(502, text="bad gateway")
+
+        with pytest.raises(ClearinghouseUnavailableError) as raised:
+            _client_for(handler).search_payers("anything")
+
+        assert raised.value.code is None

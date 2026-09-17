@@ -9,7 +9,12 @@
  */
 
 import { formatCents } from "@/lib/money"
-import type { CardOnFileResponse, ChargeKind, ChargeResponse } from "@/types/payments"
+import type {
+  CardOnFileResponse,
+  ChargeKind,
+  ChargeResponse,
+  PaymentMethod,
+} from "@/types/payments"
 
 /** `visa` -> `Visa`, `amex` -> `Amex`; unknown brands pass through capitalised. */
 export function formatCardBrand(brand: string | null): string {
@@ -102,6 +107,26 @@ const CHARGE_KIND_LABELS: Record<ChargeKind, string> = {
 
 export function chargeKindLabel(kind: string): string {
   return CHARGE_KIND_LABELS[kind as ChargeKind] ?? kind
+}
+
+/**
+ * How the money arrived, for the ledger line.
+ *
+ * `card` is left unlabelled on purpose. It is what the overwhelming majority
+ * of rows are, and a system that charges cards saying "card" on every line is
+ * noise — the method is worth a word exactly when it is NOT the default, which
+ * is the case this was added for. An unrecognised method falls back to itself
+ * rather than to a friendly guess, like `chargeKindLabel` above.
+ */
+const PAYMENT_METHOD_LABELS: Record<Exclude<PaymentMethod, "card">, string> = {
+  cash: "cash",
+  check: "check",
+  other: "recorded",
+}
+
+export function paymentMethodLabel(method: string | null): string | null {
+  if (method === null || method === "card") return null
+  return PAYMENT_METHOD_LABELS[method as Exclude<PaymentMethod, "card">] ?? method
 }
 
 /**

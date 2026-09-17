@@ -235,12 +235,19 @@ def _submit(scoped: _TenantSession, client: Any) -> Any:
 
 
 def _reminders_visible_to(engine: Engine, schema: str, user_id: str) -> list[Any]:
-    from app.db.models import ComplianceItemRow  # noqa: PLC0415
+    """What this clinician can see of the claims' outstanding work.
+
+    Reads ``claim_reminders``, which is isolated by the claim's own
+    ``has_patient_access`` policy rather than by ``user_id`` — so "nobody
+    else's" below now means "nobody without a grant on the client", which is
+    the same boundary the claim itself has.
+    """
+    from app.db.models import ClaimReminderRow  # noqa: PLC0415
     from sqlalchemy import select  # noqa: PLC0415
 
     scoped = _TenantSession(engine, schema, user_id)
     try:
-        return list(scoped.session.execute(select(ComplianceItemRow)).scalars().all())
+        return list(scoped.session.execute(select(ClaimReminderRow)).scalars().all())
     finally:
         scoped.close()
 
@@ -338,10 +345,14 @@ class TestOutboxOnPostgres:
         mine = [
             r
             for r in _reminders_visible_to(engine, tenant_schema, _CLINICIAN_A)
-            if r.item_type == "claim_rejected" and created.control_number in (r.notes or "")
+            if r.kind == "rejected" and r.claim_id == created.id
         ]
         assert len(mine) == 1, "Control: the owner sees the reminder the worker wrote"
-        assert mine[0].user_id == _CLINICIAN_A
+        # A reminder is no longer addressed to a clinician by ``user_id``; it
+        # belongs to the claim, and the claim's ``has_patient_access`` policy
+        # decides who can see it. Clinician B's empty list below is that policy
+        # working, and it is the stronger assertion of the two.
+        assert mine[0].patient_id == patient_id
         for forbidden in ("123456789", "Anon", "F41", "2000-01-01"):
             assert forbidden not in mine[0].label
         assert _reminders_visible_to(engine, tenant_schema, _CLINICIAN_B) == []
@@ -524,8 +535,7 @@ class TestAcknowledgementsOnPostgres:
         mine = [
             r
             for r in _reminders_visible_to(engine, tenant_schema, _CLINICIAN_A)
-            if r.item_type == "claim_deadline_approaching"
-            and created.control_number in (r.notes or "")
+            if r.kind == "deadline_approaching" and r.claim_id == created.id
         ]
         assert len(mine) == 1
 

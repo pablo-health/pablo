@@ -1270,6 +1270,11 @@ class TestLedgerRead:
             "claim_id",
             "write_off_reason",
             "note",
+            # How the money arrived and how the practice finds it again. Both
+            # describe the payment, not the payer: still no processor customer
+            # id, no payment-method id, no card data.
+            "method",
+            "payment_reference",
             "settled_by_charge_id",
             "created_at",
             "updated_at",

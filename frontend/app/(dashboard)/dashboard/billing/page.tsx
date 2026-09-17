@@ -8,6 +8,7 @@ import { BillingSetupGate } from "@/components/billing/BillingSetupGate"
 import { ClaimsSetupChecklist } from "@/components/billing/ClaimsSetupChecklist"
 import { CredentialingPrompt } from "@/components/billing/CredentialingPrompt"
 import { ClaimsTracker } from "@/components/billing/claims/ClaimsTracker"
+import { ClaimReminders } from "@/components/billing/claims/ClaimReminders"
 import { RemittanceHolds } from "@/components/billing/claims/RemittanceHolds"
 import { ReportsView } from "@/components/billing/ReportsView"
 import { UnbilledQueue } from "@/components/billing/UnbilledQueue"
@@ -32,6 +33,11 @@ export default function BillingPage() {
             should not depend on picking the right tab. Renders nothing when
             nothing is held, which is almost always. */}
         <RemittanceHolds />
+        {/* What the payers have sent back that needs answering — a rejection,
+            a denial, a filing deadline. These used to appear on the compliance
+            dashboard beside a licence renewal; they are claims work and belong
+            with it. Renders nothing when no claim needs anything. */}
+        <ClaimReminders />
         {/* Whether she is on any payer's panel decides whether these sessions
             bill as claims or as superbills, and we may have never been told.
             Renders nothing once the record answers it. */}

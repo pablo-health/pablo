@@ -55,7 +55,7 @@ from ..models.claims_transport import (
     TaskFieldValue,
     TaskResponseData,
 )
-from .clearinghouse import ClearinghouseError
+from .clearinghouse import ClearinghouseError, describe_error_with_message
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -202,10 +202,10 @@ def answer_task(
             client.put_document(slot.uploadUrl, upload.content)
         except ClearinghouseError as exc:
             logger.warning(
-                "enrollment_document_upload_failed task_id=%s field=%s error=%s",
+                "enrollment_document_upload_failed task_id=%s field=%s %s",
                 task.id,
                 wanted.key,
-                type(exc).__name__,
+                describe_error_with_message(exc),
             )
             msg = "the document could not be sent to the clearinghouse"
             raise DocumentRejectedError(msg) from exc

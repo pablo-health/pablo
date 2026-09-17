@@ -356,8 +356,8 @@ class TestTierOneCompletesAgainstTheTenantRecord:
             confirmations.record(
                 scoped_a.session,
                 _CLINICIAN_A,
-                field_key="exclusion_clearance",
-                source="leie_sam",
+                field_key="hospital_affiliations_none",
+                source="clinician_profiles",
                 confirmed=True,
             )
             scoped_a.session.commit()

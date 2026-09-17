@@ -453,84 +453,12 @@ _TEMPLATES: tuple[ComplianceTemplate, ...] = (
         sort_order=200,
         severity="critical",
     ),
-    # --- Claim events ---------------------------------------------------
-    # Written automatically by the claims pipeline's default event listener
-    # (``app.claims.events``), one per (event kind, claim control number),
-    # so a rejection, denial or deadline shows up on the same dashboard as a
-    # license renewal. The due date is the payer's deadline when there is
-    # one, otherwise a week from the event. Visible to every role: anyone
-    # who files claims can receive them.
-    ComplianceTemplate(
-        item_type="claim_rejected",
-        label="Claim rejected",
-        description=(
-            "The clearinghouse or payer rejected a claim before adjudication. Fix and resubmit."
-        ),
-        cadence_days=None,
-        reminder_windows=(7, 3, 0),
-        multi_instance=True,
-        min_edition="core",
-        sort_order=300,
-        severity="critical",
-    ),
-    ComplianceTemplate(
-        item_type="claim_denied",
-        label="Claim denied",
-        description="The payer adjudicated a claim and paid nothing. Appeal or correct.",
-        cadence_days=None,
-        reminder_windows=(7, 3, 0),
-        multi_instance=True,
-        min_edition="core",
-        sort_order=310,
-        severity="critical",
-    ),
-    ComplianceTemplate(
-        item_type="claim_partial",
-        label="Claim partially paid",
-        description="The payer paid less than billed. Review the adjustment reasons.",
-        cadence_days=None,
-        reminder_windows=(7, 3, 0),
-        multi_instance=True,
-        min_edition="core",
-        sort_order=320,
-        severity="routine",
-    ),
-    ComplianceTemplate(
-        item_type="claim_stalled",
-        label="Claim stalled",
-        description=(
-            "No acknowledgement or adjudication within the expected window. "
-            "Follow up with the payer."
-        ),
-        cadence_days=None,
-        reminder_windows=(7, 3, 0),
-        multi_instance=True,
-        min_edition="core",
-        sort_order=330,
-        severity="routine",
-    ),
-    ComplianceTemplate(
-        item_type="claim_deadline_approaching",
-        label="Claim deadline approaching",
-        description="A filing, correction or appeal deadline is close.",
-        cadence_days=None,
-        reminder_windows=(7, 3, 0),
-        multi_instance=True,
-        min_edition="core",
-        sort_order=340,
-        severity="critical",
-    ),
-    ComplianceTemplate(
-        item_type="claim_deadline_missed",
-        label="Claim deadline missed",
-        description="A filing, correction or appeal deadline has passed.",
-        cadence_days=None,
-        reminder_windows=(7, 3, 0),
-        multi_instance=True,
-        min_edition="core",
-        sort_order=350,
-        severity="critical",
-    ),
+    # The one claim-event kind that IS a compliance item, because it is not
+    # about a claim. A payer wanting the practice to sign or attest something
+    # has no claim and no patient behind it — ``app.claims.enrollment`` raises
+    # it with a synthesised claim id and the vendor's request id — so it
+    # belongs here with the practice's own obligations rather than on Billing
+    # with the claims work. See ``app.claims.events.NON_CLAIM_KINDS``.
     ComplianceTemplate(
         item_type="claim_enrollment_action_required",
         label="Payer enrollment needs action",
@@ -544,34 +472,19 @@ _TEMPLATES: tuple[ComplianceTemplate, ...] = (
         sort_order=360,
         severity="critical",
     ),
-    ComplianceTemplate(
-        item_type="claim_remittance_held",
-        label="Remittance does not add up",
-        description=(
-            "A payer stated the client's share twice and the two statements disagree, so "
-            "the client has not been billed. Read the remittance, then bill the stated "
-            "amount or waive it."
-        ),
-        cadence_days=None,
-        reminder_windows=(7, 3, 0),
-        multi_instance=True,
-        min_edition="core",
-        # Above the unmatched-remittance entry: that one is money nobody has
-        # posted yet, this one is a client whose balance has stopped moving.
-        sort_order=365,
-        severity="critical",
-    ),
-    ComplianceTemplate(
-        item_type="claim_unmatched_remittance",
-        label="Unmatched remittance",
-        description="A payment arrived that could not be matched to a claim. Post it by hand.",
-        cadence_days=None,
-        reminder_windows=(7, 3, 0),
-        multi_instance=True,
-        min_edition="core",
-        sort_order=370,
-        severity="routine",
-    ),
+    # Every OTHER claim event is NOT in this catalog, and that is the point.
+    #
+    # A rejection, a denial or a filing deadline used to be written here as
+    # a ``claim_*`` compliance item, so it landed on the same dashboard as a
+    # licence renewal. Convenient, and wrong underneath: a compliance item is
+    # about the CLINICIAN and recurs on a cadence, while a claim alert is
+    # about one patient's claim, resolves when that claim moves, and is
+    # isolated by the claim's own ``has_patient_access`` policy. Sharing one
+    # table cost a foreign key and a unique constraint, and their absence was
+    # a live duplicate-reminder bug.
+    #
+    # They now live in ``claim_reminders`` and surface with the rest of the
+    # claims work, on Billing. Do not add a ``claim_*`` template back here.
     # --- Escape hatch ---------------------------------------------------
     # Free-form custom reminder. The user supplies their own per-instance
     # label (multi_instance=True); we only enforce a sensible default

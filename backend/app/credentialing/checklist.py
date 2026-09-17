@@ -244,27 +244,31 @@ TIER_0_CONFIRM: tuple[ChecklistField, ...] = (
         source=_PRACTICE,
         required=False,
     ),
-    ChecklistField(
-        key="medicare_enrollment",
-        label="Medicare enrolment on file",
-        section=CaqhSection.PROFESSIONAL_IDS,
-        tier=Tier.CONFIRM,
-        kind=FieldKind.BOOLEAN,
-        target="credential_confirmations.presented_value",
-        source=_PECOS,
-        required=False,
-        help_text="From the public PECOS file.",
-    ),
-    ChecklistField(
-        key="exclusion_clearance",
-        label="No federal exclusions found",
-        section=CaqhSection.DISCLOSURE,
-        tier=Tier.CONFIRM,
-        kind=FieldKind.BOOLEAN,
-        target="credential_confirmations.presented_value",
-        source=_EXCLUSIONS,
-        help_text="Checked against the LEIE and SAM exclusion lists.",
-    ),
+    # TWO FIELDS ARE DELIBERATELY ABSENT HERE, and this comment is the reason
+    # so that nobody helpfully puts them back.
+    #
+    # ``medicare_enrollment`` ("From the public PECOS file") and
+    # ``exclusion_clearance`` ("Checked against the LEIE and SAM exclusion
+    # lists") sat in this tier from the day it shipped. Nothing ever checked
+    # either list. There was no PECOS reader and no exclusion reader anywhere
+    # in the tree, and the card's presented value resolved to nothing — so a
+    # clinician was shown a clearance nobody had obtained, and her "yes" was
+    # then stored as a confirmation carrying the provenance ``leie_sam`` and a
+    # date. That record is what marks a value verified rather than
+    # self-reported on an application.
+    #
+    # Tier 0 means WE LOOKED THIS UP. A field in it that nothing looks up is
+    # not a wording problem, so it is gone rather than reworded. The
+    # self-reported halves are already asked properly elsewhere and are not
+    # lost: ``disclosure_medicare_sanction`` asks her about sanctions in the
+    # disclosure tier, and ``medicare_intent`` asks whether she wants to enrol.
+    #
+    # They come back when there is a check behind them. ``app.credentialing.
+    # exclusions`` is that check for LEIE and SAM; what it produces is a
+    # verification RESULT — a fact about the world on a date, belonging in its
+    # own record — rather than a value she confirms. ``leie_sam`` and
+    # ``pecos_public_file`` stay in the schema's source vocabulary for exactly
+    # that return.
     ChecklistField(
         key="hospital_affiliations_none",
         label="No hospital affiliations",

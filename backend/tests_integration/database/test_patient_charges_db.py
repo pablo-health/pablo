@@ -128,12 +128,19 @@ _CHARGE_KINDS = (
     "credit",
 )
 
+#: The kinds that collect money, and so must name a payment method. The
+#: constraint is a biconditional, exactly like the write-off one below: these
+#: require a method and every other kind forbids one.
+_COLLECTING_KINDS = ("session", "copay", "payment")
+
 _INSERT_CHARGE = text(
     "INSERT INTO patient_charges "
     "(id, patient_id, appointment_id, kind, claim_id, write_off_reason, note, "
+    " method, payment_reference, "
     " settled_by_charge_id, amount_cents, currency, status, created_by_user_id, created_at) "
     "VALUES (:id, CAST(:patient_id AS uuid), NULL, :kind, CAST(:claim_id AS uuid), "
-    " :write_off_reason, NULL, NULL, :amount_cents, 'usd', :status, :user_id, now())"
+    " :write_off_reason, NULL, :method, :payment_reference, "
+    " NULL, :amount_cents, 'usd', :status, :user_id, now())"
 )
 
 
@@ -242,8 +249,15 @@ def _charge_params(patient_id: str, **overrides: Any) -> dict[str, Any]:
         "amount_cents": 15000,
         "status": "pending",
         "user_id": _CLINICIAN_A,
+        "payment_reference": None,
     }
     params.update(overrides)
+    # Derived AFTER the overrides, from whatever kind they settled on, so the
+    # dozens of call sites that only care about some other column do not each
+    # have to know this rule. A test that wants to violate it deliberately
+    # passes ``method=`` explicitly and wins, since that lands in the
+    # overrides above.
+    params.setdefault("method", "card" if params["kind"] in _COLLECTING_KINDS else None)
     return params
 
 
@@ -351,6 +365,94 @@ class TestCheckConstraints:
                 _charge_params(patient_a, kind="write_off", write_off_reason="felt_like_it"),
             )
         assert "ck_patient_charges_write_off_reason" in str(exc.value)
+
+    def test_the_collecting_kind_list_here_matches_the_models(self) -> None:
+        """Drift guard for the local copy, like the kind list above.
+
+        A kind moved into or out of the collecting set in the models and not
+        here would leave the method cases below asserting the old rule while
+        the database enforced the new one.
+        """
+        from app.db.models import COLLECTING_CHARGE_KINDS  # noqa: PLC0415
+
+        assert set(_COLLECTING_KINDS) == set(COLLECTING_CHARGE_KINDS)
+
+    @pytest.mark.parametrize("kind", _COLLECTING_KINDS)
+    def test_a_collecting_kind_without_a_method_is_rejected(
+        self, armed_conn: Connection, patient_a: str, kind: str
+    ) -> None:
+        """A row that says money arrived must say how it arrived."""
+        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+
+        with pytest.raises(IntegrityError) as exc:
+            armed_conn.execute(_INSERT_CHARGE, _charge_params(patient_a, kind=kind, method=None))
+        assert "ck_patient_charges_method_kind" in str(exc.value)
+
+    @pytest.mark.parametrize("kind", [k for k in _CHARGE_KINDS if k not in _COLLECTING_KINDS])
+    def test_a_method_on_a_kind_that_collects_nothing_is_rejected(
+        self, armed_conn: Connection, patient_a: str, kind: str
+    ) -> None:
+        """The other half of the biconditional.
+
+        Asking how a contractual adjustment was paid has no answer — it is an
+        amount nobody ever pays — and a method there would be a claim that
+        somebody did.
+        """
+        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+
+        reason = "hardship" if kind == "write_off" else None
+        with pytest.raises(IntegrityError) as exc:
+            armed_conn.execute(
+                _INSERT_CHARGE,
+                _charge_params(patient_a, kind=kind, write_off_reason=reason, method="cash"),
+            )
+        assert "ck_patient_charges_method_kind" in str(exc.value)
+
+    @pytest.mark.parametrize("method", ["card", "cash", "check"])
+    def test_every_method_but_other_is_accepted_without_a_reference(
+        self, armed_conn: Connection, patient_a: str, method: str
+    ) -> None:
+        params = _charge_params(patient_a, kind="payment", method=method)
+        armed_conn.execute(_INSERT_CHARGE, params)
+        stored = armed_conn.execute(
+            text("SELECT method, payment_reference FROM patient_charges WHERE id = :id"),
+            {"id": params["id"]},
+        ).one()
+        assert stored == (method, None)
+
+    def test_other_without_a_reference_is_rejected(
+        self, armed_conn: Connection, patient_a: str
+    ) -> None:
+        """An unlabelled 'other' is the row nobody can account for later."""
+        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+
+        with pytest.raises(IntegrityError) as exc:
+            armed_conn.execute(
+                _INSERT_CHARGE, _charge_params(patient_a, kind="payment", method="other")
+            )
+        assert "ck_patient_charges_other_has_reference" in str(exc.value)
+
+    def test_other_with_a_reference_is_accepted(
+        self, armed_conn: Connection, patient_a: str
+    ) -> None:
+        params = _charge_params(
+            patient_a, kind="payment", method="other", payment_reference="Zelle 14 Mar"
+        )
+        armed_conn.execute(_INSERT_CHARGE, params)
+        stored = armed_conn.execute(
+            text("SELECT method, payment_reference FROM patient_charges WHERE id = :id"),
+            {"id": params["id"]},
+        ).one()
+        assert stored == ("other", "Zelle 14 Mar")
+
+    def test_an_unknown_method_is_rejected(self, armed_conn: Connection, patient_a: str) -> None:
+        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+
+        with pytest.raises(IntegrityError) as exc:
+            armed_conn.execute(
+                _INSERT_CHARGE, _charge_params(patient_a, kind="payment", method="bitcoin")
+            )
+        assert "ck_patient_charges_method" in str(exc.value)
 
     @pytest.mark.parametrize("amount", [0, -1, -15000])
     @pytest.mark.parametrize("kind", _CHARGE_KINDS)
@@ -784,6 +886,10 @@ def seeded_ledger(engine: Engine, tenant_schema: str, patient_a: str) -> Iterato
         repo.commit()
         repo.close_charge(paid.id, status="succeeded", status_detail=None)
 
+        # A copay is taken at the door, so it names how — and the two
+        # collecting rows in this fixture deliberately use different methods,
+        # so the arithmetic below is exercised over a mixed ledger rather than
+        # an all-card one.
         repo.add_ledger_row(
             patient_id=patient_a,
             kind="copay",
@@ -791,6 +897,7 @@ def seeded_ledger(engine: Engine, tenant_schema: str, patient_a: str) -> Iterato
             currency="usd",
             user_id=_CLINICIAN_A,
             appointment_id=visit_two,
+            method="card",
         )
         responsibility = repo.add_ledger_row(
             patient_id=patient_a,
@@ -811,6 +918,8 @@ def seeded_ledger(engine: Engine, tenant_schema: str, patient_a: str) -> Iterato
             currency="usd",
             user_id=_CLINICIAN_A,
             appointment_id=visit_two,
+            method="check",
+            payment_reference="1042",
         )
         repo.record_settlement(responsibility.id, settled_by_charge_id=settling_payment.id)
         repo.add_ledger_row(

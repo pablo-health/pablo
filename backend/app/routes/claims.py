@@ -47,14 +47,16 @@ a log line.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import TYPE_CHECKING, Annotated
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from pydantic import BaseModel
 
-from ..api_errors import UnprocessableEntityError
+from ..api_errors import NotFoundError, UnprocessableEntityError
 from ..auth.service import require_baa_acceptance
+from ..claims import reminders
 from ..claims.assembly import (
     AppointmentNotFoundError,
     ClaimSources,
@@ -121,7 +123,10 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from datetime import tzinfo
 
+    from sqlalchemy.orm import Session
+
     from ..claims.scrub import Finding
+    from ..db.models import ClaimReminderRow
     from ..models import User
     from ..models.claims import ClaimReceipt
     from ..models.coverage import Payer
@@ -152,6 +157,7 @@ def get_billing_profile_loader() -> Mapping[str, object]:
 # the framework, whereas an unresolvable name in a function signature is
 # silently read as a query parameter.
 CurrentUser = Annotated["User", Depends(require_baa_acceptance)]
+DbSession = Annotated["Session", Depends(get_db_session)]
 ClaimsRepo = Annotated["ClaimRepository", Depends(get_claim_repository)]
 ReceiptsRepo = Annotated["ClaimReceiptRepository", Depends(get_claim_receipt_repository)]
 PatientsRepo = Annotated["PatientRepository", Depends(get_patient_repository)]
@@ -642,6 +648,113 @@ def resolve_remittance_hold(
         },
     )
     return _to_hold_response(resolved)
+
+
+class ClaimReminderResponse(BaseModel):
+    """One thing a claim still needs a person to do."""
+
+    id: str
+    claim_id: str
+    control_number: str
+    kind: str
+    label: str
+    due_date: date | None
+    notes: str | None
+    completed_at: datetime | None
+
+
+class ClaimReminderListResponse(BaseModel):
+    data: list[ClaimReminderResponse]
+    total: int
+
+
+def _to_reminder_response(reminder: ClaimReminderRow, control_number: str) -> ClaimReminderResponse:
+    return ClaimReminderResponse(
+        id=reminder.id,
+        claim_id=reminder.claim_id,
+        control_number=control_number,
+        kind=reminder.kind,
+        label=reminder.label,
+        due_date=reminder.due_date,
+        notes=reminder.notes,
+        completed_at=reminder.completed_at,
+    )
+
+
+@router.get("/reminders", response_model=ClaimReminderListResponse)
+def list_claim_reminders(
+    request: Request,
+    user: CurrentUser,
+    session: DbSession,
+    audit: AuditService = Depends(get_audit_service),
+) -> ClaimReminderListResponse:
+    """Everything the clinician's claims still need her to do.
+
+    These used to be ``claim_*`` rows on the compliance dashboard, beside her
+    licence renewal. They were moved because they are not the same kind of
+    thing: a compliance item is about her and recurs on a cadence, a claim
+    alert is about one patient's claim and ends when that claim moves. Sharing
+    a table cost a foreign key and a unique constraint, and their absence was a
+    duplicate-reminder bug.
+
+    Being here rather than there also means being audited. The compliance
+    routes are exempt — they are the clinician's own credentials — so these
+    reads were never recorded. A claim is a patient's, and this read is now
+    logged like every other one on this router.
+    """
+    open_reminders = reminders.list_open(session)
+    data = [
+        _to_reminder_response(reminder, control_number)
+        for reminder, control_number in open_reminders
+    ]
+    audit.log(
+        AuditAction.CLAIM_REMINDERS_LISTED,
+        user,
+        request,
+        resource_type=ResourceType.CLAIM,
+        resource_id="reminders",
+        changes={
+            "reminder_ids": [r.id for r in data],
+            "kinds": sorted({r.kind for r in data}),
+            "count": len(data),
+        },
+    )
+    return ClaimReminderListResponse(data=data, total=len(data))
+
+
+@router.post("/reminders/{reminder_id}/complete", response_model=ClaimReminderResponse)
+def complete_claim_reminder(
+    reminder_id: str,
+    request: Request,
+    user: CurrentUser,
+    session: DbSession,
+    audit: AuditService = Depends(get_audit_service),
+) -> ClaimReminderResponse:
+    """Mark one done.
+
+    Idempotent — completing a completed reminder keeps the first timestamp,
+    because when she finished it is the fact worth keeping.
+    """
+    found = reminders.get_with_control_number(session, reminder_id)
+    if found is None:
+        raise NotFoundError("Claim reminder not found")
+    reminder, control_number = found
+    was_open = reminder.completed_at is None
+    reminders.complete(session, reminder)
+    audit.log(
+        AuditAction.CLAIM_REMINDER_COMPLETED,
+        user,
+        request,
+        resource_type=ResourceType.CLAIM,
+        resource_id=reminder.claim_id,
+        changes={
+            "reminder_id": reminder.id,
+            "kind": reminder.kind,
+            "control_number": control_number,
+            "already_complete": not was_open,
+        },
+    )
+    return _to_reminder_response(reminder, control_number)
 
 
 # These sit ABOVE ``GET /{claim_id}`` on purpose. FastAPI matches routes in

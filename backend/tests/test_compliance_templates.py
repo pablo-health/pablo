@@ -51,16 +51,16 @@ def test_critical_items_are_livelihood_or_legal() -> None:
         "board_certification",
         # Supervision/oversight review — a lapse suspends practice/prescribing authority
         "supervision_review",
-        # Claim events that cost money if nobody acts before the payer's deadline
-        "claim_rejected",
-        "claim_denied",
-        "claim_deadline_approaching",
-        "claim_deadline_missed",
+        # A payer wanting the practice to sign something before it will accept
+        # claims. The one claim-event kind still in this catalog, because it is
+        # the one with no claim and no patient behind it.
         "claim_enrollment_action_required",
-        # A payer's two statements of the client's share disagreed, so a
-        # real client's balance has stopped being billed and stays unbilled
-        # until somebody decides. Money, and it never resolves itself.
-        "claim_remittance_held",
+        # Every OTHER claim event is deliberately absent. They were here as
+        # ``claim_*`` templates until they moved into ``claim_reminders`` — a
+        # compliance item is about the clinician and recurs, a claim alert is
+        # about one patient's claim and ends when the claim does. They still
+        # cost money if nobody acts, and they still say so; they say it on
+        # Billing now, beside the rest of the claims work.
     }
     actual_critical = {t.item_type for t in _TEMPLATES if t.severity == "critical"}
     assert actual_critical == expected_critical
