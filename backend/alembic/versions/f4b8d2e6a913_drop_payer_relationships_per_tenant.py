@@ -30,8 +30,14 @@ CASCADE here would silently take anything else that had come to depend on these
 tables, which is precisely what nobody wants a drop migration to decide on its
 own.
 
+Sits after ``f2a91c37b6d4`` rather than after ``e3a9c7b1d802``, whose argument
+it borrows: two revisions landed on this chain after that one while this was in
+flight, so it is no longer the head. Landing order is chain order, and a second
+revision naming an already-parented revision is what leaves alembic with two
+heads — which git merges without a word and every migration run then refuses.
+
 Revision ID: f4b8d2e6a913
-Revises: e3a9c7b1d802
+Revises: f2a91c37b6d4
 Create Date: 2026-09-14
 """
 
@@ -47,7 +53,7 @@ if TYPE_CHECKING:
 __all__ = ["branch_labels", "depends_on", "down_revision", "revision"]
 
 revision: str = "f4b8d2e6a913"
-down_revision: str | Sequence[str] | None = "e3a9c7b1d802"
+down_revision: str | Sequence[str] | None = "f2a91c37b6d4"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

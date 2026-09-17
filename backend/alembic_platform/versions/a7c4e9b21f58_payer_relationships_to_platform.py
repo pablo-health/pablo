@@ -57,8 +57,13 @@ without it.
 PHI-free by construction — every row is about a clinician and an insurer, and
 no patient appears in any of them.
 
+Sits after ``d8e4a6b02f19`` rather than after the eleven it continues:
+``d8e4a6b02f19`` landed on the platform chain first, so that is the head this
+has to follow. Two revisions naming the same parent is what leaves alembic
+with two heads, and git merges both without complaint.
+
 Revision ID: a7c4e9b21f58
-Revises: b6e2f8a41c37
+Revises: d8e4a6b02f19
 Create Date: 2026-09-14
 """
 
@@ -74,7 +79,7 @@ if TYPE_CHECKING:
 __all__ = ["branch_labels", "depends_on", "down_revision", "revision"]
 
 revision: str = "a7c4e9b21f58"
-down_revision: str | Sequence[str] | None = "b6e2f8a41c37"
+down_revision: str | Sequence[str] | None = "d8e4a6b02f19"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
