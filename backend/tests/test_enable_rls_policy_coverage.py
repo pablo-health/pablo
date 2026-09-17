@@ -136,6 +136,30 @@ def test_appointments_gets_both_the_clinician_and_patient_arms() -> None:
     assert "CREATE POLICY rls_patient_self_insert ON practice_test.appointments" not in ddl
 
 
+def test_chat_tables_get_all_four_patient_arms() -> None:
+    """The two chat tables are the only patient-deletable ones.
+
+    A purge with no DELETE arm deletes nothing and says it succeeded, so
+    the arm is asserted per table — and asserted absent on
+    ``outcome_measures``, which is writable but not withdrawable.
+    """
+    session = _run(
+        {
+            "chat_conversations": {"id", "patient_id", "owner_user_id"},
+            "chat_messages": {"id", "conversation_id"},
+            "outcome_measures": {"id", "patient_id"},
+        }
+    )
+    ddl = " ".join(session.executed)
+
+    for table in ("chat_conversations", "chat_messages"):
+        for arm in ("read", "write", "insert", "delete"):
+            assert f"CREATE POLICY rls_patient_self_{arm} ON practice_test.{table}" in ddl, arm
+
+    assert "CREATE POLICY rls_patient_self_insert ON practice_test.outcome_measures" in ddl
+    assert "CREATE POLICY rls_patient_self_delete ON practice_test.outcome_measures" not in ddl
+
+
 # ---------------------------------------------------------------------------
 # L3 unit guards — real ORM metadata, no DB
 # ---------------------------------------------------------------------------
