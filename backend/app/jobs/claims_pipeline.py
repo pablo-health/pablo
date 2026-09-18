@@ -207,6 +207,20 @@ def run_pipeline(
     try:
         for practice in active_practices(max_tenants=max_tenants):
             totals["practices"] += 1
+            if not practice.user_ids:
+                # Nobody can see this practice's claims, so every stage would
+                # read an empty set. Skipping here rather than inside the
+                # clinician fan-out also skips the per-practice preamble — the
+                # billing-profile read and the credential lookup — which is
+                # the rest of what a practice costs to visit.
+                #
+                # Counted rather than logged. A deployment can hold a great
+                # many of these at once and the sweep runs on a short
+                # interval, so a line each would be tens of thousands a day;
+                # the count rides the one line every pass already emits,
+                # which is where a reader looks to find out what the pass saw.
+                totals["practices_without_clinicians"] += 1
+                continue
             try:
                 totals.update(run_practice(practice, stages, max_per_tenant=max_per_tenant))
             except Exception:

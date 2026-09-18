@@ -100,6 +100,20 @@ def test_a_filed_claim_can_be_found_again_and_pays(live: LiveClient) -> None:
         "state the tracker cannot explain"
     )
 
+    # Read once, and only once. `fetch_timeline` stops when the vendor stops
+    # offering a cursor, which is only safe while this endpoint actually
+    # withholds one at the end — and the polling endpoints beside it do the
+    # opposite, echoing the same cursor forever on an empty page (see
+    # `app.claims.remittance_feed`). So this is the assertion that says the two
+    # halves of the vendor still differ. If it ever fails, every timeline read
+    # silently becomes twenty round trips on the path that decides what a payer
+    # paid, and the recorded capture in tests/fixtures/clearinghouse would go
+    # on agreeing with the old behaviour.
+    assert timeline.next_page_token is None, (
+        "the timeline endpoint offered a cursor past its last page; the "
+        "empty-page guard in fetch_timeline is now load-bearing, not defensive"
+    )
+
     posting = posting_for(timeline, charged_cents=_CHARGED_CENTS)
 
     assert posting is not None, "a paid claim must produce something to post"

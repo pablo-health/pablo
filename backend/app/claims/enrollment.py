@@ -784,7 +784,12 @@ def _list_all(client: ClearinghouseClient, filters: EnrollmentFilters) -> dict[s
     for _ in range(MAX_LIST_PAGES):
         page = client.list_enrollments(filters)
         by_vendor_id.update((e.id, e) for e in page.items)
-        if page.nextPageToken is None:
+        # An empty page ends the listing as surely as a missing cursor does,
+        # and on this vendor's polling endpoints it is the only end signalled
+        # (see :mod:`app.claims.remittance_feed`). Stopping on it costs a
+        # listing nothing and keeps a cursor echoed past the last page from
+        # walking every refresh to the page cap.
+        if page.nextPageToken is None or not page.items:
             return by_vendor_id
         filters = filters.model_copy(update={"pageToken": page.nextPageToken})
     logger.warning("payer_enrollment_listing_truncated max_pages=%s", MAX_LIST_PAGES)

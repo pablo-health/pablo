@@ -109,6 +109,26 @@ class TestTheVendorStillSendsWhatWeRead:
         assert payment.is_money
         assert payment.trace_number, "a payment we can tie to funds must carry its trace"
 
+    def test_the_last_page_of_a_timeline_offers_no_cursor(self, timeline: ClaimTimeline) -> None:
+        """This endpoint signals its end, unlike the polling feed beside it.
+
+        ``app.claims.remittance_feed`` documents the other half of this
+        vendor: its polling endpoints return a cursor on every page, an empty
+        one included, so an empty page is the only end they signal. The
+        timeline endpoint does not behave that way — and ``fetch_timeline``
+        stopping on a missing cursor is only correct because it does.
+
+        Asserting it on the CAPTURE rather than on a hand-built object is the
+        whole point: an authored fixture can only restate the belief that
+        wrote it, and this is exactly the belief that would be expensive to
+        get wrong. If the vendor starts echoing a cursor past the last page,
+        a timeline read becomes twenty round trips on the path that decides
+        what a payer paid, and it should break here rather than in a
+        practice's receivables.
+        """
+        assert "nextPageToken" not in json.loads(CAPTURE.read_bytes())
+        assert timeline.next_page_token is None
+
 
 class TestTheOrdinaryAcknowledgmentIsNotAMystery:
     """The first thing that happens to every healthy claim.

@@ -82,8 +82,24 @@ class TenantRun:
 def practice_user_ids(practice_id: str | None) -> list[str]:
     """Every clinician of the practice, by the platform's email-to-practice map.
 
-    A deployment with no mapping rows (one practice, everybody in it)
-    falls back to every platform user.
+    A deployment with no mapping rows AT ALL (one practice, everybody in it)
+    falls back to every platform user. That fallback answers a question about
+    the DEPLOYMENT, so it has to be asked of the deployment. Asked of one
+    practice, it reads "this practice has no clinicians I can resolve" as
+    "this deployment does not map emails to practices" — and a single practice
+    whose mapped address no longer has a user row inherits every user on the
+    platform, each of whom the pipeline then opens a session for, in that
+    practice's schema, on every pass.
+
+    On a deployment that accumulates practices that is the entire cost of the
+    sweep, and none of it is work: a user who was never a member of the
+    practice is shown nothing by its row policies, so the pass reads no claims
+    and posts no remittances however many sessions it opens. Measured before
+    this was narrowed: two thirds of the practices resolving to every user
+    turned a sixty-session pass into a five-thousand-session one, every tick.
+
+    An empty list means "nobody can see this practice's claims", which is the
+    honest answer and the one that costs nothing.
     """
     with create_standalone_session() as db:
         mapped = (
@@ -97,6 +113,9 @@ def practice_user_ids(practice_id: str | None) -> list[str]:
         )
         if mapped:
             return list(mapped)
+        maps_emails = db.execute(select(EmailTenantMappingRow.email).limit(1)).first() is not None
+        if maps_emails:
+            return []
         return list(db.execute(select(PlatformUserRow.id)).scalars().all())
 
 

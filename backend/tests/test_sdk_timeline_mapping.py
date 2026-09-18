@@ -216,10 +216,36 @@ class TestFetchingEveryPage:
         assert len(timeline.payments) == 2
         assert timeline.paid_cents == 0
 
-    def test_a_vendor_that_never_stops_paging_is_cut_off(self) -> None:
-        """Reporting what we have beats looping forever."""
+    def test_an_empty_page_ends_the_read_even_with_a_cursor_still_offered(self) -> None:
+        """An empty page is an end, and it costs one call to notice.
+
+        This vendor's polling endpoints hand back a cursor on every page, an
+        empty one included, where it means "come back later" rather than
+        "more to read" (see ``app.claims.remittance_feed``). Treating the
+        cursor as the only end walks every read to the page cap, so an
+        endless-empty vendor used to cost twenty round trips per claim to
+        learn nothing. One is enough.
+        """
         endless = GetClaimTimelineOutput(
             items=[],
+            next_page_token="always",  # noqa: S106 - a cursor, not a credential
+        )
+        client = self._PagingClient([endless] * 10)
+
+        timeline = asyncio.run(fetch_timeline(client, "clm_1", max_pages=3))
+
+        assert len(client.seen_tokens) == 1
+        assert timeline.payments == []
+
+    def test_a_vendor_that_never_stops_sending_entries_is_cut_off(self) -> None:
+        """Reporting what we have beats looping forever.
+
+        The empty-page guard above cannot catch a vendor that keeps handing
+        back both a cursor AND entries, so ``max_pages`` still has to be the
+        stop. A claim with more entries than that has something wrong with it.
+        """
+        endless = GetClaimTimelineOutput(
+            items=[_payment_event(status="PROCESSED_AS_PRIMARY", paid="1.00")],
             next_page_token="always",  # noqa: S106 - a cursor, not a credential
         )
         client = self._PagingClient([endless] * 10)
