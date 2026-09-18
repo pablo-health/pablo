@@ -63,14 +63,23 @@ def upgrade() -> None:
         );
         """
     )
+    # The name follows the models' naming convention
+    # (``ix_platform_<table>_<column>``), not the shorter form it would be
+    # natural to type. The models create this index through ``create_all``
+    # before this chain runs, so a differently-named ``CREATE INDEX IF NOT
+    # EXISTS`` does not match the existing one and quietly builds a SECOND
+    # index over the same column — which is what ``d8f3b6c04e17`` had to go
+    # back and drop for ``claim_routes``. Matching the convention keeps
+    # ``alembic check`` quiet too: autogenerate compares against the model's
+    # name and reports a rename as drift.
     op.execute(
         """
-        CREATE INDEX IF NOT EXISTS ix_claim_reviews_practice_id
+        CREATE INDEX IF NOT EXISTS ix_platform_claim_reviews_practice_id
             ON platform.claim_reviews (practice_id);
         """
     )
 
 
 def downgrade() -> None:
-    op.execute("DROP INDEX IF EXISTS platform.ix_claim_reviews_practice_id;")
+    op.execute("DROP INDEX IF EXISTS platform.ix_platform_claim_reviews_practice_id;")
     op.execute("DROP TABLE IF EXISTS platform.claim_reviews;")

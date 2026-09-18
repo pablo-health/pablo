@@ -701,8 +701,6 @@ CREATE INDEX idx_practices_deleted_at ON platform.practices USING btree (deleted
 
 CREATE INDEX idx_practices_offboard_scheduled_at ON platform.practices USING btree (offboard_scheduled_at) WHERE (offboard_scheduled_at IS NOT NULL);
 
-CREATE INDEX ix_claim_reviews_practice_id ON platform.claim_reviews USING btree (practice_id);
-
 CREATE INDEX ix_contracted_rates_participation_id ON platform.contracted_rates USING btree (participation_id);
 
 CREATE INDEX ix_contracted_rates_practice_id ON platform.contracted_rates USING btree (practice_id);
@@ -744,6 +742,8 @@ CREATE INDEX ix_payer_participations_practice_id ON platform.payer_participation
 CREATE INDEX ix_payer_participations_user_id ON platform.payer_participations USING btree (user_id);
 
 CREATE INDEX ix_platform_booking_links_user_id ON platform.booking_links USING btree (user_id);
+
+CREATE INDEX ix_platform_claim_reviews_practice_id ON platform.claim_reviews USING btree (practice_id);
 
 CREATE INDEX ix_platform_claim_routes_practice_id ON platform.claim_routes USING btree (practice_id);
 
