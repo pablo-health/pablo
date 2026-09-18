@@ -26,6 +26,14 @@ _EXPECTED = {
     ("validated", "submit"): "submitted",
     ("validated", "reject"): "rejected",
     ("validated", "stall"): "stalled",
+    # The deliberate hold before filing, and the two ways out of it.
+    # Approving returns the claim to `validated` rather than filing from
+    # here, so the hold changes when a claim is filed and never how; refusing
+    # sends it to `draft`, not `rejected`, because `rejected` is the payer's
+    # word in this machine and a claim nobody has filed has had no answer.
+    ("validated", "hold_for_review"): "in_review",
+    ("in_review", "approve"): "validated",
+    ("in_review", "refuse"): "draft",
     ("submitted", "ch_accept"): "ch_accepted",
     ("submitted", "payer_accept"): "payer_accepted",
     ("submitted", "reject"): "rejected",

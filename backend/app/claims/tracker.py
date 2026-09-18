@@ -16,6 +16,13 @@ if TYPE_CHECKING:
 _NEXT_ACTIONS: dict[str, NextAction] = {
     "draft": "review_and_file",
     "validated": "queued_to_send",
+    # Nothing for the practice to do, and nothing wrong with the claim — so
+    # the wording says what is happening and stops there. "Being checked"
+    # rather than "held", "blocked" or "pending approval": a first claim to a
+    # payer is read before it goes because that is the one worth reading, not
+    # because this claim looks bad, and a word that hints otherwise invites a
+    # worried question the screen cannot answer.
+    "in_review": "being_checked",
     "submitted": "await_acknowledgment",
     "ch_accepted": "await_payer",
     "payer_accepted": "await_remittance",
