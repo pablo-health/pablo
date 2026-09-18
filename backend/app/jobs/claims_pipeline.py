@@ -56,6 +56,7 @@ from ..claims.hold_emission import emit_heartbeat, emit_open
 from ..claims.receipts import owned_by_principal
 from ..claims.remittance import post_remittances
 from ..claims.remittance_feed import FeedRemittanceDetails
+from ..claims.review_queue import record_held
 from ..claims.routing import record_claim_route
 from ..claims.sdk_timeline import SdkClaimTimelines
 from ..claims.status_worker import AWAITING_STATES, poll_acknowledgments
@@ -135,8 +136,26 @@ def run_practice(
                     control, practice.practice_id, user_id
                 ),
             )
-            totals.update({f"submit_{k}": v for k, v in asdict(submitted).items()})
+            # Counts only: the summary also carries the held claims themselves,
+            # which are a list and would not mean anything in a Counter.
+            totals.update(
+                {f"submit_{k}": v for k, v in asdict(submitted).items() if isinstance(v, int)}
+            )
             run.commit()
+            # Recorded here rather than in the worker because the worker
+            # deliberately does not know which practice its run belongs to —
+            # the same reason `on_pending` exists for claim routing. Best
+            # effort: the claim is already held, and this only makes it
+            # findable without opening every practice in turn.
+            for held in submitted.held_claims:
+                record_held(
+                    held.claim_id,
+                    held.control_number,
+                    practice_id=practice.practice_id,
+                    user_id=user_id,
+                    payer_name=held.payer_name,
+                    reasons=held.reasons,
+                )
         if "status" in stages:
             polled = poll_acknowledgments(
                 run.pipeline,

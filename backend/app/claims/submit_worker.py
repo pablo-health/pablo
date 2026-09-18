@@ -122,6 +122,25 @@ class SubmissionAccount:
     receiver_name: str
 
 
+@dataclass(frozen=True, slots=True)
+class HeldClaim:
+    """A claim this run held, and the little a queue needs to list it.
+
+    Plain data rather than a callback. ``on_pending`` next door IS a callback
+    because it has to fire before the vendor call, and only the caller knows
+    the practice; a hold finishes the moment the state moves, so there is
+    nothing to order and the caller can read this off the summary afterwards.
+
+    Codes, a control number and the PAYER's name — an insurance company, not a
+    person. Nothing here names a client.
+    """
+
+    claim_id: str
+    control_number: str
+    payer_name: str
+    reasons: tuple[str, ...]
+
+
 @dataclass
 class SubmitSummary:
     submitted: int = 0
@@ -133,6 +152,10 @@ class SubmitSummary:
     #: pass that files nothing because everything is waiting on a reviewer
     #: reads differently from a pass that had nothing to file.
     held: int = 0
+    #: The same claims, for a caller that wants to put them on a list. Not a
+    #: count, so it is skipped when this summary is folded into the pipeline's
+    #: counters.
+    held_claims: list[HeldClaim] = field(default_factory=list)
 
 
 def mint_idempotency_key(claim: Claim) -> str:
@@ -236,10 +259,18 @@ def _hold_if_needed(
         detail={"reasons": [r.code for r in reasons], "payer": reasons[0].payer_name},
     )
     summary.held += 1
+    summary.held_claims.append(
+        HeldClaim(
+            claim_id=claim.id,
+            control_number=claim.control_number,
+            payer_name=reasons[0].payer_name,
+            reasons=tuple(reason.code for reason in reasons),
+        )
+    )
     logger.info(
         "claim_held_for_review control_number=%s reasons=%s",
         claim.control_number,
-        ",".join(r.code for r in reasons),
+        ",".join(reason.code for reason in reasons),
     )
     return True
 

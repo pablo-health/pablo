@@ -229,6 +229,61 @@ class ClaimRouteRow(PlatformBase):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class ClaimReviewRow(PlatformBase):
+    """The claims waiting to be read before filing, listable without a search.
+
+    A claim held for review lives in its practice's schema, row-policied to the
+    clinician who owns it, which makes "show me everything waiting on a
+    reviewer" the same problem ``claim_routes`` was built to solve for inbound
+    webhooks: answerable only by opening every practice in turn, and therefore
+    bounded, and therefore wrong past the bound. A reviewer's list that quietly
+    stops at the fiftieth practice is worse than no list — the claims it omits
+    are the ones nobody knows to release.
+
+    So the same shape as ``claim_routes``: the smallest row that answers the
+    question, outside the practice schemas because the question spans them.
+
+    NO PHI, and the boundary is worth stating because this row is read by
+    surfaces that must not carry clinical detail. It holds the claim's id and
+    control number, whose practice and clinician it belongs to, the PAYER's
+    name, why it is waiting, and when. A payer is an insurance company, not a
+    person. Nothing here names a client, a diagnosis, a service or an amount —
+    a reviewer who needs those opens the claim in its own tenant session, which
+    is where the row policy can still see them.
+
+    ``payer_name`` is denormalised on purpose rather than joined. It is the
+    field that makes the list useful at a glance — "first claim to Carelon" is
+    the thing a reviewer reacts to — and the payer lives in the tenant, so a
+    list that had to join for it would be back to opening every schema.
+
+    **An index, never the authority.** The claim's own ``in_review`` state is
+    the truth; this table only makes the set findable. Writes swallow their
+    failures the way ``app.claims.routing`` does, for the same reason: a
+    bookkeeping error must not fail a claim. A lost row costs a claim that is
+    held but missing from the queue — still on the filing clock, still
+    escalated by the watchdog (``app.claims.watchdog.OPEN_STATES``), so a
+    person still hears about it. A write that could fail the hold would cost
+    the hold itself.
+    """
+
+    __tablename__ = "claim_reviews"
+    __table_args__ = {"schema": PLATFORM_SCHEMA}
+
+    #: The claim's own id, so releasing it is a delete by key and a claim can
+    #: never appear in the queue twice.
+    claim_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    practice_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    control_number: Mapped[str] = mapped_column(String(17), nullable=False)
+    #: The insurance company, not a person. Drives the list and the "a payer
+    #: nobody has billed before is about to be billed" signal.
+    payer_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    #: Comma-joined reason codes from ``app.claims.prefiling`` — codes only, so
+    #: this column can be shown anywhere the row can.
+    reasons: Mapped[str] = mapped_column(String(255), nullable=False)
+    held_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class SetupTokenRow(PlatformBase):
     """Short-lived token to pass email from marketing signup to login page.
 
