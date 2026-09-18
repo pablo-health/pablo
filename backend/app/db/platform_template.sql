@@ -49,6 +49,16 @@ CREATE TABLE platform.booking_links (
     deleted_at timestamp with time zone
 );
 
+CREATE TABLE platform.claim_reviews (
+    claim_id character varying(64) NOT NULL,
+    practice_id character varying(128) NOT NULL,
+    user_id character varying(128) NOT NULL,
+    control_number character varying(17) NOT NULL,
+    payer_name character varying(255) NOT NULL,
+    reasons character varying(255) NOT NULL,
+    held_at timestamp with time zone NOT NULL
+);
+
 CREATE TABLE platform.claim_routes (
     control_number character varying(17) NOT NULL,
     practice_id character varying(128) NOT NULL,
@@ -558,6 +568,9 @@ ALTER TABLE ONLY platform.booking_links
 ALTER TABLE ONLY platform.booking_links
     ADD CONSTRAINT booking_links_slug_key UNIQUE (slug);
 
+ALTER TABLE ONLY platform.claim_reviews
+    ADD CONSTRAINT claim_reviews_pkey PRIMARY KEY (claim_id);
+
 ALTER TABLE ONLY platform.claim_routes
     ADD CONSTRAINT claim_routes_pkey PRIMARY KEY (control_number);
 
@@ -687,6 +700,8 @@ ALTER TABLE ONLY platform.payer_participations
 CREATE INDEX idx_practices_deleted_at ON platform.practices USING btree (deleted_at) WHERE (deleted_at IS NOT NULL);
 
 CREATE INDEX idx_practices_offboard_scheduled_at ON platform.practices USING btree (offboard_scheduled_at) WHERE (offboard_scheduled_at IS NOT NULL);
+
+CREATE INDEX ix_claim_reviews_practice_id ON platform.claim_reviews USING btree (practice_id);
 
 CREATE INDEX ix_contracted_rates_participation_id ON platform.contracted_rates USING btree (participation_id);
 
