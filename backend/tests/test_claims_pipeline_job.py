@@ -183,14 +183,21 @@ def test_a_practice_with_no_clinicians_is_counted_and_not_entered(
     assert [schema for schema, _ in practices["visited"]] == ["practice_b"]
 
 
-def test_the_fan_out_asks_for_real_practices_only(
+def test_the_fan_out_does_not_skip_synthetic_tenants(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Nobody is owed money by a practice that exists to exercise a signup.
+    """The sweep must reach a synthetic tenant, because that is where it is proven.
 
-    The sweep is bounded, and costs a credential lookup plus a roster read
-    per tenant before one can even be ruled out — so a suite that provisions
-    a practice per run would otherwise crowd real practices out of the pass.
+    The deployed end-to-end test files a real 837 from a synthetic tenant —
+    that is precisely what makes filing one safe. So a sweep that skipped
+    synthetic tenants could never be observed filing anything, and for three
+    days it was not: the deployed claims test went red the day exclusion
+    landed and stayed red, which held up every promotion behind it.
+
+    The hazard exclusion was reaching for is real but different — enough
+    synthetic tenants push a real practice past ``max_tenants`` — and the
+    registry answers that by ordering, not by dropping rows. This asserts the
+    sweep asks for everything and leaves the bound to do the rest.
     """
     asked: dict[str, object] = {}
 
@@ -202,7 +209,9 @@ def test_the_fan_out_asks_for_real_practices_only(
     monkeypatch.setattr(fanout, "list_active_practice_registry", registry)
 
     assert list(fanout.active_practices(max_tenants=10)) == []
-    assert asked["include_pentest"] is False
+    assert asked["include_pentest"] is True, (
+        "skipping synthetic tenants makes the deployed claims test unpassable"
+    )
 
 
 def test_a_practice_that_cannot_be_resolved_is_skipped(
