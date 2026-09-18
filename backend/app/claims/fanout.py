@@ -122,13 +122,22 @@ def practice_user_ids(practice_id: str | None) -> list[str]:
 def active_practices(*, max_tenants: int) -> Iterator[PracticeContext]:
     """The practices with a clearinghouse configured, in schema order.
 
-    Synthetic tenants are excluded. Nobody is owed money by a practice that
-    exists to exercise a signup, and the sweep is not free per tenant: each
-    one costs a credential lookup and a roster read before it can even be
-    ruled out. A test suite that provisions a practice per run therefore
-    charges the fan-out for every run it has ever made, and the whole sweep
-    is bounded by ``max_tenants`` — so once the synthetic ones outnumber the
-    limit, they crowd real practices out of the pass entirely.
+    Synthetic tenants are NOT skipped, and the reason is worth keeping: the
+    deployed end-to-end test files a real 837 from a synthetic tenant, which is
+    exactly what makes filing one safe. Skipping them meant the single test that
+    proves a confirmed claim reaches a payer could never pass, and it stopped
+    passing the day exclusion landed. A sweep nobody can observe filing is worse
+    than a sweep that spends a few milliseconds on a tenant nobody is owed money
+    by.
+
+    The concern exclusion was reaching for is real and is NOT addressed here:
+    this pass reads the whole active registry and takes the first
+    ``max_tenants`` in schema order, so with enough practices — synthetic or
+    not — the ones past the bound are never visited, and a claim that is never
+    visited silently stops moving. Ordering the registry would only change
+    WHICH practices starve. The fix is for the pass to ask for the practices
+    that have work rather than walk every practice and truncate, which is a
+    different change and wants its own review.
 
     A practice that cannot be described is skipped rather than allowed to
     end the iteration. Resolving one costs a credential lookup and a roster
@@ -137,7 +146,7 @@ def active_practices(*, max_tenants: int) -> Iterator[PracticeContext]:
     tenant would silently truncate the fan-out at its position in schema
     order.
     """
-    registry = list_active_practice_registry(get_engine(), include_pentest=False)
+    registry = list_active_practice_registry(get_engine())
     for schema, practice_id in registry[:max_tenants]:
         try:
             client = clearinghouse_client_for_practice(practice_id)

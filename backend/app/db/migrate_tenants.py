@@ -114,6 +114,12 @@ def list_active_practice_registry(
     synthetic tenant still needs its DDL and still needs its retention honoured
     — so dropping them is a decision each caller makes rather than a default
     imposed on all of them.
+
+    Returns EVERY matching row; callers that want fewer slice the result. That
+    is fine at today's scale and is the wrong shape at a larger one — a caller
+    needing "the practices with work to do" should ask for that rather than
+    read the whole registry and take the first N, since which N it gets is
+    decided by schema name and nothing else.
     """
     sql = (
         # Operator migration: only the PLATFORM_SCHEMA constant interpolated (noqa S608).
