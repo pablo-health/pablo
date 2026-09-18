@@ -309,7 +309,7 @@ CREATE TABLE __TENANT_SCHEMA__.claims (
     last_receipt_at timestamp with time zone,
     status_checked_at timestamp with time zone,
     CONSTRAINT ck_claims_frequency_code CHECK (((frequency_code)::text = ANY ((ARRAY['1'::character varying, '7'::character varying, '8'::character varying])::text[]))),
-    CONSTRAINT ck_claims_state CHECK (((state)::text = ANY ((ARRAY['draft'::character varying, 'validated'::character varying, 'submitted'::character varying, 'ch_accepted'::character varying, 'payer_accepted'::character varying, 'paid'::character varying, 'partial'::character varying, 'denied'::character varying, 'rejected'::character varying, 'stalled'::character varying])::text[]))),
+    CONSTRAINT ck_claims_state CHECK (((state)::text = ANY ((ARRAY['draft'::character varying, 'validated'::character varying, 'in_review'::character varying, 'submitted'::character varying, 'ch_accepted'::character varying, 'payer_accepted'::character varying, 'paid'::character varying, 'partial'::character varying, 'denied'::character varying, 'rejected'::character varying, 'stalled'::character varying])::text[]))),
     CONSTRAINT ck_claims_total_charge_cents CHECK ((total_charge_cents >= 0)),
     CONSTRAINT ck_claims_total_paid_cents CHECK ((total_paid_cents >= 0))
 );

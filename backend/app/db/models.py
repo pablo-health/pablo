@@ -2313,6 +2313,11 @@ class PayerEnrollmentRow(Base):
 CLAIM_STATES: tuple[str, ...] = (
     "draft",
     "validated",
+    # Held before filing for a person to read. Kept in step with
+    # ``app.models.claims.ClaimState``: this tuple builds the ``ck_claims_state``
+    # CHECK constraint below, so a state added to one and not the other is an
+    # IntegrityError at the moment a claim tries to enter it.
+    "in_review",
     "submitted",
     "ch_accepted",
     "payer_accepted",

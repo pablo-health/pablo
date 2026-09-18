@@ -49,7 +49,15 @@ class ClaimDeadlines:
 
 
 #: States under the filing clock outright.
-_FILING_STATES: frozenset[str] = frozenset({"draft", "validated", "rejected"})
+#:
+#: ``in_review`` belongs here and the omission would be expensive: a claim we
+#: are holding for someone to read is still a claim nobody has filed, and the
+#: payer's filing window keeps closing while it waits. Leaving it off the
+#: clock would make a hold look free right up to the day the deadline passed
+#: and the money was gone — a safeguard that loses claims is worse than no
+#: safeguard. Every hold therefore reports its days remaining like any unfiled
+#: claim, and the watchdog escalates it on the same ladder.
+_FILING_STATES: frozenset[str] = frozenset({"draft", "validated", "in_review", "rejected"})
 
 #: States under the correction / appeal clocks, once a remittance exists.
 _REMITTANCE_STATES: frozenset[str] = frozenset({"denied", "partial"})

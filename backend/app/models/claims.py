@@ -30,6 +30,21 @@ from .coverage import AdministrativeSex, SubscriberRelationship  # noqa: TC001
 ClaimState = Literal[
     "draft",
     "validated",
+    # Held deliberately before filing, for a person to look at. A deployment
+    # can ask for the first claim it sends a payer to be read by someone
+    # before it goes: everything payer-specific — the payer id resolved from
+    # the directory, whether enrollment is live, the submitter identification,
+    # the rate — is unproven until a claim actually goes, and a mistake in any
+    # of them comes back as a rejection days later, by which time every claim
+    # since has gone out the same wrong way.
+    #
+    # Deliberately a state and not a flag: the tracker, the receipts, the
+    # deadline clock and the watchdog all already know what to do with a
+    # state, and a held claim must stay visible to every one of them. Its
+    # filing deadline keeps running while it waits, which is the whole reason
+    # a hold cannot be silent — see ``app.claims.deadlines`` and the watchdog's
+    # ``OPEN_STATES``.
+    "in_review",
     "submitted",
     "ch_accepted",
     "payer_accepted",
@@ -294,6 +309,7 @@ NextAction = Literal[
     "review_and_file",
     "queued_to_send",
     "sending",
+    "being_checked",
     "await_acknowledgment",
     "await_payer",
     "await_remittance",

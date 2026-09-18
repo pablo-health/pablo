@@ -71,6 +71,20 @@ class ClaimNotValidError(Exception):
 _TRANSITIONS: dict[tuple[str, str], ClaimState] = {
     ("draft", "validate"): "validated",
     ("validated", "submit"): "submitted",
+    # Held for a person to read before it goes. Entered at the FILING
+    # boundary rather than at validation, deliberately: every path that files
+    # a claim passes through there, so one check covers all of them and a new
+    # filing path cannot be added that forgets the hold. Entering at
+    # validation would leave any direct-to-submit path free to skip it.
+    ("validated", "hold_for_review"): "in_review",
+    # Approving returns the claim to the queue it came from rather than
+    # filing it here, so the hold changes WHEN a claim is filed and never HOW.
+    ("in_review", "approve"): "validated",
+    # Refusing sends it back to the person who can fix it. Not `rejected` —
+    # that word is the payer's answer in this machine, and reusing it for our
+    # own refusal would make a claim nobody has filed yet indistinguishable
+    # from one a payer turned down.
+    ("in_review", "refuse"): "draft",
     # The clearinghouse refuses the claim on the synchronous answer (an
     # edit rejection), or the outbox cannot get it filed at all.
     ("validated", "reject"): "rejected",

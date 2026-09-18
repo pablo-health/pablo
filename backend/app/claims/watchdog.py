@@ -63,6 +63,11 @@ MAX_CLAIMS_PER_RUN = 500
 OPEN_STATES: tuple[str, ...] = (
     "draft",
     "validated",
+    # A claim waiting on a reviewer is the case that most needs a person, not
+    # the least: its filing deadline is running and the only thing standing
+    # between it and being paid is somebody looking at it. Omitting it would
+    # make the hold the one state the deadline ladder never escalates.
+    "in_review",
     "submitted",
     "ch_accepted",
     "payer_accepted",
