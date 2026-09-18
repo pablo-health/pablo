@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, select, text
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -844,3 +844,127 @@ class TestWebhookRoutingOnPostgres:
         from app.claims.fanout import practice_user_ids  # noqa: PLC0415
 
         assert set(practice_user_ids(registered_practice)) == {_CLINICIAN_A, _CLINICIAN_B}
+
+    def test_a_practice_whose_mapped_clinician_is_gone_gets_an_empty_roster(
+        self, engine: Engine, registered_practice: str
+    ) -> None:
+        """A mapping pointing at a user row that no longer exists names nobody.
+
+        This is the one that cost a deployment its claims sweep. The roster
+        read falls back to every platform user when it resolves nobody, which
+        is right for a deployment that does not map emails to practices at all
+        — one practice, everybody in it. Asked of a single practice it says
+        something entirely different and false: a practice whose mapped
+        address has lost its user row inherited every user on the platform,
+        and the sweep opened a session per inherited user inside that
+        practice's schema, on every pass, to be shown nothing by its row
+        policies.
+
+        ``registered_practice`` is requested so the deployment demonstrably
+        DOES map emails — that is the condition that separates "this practice
+        has nobody" from "this deployment maps nobody".
+        """
+        from app.claims.fanout import practice_user_ids  # noqa: PLC0415
+        from app.db.platform_models import (  # noqa: PLC0415
+            EmailTenantMappingRow,
+            PlatformUserRow,
+            PracticeRow,
+        )
+        from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+
+        # The precondition that gives this test its meaning: the deployment
+        # demonstrably DOES map emails to practices, so an unresolvable roster
+        # below cannot be read as "this deployment maps nobody".
+        assert practice_user_ids(registered_practice), (
+            "the fixture's own practice must resolve, or the fallback under "
+            "test is not the one this asserts against"
+        )
+
+        orphan_id = f"prac-{uuid.uuid4().hex[:8]}"
+        orphan_email = f"gone-{uuid.uuid4().hex[:8]}@example.test"
+        # A well-formed id that owns no `platform.users` row — the state a
+        # practice is left in when its clinician's identity is removed.
+        departed_user_id = str(uuid.uuid4())
+        now = datetime.now(UTC)
+        with OrmSession(bind=engine) as session:
+            session.add(
+                PracticeRow(
+                    id=orphan_id,
+                    name="Practice Whose Clinician Left",
+                    schema_name="practice_orphan_roster",
+                    owner_email=orphan_email,
+                    owner_user_id=departed_user_id,
+                    is_active=True,
+                    created_at=now,
+                )
+            )
+            # The mapping exists; the user row it names deliberately does not.
+            session.add(
+                EmailTenantMappingRow(
+                    email=orphan_email,
+                    tenant_id=orphan_id,
+                    practice_id=orphan_id,
+                    created_at=now,
+                )
+            )
+            session.commit()
+        try:
+            with OrmSession(bind=engine) as session:
+                everyone = set(session.execute(select(PlatformUserRow.id)).scalars().all())
+            assert everyone, "the fixture put platform users in place to inherit"
+
+            roster = practice_user_ids(orphan_id)
+
+            assert roster == []
+            assert set(roster) != everyone
+        finally:
+            with OrmSession(bind=engine) as session:
+                session.query(EmailTenantMappingRow).filter_by(email=orphan_email).delete()
+                session.query(PracticeRow).filter_by(id=orphan_id).delete()
+                session.commit()
+
+    def test_a_deployment_that_maps_nobody_still_falls_back_to_every_user(
+        self, engine: Engine, registered_practice: str
+    ) -> None:
+        """The fallback the narrowing must not break: one practice, everybody in it.
+
+        A deployment with no email-to-practice map has one practice and every
+        platform user is in it. That is the case the fallback was written for
+        and it stays exactly as it was; the narrowing only stops it answering
+        for a deployment that HAS a map.
+
+        The mapping rows are removed and put back rather than mocked, because
+        the behaviour under test is a query against an empty table and a stub
+        session would only restate the belief being tested.
+        """
+        from app.claims.fanout import practice_user_ids  # noqa: PLC0415
+        from app.db.platform_models import (  # noqa: PLC0415
+            EmailTenantMappingRow,
+            PlatformUserRow,
+        )
+        from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+
+        with OrmSession(bind=engine) as session:
+            saved = session.query(EmailTenantMappingRow).all()
+            held = [
+                {
+                    "email": row.email,
+                    "tenant_id": row.tenant_id,
+                    "practice_id": row.practice_id,
+                    "created_at": row.created_at,
+                }
+                for row in saved
+            ]
+            assert held, "the fixture maps at least the two clinicians"
+            session.query(EmailTenantMappingRow).delete()
+            session.commit()
+        try:
+            with OrmSession(bind=engine) as session:
+                everyone = set(session.execute(select(PlatformUserRow.id)).scalars().all())
+
+            assert set(practice_user_ids(registered_practice)) == everyone
+        finally:
+            with OrmSession(bind=engine) as session:
+                for values in held:
+                    session.add(EmailTenantMappingRow(**values))
+                session.commit()

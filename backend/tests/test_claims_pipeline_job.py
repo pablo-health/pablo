@@ -144,6 +144,45 @@ def test_one_failing_practice_does_not_stop_the_rest(
     assert b.get(b_claim.id).state == "submitted"
 
 
+def test_a_practice_with_no_clinicians_is_counted_and_not_entered(
+    practices: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A roster nobody is on means every stage would read an empty set.
+
+    Claims are row-policied, so a practice the pipeline cannot name a
+    clinician for has nothing it is allowed to see. Visiting it anyway spent a
+    billing-profile read and a credential lookup per pass to discover that,
+    which is why the skip is in the loop body and not inside the clinician
+    fan-out: the preamble is most of what a practice costs.
+
+    The count is the point as much as the skip. A pass that visits far fewer
+    practices than the registry holds should say so on the line a reader
+    already watches, rather than looking like a registry that shrank.
+    """
+    entered: list[str] = []
+    monkeypatch.setattr(job, "_account_for", lambda practice: entered.append(practice.schema))
+    contexts = [
+        PracticeContext(schema="practice_empty", practice_id="empty", client=object(), user_ids=[]),
+        PracticeContext(
+            schema="practice_b",
+            practice_id="practice_b",
+            client=practices["harnesses"]["practice_b"].client,
+            user_ids=[USER_ID],
+        ),
+    ]
+    monkeypatch.setattr(
+        job, "active_practices", lambda *, max_tenants: iter(contexts[:max_tenants])
+    )
+
+    totals = job.run_pipeline(("watchdog",))
+
+    assert totals["practices"] == 2
+    assert totals["practices_without_clinicians"] == 1
+    assert "practice_empty" not in entered
+    assert ("practice_empty", "") not in practices["visited"]
+    assert [schema for schema, _ in practices["visited"]] == ["practice_b"]
+
+
 def test_the_fan_out_asks_for_real_practices_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
