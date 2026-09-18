@@ -54,6 +54,19 @@ ClaimState = Literal[
     "rejected",
     "stalled",
 ]
+#: States that prove a payer took the claim up: it reached the payer and the
+#: payer acted on it.
+#:
+#: Excludes ``rejected`` — the claim never got past the clearinghouse or the
+#: payer refused it on intake, which shows the configuration does NOT work.
+#: Excludes ``denied`` too, which is the less obvious one: a denial means the
+#: payer adjudicated and said no, and one common reason for that is the claim
+#: going to an entity that does not administer this kind of care. Treating a
+#: denial as proof the payer wiring is right would read the symptom as the
+#: cure. Lives here rather than in ``app.claims`` so the repositories can
+#: import it without depending on the claims logic.
+ACCEPTED_STATES: frozenset[str] = frozenset({"ch_accepted", "payer_accepted", "paid", "partial"})
+
 FrequencyCode = Literal["1", "7", "8"]
 FindingSeverity = Literal["blocking", "warning"]
 
@@ -233,6 +246,11 @@ ClaimReceiptKind = Literal[
     "payer_accepted",
     "rejected",
     "stalled",
+    # The claim was held for a person to read before filing, and the reason
+    # why. A receipt rather than only a state change, because "why is this
+    # waiting" is the first thing anyone asks about a held claim, and the
+    # tracker already shows receipts in order.
+    "held_for_review",
     "acknowledged",
     "status_checked",
     "deadline_approaching",

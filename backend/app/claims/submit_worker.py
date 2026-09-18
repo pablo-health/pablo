@@ -47,6 +47,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Literal
 
 from ..models.claims import SubmissionFinding
+from ..settings import get_settings
 from .clearinghouse import (
     ClearinghouseAccessDeniedError,
     ClearinghouseError,
@@ -59,6 +60,7 @@ from .clearinghouse import (
     ClearinghouseValidationError,
     describe_error,
 )
+from .prefiling import reasons_to_hold
 from .receipts import move, owned_by_principal, reject, stall
 from .wire import ClaimMappingError, to_submission_request
 
@@ -127,6 +129,10 @@ class SubmitSummary:
     rejected: int = 0
     deferred: int = 0
     stalled: int = 0
+    #: Claims this run moved to ``in_review`` instead of filing. Counted so a
+    #: pass that files nothing because everything is waiting on a reviewer
+    #: reads differently from a pass that had nothing to file.
+    held: int = 0
 
 
 def mint_idempotency_key(claim: Claim) -> str:
@@ -169,6 +175,14 @@ def submit_pending(  # noqa: PLR0913 — the run's collaborators, keyword-only
     for claim in pipeline.claims.list_by_state(("validated",), limit=limit):
         if not owned_by_principal(pipeline, claim, practice_user_ids):
             continue
+        # Asked here because here is where every filing path converges. A
+        # claim held now has not been touched yet — no idempotency key, no
+        # pending marker, nothing recorded with the vendor — so the hold is
+        # free to undo, which is what makes `approve` a plain return to
+        # `validated` rather than an unwind.
+        held = _hold_if_needed(pipeline, claim, payers=payers, summary=summary)
+        if held:
+            continue
         if on_pending is not None:
             on_pending(claim.control_number)
         if claim.submission_pending_at is not None:
@@ -183,6 +197,51 @@ def submit_pending(  # noqa: PLR0913 — the run's collaborators, keyword-only
         commit()
         _attempt(pipeline, client, account, marked, key, payers=payers, summary=summary)
     return summary
+
+
+def _hold_if_needed(
+    pipeline: ClaimPipeline,
+    claim: Claim,
+    *,
+    payers: PayerRepository,
+    summary: SubmitSummary,
+) -> bool:
+    """Move the claim to ``in_review`` if anything says a person should read it.
+
+    ``True`` when it was held and this run should leave it alone.
+
+    Off unless the deployment asked for it, and read per call rather than
+    cached so turning it off releases the next pass rather than needing a
+    restart. A deployment that switches it off does NOT have its already-held
+    claims released — those are somebody's decision to make, not a setting's.
+    """
+    if not get_settings().hold_first_claim_to_payer:
+        return False
+    reasons = reasons_to_hold(
+        claim,
+        payers.get(claim.payer_id),
+        claims=pipeline.claims,
+        hold_first_claim=True,
+    )
+    if not reasons:
+        return False
+    move(
+        pipeline,
+        claim,
+        "hold_for_review",
+        kind="held_for_review",
+        # Codes and the payer's name only. A held claim's receipt is read by
+        # whoever picks it up, and the reason it is held is about the PAYER,
+        # never about the client — so nothing patient-shaped belongs here.
+        detail={"reasons": [r.code for r in reasons], "payer": reasons[0].payer_name},
+    )
+    summary.held += 1
+    logger.info(
+        "claim_held_for_review control_number=%s reasons=%s",
+        claim.control_number,
+        ",".join(r.code for r in reasons),
+    )
+    return True
 
 
 def _reconcile(  # noqa: PLR0913 — keyword-only collaborators

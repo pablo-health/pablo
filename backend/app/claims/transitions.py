@@ -38,6 +38,13 @@ if TYPE_CHECKING:
 ClaimEvent = Literal[
     "validate",
     "submit",
+    # Ours, not the payer's: the three moves around the hold before filing.
+    # `refuse` rather than `reject` because `reject` is what a payer or the
+    # clearinghouse does, and a claim we declined to send has had no answer
+    # from either.
+    "hold_for_review",
+    "approve",
+    "refuse",
     "ch_accept",
     "payer_accept",
     "pay",

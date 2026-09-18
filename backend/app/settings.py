@@ -1307,6 +1307,18 @@ class Settings(BaseSettings):
         description="How often the in-process claims pipeline runs.",
     )
 
+    hold_first_claim_to_payer: bool = Field(
+        default=False,
+        description=(
+            "Hold the first claim to each payer in `in_review` until a person "
+            "releases it. Everything payer-specific is unproven until a claim "
+            "actually goes, and a mistake comes back as a denial days later "
+            "with every claim since made the same way. OFF by default: a hold "
+            "nobody clears is a claim that never gets filed, which is worse "
+            "than the denial it guards against, so a deployment has to mean it."
+        ),
+    )
+
     eligibility_check_task_queue: str = Field(
         default="pablo-soap-generation",
         description=(
