@@ -195,7 +195,21 @@ async def fetch_timeline(client: Any, claim_id: str, *, max_pages: int = 20) -> 
         combined.acknowledgments.extend(page.acknowledgments)
         combined.payments.extend(page.payments)
         page_token = page.next_page_token
-        if not page_token:
+        # An empty page is an end too, and on the vendor's polling endpoints it
+        # is the only end signalled at all — see the note in
+        # :mod:`app.claims.remittance_feed`, where reading "cursor present" as
+        # "more to read" walked every pass to the page cap. This endpoint does
+        # better: the captured response in
+        # ``tests/fixtures/clearinghouse/claim_timeline_paid_in_full.json``
+        # carries no cursor on its last page, so today this costs nothing. It
+        # is here so that one endpoint changing its mind cannot quietly turn
+        # every timeline read into twenty round trips on the path that decides
+        # what a payer paid.
+        #
+        # ``output.items`` rather than the mapped lists: the mapping drops
+        # entries it cannot classify, and "the vendor sent nothing" is a
+        # different fact from "nothing the vendor sent was of a kind we read".
+        if not page_token or not output.items:
             return combined
     logger.warning("claim_timeline_pages_exhausted claim_id=%s pages=%d", claim_id, max_pages)
     combined.next_page_token = page_token

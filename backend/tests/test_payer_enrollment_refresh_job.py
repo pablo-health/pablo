@@ -124,3 +124,40 @@ def test_dry_run_calls_no_clearinghouse(
 def test_refresh_tenant_refuses_a_schema_name_that_is_not_an_identifier() -> None:
     with pytest.raises(ValueError, match="schema"):
         job.refresh_tenant("practice; drop", object(), limit=1)  # type: ignore[arg-type]  # never reached
+
+
+class TestTheListingStopsOnAnEmptyPage:
+    """A cursor offered past the last page must not walk the listing to its cap.
+
+    The same vendor's polling endpoints return a cursor on every page, an
+    empty one included, where it means "come back later" rather than "more to
+    read" — ``app.claims.remittance_feed`` documents it and guards for it.
+    ``_list_all`` reads the enrollment listing, a different endpoint, and used
+    to trust the cursor alone: an echoed one turned every daily refresh into
+    ``MAX_LIST_PAGES`` round trips to learn nothing.
+    """
+
+    class _EndlessCursorClient:
+        """Answers every page empty while always offering somewhere else to look."""
+
+        def __init__(self) -> None:
+            self.pages_read = 0
+
+        def list_enrollments(self, _filters: Any) -> Any:
+            from app.models.claims_transport import EnrollmentPage  # noqa: PLC0415
+
+            self.pages_read += 1
+            return EnrollmentPage(items=[], nextPageToken="always")
+
+    def test_an_empty_page_ends_the_listing_in_one_read(self) -> None:
+        from app.claims.enrollment import MAX_LIST_PAGES, _list_all  # noqa: PLC0415
+        from app.models.claims_transport import EnrollmentFilters  # noqa: PLC0415
+
+        client = self._EndlessCursorClient()
+
+        found = _list_all(client, EnrollmentFilters())  # type: ignore[arg-type]  # only list_enrollments is reached
+
+        assert found == {}
+        assert client.pages_read == 1, (
+            f"an echoed cursor walked the listing to its cap of {MAX_LIST_PAGES}"
+        )
