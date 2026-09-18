@@ -1,17 +1,17 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Platform index: which claims are waiting to be read before filing.
+"""platform.claim_reviews: which claims are waiting to be read before filing
 
-Revision ID: e5c2a70b14f9
-Revises: b3d8f1a06c57
+Revision ID: f2a6d94c08b3
+Revises: a7c4e9b21f58
 Create Date: 2026-09-18
 
 A claim held for review lives in its practice's schema and is row-policied to
 the clinician who owns it, so listing every claim waiting on a reviewer means
 opening each practice in turn — a search that has to be bounded, which makes it
 wrong past the bound. The claims a bounded list omits are precisely the ones
-nobody knows to release, and each one is sitting on a filing deadline. Same
-problem, same answer as ``claim_routes`` (``c4e8b1f7a2d9``).
+nobody knows to release, and each is sitting on a filing deadline. Same problem
+and same answer as ``platform.claim_routes``.
 
 Holds the claim id, whose practice and clinician it is, the control number, the
 PAYER's name, the reason codes, and when. No PHI: a payer is an insurance
@@ -22,12 +22,16 @@ row policy still applies.
 The primary key is the claim, so a claim cannot appear in the queue twice and
 releasing it is a delete by key.
 
-**Written idempotently, and expected to be a no-op.** ``alembic/env.py``
-materializes the platform tables from the models with ``create_all`` in a
-committed transaction BEFORE this chain runs, so the table already exists by the
-time this executes on every path. A plain ``op.create_table`` would fail with
-``DuplicateTable``. It is here because the DDL belongs somewhere a reviewer
-looks for it, and because a model change arrives with a migration.
+Lives in the PLATFORM chain, not the tenant chain, because the table lives in
+one shared schema and there is one of it — ``claim_routes`` sits in the tenant
+chain only because it predates this chain existing.
+
+**Written idempotently, and expected to be a no-op.** The platform tables are
+materialised from the models with ``create_all`` before this chain runs, so the
+table already exists by the time this executes on every path; a plain
+``op.create_table`` would fail with ``DuplicateTable``. It is here because the
+DDL belongs somewhere a reviewer looks for it, and because a model change
+arrives with a migration.
 """
 
 from __future__ import annotations
@@ -39,8 +43,8 @@ from alembic import op
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-revision: str = "e5c2a70b14f9"
-down_revision: str | Sequence[str] | None = "b3d8f1a06c57"
+revision: str = "f2a6d94c08b3"
+down_revision: str | Sequence[str] | None = "a7c4e9b21f58"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
