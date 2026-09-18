@@ -19,6 +19,7 @@ from sqlalchemy import func, select
 
 from ...db.models import ClaimLineRow, ClaimRow
 from ...models.claims import (
+    ACCEPTED_STATES,
     BillingSnapshot,
     Claim,
     ClaimLine,
@@ -240,6 +241,18 @@ class PostgresClaimRepository(ClaimRepository):
         )
         lines = self._lines_for([row.id for row in rows])
         return [_to_claim(row, lines.get(row.id, [])) for row in rows]
+
+    def any_accepted_for_payer(self, payer_id: str) -> bool:
+        # EXISTS rather than a count or a fetch: the question is whether there
+        # is one, and this runs once per claim the outbox is about to file.
+        return (
+            self._session.execute(
+                select(ClaimRow.id)
+                .where(ClaimRow.payer_id == payer_id, ClaimRow.state.in_(ACCEPTED_STATES))
+                .limit(1)
+            ).first()
+            is not None
+        )
 
     def latest_by_appointment(self, appointment_ids: list[str]) -> dict[str, Claim]:
         if not appointment_ids:

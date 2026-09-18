@@ -391,3 +391,122 @@ def test_only_validated_claims_are_picked_up(harness: PipelineHarness) -> None:
 
     assert _run(harness).submitted == 0
     assert harness.client.submissions == []
+
+
+# --- the hold before filing ---------------------------------------------------
+
+
+class TestHoldingTheFirstClaimToAPayer:
+    """Off by default; when on, the first claim waits and the second does not.
+
+    These drive ``submit_pending`` rather than the state machine on purpose:
+    the hold is asked for at the FILING boundary, where every path that files
+    a claim converges, so that is the only place the check has to be right.
+    """
+
+    @pytest.fixture
+    def holding(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from app.claims import submit_worker as worker  # noqa: PLC0415
+        from app.settings import get_settings  # noqa: PLC0415
+
+        on = get_settings().model_copy(update={"hold_first_claim_to_payer": True})
+        monkeypatch.setattr(worker, "get_settings", lambda: on)
+
+    def test_off_by_default_the_first_claim_is_filed(self, harness: PipelineHarness) -> None:
+        """A deployment that never asked for a reviewer must not accumulate holds.
+
+        A hold nobody clears is a claim that never gets filed, which is worse
+        than the denial the hold guards against — so the default has to file.
+        """
+        created = harness.add(state="validated")
+
+        summary = _run(harness)
+
+        assert summary.held == 0
+        assert summary.submitted == 1
+        assert harness.get(created.id).state == "submitted"
+
+    def test_the_first_claim_to_a_payer_is_held_and_not_sent(
+        self, harness: PipelineHarness, holding: None
+    ) -> None:
+        created = harness.add(state="validated")
+
+        summary = _run(harness)
+
+        assert summary.held == 1
+        assert summary.submitted == 0
+        assert harness.get(created.id).state == "in_review"
+        # The whole point: nothing reached the vendor.
+        assert harness.client.submissions == []
+
+    def test_a_held_claim_carries_no_filing_marker(
+        self, harness: PipelineHarness, holding: None
+    ) -> None:
+        """Held BEFORE the idempotency key is minted.
+
+        That ordering is what lets `approve` be a plain return to `validated`
+        rather than an unwind of a half-started filing.
+        """
+        created = harness.add(state="validated")
+
+        _run(harness)
+
+        held = harness.get(created.id)
+        assert held.submission_pending_at is None
+        assert held.submission_idempotency_key is None
+
+    def test_the_receipt_says_why_and_names_no_client(
+        self, harness: PipelineHarness, holding: None
+    ) -> None:
+        created = harness.add(state="validated")
+
+        _run(harness)
+
+        held = [
+            receipt
+            for receipt in harness.pipeline.receipts.list_for_claim(created.id)
+            if receipt.kind == "held_for_review"
+        ]
+        assert len(held) == 1
+        assert held[0].detail == {
+            "reasons": ["first_claim_to_payer"],
+            "payer": "Stedi Test Payer",
+        }
+
+    def test_once_the_payer_has_accepted_a_claim_the_next_is_filed(
+        self, harness: PipelineHarness, holding: None
+    ) -> None:
+        """Acceptance clears the gate, and clears it for the whole payer.
+
+        This is the assertion that makes the feature finite. Without it every
+        claim is held forever and the practice never gets paid.
+        """
+        harness.add(state="ch_accepted")
+        created = harness.add(state="validated")
+
+        summary = _run(harness)
+
+        assert summary.held == 0
+        assert summary.submitted == 1
+        assert harness.get(created.id).state == "submitted"
+
+    @pytest.mark.parametrize("unproven", ["rejected", "denied", "submitted"])
+    def test_a_claim_that_was_not_accepted_does_not_clear_the_gate(
+        self, harness: PipelineHarness, holding: None, unproven: str
+    ) -> None:
+        """Filing is not proof; being taken up is.
+
+        `rejected` means the configuration demonstrably does not work, so
+        counting it would disarm the check exactly when it was proven
+        necessary. `denied` is excluded for a subtler reason: a denial is a
+        common symptom of billing the wrong entity for this kind of care, so
+        reading it as proof would mistake the symptom for the cure.
+        `submitted` only means the claim left here.
+        """
+        harness.add(state=unproven)
+        created = harness.add(state="validated")
+
+        summary = _run(harness)
+
+        assert summary.held == 1
+        assert harness.get(created.id).state == "in_review"

@@ -18,6 +18,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
+from ..models.claims import ACCEPTED_STATES
 from ..utcnow import utc_now
 
 if TYPE_CHECKING:
@@ -104,6 +105,25 @@ class ClaimRepository(ABC):
         """
 
     @abstractmethod
+    def any_accepted_for_payer(self, payer_id: str) -> bool:
+        """Has any claim to ``payer_id`` ever been taken up by the payer?
+
+        Asked rather than stored. The same fact could be a column on the payer
+        set when an acknowledgement lands, but a column has a write path, and a
+        write path on the money side can be missed — after which the answer is
+        wrong in the direction that files a first claim unread, which is the one
+        thing this question exists to prevent. Derived from the claims
+        themselves it cannot drift.
+
+        ACCEPTANCE ONLY, and not merely submission: a claim that was filed and
+        REJECTED has shown the payer configuration does not work, so counting
+        it would disarm the check at the moment it was proven necessary. A
+        DENIAL is excluded for the same reason — a denial can itself be the
+        symptom of filing to the wrong entity, which is exactly the mistake
+        worth catching.
+        """
+
+    @abstractmethod
     def create(self, claim: Claim) -> Claim:
         """Add a claim and its lines. Flushed, not committed."""
 
@@ -183,6 +203,12 @@ class InMemoryClaimRepository(ClaimRepository):
                 if line.appointment_id in wanted and line.appointment_id not in latest:
                     latest[line.appointment_id] = claim.model_copy(deep=True)
         return latest
+
+    def any_accepted_for_payer(self, payer_id: str) -> bool:
+        return any(
+            claim.payer_id == payer_id and claim.state in ACCEPTED_STATES
+            for claim in self._claims.values()
+        )
 
     def create(self, claim: Claim) -> Claim:
         if any(c.control_number == claim.control_number for c in self._claims.values()):
