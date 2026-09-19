@@ -51,10 +51,13 @@ export function CredentialingPrompt() {
           <p className="text-sm font-medium text-neutral-900">
             Finish setting up how you get paid
           </p>
+          {/* One sentence, and no pronoun for the client. The version this
+              replaces spent its second half saying we hold nothing yet, which
+              is the card's own reason for being on screen rather than
+              anything the reader needs told. */}
           <p className="mt-1 text-sm text-neutral-600">
-            A few questions about your practice. They decide whether a session
-            bills as a claim we file or a superbill your client files herself,
-            and we have nothing on file yet either way.
+            A few questions about your practice, so Pablo knows whether a
+            session bills as a claim or a superbill.
           </p>
           <div className="mt-3 text-sm">
             <Link
