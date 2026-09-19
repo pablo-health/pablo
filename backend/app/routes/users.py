@@ -43,7 +43,7 @@ from ..models import (
     User,
     UserPreferences,
 )
-from ..models.audit import AuditAction
+from ..models.audit import AuditAction, AuditCursor
 from ..repositories import (
     ClinicianProfile,
     ClinicianProfileRepository,
@@ -954,6 +954,11 @@ class AuditLogItem(BaseModel):
 class AuditLogResponse(BaseModel):
     data: list[AuditLogItem]
     limit: int
+    # Present when this page filled to `limit`, meaning there may be older
+    # rows behind it. Absent means the caller has reached the end of their
+    # own history — the one claim this response makes that a reader could
+    # otherwise only guess at.
+    next_cursor: str | None = None
 
 
 AUDIT_LOG_MAX_LIMIT = 500
@@ -965,16 +970,34 @@ def list_my_audit_log(
     since: datetime | None = Query(
         None, description="Return rows strictly after this ISO-8601 timestamp."
     ),
+    cursor: str | None = Query(
+        None, description="Page further back: the `next_cursor` of the previous page."
+    ),
     limit: int = Query(100, ge=1, le=AUDIT_LOG_MAX_LIMIT),
     user: User = Depends(get_current_user),
     _ctx: TenantContext = Depends(get_tenant_context),
     audit: AuditService = Depends(get_audit_service),
     _: None = Depends(subscription_exempt),
 ) -> AuditLogResponse:
-    """Return the caller's own audit rows, newest first."""
-    entries = audit.list_for_user(user_id=user.id, since=since, limit=limit)
+    """Return the caller's own audit rows, newest first.
+
+    Reading writes a row of its own (``log_self_audit_view``), which lands
+    NEWER than anything this call returned — so it can never appear in a
+    page reached through ``cursor``, and paging back through a long history
+    does not chase its own tail.
+    """
+    before = None
+    if cursor is not None:
+        try:
+            before = AuditCursor.decode(cursor)
+        except ValueError as exc:
+            raise BadRequestError("Invalid cursor.") from exc
+
+    entries = audit.list_for_user(user_id=user.id, since=since, limit=limit, before=before)
     audit.log_self_audit_view(user=user, request=request, returned_count=len(entries))
+    next_cursor = AuditCursor.from_entry(entries[-1]).encode() if len(entries) == limit else None
     return AuditLogResponse(
+        next_cursor=next_cursor,
         data=[
             AuditLogItem(
                 id=e.id,

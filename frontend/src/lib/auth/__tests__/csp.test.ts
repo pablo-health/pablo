@@ -1,7 +1,11 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-import { describe, expect, it } from "vitest"
-import { assertHttpsOrigin, generateNonce } from "@/lib/auth/csp"
+import { afterEach, describe, expect, it, vi } from "vitest"
+import { assertHttpsOrigin, browserApiOrigin, generateNonce } from "@/lib/auth/csp"
+
+afterEach(() => {
+  vi.unstubAllEnvs()
+})
 
 describe("assertHttpsOrigin", () => {
   it("returns the normalized origin for a valid https URL", () => {
@@ -30,6 +34,34 @@ describe("assertHttpsOrigin", () => {
     expect(() => assertHttpsOrigin("API_URL", "not-a-url")).toThrow(
       /must be a valid absolute URL/
     )
+  })
+})
+
+describe("browserApiOrigin", () => {
+  it("is API_URL in the ordinary deployment, where both callers use one address", () => {
+    vi.stubEnv("API_URL", "https://api.example.com")
+    vi.stubEnv("PUBLIC_API_URL", "")
+    expect(browserApiOrigin()).toBe("https://api.example.com")
+  })
+
+  it("prefers the published address when the server's is not reachable from a browser", () => {
+    // The e2e stack: the frontend shares the backend's network namespace, so
+    // server-rendered fetches use the container port while the browser can
+    // only reach the published one. connect-src governs the browser.
+    vi.stubEnv("API_URL", "http://localhost:8000")
+    vi.stubEnv("PUBLIC_API_URL", "http://localhost:8210")
+    expect(browserApiOrigin()).toBe("http://localhost:8210")
+  })
+
+  it("still refuses a plaintext non-loopback origin", () => {
+    vi.stubEnv("PUBLIC_API_URL", "http://api.example.com")
+    expect(() => browserApiOrigin()).toThrow(/must be an https origin/)
+  })
+
+  it("is empty when neither is set", () => {
+    vi.stubEnv("API_URL", "")
+    vi.stubEnv("PUBLIC_API_URL", "")
+    expect(browserApiOrigin()).toBe("")
   })
 })
 

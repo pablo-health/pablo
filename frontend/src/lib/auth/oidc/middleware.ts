@@ -20,7 +20,7 @@ import { auth } from "./config"
 import { isForcedLogoutArrival } from "@/lib/auth/forced-logout"
 import { extraPublicPaths } from "@/lib/auth/public-paths"
 import {
-  assertHttpsOrigin,
+  browserApiOrigin,
   generateNonce,
   requestHeadersWithNonce,
   STRIPE_CONNECT_SRC,
@@ -54,7 +54,7 @@ const keycloakOrigin = (() => {
   }
 })()
 
-const API_ORIGIN = assertHttpsOrigin("API_URL", process.env.API_URL || "")
+const API_ORIGIN = browserApiOrigin()
 
 function buildCsp(nonce: string): string {
   return [

@@ -12,7 +12,7 @@ import { authConfig, loginPath, logoutPath } from "@/lib/auth-config"
 import { isForcedLogoutArrival } from "@/lib/auth/forced-logout"
 import { extraPublicPaths } from "@/lib/auth/public-paths"
 import {
-  assertHttpsOrigin,
+  browserApiOrigin,
   generateNonce,
   NONCE_HEADER,
   requestHeadersWithNonce,
@@ -24,7 +24,7 @@ import { IS_DEV_MODE } from "@/lib/devMode"
 
 const PUBLIC_PATHS = ["/login", "/native-auth", "/baa-acceptance", "/mfa-enrollment", "/api/config", "/api/auth/native", "/api/auth/exchange-setup-token", ...extraPublicPaths()]
 
-const API_ORIGIN = assertHttpsOrigin("API_URL", process.env.API_URL || "")
+const API_ORIGIN = browserApiOrigin()
 
 // The Firebase Auth emulator serves plain HTTP on a loopback host, so a
 // local end-to-end build must let the SDK reach it; unset (every deployed

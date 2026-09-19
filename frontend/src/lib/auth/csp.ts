@@ -75,6 +75,27 @@ export function assertHttpsOrigin(name: string, value: string): string {
 }
 
 /**
+ * The API origin the BROWSER will dial, for `connect-src`.
+ *
+ * Normally `API_URL`, and that is the fallback. They differ only where the
+ * frontend does not reach the backend by the same address the browser does —
+ * the e2e stack runs the frontend inside the backend's network namespace, so
+ * server-rendered fetches use the container port while the browser can only
+ * use the published one. `connect-src` governs the browser, so it has to
+ * name the browser's address: allowing the server's would block every call
+ * the app makes, which surfaces as a signed-in page that renders its shell
+ * and then sits empty.
+ *
+ * Validated the same way either way — a non-https, non-loopback value still
+ * fails at middleware startup rather than quietly widening the policy.
+ */
+export function browserApiOrigin(): string {
+  const published = process.env.PUBLIC_API_URL || ""
+  if (published) return assertHttpsOrigin("PUBLIC_API_URL", published)
+  return assertHttpsOrigin("API_URL", process.env.API_URL || "")
+}
+
+/**
  * Per-request nonce for script-src / the theme bootstrap script, following
  * https://nextjs.org/docs/app/guides/content-security-policy.
  */

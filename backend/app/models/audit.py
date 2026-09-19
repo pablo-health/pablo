@@ -2,6 +2,8 @@
 
 """Audit logging models for HIPAA compliance."""
 
+import base64
+import binascii
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -476,6 +478,55 @@ ACTOR_TYPES: tuple[str, ...] = (
 # components without dragging values through here. Consumers treat it as an
 # opaque label for filtering. Dotted, stable, and never PHI.
 ACTOR_COMPONENT_MAX_LENGTH = 64
+
+
+@dataclass(frozen=True)
+class AuditCursor:
+    """A position in one user's audit stream: a timestamp and an entry id.
+
+    The id is a tie-break, not decoration. Rows written inside one
+    transaction can share a timestamp to the microsecond, and a cursor on
+    timestamp alone would either skip the rest of that group or serve it
+    twice — in the one record a user is meant to be able to trust.
+
+    Encoded opaquely so no caller builds one by hand and then depends on
+    the shape of it.
+    """
+
+    timestamp: datetime
+    entry_id: str
+
+    def encode(self) -> str:
+        raw = f"{self.timestamp.isoformat()}|{self.entry_id}"
+        return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+
+    @classmethod
+    def decode(cls, value: str) -> "AuditCursor":
+        """Parse an encoded cursor. Raises ``ValueError`` on anything else."""
+        padded = value + "=" * (-len(value) % 4)
+        try:
+            raw = base64.urlsafe_b64decode(padded.encode()).decode()
+        except (binascii.Error, UnicodeDecodeError) as exc:
+            raise ValueError("cursor is not valid base64url") from exc
+        timestamp_part, separator, entry_id = raw.partition("|")
+        if not separator or not entry_id:
+            raise ValueError("cursor is missing its entry id")
+        try:
+            timestamp = datetime.fromisoformat(timestamp_part)
+        except ValueError as exc:
+            # One vocabulary for every way a cursor can be wrong, so a caller
+            # can recognise the class without matching on three messages.
+            raise ValueError("cursor has an unreadable timestamp") from exc
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=UTC)
+        return cls(timestamp=timestamp, entry_id=entry_id)
+
+    @classmethod
+    def from_entry(cls, entry: "AuditLogEntry") -> "AuditCursor":
+        timestamp = datetime.fromisoformat(entry.timestamp)
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=UTC)
+        return cls(timestamp=timestamp, entry_id=entry.id)
 
 
 @dataclass

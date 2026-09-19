@@ -217,7 +217,15 @@ services:
     network_mode: "service:backend"
     env_file: .env.e2e
     environment:
-      - API_URL=http://localhost:${E2E_BACKEND_PORT:-8000}
+      # Two addresses for one backend, because there are two callers. Inside
+      # the shared namespace the backend is on its CONTAINER port, always
+      # 8000 whatever the stack publishes; the browser can only reach the
+      # PUBLISHED port. They are the same string until E2E_BACKEND_PORT is
+      # overridden, at which point server-rendered fetches were dialling a
+      # port nothing listens on inside the namespace — every browser-driven
+      # spec failing on a blank page while the API-only ones passed.
+      - API_URL=http://localhost:8000
+      - PUBLIC_API_URL=http://localhost:${E2E_BACKEND_PORT:-8000}
       # The booking pages are reached with no session: the link is the
       # credential. A deployment that publishes them says so here, and the
       # auth middleware unions this into its own allowlist.

@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 from ..models.audit import PHI_FIELD_NAMES
 
 if TYPE_CHECKING:
-    from ..models.audit import AuditLogEntry
+    from ..models.audit import AuditCursor, AuditLogEntry
 
 
 # Default historical-baseline window used to classify "novel" pairs in
@@ -48,8 +48,14 @@ class AuditRepository(ABC):
         user_id: str,
         since: datetime | None = None,
         limit: int = 100,
+        before: AuditCursor | None = None,
     ) -> list[AuditLogEntry]:
-        """Return this user's own audit rows, newest first."""
+        """Return this user's own audit rows, newest first.
+
+        ``since`` bounds the window from below (rows strictly newer).
+        ``before`` is a keyset position for paging further back — rows
+        strictly older than that (timestamp, id) pair.
+        """
 
     @abstractmethod
     def earliest_create_for_patients(self, patient_ids: set[str]) -> dict[str, datetime | None]:
@@ -99,11 +105,18 @@ class InMemoryAuditRepository(AuditRepository):
         user_id: str,
         since: datetime | None = None,
         limit: int = 100,
+        before: AuditCursor | None = None,
     ) -> list[AuditLogEntry]:
         rows = [e for e in self._entries if e.user_id == user_id]
         if since is not None:
             rows = [e for e in rows if datetime.fromisoformat(e.timestamp) > since]
-        rows.sort(key=lambda e: e.timestamp, reverse=True)
+        if before is not None:
+            rows = [
+                e
+                for e in rows
+                if (datetime.fromisoformat(e.timestamp), e.id) < (before.timestamp, before.entry_id)
+            ]
+        rows.sort(key=lambda e: (e.timestamp, e.id), reverse=True)
         return rows[:limit]
 
     def earliest_create_for_patients(self, patient_ids: set[str]) -> dict[str, datetime | None]:

@@ -29,7 +29,14 @@ export async function GET() {
   // In production, force safe defaults for dev/mock flags
   // to prevent exposing internal configuration to unauthenticated users
   return NextResponse.json({
-    apiUrl: process.env.API_URL || 'http://localhost:8000',
+    // What the BROWSER should dial. Usually the same as API_URL, and it
+    // falls back to it — but they are not always the same address. When the
+    // frontend shares the backend's network namespace, API_URL is the
+    // backend's container port (what server-rendered fetches use from
+    // inside), while the browser can only reach the published host port.
+    // Those coincide whenever the published port equals the container port,
+    // which is why one variable served both for so long.
+    apiUrl: process.env.PUBLIC_API_URL || process.env.API_URL || 'http://localhost:8000',
     devMode: IS_DEV_MODE,
     dataMode: IS_PRODUCTION ? 'api' : (process.env.DATA_MODE || 'api'),
     enableLocalAuth: IS_PRODUCTION ? false : process.env.ENABLE_LOCAL_AUTH === 'true',

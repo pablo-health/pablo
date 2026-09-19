@@ -318,6 +318,55 @@ export type BillingSetupRoute =
  * them says anything about what she wants next. */
 export type BillingSetupState = "self_pay" | "platform" | "own_insurance"
 
+/**
+ * One row of the caller's own audit trail.
+ *
+ * PHI-free by construction on the server side — ids, never names. Nothing
+ * here should be resolved to a patient or session name for display: doing
+ * so would change what this screen is, from a record of access into a
+ * second view of the chart.
+ */
+export interface AuditLogItem {
+  id: string
+  timestamp: string
+  /** What kind of principal acted. A row in your trail is not necessarily a
+   * row you wrote — a public booking lands here as an anonymous actor. */
+  actor_type: string
+  action: string
+  resource_type: string
+  resource_id: string
+  patient_id: string | null
+  session_id: string | null
+  ip_address: string | null
+  user_agent: string | null
+}
+
+export interface AuditLogPage {
+  data: AuditLogItem[]
+  limit: number
+  /** Present when older rows may exist behind this page; null at the end of
+   * the history. */
+  next_cursor: string | null
+}
+
+/**
+ * Read a page of the caller's own audit log, newest first.
+ *
+ * `cursor` is the previous page's `next_cursor` — it pages BACKWARDS into
+ * older history. Reading writes an audit row of its own, which always lands
+ * newer than the page just returned, so paging never chases its own tail.
+ */
+export async function getMyAuditLog(
+  params: { cursor?: string | null; limit?: number } = {},
+  token?: string
+): Promise<AuditLogPage> {
+  const query = new URLSearchParams()
+  if (params.limit) query.set("limit", String(params.limit))
+  if (params.cursor) query.set("cursor", params.cursor)
+  const suffix = query.size > 0 ? `?${query.toString()}` : ""
+  return get<AuditLogPage>(`/api/users/me/audit-log${suffix}`, token)
+}
+
 export async function getPreferences(
   token?: string
 ): Promise<UserPreferences> {
