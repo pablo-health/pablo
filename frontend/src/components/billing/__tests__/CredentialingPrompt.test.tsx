@@ -93,7 +93,17 @@ describe("CredentialingPrompt", () => {
   it("says why it matters, in terms of what she gets paid", () => {
     render(<CredentialingPrompt />)
 
-    expect(screen.getByText(/claim we file or a superbill/i)).toBeInTheDocument()
+    expect(screen.getByText(/bills as a claim or a superbill/i)).toBeInTheDocument()
+  })
+
+  it("does not put a gender on the client", () => {
+    // Second person carries the sentence; a client has no stated pronoun and
+    // guessing one in a billing prompt is the kind of wrong that gets noticed.
+    render(<CredentialingPrompt />)
+
+    expect(
+      screen.queryByText(/\b(she|her|hers|herself|he|him|his|himself)\b/i),
+    ).not.toBeInTheDocument()
   })
 
   it("can be put away for the visit without going through setup", () => {
