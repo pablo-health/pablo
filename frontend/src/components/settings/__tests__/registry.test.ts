@@ -26,7 +26,12 @@ describe("settings registry merge", () => {
     const { settingsGroups } = await load()
 
     expect(settingsGroups.map((group) => group.id)).toEqual(["you", "practice", "billing"])
-    expect(settingsGroups[0].items.map((item) => item.id)).toEqual(["profile", "appearance", "security"])
+    expect(settingsGroups[0].items.map((item) => item.id)).toEqual([
+      "profile",
+      "appearance",
+      "security",
+      "activity",
+    ])
   })
 
   it("applies per-id overrides to base items without touching the rest", async () => {
@@ -84,7 +89,13 @@ describe("settings registry merge", () => {
     ])
 
     const you = settingsGroups.find((group) => group.id === "you")
-    expect(you?.items.map((item) => item.id)).toEqual(["profile", "appearance", "security", "notifications"])
+    expect(you?.items.map((item) => item.id)).toEqual([
+      "profile",
+      "appearance",
+      "security",
+      "activity",
+      "notifications",
+    ])
 
     extensions.appendItems = []
   })

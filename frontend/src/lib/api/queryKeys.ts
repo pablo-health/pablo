@@ -152,6 +152,9 @@ const baseQueryKeys = {
     preferences: () => [...baseQueryKeys.user.all, "preferences"] as const,
     // Enrolled companion installs for the current user (desktop handoff).
     devices: () => [...baseQueryKeys.user.all, "devices"] as const,
+    // The user's own access trail. One key for the whole paged history —
+    // the cursor rides in the page param, not the key.
+    auditLog: () => [...baseQueryKeys.user.all, "audit-log"] as const,
   },
 
   // Note (clinical artifact) query keys

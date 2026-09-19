@@ -10,6 +10,7 @@ import {
   Mic,
   Palette,
   Receipt,
+  ScrollText,
   ShieldCheck,
   ShieldPlus,
   User,
@@ -17,6 +18,7 @@ import {
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import type { ComponentType } from "react"
+import { ActivityPage } from "./pages/ActivityPage"
 import { AppearancePage } from "./pages/AppearancePage"
 import { AvailabilityPage } from "./pages/AvailabilityPage"
 import { BillingContactPage } from "./pages/BillingContactPage"
@@ -113,6 +115,13 @@ const baseGroups: SettingsGroup[] = [
       { id: "profile", label: "Profile", icon: User, page: ProfilePage, desc: "Your name, timezone and clinician type." },
       { id: "appearance", label: "Appearance", icon: Palette, page: AppearancePage, desc: "How your workspace looks." },
       { id: "security", label: "Sign-in & security", icon: ShieldCheck, page: SecurityPage, desc: "Passkeys and second factors." },
+      {
+        id: "activity",
+        label: "Your activity",
+        icon: ScrollText,
+        page: ActivityPage,
+        desc: "Every action recorded against your account, and where it came from.",
+      },
     ],
   },
   {

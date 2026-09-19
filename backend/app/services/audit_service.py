@@ -13,6 +13,7 @@ from ..models.audit import (
     ACTOR_TYPE_PATIENT,
     PHI_FIELD_NAMES,
     AuditAction,
+    AuditCursor,
     AuditLogEntry,
     ResourceType,
 )
@@ -461,8 +462,9 @@ class AuditService:
         user_id: str,
         since: datetime | None = None,
         limit: int = 100,
+        before: AuditCursor | None = None,
     ) -> list[AuditLogEntry]:
-        return self._repo.list_for_user(user_id=user_id, since=since, limit=limit)
+        return self._repo.list_for_user(user_id=user_id, since=since, limit=limit, before=before)
 
     def log_onboarding_milestone(
         self,

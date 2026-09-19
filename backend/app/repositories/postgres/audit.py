@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import distinct, func, select
+from sqlalchemy import distinct, func, literal, select, tuple_
 
 from ...db.models import AuditLogRow
 from ...models.audit import ACTOR_TYPE_PATIENT
@@ -21,7 +21,7 @@ from ..audit import (
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
-    from ...models.audit import AuditLogEntry
+    from ...models.audit import AuditCursor, AuditLogEntry
 
 
 class PostgresAuditRepository(AuditRepository):
@@ -56,13 +56,25 @@ class PostgresAuditRepository(AuditRepository):
         user_id: str,
         since: datetime | None = None,
         limit: int = 100,
+        before: AuditCursor | None = None,
     ) -> list[AuditLogEntry]:
         from ...models.audit import AuditLogEntry  # noqa: PLC0415
 
         query = select(AuditLogRow).where(AuditLogRow.user_id == user_id)
         if since is not None:
             query = query.where(AuditLogRow.timestamp > since)
-        query = query.order_by(AuditLogRow.timestamp.desc()).limit(limit)
+        if before is not None:
+            # Row-value comparison, so the id breaks ties inside one
+            # timestamp rather than a page boundary dropping rows that
+            # share it.
+            query = query.where(
+                tuple_(AuditLogRow.timestamp, AuditLogRow.id)
+                < tuple_(
+                    literal(before.timestamp, type_=AuditLogRow.timestamp.type),
+                    literal(before.entry_id, type_=AuditLogRow.id.type),
+                )
+            )
+        query = query.order_by(AuditLogRow.timestamp.desc(), AuditLogRow.id.desc()).limit(limit)
 
         rows = self._session.execute(query).scalars().all()
         return [
