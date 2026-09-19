@@ -73,7 +73,12 @@ test("an already-paneled practice reaches the payer screen and finishes", async 
   // And it ends somewhere, saying what happens next rather than congratulating
   // her on arriving — she was billing before she met us.
   await expect(page.getByRole("heading", { name: "You're set up to bill" })).toBeVisible()
-  await expect(page.getByText(/enrollment requests sit with each payer/i)).toBeVisible()
+  // The ending is composed for someone who bills insurers herself, which is
+  // what the link to her payers proves. This used to assert a sentence about
+  // enrollment requests sitting with each payer, and went red the day that
+  // sentence was cut — a browser test failing for a reason that had nothing to
+  // do with the browser.
+  await expect(page.getByRole("link", { name: "Insurance payers" })).toBeVisible()
 })
 
 test("the payer screen offers the enrollment surface, not a second copy of it", async ({
