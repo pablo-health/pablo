@@ -108,8 +108,13 @@ test("the platform case walks end to end and finishes", async ({ signedInPage: p
     await page.getByRole("button", { name: "Continue" }).click()
   }
 
-  // A real finish, not an empty list.
-  await expect(page.getByText(/Set up for work outside the service/i)).toBeVisible()
+  // A real finish, composed for THIS practice rather than an empty list: the
+  // agreement note is rendered only for someone who is both on a platform and
+  // taking clients directly, so its presence is the branch decision, not a
+  // sentence. Asserted on the testid deliberately — what the ending SAYS is a
+  // component test's job, and pinning prose here means every copy edit breaks
+  // a browser test that was never about wording.
+  await expect(page.getByTestId("platform-agreement-note")).toBeVisible()
 
   await page.screenshot({
     path: "e2e/test-results/get-paid-platform-done.png",

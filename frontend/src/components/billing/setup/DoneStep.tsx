@@ -107,16 +107,17 @@ export function DoneStep({
         )}
 
         {takesDirectPay && superbillReady && (
-          <li>
-            When a client needs a superbill, Pablo uses your practice information to prepare it.
-          </li>
+          <li>When a client needs a superbill, Pablo prepares it from your practice details.</li>
         )}
 
         {billsInsurance && (
           <>
+            {/* Two sentences became one. "Enrollment requests sit with each
+                payer until they answer" describes our side of a queue nobody
+                asked about, and "you do not need to chase them" is
+                reassurance against a worry the sentence itself introduced. */}
             <li>
-              Enrollment requests sit with each payer until they answer. You do not need to chase
-              them &mdash; if one wants something from you, it shows up on the payer in{" "}
+              If a payer needs something from you, it shows up on that payer in{" "}
               <Link
                 href="/dashboard/settings/insurance"
                 className="font-medium underline underline-offset-4"
@@ -125,16 +126,13 @@ export function DoneStep({
               </Link>
               .
             </li>
-            <li>
-              A payer you are not enrolled with yet can still be billed by superbill, so a client
-              is never stuck waiting on paperwork between us and their insurer.
-            </li>
+            <li>While an application is pending, you can still bill a client by superbill.</li>
           </>
         )}
 
         {wantsCredentialing && (
           <>
-            <li>Your NPI and credentialing information can be reused for each application.</li>
+            <li>Your NPI and credentialing details are reused for every application.</li>
             <li>
               Pablo prepares and tracks applications. If one needs your signature or a document,
               you&rsquo;ll see it in{" "}
@@ -146,10 +144,10 @@ export function DoneStep({
               </Link>
               .
             </li>
-            <li>Pablo will not submit an application until you authorize it.</li>
+            <li>Pablo won&rsquo;t submit an application until you authorize it.</li>
             <li>
-              Billing a payer through Pablo is a later step. It begins only after your contract and
-              billing setup are ready.
+              Billing a payer through Pablo comes later, once your contract and billing setup are
+              ready.
             </li>
           </>
         )}
@@ -160,8 +158,8 @@ export function DoneStep({
           worse than one that reminds them it exists. */}
       {onPlatform && takesDirectPay && (
         <p className="text-[12.5px] text-muted-foreground" data-testid="platform-agreement-note">
-          Before seeing clients outside the service, check whether your agreement has any
-          restrictions that apply.
+          If you start seeing clients outside the service, check its agreement for any restrictions
+          first.
         </p>
       )}
 
@@ -170,8 +168,7 @@ export function DoneStep({
           not that it is done. */}
       {!profileReady && !seeingNobodyYet && (
         <p className="text-[12.5px] text-muted-foreground" data-testid="setup-incomplete">
-          Finish the remaining items when you&rsquo;re ready to charge a client. You can see what is
-          still needed in{" "}
+          A few details are still missing. You can see what&rsquo;s left in{" "}
           <Link
             href="/dashboard/settings/billing-profile"
             className="font-medium underline underline-offset-4"
@@ -205,9 +202,14 @@ function title({
   profileReady: boolean
 }): string {
   if (seeingNobodyYet) return "Ready when you are"
-  if (onPlatform && wantsCredentialing) return "Build your own contracts without disrupting what works"
-  if (onPlatform) return "Set up for work outside the service"
-  if (wantsCredentialing) return "Your credentialing record is ready"
+  // Both platform headings say the same true thing, and the lede below does
+  // the distinguishing. They used to promise an outcome — building your own
+  // contracts, being set up for outside work — which is a claim about where
+  // this leaves you rather than about what happened.
+  if (onPlatform) return "Everything you entered is saved"
+  // "is ready" was a readiness claim reaching this screen does not support:
+  // the wizard lets every field be skipped.
+  if (wantsCredentialing) return "Your credentialing record is saved"
   // Both of these used to be stated unconditionally, which made them a claim
   // about readiness that arriving here does not support.
   if (billsInsurance) return billingReady ? "You're set up to bill" : "Your billing setup is underway"
@@ -228,11 +230,15 @@ function lede({
   if (seeingNobodyYet) {
     return "What you entered is saved. You can finish setting up payments when you start seeing clients."
   }
+  // NAMES what "the service" is, on its first mention, because this is the
+  // first line the reader meets. "The service" alone could be Pablo, a
+  // clearinghouse, or the company that pays them; only the last is meant, and
+  // the sentence has to say so without suggesting they leave it.
   if (onPlatform && wantsCredentialing) {
-    return "You can prepare for independent billing while the service continues handling your current clients."
+    return "You can get ready to bill on your own while the service that bills for you today keeps doing that."
   }
   if (onPlatform) {
-    return "Keep using the service for the clients it handles. Pablo can support the work you do outside it without changing that arrangement."
+    return "The service that bills for you today keeps doing that. Pablo can handle the work you do outside it."
   }
   if (wantsCredentialing) {
     return "You can prepare applications now and decide when you're ready to send them."
@@ -254,10 +260,16 @@ function closing({
 }): string {
   if (seeingNobodyYet) return "You won't need to start over."
   if (onPlatform) {
-    return "Keep using the service for as long as it works for you. Before Pablo changes where a payer sends claims, payments, or payment reports, you'll see what will change and choose whether to continue."
+    // The first sentence used to be "keep using the service for as long as it
+    // works for you" — kindly meant, and the lede has already said it. What is
+    // left is the one thing this screen owes them: nothing about where their
+    // money goes moves without being shown to them first.
+    return "Before Pablo changes where a payer sends claims, payments, or payment reports, you'll see what would change and decide whether to go ahead."
   }
   if (wantsCredentialing) {
-    return "If an application needs your signature or a document, you'll see it in Credentialing."
+    // Was a restatement of the bullet above it. The payoff is the thing worth
+    // ending on instead.
+    return "Every application asks for the same facts. You've now answered them once."
   }
   return "If you ever want to bill insurance directly, setup picks up from here — most of what a payer asks for is already answered."
 }
