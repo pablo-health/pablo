@@ -31,6 +31,7 @@ import { expect, test } from "../fixtures/auth"
 const SETUP_PATH = "/dashboard/billing/setup"
 const BILLING_PROFILE = "/api/practice/billing-profile"
 const PREFERENCES = "/api/users/me/preferences"
+const CHECKLIST = "/api/credentialing/checklist"
 
 interface BillingProfile {
   legal_name: string | null
@@ -38,6 +39,10 @@ interface BillingProfile {
 
 interface Preferences {
   billing_setup_complete: boolean
+}
+
+interface Checklist {
+  fields: { key: string; answered: boolean }[]
 }
 
 const SELF_PAY = "Clients pay me directly"
@@ -250,7 +255,27 @@ test("finishing setup puts the billing page's invitation away", async ({
     .poll(async () => (await api.get<Preferences>(PREFERENCES)).billing_setup_complete)
     .toBe(true)
 
+  // No payer row appeared, so the ONLY thing that can put the card away is the
+  // wizard's own record of having run. Without this the test would pass for a
+  // clinician who happened to add a payer, which is not the case being made.
+  const checklist = await api.get<Checklist>(CHECKLIST)
+  expect(checklist.fields.find((f) => f.key === "payer_participation")?.answered).toBe(false)
+
+  // Absence only means something once the answer is IN. `toBeHidden` passes on
+  // the first poll where the element is missing, and on a half-loaded page it
+  // is always missing — so asserted naively this test passed against the
+  // unfixed build too, which is the only reason we know. Wait for the response
+  // the card's decision is made from, then let React paint it.
+  //
+  // Not `waitForLoadState("networkidle")`: the dashboard polls, so the network
+  // never goes idle and that call simply times out.
+  const decided = page.waitForResponse(
+    (r) => r.url().includes("/api/credentialing/checklist") && r.status() === 200,
+  )
   await page.goto("/dashboard/billing")
+  await expect(page.getByRole("tab", { name: "Unbilled" })).toBeVisible()
+  await decided
+  await page.waitForTimeout(1000)
 
   await expect(page.getByText("Finish setting up how you get paid")).toBeHidden()
 })
