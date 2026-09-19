@@ -3,7 +3,7 @@
 "use client"
 
 import { useCallback, useMemo } from "react"
-import { SetupNav, SetupWizardShell } from "@/components/setup"
+import { SetupNav, StepSaveProvider, SetupWizardShell, useStepSave } from "@/components/setup"
 import { Skeleton } from "@/components/ui/skeleton"
 import { usePreferences, useSavePreferences } from "@/hooks/usePreferences"
 import { type CurrentStateId, stepsForState } from "./routes"
@@ -45,8 +45,23 @@ interface GetPaidWizardProps {
  * card on the billing page instead and can return whenever.
  */
 export function GetPaidWizard({ onSettled }: GetPaidWizardProps) {
+  // The provider has to be ABOVE the wizard, not inside it, because the wizard
+  // itself is what reads the registered saves. See `StepSave`.
+  return (
+    <StepSaveProvider>
+      <GetPaidWizardBody onSettled={onSettled} />
+    </StepSaveProvider>
+  )
+}
+
+function GetPaidWizardBody({ onSettled }: GetPaidWizardProps) {
   const { data: preferences } = usePreferences()
   const savePreferences = useSavePreferences()
+  // Commits whatever form is standing on the current step. The steps that
+  // collect facts mount the settings card for those facts, and that card saves
+  // on its own button — so without this, Continue walked past everything just
+  // typed and it was gone.
+  const saveStep = useStepSave()
 
   // What she has done in this sitting laid over what was stored, so the screen
   // reacts immediately rather than waiting for the save to land. The merge and
@@ -73,6 +88,42 @@ export function GetPaidWizard({ onSettled }: GetPaidWizardProps) {
       apply({ type: "goTo", step: target.id })
     },
     [steps, apply],
+  )
+
+  /**
+   * Leave the current step, having first committed what is on it.
+   *
+   * A rejected save keeps her here. The card has already put the reason on
+   * screen next to the field it belongs to, so there is nothing to add — and
+   * moving on would mean the ending speaks for a tax id the server refused.
+   */
+  const commitAndGoTo = useCallback(
+    async (index: number) => {
+      try {
+        await saveStep()
+      } catch {
+        return
+      }
+      goTo(index)
+    },
+    [saveStep, goTo],
+  )
+
+  /**
+   * Leave without being held up by a failure — going back, and finishing
+   * later.
+   *
+   * Still saves, because typing something and pressing Back should not throw
+   * it away either. But neither of these is a claim that the step is good, and
+   * a wizard that will not let her leave is the trap this flow is built to
+   * avoid.
+   */
+  const commitAndLeave = useCallback(
+    async (leave: () => void) => {
+      await saveStep().catch(() => {})
+      leave()
+    },
+    [saveStep],
   )
 
   const toggle = useCallback(
@@ -114,6 +165,11 @@ export function GetPaidWizard({ onSettled }: GetPaidWizardProps) {
     onSettled?.()
   }, [persistSettled, onSettled])
 
+  // Finishing is still leaving a step, and the last one collects facts on
+  // several routes. Settling without committing it would lose the last screen
+  // she filled in — the one she was most likely still typing on.
+  const finish = useCallback(() => void commitAndLeave(settle), [commitAndLeave, settle])
+
   const current = useMemo(() => steps[activeIndex], [steps, activeIndex])
   const Body = STEP_BODIES[current?.id ?? "route"]
   const isLastStep = activeIndex === steps.length - 1
@@ -139,10 +195,10 @@ export function GetPaidWizard({ onSettled }: GetPaidWizardProps) {
     <SetupWizardShell
       steps={steps}
       activeIndex={activeIndex}
-      onJump={goTo}
+      onJump={(index) => void commitAndGoTo(index)}
       title="Getting paid"
       lede="A few questions, so this works the way your practice already does."
-      onFinishLater={settle}
+      onFinishLater={finish}
       aside={{
         img: "/pablo-tie.webp",
         caption: current?.caption ?? "Tell Pablo once. He'll take it from here.",
@@ -150,12 +206,17 @@ export function GetPaidWizard({ onSettled }: GetPaidWizardProps) {
       footer={
         !ownsItsNav ? (
           <SetupNav
-            onBack={() => goTo(activeIndex - 1)}
-            onContinue={isLastStep ? settle : () => goTo(activeIndex + 1)}
+            onBack={() => void commitAndLeave(() => goTo(activeIndex - 1))}
+            onContinue={isLastStep ? finish : () => void commitAndGoTo(activeIndex + 1)}
             // Never gated. Setup here is progressive by design — the same
             // stance ClaimsSetupChecklist takes, where a practice can fill in
             // what it has and come back for the rest. Blocking Continue until
             // a step is perfect would turn a resumable flow into a wall.
+            //
+            // Committing the step is not the same as gating it: an empty form
+            // saves nothing and Continue behaves exactly as before. Only a
+            // form she filled in badly holds her, and only because the field
+            // beside her is showing why.
             canContinue
             isLastStep={isLastStep}
           />
@@ -169,8 +230,10 @@ export function GetPaidWizard({ onSettled }: GetPaidWizardProps) {
         onToggle={toggle}
         onToggleCredentialing={toggleCredentialing}
         onToggleCardPayments={toggleCardPayments}
-        onContinue={current?.id === "route" ? confirmChecklist : () => goTo(activeIndex + 1)}
-        onBack={() => goTo(activeIndex - 1)}
+        onContinue={
+          current?.id === "route" ? confirmChecklist : () => void commitAndGoTo(activeIndex + 1)
+        }
+        onBack={() => void commitAndLeave(() => goTo(activeIndex - 1))}
         onNoClients={noClientsYet}
       />
     </SetupWizardShell>

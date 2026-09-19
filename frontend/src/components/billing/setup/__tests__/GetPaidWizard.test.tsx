@@ -15,7 +15,7 @@
  *   back to an empty checklist, having already told us.
  */
 
-import { fireEvent, render, screen } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { UserPreferences } from "@/lib/api/users"
 import { GetPaidWizard } from "../GetPaidWizard"
@@ -233,15 +233,18 @@ describe("a clinician who answered the superseded question", () => {
 })
 
 describe("leaving mid-way", () => {
-  it("marks setup settled so the page stops opening on it", () => {
+  it("marks setup settled so the page stops opening on it", async () => {
     // A first-visit surface she cannot leave is a trap, not a wizard.
+    // Leaving now commits the step first, so settling lands a tick later.
     const onSettled = vi.fn()
     render(<GetPaidWizard onSettled={onSettled} />)
 
     fireEvent.click(screen.getByRole("button", { name: /finish later/i }))
 
-    expect(savePreferences).toHaveBeenCalledWith(
-      expect.objectContaining({ billing_setup_complete: true }),
+    await waitFor(() =>
+      expect(savePreferences).toHaveBeenCalledWith(
+        expect.objectContaining({ billing_setup_complete: true }),
+      ),
     )
     expect(onSettled).toHaveBeenCalled()
   })

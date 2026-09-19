@@ -14,6 +14,12 @@
  *
  * - the answers actually PERSIST, through the preferences API and back, so
  *   closing the tab mid-setup really does cost her nothing
+ * - and so does what she TYPES, which is a different claim and was for a long
+ *   time a false one. The checklist answers live on preferences and were
+ *   always saved; the facts she entered on a step lived in a settings card
+ *   that saves on its own button, and Continue walked past them. Both are
+ *   asserted against the API, because a page rendering from a warm cache says
+ *   nothing about what the server kept.
  * - the steps she walks are the ones the checklist implied, on the real shell
  *   inside the dashboard
  * - nothing on the way through asks a platform clinician for the things only
@@ -23,6 +29,16 @@
 import { expect, test } from "../fixtures/auth"
 
 const SETUP_PATH = "/dashboard/billing/setup"
+const BILLING_PROFILE = "/api/practice/billing-profile"
+const PREFERENCES = "/api/users/me/preferences"
+
+interface BillingProfile {
+  legal_name: string | null
+}
+
+interface Preferences {
+  billing_setup_complete: boolean
+}
 
 const SELF_PAY = "Clients pay me directly"
 const PLATFORM = /a service like Headway, Alma, or Rula/
@@ -172,6 +188,70 @@ test("a therapist who only takes cash walks the same, shorter path", async ({
   await page.getByRole("button", { name: "Continue" }).click()
 
   await expect(page.getByRole("heading", { name: "Payers" })).toBeHidden()
+})
+
+test("what she types on a step is saved by pressing Continue", async ({
+  signedInPage: page,
+  api,
+}) => {
+  // The failure this guards is invisible from inside the wizard, which is why
+  // it survived a suite that already claimed to prove persistence. Each step
+  // that collects facts mounts the settings card for them, and that card saves
+  // on its own button — so Continue walked straight past everything typed and
+  // it was gone. She found out days later, in Settings, looking for a legal
+  // name she had entered.
+  //
+  // Asserted against the API rather than by navigating to Settings, because a
+  // page that re-renders from a warm cache proves nothing about what the
+  // server kept.
+  const legalName = `Continue Saves This ${Date.now()}`
+  await api.request("PATCH", "/api/practice/billing-profile", { legal_name: "" })
+
+  await page.goto(SETUP_PATH)
+  await page.getByLabel(SELF_PAY).check()
+  await page.getByRole("button", { name: "Continue" }).click()
+  await page.getByRole("button", { name: "Continue" }).click()
+  await expect(page.getByText("What we found")).toBeVisible()
+  await page.getByRole("button", { name: "Continue" }).click()
+
+  await expect(page.getByText("How insurers identify your practice")).toBeVisible()
+  await page.getByLabel("Legal business name").fill(legalName)
+
+  // Continue, NOT the card's own Save. That is the whole point: the primary
+  // button on the step is the one a person presses.
+  await page.getByRole("button", { name: "Continue" }).click()
+
+  await expect
+    .poll(async () => (await api.get<BillingProfile>(BILLING_PROFILE)).legal_name)
+    .toBe(legalName)
+})
+
+test("finishing setup puts the billing page's invitation away", async ({
+  signedInPage: page,
+  api,
+}) => {
+  // A practice paid in cash answers "nobody bills insurance for me", and there
+  // is no payer row to write that on. Gating the card on the payer record
+  // alone left it on the Billing page for good: she finished setup, came back,
+  // and was invited to set up billing.
+  //
+  // Asserted visible FIRST, or "hidden at the end" passes for a card that was
+  // never going to show.
+  await page.goto("/dashboard/billing")
+  await expect(page.getByText("Finish setting up how you get paid")).toBeVisible()
+
+  await page.goto(SETUP_PATH)
+  await page.getByLabel(SELF_PAY).check()
+  await page.getByRole("button", { name: "Continue" }).click()
+  await page.getByRole("button", { name: /finish later/i }).click()
+
+  await expect
+    .poll(async () => (await api.get<Preferences>(PREFERENCES)).billing_setup_complete)
+    .toBe(true)
+
+  await page.goto("/dashboard/billing")
+
+  await expect(page.getByText("Finish setting up how you get paid")).toBeHidden()
 })
 
 test("not seeing clients yet is an answer, not a dead end", async ({ signedInPage: page }) => {

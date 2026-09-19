@@ -14,10 +14,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { BillingProfileResponse } from "@/types/practiceBilling"
 import { BillingContactCard } from "../BillingContactCard"
 
-const mockUpdate = vi.fn()
+const mockUpdate = vi.fn((_patch: unknown) => Promise.resolve())
 
 vi.mock("@/hooks/useBillingProfile", () => ({
-  useUpdateBillingProfile: () => ({ mutate: mockUpdate, isPending: false }),
+  // `mutateAsync`, because the card's save is awaitable now: a wizard
+  // step's Continue has to be able to wait for it. Resolves so the
+  // success path runs.
+  useUpdateBillingProfile: () => ({
+    mutateAsync: mockUpdate,
+    isPending: false,
+  }),
 }))
 
 vi.mock("../SettingsSavedContext", () => ({
