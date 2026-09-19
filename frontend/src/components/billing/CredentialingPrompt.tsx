@@ -6,6 +6,7 @@ import { X } from "lucide-react"
 import Link from "next/link"
 import { useState } from "react"
 import { useChecklist } from "@/hooks/useCredentialingChecklist"
+import { usePreferences } from "@/hooks/usePreferences"
 
 /**
  * The way into billing setup, for a practice that has not been through it.
@@ -22,6 +23,12 @@ import { useChecklist } from "@/hooks/useCredentialingChecklist"
  * setup is what makes this go away, and the close button is a courtesy for the
  * current visit rather than a decision worth keeping.
  *
+ * TWO ways the question can be settled, and for a while this only knew one.
+ * A payer row answers it, but "nobody, I'm paid in cash" is an answer with no
+ * row to write it on — so a cash practice finished the wizard, came back to
+ * Billing, and found the card inviting it to do the thing it had just done.
+ * The wizard records that it ran; read that too.
+ *
  * A card above the tabs rather than a gate in front of them. She clicked
  * Billing with work in mind; intercepting her would be a speed bump on the way
  * to it.
@@ -29,11 +36,19 @@ import { useChecklist } from "@/hooks/useCredentialingChecklist"
 export function CredentialingPrompt() {
   const [dismissed, setDismissed] = useState(false)
   const { data: checklist } = useChecklist()
+  const { data: preferences } = usePreferences()
+  const setupComplete = preferences?.billing_setup_complete ?? false
 
   const panels = checklist?.fields.find((f) => f.key === "payer_participation")
   // Absent means the question does not apply to her at all; answered means we
   // already know. Either way there is nothing to ask.
   if (dismissed || !panels || panels.answered) return null
+  // And she may have been through setup and answered it as "nobody" — which a
+  // payer row cannot record, because there is no row to write. A practice paid
+  // in cash never adds a payer, so gating on the payer record alone left this
+  // card on the Billing page permanently, no matter how many times she
+  // finished the wizard it points at.
+  if (setupComplete) return null
 
   return (
     <div className="relative rounded-xl border border-neutral-200 bg-white p-4">

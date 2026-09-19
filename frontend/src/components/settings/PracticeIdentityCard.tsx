@@ -4,6 +4,7 @@
 
 import { useState } from "react"
 import { SegmentedControl, SettingsCard } from "@/components/settings/ui"
+import { useRegisterStepSave } from "@/components/setup"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useUpdateBillingProfile } from "@/hooks/useBillingProfile"
@@ -83,25 +84,6 @@ export function PracticeIdentityCard({
   const profileName = practiceDetails?.name?.trim() ?? ""
   const canPrefill = Boolean(profileName) && !legalName.trim()
 
-  function handleSave() {
-    const invalid = validate()
-    setProblem(invalid)
-    if (invalid || !isDirty) return
-    update.mutate(patch, {
-      onSuccess: () => {
-        setTaxId("")
-        setChangingTaxId(false)
-        flashSaved()
-      },
-      onError: (error) =>
-        setProblem(
-          error instanceof Error && error.message
-            ? error.message
-            : "The practice identity could not be saved.",
-        ),
-    })
-  }
-
   function validate(): string | null {
     if (billingNpi.trim() && !/^\d{10}$/.test(billingNpi.trim())) {
       return "Enter a 10-digit NPI."
@@ -111,6 +93,32 @@ export function PracticeIdentityCard({
     if (taxId.trim() && !taxIdType) return "Say whether the tax ID is an EIN or an SSN."
     return null
   }
+
+  // Awaitable, so a wizard step's Continue can wait for it rather than
+  // advancing over a save that has not landed — see `useRegisterStepSave`.
+  // Rejects on failure for the same reason: the caller must be able to stay
+  // put. On a settings page nothing awaits it and the behavior is unchanged.
+  async function handleSave(): Promise<void> {
+    const invalid = validate()
+    setProblem(invalid)
+    if (invalid) throw new Error(invalid)
+    if (!isDirty) return
+    try {
+      await update.mutateAsync(patch)
+      setTaxId("")
+      setChangingTaxId(false)
+      flashSaved()
+    } catch (error) {
+      setProblem(
+        error instanceof Error && error.message
+          ? error.message
+          : "The practice identity could not be saved.",
+      )
+      throw error
+    }
+  }
+
+  useRegisterStepSave("practice-identity", handleSave, isDirty)
 
   return (
     <SettingsCard
@@ -234,8 +242,14 @@ export function PracticeIdentityCard({
           </p>
         )}
 
+        {/* The rejection is how a wizard's Continue knows to stay put. This
+            button has already shown the problem, so it swallows it. */}
         {isDirty && (
-          <Button size="sm" onClick={handleSave} disabled={update.isPending}>
+          <Button
+            size="sm"
+            onClick={() => void handleSave().catch(() => {})}
+            disabled={update.isPending}
+          >
             {update.isPending ? "Saving..." : "Save"}
           </Button>
         )}

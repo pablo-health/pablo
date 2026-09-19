@@ -5,3 +5,8 @@ export { SetupStepper, type SetupStepperStep } from "@/components/setup/SetupSte
 export { SetupStepHead } from "@/components/setup/SetupStepHead"
 export { SetupAside } from "@/components/setup/SetupAside"
 export { SetupNav } from "@/components/setup/SetupNav"
+export {
+  StepSaveProvider,
+  useRegisterStepSave,
+  useStepSave,
+} from "@/components/setup/StepSave"

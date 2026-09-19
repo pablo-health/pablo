@@ -4,6 +4,7 @@
 
 import { useState } from "react"
 import { SettingsCard } from "@/components/settings/ui"
+import { useRegisterStepSave } from "@/components/setup"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useUpdateBillingProfile } from "@/hooks/useBillingProfile"
@@ -72,23 +73,31 @@ export function BillingContactCard({
     setDraft((current) => ({ ...current, [field]: value }))
   }
 
-  function handleSave() {
+  // Awaitable and rejecting, for the reason given on PracticeIdentityCard's
+  // handleSave: a wizard step's Continue has to be able to wait for it and to
+  // stay put when it fails.
+  async function handleSave(): Promise<void> {
     const invalid =
       draft.state.trim() && draft.state.trim().length !== 2
         ? "State is its two-letter abbreviation."
         : null
     setProblem(invalid)
-    if (invalid || !isDirty) return
-    update.mutate(patch, {
-      onSuccess: () => flashSaved(),
-      onError: (error) =>
-        setProblem(
-          error instanceof Error && error.message
-            ? error.message
-            : "The billing contact could not be saved.",
-        ),
-    })
+    if (invalid) throw new Error(invalid)
+    if (!isDirty) return
+    try {
+      await update.mutateAsync(patch)
+      flashSaved()
+    } catch (error) {
+      setProblem(
+        error instanceof Error && error.message
+          ? error.message
+          : "The billing contact could not be saved.",
+      )
+      throw error
+    }
   }
+
+  useRegisterStepSave("billing-contact", handleSave, isDirty)
 
   return (
     <SettingsCard
@@ -193,7 +202,11 @@ export function BillingContactCard({
         )}
 
         {isDirty && (
-          <Button size="sm" onClick={handleSave} disabled={update.isPending}>
+          <Button
+            size="sm"
+            onClick={() => void handleSave().catch(() => {})}
+            disabled={update.isPending}
+          >
             {update.isPending ? "Saving..." : "Save"}
           </Button>
         )}

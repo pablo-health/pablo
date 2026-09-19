@@ -17,9 +17,14 @@ import type { ChecklistField, ChecklistSurface } from "@/types/credentialing"
 import { CredentialingPrompt } from "../CredentialingPrompt"
 
 const useChecklist = vi.hoisted(() => vi.fn())
+const usePreferences = vi.hoisted(() => vi.fn())
 
 vi.mock("@/hooks/useCredentialingChecklist", () => ({
   useChecklist: (...args: unknown[]) => useChecklist(...args),
+}))
+
+vi.mock("@/hooks/usePreferences", () => ({
+  usePreferences: (...args: unknown[]) => usePreferences(...args),
 }))
 
 function panelsField(answered: boolean): ChecklistField {
@@ -52,6 +57,7 @@ function surface(fields: ChecklistField[]): ChecklistSurface {
 beforeEach(() => {
   vi.clearAllMocks()
   useChecklist.mockReturnValue({ data: surface([panelsField(false)]) })
+  usePreferences.mockReturnValue({ data: { billing_setup_complete: false } })
 })
 
 describe("CredentialingPrompt", () => {
@@ -64,6 +70,19 @@ describe("CredentialingPrompt", () => {
   it("says nothing once the record answers it", () => {
     // The promise the intake rests on: never ask for what we can already read.
     useChecklist.mockReturnValue({ data: surface([panelsField(true)]) })
+
+    const { container } = render(<CredentialingPrompt />)
+
+    expect(container).toBeEmptyDOMElement()
+  })
+
+  it("says nothing once she has been through the wizard, payers or not", () => {
+    // A practice paid in cash answers "nobody" and there is no payer row to
+    // write that on, so the checklist never reads as answered. Gating on the
+    // payer record alone left this card on the Billing page permanently — she
+    // finished setup, came back, and was invited to do it again.
+    useChecklist.mockReturnValue({ data: surface([panelsField(false)]) })
+    usePreferences.mockReturnValue({ data: { billing_setup_complete: true } })
 
     const { container } = render(<CredentialingPrompt />)
 
