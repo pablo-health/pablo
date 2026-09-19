@@ -147,6 +147,29 @@ def active_practices(*, max_tenants: int) -> Iterator[PracticeContext]:
     order.
     """
     registry = list_active_practice_registry(get_engine())
+    if len(registry) > max_tenants:
+        # The one silent truncation this pass can actually suffer, made loud.
+        #
+        # The bound is applied to the registry in SCHEMA ORDER, so the
+        # practices past it are not "some practices" — they are the same
+        # practices every run, and their claims stop moving while every pass
+        # reports success. That is the failure PABLO-ffw8 was: a bounded search
+        # answered confidently about the part it looked at.
+        #
+        # A warning rather than a mechanism, deliberately. The durable fixes
+        # are to make the pass smaller — file at confirm time so `submit` has
+        # nothing to do, and ask for the practices that HAVE work instead of
+        # walking all of them — and neither is helped by this pass choosing a
+        # different moment to give up. But until one of them lands, a reader
+        # should not have to infer truncation from a registry count they cannot
+        # see. If this line never fires, the bound is not costing anything; if
+        # it does, it names exactly how many practices went unvisited.
+        logger.warning(
+            "claims_fanout_truncated registry=%d max_tenants=%d unvisited=%d",
+            len(registry),
+            max_tenants,
+            len(registry) - max_tenants,
+        )
     for schema, practice_id in registry[:max_tenants]:
         try:
             client = clearinghouse_client_for_practice(practice_id)

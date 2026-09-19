@@ -10,6 +10,7 @@ whole practice that fails or cannot be resolved at all.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -212,6 +213,55 @@ def test_the_fan_out_does_not_skip_synthetic_tenants(
     assert asked["include_pentest"] is True, (
         "skipping synthetic tenants makes the deployed claims test unpassable"
     )
+
+
+def test_a_registry_larger_than_the_bound_says_so(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The bound truncates in schema order, so it starves the SAME practices.
+
+    ``max_tenants`` slices the registry before anything is filtered, so the
+    practices past it are not a rotating sample — they are the same ones every
+    run, and their claims stop moving while every pass reports success. That is
+    what a bounded search did in PABLO-ffw8: answered confidently about the part
+    it looked at.
+
+    Nothing here changes what the pass does. It changes whether a reader has to
+    infer the truncation from a registry count they cannot see.
+    """
+    monkeypatch.setattr(fanout, "get_engine", object)
+    monkeypatch.setattr(
+        fanout,
+        "list_active_practice_registry",
+        lambda _engine, **_kwargs: [(f"practice_{n}", str(n)) for n in range(5)],
+    )
+    monkeypatch.setattr(fanout, "clearinghouse_client_for_practice", lambda _id: object())
+    monkeypatch.setattr(fanout, "practice_user_ids", lambda _practice_id: [USER_ID])
+
+    with caplog.at_level(logging.WARNING, logger=fanout.logger.name):
+        visited = list(fanout.active_practices(max_tenants=2))
+
+    assert [practice.schema for practice in visited] == ["practice_0", "practice_1"]
+    assert "claims_fanout_truncated registry=5 max_tenants=2 unvisited=3" in caplog.text
+
+
+def test_a_registry_inside_the_bound_stays_quiet(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A warning that fires on every healthy run is one nobody reads."""
+    monkeypatch.setattr(fanout, "get_engine", object)
+    monkeypatch.setattr(
+        fanout,
+        "list_active_practice_registry",
+        lambda _engine, **_kwargs: [("practice_a", "a")],
+    )
+    monkeypatch.setattr(fanout, "clearinghouse_client_for_practice", lambda _id: object())
+    monkeypatch.setattr(fanout, "practice_user_ids", lambda _practice_id: [USER_ID])
+
+    with caplog.at_level(logging.WARNING, logger=fanout.logger.name):
+        list(fanout.active_practices(max_tenants=500))
+
+    assert "claims_fanout_truncated" not in caplog.text
 
 
 def test_a_practice_that_cannot_be_resolved_is_skipped(
