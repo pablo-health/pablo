@@ -204,8 +204,9 @@ test("what she types on a step is saved by pressing Continue", async ({
   // Asserted against the API rather than by navigating to Settings, because a
   // page that re-renders from a warm cache proves nothing about what the
   // server kept.
+  // Unique per run, so this asserts the value BECAME what was typed rather
+  // than that something was already there.
   const legalName = `Continue Saves This ${Date.now()}`
-  await api.request("PATCH", "/api/practice/billing-profile", { legal_name: "" })
 
   await page.goto(SETUP_PATH)
   await page.getByLabel(SELF_PAY).check()
