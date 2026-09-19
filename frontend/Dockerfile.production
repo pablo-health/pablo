@@ -53,6 +53,10 @@ ENV HOSTNAME="0.0.0.0"
 
 # Runtime configuration
 ENV API_URL=""
+# Where the BROWSER reaches the API, when that is not the same address the
+# server uses (a frontend sharing the backend's network namespace). Empty
+# means "same as API_URL", which is the ordinary deployment.
+ENV PUBLIC_API_URL=""
 ENV DEV_MODE="false"
 ENV DATA_MODE="api"
 ENV ENABLE_LOCAL_AUTH="false"
