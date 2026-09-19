@@ -49,3 +49,20 @@ export const HAS_PAYMENTS_SETUP = false
 export function PaymentsSetup(): ReactNode {
   return null
 }
+
+/**
+ * Whether a client can actually pay this practice by card yet.
+ *
+ * The last screen of setup says what is true now, and "ready to charge" is a
+ * claim about a processor rather than about a box someone ticked on the way
+ * past. Only a deployment that HAS a processor can answer, so the question is
+ * asked here and the base build answers `null`: no processor concept, so no
+ * claim either way and the ending keeps its ordinary wording.
+ *
+ * `null` means NOT KNOWN, not "not connected". An implementation's read is in
+ * flight for a moment, and telling someone to connect a processor they already
+ * connected is its own small lie — the same one in the other direction.
+ */
+export function usePaymentsConnected(): boolean | null {
+  return null
+}

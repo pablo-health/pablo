@@ -8,6 +8,7 @@ import { billingProfileGaps } from "@/components/settings/billingProfileGaps"
 import { useSettingsUserStatus } from "@/components/settings/useSettingsPreferences"
 import { useBillingProfile } from "@/hooks/useBillingProfile"
 import type { CurrentStateId } from "./routes"
+import { usePaymentsConnected } from "./setupSlots.extensions"
 
 /**
  * Where setup finishes, assembled from what was chosen AND from what is
@@ -36,6 +37,9 @@ import type { CurrentStateId } from "./routes"
  * - **That finishing setup means insurance can be billed.** Being contracted
  *   and being able to file a claim are different states.
  * - **That a platform arrangement has changed.** It has not.
+ * - **That a client can pay by card.** Taking a card needs a processor, and
+ *   ticking "card, cash, bank transfer" on the first screen says how the
+ *   practice is paid today, not that one is connected.
  */
 export function DoneStep({
   selected,
@@ -46,6 +50,9 @@ export function DoneStep({
 }) {
   const { data: profile } = useBillingProfile()
   const { data: user } = useSettingsUserStatus()
+  // `null` on a deployment with no processor concept, and while the read is in
+  // flight. Only an explicit `false` is grounds for saying something is left.
+  const paymentsConnected = usePaymentsConnected()
 
   const onPlatform = selected.includes("platform")
   const billsInsurance = selected.includes("own_insurance")
@@ -91,7 +98,11 @@ export function DoneStep({
             <Link href="/dashboard/billing" className="font-medium underline underline-offset-4">
               Billing
             </Link>
-            , ready to charge.
+            {paymentsConnected === false ? (
+              <>. Clients can pay by card once you connect a payment processor.</>
+            ) : (
+              <>, ready to charge.</>
+            )}
           </li>
         )}
 

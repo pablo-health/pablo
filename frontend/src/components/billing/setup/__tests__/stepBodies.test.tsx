@@ -45,6 +45,13 @@ vi.mock("@/components/credentialing/NpiLookupStep", () => ({
 }))
 let profile: Record<string, unknown> | null = null
 let clinician: Record<string, unknown> = { npi_number: null, taxonomy_code: null }
+let paymentsConnected: boolean | null = null
+
+vi.mock("../setupSlots.extensions", () => ({
+  HAS_PAYMENTS_SETUP: true,
+  PaymentsSetup: () => <div />,
+  usePaymentsConnected: () => paymentsConnected,
+}))
 
 vi.mock("@/hooks/useBillingProfile", () => ({
   useBillingProfile: () => ({ data: profile, isLoading: false }),
@@ -115,6 +122,8 @@ function props(
 beforeEach(() => {
   profile = completeProfile()
   clinician = { npi_number: "1999999984", taxonomy_code: "101YM0800X" }
+  // The base build's answer: no processor concept, so no claim either way.
+  paymentsConnected = null
 })
 
 describe("every reachable step has a real screen", () => {
@@ -172,6 +181,40 @@ describe("an ending is honest about what is actually ready", () => {
 
     expect(screen.getByText("Your direct-payment setup is saved")).toBeInTheDocument()
     expect(screen.getByTestId("setup-incomplete")).toBeInTheDocument()
+  })
+
+  it("does not say a card can be taken when no processor is connected", () => {
+    // The first screen's "card, cash, bank transfer" says how the practice is
+    // paid today. It is not a processor, and "ready to charge" read as one.
+    profile = completeProfile()
+    paymentsConnected = false
+    const Body = STEP_BODIES.done
+    render(<Body {...props(["self_pay"], false)} />)
+
+    expect(screen.getByText(/connect a payment processor/i)).toBeInTheDocument()
+    expect(screen.queryByText(/ready to charge/i)).not.toBeInTheDocument()
+  })
+
+  it("says it plainly once a processor is connected", () => {
+    profile = completeProfile()
+    paymentsConnected = true
+    const Body = STEP_BODIES.done
+    render(<Body {...props(["self_pay"], false)} />)
+
+    expect(screen.getByText(/ready to charge/i)).toBeInTheDocument()
+  })
+
+  it("keeps the ordinary wording where there is no processor to ask about", () => {
+    // `null` is a deployment that does not do processors at all, and the
+    // moment before an implementation's read lands. Neither is grounds for
+    // telling someone to go connect something.
+    profile = completeProfile()
+    paymentsConnected = null
+    const Body = STEP_BODIES.done
+    render(<Body {...props(["self_pay"], false)} />)
+
+    expect(screen.getByText(/ready to charge/i)).toBeInTheDocument()
+    expect(screen.queryByText(/connect a payment processor/i)).not.toBeInTheDocument()
   })
 
   it("does not promise a superbill without an NPI to put on it", () => {
