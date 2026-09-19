@@ -82,10 +82,13 @@ export async function giveAvailabilityRule(
   api: ApiClient,
   ruleType: string,
   params: Record<string, unknown>,
+  /** "hard" refuses a booking outright; "soft" warns. Defaults to "hard",
+   * which is what every caller before the override work wanted. */
+  enforcement: "hard" | "soft" = "hard",
 ): Promise<AvailabilityRule> {
   return api.post<AvailabilityRule>("/api/availability/rules", {
     rule_type: ruleType,
-    enforcement: "hard",
+    enforcement,
     params,
   })
 }
