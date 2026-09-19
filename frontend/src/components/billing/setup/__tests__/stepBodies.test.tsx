@@ -274,7 +274,28 @@ describe("what an ending may not claim", () => {
     const Body = STEP_BODIES.done
     render(<Body {...props(["platform"], true)} />)
 
-    expect(screen.getByText(/a later step/i)).toBeInTheDocument()
+    expect(screen.getByText(/billing a payer through pablo comes later/i)).toBeInTheDocument()
+  })
+
+  it("names what 'the service' is, rather than leaving it to be guessed", () => {
+    // On its own, "the service" could be Pablo, a clearinghouse, or the
+    // company that actually pays them. Only the last is meant, and this is the
+    // first line on the screen.
+    const Body = STEP_BODIES.done
+    render(<Body {...props(["platform"], true)} />)
+
+    expect(screen.getByText(/the service that bills for you today/i)).toBeInTheDocument()
+  })
+
+  it("does not claim the credentialing record is ready", () => {
+    // Every field on the way here can be skipped, so arriving proves nothing
+    // about whether the record is complete. Not on a platform and seeing
+    // somebody, which is the branch that carries this heading.
+    const Body = STEP_BODIES.done
+    render(<Body {...props(["self_pay"], true)} />)
+
+    expect(screen.getByText("Your credentialing record is saved")).toBeInTheDocument()
+    expect(screen.queryByText(/credentialing record is ready/i)).not.toBeInTheDocument()
   })
 
   it("tells a platform clinician her current billing is untouched", () => {
