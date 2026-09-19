@@ -209,7 +209,9 @@ def submit_pending(  # noqa: PLR0913 — the run's collaborators, keyword-only
         if on_pending is not None:
             on_pending(claim.control_number)
         if claim.submission_pending_at is not None:
-            _reconcile(pipeline, client, account, claim, payers=payers, summary=summary)
+            _reconcile(
+                pipeline, client, account, claim, payers=payers, commit=commit, summary=summary
+            )
             continue
         key = mint_idempotency_key(claim)
         marked = pipeline.claims.update(
@@ -218,7 +220,9 @@ def submit_pending(  # noqa: PLR0913 — the run's collaborators, keyword-only
             )
         )
         commit()
-        _attempt(pipeline, client, account, marked, key, payers=payers, summary=summary)
+        _attempt(
+            pipeline, client, account, marked, key, payers=payers, commit=commit, summary=summary
+        )
     return summary
 
 
@@ -282,6 +286,7 @@ def _reconcile(  # noqa: PLR0913 — keyword-only collaborators
     claim: Claim,
     *,
     payers: PayerRepository,
+    commit: Callable[[], None],
     summary: SubmitSummary,
 ) -> None:
     """A claim whose previous attempt never got its answer written down."""
@@ -289,6 +294,11 @@ def _reconcile(  # noqa: PLR0913 — keyword-only collaborators
     if pending_at is None or key is None:
         msg = f"claim {claim.control_number} has no pending attempt to reconcile"
         raise ValueError(msg)
+    # The caller's scan of `validated` claims left a transaction open, and the
+    # feed read below walks up to five pages of vendor HTTP. That is the
+    # longest external call in this module and the one most likely to outlive
+    # `idle_in_transaction_session_timeout`, so the transaction ends first.
+    commit()
     try:
         filed = _filed_in_feed(client, claim, since=pending_at - _FEED_LOOKBACK)
     except ClearinghouseError as exc:
@@ -319,7 +329,7 @@ def _reconcile(  # noqa: PLR0913 — keyword-only collaborators
         logger.info("claim_reconciled_from_feed control_number=%s", claim.control_number)
         summary.reconciled += 1
         return
-    _attempt(pipeline, client, account, claim, key, payers=payers, summary=summary)
+    _attempt(pipeline, client, account, claim, key, payers=payers, commit=commit, summary=summary)
 
 
 def _filed_in_feed(
@@ -372,6 +382,7 @@ def _attempt(  # noqa: PLR0913 — keyword-only collaborators
     key: str,
     *,
     payers: PayerRepository,
+    commit: Callable[[], None],
     summary: SubmitSummary,
 ) -> None:
     """One submission call under ``key``; the claim moves on the answer."""
@@ -381,6 +392,20 @@ def _attempt(  # noqa: PLR0913 — keyword-only collaborators
         stall(pipeline, claim, code="claim_incomplete", description=str(exc))
         summary.stalled += 1
         return
+
+    # Building the request read the payer and possibly the parent claim, which
+    # opened a transaction. End it before the vendor call: the engine sets
+    # `idle_in_transaction_session_timeout` (30s by default) precisely to catch
+    # a transaction held across a slow external call, so holding one here is
+    # how a submission turns into `SSL connection has been closed
+    # unexpectedly` on the next statement — reported as a database fault when
+    # the cause is the clearinghouse taking its time.
+    #
+    # Committing rather than rolling back: both end the transaction, commit is
+    # what the rest of this module does, and there is nothing pending to
+    # discard — the idempotency marker was already committed by the caller
+    # before we got here, deliberately (see the module docstring).
+    commit()
 
     try:
         result = client.submit_claim(request, idempotency_key=key)
