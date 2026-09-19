@@ -108,7 +108,64 @@ def test_the_pending_marker_is_committed_before_the_call(harness: PipelineHarnes
 
     [(key_at_call, commits_at_call)] = seen
     assert key_at_call is not None
-    assert commits_at_call == ["commit"]
+    # TWO commits by the time the vendor is called, and both are deliberate:
+    #
+    #   1. the pending marker, which must be durable BEFORE the call or a crash
+    #      after it leaves a claim the vendor has and the database calls
+    #      `validated` (PABLO-02vb). That is what this test exists for and it is
+    #      still first.
+    #   2. the one that ends the transaction building the request opened, so no
+    #      connection is held open across the network. The engine kills a
+    #      connection left idle in a transaction after 30s, which surfaced as
+    #      `SSL connection has been closed unexpectedly` — a database error
+    #      caused by the clearinghouse's latency.
+    #
+    # Pinned exactly rather than as "at least one", so a third commit appearing
+    # here has to be explained rather than absorbed.
+    assert commits_at_call == ["commit", "commit"]
+
+
+def test_no_transaction_is_held_across_the_reconcile_feed_read(
+    harness: PipelineHarness,
+) -> None:
+    """The feed read is the longest vendor call here, and it must not hold a
+    connection.
+
+    Reconcile pages up to five pages of vendor HTTP. The caller's scan of
+    `validated` claims left a transaction open, so without a commit first that
+    whole sequence runs idle-in-transaction — and the engine kills such a
+    connection after 30s
+    (``settings.database_idle_in_transaction_timeout_ms``). The next statement
+    then fails as `SSL connection has been closed unexpectedly`, which names the
+    database for a delay that belonged to the clearinghouse.
+
+    Asserted by observing the commit log at the moment the feed is asked, which
+    is the only place the ordering is visible from outside.
+    """
+    # Leave a claim mid-attempt the way a crash does: the first run mints the
+    # key, commits it, and dies before writing the answer.
+    created = harness.add(state="validated")
+    harness.client.answers.append(_KilledError("SIGKILL"))
+    with pytest.raises(_KilledError):
+        _run(harness)
+    assert harness.get(created.id).submission_idempotency_key is not None
+
+    harness.commits.clear()
+    seen: list[list[str]] = []
+    original = harness.client.list_transactions
+
+    def list_transactions(**kwargs: object) -> object:
+        seen.append(list(harness.commits))
+        return original(**kwargs)  # type: ignore[arg-type]
+
+    harness.client.list_transactions = list_transactions  # type: ignore[method-assign]
+
+    _run(harness)
+
+    assert seen, "the reconcile path never asked the feed"
+    assert seen[0] == ["commit"], (
+        "the feed was read with a transaction still open from the claim scan"
+    )
 
 
 # --- validated + edit rejection -> rejected -----------------------------------

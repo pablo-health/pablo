@@ -161,6 +161,12 @@ def run_practice(
                 run.pipeline,
                 practice.client,
                 practice_user_ids=practice.user_ids,
+                # Ends the transaction before each vendor call. Without it the
+                # scan of waiting claims stays open across the whole feed read,
+                # and a connection left idle in a transaction is killed after
+                # 30s — surfacing as an SSL-closed database error for what is
+                # really the clearinghouse taking its time.
+                commit=run.commit,
                 limit=max_per_tenant,
             )
             totals.update({f"status_{k}": v for k, v in asdict(polled).items()})
@@ -177,10 +183,15 @@ def run_practice(
                 if owned_by_principal(run.pipeline, claim, practice.user_ids)
             ]
             totals["remit_read"] += len(waiting)
+            # The scan above opened a transaction and the posting loop is the
+            # longest vendor-bound stretch in the pass, so it gets the commit
+            # too — one per claim, before that claim's timeline read.
+            run.commit()
             totals["remit_posted"] += post_remittances(
                 run.pipeline,
                 timelines,
                 waiting,
+                commit=run.commit,
                 details=details,
                 # What the payer says the client owes becomes a row on the
                 # client's own ledger. Without this the money stops at the

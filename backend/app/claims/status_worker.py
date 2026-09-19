@@ -33,7 +33,7 @@ from .receipts import owned_by_principal, record
 from .responses import parse_277
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Iterator
+    from collections.abc import Callable, Collection, Iterator
 
     from ..models.claims import Claim
     from ..models.claims_transport import TransactionDocument
@@ -80,15 +80,38 @@ def _names_one_of(document: TransactionDocument, control_numbers: set[str]) -> b
     return not echoed or bool(echoed & control_numbers)
 
 
-def _apply_feed(
+def _apply_feed(  # noqa: PLR0913 — keyword-only collaborators
     pipeline: ClaimPipeline,
     client: ClearinghouseClient,
     *,
     start: datetime,
     control_numbers: set[str],
+    commit: Callable[[], None] | None = None,
     summary: PollSummary,
 ) -> None:
-    for document in _feed(client, start=start):
+    # The feed is drained BEFORE any of the database work below, rather than
+    # lazily inside the loop. `_feed` is a generator that pages vendor HTTP as
+    # it is advanced, so iterating it directly interleaved each page fetch with
+    # the receipt lookups and writes of the previous document — holding a
+    # transaction open across vendor calls, which the engine's
+    # `idle_in_transaction_session_timeout` (30s) is set to catch. That is the
+    # `SSL connection has been closed unexpectedly` reported on this route: the
+    # connection is killed mid-pass and the next statement fails, naming the
+    # database for a delay that belonged to the clearinghouse.
+    #
+    # Bounded already by `_FEED_MAX_PAGES`, so holding the documents costs a
+    # known amount of memory in exchange for a transaction that no longer spans
+    # the network.
+    #
+    # `commit` is optional because the on-demand single-claim path
+    # (`check_status`) runs inside a request that owns its own transaction and
+    # reads one document; the sweep, which reads many and runs for minutes,
+    # always passes it.
+    if commit is not None:
+        commit()
+    documents = list(_feed(client, start=start))
+
+    for document in documents:
         if document.direction != "INBOUND":
             continue
         if document.transaction_set != ACKNOWLEDGMENT_TRANSACTION_SET:
@@ -97,6 +120,10 @@ def _apply_feed(
             continue
         if not _names_one_of(document, control_numbers):
             continue
+        # The receipt lookup above opened a transaction; this is another vendor
+        # call, so end it first.
+        if commit is not None:
+            commit()
         fetched = FetchedAcknowledgment(
             transaction_id=document.transactionId,
             processed_at=_processed_at(document.processedAt),
@@ -137,9 +164,17 @@ def poll_acknowledgments(
     client: ClearinghouseClient,
     *,
     practice_user_ids: Collection[str],
+    commit: Callable[[], None] | None = None,
     limit: int = MAX_CLAIMS_PER_RUN,
 ) -> PollSummary:
-    """Read the feed for the principal's waiting claims and apply what it says."""
+    """Read the feed for the principal's waiting claims and apply what it says.
+
+    ``commit`` ends the transaction before each vendor call. Optional so a
+    caller with no session of its own still works, but the scheduled sweep
+    passes it: without one, the scan of waiting claims below stays open across
+    the whole feed read, and the engine kills a connection left idle in a
+    transaction for 30s.
+    """
     now = pipeline.now()
     waiting = [
         claim
@@ -154,6 +189,7 @@ def poll_acknowledgments(
         client,
         start=_feed_start(waiting, now),
         control_numbers={claim.control_number.upper() for claim in waiting},
+        commit=commit,
         summary=summary,
     )
     _mark_checked(pipeline, waiting, now)

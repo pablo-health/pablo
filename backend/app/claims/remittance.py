@@ -32,7 +32,7 @@ from .remittance_lines import DENIED, applied_to, disagreement_in
 from .transitions import advance, next_state
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
     from datetime import datetime
 
     from ..models.claims import Claim
@@ -348,12 +348,13 @@ def apply_posting(
     return stored, True
 
 
-def post_remittances(
+def post_remittances(  # noqa: PLR0913 — keyword-only collaborators
     pipeline: ClaimPipeline,
     timelines: ClaimTimelineSource,
     claims: Iterable[Claim],
     *,
     charges: PatientPaymentRepository | None = None,
+    commit: Callable[[], None] | None = None,
     details: RemittanceDetailSource | None = None,
 ) -> int:
     """Read each claim's timeline and post whatever the payer decided.
@@ -370,11 +371,26 @@ def post_remittances(
     was paid is worth recording even when the breakdown could not be
     fetched, and the alternative — refusing to post the money because the
     detail was unavailable — would leave a paid claim looking unpaid.
+
+    ``commit`` ends the transaction before each vendor read. This loop is the
+    longest-running one in the pipeline and the easiest place to hold a
+    connection across the network: posting one claim writes, and without a
+    commit the NEXT claim's timeline read happens inside that transaction, so a
+    run of ten claims spends the whole read sequence idle-in-transaction. The
+    engine kills such a connection after 30s
+    (``database_idle_in_transaction_timeout_ms``) and the next statement fails
+    as ``SSL connection has been closed unexpectedly`` — a database error whose
+    cause is the clearinghouse's latency. Optional so callers without a session
+    of their own are unchanged.
     """
     moved = 0
     for claim in claims:
         if not claim.vendor_claim_id:
             continue
+        # Before the vendor call, not after: on every iteration but the first,
+        # the open transaction here is the previous claim's posting.
+        if commit is not None:
+            commit()
         try:
             timeline = timelines.timeline_for(claim.vendor_claim_id)
         except ClearinghouseError:
