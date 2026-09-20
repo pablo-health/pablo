@@ -14,10 +14,17 @@
 import { readFileSync } from "fs"
 import { join } from "path"
 import { describe, it, expect, afterEach, vi } from "vitest"
-import { extraPublicPaths } from "../public-paths"
+import { builtInPublicPaths, extraPublicPaths } from "../public-paths"
 
 afterEach(() => {
   vi.unstubAllEnvs()
+})
+
+describe("builtInPublicPaths", () => {
+  it("admits the patient portal without a deployment setting", () => {
+    vi.stubEnv("EXTRA_PUBLIC_PATHS", undefined)
+    expect(builtInPublicPaths()).toContain("/portal")
+  })
 })
 
 describe("extraPublicPaths", () => {
@@ -63,6 +70,11 @@ describe("provider middlewares union the deployment paths in", () => {
     it(`${provider} spreads extraPublicPaths() into PUBLIC_PATHS`, () => {
       const source = readFileSync(join(providerDir, provider, "middleware.ts"), "utf8")
       expect(source).toContain("...extraPublicPaths()")
+    })
+
+    it(`${provider} spreads builtInPublicPaths() into PUBLIC_PATHS`, () => {
+      const source = readFileSync(join(providerDir, provider, "middleware.ts"), "utf8")
+      expect(source).toContain("...builtInPublicPaths()")
     })
   }
 })

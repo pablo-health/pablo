@@ -14,6 +14,7 @@ vi.mock("@/lib/auth/forced-logout", () => ({
 }))
 
 vi.mock("@/lib/auth/public-paths", () => ({
+  builtInPublicPaths: () => ["/portal"],
   extraPublicPaths: () => [],
 }))
 
