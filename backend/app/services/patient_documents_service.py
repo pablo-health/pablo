@@ -22,6 +22,12 @@ layer owns:
 Audit emission lives at the route layer (it needs the FastAPI Request
 for IP/UA) — service raises domain errors that the route translates
 into 4xx and decides whether to audit the failure.
+
+Both uploaders come through this one service. What is shared is
+everything about the file: the accepted types, the size cap, the object
+name, the re-check of the stored blob. What differs is who may finish an
+upload and which rows they can see afterwards, so the patient's methods
+are named for that principal and take a patient id rather than a user id.
 """
 
 from __future__ import annotations
@@ -206,11 +212,12 @@ class PatientDocumentsService:
         self,
         *,
         patient_id: str,
-        user_id: str,
         filename: str,
         mime_type: str,
         size_bytes: int,
         category: DocumentCategory = DocumentCategory.CHART,
+        user_id: str | None = None,
+        uploaded_by_patient_id: str | None = None,
     ) -> InitUploadResult:
         """Mint a signed PUT URL + insert a placeholder row.
 
@@ -218,6 +225,12 @@ class PatientDocumentsService:
         request fails fast and never reserves a path. ``size_bytes``
         is the client-claimed size; the real check happens at
         finalize against the live blob metadata.
+
+        Exactly one of ``user_id`` and ``uploaded_by_patient_id`` says who
+        is uploading — the clinician, or the patient the chart is about.
+        Passing both or neither is a programming error rather than a bad
+        request, and raises before anything is written; the table's CHECK
+        says the same thing one layer down.
 
         ``category`` defaults to :attr:`DocumentCategory.CHART` —
         the doc is part of the patient record and visible to co-
@@ -228,6 +241,10 @@ class PatientDocumentsService:
         difference between those two values. Category is immutable
         after init.
         """
+        if (user_id is None) == (uploaded_by_patient_id is None):
+            raise ValueError(
+                "init_upload needs exactly one uploader: user_id or uploaded_by_patient_id"
+            )
         if mime_type not in ALLOWED_MIME_TYPES:
             raise UnsupportedMimeTypeError(mime_type)
         max_bytes = self._settings.patient_documents_max_bytes
@@ -258,6 +275,7 @@ class PatientDocumentsService:
             size_bytes=0,  # filled in by finalize
             category=category,
             created_at=utc_now(),
+            uploaded_by_patient_id=uploaded_by_patient_id,
         )
         self._repo.add(document)
 
@@ -295,20 +313,7 @@ class PatientDocumentsService:
         if document.finalized_at is not None:
             return document  # idempotent: re-finalize is a no-op
 
-        storage = self._storage()
-        bucket = self._bucket()
-        metadata = storage.fetch_metadata(
-            bucket=bucket,
-            object_name=document.gcs_path,
-        )
-        if metadata is None:
-            raise UploadNotCompleteError("storage object not found")
-        size_bytes, content_type = metadata
-        max_bytes = self._settings.patient_documents_max_bytes
-        if size_bytes > max_bytes:
-            raise FileTooLargeError(size_bytes, max_bytes)
-        if content_type and content_type not in ALLOWED_MIME_TYPES:
-            raise UnsupportedMimeTypeError(content_type)
+        size_bytes = self._verify_uploaded_object(document)
 
         updated = self._repo.mark_pending(
             document_id=document_id,
@@ -333,6 +338,104 @@ class PatientDocumentsService:
             logger.info("finalize-document already enqueued for document %s (dedup)", document_id)
 
         return updated
+
+    def _verify_uploaded_object(self, document: PatientDocument) -> int:
+        """Re-check the stored blob against the rules the signed URL carried.
+
+        The signed URL already pinned content type and size at the storage
+        layer; this asks the object itself, so a constraint that was
+        tampered with or a provider whose behaviour shifted is caught before
+        the row is stamped finalized. Returns the object's real size in
+        bytes — which is what gets written, rather than the size the client
+        claimed at init.
+
+        Shared by both uploaders, deliberately: whether a clinician or a
+        patient sent the file changes who may finish the upload, and changes
+        nothing about what the file is allowed to be.
+        """
+        metadata = self._storage().fetch_metadata(
+            bucket=self._bucket(),
+            object_name=document.gcs_path,
+        )
+        if metadata is None:
+            raise UploadNotCompleteError("storage object not found")
+        size_bytes, content_type = metadata
+        max_bytes = self._settings.patient_documents_max_bytes
+        if size_bytes > max_bytes:
+            raise FileTooLargeError(size_bytes, max_bytes)
+        if content_type and content_type not in ALLOWED_MIME_TYPES:
+            raise UnsupportedMimeTypeError(content_type)
+        return size_bytes
+
+    def finalize_patient_upload(
+        self,
+        *,
+        document_id: str,
+        patient_id: str,
+    ) -> PatientDocument:
+        """Verify the object a patient uploaded and stamp the row finalized.
+
+        The same blob validation the clinician path runs, and then the row
+        is done — where the clinician path enqueues a Cloud Tasks job to
+        pull text out of the PDF, this one does not. Two reasons, and the
+        second is the load-bearing one:
+
+        * Nothing reads it. An insurance card and a message attachment are
+          shown to a person, not fed to the chat bundler, so the text would
+          be extracted and never asked for.
+        * The worker resolves its tenant from the uploading clinician's
+          user id (``document_finalize_worker.run_document_finalize_job``),
+          and a patient upload has no clinician. Queueing one would mean a
+          second tenant-resolution path on a surface that has just accepted
+          a file from outside the practice, which is a larger change than
+          extraction is worth here.
+
+        So the row lands ``extraction_status='complete'`` with no text:
+        the same state a scanned PDF reaches when OCR is unavailable, which
+        every reader already handles. A clinician who needs the text can
+        run the extraction from their own side.
+
+        Idempotent: re-calling on an already-finalized row returns it
+        unchanged, so a retry after a flaky network is not a second upload.
+        """
+        document = self._repo.get_for_patient_principal(document_id, patient_id)
+        if document is None:
+            return _raise_not_found()
+        if document.finalized_at is not None:
+            return document
+
+        size_bytes = self._verify_uploaded_object(document)
+        updated = self._repo.mark_finalized_for_patient_principal(
+            document_id=document_id,
+            patient_id=patient_id,
+            size_bytes=size_bytes,
+            finalized_at=utc_now(),
+        )
+        if updated is None:
+            return _raise_not_found()
+        return updated
+
+    def list_for_patient_principal(self, patient_id: str) -> list[PatientDocument]:
+        """The calling patient's own documents, newest first."""
+        return self._repo.list_for_patient_principal(patient_id)
+
+    def signed_download_url_for_patient(
+        self,
+        document_id: str,
+        patient_id: str,
+        *,
+        disposition: Literal["attachment", "inline"] = "attachment",
+    ) -> tuple[PatientDocument, str] | None:
+        """A short-lived signed GET URL for one of the patient's own documents.
+
+        ``None`` when there is no such document on this patient's own
+        surface — the caller turns that into the same 404 an id that never
+        existed gets.
+        """
+        document = self._repo.get_for_patient_principal(document_id, patient_id)
+        if document is None or document.finalized_at is None:
+            return None
+        return document, self._download_url(document, disposition)
 
     def run_finalize_extraction(
         self,
@@ -469,9 +572,19 @@ class PatientDocumentsService:
         document = self.get(document_id, user_id)
         if document is None:
             return None
-        # inline lets the in-app viewer render PDFs/images in-page;
-        # attachment forces a download with a friendly filename.
-        url = self._storage().make_download_url(
+        return document, self._download_url(document, disposition)
+
+    def _download_url(
+        self,
+        document: PatientDocument,
+        disposition: Literal["attachment", "inline"],
+    ) -> str:
+        """Mint the signed GET URL. Access was decided before we got here.
+
+        ``inline`` lets the in-app viewer render PDFs and images in place;
+        ``attachment`` forces a download with a friendly filename.
+        """
+        return self._storage().make_download_url(
             bucket=self._bucket(),
             object_name=document.gcs_path,
             ttl_seconds=self._settings.patient_documents_download_url_ttl_seconds,
@@ -479,7 +592,6 @@ class PatientDocumentsService:
                 f'{disposition}; filename="{_sanitize_filename(document.filename)}"'
             ),
         )
-        return document, url
 
     # --- writes -------------------------------------------------------
 

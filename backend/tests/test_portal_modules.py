@@ -51,10 +51,12 @@ class TestTheConfiguredListIsParsed:
     def test_the_default_is_the_three_modules_that_exist(self) -> None:
         """Pinned, because it decides what a deployment gets with no config.
 
-        All three have a patient-facing router today. ``documents`` and
-        ``billing`` are deliberately absent: both are real portal modules
-        whose patient-facing half has not been built, so naming them would
-        promise a navigation item that leads to a 404.
+        All three have a patient-facing router today, and a section of the
+        portal to reach. ``documents`` is deliberately absent even though
+        its routes are mounted: they are the seam the other modules upload
+        through, not a section of their own, so naming it here would
+        promise a navigation item that leads nowhere. ``billing`` is absent
+        because its patient-facing half has not been built at all.
         """
         assert Settings().portal_module_names == ("intake", "messaging", "appointments")
 
@@ -125,10 +127,18 @@ class TestMountedIsReadFromTheRouteTable:
         assembled application for the three modules that have a
         patient-facing surface today.
 
-        ``documents`` and ``billing`` are asserted absent on purpose: both
-        are real portal modules whose patient-facing half has not been
-        built, so they report off however they are configured. The day one
-        lands, this is where somebody has to come back.
+        ``documents`` is mounted and is NOT in the default configured list,
+        which is the deliberate middle state: the patient-facing routes
+        exist, because sending in an insurance card and attaching a file to
+        a message both upload through them, but there is no Documents
+        section in the portal for somebody to open. So it reports off in the
+        capability document until a deployment names it — which is the
+        mounted-but-unconfigured case the intersection tests above cover.
+
+        ``billing`` is asserted absent on purpose: a real portal module
+        whose patient-facing half has not been built, so it reports off
+        however it is configured. The day it lands, this is where somebody
+        has to come back.
 
         ``chat`` is mounted here because the test settings turn
         ``ENABLE_PATIENT_CHAT`` on, which is the gate that decides whether
@@ -141,9 +151,10 @@ class TestMountedIsReadFromTheRouteTable:
         from app.main import app  # noqa: PLC0415 — the assembled app is the subject
 
         mounted = mounted_modules_on(app)
-        assert {"intake", "messaging", "appointments"} <= mounted
-        assert "documents" not in mounted
+        assert {"intake", "messaging", "appointments", "documents"} <= mounted
         assert "billing" not in mounted
+        # Mounted, and still off: the portal offers no Documents section.
+        assert "documents" not in Settings().portal_module_names
 
     def test_reading_the_raw_route_list_would_find_nothing(self) -> None:
         """Why ``mounted_modules_on`` exists rather than a walk of ``app.routes``.
