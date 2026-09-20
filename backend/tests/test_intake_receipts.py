@@ -11,7 +11,12 @@ rather than a wrong answer, but only after somebody hit it.
 
 from __future__ import annotations
 
-from app.intake.receipts import RECEIPT_ALPHABET, RECEIPT_LENGTH, new_receipt_code
+from app.intake.receipts import (
+    RECEIPT_ALPHABET,
+    RECEIPT_LENGTH,
+    new_receipt_code,
+    withheld_answers_note,
+)
 
 
 class TestTheAlphabet:
@@ -43,3 +48,27 @@ class TestTheCode:
         second submission of the day.
         """
         assert len({new_receipt_code() for _ in range(200)}) == 200
+
+
+class TestTheNoteAboutAnswersThatWereNotSent:
+    def test_an_ordinary_submission_gets_no_note(self) -> None:
+        """Almost every one. A receipt that explained branching every time
+        would be teaching it to people who never met it."""
+        assert withheld_answers_note(0) is None
+
+    def test_one_answer_reads_as_one(self) -> None:
+        note = withheld_answers_note(1)
+        assert note is not None
+        assert note.startswith("One question")
+        assert "your answer to it" in note
+
+    def test_several_answers_are_counted(self) -> None:
+        note = withheld_answers_note(3)
+        assert note is not None
+        assert note.startswith("3 questions")
+
+    def test_it_says_what_happened_without_naming_the_questions(self) -> None:
+        """The note is a receipt line, not a second copy of the form."""
+        note = withheld_answers_note(2)
+        assert note is not None
+        assert note.count(".") == 1

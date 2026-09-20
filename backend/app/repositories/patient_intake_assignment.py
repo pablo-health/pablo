@@ -30,6 +30,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from datetime import datetime
 
 #: Statuses an assignment can be in while it is still somebody's to finish.
@@ -183,6 +184,32 @@ class PatientIntakeAssignmentRepository(ABC):
         the same key the partial unique index enforces — so answering a
         question twice updates one row rather than accumulating two. The
         ``id`` on *row* is used only when the row is new.
+        """
+
+    @abstractmethod
+    def retire_draft_responses(
+        self,
+        assignment_id: str,
+        patient_id: str,
+        item_ids: Sequence[str],
+        now: datetime,
+    ) -> list[str]:
+        """Take the live drafts for *item_ids* out of the record.
+
+        Returns the item ids that had one, so a caller can say how many
+        answers this did something to without reading them back.
+
+        What it writes is ``superseded_by``, pointed at the row itself:
+        retired, with nothing in its place. That is the one transition this
+        table already has for "no longer the live answer", and every read —
+        the patient's, the clinician's, the scorer's — already asks for
+        rows that have not been superseded, so nothing has to learn a new
+        exception. The row stays exactly as it was written, which is the
+        point: an answer somebody gave is never deleted, it stops counting.
+
+        Only drafts. An answer that has already been handed in is part of a
+        record somebody has read, and retiring one would be rewriting that
+        record rather than declining to add to it.
         """
 
     @abstractmethod
@@ -350,6 +377,28 @@ class InMemoryPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
             return dict(existing)
         self.responses[str(row["id"])] = dict(row)
         return dict(row)
+
+    def retire_draft_responses(
+        self,
+        assignment_id: str,
+        patient_id: str,
+        item_ids: Sequence[str],
+        now: datetime,
+    ) -> list[str]:
+        wanted = set(item_ids)
+        retired: list[str] = []
+        for row in self.responses.values():
+            if (
+                str(row["assignment_id"]) == assignment_id
+                and str(row["patient_id"]) == patient_id
+                and str(row["item_id"]) in wanted
+                and row["draft"]
+                and row["superseded_by"] is None
+            ):
+                row["superseded_by"] = row["id"]
+                row["updated_at"] = now
+                retired.append(str(row["item_id"]))
+        return retired
 
     def freeze_draft_responses(self, assignment_id: str, patient_id: str, now: datetime) -> int:
         frozen = 0

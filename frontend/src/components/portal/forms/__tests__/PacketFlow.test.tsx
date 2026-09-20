@@ -27,6 +27,7 @@ import {
   RECEIPT,
   SEEDED_ITEMS,
   assignmentDetail,
+  authoredItem,
 } from "./formFixtures"
 
 vi.mock("@/lib/api/patientIntake", async (importOriginal) => {
@@ -301,6 +302,20 @@ describe("review and sending", () => {
     expect(screen.getByTestId("forms-crisis-footer")).toHaveTextContent(CRISIS_FOOTER)
     // The 200 carried both totals and both bands. Neither reaches the screen.
     expect(screen.getByTestId("forms-receipt").textContent).not.toMatch(/12|moderate|mild/)
+    // Nothing was left out of this one, so the receipt has nothing to add.
+    expect(screen.queryByTestId("forms-receipt-notes")).not.toBeInTheDocument()
+  })
+
+  it("shows a note the server sent, as the server wrote it", async () => {
+    const note = "One question stopped applying as you answered, so your answer to it wasn't sent."
+    vi.mocked(api.submitAssignment).mockResolvedValue({ ...RECEIPT, notes: [note] })
+    const user = userEvent.setup()
+    renderFlow()
+    await walkToReview(user)
+
+    await user.click(screen.getByTestId("forms-submit"))
+
+    expect(await screen.findByTestId("forms-receipt-notes")).toHaveTextContent(note)
   })
 
   it("says what is outstanding when the server refuses an unfinished form", async () => {
@@ -446,6 +461,120 @@ describe("a question whose renderer writes for itself", () => {
     // And Continue is still what moves them on.
     await user.click(screen.getByTestId("forms-continue"))
     expect(await screen.findByTestId("forms-review")).toBeInTheDocument()
+  })
+})
+
+describe("a question asked only of some people", () => {
+  /** A yes-or-no, and a follow-up that only a yes opens. */
+  function branchingItems(answer: Record<string, unknown> | null) {
+    const trigger = authoredItem("yes_no", {
+      id: "88888888-8888-4888-8888-888888888888",
+      key: "substances",
+      label: "Do you drink alcohol or use any other substances?",
+    })
+    const followUp = authoredItem("free_text", {
+      id: "99999999-9999-4999-8999-999999999999",
+      key: "which",
+      label: "What, and roughly how often?",
+      config: {
+        max_len: 500,
+        visible_when: { item_key: "substances", op: "eq", value: true },
+      },
+    })
+    return [
+      { ...trigger, position: 0, value: answer },
+      { ...followUp, position: 1, value: null },
+    ]
+  }
+
+  it("is not on the walk until the answer that opens it is given", async () => {
+    vi.mocked(api.fetchAssignment).mockResolvedValue(
+      assignmentDetail({
+        items: branchingItems({ yes: false }),
+        progress: { complete: true, missing: [] },
+      }),
+    )
+    renderFlow()
+
+    const review = await screen.findByTestId("forms-review")
+    expect(within(review).getAllByTestId("forms-review-edit")).toHaveLength(1)
+    expect(review).not.toHaveTextContent("What, and roughly how often?")
+  })
+
+  it("is on the walk once it is", async () => {
+    vi.mocked(api.fetchAssignment).mockResolvedValue(
+      assignmentDetail({
+        items: branchingItems({ yes: true }),
+        progress: { complete: false, missing: ["99999999-9999-4999-8999-999999999999"] },
+      }),
+    )
+    renderFlow()
+
+    expect(await screen.findByTestId("forms-item-screen")).toBeInTheDocument()
+    expect(screen.getByRole("heading", { name: "What, and roughly how often?" })).toBeVisible()
+  })
+
+  it("appears the moment the answer that opens it is given", async () => {
+    // Not after a refetch. The walk does not make one on Continue, so a
+    // rule read off the server's copy alone would be a branch that never
+    // fires inside one sitting.
+    vi.mocked(api.fetchAssignment).mockResolvedValue(
+      assignmentDetail({
+        items: branchingItems(null),
+        progress: { complete: false, missing: ["88888888-8888-4888-8888-888888888888"] },
+      }),
+    )
+    const user = userEvent.setup()
+    renderFlow()
+
+    await screen.findByTestId("forms-item-screen")
+    await user.click(within(screen.getByTestId("forms-yes-no")).getByText("Yes"))
+    await user.click(screen.getByTestId("forms-continue"))
+
+    expect(
+      await screen.findByRole("heading", { name: "What, and roughly how often?" }),
+    ).toBeVisible()
+  })
+
+  it("goes when the answer is taken back", async () => {
+    vi.mocked(api.fetchAssignment).mockResolvedValue(
+      assignmentDetail({
+        items: branchingItems({ yes: true }),
+        progress: { complete: false, missing: ["99999999-9999-4999-8999-999999999999"] },
+      }),
+    )
+    const user = userEvent.setup()
+    renderFlow()
+
+    await screen.findByRole("heading", { name: "What, and roughly how often?" })
+    await user.click(screen.getByTestId("forms-back"))
+    await user.click(within(screen.getByTestId("forms-yes-no")).getByText("No"))
+    await user.click(screen.getByTestId("forms-continue"))
+
+    expect(await screen.findByTestId("forms-review")).toBeInTheDocument()
+    expect(screen.getByTestId("forms-review")).not.toHaveTextContent(
+      "What, and roughly how often?",
+    )
+  })
+
+  it("starts at the beginning when the server names one this browser hid", async () => {
+    // The two disagreeing about the rules is not something a patient should
+    // meet as an error: the walk opens at the first question, and the
+    // server is still what refuses an unfinished form.
+    vi.mocked(api.fetchAssignment).mockResolvedValue(
+      assignmentDetail({
+        items: branchingItems({ yes: false }),
+        progress: { complete: false, missing: ["99999999-9999-4999-8999-999999999999"] },
+      }),
+    )
+    renderFlow()
+
+    expect(await screen.findByTestId("forms-item-screen")).toBeInTheDocument()
+    expect(
+      screen.getByRole("heading", {
+        name: "Do you drink alcohol or use any other substances?",
+      }),
+    ).toBeVisible()
   })
 })
 

@@ -169,6 +169,90 @@ describe("IntakeItemEditor", () => {
     )
   })
 
+  it("puts the refusal beside the question the server named", () => {
+    editor(version({ items: [item("reason", "reason"), item("how_bad", "scale")] }), {
+      publishError: "how_bad: the top of the scale is not above the bottom",
+    })
+
+    // Once, next to that question, with the key it already carries on the
+    // row stripped off the message — and not again at the foot of the form.
+    const alerts = screen.getAllByRole("alert")
+    expect(alerts).toHaveLength(1)
+    expect(alerts[0]).toHaveTextContent("the top of the scale is not above the bottom")
+    expect(alerts[0].textContent).not.toContain("how_bad:")
+  })
+
+  it("offers a question the ones above it to be shown because of", async () => {
+    const user = userEvent.setup()
+    editor(
+      version({
+        items: [
+          item("drinks", "single_choice", {
+            options: [
+              { key: "yes", label: "Yes" },
+              { key: "no", label: "No" },
+            ],
+          }, "Do you drink?"),
+          item("how_often", "free_text", {}, "How often?"),
+        ],
+      })
+    )
+
+    await user.click(screen.getByRole("button", { name: /How often\?/ }))
+    await user.click(screen.getByRole("combobox", { name: "Based on" }))
+
+    expect(screen.getByRole("option", { name: "Do you drink?" })).toBeInTheDocument()
+    // Not itself, and nothing below it: a rule may only look backwards.
+    expect(screen.queryByRole("option", { name: "How often?" })).not.toBeInTheDocument()
+  })
+
+  it("saves the rule the picker wrote", async () => {
+    const user = userEvent.setup()
+    editor(
+      version({
+        items: [
+          item("smokes", "yes_no", {}, "Do you smoke?"),
+          item("how_many", "number", {}, "How many a day?"),
+        ],
+      })
+    )
+
+    await user.click(screen.getByRole("button", { name: /How many a day\?/ }))
+    await user.click(screen.getByRole("combobox", { name: "Based on" }))
+    await user.click(screen.getByRole("option", { name: "Do you smoke?" }))
+    await user.click(screen.getByRole("combobox", { name: "When they" }))
+    await user.click(screen.getByRole("option", { name: "said yes" }))
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(onSave.mock.calls[onSave.mock.calls.length - 1][0][1].config).toEqual({
+      visible_when: { item_key: "smokes", op: "eq", value: true },
+    })
+  })
+
+  it("takes a rule back off again", async () => {
+    const user = userEvent.setup()
+    editor(
+      version({
+        items: [
+          item("smokes", "yes_no", {}, "Do you smoke?"),
+          item(
+            "how_many",
+            "number",
+            { visible_when: { item_key: "smokes", op: "eq", value: true } },
+            "How many a day?"
+          ),
+        ],
+      })
+    )
+
+    await user.click(screen.getByRole("button", { name: /How many a day\?/ }))
+    await user.click(screen.getByRole("combobox", { name: "Based on" }))
+    await user.click(screen.getByRole("option", { name: "Always ask this" }))
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(onSave.mock.calls[onSave.mock.calls.length - 1][0][1].config).toEqual({})
+  })
+
   it("a published version is read-only and says what to do instead", () => {
     editor(
       version({ published_at: "2026-09-02T09:00:00Z", items: [item("reason", "reason")] })

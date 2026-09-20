@@ -835,6 +835,69 @@ class PatientSlotListResponse(BaseModel):
     total: int
 
 
+class PatientBookableTypeResponse(BaseModel):
+    """A kind of appointment this practice lets its patients book for themselves.
+
+    Name and length, because those are the two things a patient chooses
+    between. Deliberately NOT a projection of
+    :class:`~app.scheduling_engine.models.appointment_type.AppointmentType`:
+    that carries ``default_fee_cents``, ``cpt`` and the per-type offer windows,
+    none of which a patient picking a time is being asked to reason about, and
+    the fee in particular is resolved per patient elsewhere.
+    """
+
+    name: str
+    duration_minutes: int
+
+
+class PatientBookingOptionsResponse(BaseModel):
+    """What this practice lets a patient do with their own appointments.
+
+    Answered whether or not self-booking is on, which is the entire reason it
+    is a route rather than an inference from the first 403. A portal that
+    discovers the answer by trying has to draw a booking control first and take
+    it away afterwards; one that asks can say what is true the first time it
+    renders.
+
+    ``self_booking`` false is a complete answer, not an error: the practice
+    takes its bookings another way, and ``practice_phone`` is how. The windows
+    are still reported in that state because they describe what the practice
+    asks of a patient either way.
+
+    Nothing here is about the caller. Two patients of the same practice get the
+    same document, which is why it carries no appointment, no id and no count.
+    """
+
+    #: Whether an existing patient of this practice may book online. Keyed on
+    #: ``self_book_existing``: everyone who can call this is already a patient
+    #: here, so ``self_book_new`` — a stranger booking a first visit through a
+    #: public link — is a different question and not this one.
+    self_booking: bool
+    #: The types a patient may choose between, empty when none is opted in. An
+    #: empty list with ``self_booking`` true is a real state: the practice
+    #: turned the switch on and has not marked a type bookable, so there is
+    #: nothing to offer and the portal must say so rather than offer a picker.
+    session_types: list[PatientBookableTypeResponse]
+    min_notice_hours: int
+    max_horizon_days: int
+    cancel_cutoff_hours: int
+    reschedule_cutoff_hours: int
+    #: The IANA zone the practice keeps its diary in, e.g. ``America/New_York``.
+    #:
+    #: Reported so a patient reads an appointment in the time their practice
+    #: means, not the time their own device happens to be set to. Those are the
+    #: same thing until somebody travels, and then they are an hour or five
+    #: apart with nothing on screen to say which is meant. The engine already
+    #: computes free slots in this frame, so rendering in any other one shows a
+    #: time the booking was not made for.
+    practice_timezone: str
+    #: The practice's own phone number, or ``None`` when it has not given one.
+    #: The number a practice publishes for its patients to ring, from the same
+    #: directory row the portal's header name comes from — never a clinician's
+    #: personal line and never the billing inbox, which exists for payers.
+    practice_phone: str | None = None
+
+
 class PatientBookingRequest(BaseModel):
     """What a patient may say when booking.
 

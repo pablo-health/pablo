@@ -120,6 +120,11 @@ export function PortalMessaging({ sessionToken }: PortalMessagingProps) {
     setOpenThreadId(threadId)
   }, [])
 
+  const handleStartThread = useCallback(() => {
+    setOpenThreadId(null)
+    setComposing(true)
+  }, [])
+
   const handleBack = useCallback(() => {
     setOpenThreadId(null)
     sendReset()
@@ -164,6 +169,7 @@ export function PortalMessaging({ sessionToken }: PortalMessagingProps) {
         slaText={slaText}
         sendError={send.isError ? SEND_FAILED : null}
         onBack={handleBack}
+        onStartThread={handleStartThread}
       />
     )
   }
@@ -188,7 +194,7 @@ export function PortalMessaging({ sessionToken }: PortalMessagingProps) {
     <ThreadList
       threads={threads.data.data}
       onOpenThread={handleOpenThread}
-      onStartThread={() => setComposing(true)}
+      onStartThread={handleStartThread}
       slaText={slaText}
     />
   )

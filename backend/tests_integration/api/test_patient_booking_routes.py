@@ -228,11 +228,28 @@ def practice(engine: Engine) -> Iterator[dict[str, Any]]:
                 name="Booking Test Practice",
                 schema_name=_SCHEMA,
                 owner_email=f"{_PRACTICE_ID}@example.test",
-                owner_user_id=_CLINICIAN,
+                # Left empty on purpose. Setting it here by hand was what let
+                # every route below pass while the column was never written on
+                # any real practice: the suite supplied the one thing the
+                # engine did not, and the whole self-booking surface was
+                # unreachable in production with nothing failing. The owner is
+                # recorded the way a practice actually acquires one, below.
+                owner_user_id=None,
                 created_at=now,
             )
         )
         s.commit()
+
+    # As the authenticated path does, with the same call — so a change that
+    # stops recording the owner takes these tests down rather than leaving them
+    # green over a fixture that had already decided the answer.
+    from app.db.practice_owner import record_owner_on_sign_in  # noqa: PLC0415
+
+    assert record_owner_on_sign_in(_PRACTICE_ID, f"{_PRACTICE_ID}@example.test", _CLINICIAN)
+    with OrmSession(bind=engine) as s:
+        recorded = s.get(PracticeRow, _PRACTICE_ID)
+        assert recorded is not None
+        assert recorded.owner_user_id == _CLINICIAN
 
     patient_a, patient_b = str(uuid.uuid4()), str(uuid.uuid4())
     type_id = str(uuid.uuid4())
@@ -1530,3 +1547,148 @@ def test_the_same_request_succeeds_once_it_carries_the_acknowledgement(
     assert second.status_code == 200, second.text
     assert _status_of(engine, appointment_id) == "cancelled"
     assert _cancellation_of(engine, appointment_id)["late_cancellation"] is True
+
+
+# ---------------------------------------------------------------------------
+# What the practice allows, asked rather than inferred
+# ---------------------------------------------------------------------------
+
+
+def test_the_options_document_answers_when_booking_is_off(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """The one route here that does NOT refuse when self-booking is off.
+
+    Every other route answers 403, which is right for a route that would act.
+    It is wrong for the one a portal asks before it draws anything: a client
+    that had to learn the answer from a refusal would render a booking control
+    and then withdraw it.
+    """
+    _set_policy(engine, self_book_existing=False)
+
+    response = patient_a_client.get("/api/patient/booking/options")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["self_booking"] is False
+    # And no list of types nobody may book: machinery the reader did not ask
+    # about, on a screen whose answer is "not here".
+    assert body["session_types"] == []
+
+
+def test_the_options_document_lists_only_types_the_practice_opted_in(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """Offered types and bookable types must be the same set.
+
+    Listing a type the booking route would refuse is the same defect as
+    offering a slot outside the window: the patient picks something, is told
+    no, and has learned nothing they can act on.
+    """
+    _open_policy(engine)
+    closed_type = str(uuid.uuid4())
+    with engine.begin() as conn:
+        conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
+        conn.execute(text("SELECT set_config('app.current_user_id', :u, false)"), {"u": _CLINICIAN})
+        conn.execute(
+            text(
+                "INSERT INTO appointment_types (id, user_id, name, duration_minutes, "
+                "self_bookable, created_at, updated_at) "
+                "VALUES (CAST(:i AS uuid), CAST(:u AS uuid), :n, 50, false, now(), now())"
+            ),
+            {"i": closed_type, "u": _CLINICIAN, "n": "Internal review"},
+        )
+
+    try:
+        response = patient_a_client.get("/api/patient/booking/options")
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["self_booking"] is True
+        names = [entry["name"] for entry in body["session_types"]]
+        assert names == [_SESSION_TYPE]
+        # The type nobody opted in is absent, and so is its name anywhere else
+        # in the answer — a practice's internal bookkeeping is not a patient's.
+        assert "Internal review" not in response.text
+    finally:
+        with engine.begin() as conn:
+            conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
+            conn.execute(
+                text("DELETE FROM appointment_types WHERE id = CAST(:i AS uuid)"),
+                {"i": closed_type},
+            )
+
+
+def test_the_options_document_carries_the_practice_windows_and_zone(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """The windows a client renders against, in the frame the diary is kept.
+
+    The timezone in particular is not decoration: the engine computes openings
+    in the clinician's zone, so a portal rendering in the browser's would show
+    a patient in another timezone an hour their practice never offered.
+    """
+    _set_policy(
+        engine,
+        self_book_existing=True,
+        min_notice_hours=36,
+        max_horizon_days=45,
+        cancel_cutoff_hours=12,
+        reschedule_cutoff_hours=18,
+    )
+
+    body = patient_a_client.get("/api/patient/booking/options").json()
+
+    assert body["min_notice_hours"] == 36
+    assert body["max_horizon_days"] == 45
+    assert body["cancel_cutoff_hours"] == 12
+    assert body["reschedule_cutoff_hours"] == 18
+    assert body["practice_timezone"] == _TZ_NAME
+
+
+def test_the_options_document_names_no_appointment_of_anybody(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """It is about the practice, so it must carry nothing about a person.
+
+    Seeded with the other patient's appointment on the day, because the route
+    opens an owner-armed session — the same session that can see the whole
+    diary — and a document that leaked from it would leak from there.
+    """
+    _open_policy(engine)
+    _clear_appointments(engine)
+    other = _seed_appointment(engine, practice["b"], _at(10))
+
+    response = patient_a_client.get("/api/patient/booking/options")
+
+    assert response.status_code == 200, response.text
+    for secret in (other, practice["b"], practice["a"], _CLINICIAN, "Grace", "Ada"):
+        assert secret not in response.text
+    assert set(response.json()) == {
+        "self_booking",
+        "session_types",
+        "min_notice_hours",
+        "max_horizon_days",
+        "cancel_cutoff_hours",
+        "reschedule_cutoff_hours",
+        "practice_timezone",
+        "practice_phone",
+    }
+
+
+def test_a_single_factor_principal_may_read_the_options(
+    engine: Engine, practice: dict[str, Any], single_factor_client: Any
+) -> None:
+    """Same bar as the capability document, and for the same reason.
+
+    Nothing here is about the caller — two patients of this practice get the
+    identical answer — so there is no per-patient fact for a second factor to
+    protect. The routes that change the diary keep their own step-up bar; this
+    document does not soften it.
+    """
+    _open_policy(engine)
+
+    response = single_factor_client.get("/api/patient/booking/options")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["self_booking"] is True
