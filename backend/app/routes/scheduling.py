@@ -9,7 +9,6 @@ import uuid
 from collections.abc import Collection, Sequence
 from datetime import UTC, datetime, tzinfo
 from typing import TYPE_CHECKING, Any, TypedDict
-from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
@@ -20,6 +19,7 @@ from ..api_errors import (
     NotFoundError,
     UnprocessableEntityError,
 )
+from ..auth.oauth_redirect import is_allowed_oauth_redirect_uri
 from ..auth.service import (
     TenantContext,
     get_tenant_context,
@@ -111,6 +111,9 @@ from ..repositories import (
 from ..repositories import (
     get_session_repository as _session_repo_factory,
 )
+from ..repositories import (
+    get_zoom_connection_store as _zoom_store_factory,
+)
 from ..scheduling_engine.exceptions import (
     AppointmentConflictError,
     AppointmentNotFoundError,
@@ -139,33 +142,22 @@ from ..services.google_calendar_service import (
     RetitleOutcome,
     google_consent_surface,
 )
+from ..services.telehealth import (
+    GOOGLE_MEET,
+    Attendee,
+    Clinician,
+    MeetingProviderRegistry,
+    Practice,
+    TelehealthError,
+    provision_meeting,
+    release_meeting,
+)
 from ..settings import get_settings
 from ..utcnow import utc_now
 
-# Native app schemes allowed for Google Calendar OAuth redirect
-_ALLOWED_GCAL_SCHEMES = {"pablohealth", "therapyrecorder"}
-
-
-def _is_valid_gcal_redirect_uri(redirect_uri: str) -> bool:
-    """Validate redirect_uri against allowed origins and native app schemes."""
-    try:
-        parsed = urlparse(redirect_uri)
-    except Exception:
-        return False
-
-    # Allow native app schemes
-    if parsed.scheme in _ALLOWED_GCAL_SCHEMES:
-        return True
-
-    # Allow localhost for development
-    if parsed.scheme == "http" and parsed.hostname == "localhost":
-        return True
-
-    # Allow CORS origins (the known frontend URLs)
-    settings = get_settings()
-    allowed_origins = {o.strip().rstrip("/") for o in settings.cors_origins.split(",") if o.strip()}
-    origin = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
-    return origin in allowed_origins
+#: Where an authorization code may be delivered. Shared with every other
+#: OAuth connect flow — see ``app.auth.oauth_redirect``.
+_is_valid_gcal_redirect_uri = is_allowed_oauth_redirect_uri
 
 
 if TYPE_CHECKING:
@@ -296,6 +288,121 @@ def get_google_calendar_service(
     )
 
 
+class _LazyZoomStore:
+    """The Zoom store, resolved when a provider actually reaches for it.
+
+    Building it eagerly would open a database session for every appointment
+    write on a deployment that does not offer Zoom at all — which is the
+    default, and is most of them.
+    """
+
+    def get(self, user_id: str) -> Any:
+        return _zoom_store_factory().get(user_id)
+
+    def save(self, user_id: str, grant: Any) -> None:
+        _zoom_store_factory().save(user_id, grant)
+
+    def delete(self, user_id: str) -> bool:
+        return _zoom_store_factory().delete(user_id)
+
+
+def get_meeting_registry(
+    _ctx: TenantContext = Depends(get_tenant_context),
+) -> MeetingProviderRegistry:
+    """The video services this deployment can offer, for this request.
+
+    Google Meet is offered only to a clinician whose calendar is connected,
+    because the conference lives on the calendar event. The check is passed in
+    as a callable so the Meet adapter never holds a calendar service — and so
+    that nothing here reads the database until a provider that needs it is
+    both configured and asked.
+    """
+    from ..meeting_providers.registry import build_registry
+
+    return build_registry(
+        get_settings(),
+        zoom_store=_LazyZoomStore(),
+        is_calendar_connected=lambda user_id: _gcal_token_repo_factory().exists(user_id),
+    )
+
+
+def _clinician_view(user_repo: UserRepository, user_id: str) -> Clinician:
+    """The clinician's telehealth preferences, as a provider sees them."""
+    preferences = user_repo.get_preferences(user_id)
+    return Clinician(
+        id=user_id,
+        preferred_provider=preferences.default_video_platform,
+        room_url=preferences.telehealth_room_url,
+    )
+
+
+def _practice_view() -> Practice:
+    return Practice(doxy_clinic_features=get_settings().telehealth_doxy_clinic_features)
+
+
+def _attendee_view(patient_repo: PatientRepository, appt: Appointment) -> Attendee:
+    """The patient's first name, and nothing else, for a waiting room.
+
+    A room that checks somebody in has to have something to call them. The
+    surname stays here: what goes to the vendor is the least that makes the
+    feature work.
+    """
+    patient = patient_repo.get(appt.patient_id, appt.user_id)
+    return Attendee(display_name=patient.first_name if patient else None)
+
+
+def _provision_meeting(
+    service: SchedulingService,
+    registry: MeetingProviderRegistry,
+    user_repo: UserRepository,
+    patient_repo: PatientRepository,
+    user: User,
+    appt: Appointment,
+    *,
+    requested_provider: str | None,
+) -> Appointment:
+    """Best-effort: give the appointment a room and record it.
+
+    A vendor that will not issue a meeting never fails the booking. The
+    appointment is real — somebody is expected at a time — and the missing
+    piece is a link, which the clinician can paste. Same judgement the
+    calendar push makes one function down, and for the same reason.
+    """
+    try:
+        provisioned = provision_meeting(
+            appt,
+            clinician=_clinician_view(user_repo, user.id),
+            practice=_practice_view(),
+            registry=registry,
+            attendee=_attendee_view(patient_repo, appt),
+            requested_provider=requested_provider,
+        )
+    except TelehealthError:
+        logger.warning("telehealth_provision_failed provider=%s", requested_provider)
+        return appt
+    if provisioned == appt:
+        return appt
+    return service.update_appointment(
+        appt.id,
+        user.id,
+        provider=provisioned.provider,
+        video_link=provisioned.video_link,
+        meeting_external_id=provisioned.meeting_external_id,
+    )
+
+
+def _release_meeting(
+    registry: MeetingProviderRegistry,
+    user: User,
+    appt: Appointment,
+) -> None:
+    """Best-effort release of the vendor meeting behind a cancelled appointment."""
+    try:
+        release_meeting(appt, clinician=Clinician(id=user.id), registry=registry)
+    except Exception:
+        logger.exception("Failed to release the telehealth meeting")
+
+
 def _sync_appointment_to_google(
     service: SchedulingService,
     gcal_service: GoogleCalendarService,
@@ -307,17 +414,34 @@ def _sync_appointment_to_google(
     A Google failure never fails the appointment write — it's recorded as
     google_sync_status='error' and swallowed. A user who isn't connected
     gets no event and no status change: absence of sync isn't an error.
+
+    This is also where a Google Meet appointment learns its own link. The
+    event body asked for a conference and Google answered with one, so the
+    URL only exists on the way back from this call — and it is asked for only
+    on an appointment whose provider is Meet, so every other appointment's
+    push is exactly the call it has always been.
     """
+    wants_conference = appt.provider == GOOGLE_MEET and not appt.video_link
     try:
-        event_id = gcal_service.push_appointment(user.id, appt)
+        if wants_conference:
+            pushed = gcal_service.push_appointment_event(user.id, appt)
+            event_id = pushed.event_id if pushed else None
+            conference = pushed.conference_url if pushed else None
+        else:
+            event_id = gcal_service.push_appointment(user.id, appt)
+            conference = None
     except Exception:
         logger.exception("Failed to push appointment to Google Calendar")
         return service.update_appointment(appt.id, user.id, google_sync_status="error")
     if event_id is None:
         return appt
-    return service.update_appointment(
-        appt.id, user.id, google_event_id=event_id, google_sync_status="synced"
-    )
+    updates: dict[str, Any] = {
+        "google_event_id": event_id,
+        "google_sync_status": "synced",
+    }
+    if conference:
+        updates["video_link"] = conference
+    return service.update_appointment(appt.id, user.id, **updates)
 
 
 def _push_cancellation_to_google(
@@ -384,6 +508,8 @@ def _to_response(
         session_type=appt.session_type,
         video_link=appt.video_link,
         video_platform=appt.video_platform,
+        provider=appt.provider,
+        meeting_external_id=appt.meeting_external_id,
         notes=appt.notes,
         note_type=appt.note_type,
         recurrence_rule=appt.recurrence_rule,
@@ -423,11 +549,16 @@ def create_appointment(
     gcal_service: GoogleCalendarService = Depends(get_google_calendar_service),
     patient_repo: PatientRepository = Depends(get_patient_repository),
     type_repo: AppointmentTypeRepository = Depends(get_appointment_type_repository),
+    registry: MeetingProviderRegistry = Depends(get_meeting_registry),
+    user_repo: UserRepository = Depends(get_user_repository),
     tz: tzinfo = Depends(get_owner_timezone),
 ) -> AppointmentResponse:
     """Create a new appointment."""
     data = request.model_dump()
     rule_override = bool(data.pop("rule_override", False))
+    # Which video service to ask is a request, not a column: the row records
+    # who actually made the room, which is decided below.
+    requested_provider = data.pop("provider", None)
     _apply_appointment_type(data, user_id=user.id, type_repo=type_repo)
     try:
         appt = service.create_appointment(
@@ -453,6 +584,17 @@ def create_appointment(
         appt.id,
         patient_id=appt.patient_id,
         changes=_override_record(overridden),
+    )
+    # Before the calendar push, because a Google Meet appointment is given its
+    # provider here and the push is what turns that into a conference.
+    appt = _provision_meeting(
+        service,
+        registry,
+        user_repo,
+        patient_repo,
+        user,
+        appt,
+        requested_provider=requested_provider,
     )
     appt = _sync_appointment_to_google(service, gcal_service, user, appt)
     return _to_response(
@@ -596,6 +738,7 @@ def cancel_appointment(
     audit: AuditService = Depends(get_audit_service),
     gcal_service: GoogleCalendarService = Depends(get_google_calendar_service),
     patient_repo: PatientRepository = Depends(get_patient_repository),
+    registry: MeetingProviderRegistry = Depends(get_meeting_registry),
 ) -> AppointmentResponse:
     """Cancel an appointment (soft delete — sets status to cancelled)."""
     try:
@@ -609,6 +752,7 @@ def cancel_appointment(
         appt.id,
         patient_id=appt.patient_id,
     )
+    _release_meeting(registry, user, appt)
     _push_cancellation_to_google(gcal_service, user, appt)
     return _to_response(
         appt,

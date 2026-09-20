@@ -309,6 +309,11 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # clinician-facing reads of the same claims ARE audited, on the
         # routes in claims.py and claim_tracker.py.
         ("post", "/api/webhooks/clearinghouse"),  # clearinghouse callback, no disclosure
+        # telehealth_webhooks.py — secret-verified waiting-room callback. It
+        # stamps one timestamp on an appointment found by an opaque handle and
+        # discloses nothing to anyone; there is no principal to attribute a
+        # chart access to, and nothing was read out.
+        ("post", "/api/webhooks/telehealth/room"),  # waiting-room callback, no disclosure
         # booking_links.py — owner's own link metadata (slug/copy/duration), no patient data
         ("post", "/api/booking-links"),  # creates a booking link
         ("get", "/api/booking-links"),  # lists caller's own booking links
@@ -398,6 +403,14 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("get", "/api/google-calendar/callback"),  # OAuth token exchange, no events
         ("get", "/api/google-calendar/status"),  # calendar connection status
         ("delete", "/api/google-calendar/disconnect"),  # removes calendar tokens
+        # telehealth.py — which video services are on offer, and the clinician's
+        # own connection to one. No patient appears in any of them.
+        ("get", "/api/telehealth/providers"),  # deployment config + own connections
+        ("put", "/api/telehealth/room-url"),  # the clinician's own room address
+        ("get", "/api/telehealth/zoom/authorize"),  # OAuth start, returns auth URL
+        ("get", "/api/telehealth/zoom/callback"),  # OAuth token exchange, no meetings
+        ("get", "/api/telehealth/zoom/status"),  # own connection status
+        ("delete", "/api/telehealth/zoom/disconnect"),  # removes the stored grant
         # calendar_import.py — busy/free times only, no event content (scan/confirm
         # below DO carry event content and are audited, not exempted)
         ("get", "/api/calendar/import/busy"),  # freebusy start/end blocks, never titles

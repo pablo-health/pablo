@@ -4,6 +4,7 @@
 
 import { AudioRetentionSettings } from "../AudioRetentionSettings"
 import { SessionDefaults } from "../SessionDefaults"
+import { TelehealthSettings } from "../TelehealthSettings"
 import { TranscriptionSettings } from "../TranscriptionSettings"
 import { SessionsRecordingCard } from "../settingsSlots.extensions"
 import { SettingsCard } from "../ui"
@@ -29,6 +30,13 @@ export function SessionsPage() {
           <SessionDefaults preferences={preferences} onSave={save} isSaving={isSaving} />
         </SettingsCard>
       )}
+
+      <SettingsCard
+        title="Video sessions"
+        description="Where a session happens when you meet online. Pablo uses the service you already have."
+      >
+        <TelehealthSettings />
+      </SettingsCard>
 
       <SessionsRecordingCard
         fallback={

@@ -83,6 +83,7 @@ from ..scheduling_engine.services.scheduling_policy import (
 )
 from ..scheduling_engine.services.scheduling_policy import load_policy, may_self_book
 from ..services.audit_service import AuditService, get_audit_service
+from ..settings import get_settings
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -514,6 +515,7 @@ def get_booking_options(
         cancel_cutoff_hours=int(policy["cancel_cutoff_hours"]),  # type: ignore[call-overload]
         reschedule_cutoff_hours=int(policy["reschedule_cutoff_hours"]),  # type: ignore[call-overload]
         practice_timezone=timezone,
+        join_window_before_minutes=get_settings().telehealth_join_window_before_minutes,
         practice_phone=phone,
     )
 

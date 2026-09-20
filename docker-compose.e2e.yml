@@ -125,6 +125,15 @@ services:
       - PORTAL_INVITE_DELIVERY=smtp
       - PORTAL_SMS_GATEWAY=capture
       - PORTAL_SMS_CAPTURE_URL=http://fake-sms:8026
+      # Video sessions. Only the two providers that need no vendor account
+      # are offered here: a pasted link, and a clinician's own waiting room.
+      # Zoom and Google Meet each need a real connection to produce a room,
+      # so a spec covering them would be testing somebody else's uptime —
+      # they are proved by unit and contract tests instead.
+      - TELEHEALTH_PROVIDERS_ENABLED=manual,doxy_me
+      # Compose the room URL with the check-in parameters, which is the half
+      # a spec can actually look at.
+      - TELEHEALTH_DOXY_CLINIC_FEATURES=true
     healthcheck:
       # curl isn't in the Chainguard base; probe with the stdlib. The image's
       # own check targets a path the app doesn't serve, so it is replaced.

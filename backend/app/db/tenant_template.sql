@@ -144,7 +144,12 @@ CREATE TABLE __TENANT_SCHEMA__.appointments (
     cancelled_by_id uuid,
     late_cancellation boolean,
     superseded_by_id uuid,
-    late_change_acknowledged boolean
+    late_change_acknowledged boolean,
+    provider character varying(16),
+    meeting_external_id character varying(128),
+    telehealth_checked_in_at timestamp with time zone,
+    telehealth_started_at timestamp with time zone,
+    telehealth_ended_at timestamp with time zone
 );
 
 
@@ -1147,6 +1152,17 @@ CREATE TABLE __TENANT_SCHEMA__.supervision_relationships (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.telehealth_connections (
+    user_id uuid NOT NULL,
+    provider character varying(16) NOT NULL,
+    encrypted_tokens text NOT NULL,
+    account_handle character varying(255),
+    connected_at timestamp with time zone,
+    last_error text
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.therapy_sessions (
     id uuid NOT NULL,
     user_id uuid NOT NULL,
@@ -1456,6 +1472,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.supervision_relationships
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.telehealth_connections
+    ADD CONSTRAINT telehealth_connections_pkey PRIMARY KEY (user_id, provider);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.therapy_sessions
     ADD CONSTRAINT therapy_sessions_pkey PRIMARY KEY (id);
 
@@ -1544,6 +1565,10 @@ CREATE INDEX ix_appointments_confirmation_token_hash ON __TENANT_SCHEMA__.appoin
 
 
 CREATE INDEX ix_appointments_ical_source ON __TENANT_SCHEMA__.appointments USING btree (ical_source);
+
+
+
+CREATE INDEX ix_appointments_meeting_external_id ON __TENANT_SCHEMA__.appointments USING btree (meeting_external_id);
 
 
 

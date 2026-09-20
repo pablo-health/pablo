@@ -52,6 +52,13 @@ export interface PatientAppointment {
   session_type: string
   video_link?: string | null
   video_platform?: string | null
+  /**
+   * Which video service the appointment is held on, when it is held on one.
+   *
+   * Sent whether or not there is a link yet, which is what lets the list say
+   * a link is coming rather than showing a row with nothing on it.
+   */
+  provider?: string | null
   recurrence_rule?: string | null
   recurring_appointment_id?: string | null
   /**
@@ -102,6 +109,14 @@ export interface PatientBookingOptions {
    * set to.
    */
   practice_timezone: string
+  /**
+   * How long before the start a join link is offered, in minutes.
+   *
+   * Read from the server rather than held here, so the patient's screen and
+   * the clinician's diary cannot come to different conclusions about whether
+   * an appointment can be joined yet.
+   */
+  join_window_before_minutes: number
   practice_phone: string | null
 }
 

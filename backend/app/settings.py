@@ -1522,6 +1522,68 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Telehealth
+    #
+    # Pablo hosts no video of its own. A practice brings the room it already
+    # uses and already has an agreement with, and these settings say which of
+    # those rooms this deployment is able to offer.
+    telehealth_providers_enabled: list[str] = Field(
+        default=["manual"],
+        description=(
+            "Which meeting providers this deployment offers, from "
+            "google_meet, zoom, doxy_me and manual. Listing one is not the "
+            "same as a clinician having connected it — a provider with no "
+            "connection behind it is not offered."
+        ),
+    )
+    telehealth_join_window_before_minutes: int = Field(
+        default=15,
+        ge=0,
+        le=1440,
+        description=(
+            "How long before the start a join link is offered. The link stays "
+            "offered until the scheduled end."
+        ),
+    )
+    telehealth_include_join_link_in_reminders: bool = Field(
+        default=False,
+        description=(
+            "Add the join link to appointment reminders. Off by default: a "
+            "reminder carries only the time and the practice name, and the "
+            "link names the video service and says an appointment exists."
+        ),
+    )
+    telehealth_doxy_clinic_features: bool = Field(
+        default=False,
+        description=(
+            "Compose doxy.me room URLs with the Clinic check-in parameters. "
+            "Off gives the plain room URL, which every doxy.me plan accepts."
+        ),
+    )
+    telehealth_doxy_webhook_secret: SecretStr = Field(
+        default=SecretStr(""),
+        description=(
+            "Shared secret for the doxy.me webhook receiver. The receiver is "
+            "disabled — 404 — until this is set."
+        ),
+    )
+    zoom_client_id: str = Field(
+        default="",
+        description="Zoom OAuth client id for the deployment's Zoom app",
+    )
+    zoom_client_secret: SecretStr = Field(
+        default=SecretStr(""),
+        description="Zoom OAuth client secret for the deployment's Zoom app",
+    )
+
+    @field_validator("telehealth_providers_enabled", mode="before")
+    @classmethod
+    def _parse_telehealth_providers(cls, v: object) -> object:
+        """Accept the comma-separated form an environment variable carries."""
+        if isinstance(v, str):
+            return [name.strip() for name in v.split(",") if name.strip()]
+        return v
+
     @property
     def redis_url(self) -> str:
         """Construct Redis connection URL."""

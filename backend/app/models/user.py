@@ -112,6 +112,11 @@ class UserPreferences(BaseModel):
     """User preferences for the companion app."""
 
     default_video_platform: str = "zoom"
+    #: The clinician's own permanent video room, for a service that gives them
+    #: one rather than a meeting per appointment (doxy.me). Pasted once, in
+    #: settings. None until they do, which is why doxy.me is not offered to a
+    #: clinician who has not: a room nobody named is not a room.
+    telehealth_room_url: str | None = None
     default_session_type: str = "individual"
     default_duration_minutes: int = Field(default=50, ge=1, le=480)
     auto_transcribe: bool = True

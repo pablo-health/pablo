@@ -1,0 +1,46 @@
+{
+  "kind": "calendar#event",
+  "id": "ssssssssssssssssssssssssss",
+  "status": "confirmed",
+  "summary": "Therapy Session",
+  "start": {
+    "dateTime": "2026-10-01T15:00:00Z",
+    "timeZone": "UTC"
+  },
+  "end": {
+    "dateTime": "2026-10-01T15:50:00Z",
+    "timeZone": "UTC"
+  },
+  "hangoutLink": "https://meet.example.test/abc-defg-hij",
+  "conferenceData": {
+    "createRequest": {
+      "requestId": "pablo-00000000-0000-4000-8000-000000000000",
+      "conferenceSolutionKey": {
+        "type": "hangoutsMeet"
+      },
+      "status": {
+        "statusCode": "success"
+      }
+    },
+    "entryPoints": [
+      {
+        "entryPointType": "video",
+        "uri": "https://meet.example.test/abc-defg-hij",
+        "label": "meet.example.test/abc-defg-hij"
+      },
+      {
+        "entryPointType": "more",
+        "uri": "https://tel.example.test/abc-defg-hij?pin=000000000000000"
+      }
+    ],
+    "conferenceSolution": {
+      "key": {
+        "type": "hangoutsMeet"
+      },
+      "name": "Google Meet",
+      "iconUri": "https://fonts.example.test/meet_96.png"
+    },
+    "conferenceId": "abc-defg-hij",
+    "signature": "SYNTHETIC_SIGNATURE"
+  }
+}

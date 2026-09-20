@@ -1655,6 +1655,9 @@ def test_the_options_document_names_no_appointment_of_anybody(
         "cancel_cutoff_hours",
         "reschedule_cutoff_hours",
         "practice_timezone",
+        # How long before the start a join link is offered. A number about the
+        # practice's own policy, the same for every patient of it.
+        "join_window_before_minutes",
         "practice_phone",
     }
 
