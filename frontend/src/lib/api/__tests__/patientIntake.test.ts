@@ -14,10 +14,12 @@
 import { readFileSync } from "node:fs"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
+  fetchAssignment,
   fetchIntakeForm,
+  listAssignments,
   PatientIntakeError,
-  submitIntake,
-  type SubmitIntakeRequest,
+  saveAnswer,
+  submitAssignment,
 } from "../patientIntake"
 
 const TOKEN = "portal-session-token"
@@ -29,14 +31,8 @@ const FORM = {
   instruments: [],
 }
 
-const BODY: SubmitIntakeRequest = {
-  name_confirmed: true,
-  dob_confirmed: true,
-  corrections: null,
-  reason_text: "Sleep has been bad",
-  phq9: { "1": 0 },
-  gad7: { "1": 0 },
-}
+const ASSIGNMENT_ID = "6f2a0e1c-77d4-4f9a-9c2b-1a3e5d7f9b01"
+const ITEM_ID = "1b9c4d2e-5f60-4a81-9e33-7c0d2a4b6e88"
 
 function jsonResponse(status: number, body: unknown): Response {
   return { ok: status >= 200 && status < 300, status, json: async () => body } as Response
@@ -97,32 +93,113 @@ describe("fetchIntakeForm", () => {
   })
 })
 
-describe("submitIntake", () => {
-  it("POSTs the submissions route with the bearer and the body verbatim", async () => {
-    const fetchMock = stubFetch(jsonResponse(201, { id: "s1", submitted_at: "x", measures: [] }))
+describe("the assignment routes", () => {
+  it("lists the caller's own forms with no patient id anywhere", async () => {
+    const fetchMock = stubFetch(jsonResponse(200, []))
 
-    await submitIntake(TOKEN, BODY)
+    await expect(listAssignments(TOKEN)).resolves.toEqual([])
 
-    expect(fetchMock).toHaveBeenCalledWith(`${API}/api/patient/intake/submissions`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${TOKEN}`,
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(BODY),
+    expect(fetchMock).toHaveBeenCalledWith(`${API}/api/patient/intake/assignments`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${TOKEN}`, Accept: "application/json" },
     })
+  })
+
+  it("reads one form by id", async () => {
+    const fetchMock = stubFetch(jsonResponse(200, { id: ASSIGNMENT_ID, items: [] }))
+
+    await fetchAssignment(TOKEN, ASSIGNMENT_ID)
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      `${API}/api/patient/intake/assignments/${ASSIGNMENT_ID}`,
+    )
+  })
+
+  it("PUTs one answer under its own item, wrapped in `value`", async () => {
+    const fetchMock = stubFetch(
+      jsonResponse(200, {
+        item_id: ITEM_ID,
+        saved_at: "2026-09-20T10:00:00Z",
+        status: "in_progress",
+        progress: { complete: false, missing: [] },
+      }),
+    )
+
+    await saveAnswer(TOKEN, ASSIGNMENT_ID, ITEM_ID, { text: "Sleep has been bad" })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${API}/api/patient/intake/assignments/${ASSIGNMENT_ID}/items/${ITEM_ID}`,
+      {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${TOKEN}`,
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ value: { text: "Sleep has been bad" } }),
+      },
+    )
+    // The route reads the patient off the session; there is no field for one.
     expect(fetchMock.mock.calls[0][1].body).not.toContain("patient_id")
+  })
+
+  it("POSTs a submit with no body at all", async () => {
+    const fetchMock = stubFetch(jsonResponse(200, { receipt_code: "ABCDEFGH" }))
+
+    await submitAssignment(TOKEN, ASSIGNMENT_ID)
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${API}/api/patient/intake/assignments/${ASSIGNMENT_ID}/submit`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${TOKEN}`, Accept: "application/json" },
+      },
+    )
   })
 
   it.each([
     [429, "rate_limited"],
     [400, "rejected"],
+    [409, "closed"],
+    [422, "invalid"],
     [500, "unavailable"],
   ])("reads %i as %s", async (status, kind) => {
     stubFetch(jsonResponse(status, {}))
 
-    await expect(submitIntake(TOKEN, BODY)).rejects.toMatchObject({ kind })
+    await expect(submitAssignment(TOKEN, ASSIGNMENT_ID)).rejects.toMatchObject({ kind })
+  })
+
+  it("carries the server's own sentence for a refused answer", async () => {
+    stubFetch(
+      jsonResponse(422, {
+        error: {
+          code: "UNPROCESSABLE_ENTITY",
+          message: "What brings you in is still blank.",
+          details: { item_id: ITEM_ID },
+        },
+      }),
+    )
+
+    const error = await saveAnswer(TOKEN, ASSIGNMENT_ID, ITEM_ID, {}).catch((e: unknown) => e)
+
+    expect(error).toBeInstanceOf(PatientIntakeError)
+    expect((error as PatientIntakeError).serverMessage).toBe("What brings you in is still blank.")
+  })
+
+  it("carries what is still outstanding when a submit is refused", async () => {
+    stubFetch(
+      jsonResponse(422, {
+        error: {
+          code: "UNPROCESSABLE_ENTITY",
+          message: "Some questions still need an answer.",
+          details: { missing: [ITEM_ID] },
+        },
+      }),
+    )
+
+    const error = await submitAssignment(TOKEN, ASSIGNMENT_ID).catch((e: unknown) => e)
+
+    expect((error as PatientIntakeError).missing).toEqual([ITEM_ID])
   })
 })
 

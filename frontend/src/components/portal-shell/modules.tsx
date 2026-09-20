@@ -2,7 +2,7 @@
 
 /**
  * What the engine mounts in the portal, in the order a patient meets it:
- * intake first, then messaging.
+ * the forms they were asked for first, then messaging.
  *
  * Imported for its side effect by the shell, which is a client component.
  * That is the whole reason this file exists rather than the registrations
@@ -19,17 +19,17 @@
 
 "use client"
 
-import { PortalIntakeFlow } from "@/components/portal/intake"
+import { PortalForms } from "@/components/portal/forms"
 import { PortalMessaging } from "@/components/portal/messaging/PortalMessaging"
 import { registerPortalSlot, type PortalSlotProps } from "./slots"
 
-function IntakeSlot({ sessionToken }: PortalSlotProps) {
-  return <PortalIntakeFlow sessionToken={sessionToken} />
+function FormsSlot({ sessionToken }: PortalSlotProps) {
+  return <PortalForms sessionToken={sessionToken} />
 }
 
 function MessagingSlot({ sessionToken }: PortalSlotProps) {
   return <PortalMessaging sessionToken={sessionToken} />
 }
 
-registerPortalSlot({ id: "intake", Component: IntakeSlot })
+registerPortalSlot({ id: "forms", Component: FormsSlot })
 registerPortalSlot({ id: "messaging", Component: MessagingSlot })

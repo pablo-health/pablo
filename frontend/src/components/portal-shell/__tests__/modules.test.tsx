@@ -3,8 +3,9 @@
 /**
  * What the engine mounts in the portal, and where it gets registered from.
  *
- * The order is product order — a patient meets intake before messaging —
- * and the registration has to run in the browser's module graph. A
+ * The order is product order — a patient meets the forms they were asked
+ * for before messaging — and the registration has to run in the browser's
+ * module graph. A
  * side-effect import from a server component fills the registry on the
  * server and leaves the browser's empty, which fails as slots that simply
  * never render: nothing throws, nothing logs, the shell just looks empty.
@@ -21,11 +22,11 @@ beforeEach(() => {
 })
 
 describe("portal modules", () => {
-  it("registers intake, then messaging", async () => {
+  it("registers forms, then messaging", async () => {
     await import("../modules")
     const { getPortalSlots } = await import("../slots")
 
-    expect(getPortalSlots().map((slot) => slot.id)).toEqual(["intake", "messaging"])
+    expect(getPortalSlots().map((slot) => slot.id)).toEqual(["forms", "messaging"])
   })
 
   it("is imported by the shell's client component", () => {
