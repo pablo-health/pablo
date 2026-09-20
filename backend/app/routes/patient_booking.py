@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Annotated
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -52,6 +53,8 @@ from ..db import arm_current_user_id, create_standalone_session, set_tenant_sche
 from ..models.audit import AuditAction, ResourceType
 from ..models.patient_facing import PatientAppointmentResponse
 from ..models.scheduling import (
+    PatientBookableTypeResponse,
+    PatientBookingOptionsResponse,
     PatientBookingRequest,
     PatientCancelRequest,
     PatientRescheduleRequest,
@@ -75,6 +78,9 @@ from ..scheduling_engine.models.appointment import (
 )
 from ..scheduling_engine.services.availability import AvailabilityEngine
 from ..scheduling_engine.services.scheduling import SchedulingService
+from ..scheduling_engine.services.scheduling_policy import (
+    DEFAULTS as POLICY_DEFAULTS,
+)
 from ..scheduling_engine.services.scheduling_policy import load_policy, may_self_book
 from ..services.audit_service import AuditService, get_audit_service
 
@@ -408,6 +414,108 @@ def _to_patient_view(appointment: Appointment) -> PatientAppointmentResponse:
     may see of an appointment they just booked.
     """
     return PatientAppointmentResponse.from_appointment(appointment)
+
+
+def _practice_directory(schema: str) -> tuple[str | None, str | None]:
+    """The owning clinician and published phone number of the practice in *schema*.
+
+    The same platform row :func:`owner_session` resolves a principal from, read
+    for the two facts the options document needs before it knows whether a
+    tenant session is worth opening. ``(None, None)`` when nothing lives in
+    that schema, which for a principal off a live session means the practice
+    was removed underneath them.
+
+    ``platform.practices`` carries no row policies, so this is reachable
+    without arming anything — the same property that makes it a non-circular
+    place to find a principal.
+    """
+    from ..db.platform_models import PracticeRow
+
+    session = create_standalone_session()
+    try:
+        practice = (
+            session.query(PracticeRow).filter(PracticeRow.schema_name == schema).one_or_none()
+        )
+        if practice is None:
+            return None, None
+        return practice.owner_user_id, practice.phone
+    finally:
+        session.close()
+
+
+@router.get("/options", response_model=PatientBookingOptionsResponse)
+def get_booking_options(
+    patient: CurrentPatient,
+    _: None = Depends(subscription_exempt),
+) -> PatientBookingOptionsResponse:
+    """What this practice lets a patient do with their own appointments.
+
+    **Answers when self-booking is off, and that is the point.** Every other
+    route here refuses with 403 unless the practice has opted in, which is
+    right for a route that would act; it is wrong for the one a portal asks
+    before it draws anything. A portal that had to learn the answer from a
+    refusal would render a booking control and then withdraw it, or — worse —
+    leave one on screen that does nothing and says nothing about why.
+
+    **Single factor is enough, for the same reason
+    ``/api/patient/capabilities`` is.** Nothing here is about the caller: two
+    patients of the same practice get the identical document. It names no
+    appointment, carries no id and counts nothing, so there is no per-patient
+    fact for a second factor to protect. The routes that change the diary keep
+    their own step-up bar, and this document does not soften it.
+
+    **The types offered are filtered exactly as :func:`_bookable_type` filters
+    them.** Listing a type booking would then refuse is the same defect as
+    offering a slot outside the window — the patient picks something, is told
+    no, and has learned nothing they can act on. So the test is
+    ``self_bookable`` and nothing else, in one place conceptually even though
+    it is written twice.
+
+    Not audited, and classified as such in ``check_route_audit.py``: the
+    practice's own policy and published phone number are not the patient's
+    record, and logging a read of them would put a row on a chart for
+    something that disclosed nothing about the person.
+    """
+    owner, phone = _practice_directory(patient.practice_schema)
+
+    if owner:
+        with owner_session(patient) as (session, clinician):
+            policy = load_policy(session)
+            self_booking = may_self_book(policy, is_new_patient=False)
+            # The same frame ``list_bookable_slots`` computes openings in, so a
+            # patient reads back the time the slot was offered for.
+            timezone = str(_owner_timezone(session, clinician))
+            types = [
+                PatientBookableTypeResponse(
+                    name=candidate.name, duration_minutes=candidate.duration_minutes
+                )
+                for candidate in PostgresAppointmentTypeRepository(session).list_by_user(clinician)
+                if candidate.self_bookable
+            ]
+    else:
+        # No clinician owns this practice, so there is nothing to book against.
+        # A refusal would be defensible on the acting routes — they say so with
+        # NO_CLINICIAN — but this one exists so the portal can render, and
+        # "this practice does not take bookings online" is a true and complete
+        # answer. The strict defaults describe the windows, which is what an
+        # unconfigured practice's policy would have said anyway.
+        policy = deepcopy(POLICY_DEFAULTS)
+        self_booking = False
+        timezone = str(UTC)
+        types = []
+
+    return PatientBookingOptionsResponse(
+        self_booking=self_booking,
+        # Withheld when the practice does not take online bookings: a list of
+        # types nobody may book is machinery the reader did not ask about.
+        session_types=types if self_booking else [],
+        min_notice_hours=int(policy["min_notice_hours"]),  # type: ignore[call-overload]
+        max_horizon_days=int(policy["max_horizon_days"]),  # type: ignore[call-overload]
+        cancel_cutoff_hours=int(policy["cancel_cutoff_hours"]),  # type: ignore[call-overload]
+        reschedule_cutoff_hours=int(policy["reschedule_cutoff_hours"]),  # type: ignore[call-overload]
+        practice_timezone=timezone,
+        practice_phone=phone,
+    )
 
 
 @router.get("/slots", response_model=PatientSlotListResponse)
