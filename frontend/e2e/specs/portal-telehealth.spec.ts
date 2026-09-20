@@ -70,34 +70,46 @@ async function giveAppointment(
   })
 }
 
+/**
+ * One clinician, one diary, so the two tests cannot both hold a slot minutes
+ * from now — the engine refuses an overlapping booking, whoever it is with.
+ * Only the first test needs a joinable appointment; the second is about what
+ * goes in the URL, which is decided when the appointment is made and does not
+ * depend on the clock. So it books a week and a day out, clear of the first.
+ */
+const LATER_MINUTES = 7 * 24 * 60
+const LATER_STILL_MINUTES = 8 * 24 * 60
+
 test.describe("portal telehealth", () => {
   test("a patient is given the link when the session is about to start, and told to wait before that", async ({
     api,
     page,
   }) => {
+    // The clinician's own waiting room, so the joinable row proves the
+    // composed URL reaches the patient's screen and not just the API.
+    await api.put("/api/telehealth/room-url", { room_url: ROOM_URL })
+
     const { patient, email, phone } = await givePortalPatient(api)
 
     // One starting in five minutes, and one next week. The practice's window
     // is fifteen minutes, so the first is joinable and the second is not.
-    const soon = await giveAppointment(api, patient.id, 5, {
-      video_link: "https://meet.example.test/e2e-soon",
-    })
-    await giveAppointment(api, patient.id, 7 * 24 * 60, {
+    const soon = await giveAppointment(api, patient.id, 5, { provider: "doxy_me" })
+    await giveAppointment(api, patient.id, LATER_MINUTES, {
       video_link: "https://meet.example.test/e2e-later",
     })
 
-    // A pasted link is the room, whatever any preference says.
-    expect(soon.video_link).toBe("https://meet.example.test/e2e-soon")
-    expect(soon.provider).toBe("manual")
+    expect(soon.provider).toBe("doxy_me")
+    expect(soon.video_link).toBeTruthy()
 
     await signInToPortal(page, await givePortalInvitation(api, patient.id, email, phone))
 
     await expect(page.getByTestId("appointments-row")).toHaveCount(2)
 
-    // The one about to start offers the way in.
+    // The one about to start offers the way in, and it is the room the
+    // practice's own settings produced.
     const join = page.getByTestId("appointments-row-join")
     await expect(join).toHaveCount(1)
-    await expect(join).toHaveAttribute("href", "https://meet.example.test/e2e-soon")
+    await expect(join).toHaveAttribute("href", soon.video_link ?? "")
 
     // The one next week says when the link turns up instead, which is the
     // assertion that matters: a row with neither would leave a patient
@@ -109,12 +121,13 @@ test.describe("portal telehealth", () => {
 
   test("a waiting room's link carries the check-in parameters and an opaque handle", async ({
     api,
-    page,
   }) => {
     await api.put("/api/telehealth/room-url", { room_url: ROOM_URL })
 
-    const { patient, email, phone } = await givePortalPatient(api)
-    const appointment = await giveAppointment(api, patient.id, 5, { provider: "doxy_me" })
+    const { patient } = await givePortalPatient(api)
+    const appointment = await giveAppointment(api, patient.id, LATER_STILL_MINUTES, {
+      provider: "doxy_me",
+    })
 
     expect(appointment.provider).toBe("doxy_me")
     const url = new URL(appointment.video_link ?? "")
@@ -132,12 +145,5 @@ test.describe("portal telehealth", () => {
     expect(appointment.video_link).not.toContain(appointment.id)
     expect(appointment.video_link).not.toContain(patient.id)
     expect(appointment.meeting_external_id).toBe(handle)
-
-    // And the patient's own screen offers exactly that URL.
-    await signInToPortal(page, await givePortalInvitation(api, patient.id, email, phone))
-    await expect(page.getByTestId("appointments-row-join")).toHaveAttribute(
-      "href",
-      appointment.video_link ?? "",
-    )
   })
 })
