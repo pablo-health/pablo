@@ -31,6 +31,11 @@ from app.auth.patient_context import (
 )
 from app.models import Patient
 from app.models.audit import ACTOR_TYPE_PATIENT, AuditAction, ResourceType
+from app.models.patient_facing import (
+    PATIENT_COLUMN_DECISIONS,
+    shown_columns,
+    withheld_columns,
+)
 from app.rate_limit import get_chat_send_limiter, get_intake_submit_limiter
 from app.repositories import (
     InMemoryPatientIntakeSubmissionRepository,
@@ -60,6 +65,11 @@ _TOKEN_A_WEAK = "single-factor-credential-of-patient-a"
 
 FORM = "/api/patient/intake/form"
 SUBMISSIONS = "/api/patient/intake/submissions"
+
+# Staff-authored text seeded onto every test chart. Distinctive strings, so a
+# body check catches the CONTENT reaching a patient and not only the field name.
+_DIAGNOSIS = "F41.1 generalised anxiety, provisional"
+_SLIDING_SCALE_NOTE = "agreed 90 a session while between jobs"
 
 _ALL_ZERO_PHQ9 = {str(i): 0 for i in range(1, 10)}
 _ALL_THREE_PHQ9 = {str(i): 3 for i in range(1, 10)}
@@ -102,6 +112,22 @@ def _patient(patient_id: str, first: str, last: str, dob: str) -> Patient:
         created_at=now,
         updated_at=now,
         date_of_birth=dob,
+        # Staff-authored columns, populated so the withholding assertions in
+        # ``TestTheFormWithholdsStaffColumns`` have something to catch. Left at
+        # their defaults, the chart would pass against a route that returned
+        # every one of them.
+        email=f"{first.lower()}@example.test",
+        phone="+15555550100",
+        diagnosis=_DIAGNOSIS,
+        rate_cents=9000,
+        sliding_scale_note=_SLIDING_SCALE_NOTE,
+        origin="voice",
+        chart_closure_reason="Moved out of state",
+        address_line1="12 Analytical Engine Way",
+        city="London",
+        state="NY",
+        postal_code="10001",
+        sex="F",
     )
 
 
@@ -310,6 +336,56 @@ class TestForm:
     def test_the_response_carries_no_patient_id(self, client: TestClient) -> None:
         text = client.get(FORM, headers=_auth(_TOKEN_A)).text
         assert _PATIENT_A not in text
+
+
+class TestTheFormWithholdsStaffColumns:
+    """The only patient-facing route that returns a chart row, on the wire.
+
+    ``rls_patient_self_read`` grants this principal their whole ``patients``
+    row and row-level security cannot narrow that to columns, so the projection
+    is the only thing between a patient and the clinician's working diagnosis
+    or the note about what they can afford. Which columns those are is read
+    from the decisions in ``app.models.patient_facing`` rather than listed
+    again here: a list copied into a test agrees with the copy, not with the
+    table.
+    """
+
+    def test_no_withheld_column_reaches_the_identity_block(self, client: TestClient) -> None:
+        identity = client.get(FORM, headers=_auth(_TOKEN_A)).json()["identity"]
+
+        for withheld in withheld_columns(PATIENT_COLUMN_DECISIONS):
+            assert withheld not in identity, f"{withheld} reached a patient-facing response"
+
+    def test_the_identity_block_is_exactly_the_shown_columns(self, client: TestClient) -> None:
+        identity = client.get(FORM, headers=_auth(_TOKEN_A)).json()["identity"]
+        assert set(identity) == shown_columns(PATIENT_COLUMN_DECISIONS)
+
+    def test_no_withheld_column_reaches_the_response_at_all(self, client: TestClient) -> None:
+        """Not just the identity block — the whole body, keys and values.
+
+        The form carries instrument text alongside the identity, so a widening
+        anywhere in the envelope is in scope here.
+        """
+        text = client.get(FORM, headers=_auth(_TOKEN_A)).text
+        for content in (_DIAGNOSIS, _SLIDING_SCALE_NOTE, "9000", "voice", "Moved out of state"):
+            assert content not in text, f"{content!r} reached a patient-facing response"
+
+    def test_the_repository_never_reads_the_withheld_columns(self) -> None:
+        """One layer down: the projection is what makes the body check hold.
+
+        A route that happened to drop a column would pass the assertions above
+        while the column was still selected, sitting in memory for the next
+        refactor to reach for.
+        """
+        patients = InMemoryPatientRepository()
+        patients.create(_patient(_PATIENT_A, "Ada", "Lovelace", "1990-03-14"), "seed")
+
+        own = patients.get_for_patient_principal(_PATIENT_A)
+
+        assert own is not None
+        assert set(type(own).model_fields) == shown_columns(PATIENT_COLUMN_DECISIONS)
+        for withheld in withheld_columns(PATIENT_COLUMN_DECISIONS):
+            assert not hasattr(own, withheld), f"{withheld} was read for a patient principal"
 
     def test_it_asks_both_screeners_in_order(self, client: TestClient) -> None:
         body = client.get(FORM, headers=_auth(_TOKEN_A)).json()

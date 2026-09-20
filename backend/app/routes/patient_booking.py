@@ -50,8 +50,8 @@ from ..auth.patient_context import AuthStrength, PatientContext, get_patient_con
 from ..auth.route_access import subscription_exempt
 from ..db import arm_current_user_id, create_standalone_session, set_tenant_schema
 from ..models.audit import AuditAction, ResourceType
+from ..models.patient_facing import PatientAppointmentResponse
 from ..models.scheduling import (
-    PatientAppointmentResponse,
     PatientBookingRequest,
     PatientCancelRequest,
     PatientRescheduleRequest,
@@ -400,23 +400,14 @@ def _require_offered_slot(
 def _to_patient_view(appointment: Appointment) -> PatientAppointmentResponse:
     """Project an appointment down to what its patient may see.
 
-    Field by field rather than ``model_validate``, for the same reason
-    ``patient_appointments._to_patient_view`` does it: a future column on the
-    domain model must not become a response field by default.
+    These routes write the diary, so they hold the whole row: the scheduling
+    engine needs the columns a read-only route would never select. The
+    narrowing therefore happens on the way out rather than at the read, through
+    the same projector the list route's repository projects into — one place to
+    change, and no way for the two surfaces to disagree about what a patient
+    may see of an appointment they just booked.
     """
-    return PatientAppointmentResponse(
-        id=appointment.id,
-        start_at=appointment.start_at,
-        end_at=appointment.end_at,
-        duration_minutes=appointment.duration_minutes,
-        status=appointment.status,
-        session_type=appointment.session_type,
-        video_link=appointment.video_link,
-        video_platform=appointment.video_platform,
-        recurrence_rule=appointment.recurrence_rule,
-        recurring_appointment_id=appointment.recurring_appointment_id,
-        late_cancellation=appointment.late_cancellation,
-    )
+    return PatientAppointmentResponse.from_appointment(appointment)
 
 
 @router.get("/slots", response_model=PatientSlotListResponse)
