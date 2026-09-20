@@ -21,6 +21,7 @@ import { isForcedLogoutArrival } from "@/lib/auth/forced-logout"
 import { builtInPublicPaths, extraPublicPaths } from "@/lib/auth/public-paths"
 import {
   browserApiOrigin,
+  browserStorageOrigin,
   generateNonce,
   requestHeadersWithNonce,
   STRIPE_CONNECT_SRC,
@@ -57,6 +58,12 @@ const keycloakOrigin = (() => {
 
 const API_ORIGIN = browserApiOrigin()
 
+// Where a document upload actually goes. This policy names no storage host
+// at all otherwise — not even Google's — so a self-hosted deployment has to
+// say where its store is or every browser upload is blocked. See
+// ``browserStorageOrigin``.
+const STORAGE_ORIGIN = browserStorageOrigin()
+
 function buildCsp(nonce: string): string {
   return [
     "default-src 'self'",
@@ -64,7 +71,7 @@ function buildCsp(nonce: string): string {
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
     "img-src 'self' https: data:",
-    `connect-src 'self' ${API_ORIGIN} ${keycloakOrigin} ${STRIPE_CONNECT_SRC}`.replace(/\s+/g, " ").trim(),
+    `connect-src 'self' ${API_ORIGIN} ${keycloakOrigin} ${STORAGE_ORIGIN} ${STRIPE_CONNECT_SRC}`.replace(/\s+/g, " ").trim(),
     `frame-src 'self' ${keycloakOrigin} ${STRIPE_FRAME_SRC}`.replace(/\s+/g, " ").trim(),
     "object-src 'none'",
     "base-uri 'self'",

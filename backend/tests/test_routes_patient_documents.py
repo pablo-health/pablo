@@ -17,18 +17,26 @@ from unittest.mock import patch
 
 import pytest
 from app.main import app
-from app.models import Patient
+from app.models import (
+    DocumentCategory,
+    Patient,
+    PatientDocument,
+    PatientMessage,
+    PatientMessageThread,
+)
 from app.models.audit import AuditAction, ResourceType
 from app.repositories import (
     InMemoryPatientDocumentRepository,
+    InMemoryPatientMessageRepository,
     InMemoryPatientRepository,
 )
 from app.repositories.audit import InMemoryAuditRepository
 from app.routes.patient_documents import (
-    get_patient_document_repository as docs_route_doc_repo,
+    get_message_repository_for_documents,
+    get_patient_documents_service,
 )
 from app.routes.patient_documents import (
-    get_patient_documents_service,
+    get_patient_document_repository as docs_route_doc_repo,
 )
 from app.routes.patient_documents import (
     get_patient_repository as docs_route_patient_repo,
@@ -171,11 +179,18 @@ def documents_service(
 
 
 @pytest.fixture
+def message_repo() -> InMemoryPatientMessageRepository:
+    """Only the reverse link is read through it — see the list route."""
+    return InMemoryPatientMessageRepository()
+
+
+@pytest.fixture
 def documents_client(
     client: TestClient,
     mock_repo: InMemoryPatientRepository,
     mock_user_id: str,
     documents_service: PatientDocumentsService,
+    message_repo: InMemoryPatientMessageRepository,
     audit_repo: InMemoryAuditRepository,
 ) -> TestClient:
     # Patient under test
@@ -198,6 +213,7 @@ def documents_client(
     app.dependency_overrides[docs_route_doc_repo] = lambda: documents_service._repo
     app.dependency_overrides[docs_route_patient_repo] = lambda: mock_repo
     app.dependency_overrides[get_patient_documents_service] = lambda: documents_service
+    app.dependency_overrides[get_message_repository_for_documents] = lambda: message_repo
     app.dependency_overrides[get_audit_service] = lambda: AuditService(audit_repo)
     return client
 
@@ -408,6 +424,86 @@ class TestList:
         body = response.json()
         assert body["total"] == 1
         assert body["data"][0]["filename"] == "visible.pdf"
+
+    def test_a_message_document_carries_the_thread_it_arrived_on(
+        self,
+        documents_client: TestClient,
+        doc_repo: InMemoryPatientDocumentRepository,
+        message_repo: InMemoryPatientMessageRepository,
+        mock_user_id: str,
+    ) -> None:
+        """A file sent as correspondence says which conversation it came from."""
+        now = datetime.now(UTC)
+        thread = PatientMessageThread(
+            id="t-1",
+            patient_id="patient-1",
+            subject=None,
+            status="open",
+            created_at=now,
+            last_message_at=now,
+        )
+        message = PatientMessage(
+            id="m-1",
+            thread_id="t-1",
+            patient_id="patient-1",
+            sender="patient",
+            body="Here it is.",
+            created_at=now,
+        )
+        message_repo.add_patient_thread(thread, message)
+        doc_repo.add(
+            PatientDocument(
+                id="doc-1",
+                patient_id="patient-1",
+                user_id=None,
+                uploaded_by_patient_id="patient-1",
+                filename="card.png",
+                mime_type="image/png",
+                gcs_path="tenant-A/card.png",
+                size_bytes=2048,
+                created_at=now,
+                finalized_at=now,
+                category=DocumentCategory.MESSAGE,
+            )
+        )
+        message_repo.link_attachments(
+            message_id="m-1",
+            patient_id="patient-1",
+            document_ids=["doc-1"],
+            created_at=now,
+        )
+
+        rows = documents_client.get("/api/patients/patient-1/documents").json()["data"]
+
+        by_id = {row["id"]: row for row in rows}
+        assert by_id["doc-1"]["message_thread_id"] == "t-1"
+
+    def test_a_document_that_went_on_no_message_names_no_thread(
+        self,
+        documents_client: TestClient,
+        doc_repo: InMemoryPatientDocumentRepository,
+    ) -> None:
+        """The control: the field is filled in by a link, not by a category."""
+        now = datetime.now(UTC)
+        doc_repo.add(
+            PatientDocument(
+                id="doc-loose",
+                patient_id="patient-1",
+                user_id=None,
+                uploaded_by_patient_id="patient-1",
+                filename="card.png",
+                mime_type="image/png",
+                gcs_path="tenant-A/loose.png",
+                size_bytes=2048,
+                created_at=now,
+                finalized_at=now,
+                category=DocumentCategory.MESSAGE,
+            )
+        )
+
+        rows = documents_client.get("/api/patients/patient-1/documents").json()["data"]
+
+        assert rows[0]["message_thread_id"] is None
 
 
 # ---- get + download + delete -----------------------------------------
