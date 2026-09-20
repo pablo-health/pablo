@@ -883,8 +883,8 @@ class TestClinicianTenantContextNeverReachesAnotherPractice:
         self, client: TestClient, patient_records: tuple[str, str]
     ) -> None:
         """The property that has to hold regardless of status code: no data
-        about Y's threads crosses over. See the xfail below for the status
-        code the design actually asked for."""
+        about Y's threads crosses over. See the 404 test below for the
+        status code the design asks for."""
         _, patient_y = patient_records
         resp = client.get(
             f"/api/patients/{patient_y}/message-threads", headers=_headers(_CLINICIAN_TOKEN)
@@ -895,24 +895,6 @@ class TestClinicianTenantContextNeverReachesAnotherPractice:
             assert body["data"] == []
             assert body["total"] == 0
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Design THERAPY-1mty.14.10 calls for a 404 here, matching "
-            "GET /api/message-threads/{thread_id} above. The route "
-            "(list_threads_for_patient in app/routes/patient_messages.py) "
-            "instead answers 200 with an empty list: it calls "
-            "has_patient_access(patient_id, user_id) and returns [] on a "
-            "miss, with no branch that tells 'this patient exists in my "
-            "schema but I have no grant' apart from 'no such patient id in "
-            "this schema at all' — the distinction get_thread()'s "
-            "session.get() lookup draws for free. No data about Y crosses "
-            "over either way (see the sibling test above), so this is a "
-            "status-code / existence-leak-shape gap, not a disclosure. Not "
-            "patched here per this module's brief: fixing the route is "
-            "engine work for a follow-up change."
-        ),
-    )
     def test_clinician_x_listing_ys_patient_threads_is_404(
         self, client: TestClient, patient_records: tuple[str, str]
     ) -> None:
@@ -976,28 +958,6 @@ class TestRefusedCrossPracticeCallsAuditNothing:
         assert _PATIENT_X_FIRST not in log_text
         assert _PATIENT_Y_FIRST not in log_text
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Design THERAPY-1mty.14.10 calls for this refused call to write "
-            "no audit row anywhere. list_threads_for_patient() "
-            "(app/routes/patient_messages.py) calls "
-            "audit.log_patient_message_action() UNCONDITIONALLY, after "
-            "computing the (possibly empty) thread list, rather than only "
-            "on an actual disclosure — so a call naming a patient id that "
-            "belongs to a DIFFERENT practice still writes a "
-            "'thread_viewed' row in clinician X's OWN schema, with Y's "
-            "patient id as the row's resource_id/patient_id. No thread "
-            "content crosses over (the list itself is empty — see the "
-            "sibling 'discloses nothing' test in case 6), but a foreign "
-            "practice's patient id now appears in X's audit trail, which "
-            "is a real disclosure of a narrower kind: that a caller went "
-            "looking for it, on a row that records no such attempt "
-            "actually resolved to a thread. Not patched here per this "
-            "module's brief: fixing the route to audit only a genuine "
-            "disclosure is engine work for a follow-up change."
-        ),
-    )
     def test_the_listing_call_that_finds_nothing_still_writes_no_audit_row(
         self,
         engine: Engine,
