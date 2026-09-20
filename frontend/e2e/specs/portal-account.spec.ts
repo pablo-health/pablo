@@ -202,7 +202,7 @@ test("the profile carries the patient's own details and no staff notes @portal",
   const { email, phone } = contactDetails()
   const patient = await givePatient(api, { email, phone })
   const diagnosis = "F41.1 seeded for the portal profile e2e"
-  await api.put(`/api/patients/${patient.id}`, { diagnosis, sliding_scale_note: "60 a session" })
+  await api.patch(`/api/patients/${patient.id}`, { diagnosis, sliding_scale_note: "60 a session" })
 
   const { slug } = await api.post<{ slug: string }>("/api/portal/practice-slug")
   expect(slug).toBeTruthy()
