@@ -72,6 +72,8 @@ PHI_PATH_MARKERS: tuple[str, ...] = (
     "/import-clients",
     "/claims",
     "/patient/chat",
+    "/patient/messages",
+    "/message-threads",
 )
 
 FORBIDDEN_UNDERSCORE_PARAMS: frozenset[str] = frozenset({"_audit", "_http_request"})
@@ -102,6 +104,16 @@ AUDIT_EXEMPT_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # audio content; matches the "/audio" marker on path text alone.
         ("get", "/api/users/me/practice/audio-retention"),
         ("put", "/api/users/me/practice/audio-retention"),
+        # patient_messages.py — the patient reading their OWN secure
+        # messages. Not an omission: the audit log records disclosures, and
+        # a person reading their own record is not one. Writes on the same
+        # surface ARE recorded (starting a thread, sending, marking read),
+        # and every clinician-side read of the same rows is recorded too —
+        # those are disclosures to somebody else. Auditing the patient's own
+        # reading would add a row per portal visit and bury the ones that
+        # carry forensic weight.
+        ("get", "/api/patient/messages/threads"),
+        ("get", "/api/patient/messages/threads/{thread_id}"),
     }
 )
 
