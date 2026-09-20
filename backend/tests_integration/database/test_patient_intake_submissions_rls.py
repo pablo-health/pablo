@@ -568,7 +568,15 @@ class TestFreshAndMigratedAgree:
             result = upgrade_tenant_schema(engine, schema)
             assert result.status.value == "success", result.detail
 
-            with engine.connect() as conn:
+            # Read as the row's own patient rather than on a bare
+            # connection. The chain now ends with a revision that re-runs
+            # ``enable_rls_on_schema``, so the table carries its policies by
+            # the time this reads it, and FORCE ROW LEVEL SECURITY means
+            # even a superuser connection is subject to them. An unarmed
+            # read would come back empty and look exactly like the data
+            # loss this test exists to rule out.
+            conn = _as_patient(engine, schema, patient_id)
+            try:
                 surviving = (
                     conn.execute(
                         text(f'SELECT id FROM "{schema}".{_TABLE}')  # noqa: S608
@@ -576,6 +584,8 @@ class TestFreshAndMigratedAgree:
                     .scalars()
                     .all()
                 )
+            finally:
+                conn.close()
             assert list(surviving) == ["intake-preexisting"]
         finally:
             _drop_schema(engine, schema)

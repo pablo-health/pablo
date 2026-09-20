@@ -37,6 +37,10 @@ from ..db import create_standalone_session
 from ..db.platform_models import PortalPracticeSlugRow, PracticeRow
 from ..models import User
 from ..rate_limit import require_portal_practice_resolve_rate_limit
+
+# Runtime import: FastAPI resolves this annotation when it builds the route,
+# so it cannot live in a TYPE_CHECKING block.
+from ..services.captcha import CaptchaVerifier, get_captcha_verifier
 from ..utcnow import utc_now
 
 if TYPE_CHECKING:
@@ -83,6 +87,16 @@ class PortalPracticeResolution(BaseModel):
 
     slug: str
     display_name: str
+    #: The deployment's CAPTCHA site key, or ``None`` when no provider is
+    #: configured. Public by definition — it is rendered into the widget and
+    #: the script tag — and returned here for the same reason the public
+    #: booking card carries it: the recovery page has to know whether to
+    #: render a widget before it can ask anybody for an email address, and
+    #: this is the only unauthenticated call it makes first.
+    #:
+    #: Not a fact about the practice, so it does not narrow the 404 above:
+    #: it is the same value for every slug this deployment serves.
+    captcha_site_key: str | None = None
 
 
 class PortalPracticeSlugResponse(BaseModel):
@@ -109,6 +123,7 @@ def _practice_not_found() -> HTTPException:
 )
 def resolve_portal_practice(
     slug: str,
+    verifier: Annotated[CaptchaVerifier, Depends(get_captcha_verifier)],
     _public: None = Depends(truly_public),
 ) -> PortalPracticeResolution:
     """Resolve a slug to the display name the shell should show.
@@ -130,7 +145,11 @@ def resolve_portal_practice(
 
     if row is None or not row.enabled:
         raise _practice_not_found()
-    return PortalPracticeResolution(slug=row.slug, display_name=row.display_name)
+    return PortalPracticeResolution(
+        slug=row.slug,
+        display_name=row.display_name,
+        captcha_site_key=verifier.site_key,
+    )
 
 
 @router.post(

@@ -1088,8 +1088,15 @@ PATIENT_READABLE_TABLES: dict[str, str] = {
 #
 # ``outcome_measures`` is the first write grant: a patient completing a
 # screener records their own scored row and reads their own history back.
-# ``patients`` deliberately stays read-only — a patient reads their
-# demographics; nothing in core lets them write that record.
+#
+# ``patients`` is writable as of the portal profile screen, and the grant is
+# wider than what that screen does: the policy bounds the write to the
+# calling patient's ROW, and row-level security has no column granularity to
+# say more. Which columns a patient may actually change is decided one layer
+# up, in ``PATIENT_SELF_WRITABLE_COLUMNS`` and in the request model
+# ``app.routes.patient_profile`` accepts — contact details and a preferred
+# name, never a legal name or a date of birth. Same posture as
+# ``patient_messages``, and for the same reason.
 #
 # Both commands a patient may use are now policied explicitly. INSERT used
 # to be the gap: ``patients`` carried ``rls_patient_insert ... WITH CHECK
@@ -1100,6 +1107,9 @@ PATIENT_READABLE_TABLES: dict[str, str] = {
 # ``app.current_user_id`` — which a patient principal never sets — instead
 # of admitting everyone.
 PATIENT_WRITABLE_TABLES: dict[str, str] = {
+    # Keyed on ``id`` rather than ``patient_id``: on this one table the
+    # patient IS the row.
+    "patients": "id",
     "outcome_measures": "patient_id",
     # Submitting the intake form is a patient INSERT, so the write arm is
     # what makes the table usable at all from a patient principal.

@@ -1170,6 +1170,43 @@ class Settings(BaseSettings):
             "portal_sms_gateway."
         ),
     )
+    # Which patient-facing modules this deployment serves in the portal.
+    #
+    # A comma-separated string rather than a list field: pydantic-settings
+    # parses a ``list[str]`` from the environment as JSON, so
+    # ``PORTAL_MODULES=intake,messaging`` would fail to load rather than
+    # mean what it plainly says. ``portal_module_names`` does the splitting.
+    #
+    # This is a MOUNT decision, not a display one. A module not named here
+    # has its patient-facing router left unmounted in ``app.main``, so its
+    # paths answer 404 — which is what keeps "the portal doesn't show it"
+    # from being the only thing standing in front of it.
+    portal_modules: str = Field(
+        default="intake,messaging,appointments",
+        description=(
+            "Comma-separated patient-facing portal modules to serve: any of "
+            "intake, messaging, documents, appointments, billing, chat. A "
+            "module left out has its patient-facing routes unmounted, so "
+            "they answer 404 rather than merely being hidden. Unknown names "
+            "are ignored."
+        ),
+    )
+
+    @property
+    def portal_module_names(self) -> tuple[str, ...]:
+        """``portal_modules`` split, trimmed, lowercased, de-duplicated.
+
+        Order is the configured order, so a deployment that cares about the
+        order its navigation reads in can say so. Unknown names survive this
+        and are dropped later, where the known set lives — this property
+        only parses.
+        """
+        seen: dict[str, None] = {}
+        for raw in self.portal_modules.split(","):
+            name = raw.strip().lower()
+            if name:
+                seen.setdefault(name, None)
+        return tuple(seen)
 
     # Companion device-binding proof enforcement (DPoP, RFC 9449-style).
     # When false the DPoP middleware is a hard no-op pass-through, so the

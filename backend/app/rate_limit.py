@@ -562,6 +562,8 @@ _portal_redeem_ip_limiter: RateLimiter | None = None
 _portal_redeem_invite_limiter: RateLimiter | None = None
 _portal_refresh_ip_limiter: RateLimiter | None = None
 _portal_practice_resolve_ip_limiter: RateLimiter | None = None
+_portal_recover_ip_limiter: RateLimiter | None = None
+_portal_recover_slug_limiter: RateLimiter | None = None
 
 
 def _get_portal_redeem_ip_limiter() -> RateLimiter:
@@ -622,6 +624,60 @@ def _get_portal_practice_resolve_ip_limiter() -> RateLimiter:
     return _portal_practice_resolve_ip_limiter
 
 
+def _get_portal_recover_ip_limiter() -> RateLimiter:
+    """5/hour per address on account recovery.
+
+    Tighter than anything else on the portal surface, because the request
+    body is an email address and the route's whole job is to answer the same
+    way whether or not it matched. A uniform answer stops the response being
+    an oracle; it does nothing about volume, and a caller who can ask this
+    thousands of times is mailing sign-in links to whoever they like at
+    whatever rate they like. This is what bounds that."""
+    global _portal_recover_ip_limiter  # noqa: PLW0603
+    if _portal_recover_ip_limiter is None:
+        _portal_recover_ip_limiter = NamespacedLimiter(
+            _create_limiter(max_requests=5, window_seconds=3_600), "portal-recover-ip:"
+        )
+        logger.info("Portal recover IP rate limiter: %s", type(_portal_recover_ip_limiter).__name__)
+    return _portal_recover_ip_limiter
+
+
+def _get_portal_recover_slug_limiter() -> RateLimiter:
+    """20/hour per practice on account recovery.
+
+    The per-address window is the wrong bound on its own: a caller with a
+    pool of addresses walks straight through it, and the thing they would be
+    walking through is one practice's patient list. So the practice gets a
+    budget of its own — a real practice's patients ask for a new link a
+    handful of times a day between them, and a sweep of a list does not look
+    like that."""
+    global _portal_recover_slug_limiter  # noqa: PLW0603
+    if _portal_recover_slug_limiter is None:
+        _portal_recover_slug_limiter = NamespacedLimiter(
+            _create_limiter(max_requests=20, window_seconds=3_600), "portal-recover-slug:"
+        )
+        logger.info(
+            "Portal recover slug rate limiter: %s", type(_portal_recover_slug_limiter).__name__
+        )
+    return _portal_recover_slug_limiter
+
+
+def require_portal_recover_rate_limit(request: Request) -> None:
+    """Per-address window on recovery. A route dependency, so it runs before
+    the email in the body reaches anything."""
+    _get_portal_recover_ip_limiter().check(get_client_ip(request))
+
+
+def check_portal_recover_slug_limit(slug: str) -> None:
+    """Per-practice window on recovery.
+
+    Called from the handler rather than declared as a dependency because the
+    slug is a path parameter the route already has, and because it must run
+    after the per-address window rather than beside it: the cheaper, more
+    specific budget should be the one an ordinary caller ever meets."""
+    _get_portal_recover_slug_limiter().check(slug)
+
+
 def require_portal_practice_resolve_rate_limit(request: Request) -> None:
     """Per-address window on the public slug directory. A route dependency, so
     it runs before the slug ever reaches a query."""
@@ -651,6 +707,8 @@ def reset_portal_limiters() -> None:
         _portal_redeem_invite_limiter,
         _portal_refresh_ip_limiter,
         _portal_practice_resolve_ip_limiter,
+        _portal_recover_ip_limiter,
+        _portal_recover_slug_limiter,
     ):
         if limiter is not None:
             limiter.reset()

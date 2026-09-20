@@ -12,7 +12,7 @@
  * two practices' tokens from clobbering each other in one browser.
  */
 
-import { redeemInvite, refreshSession } from "./api"
+import { redeemInvite, refreshSession, signOut } from "./api"
 
 export interface StoredPortalSession {
   sessionToken: string
@@ -74,6 +74,32 @@ export async function bootstrapSession(slug: string): Promise<BootstrapResult> {
     expiresAt: result.data.expires_at,
   })
   return { status: "active", sessionToken: result.data.session_token }
+}
+
+/**
+ * Sign out, then forget the token locally whatever the server said.
+ *
+ * **The order is the point, and so is the "whatever".** Revoking the row is
+ * the act — a session token keeps working until the server says otherwise,
+ * so a sign-out that only cleared `localStorage` would leave a live
+ * credential in whoever's hands next used the machine. Clearing afterwards
+ * is the cleanup.
+ *
+ * But the clearing happens even when the call fails, and that is
+ * deliberate rather than sloppy. Someone signing out on a shared computer
+ * is leaving; the useful thing to do with a token whose revocation could
+ * not be confirmed is to stop holding it. The caller is told whether the
+ * server half succeeded so it can say so, and the session is gone from
+ * this browser either way.
+ */
+export async function signOutAndForget(
+  slug: string,
+  sessionToken: string,
+  { everywhere = false }: { everywhere?: boolean } = {},
+): Promise<{ revoked: boolean }> {
+  const result = await signOut(sessionToken, { everywhere })
+  clearSession(slug)
+  return { revoked: result.ok }
 }
 
 export interface RedeemedSession {

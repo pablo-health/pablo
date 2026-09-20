@@ -8,10 +8,10 @@ import asyncio
 import contextlib
 import logging
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI
+from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
@@ -38,7 +38,9 @@ from .outcome_measures.router import (
     outcome_measures_router,
     patient_outcome_measures_router,
 )
+from .portal import account_routes as portal_account_routes
 from .portal import practice_routes as portal_practice_routes
+from .portal import recovery as portal_recovery
 from .portal import routes as portal_routes
 from .portal.resolver import register_portal_resolver
 from .routes import (
@@ -75,6 +77,7 @@ from .routes import (
     patient_intake,
     patient_messages,
     patient_payments,
+    patient_profile,
     patient_statements,
     patient_write_offs,
     patients,
@@ -256,8 +259,51 @@ app.include_router(practice_balances.router)
 app.include_router(billing_export.router)
 app.include_router(billing_report.router)
 app.include_router(scheduling.router)
-# Runs as the patient, not as a clinician — see the module docstring.
-app.include_router(patient_appointments.router)
+
+
+def portal_module_routers(modules: Iterable[str]) -> list[APIRouter]:
+    """The patient-facing routers to mount for a given set of portal modules.
+
+    A portal module whose name is not in ``PORTAL_MODULES`` has its
+    patient-facing router left out of the application entirely, so its paths
+    answer 404 to a patient holding a perfectly good session. That is the
+    point: the shell draws its navigation from the capability document, and
+    "the shell doesn't show it" is never the only thing standing in front of
+    a route.
+
+    ``app.portal.modules`` then reads the answer back off the ASSEMBLED route
+    table rather than off the setting, so the capability document and the
+    mounting cannot drift apart. This function is the one place the setting
+    turns into routers, which is what makes that round trip testable without
+    re-importing this module.
+
+    Clinician-facing routers are not here and are mounted unconditionally: a
+    practice's own staff reading their own chart data is not a portal module,
+    and turning the patient side of messaging off must not take the
+    practice's inbox with it.
+
+    ``chat`` is absent for a different reason. It has a gate of its own that
+    predates the portal (``enable_patient_chat``), and that flag is what
+    decides whether this build serves patient chat at all; naming it in
+    ``PORTAL_MODULES`` decides whether the portal offers it, which is the
+    narrower question the capability document answers.
+    """
+    wanted = frozenset(modules)
+    by_module: dict[str, APIRouter] = {
+        "intake": patient_intake.router,
+        "messaging": patient_messages.patient_messages_router,
+        "appointments": patient_appointments.router,
+    }
+    return [router for name, router in by_module.items() if name in wanted]
+
+
+_portal_module_routers = portal_module_routers(settings.portal_module_names)
+
+# Same principal as the clinician routes above, and not a clinician — see
+# each module's docstring. Mounted only when the module list names them.
+for _router in _portal_module_routers:
+    app.include_router(_router)
+
 # Same principal, and the one place a patient WRITES. Two sessions per request,
 # each single-principal — see the module docstring.
 app.include_router(patient_booking.router)
@@ -270,7 +316,9 @@ app.include_router(notes.internal_jobs_router)
 app.include_router(patient_documents.patient_documents_router)
 app.include_router(patient_documents.documents_router)
 app.include_router(patient_documents.internal_jobs_router)
-app.include_router(patient_messages.patient_messages_router)
+# The practice's side of the same threads, and the clinician's chart view of
+# them. Unconditional: staff reading their own inbox is not a portal module.
+# The patient's half went up with the portal modules above.
 app.include_router(patient_messages.patient_threads_router)
 app.include_router(patient_messages.message_threads_router)
 app.include_router(patient_payments.router)
@@ -292,12 +340,13 @@ app.include_router(diagnostic_assessments_router)
 app.include_router(patient_diagnostic_assessments_router)
 if settings.enable_patient_chat:
     app.include_router(chat.router)
+    # Patient chat's mount gate is this flag and not the portal module list
+    # — see ``portal_module_routers`` for why the two questions are
+    # different. Naming "chat" in PORTAL_MODULES is what puts it in the
+    # portal's navigation; this is what makes it exist.
     app.include_router(patient_chat.router)
-# Patient intake. Unconditional: with no patient resolver registered every
-# URL here answers 401, so a deployment that has no patient front door needs
-# no flag to keep it shut.
-app.include_router(patient_intake.router)
-# The clinician's read of what that form collected. Unconditional for a
+# The patient's own half of intake went up with the portal modules above.
+# The clinician's read of what that form collected is unconditional for a
 # different reason: it sits behind the ordinary clinician door, and an
 # already-collected clinical record should stay readable whatever else a
 # deployment has turned off.
@@ -326,7 +375,19 @@ if settings.public_booking_enabled:
 if settings.enable_patient_portal:
     app.include_router(portal_routes.router)
     app.include_router(portal_practice_routes.router)
+    # Sign-out, the capability document, and recovery. Same flag: all three
+    # are the portal's own account surface, and recovery in particular mints
+    # a credential for a caller who has none, which is exactly the decision
+    # the flag exists to make.
+    app.include_router(portal_account_routes.router)
+    app.include_router(portal_recovery.router)
     register_portal_resolver()
+# The patient's own demographics. Unconditional, like the intake form's
+# clinician read and for the same reason: it sits behind a patient principal
+# that only the portal can produce, so with no front door registered it
+# answers 401 by itself. It is not a module — a portal with no modules at
+# all still lets someone check the address on their chart.
+app.include_router(patient_profile.router)
 
 
 @app.get("/api/health")

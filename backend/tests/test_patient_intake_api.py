@@ -356,9 +356,23 @@ class TestTheFormWithholdsStaffColumns:
         for withheld in withheld_columns(PATIENT_COLUMN_DECISIONS):
             assert withheld not in identity, f"{withheld} reached a patient-facing response"
 
-    def test_the_identity_block_is_exactly_the_shown_columns(self, client: TestClient) -> None:
+    def test_the_identity_block_is_the_three_identity_columns(self, client: TestClient) -> None:
+        """Narrower than the shown set, on purpose.
+
+        The form asks one question — is this who the chart says you are —
+        so it shows a name and a date of birth and stops. The patient may
+        also SEE their contact details and address (the profile screen shows
+        them, and they are shown in ``PATIENT_COLUMN_DECISIONS``), but
+        putting them on this form would be asking a second question in the
+        middle of the first.
+
+        Asserted as a subset of the shown set rather than as an equality, so
+        the two can differ deliberately while a column that is withheld
+        everywhere still cannot appear here — which the case above checks.
+        """
         identity = client.get(FORM, headers=_auth(_TOKEN_A)).json()["identity"]
-        assert set(identity) == shown_columns(PATIENT_COLUMN_DECISIONS)
+        assert set(identity) == {"first_name", "last_name", "date_of_birth"}
+        assert set(identity) <= shown_columns(PATIENT_COLUMN_DECISIONS)
 
     def test_no_withheld_column_reaches_the_response_at_all(self, client: TestClient) -> None:
         """Not just the identity block — the whole body, keys and values.

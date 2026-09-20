@@ -22,16 +22,20 @@ import { PortalShell } from "../PortalShell"
 import { resetPortalSlotsForTests, registerPortalSlot, type PortalSlotProps } from "../slots"
 
 const resolvePortalPractice = vi.fn()
+const fetchCapabilities = vi.fn()
 const bootstrapSession = vi.fn()
 const redeemAndStore = vi.fn()
+const signOutAndForget = vi.fn()
 
 vi.mock("@/lib/portal-shell/api", () => ({
   resolvePortalPractice: (...args: unknown[]) => resolvePortalPractice(...args),
+  fetchCapabilities: (...args: unknown[]) => fetchCapabilities(...args),
 }))
 
 vi.mock("@/lib/portal-shell/session", () => ({
   bootstrapSession: (...args: unknown[]) => bootstrapSession(...args),
   redeemAndStore: (...args: unknown[]) => redeemAndStore(...args),
+  signOutAndForget: (...args: unknown[]) => signOutAndForget(...args),
 }))
 
 /** Open the page the way an invitation link does. */
@@ -54,6 +58,12 @@ beforeEach(() => {
   // The shell registers the engine's own modules when it is imported. A
   // spec about the shell's states drives its own slots instead.
   resetPortalSlotsForTests()
+  // The capability fetch fires on every active phase. These cases are about
+  // the state machine rather than about module gating, so it answers "could
+  // not fetch" — which keeps every registered slot rendered. Module gating
+  // has a spec of its own.
+  fetchCapabilities.mockResolvedValue({ ok: false })
+  signOutAndForget.mockResolvedValue({ revoked: true })
 })
 
 describe("PortalShell", () => {

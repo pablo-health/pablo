@@ -31,5 +31,15 @@ function MessagingSlot({ sessionToken }: PortalSlotProps) {
   return <PortalMessaging sessionToken={sessionToken} />
 }
 
-registerPortalSlot({ id: "intake", Component: IntakeSlot })
-registerPortalSlot({ id: "messaging", Component: MessagingSlot })
+// ``module`` names the capability the deployment has to have turned on for
+// this slot to render, and ``label`` is what the navigation calls it. Both
+// are presentation: the routes behind an unnamed module are not mounted, so
+// what this decides is whether a patient is shown a section their practice
+// does not have — not whether they could reach one.
+registerPortalSlot({ id: "intake", Component: IntakeSlot, module: "intake", label: "Forms" })
+registerPortalSlot({
+  id: "messaging",
+  Component: MessagingSlot,
+  module: "messaging",
+  label: "Messages",
+})

@@ -246,6 +246,41 @@ class AuditAction(StrEnum):
     PATIENT_PORTAL_INVITE_REVOKED = "patient_portal_invite_revoked"
     PATIENT_PORTAL_SESSION_REDEEMED = "patient_portal_session_redeemed"
 
+    # A patient signed themselves out. The mirror image of
+    # PATIENT_PORTAL_SESSION_REDEEMED and recorded for the same reason:
+    # when a credential stopped working is as much a part of the access
+    # record as when it started. The payload says how many sessions were
+    # retired and whether this was one device or all of them; the token
+    # handle is the most identifying thing in it.
+    PATIENT_SESSION_REVOKED = "patient_session_revoked"
+
+    # A patient asked for a fresh sign-in link without a clinician.
+    #
+    # Written ONLY when the request actually matched a patient with live
+    # portal access, which is the one place this enum's usual "name what
+    # happened" rule bends: a row for every attempt would make the audit
+    # log the enumeration oracle the route refuses to be, since a row
+    # scoped to a patient id says that patient exists. Requests that match
+    # nothing leave a hashed handle in the application log and nothing
+    # patient-scoped anywhere.
+    PATIENT_ACCESS_RECOVERY_REQUESTED = "patient_access_recovery_requested"
+
+    # A patient changed their own contact details or preferred name. The
+    # payload is the list of FIELD NAMES that changed and nothing they were
+    # set to — an address is PHI-adjacent and belongs on the chart row, not
+    # in an audit payload.
+    PATIENT_PROFILE_UPDATED = "patient_profile_updated"
+
+    # The subset of that change which moved a DELIVERY CHANNEL: the address
+    # an invite link is emailed to, or the number a step-up code is texted
+    # to. Its own action because it is its own security event — whoever
+    # controls the new address controls the next recovery — and the
+    # clinician should see it on the chart's activity without having to
+    # diff two profile writes. Old and new travel as salted hashes, so the
+    # row proves a change happened and lets one value be tested against it,
+    # without the log becoming a second copy of the patient's contact book.
+    PATIENT_PROFILE_CONTACT_CHANGED = "patient_profile_contact_changed"
+
     # A patient submitted their intake form. The actor is the patient
     # themselves, so this is a write by the subject rather than a
     # clinician disclosure; the payload carries the submission id and the

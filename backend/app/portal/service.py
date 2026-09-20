@@ -87,21 +87,26 @@ class PatientSession:
 class PortalAuthService:
     """Issue, redeem, refresh and revoke — the whole credential lifecycle.
 
-    ``sessions`` is optional so the pure unit tests (and any caller that
-    only mints tokens) can run without a revocation list. It is NOT optional
-    in production: with no store, a minted token is valid until it expires
-    and nothing can call it back, so every path that hands a real patient a
-    session passes one, and :meth:`refresh` / :meth:`revoke_patient` refuse
-    outright without it rather than quietly succeeding at nothing.
+    Both stores are optional, and for the same reason from opposite ends:
+    the lifecycle splits cleanly into the invitation half and the session
+    half, and a caller often has business with only one of them. Signing a
+    patient out touches no invitation; the pure unit tests that only mint
+    tokens touch no revocation list.
+
+    Optional is not lenient. A method that needs a store it was not given
+    raises rather than quietly succeeding at nothing — because "quietly
+    succeeding at nothing" here means a credential nobody can call back, or
+    a sign-out that signed nobody out. Every production path passes the
+    store its work actually needs.
     """
 
     def __init__(
         self,
         *,
         config: PortalAuthConfig,
-        store: PortalAuthStore,
         sms: SmsGateway,
         now: Callable[[], int],
+        store: PortalAuthStore | None = None,
         sessions: PortalSessionStore | None = None,
     ) -> None:
         if not config.signing_key:
@@ -112,6 +117,11 @@ class PortalAuthService:
         self._sms = sms
         self._now = now
         self._sessions = sessions
+
+    def _require_store(self) -> PortalAuthStore:
+        if self._store is None:
+            raise ValueError("portal challenge store is not configured")
+        return self._store
 
     def _require_sessions(self) -> PortalSessionStore:
         if self._sessions is None:
@@ -183,7 +193,7 @@ class PortalAuthService:
             lifetime=tokens.TokenLifetime(issued_at=issued_at, ttl_seconds=cfg.invite_ttl_seconds),
         )
         self._sms.send(to=phone, body=OTP_MESSAGE.format(otp=otp))
-        self._store.put_challenge(
+        self._require_store().put_challenge(
             InviteChallenge(
                 jti=jti,
                 patient_id=patient_id,
@@ -200,7 +210,7 @@ class PortalAuthService:
         cfg = self._config
         claims = tokens.verify_invite_token(signing_key=cfg.signing_key, token=token)
 
-        challenge = self._store.get_challenge(claims.jti)
+        challenge = self._require_store().get_challenge(claims.jti)
         if challenge is None:
             raise InvalidInviteError("no challenge for this invitation")
         if challenge.consumed:
@@ -212,12 +222,12 @@ class PortalAuthService:
             raise TooManyAttemptsError(claims.jti)
 
         if not verify_otp(otp, otp_hash=challenge.otp_hash, pepper=cfg.signing_key):
-            self._store.increment_attempts(claims.jti)
+            self._require_store().increment_attempts(claims.jti)
             raise InvalidStepUpError(claims.jti)
 
         # Success: burn the invitation before issuing the session so a race
         # cannot redeem twice.
-        self._store.mark_consumed(claims.jti)
+        self._require_store().mark_consumed(claims.jti)
         # This redemption starts the chain: every later refresh carries
         # ``now`` forward as ``chain_started_at``, and the ceiling is
         # measured from here.
@@ -276,3 +286,47 @@ class PortalAuthService:
         invitation in flight would undo itself a minute later.
         """
         return self._require_sessions().revoke_all_for_patient(patient_id, at=self._now())
+
+    def revoke_session(self, *, jti: str) -> None:
+        """Retire ONE session. Signing out on this device and no other.
+
+        Takes a ``jti`` the caller resolved from a live principal, not a
+        token: by the time a patient can ask to sign out, the front door has
+        already verified their session and named its row, so re-verifying
+        here would be checking the same signature twice.
+
+        Idempotent, and it does not care whether the row is live — signing
+        out of a session that expired a second ago is a no-op the patient
+        should never hear about.
+        """
+        self._require_sessions().revoke(jti, at=self._now())
+
+    def has_active_grant(self, *, patient_id: str) -> bool:
+        """Has this patient been given portal access and not had it taken away?
+
+        There is no column that records a grant, and adding one would be a
+        third piece of state to keep in step with the two that already
+        decide everything. So the question is answered from those two: the
+        practice's kill switch revokes every session row AND consumes every
+        outstanding invitation, in one transaction, so a patient it has been
+        used on has neither an unrevoked session nor an unspent invitation.
+        Anyone else who was ever invited has at least one of the two.
+
+        What the two arms cover between them:
+
+        * an invitation sent and not yet redeemed — unconsumed challenge;
+        * an invitation that expired unredeemed — unconsumed challenge, and
+          the most ordinary reason someone asks for a new link;
+        * a patient who signed in months ago and whose session lapsed —
+          unrevoked row, because lapsing is not withdrawal;
+        * a patient who signed themselves out of every device — still
+          unrevoked invitations or, if none, no grant, which is the safe
+          direction: a clinician re-invite restores them.
+
+        Never a reason to answer a caller differently. The recovery route
+        answers identically either way; this only decides whether a link is
+        sent.
+        """
+        if self._sessions is not None and self._sessions.has_unrevoked_session(patient_id):
+            return True
+        return self._require_store().has_unconsumed_challenge(patient_id)

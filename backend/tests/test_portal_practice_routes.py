@@ -193,15 +193,32 @@ def client(app: FastAPI, fake_db: _FakeSession) -> Iterator[TestClient]:
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_returns_slug_and_display_name_only(
+def test_resolve_returns_the_slug_the_name_and_the_captcha_key_only(
     client: TestClient, fake_db: _FakeSession
 ) -> None:
+    """Three fields, and none of them is a fact about this practice.
+
+    The slug and the display name are what the shell puts in its header.
+    ``captcha_site_key`` is the deployment's, not the practice's — it is
+    public by definition, identical for every slug, and it is here because
+    the recovery page has to know whether to render a widget before it can
+    ask anybody for an email address.
+
+    What must never appear is the practice's internal identity: the id and
+    the schema name are how a caller would go looking for the tenant.
+    """
     fake_db.slugs["example-therapy"] = _slug_row("example-therapy")
 
     response = client.get(RESOLVE_URL.format(slug="example-therapy"))
 
     assert response.status_code == 200
-    assert response.json() == {"slug": "example-therapy", "display_name": "Example Therapy"}
+    assert response.json() == {
+        "slug": "example-therapy",
+        "display_name": "Example Therapy",
+        # No CAPTCHA provider is configured in this test's settings, which
+        # is the default a bare deployment gets.
+        "captcha_site_key": None,
+    }
     raw = response.text
     assert PRACTICE_ID not in raw
     assert "schema_name" not in raw

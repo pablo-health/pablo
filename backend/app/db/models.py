@@ -99,6 +99,11 @@ class PatientRow(Base):
     last_name: Mapped[str] = mapped_column(String(255), nullable=False)
     first_name_lower: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     last_name_lower: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    # What this person is called, as distinct from the legal name above that a
+    # claim and a release of information need. The one name field the patient
+    # owns outright — the portal profile screen writes it, and NULL or blank
+    # means "use the first name" rather than "no name".
+    preferred_name: Mapped[str | None] = mapped_column(String(255))
     email: Mapped[str | None] = mapped_column(String(255))
     phone: Mapped[str | None] = mapped_column(String(50))
     status: Mapped[str] = mapped_column(String(20), default="active")
