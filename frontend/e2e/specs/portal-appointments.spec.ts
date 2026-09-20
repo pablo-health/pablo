@@ -72,27 +72,19 @@ async function diaryFor(api: ApiClient, patientId: string): Promise<ClinicianApp
 
 test.describe("portal appointments", () => {
   /**
-   * BLOCKED on a defect this spec found, in code that shipped before it.
+   * This one also proves something none of its assertions mention: that the
+   * practice knows which account owns it.
    *
    * `owner_session` in `backend/app/routes/patient_booking.py` resolves the
-   * clinician whose diary is in question from `platform.practices.
-   * owner_user_id`. Nothing in the engine ever writes that column: the
-   * default practice is registered at boot before any user exists
-   * (`db/provisioning.py`), and a clinician is attached to a practice
-   * afterwards through `EmailTenantMappingRow` alone
-   * (`auth/service.py`). So on any practice this code provisions the column
-   * is NULL, every self-booking route answers `NO_CLINICIAN`, and the whole
-   * patient self-booking surface is unreachable. The integration suite
-   * passes because it seeds the column by hand.
-   *
-   * The body below is correct and runs green the moment a practice knows its
-   * owner. It is NOT enabled here because the fix is a decision about how a
-   * practice learns that — and `auth/service.py` explicitly rejects "if
-   * there is only one clinician, use it" for the auth path, so guessing at
-   * the same shortcut inside a principal resolver is not a change to make in
-   * passing.
+   * clinician whose diary is in question from
+   * `platform.practices.owner_user_id`, so every route walked below refuses
+   * with `NO_CLINICIAN` until that column is filled. Nothing filled it when
+   * this spec was first written, and the integration suite did not notice
+   * because its fixture set the column by hand. The clinician here signs in
+   * through the product's own login, into a practice registered before they
+   * existed — which is precisely the path that has to record it.
    */
-  test.fixme("a patient books a time, moves it, and cancels it", async ({ api, page }) => {
+  test("a patient books a time, moves it, and cancels it", async ({ api, page }) => {
     // --- the practice opens its diary ---------------------------------------
     await giveWorkingHoursAllWeek(api)
     const type = await giveSelfBookableType(api, `Therapy session ${Date.now().toString(36)}`)
