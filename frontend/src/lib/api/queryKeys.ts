@@ -209,6 +209,17 @@ const baseQueryKeys = {
       [...baseQueryKeys.patientDocuments.all, "detail", documentId] as const,
   },
 
+  // Intake submissions, as the chart reads them
+  patientIntakeSubmissions: {
+    all: ["patient-intake-submissions"] as const,
+    byPatient: (patientId: string) =>
+      [
+        ...baseQueryKeys.patientIntakeSubmissions.all,
+        "byPatient",
+        patientId,
+      ] as const,
+  },
+
   // Note-type catalog query keys
   noteTypes: {
     all: ["note-types"] as const,

@@ -234,6 +234,15 @@ class AuditAction(StrEnum):
     # patient id, never any answer.
     PATIENT_INTAKE_SUBMITTED = "patient_intake_submitted"
 
+    # A clinician read a patient's intake submissions. The form carries
+    # free text the patient wrote — what brings them in, and anything they
+    # said was wrong about their name or date of birth — so opening it is a
+    # disclosure of patient-authored content, audited like a chat read
+    # rather than like a score. Patient-scoped: ``resource_id`` is the
+    # patient id and the payload carries how many submissions came back,
+    # never any of their words.
+    PATIENT_INTAKE_SUBMISSION_VIEWED = "patient_intake_submission_viewed"
+
     # Companion audio signed-URL upload (additive to the existing
     # multipart /upload-audio surface — companion app migrates at its
     # own pace). INIT fires when channel signed URLs are minted;

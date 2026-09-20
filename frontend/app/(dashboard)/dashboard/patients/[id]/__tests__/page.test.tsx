@@ -8,6 +8,8 @@
  * `params` promise, which needs a full Next.js environment to resolve.
  */
 
+import { readFileSync } from "fs"
+import { join } from "path"
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { screen } from "@testing-library/react"
 import * as usePatients from "@/hooks/usePatients"
@@ -135,5 +137,32 @@ describe("PatientChartPage Integration", () => {
     expect(screen.queryByText("alice@example.com")).not.toBeInTheDocument()
     expect(screen.getByText("Bob Brown")).toBeInTheDocument()
     expect(screen.getByText("bob@example.com")).toBeInTheDocument()
+  })
+})
+
+describe("PatientChartPage composition", () => {
+  /**
+   * Asserted against the page source, not a render.
+   *
+   * The wrapper above stands in for the page because the real one resolves
+   * an async `params` promise that needs a full Next.js environment. A
+   * wrapper cannot prove what the page composes, and the extension slot is
+   * a component that renders nothing, so there is no DOM order to compare
+   * either. Reading the file is what is left, and it is what the claim is
+   * about: the order the page puts them in.
+   */
+  const source = readFileSync(join(__dirname, "..", "page.tsx"), "utf8")
+
+  it("renders the intake card above the extension slot", () => {
+    const intakeAt = source.indexOf("<IntakeCard")
+    const extrasAt = source.indexOf("<PatientChartExtras")
+
+    expect(intakeAt).toBeGreaterThan(-1)
+    expect(extrasAt).toBeGreaterThan(-1)
+    expect(intakeAt).toBeLessThan(extrasAt)
+  })
+
+  it("passes the patient's id to the intake card", () => {
+    expect(source).toContain("<IntakeCard patientId={patient.id} />")
   })
 })
