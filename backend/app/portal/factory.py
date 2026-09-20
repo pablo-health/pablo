@@ -38,17 +38,20 @@ if TYPE_CHECKING:
 
     from .store import PortalAuthStore, PortalSessionStore
 
-#: Where the magic link lands. A reserved segment under ``/portal``: the
-#: shell's practice pages sit beside it, so no practice may be addressed by
-#: this name.
+#: Where a magic link lands: the practice's own portal page, which is the page
+#: the patient is going to end up on anyway. The shell reads the practice from
+#: this path segment, so the link needs no separate landing page and nothing
+#: downstream has to carry a practice around to find out where to send
+#: somebody.
 #:
-#: The token rides in the URL **fragment**, never the query string. A
-#: fragment is not sent to a server, so the credential stays out of access
-#: logs, out of ``Referer`` headers on anything the page later loads, and
-#: out of every proxy in between; the page reads it off ``location.hash``
-#: and posts it to the redeem endpoint. A ``?token=`` link would be logged
-#: by every hop that handled it.
-PORTAL_REDEEM_PATH = "/portal/redeem"
+#: The token rides in the URL **fragment**, never the query string. A fragment
+#: is not sent to a server, so the credential stays out of access logs, out of
+#: ``Referer`` headers on anything the page later loads, and out of every proxy
+#: in between; the page reads it off ``location.hash`` and posts it to the
+#: redeem endpoint. An ``?invite=`` link would be logged by every hop that
+#: handled it.
+PORTAL_PRACTICE_PATH = "/portal/{slug}"
+INVITE_FRAGMENT_KEY = "invite"
 
 _invite_delivery_factory: Callable[[], PortalInviteDelivery] | None = None
 _sms_gateway_factory: Callable[[], SmsGateway] | None = None
@@ -125,14 +128,21 @@ def sms_gateway_from_settings() -> SmsGateway:
     return CapturingSmsGateway(base_url=settings.portal_sms_capture_url)
 
 
-def build_invite_link(token: str) -> str:
-    """The magic link a patient clicks, or raise if there is nowhere to point."""
+def build_invite_link(*, slug: str, token: str) -> str:
+    """The magic link a patient clicks, or raise if there is nowhere to point.
+
+    ``slug`` is the practice's own portal address, so the link opens the page
+    the patient belongs on and the shell knows which practice it is serving
+    before it asks anything. See :data:`PORTAL_PRACTICE_PATH` for why the
+    token is in the fragment rather than the query string.
+    """
     base = get_settings().portal_web_base_url.rstrip("/")
     if not base:
         raise DeliveryNotConfiguredError(
             "No portal web origin is configured; there is no link to mint."
         )
-    return f"{base}{PORTAL_REDEEM_PATH}#token={quote(token, safe='')}"
+    path = PORTAL_PRACTICE_PATH.format(slug=quote(slug, safe=""))
+    return f"{base}{path}#{INVITE_FRAGMENT_KEY}={quote(token, safe='')}"
 
 
 def build_portal_auth_service(

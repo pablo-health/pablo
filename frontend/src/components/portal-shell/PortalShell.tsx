@@ -50,33 +50,24 @@ import "./modules"
 
 type Phase = "resolving" | "unknown" | "no-session" | "otp" | "active" | "expired"
 
-/**
- * The segment an invitation link used to land on, kept working because
- * links already in inboxes point at it. It names no practice — the redeem
- * response does — so the shell skips straight to the code form and learns
- * whose portal this is from what comes back.
- */
-const SLUGLESS_LANDING = "redeem"
-
 /** The invitation in the URL fragment, if this page was opened with one. */
 function invitationInUrl(): string | null {
   if (typeof window === "undefined") return null
   const fragment = window.location.hash
   if (!fragment.startsWith("#")) return null
-  return new URLSearchParams(fragment.slice(1)).get("token")
+  return new URLSearchParams(fragment.slice(1)).get("invite")
 }
 
-/** Put the practice's own address in the bar, with no credential on it. */
-function forgetInvitationInUrl(practiceSlug: string): void {
+/** Leave the practice's address in the bar, with no credential on it. */
+function forgetInvitationInUrl(): void {
   if (typeof window === "undefined") return
-  window.history.replaceState(null, "", `/portal/${encodeURIComponent(practiceSlug)}`)
+  window.history.replaceState(null, "", window.location.pathname + window.location.search)
 }
 
 export function PortalShell({ slug }: { slug: string }) {
   const [phase, setPhase] = useState<Phase>("resolving")
   const [displayName, setDisplayName] = useState<string | null>(null)
   const [sessionToken, setSessionToken] = useState<string | null>(null)
-  const [practiceSlug, setPracticeSlug] = useState(slug)
   const [invitation, setInvitation] = useState<string | null>(null)
   const [otp, setOtp] = useState("")
   const [otpError, setOtpError] = useState<string | null>(null)
@@ -92,13 +83,6 @@ export function PortalShell({ slug }: { slug: string }) {
     async function load() {
       const token = invitationInUrl()
       setInvitation(token)
-
-      // Nothing to resolve: this path names no practice. With an invitation
-      // the code form is the whole page; without one there is nothing here.
-      if (slug === SLUGLESS_LANDING) {
-        setPhase(token ? "otp" : "unknown")
-        return
-      }
 
       const resolved = await resolvePortalPractice(slug)
       if (cancelled) return
@@ -157,13 +141,11 @@ export function PortalShell({ slug }: { slug: string }) {
     if (!invitation || !otp.trim() || submitting) return
     setSubmitting(true)
     setOtpError(null)
-    const result = await redeemAndStore(invitation, otp.trim())
+    const result = await redeemAndStore(slug, invitation, otp.trim())
     setSubmitting(false)
     if (result.ok) {
-      setSessionToken(result.session.sessionToken)
-      setPracticeSlug(result.session.practiceSlug)
-      setDisplayName(result.session.practiceDisplayName)
-      forgetInvitationInUrl(result.session.practiceSlug)
+      setSessionToken(result.sessionToken)
+      forgetInvitationInUrl()
       setPhase("active")
     } else {
       setOtpError(
@@ -175,7 +157,7 @@ export function PortalShell({ slug }: { slug: string }) {
   const handleSignOut = useCallback(async () => {
     if (sessionToken === null || signingOut) return
     setSigningOut(true)
-    await signOutAndForget(practiceSlug, sessionToken)
+    await signOutAndForget(slug, sessionToken)
     setSigningOut(false)
     // Whatever the server said, this browser is no longer holding a
     // session — so the shell shows the signed-out state rather than a
@@ -183,7 +165,7 @@ export function PortalShell({ slug }: { slug: string }) {
     setSessionToken(null)
     setModules(null)
     setPhase("no-session")
-  }, [practiceSlug, sessionToken, signingOut])
+  }, [slug, sessionToken, signingOut])
 
   const signedIn = phase === "active" && sessionToken !== null
   const slots = signedIn ? visiblePortalSlots(modules) : []
@@ -200,8 +182,8 @@ export function PortalShell({ slug }: { slug: string }) {
         <div className="w-full max-w-md">
           {phase === "resolving" && <ResolvingCard />}
           {phase === "unknown" && <UnknownPracticeCard />}
-          {phase === "no-session" && <NoSessionCard slug={practiceSlug} />}
-          {phase === "expired" && <NoSessionCard slug={practiceSlug} revoked />}
+          {phase === "no-session" && <NoSessionCard slug={slug} />}
+          {phase === "expired" && <NoSessionCard slug={slug} revoked />}
           {phase === "otp" && (
             <OtpCard
               otp={otp}
@@ -212,7 +194,7 @@ export function PortalShell({ slug }: { slug: string }) {
             />
           )}
           {signedIn && sessionToken !== null && (
-            <ActiveShellBody slug={practiceSlug} sessionToken={sessionToken} slots={slots} />
+            <ActiveShellBody slug={slug} sessionToken={sessionToken} slots={slots} />
           )}
         </div>
       </main>

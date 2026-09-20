@@ -263,7 +263,13 @@ def _attempt_recovery(  # noqa: PLR0913 — one parameter per injected collabora
             # the practice's record of this person rather than a string a
             # stranger supplied.
             delivery.send_invite(
-                to_email=target.email or email, link=build_invite_link(issued.token)
+                to_email=target.email or email,
+                # The same link shape the clinician's invite produces, built
+                # by the same function: the practice's own address in the
+                # path, the credential in the fragment. The slug is the one
+                # out of this request's own URL, which is how the caller
+                # reached this practice in the first place.
+                link=build_invite_link(slug=slug, token=issued.token),
             )
         except DeliveryNotConfiguredError:
             # A deployment with no channels wired cannot recover anyone. The

@@ -554,6 +554,148 @@ class IntakeItemDefinitionRow(Base):
     )
 
 
+class PatientIntakeAssignmentRow(Base):
+    """One patient being asked to fill in one version of one form.
+
+    This is where the practice's paperwork meets a person. The three tables
+    above are the same for everybody; this row says who was asked, which
+    frozen version they were asked, and how far they have got.
+
+    ``version_id`` points at a version rather than a template because the
+    questions have to stay reconstructible: a published version never
+    changes, so the answers underneath keep meaning what they meant. The
+    service refuses to assign an unpublished one.
+
+    ``status`` moves forwards only. ``assigned`` until the patient touches
+    it, ``in_progress`` from their first saved answer, then either
+    ``submitted`` (the patient is finished) or ``withdrawn`` (the practice
+    withdrew the request). ``needs_correction`` and ``accepted`` belong to
+    the review cycle and nothing writes them yet; the CHECK admits them now
+    so the states that follow cost no migration. Each state has its own
+    timestamp column rather than one transition log, because the questions
+    asked of this table are "when was it sent" and "when did it arrive".
+
+    **The partial unique index is the rule that a request is not duplicated.**
+    One live assignment per patient per version: a clinician who clicks send
+    twice, or reissues portal access after a link expired, must not leave the
+    patient with two of the same form. ``accepted`` and ``withdrawn`` are
+    outside the index, so a form genuinely asked for a second time later is
+    still possible.
+
+    The unique constraint on ``(id, patient_id)`` is not redundant with the
+    primary key: it is the target of the composite foreign key on
+    :class:`PatientIntakeResponseRow`, which keeps that table's denormalized
+    ``patient_id`` from ever disagreeing with the assignment's owner. Same
+    pattern, and the same reason, as :class:`PatientMessageThreadRow`.
+    """
+
+    __tablename__ = "patient_intake_assignments"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
+    version_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey(
+            "intake_packet_versions.id",
+            name="fk_patient_intake_assignments_version",
+        ),
+        nullable=False,
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    assigned_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    withdrawn_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('assigned','in_progress','submitted',"
+            "'needs_correction','accepted','withdrawn')",
+            name="ck_patient_intake_assignments_status",
+        ),
+        UniqueConstraint("id", "patient_id", name="uq_patient_intake_assignments_id_patient"),
+        Index(
+            "uq_patient_intake_assignments_active",
+            "patient_id",
+            "version_id",
+            unique=True,
+            postgresql_where=text("status NOT IN ('accepted','withdrawn')"),
+        ),
+    )
+
+
+class PatientIntakeResponseRow(Base):
+    """One answer to one question on one assignment.
+
+    A row per item rather than one blob per assignment, because the patient
+    fills a form in over several sittings and each save has to land on its
+    own. ``value`` is JSONB for the same reason the item's ``config`` is:
+    every kind of question is answered with a different shape, and none of
+    them is ever queried by its contents.
+
+    ``draft`` is the whole lifecycle. A patient's saved answers are drafts
+    until they submit, and a draft is the only row in this model a patient
+    may change — which is what makes "what was submitted" a stable record
+    once it stops being one. ``superseded_by`` points at the row that
+    replaced this one, so a corrected answer leaves the original readable
+    rather than overwriting it. Nothing writes either transition yet; both
+    ship with the columns they belong to rather than costing a migration.
+
+    The partial unique index is what makes saving an answer an upsert: at
+    most one live draft per question per assignment, so a patient who
+    answers the same question twice updates rather than accumulates.
+
+    ``patient_id`` is denormalized from the assignment, exactly as
+    ``patient_messages`` denormalizes it from its thread and for the same
+    reason: every per-patient policy keys on a ``patient_id`` column, so
+    carrying it means this table needs no bespoke policy branch. The
+    composite foreign key to ``(id, patient_id)`` is what keeps the copy
+    honest — a response whose ``patient_id`` disagrees with its
+    assignment's is rejected by the database, not by a convention.
+    """
+
+    __tablename__ = "patient_intake_responses"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    assignment_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
+    item_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey(
+            "intake_item_definitions.id",
+            name="fk_patient_intake_responses_item",
+        ),
+        nullable=False,
+    )
+    value: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    draft: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    superseded_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["assignment_id", "patient_id"],
+            [
+                "patient_intake_assignments.id",
+                "patient_intake_assignments.patient_id",
+            ],
+            ondelete="CASCADE",
+            name="fk_patient_intake_responses_assignment",
+        ),
+        Index(
+            "uq_patient_intake_responses_live_draft",
+            "assignment_id",
+            "item_id",
+            unique=True,
+            postgresql_where=text("superseded_by IS NULL AND draft"),
+        ),
+    )
+
+
 class PatientMessageThreadRow(Base):
     """One secure-message conversation between a patient and their practice.
 

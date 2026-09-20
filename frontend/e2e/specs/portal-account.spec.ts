@@ -80,7 +80,7 @@ async function signInAPatient(
 
   await api.post(`/api/patients/${patient.id}/portal-invite`)
   const link = firstLink(await mail.waitFor(email))
-  const token = new URLSearchParams(new URL(link).hash.slice(1)).get("token")
+  const token = new URLSearchParams(new URL(link).hash.slice(1)).get("invite")
   const otp = stepUpCode(await sms.waitFor(phone))
 
   const redeemed = await request.post(`${BACKEND_URL}${REDEEM_PATH}`, {
@@ -132,16 +132,22 @@ test("recovery sends a link that really signs the patient in @portal", async ({
   expect(asked.status(), "recovery always accepts").toBe(202)
 
   // Both factors arrive on the patient's own channels, not in the response.
-  expect(await asked.text()).not.toContain("token")
+  expect(await asked.text()).not.toContain("invite")
   const link = firstLink(await mail.waitFor(patient.email))
   const otp = stepUpCode(await sms.waitFor(patient.phone))
+
+  // The recovery link has the same shape the clinician's invite produces —
+  // it names the practice in the path and carries the credential in the
+  // fragment, which is never sent to a server.
+  expect(link).toContain(`/portal/${patient.slug}`)
+  expect(link).toContain("#invite=")
 
   await page.goto(link)
   await page.getByTestId("portal-shell-otp-input").fill(otp)
   await page.getByTestId("portal-shell-otp-submit").click()
 
   await expect(page.getByTestId("portal-shell-active")).toBeVisible()
-  expect(page.url(), "the address bar holds no credential").not.toContain("token")
+  expect(page.url(), "the address bar holds no credential").not.toContain("invite")
 })
 
 test("recovery answers the same for a stranger as for a patient @portal", async ({
@@ -202,7 +208,7 @@ test("the profile carries the patient's own details and no staff notes @portal",
   expect(slug).toBeTruthy()
   await api.post(`/api/patients/${patient.id}/portal-invite`)
   const link = firstLink(await mail.waitFor(email))
-  const token = new URLSearchParams(new URL(link).hash.slice(1)).get("token")
+  const token = new URLSearchParams(new URL(link).hash.slice(1)).get("invite")
   const redeemed = await request.post(`${BACKEND_URL}${REDEEM_PATH}`, {
     data: { token, otp: stepUpCode(await sms.waitFor(phone)) },
   })

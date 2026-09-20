@@ -40,7 +40,7 @@ from ..models.audit import AuditAction, ResourceType
 from ..repositories.postgres.audit import PostgresAuditRepository
 from ..services.audit_service import AuditService
 from .db_store import DbPortalAuthStore, DbPortalSessionStore
-from .directory import practice_schema_for_slug
+from .practice_routes import practice_schema_for_slug
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator

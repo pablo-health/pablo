@@ -48,20 +48,11 @@ export async function resolvePortalPractice(slug: string): Promise<ResolvePracti
   }
 }
 
-/**
- * Mirrors the backend's `PatientSessionResponse`.
- *
- * The practice comes back with the credential because the page that redeems
- * an invitation may not know it yet: an invitation link carries its token in
- * the URL fragment, and the response is what names the practice the session
- * belongs to.
- */
+/** Mirrors the backend's `PatientSessionResponse`. */
 export interface PortalSessionPayload {
   session_token: string
   token_type: string
   expires_at: number
-  practice_slug: string
-  practice_display_name: string
 }
 
 export type PortalAuthResult = { ok: true; data: PortalSessionPayload } | { ok: false }
@@ -94,11 +85,11 @@ export function refreshSession(sessionToken: string): Promise<PortalAuthResult> 
 }
 
 /**
- * A POST or GET made AS the patient, with the session token as the bearer.
+ * A request made AS the patient, with the session token as the bearer.
  *
- * The three calls below are the first on this surface that authenticate —
- * resolve, redeem and refresh all run before or across a session — so this
- * is where the `Authorization` header lives.
+ * The calls below are the first on this surface that authenticate — resolve,
+ * redeem and refresh all run before or across a session — so this is where
+ * the `Authorization` header lives.
  */
 async function callAsPatient(
   path: string,
@@ -109,7 +100,6 @@ async function callAsPatient(
     return await fetch(buildApiUrl(path), {
       ...init,
       headers: {
-        ...(init.body ? { "Content-Type": "application/json" } : {}),
         Accept: "application/json",
         Authorization: `Bearer ${sessionToken}`,
       },

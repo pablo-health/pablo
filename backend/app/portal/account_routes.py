@@ -53,9 +53,9 @@ from ..models.audit import AuditAction, ResourceType
 from ..services.audit_service import AuditService, get_audit_service
 from ..settings import get_settings
 from .db_store import DbPortalSessionStore
-from .directory import practice_display_name_for_schema
 from .factory import build_portal_auth_service
 from .modules import mounted_modules_on, portal_capabilities
+from .practice_routes import practice_address_for_schema
 
 logger = logging.getLogger(__name__)
 
@@ -233,9 +233,16 @@ def get_capabilities(
     """
     configured = get_settings().portal_module_names
     mounted = mounted_modules_on(request.app)
+    # The practice's own name, from the same platform directory the
+    # unauthenticated slug route answers from — so the header before sign-in
+    # and the header after it cannot disagree. ``None`` when the practice
+    # has no address yet, which is a blank header rather than an error: the
+    # load-bearing half of this document is the module map, and it came from
+    # the route table.
+    address = practice_address_for_schema(patient.practice_schema)
     return PortalCapabilitiesResponse(
         practice=PortalPracticeSummary(
-            display_name=practice_display_name_for_schema(patient.practice_schema)
+            display_name=None if address is None else address.display_name
         ),
         modules=portal_capabilities(configured=configured, mounted=mounted),
         auth_strength=patient.auth_strength,

@@ -182,6 +182,12 @@ def practice(engine: Engine) -> Iterator[str]:
 
     with engine.begin() as conn:
         conn.execute(text(f'DROP SCHEMA IF EXISTS "{_SCHEMA}" CASCADE'))
+        # The portal address is platform-scoped, so dropping the practice
+        # schema does not take it with it.
+        conn.execute(
+            text("DELETE FROM platform.companion_practice_slugs WHERE practice_id = :i"),
+            {"i": _PRACTICE_ID},
+        )
         conn.execute(text("DELETE FROM platform.practices WHERE id = :i"), {"i": _PRACTICE_ID})
         conn.execute(
             text("DELETE FROM platform.users WHERE id = CAST(:i AS uuid)"), {"i": _CLINICIAN}
@@ -243,11 +249,16 @@ def _issue_invitation(practice_schema: str, patient_id: str) -> None:
         invite_delivery_from_settings,
         sms_gateway_from_settings,
     )
+    from app.portal.practice_routes import ensure_practice_slug  # noqa: PLC0415
 
     delivery = invite_delivery_from_settings()
     sms = sms_gateway_from_settings()
     delivery.check_ready()
     sms.check_ready()
+    # Minted for real against the platform table, the same call the invite
+    # route makes — so the link this test follows is addressed the way a real
+    # one is, rather than by a constant that could drift from the minter.
+    slug = ensure_practice_slug(_PRACTICE_ID).slug
 
     session = create_standalone_session(practice_schema)
     try:
@@ -259,7 +270,10 @@ def _issue_invitation(practice_schema: str, patient_id: str) -> None:
         issued = service.issue_invite(
             patient_id=patient_id, tenant=practice_schema, phone=_PATIENT_PHONE
         )
-        delivery.send_invite(to_email=_PATIENT_EMAIL, link=build_invite_link(issued.token))
+        delivery.send_invite(
+            to_email=_PATIENT_EMAIL,
+            link=build_invite_link(slug=slug, token=issued.token),
+        )
         session.commit()
     finally:
         session.close()
@@ -273,7 +287,7 @@ def _token_from_the_email() -> str:
     body = message.get_content()
     assert _PORTAL_ORIGIN in body
     link = next(word for word in body.split() if word.startswith(_PORTAL_ORIGIN))
-    return link.split("#token=", 1)[1]
+    return link.split("#invite=", 1)[1]
 
 
 def _code_from_the_log(caplog: pytest.LogCaptureFixture) -> str:

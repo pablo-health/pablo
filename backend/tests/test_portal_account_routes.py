@@ -40,6 +40,7 @@ from app.auth.patient_context import (
 from app.db import get_db_session
 from app.models.audit import AuditAction
 from app.portal.account_routes import router
+from app.portal.practice_routes import PracticeAddress
 from app.portal.store import InMemoryPortalSessionStore, PortalSessionRecord
 from app.services.audit_service import get_audit_service
 from app.settings import get_settings
@@ -182,7 +183,9 @@ def app(
     # document's load-bearing half is the module map; this is decoration,
     # and it is pinned to a constant so a change to it fails visibly.
     monkeypatch.setattr(
-        account_routes, "practice_display_name_for_schema", lambda _schema: PRACTICE_NAME
+        account_routes,
+        "practice_address_for_schema",
+        lambda _schema: PracticeAddress(slug="example", display_name=PRACTICE_NAME, enabled=True),
     )
     return application
 

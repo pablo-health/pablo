@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -173,14 +174,105 @@ def get_or_create_portal_practice_slug(
             detail="No practice is associated with this account yet.",
         )
     practice_id, _schema_name = practice
+    return PortalPracticeSlugResponse(slug=ensure_practice_slug(practice_id).slug)
 
+
+@dataclass(frozen=True)
+class PracticeAddress:
+    """A practice's portal address, as the rest of the package needs it."""
+
+    slug: str
+    display_name: str
+    #: False when the practice has turned its portal off. The address stays
+    #: claimed either way; what changes is whether anything should be sent to
+    #: it. The public resolve route answers 404 and the invite route refuses.
+    enabled: bool
+
+
+def practice_address_for_schema(schema: str) -> PracticeAddress | None:
+    """The portal address of whichever practice lives in *schema*.
+
+    For the patient-facing routes, which know a schema (from a
+    signature-verified token) and not a practice id. Returns ``None`` when
+    the practice has no address yet — a caller on this path is mid-sign-in
+    and must not be failed over a display name.
+    """
+    session = create_standalone_session()
+    try:
+        practice = session.execute(
+            select(PracticeRow.id).where(PracticeRow.schema_name == schema)
+        ).scalar_one_or_none()
+        if practice is None:
+            return None
+        row = session.execute(
+            select(PortalPracticeSlugRow).where(PortalPracticeSlugRow.practice_id == practice)
+        ).scalar_one_or_none()
+        if row is None:
+            return None
+        return PracticeAddress(slug=row.slug, display_name=row.display_name, enabled=row.enabled)
+    finally:
+        session.close()
+
+
+def practice_schema_for_slug(slug: str) -> str | None:
+    """The schema a practice's patients live in, from its public address.
+
+    The mirror of :func:`practice_address_for_schema`, for the one route
+    that arrives with a slug out of a URL and no principal at all: account
+    recovery has to resolve the practice before any tenant session can be
+    opened. Exactly the inversion
+    :class:`~app.db.platform_models.PortalPracticeSlugRow` exists for.
+
+    ``None`` when the slug names nothing, names a practice whose portal is
+    off, or names one that is inactive or deleted — one answer for all of
+    them, and the caller must not tell them apart either. The filters are
+    the ones that decide whether a tenant session is opened at all: a
+    deleted practice's schema may not exist, and an inactive practice is one
+    the deployment has already stopped serving.
+    """
+    session = create_standalone_session()
+    try:
+        return session.execute(
+            select(PracticeRow.schema_name)
+            .join(PortalPracticeSlugRow, PortalPracticeSlugRow.practice_id == PracticeRow.id)
+            .where(
+                PortalPracticeSlugRow.slug == slug,
+                PortalPracticeSlugRow.enabled.is_(True),
+                PracticeRow.is_active.is_(True),
+                PracticeRow.deleted_at.is_(None),
+            )
+        ).scalar_one_or_none()
+    finally:
+        session.close()
+
+
+def ensure_practice_slug(practice_id: str) -> PracticeAddress:
+    """The practice's portal address, minting one on first ask.
+
+    Shared with the invite route, which needs the address to build a magic
+    link and should not make a clinician go and create one first. Idempotent:
+    ``practice_id`` is UNIQUE, so a practice that already has an address gets
+    it back rather than a second one.
+
+    Returns the address including whether it is enabled, and leaves that
+    judgement to the caller: asking for your own address is reasonable with
+    the portal switched off, and sending somebody an invitation to it is not.
+
+    Raises ``HTTPException`` when there is no such practice, or when every
+    candidate in the budget is taken — which is practically unreachable, but
+    failing loudly beats handing back an address that is not this practice's.
+    """
     session = create_standalone_session()
     try:
         existing = session.execute(
             select(PortalPracticeSlugRow).where(PortalPracticeSlugRow.practice_id == practice_id)
         ).scalar_one_or_none()
         if existing is not None:
-            return PortalPracticeSlugResponse(slug=existing.slug)
+            return PracticeAddress(
+                slug=existing.slug,
+                display_name=existing.display_name,
+                enabled=existing.enabled,
+            )
 
         practice_row = session.get(PracticeRow, practice_id)
         if practice_row is None:
@@ -208,7 +300,7 @@ def get_or_create_portal_practice_slug(
                     raise
                 continue
             session.commit()
-            return PortalPracticeSlugResponse(slug=candidate)
+            return PracticeAddress(slug=candidate, display_name=practice_row.name, enabled=True)
 
         # Every candidate in the budget collided — practically unreachable (it
         # means every numeric suffix of the same base is already taken), but

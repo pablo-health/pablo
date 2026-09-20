@@ -45,11 +45,16 @@ from typing import TYPE_CHECKING, Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
-from ..api_errors import NotFoundError, ServiceUnavailableError, UnprocessableEntityError
+from ..api_errors import (
+    ConflictError,
+    NotFoundError,
+    ServiceUnavailableError,
+    UnprocessableEntityError,
+)
 from ..auth.patient_context import patient_not_authenticated_detail
 from ..auth.route_access import subscription_exempt
 from ..auth.route_security import truly_public
-from ..auth.service import require_active_subscription
+from ..auth.service import _resolve_practice_from_email, require_active_subscription
 from ..db import DEFAULT_PRACTICE_SCHEMA
 from ..models import User
 from ..models.audit import AuditAction, ResourceType
@@ -77,6 +82,7 @@ from .factory import (
     get_invite_delivery,
     get_sms_gateway,
 )
+from .practice_routes import ensure_practice_slug, practice_address_for_schema
 from .tenant_gateway import (
     PortalStores,
     PortalTenantGateway,
@@ -89,6 +95,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from ..models.patient import Patient
+    from .service import PatientSession
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +156,52 @@ def _is_tenant_schema(schema: str) -> bool:
 
 def _signing_key() -> str:
     return get_settings().portal_token_signing_key.get_secret_value()
+
+
+def _practice_slug_for(user: User) -> str:
+    """The caller's practice's portal address, minted if it has none yet.
+
+    Resolved from the caller rather than taken as a parameter: a clinician
+    cannot invite a patient into somebody else's practice, and there is no
+    request field here that could be made to say otherwise.
+
+    Refuses when the practice has turned its portal off. An invitation to a
+    page that answers 404 is worse than no invitation — the patient is the one
+    who finds out, and the clinician believes it was sent.
+    """
+    practice = _resolve_practice_from_email(user.email)
+    if practice is None:
+        raise ConflictError("No practice is associated with this account yet.")
+    practice_id, _schema_name = practice
+    address = ensure_practice_slug(practice_id)
+    if not address.enabled:
+        raise ConflictError(
+            "This practice's patient portal is switched off, so there is "
+            "nowhere for an invitation to lead.",
+            code="PORTAL_DISABLED_FOR_PRACTICE",
+        )
+    return address.slug
+
+
+def _session_response(minted: PatientSession) -> PatientSessionResponse:
+    """A minted session, plus the practice page it belongs to.
+
+    The lookup is deliberately outside the tenant transaction and swallows its
+    own failures: the credential is already minted and committed by the time
+    this runs, and a platform hiccup while reading a display name must not
+    turn a completed sign-in into the uniform 401.
+    """
+    try:
+        address = practice_address_for_schema(minted.tenant)
+    except Exception:
+        logger.warning("Portal address lookup failed; answering without it")
+        address = None
+    return PatientSessionResponse(
+        session_token=minted.session_token,
+        expires_at=minted.expires_at,
+        practice_slug=None if address is None else address.slug,
+        practice_display_name=None if address is None else address.display_name,
+    )
 
 
 def _patient_or_404(patients: PatientRepository, patient_id: str, user_id: str) -> Patient:
@@ -220,6 +273,10 @@ def issue_portal_invite(  # noqa: PLR0913 — FastAPI Depends-injected params ar
     503 when either channel is not configured, checked BEFORE anything is
     minted or sent, so an unconfigured deployment never leaves a patient
     holding a code for a link that will not arrive.
+
+    The link opens the practice's own portal page, so the practice's address
+    is resolved here — minted on the first invitation rather than made into a
+    step a clinician has to go and do first.
     """
     patient = _patient_or_404(patients, patient_id, user.id)
     if not patient.email or not patient.phone:
@@ -227,6 +284,7 @@ def issue_portal_invite(  # noqa: PLR0913 — FastAPI Depends-injected params ar
             "Add an email address and a mobile number to this chart first.",
             code="PATIENT_CONTACT_INCOMPLETE",
         )
+    slug = _practice_slug_for(user)
 
     try:
         # Both channels, and somewhere for the link to point, before the
@@ -239,7 +297,10 @@ def issue_portal_invite(  # noqa: PLR0913 — FastAPI Depends-injected params ar
         issued = service.issue_invite(
             patient_id=patient_id, tenant=stores.tenant, phone=patient.phone
         )
-        delivery.send_invite(to_email=patient.email, link=build_invite_link(issued.token))
+        delivery.send_invite(
+            to_email=patient.email,
+            link=build_invite_link(slug=slug, token=issued.token),
+        )
     except DeliveryNotConfiguredError:
         raise _delivery_unavailable() from None
 
@@ -361,11 +422,24 @@ class RefreshRequest(BaseModel):
 
 
 class PatientSessionResponse(BaseModel):
-    """A minted patient-session credential."""
+    """A minted patient-session credential, and where it belongs.
+
+    The practice fields are how a client that arrived without one finds the
+    page it should be on. A magic link carries the address in its path, so the
+    ordinary caller already knows; these are for anything that does not, and
+    they cost a platform lookup rather than a second round trip.
+
+    Neither field discloses anything: the caller has just proved two factors
+    for this practice, or is rotating a session it already holds. Both are
+    ``None`` when the practice has no address yet, which is a state a patient
+    mid-sign-in must not be failed over.
+    """
 
     session_token: str
     token_type: str = "bearer"
     expires_at: int
+    practice_slug: str | None = None
+    practice_display_name: str | None = None
 
 
 @router.post(
@@ -417,9 +491,8 @@ def redeem_portal_invite(
 
         work.record_redemption(minted.patient_id, minted.jti)
         work.commit()
-        return PatientSessionResponse(
-            session_token=minted.session_token, expires_at=minted.expires_at
-        )
+
+    return _session_response(minted)
 
 
 @router.post(
@@ -454,9 +527,8 @@ def refresh_portal_session(
             raise _unauthenticated() from None
 
         work.commit()
-        return PatientSessionResponse(
-            session_token=minted.session_token, expires_at=minted.expires_at
-        )
+
+    return _session_response(minted)
 
 
 # ── the two steps every patient-facing route takes first ────────────────
