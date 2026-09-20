@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Toggle } from "@/components/settings/ui"
 import { ruleOf, type VisibleWhen } from "@/lib/intake/visibility"
+import type { Instrument } from "@/types/instruments"
 import {
   DISPLAY_ONLY_ITEM_TYPES,
   ITEM_TYPES,
@@ -50,6 +51,8 @@ interface IntakeItemEditorProps {
   publishError?: string | null
   /** The practice's published documents, for a consent item to point at. */
   documents?: PublishedDocument[]
+  /** The instruments the engine knows, and what this practice may ask. */
+  instruments?: Instrument[]
 }
 
 function nextKey(label: string, taken: string[]): string {
@@ -178,6 +181,7 @@ export function IntakeItemEditor({
   publishing,
   publishError,
   documents,
+  instruments,
 }: IntakeItemEditorProps) {
   const [items, setItems] = useState<IntakeItemInput[]>(() => toInput(version.items))
   const [openIndex, setOpenIndex] = useState<number | null>(null)
@@ -340,6 +344,7 @@ export function IntakeItemEditor({
                     onChange={(config) => patch(index, { config })}
                     idPrefix={`${editorId}-${index}`}
                     documents={documents}
+                    instruments={instruments}
                   />
                   <VisibilityRuleForm
                     rule={ruleOf(item.config)}

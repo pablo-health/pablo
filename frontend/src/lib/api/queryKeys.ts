@@ -235,6 +235,14 @@ const baseQueryKeys = {
     published: () => [...baseQueryKeys.intakeDocuments.all, "published"] as const,
   },
 
+  // The instrument catalogue and what this practice is licensed to ask.
+  // One key, because the settings section and the form builder read the
+  // same list and have to see the same answer after either one changes it.
+  instruments: {
+    all: ["instruments"] as const,
+    list: () => [...baseQueryKeys.instruments.all, "list"] as const,
+  },
+
   // Note-type catalog query keys
   noteTypes: {
     all: ["note-types"] as const,

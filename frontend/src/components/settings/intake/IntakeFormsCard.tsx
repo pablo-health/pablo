@@ -6,6 +6,7 @@ import { Plus } from "lucide-react"
 import { useState } from "react"
 import { SettingsBadge, SettingsCard } from "@/components/settings/ui"
 import { Button } from "@/components/ui/button"
+import { useInstruments } from "@/hooks/useInstruments"
 import { usePublishedIntakeDocuments } from "@/hooks/useIntakeDocuments"
 import {
   useCreateIntakeTemplate,
@@ -49,6 +50,7 @@ function latestVersion(template: IntakeTemplate) {
 export function IntakeFormsCard() {
   const { data: templates } = useIntakeTemplates()
   const { data: documents } = usePublishedIntakeDocuments()
+  const { data: instruments } = useInstruments()
   const createTemplate = useCreateIntakeTemplate()
   const createVersion = useCreateIntakeVersion()
   const saveItems = useSaveIntakeItems()
@@ -154,6 +156,7 @@ export function IntakeFormsCard() {
                     publishing={publish.isPending}
                     publishError={messageOf(publish.error) ?? messageOf(saveItems.error)}
                     documents={publishedDocuments}
+                    instruments={instruments ?? []}
                   />
                 </div>
               )}

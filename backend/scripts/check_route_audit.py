@@ -248,6 +248,11 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # they touch belongs to anybody. Publishing IS audited
         # (INTAKE_DOCUMENT_PUBLISHED), because that is the exact text a
         # signature will later be read against.
+        # instrument_licenses.py — the instrument catalogue and the practice's
+        # own record of what it is licensed to use. No patient, no chart: the
+        # rows say what a form MAY ask, never what anybody answered. The two
+        # writes are audited; this read is the catalogue.
+        ("get", "/api/intake/instruments"),  # lists instruments and their rights
         ("get", "/api/intake/documents"),  # lists the practice's own documents
         ("post", "/api/intake/documents"),  # starts a document, no patient data
         ("get", "/api/intake/documents/{document_id}"),  # one version and its rendering

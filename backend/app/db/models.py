@@ -627,6 +627,56 @@ class IntakeDocumentRow(Base):
     )
 
 
+class InstrumentLicenseAttestationRow(Base):
+    """A practice's record that it holds permission to use one instrument.
+
+    Some instruments may be reproduced but not used freely: the wording is
+    published, and the licence covers clinical work and not something else.
+    :mod:`app.outcome_measures.instruments` marks those
+    ``attestation_required``, and a row here is the practice saying it holds
+    whatever that instrument's rights require. Until there is one, the form
+    builder does not offer the instrument and publishing a form that asks it
+    is refused.
+
+    Practice-level like the intake tables above, and registered
+    not-row-scoped for the same reason: permission is held by the practice,
+    so there is no ``user_id`` or ``patient_id`` to key a row policy on.
+    ``attested_by`` is who recorded it, which is a fact about the record and
+    not an owner.
+
+    **A row is an act, not a state.** Withdrawing sets ``revoked_at`` rather
+    than deleting, and recording permission again writes a new row, so who
+    said what and when survives. What the rest of the code asks is "is there
+    an un-revoked row for this code", which
+    ``uq_instrument_license_attestations_active`` — partial on ``revoked_at
+    IS NULL`` — makes a question with one answer.
+
+    ``license_reference`` is the practice's own note of what it holds: an
+    order number, a licence id, the name of the person who bought it.
+    Optional, because plenty of these licences are a permission rather than
+    a purchase and there is nothing to quote.
+    """
+
+    __tablename__ = "instrument_license_attestations"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    instrument_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    attested_by: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    attested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    license_reference: Mapped[str | None] = mapped_column(String(200))
+    notes: Mapped[str | None] = mapped_column(Text)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index(
+            "uq_instrument_license_attestations_active",
+            "instrument_code",
+            unique=True,
+            postgresql_where=text("revoked_at IS NULL"),
+        ),
+    )
+
+
 class PatientIntakeAssignmentRow(Base):
     """One patient being asked to fill in one version of one form.
 

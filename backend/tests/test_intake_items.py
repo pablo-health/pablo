@@ -197,6 +197,80 @@ class TestTheWholeList:
             )
 
 
+class TestAMeasureThePracticeHasToBeLicensedFor:
+    """The publish-time gate on a use-restricted measure.
+
+    Every restricted instrument in the registry today is a catalogue entry
+    with no wording, so none of them can reach a form and none of them can
+    exercise this. The gate is therefore driven by marking one that CAN
+    reach a form restricted for the length of a test — which is exactly the
+    state the registry enters the day a restricted instrument's items are
+    added, and the point of testing it now rather than then.
+    """
+
+    @pytest.fixture
+    def restricted_gad7(self, monkeypatch: pytest.MonkeyPatch) -> str:
+        from dataclasses import replace  # noqa: PLC0415
+
+        from app.outcome_measures.instruments import INSTRUMENT_REGISTRY  # noqa: PLC0415
+
+        monkeypatch.setitem(
+            INSTRUMENT_REGISTRY,
+            "gad7",
+            replace(INSTRUMENT_REGISTRY["gad7"], rights="attestation_required"),
+        )
+        monkeypatch.setattr("app.intake.items.RESTRICTED_INSTRUMENTS", frozenset({"gad7"}))
+        return "gad7"
+
+    def test_it_cannot_be_published_without_the_practice_recording_permission(
+        self, restricted_gad7: str
+    ) -> None:
+        with pytest.raises(ItemConfigError, match="record your practice's permission"):
+            validate_item_list(
+                [_draft("anxiety", "instrument", code=restricted_gad7)],
+                instrument_attested=lambda _code: False,
+            )
+
+    def test_the_refusal_names_the_measure(self, restricted_gad7: str) -> None:
+        """The practice has to know which one to go and record."""
+        with pytest.raises(ItemConfigError, match="GAD-7"):
+            validate_item_list(
+                [_draft("anxiety", "instrument", code=restricted_gad7)],
+                instrument_attested=lambda _code: False,
+            )
+
+    def test_the_refusal_names_the_question(self, restricted_gad7: str) -> None:
+        with pytest.raises(ItemConfigError, match=r"^anxiety:"):
+            validate_item_list(
+                [_draft("anxiety", "instrument", code=restricted_gad7)],
+                instrument_attested=lambda _code: False,
+            )
+
+    def test_it_publishes_once_permission_is_recorded(self, restricted_gad7: str) -> None:
+        parsed = validate_item_list(
+            [_draft("anxiety", "instrument", code=restricted_gad7)],
+            instrument_attested=lambda _code: True,
+        )
+        assert parsed[0].item_type == "instrument"
+
+    def test_a_free_measure_is_never_gated(self, restricted_gad7: str) -> None:
+        """Only the restricted set is asked about. PHQ-9 is not in it."""
+        parsed = validate_item_list(
+            [_draft("mood", "instrument", code="phq9")],
+            instrument_attested=lambda _code: False,
+        )
+        assert parsed[0].item_type == "instrument"
+
+    def test_a_draft_saves_with_no_licence_store_to_ask(self, restricted_gad7: str) -> None:
+        """Saving a draft goes through the same function as publishing.
+
+        A practice building a form before it has recorded permission is an
+        ordinary half-done thing; publishing is where it has to be right.
+        """
+        parsed = validate_item_list([_draft("anxiety", "instrument", code=restricted_gad7)])
+        assert parsed[0].item_type == "instrument"
+
+
 class TestBranching:
     def _screener(self) -> ItemDraft:
         return _draft(

@@ -581,3 +581,156 @@ class TestConsentItems:
             ],
         )
         assert response.status_code == 200, response.text
+
+
+class TestALicensedMeasureOnAForm:
+    """Publishing a form that asks a use-restricted measure.
+
+    Every restricted instrument in the registry today is a catalogue entry
+    with no wording, so none can reach a form. The gate is driven here by
+    marking one that CAN reach a form restricted for the length of a test —
+    the state the registry enters the day a restricted instrument's items
+    are added.
+
+    What surfaces on this surface is the status code and the sentence: a 422
+    naming the measure is what the editor puts beside the question, so it is
+    asserted rather than assumed.
+    """
+
+    @pytest.fixture
+    def restricted_gad7(self, monkeypatch: pytest.MonkeyPatch) -> str:
+        from dataclasses import replace  # noqa: PLC0415
+
+        from app.outcome_measures.instruments import INSTRUMENT_REGISTRY  # noqa: PLC0415
+
+        monkeypatch.setitem(
+            INSTRUMENT_REGISTRY,
+            "gad7",
+            replace(INSTRUMENT_REGISTRY["gad7"], rights="attestation_required"),
+        )
+        monkeypatch.setattr("app.intake.items.RESTRICTED_INSTRUMENTS", frozenset({"gad7"}))
+        return "gad7"
+
+    @pytest.fixture
+    def licensed(
+        self, client: TestClient, packet_repo: InMemoryIntakePacketRepository
+    ) -> TestClient:
+        """The clinician client, with permission recorded for every measure."""
+        app.dependency_overrides[get_intake_packet_service] = lambda: IntakePacketService(
+            packet_repo, lambda _key: None, lambda _code: True
+        )
+        return client
+
+    @pytest.fixture
+    def unlicensed(
+        self, client: TestClient, packet_repo: InMemoryIntakePacketRepository
+    ) -> TestClient:
+        """The same, with nothing recorded."""
+        app.dependency_overrides[get_intake_packet_service] = lambda: IntakePacketService(
+            packet_repo, lambda _key: None, lambda _code: False
+        )
+        return client
+
+    def _form_with_measure(self, client: TestClient, code: str) -> tuple[str, str]:
+        template = _create(client)
+        version_id = _draft_id(template)
+        _items(
+            client,
+            str(template["id"]),
+            version_id,
+            [
+                {"key": "reason", "item_type": "reason"},
+                {"key": "anxiety", "item_type": "instrument", "config": {"code": code}},
+            ],
+        )
+        return str(template["id"]), version_id
+
+    def test_publishing_without_permission_is_422_and_names_the_measure(
+        self, unlicensed: TestClient, restricted_gad7: str
+    ) -> None:
+        template_id, version_id = self._form_with_measure(unlicensed, restricted_gad7)
+
+        response = unlicensed.post(f"{BASE}/{template_id}/versions/{version_id}/publish")
+
+        assert response.status_code == 422
+        message = response.json()["error"]["message"]
+        assert "GAD-7" in message
+        assert "record your practice's permission" in message
+
+    def test_a_refused_publish_leaves_the_draft_a_draft(
+        self, unlicensed: TestClient, restricted_gad7: str
+    ) -> None:
+        template_id, version_id = self._form_with_measure(unlicensed, restricted_gad7)
+        unlicensed.post(f"{BASE}/{template_id}/versions/{version_id}/publish")
+
+        version = unlicensed.get(f"{BASE}/{template_id}/versions/{version_id}").json()
+        assert version["published_at"] is None
+
+    def test_the_draft_can_still_be_saved(
+        self, unlicensed: TestClient, restricted_gad7: str
+    ) -> None:
+        """Building the form before recording permission is ordinary."""
+        template = _create(unlicensed)
+        response = _items(
+            unlicensed,
+            str(template["id"]),
+            _draft_id(template),
+            [{"key": "anxiety", "item_type": "instrument", "config": {"code": restricted_gad7}}],
+        )
+        assert response.status_code == 200, response.text
+
+    def test_publishing_with_permission_recorded_works(
+        self, licensed: TestClient, restricted_gad7: str
+    ) -> None:
+        template_id, version_id = self._form_with_measure(licensed, restricted_gad7)
+
+        response = licensed.post(f"{BASE}/{template_id}/versions/{version_id}/publish")
+
+        assert response.status_code == 200, response.text
+
+    def test_withdrawing_permission_afterwards_leaves_the_published_form_alone(
+        self,
+        client: TestClient,
+        packet_repo: InMemoryIntakePacketRepository,
+        restricted_gad7: str,
+    ) -> None:
+        """The gate is at publish. A frozen version is never revisited.
+
+        The two overrides are the before and after of withdrawing: the form
+        goes live while permission is held, and is read back once it is not.
+        """
+        app.dependency_overrides[get_intake_packet_service] = lambda: IntakePacketService(
+            packet_repo, lambda _key: None, lambda _code: True
+        )
+        template_id, version_id = self._form_with_measure(client, restricted_gad7)
+        published = client.post(f"{BASE}/{template_id}/versions/{version_id}/publish")
+        assert published.status_code == 200, published.text
+
+        app.dependency_overrides[get_intake_packet_service] = lambda: IntakePacketService(
+            packet_repo, lambda _key: None, lambda _code: False
+        )
+        version = client.get(f"{BASE}/{template_id}/versions/{version_id}").json()
+
+        assert version["published_at"] is not None
+        assert [i["key"] for i in version["items"]] == ["reason", "anxiety"]
+
+    def test_a_new_version_cannot_go_live_after_permission_is_withdrawn(
+        self,
+        client: TestClient,
+        packet_repo: InMemoryIntakePacketRepository,
+        restricted_gad7: str,
+    ) -> None:
+        """Withdrawing says what a NEW form may ask. This is that half."""
+        app.dependency_overrides[get_intake_packet_service] = lambda: IntakePacketService(
+            packet_repo, lambda _key: None, lambda _code: True
+        )
+        template_id, version_id = self._form_with_measure(client, restricted_gad7)
+        client.post(f"{BASE}/{template_id}/versions/{version_id}/publish")
+
+        app.dependency_overrides[get_intake_packet_service] = lambda: IntakePacketService(
+            packet_repo, lambda _key: None, lambda _code: False
+        )
+        draft = client.post(f"{BASE}/{template_id}/versions").json()
+
+        response = client.post(f"{BASE}/{template_id}/versions/{draft['id']}/publish")
+        assert response.status_code == 422

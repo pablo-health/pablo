@@ -17,18 +17,88 @@ import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 
 import { ItemConfigForm } from "../ItemConfigForm"
+import type { Instrument } from "@/types/instruments"
 import type { ItemConfig, ItemType } from "@/types/intakePackets"
-import { DOCUMENT_PICKER_LABEL, NO_PUBLISHED_DOCUMENTS } from "../intakeCopy"
+import {
+  DOCUMENT_PICKER_LABEL,
+  MEASURE_NEEDS_PERMISSION,
+  NO_PUBLISHED_DOCUMENTS,
+} from "../intakeCopy"
 
 const onChange = vi.fn()
 
-function form(itemType: ItemType, config: ItemConfig = {}) {
+/**
+ * The catalogue the measure picker is built from.
+ *
+ * The server answers which measures are askable and which are waiting on a
+ * permission, so the fixture is the answer rather than a list of codes: a
+ * public-domain one, a restricted one the practice has not licensed, a
+ * restricted one it has, and one the engine will never carry the questions
+ * for.
+ */
+const INSTRUMENTS: Instrument[] = [
+  {
+    code: "phq9",
+    display_name: "PHQ-9",
+    rights: "public_domain",
+    rights_note: "No permission needed.",
+    publisher_url: null,
+    item_count: 9,
+    can_ask_on_a_form: true,
+    attested: false,
+    attested_at: null,
+    license_reference: null,
+  },
+  {
+    code: "gad7",
+    display_name: "GAD-7",
+    rights: "attestation_required",
+    rights_note: "Free for clinical use.",
+    publisher_url: null,
+    item_count: 7,
+    can_ask_on_a_form: true,
+    attested: false,
+    attested_at: null,
+    license_reference: null,
+  },
+  {
+    code: "epds",
+    display_name: "EPDS",
+    rights: "attestation_required",
+    rights_note: "Free for clinical use.",
+    publisher_url: null,
+    item_count: 10,
+    can_ask_on_a_form: true,
+    attested: true,
+    attested_at: "2026-09-01T12:00:00Z",
+    license_reference: null,
+  },
+  {
+    code: "bdi2",
+    display_name: "BDI-II",
+    rights: "never_ship",
+    rights_note: "Sold by its publisher.",
+    publisher_url: null,
+    item_count: 21,
+    can_ask_on_a_form: false,
+    attested: false,
+    attested_at: null,
+    license_reference: null,
+  },
+]
+
+function form(
+  itemType: ItemType,
+  config: ItemConfig = {},
+  instruments: Instrument[] = INSTRUMENTS
+) {
   return render(
     <ItemConfigForm
       itemType={itemType}
       config={config}
       onChange={onChange}
       idPrefix="test"
+      instruments={instruments}
     />
   )
 }
@@ -160,6 +230,54 @@ describe("ItemConfigForm", () => {
     expect(screen.getByRole("option", { name: "PHQ-9" })).toBeInTheDocument()
     expect(screen.getByRole("option", { name: "GAD-7" })).toBeInTheDocument()
     expect(screen.queryByRole("option", { name: /DIRE/i })).not.toBeInTheDocument()
+  })
+
+  it("a measure the engine does not carry is not on the list at all", async () => {
+    const user = userEvent.setup()
+    form("instrument")
+
+    await user.click(screen.getByRole("combobox", { name: "Which measure" }))
+
+    expect(screen.queryByRole("option", { name: "BDI-II" })).not.toBeInTheDocument()
+  })
+
+  it("a restricted measure is greyed until the practice records permission", async () => {
+    const user = userEvent.setup()
+    form("instrument")
+
+    await user.click(screen.getByRole("combobox", { name: "Which measure" }))
+
+    expect(screen.getByRole("option", { name: "GAD-7" })).toHaveAttribute(
+      "aria-disabled",
+      "true"
+    )
+  })
+
+  it("a restricted measure with permission on file can be picked", async () => {
+    const user = userEvent.setup()
+    form("instrument")
+
+    await user.click(screen.getByRole("combobox", { name: "Which measure" }))
+
+    expect(screen.getByRole("option", { name: "EPDS" })).not.toHaveAttribute(
+      "aria-disabled",
+      "true"
+    )
+  })
+
+  it("says where to record permission when something is waiting on it", () => {
+    form("instrument")
+
+    expect(screen.getByText(MEASURE_NEEDS_PERMISSION)).toBeInTheDocument()
+  })
+
+  it("says nothing about permission when nothing is waiting on it", () => {
+    form("instrument", {}, [
+      { ...INSTRUMENTS[0] },
+      { ...INSTRUMENTS[2] },
+    ])
+
+    expect(screen.queryByText(MEASURE_NEEDS_PERMISSION)).not.toBeInTheDocument()
   })
 
   it.each([

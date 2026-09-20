@@ -48,11 +48,41 @@ export const ITEM_TYPE_HINTS: Record<string, string> = {
   document_request: "Any other file you need.",
 }
 
-/** The measures a patient can complete themselves. Mirrors the server. */
-export const SELF_REPORT_INSTRUMENTS: { code: string; label: string }[] = [
-  { code: "phq9", label: "PHQ-9" },
-  { code: "gad7", label: "GAD-7" },
-]
+/**
+ * Licensed instruments — the measures a practice needs permission to use.
+ *
+ * The section says what the restriction is and stops. It does not argue the
+ * copyright position or tell a practice what its licence covers: the
+ * publisher's own line is beside each measure, with a link where there is a
+ * page to read, and the practice is the one who knows what it holds.
+ */
+export const LICENSED_TITLE = "Licensed instruments"
+export const LICENSED_DESCRIPTION = "Measures whose publisher restricts how they may be used."
+export const LICENSED_EMPTY = "Nothing here needs your permission."
+
+/** The whole claim a practice makes. No more than this. */
+export const LICENSED_CHECKBOX = "Our practice holds the permission required to use this instrument"
+
+export const LICENSE_REFERENCE_LABEL = "License reference (optional)"
+export const LICENSE_REFERENCE_PLACEHOLDER = "Anything that helps you find it again"
+export const LICENSED_SAVE = "Save"
+export const LICENSED_WITHDRAW = "Withdraw"
+export const LICENSED_ON_FILE = "On file"
+
+/**
+ * Shown where a measure is sold rather than restricted.
+ *
+ * It says what to do instead. A practice that holds one of these licences is
+ * not blocked from using it — the form goes on as an upload, and the score is
+ * theirs to record.
+ */
+export const SOLD_TITLE = "Measures you buy from their publisher"
+export const SOLD_GUIDANCE =
+  "Ask for your own copy as a document upload, and record the score yourself."
+
+/** Shown under the measure picker beside one the practice has not licensed. */
+export const MEASURE_NEEDS_PERMISSION =
+  "Record your permission under Licensed instruments to add this one."
 
 /**
  * The question itself, and the line under it.

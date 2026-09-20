@@ -102,9 +102,25 @@ LABEL_MAX_LEN = 300
 HELP_TEXT_MAX_LEN = 2000
 
 #: Measures a patient can be asked to complete themselves. An instrument in
-#: the registry with no patient-facing item text is a clinician-rated one:
-#: it scores fine and cannot be put on a form.
-SELF_REPORT_INSTRUMENTS = frozenset(INSTRUMENT_REGISTRY) & frozenset(ITEM_TEXT)
+#: the registry with no patient-facing item text is either a clinician-rated
+#: one — it scores fine and cannot be put on a form — or a catalogue entry
+#: whose wording this engine does not carry.
+#:
+#: ``never_ship`` is excluded by name rather than left to follow from the
+#: absence of wording. The two coincide today and the rule is the one worth
+#: stating: a form somebody bought is not a form this asks.
+SELF_REPORT_INSTRUMENTS = frozenset(
+    code
+    for code in frozenset(INSTRUMENT_REGISTRY) & frozenset(ITEM_TEXT)
+    if INSTRUMENT_REGISTRY[code].rights != "never_ship"
+)
+
+#: Measures whose use a practice has to hold permission for. A form may ask
+#: one only where the practice has recorded that permission — see
+#: :data:`InstrumentAttested` and ``app.services.instrument_license_service``.
+RESTRICTED_INSTRUMENTS = frozenset(
+    code for code, defn in INSTRUMENT_REGISTRY.items() if defn.rights == "attestation_required"
+)
 
 #: An item key is the editor's own name for a question, and rules point at it.
 #: Constrained so it reads as a name in a rule rather than as an id.
@@ -118,6 +134,12 @@ _MAX_OPTIONS = 40
 #: storage: the question a form asks about a document is "can somebody sign
 #: it", and this is that question with nothing else attached.
 type PublishedDocumentLookup = Callable[[str], str | None]
+
+#: Given an instrument code, whether this practice has recorded that it holds
+#: the permission that instrument's rights require. A callable for the same
+#: reason as the lookup above: the question is about the practice rather than
+#: about the item, and this module keeps knowing nothing about storage.
+type InstrumentAttested = Callable[[str], bool]
 
 
 class ItemConfigError(ValueError):
@@ -411,6 +433,7 @@ def validate_item_list(
     items: list[ItemDraft],
     *,
     published_document: PublishedDocumentLookup | None = None,
+    instrument_attested: InstrumentAttested | None = None,
 ) -> list[ItemConfig]:
     """Check a whole version's items the way publishing does.
 
@@ -426,6 +449,15 @@ def validate_item_list(
     to ask; left out, a consent item is checked for shape and not for what
     it points at. The route that publishes always supplies one, so a form
     cannot go live naming a document nobody could sign.
+
+    ``instrument_attested`` is the same arrangement for a use-restricted
+    measure: it answers whether the practice has recorded the permission
+    that measure requires. **It is checked at publish and nowhere else**,
+    which is what leaves a form that went live under an attestation working
+    after the attestation is withdrawn. Withdrawing says what the practice
+    may put on a NEW form; it does not reach back into what somebody has
+    already been asked, and rewriting a frozen version is the one thing
+    this whole module exists to prevent.
 
     Raises :class:`ItemConfigError` naming the item that is wrong. The
     message is what the editor shows next to that item, so it says what to do
@@ -460,6 +492,9 @@ def validate_item_list(
                 f"{item.key}: publish this document before you ask anybody to sign it."
             )
 
+        if isinstance(config, InstrumentConfig) and instrument_attested is not None:
+            _check_instrument_rights(item.key, config.code, instrument_attested)
+
         _check_label(item)
 
         if config.visible_when is not None:
@@ -469,6 +504,23 @@ def validate_item_list(
         parsed.append(config)
 
     return parsed
+
+
+def _check_instrument_rights(key: str, code: str, attested: InstrumentAttested) -> None:
+    """Refuse a use-restricted measure the practice has not licensed.
+
+    Named in the message, because the practice has to know which of the
+    measures on the form is the one to go and record permission for. The
+    message says where to do that rather than what the restriction is: the
+    restriction is a paragraph, and it is already on that screen.
+    """
+    if code not in RESTRICTED_INSTRUMENTS or attested(code):
+        return
+    name = INSTRUMENT_REGISTRY[code].display_name
+    raise ItemConfigError(
+        f"{key}: record your practice's permission to use the {name} in "
+        "settings, then publish this form."
+    )
 
 
 def _check_label(item: ItemDraft) -> None:
@@ -532,9 +584,11 @@ __all__ = [
     "ITEM_TYPES",
     "LABEL_MAX_LEN",
     "LABEL_REQUIRED_ITEM_TYPES",
+    "RESTRICTED_INSTRUMENTS",
     "SELF_REPORT_INSTRUMENTS",
     "ChoiceOption",
     "ConsentDocumentConfig",
+    "InstrumentAttested",
     "ItemConfig",
     "ItemConfigError",
     "ItemDraft",

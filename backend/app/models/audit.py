@@ -314,6 +314,16 @@ class AuditAction(StrEnum):
     # and it is not the text itself.
     INTAKE_DOCUMENT_PUBLISHED = "intake_document_published"
 
+    # A clinician recorded, or withdrew, the practice's permission to use a
+    # use-restricted instrument. Not a disclosure — an instrument's rights
+    # are a fact about the instrument and name nobody — but it is what
+    # decided which measures a form published afterwards was allowed to ask,
+    # so the pair is worth having in order. The payload carries the
+    # instrument code and nothing else: the licence reference is the
+    # practice's own note and stays on the row.
+    INSTRUMENT_LICENSE_ATTESTED = "instrument_license_attested"
+    INSTRUMENT_LICENSE_REVOKED = "instrument_license_revoked"
+
     # A clinician asked a patient to fill in a version of a form, or took
     # the request back. Both are writes ABOUT a patient rather than
     # disclosures to one, and the payload carries which version was asked
@@ -589,6 +599,7 @@ class ResourceType(StrEnum):
     PATIENT_INTAKE_SUBMISSION = "patient_intake_submission"
     INTAKE_PACKET_VERSION = "intake_packet_version"
     INTAKE_DOCUMENT = "intake_document"
+    INSTRUMENT_LICENSE_ATTESTATION = "instrument_license_attestation"
     PATIENT_INTAKE_ASSIGNMENT = "patient_intake_assignment"
     PATIENT_MESSAGE_THREAD = "patient_message_thread"
     INVITATION = "invitation"

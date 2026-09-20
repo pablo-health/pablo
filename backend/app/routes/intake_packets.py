@@ -48,8 +48,13 @@ from ..models.intake_packet_api import (
     ReplaceItemsRequest,
     UpdateTemplateRequest,
 )
-from ..repositories import get_intake_document_repository, get_intake_packet_repository
+from ..repositories import (
+    get_instrument_license_repository,
+    get_intake_document_repository,
+    get_intake_packet_repository,
+)
 from ..services.audit_service import AuditService, get_audit_service
+from ..services.instrument_license_service import InstrumentLicenseService
 from ..services.intake_document_service import IntakeDocumentService
 from ..services.intake_packet_service import (
     IntakePacketService,
@@ -74,19 +79,24 @@ def get_intake_packet_service(
     query underneath runs against one practice's schema, and no row here
     belongs to a narrower owner than the practice.
 
-    The document lookup is handed in rather than reached for: publishing a
-    form has to know which revision of each consent document is live, and
-    passing the one question it needs keeps the packet service from
-    knowing there is a document store at all.
+    Both lookups are handed in rather than reached for. Publishing a form
+    has to know which revision of each consent document is live, and
+    whether the practice is licensed to ask each use-restricted measure on
+    it; passing the two questions it needs keeps the packet service from
+    knowing there is a document store or a licence table at all.
     """
     repo: IntakePacketRepository = get_intake_packet_repository()
     documents = IntakeDocumentService(get_intake_document_repository())
+    licenses = InstrumentLicenseService(get_instrument_license_repository())
 
     def published_document(document_key: str) -> str | None:
         row = documents.published_for_key(document_key)
         return str(row["id"]) if row else None
 
-    return IntakePacketService(repo, published_document)
+    def instrument_attested(instrument_code: str) -> bool:
+        return licenses.active_for_code(instrument_code) is not None
+
+    return IntakePacketService(repo, published_document, instrument_attested)
 
 
 PacketService = Annotated[IntakePacketService, Depends(get_intake_packet_service)]

@@ -8,11 +8,12 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import type { Instrument } from "@/types/instruments"
 import type { ChoiceOption, ItemConfig, ItemType } from "@/types/intakePackets"
 import {
   DOCUMENT_PICKER_LABEL,
+  MEASURE_NEEDS_PERMISSION,
   NO_PUBLISHED_DOCUMENTS,
-  SELF_REPORT_INSTRUMENTS,
 } from "./intakeCopy"
 
 interface ItemConfigFormProps {
@@ -28,6 +29,13 @@ interface ItemConfigFormProps {
    * already holds the list.
    */
   documents?: PublishedDocument[]
+  /**
+   * The instruments the engine knows, with this practice's permissions on
+   * them. Passed in for the same reason as the documents: the card that owns
+   * the form already holds the list, and the server is what decides which
+   * measures are askable and which are waiting on a permission.
+   */
+  instruments?: Instrument[]
 }
 
 /** One document a consent item can point at. */
@@ -129,6 +137,7 @@ export function ItemConfigForm({
   onChange,
   idPrefix,
   documents = [],
+  instruments = [],
 }: ItemConfigFormProps) {
   const set = (key: string, value: unknown) => onChange({ ...config, [key]: value })
   const setNumber = (key: string, raw: string) =>
@@ -312,7 +321,18 @@ export function ItemConfigForm({
         </div>
       )
 
-    case "instrument":
+    case "instrument": {
+      // Three states, and only two of them are the practice's to change. A
+      // measure the engine has the questions for is offered; one whose use is
+      // restricted is offered greyed until the practice records its
+      // permission; one the engine will never carry the questions for is not
+      // on the list at all, because there is nothing here that would make it
+      // askable. The server answers all three — a second opinion computed
+      // here would be free to drift from the one that refuses the publish.
+      const askable = instruments.filter((instrument) => instrument.can_ask_on_a_form)
+      const waiting = askable.some(
+        (instrument) => instrument.rights === "attestation_required" && !instrument.attested
+      )
       return (
         <div>
           <Label htmlFor={`${idPrefix}-code`}>Which measure</Label>
@@ -321,15 +341,25 @@ export function ItemConfigForm({
               <SelectValue placeholder="Choose a measure" />
             </SelectTrigger>
             <SelectContent>
-              {SELF_REPORT_INSTRUMENTS.map((instrument) => (
-                <SelectItem key={instrument.code} value={instrument.code}>
-                  {instrument.label}
+              {askable.map((instrument) => (
+                <SelectItem
+                  key={instrument.code}
+                  value={instrument.code}
+                  disabled={instrument.rights === "attestation_required" && !instrument.attested}
+                >
+                  {instrument.display_name}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
+          {waiting && (
+            <p className="mt-1 text-[12.5px] text-muted-foreground">
+              {MEASURE_NEEDS_PERMISSION}
+            </p>
+          )}
         </div>
       )
+    }
 
     case "consent_document":
       // A document, not a version of one. Which wording a patient actually
