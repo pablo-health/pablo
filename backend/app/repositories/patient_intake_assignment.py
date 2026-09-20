@@ -2,10 +2,11 @@
 
 """Intake assignment repository — the form somebody was asked, and their answers.
 
-Two tables in one repository, because an answer is meaningless outside the
-assignment it answers and an assignment with no answers is a question
-nobody has started. Splitting them would buy two interfaces that are always
-used together and a caller responsible for keeping them consistent.
+Three tables in one repository, because an answer is meaningless outside the
+assignment it answers, an assignment with no answers is a question nobody has
+started, and a review event is a statement about both. Splitting them would
+buy three interfaces that are always used together and a caller responsible
+for keeping them consistent.
 
 **Every method names which principal is asking, and they are never the same
 method.** A patient reaches their own rows through the
@@ -50,6 +51,27 @@ ASSIGNMENT_STATUSES: tuple[str, ...] = (*ACTIVE_STATUSES, "accepted", "withdrawn
 #: is not one: an assignment the patient has handed in stops being theirs
 #: to edit until somebody asks for a correction.
 WRITABLE_STATUSES: frozenset[str] = frozenset({"assigned", "in_progress", "needs_correction"})
+
+#: Every kind the review-event CHECK constraint admits.
+#:
+#: Three are the practice's: corrections asked for, a value entered for the
+#: patient, the form accepted. ``corrected`` is the patient's — it is written
+#: when they hand a reopened form back in — and it is the only one their row
+#: policy admits.
+REVIEW_EVENT_KINDS: tuple[str, ...] = (
+    "correction_requested",
+    "corrected",
+    "accepted",
+    "clinician_entered",
+)
+
+#: The one kind a patient principal may write. Mirrors
+#: ``PATIENT_WRITE_NARROWING`` in ``app.db``; a test pins the two together.
+PATIENT_REVIEW_EVENT_KIND: str = "corrected"
+
+#: Where an answer came from. ``patient`` on everything the portal saved,
+#: ``clinician`` on a value entered with the patient in the room.
+RESPONSE_PROVENANCE: tuple[str, ...] = ("patient", "clinician")
 
 
 class ReceiptCollisionError(RuntimeError):
@@ -120,6 +142,60 @@ class PatientIntakeAssignmentRepository(ABC):
     ) -> dict[str, object] | None:
         """Move an assignment to *status*, stamping the matching column."""
 
+    @abstractmethod
+    def get_live_response_for_clinician(
+        self, assignment_id: str, user_id: str, item_id: str
+    ) -> dict[str, object] | None:
+        """This question's live answer, read through the clinician's grant.
+
+        What a clinician entry supersedes. ``None`` when nobody has answered
+        the question yet, which is the ordinary case for an entry taken in
+        the room, and also what a caller with no grant gets.
+        """
+
+    @abstractmethod
+    def add_clinician_response(
+        self, row: dict[str, object], user_id: str, *, supersedes: str | None
+    ) -> dict[str, object] | None:
+        """Record an answer a clinician entered, superseding what it replaces.
+
+        Returns ``None`` when *user_id* holds no grant on the patient, so a
+        caller with no access cannot write a row it could not then read.
+
+        Never an update in place: *supersedes* names the row this one
+        replaces, and that row keeps its value and its ``draft`` flag. What
+        changes on it is ``superseded_by``, which is the whole record of the
+        replacement having happened.
+        """
+
+    @abstractmethod
+    def add_review_event(self, row: dict[str, object], user_id: str) -> dict[str, object] | None:
+        """Record something the practice did with a form.
+
+        Returns ``None`` when *user_id* holds no grant on the patient.
+        """
+
+    @abstractmethod
+    def list_review_events_for_clinician(
+        self, assignment_id: str, user_id: str
+    ) -> list[dict[str, object]]:
+        """Everything done with one form, oldest first, read by a clinician.
+
+        An empty list when *user_id* holds no grant — the same answer a form
+        nobody has reviewed gives, so the shape reveals nothing.
+        """
+
+    @abstractmethod
+    def count_superseded_responses_for_clinician(
+        self, assignment_id: str, user_id: str
+    ) -> dict[str, int]:
+        """How many replaced answers each question on this form has.
+
+        Keyed by item id, absent where there are none. What the review view
+        needs to offer "show earlier answers" without reading the earlier
+        answers themselves.
+        """
+
     # --- patient side ---
 
     @abstractmethod
@@ -186,6 +262,36 @@ class PatientIntakeAssignmentRepository(ABC):
         """
 
     @abstractmethod
+    def add_successor_response(
+        self, row: dict[str, object], *, supersedes: str
+    ) -> dict[str, object]:
+        """Record a patient's corrected answer beside the one it replaces.
+
+        The counterpart of :meth:`save_draft_response` for a question that
+        already holds a handed-in answer. That answer is not edited: it keeps
+        its value and its frozen flag, and gains a ``superseded_by`` pointing
+        at the new row, so the form still reads back as it was handed in.
+        """
+
+    @abstractmethod
+    def add_patient_review_event(self, row: dict[str, object]) -> dict[str, object]:
+        """Record that the calling patient handed a reopened form back in.
+
+        The only kind of review event a patient writes, and their row policy
+        admits no other — see :data:`PATIENT_REVIEW_EVENT_KIND`.
+        """
+
+    @abstractmethod
+    def list_review_events_for_patient_principal(
+        self, assignment_id: str, patient_id: str
+    ) -> list[dict[str, object]]:
+        """Everything done with one of the calling patient's own forms.
+
+        Oldest first. What the portal reads to show the note asking for a
+        correction and which questions it names.
+        """
+
+    @abstractmethod
     def freeze_draft_responses(self, assignment_id: str, patient_id: str, now: datetime) -> int:
         """Turn every live draft on this assignment into a submitted answer.
 
@@ -226,6 +332,7 @@ class InMemoryPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
     def __init__(self) -> None:
         self.assignments: dict[str, dict[str, object]] = {}
         self.responses: dict[str, dict[str, object]] = {}
+        self.review_events: dict[str, dict[str, object]] = {}
         self._access: set[tuple[str, str]] = set()
         self._allow_all = False
 
@@ -290,6 +397,51 @@ class InMemoryPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
         _apply_status(row, status, now)
         return dict(row)
 
+    def get_live_response_for_clinician(
+        self, assignment_id: str, user_id: str, item_id: str
+    ) -> dict[str, object] | None:
+        row = self.assignments.get(assignment_id)
+        if row is None or not self._can_access(str(row["patient_id"]), user_id):
+            return None
+        return self.get_live_response(assignment_id, str(row["patient_id"]), item_id)
+
+    def add_clinician_response(
+        self, row: dict[str, object], user_id: str, *, supersedes: str | None
+    ) -> dict[str, object] | None:
+        if not self._can_access(str(row["patient_id"]), user_id):
+            return None
+        return self._write_successor(row, supersedes)
+
+    def add_review_event(self, row: dict[str, object], user_id: str) -> dict[str, object] | None:
+        if not self._can_access(str(row["patient_id"]), user_id):
+            return None
+        self.review_events[str(row["id"])] = dict(row)
+        return dict(row)
+
+    def list_review_events_for_clinician(
+        self, assignment_id: str, user_id: str
+    ) -> list[dict[str, object]]:
+        row = self.assignments.get(assignment_id)
+        if row is None or not self._can_access(str(row["patient_id"]), user_id):
+            return []
+        return self._events(assignment_id, str(row["patient_id"]))
+
+    def count_superseded_responses_for_clinician(
+        self, assignment_id: str, user_id: str
+    ) -> dict[str, int]:
+        row = self.assignments.get(assignment_id)
+        if row is None or not self._can_access(str(row["patient_id"]), user_id):
+            return {}
+        counts: dict[str, int] = {}
+        for response in self.responses.values():
+            if (
+                str(response["assignment_id"]) == assignment_id
+                and response["superseded_by"] is not None
+            ):
+                item_id = str(response["item_id"])
+                counts[item_id] = counts.get(item_id, 0) + 1
+        return counts
+
     # --- patient side ---
 
     def list_assignments_for_patient_principal(self, patient_id: str) -> list[dict[str, object]]:
@@ -351,6 +503,20 @@ class InMemoryPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
         self.responses[str(row["id"])] = dict(row)
         return dict(row)
 
+    def add_successor_response(
+        self, row: dict[str, object], *, supersedes: str
+    ) -> dict[str, object]:
+        return self._write_successor(row, supersedes)
+
+    def add_patient_review_event(self, row: dict[str, object]) -> dict[str, object]:
+        self.review_events[str(row["id"])] = dict(row)
+        return dict(row)
+
+    def list_review_events_for_patient_principal(
+        self, assignment_id: str, patient_id: str
+    ) -> list[dict[str, object]]:
+        return self._events(assignment_id, patient_id)
+
     def freeze_draft_responses(self, assignment_id: str, patient_id: str, now: datetime) -> int:
         frozen = 0
         for row in self.responses.values():
@@ -384,6 +550,29 @@ class InMemoryPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
         return dict(row)
 
     # --- helpers ---
+
+    def _write_successor(self, row: dict[str, object], supersedes: str | None) -> dict[str, object]:
+        """Store *row*, then point the row it replaces at it.
+
+        This order, not the other one: the pointer names an id, so the row
+        it names has to exist first. The replaced row is otherwise
+        untouched — same value, same ``draft`` flag, same timestamps.
+        """
+        self.responses[str(row["id"])] = dict(row)
+        if supersedes is not None:
+            previous = self.responses.get(supersedes)
+            if previous is not None:
+                previous["superseded_by"] = str(row["id"])
+        return dict(row)
+
+    def _events(self, assignment_id: str, patient_id: str) -> list[dict[str, object]]:
+        rows = [
+            dict(r)
+            for r in self.review_events.values()
+            if str(r["assignment_id"]) == assignment_id and str(r["patient_id"]) == patient_id
+        ]
+        rows.sort(key=lambda r: (r["created_at"], str(r["id"])))  # type: ignore[index]
+        return rows
 
     def _live(
         self, assignment_id: str, patient_id: str, *, drafts_only: bool
@@ -432,6 +621,9 @@ STATUS_TIMESTAMP_COLUMN: dict[str, str] = {
 __all__ = [
     "ACTIVE_STATUSES",
     "ASSIGNMENT_STATUSES",
+    "PATIENT_REVIEW_EVENT_KIND",
+    "RESPONSE_PROVENANCE",
+    "REVIEW_EVENT_KINDS",
     "STATUS_TIMESTAMP_COLUMN",
     "WRITABLE_STATUSES",
     "InMemoryPatientIntakeAssignmentRepository",

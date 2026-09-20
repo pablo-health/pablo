@@ -743,8 +743,14 @@ class PatientIntakeResponseRow(Base):
     may change — which is what makes "what was submitted" a stable record
     once it stops being one. ``superseded_by`` points at the row that
     replaced this one, so a corrected answer leaves the original readable
-    rather than overwriting it. Nothing writes either transition yet; both
-    ship with the columns they belong to rather than costing a migration.
+    rather than overwriting it: the successor is written first and the
+    original is then pointed at it, with its ``value`` untouched.
+
+    ``provenance`` says who put the value there — the patient in the portal,
+    or a clinician with the patient in the room. A reader who cannot tell
+    the two apart is reading a form that looks like the patient attested to
+    every word on it. Every row written before the column existed was the
+    patient's, which is why ``patient`` is the default.
 
     The partial unique index is what makes saving an answer an upsert: at
     most one live draft per question per assignment, so a patient who
@@ -774,11 +780,18 @@ class PatientIntakeResponseRow(Base):
     )
     value: Mapped[dict] = mapped_column(JSONB, nullable=False)
     draft: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    provenance: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'patient'")
+    )
     superseded_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
+        CheckConstraint(
+            "provenance IN ('patient','clinician')",
+            name="ck_patient_intake_responses_provenance",
+        ),
         ForeignKeyConstraint(
             ["assignment_id", "patient_id"],
             [
@@ -794,6 +807,76 @@ class PatientIntakeResponseRow(Base):
             "item_id",
             unique=True,
             postgresql_where=text("superseded_by IS NULL AND draft"),
+        ),
+    )
+
+
+class PatientIntakeReviewEventRow(Base):
+    """One thing the practice did with a form after it arrived.
+
+    A form handed in is not the end of it. A clinician reads what the patient
+    wrote and may ask for one question to be redone, may type a value in for
+    somebody sitting in the room with them, and eventually accepts the form.
+    Each of those is a row here, in the order it happened.
+
+    **An event log rather than more columns on the assignment.** The
+    assignment already carries where the form has got to; what it cannot
+    carry is that corrections were asked for twice, on different questions,
+    with different notes. Those are separate facts about the same form, and
+    the question a chart asks — "why is this open again, and what did we
+    ask for" — is answered by the sequence rather than by the latest value
+    of anything.
+
+    ``item_ids`` names the questions the act is about: the ones a correction
+    reopens, or the one a clinician-entered value settles. It is the scope
+    of the act, and it is what the save route consults to decide which
+    questions a patient may touch while the form is reopened — so it is a
+    rule the row carries, not a description of one.
+
+    ``note_to_patient`` is the sentence the patient reads in the portal when
+    corrections are asked for. The practice's own words about the form; it
+    never holds an answer, and nothing else on this row does either.
+
+    Patient-readable and NOT patient-writable. Every kind here is something
+    the practice did, and the one a patient causes — handing a corrected
+    form back in — is written by the route that also moves the status, so
+    the two cannot disagree. ``patient_id`` is denormalized from the
+    assignment for the same reason :class:`PatientIntakeResponseRow`
+    denormalizes it, and kept honest the same way: a composite foreign key
+    to ``(id, patient_id)``.
+    """
+
+    __tablename__ = "patient_intake_review_events"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    assignment_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(24), nullable=False)
+    item_ids: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    note_to_patient: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('correction_requested','corrected','accepted','clinician_entered')",
+            name="ck_patient_intake_review_events_kind",
+        ),
+        ForeignKeyConstraint(
+            ["assignment_id", "patient_id"],
+            [
+                "patient_intake_assignments.id",
+                "patient_intake_assignments.patient_id",
+            ],
+            ondelete="CASCADE",
+            name="fk_patient_intake_review_events_assignment",
+        ),
+        Index(
+            "ix_patient_intake_review_events_assignment",
+            "assignment_id",
+            "created_at",
         ),
     )
 

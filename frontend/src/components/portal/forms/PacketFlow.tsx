@@ -22,6 +22,13 @@
  * from the review screen whatever the answers look like; the server refuses
  * an unfinished form and names what is outstanding. A question somebody was
  * never shown and a question they skipped look the same from a browser.
+ *
+ * **A form sent back shows only what was asked about.** When the assignment
+ * carries a `correction`, the walk is the questions it names and nothing
+ * else — the rest have been read and kept, and putting them back on screen
+ * would invite changes the server refuses with a 409. Which questions those
+ * are is the server's answer too, carried on the row rather than worked out
+ * here.
  */
 
 "use client"
@@ -104,9 +111,15 @@ export function PacketFlow({
   const items = useMemo(() => {
     if (detail === null) return []
     const answers = Object.fromEntries(detail.items.map((item) => [item.key, item.value]))
-    return [...detail.items]
+    const shown = [...detail.items]
       .sort((a, b) => a.position - b.position)
       .filter((item) => visibility(ruleOf(item.config), answers))
+    // A form sent back is open only where the practice said. Filtering the
+    // walk rather than disabling the other screens: a question that cannot
+    // be changed is not a question being asked.
+    const asked = detail.correction
+    if (asked === null) return shown
+    return shown.filter((item) => asked.item_ids.includes(item.id))
   }, [detail, visibility])
 
   /** What is on screen: this sitting's edits over what is already saved. */
@@ -201,8 +214,12 @@ export function PacketFlow({
   if (assignment.isPending) return <FormsLoading />
 
   // Where the patient navigated to, or — before they have — the first
-  // question the server called outstanding.
-  const current = screen ?? resumeAt(items, assignment.data.progress.missing)
+  // question the server called outstanding. On a form sent back, that is
+  // the first correction still to do rather than the first unanswered
+  // question: the rest of the form was finished when it went in.
+  const correction = assignment.data.correction
+  const current =
+    screen ?? resumeAt(items, correction?.outstanding ?? assignment.data.progress.missing)
 
   async function advanceFrom(index: number) {
     const item = items[index]
@@ -251,6 +268,7 @@ export function PacketFlow({
         items={items}
         values={values}
         form={form}
+        correction={correction}
         onEdit={(itemId) => {
           const index = items.findIndex((item) => item.id === itemId)
           if (index >= 0) setScreen({ kind: "item", index })

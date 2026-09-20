@@ -31,12 +31,19 @@ signature row, so it is written by the signing route and by nothing else
 (:data:`~app.intake.answers.SIGNED_ITEM_TYPES`).
 
 **What was handed in is never edited.** Submitting freezes every answer,
-and no path here updates the value on a frozen row — a correction, when
-that lands, writes a successor and points the old row at it. The guard is
-here rather than only on the assignment's status because the two are
-different statements: the status says the form is closed, and this says
-that even an open form cannot rewrite an answer that has already been
-read. See :meth:`IntakeAssignmentService.save_answer`.
+and no path here updates the value on a frozen row. A correction writes a
+successor instead and points the old row at it, so the form still reads back
+as it was handed in. The guard is here rather than only on the assignment's
+status because the two are different statements: the status says the form is
+closed, and this says that even an open form cannot rewrite an answer that
+has already been read. See :meth:`IntakeAssignmentService.save_answer`.
+
+**A reopened form is open only where the practice said.** A clinician asking
+for corrections names the questions, and while the form sits in
+``needs_correction`` those are the only ones the patient may touch — every
+other question is refused, because the practice has already read and kept
+the rest. The scope lives on the review event rather than in this service's
+memory, which is what makes it survive the patient closing the tab.
 """
 
 from __future__ import annotations
@@ -54,7 +61,11 @@ from ..intake.items import (
     validate_item_config,
 )
 from ..intake.receipts import new_receipt_code
-from ..repositories.patient_intake_assignment import WRITABLE_STATUSES, ReceiptCollisionError
+from ..repositories.patient_intake_assignment import (
+    PATIENT_REVIEW_EVENT_KIND,
+    WRITABLE_STATUSES,
+    ReceiptCollisionError,
+)
 from ..utcnow import utc_now
 
 if TYPE_CHECKING:
@@ -87,6 +98,27 @@ class AssignmentClosedError(RuntimeError):
 
 class FrozenResponseError(RuntimeError):
     """An attempt to change an answer that has already been handed in."""
+
+
+class CorrectionScopeError(RuntimeError):
+    """An attempt to change a question the correction request did not name.
+
+    Raised only while a form sits in ``needs_correction``. The practice has
+    read and kept every other answer on it, so reopening one question is not
+    reopening the form.
+    """
+
+
+class CorrectionOutstandingError(RuntimeError):
+    """A reopened form handed back in with a named question still unredone.
+
+    Carries the item ids, in the order the form asks them, so the portal can
+    send somebody to the first one rather than telling them to look.
+    """
+
+    def __init__(self, outstanding: list[str]) -> None:
+        super().__init__(f"{len(outstanding)} correction(s) outstanding")
+        self.outstanding = outstanding
 
 
 class IncompleteFormError(RuntimeError):
@@ -237,6 +269,21 @@ class IntakeAssignmentService:
     def get_for_clinician(self, assignment_id: str, user_id: str) -> dict[str, object] | None:
         return self._repo.get_assignment_for_clinician(assignment_id, user_id)
 
+    def live_response_for_clinician(
+        self, assignment_id: str, user_id: str, item_id: str
+    ) -> dict[str, object] | None:
+        """One question's current answer, read through the clinician's grant."""
+        return self._repo.get_live_response_for_clinician(assignment_id, user_id, item_id)
+
+    def config_for(self, row: dict[str, object]) -> ItemConfig | None:
+        """One stored question's configuration, or ``None`` if it no longer parses.
+
+        Public because the review surface validates a clinician's entry
+        against the same configuration the portal's save uses. Two parsers
+        would be two opinions about what a question accepts.
+        """
+        return _parse(row)
+
     def progress(self, assignment: dict[str, object], patient_id: str) -> Completion:
         """Whether this form can be handed in, and what is still missing.
 
@@ -284,13 +331,19 @@ class IntakeAssignmentService:
         every save bumps, so nothing new has to be stored to know it.
 
         Raises :class:`AssignmentClosedError` when the form is no longer the
-        patient's to fill in, :class:`FrozenResponseError` when this
-        question's answer has already been handed in, ``LookupError`` when
-        the item is not on its version, and :class:`AnswerError` when the
-        value does not fit the question.
+        patient's to fill in, :class:`CorrectionScopeError` when the form is
+        reopened and this is not one of the questions it was reopened for,
+        :class:`FrozenResponseError` when this question's answer has already
+        been handed in and nothing reopened it, ``LookupError`` when the item
+        is not on its version, and :class:`AnswerError` when the value does
+        not fit the question.
         """
         if str(assignment["status"]) not in WRITABLE_STATUSES:
             raise AssignmentClosedError(str(assignment["id"]))
+
+        reopened = self.open_correction(assignment, patient_id)
+        if reopened is not None and item_id not in event_item_ids(reopened):
+            raise CorrectionScopeError(item_id)
 
         row = next(
             (
@@ -316,30 +369,86 @@ class IntakeAssignmentService:
         validate_answer(config, value)
 
         # The immutability invariant, checked against the row rather than
-        # against the form's status. A reopened form is writable and still
-        # holds answers somebody has already read; those get a successor
-        # row when corrections land, never an edit in place.
+        # against the form's status. A form can be writable and still hold
+        # an answer somebody has already read — because it was reopened for
+        # corrections, or because a clinician entered the value in the room.
+        # Neither is edited in place: a reopened question gets a successor,
+        # and anything else is refused.
         existing = self._repo.get_live_response(str(assignment["id"]), patient_id, item_id)
-        if existing is not None and not existing["draft"]:
-            raise FrozenResponseError(str(existing["id"]))
+        frozen = existing is not None and not existing["draft"]
+        if frozen and reopened is None:
+            raise FrozenResponseError(str(existing["id"]))  # type: ignore[index]
 
         now = utc_now()
         worth_auditing = _starts_a_visit(assignment, now)
-        stored = self._repo.save_draft_response(
-            {
-                "id": str(uuid.uuid4()),
-                "assignment_id": str(assignment["id"]),
-                "patient_id": patient_id,
-                "item_id": item_id,
-                "value": value,
-                "draft": True,
-                "superseded_by": None,
-                "created_at": now,
-                "updated_at": now,
-            }
-        )
+        row_to_store: dict[str, object] = {
+            "id": str(uuid.uuid4()),
+            "assignment_id": str(assignment["id"]),
+            "patient_id": patient_id,
+            "item_id": item_id,
+            "value": value,
+            "draft": True,
+            "provenance": "patient",
+            "superseded_by": None,
+            "created_at": now,
+            "updated_at": now,
+        }
+        if frozen:
+            stored = self._repo.add_successor_response(
+                row_to_store,
+                supersedes=str(existing["id"]),  # type: ignore[index]
+            )
+        else:
+            stored = self._repo.save_draft_response(row_to_store)
         self._repo.record_save(str(assignment["id"]), patient_id, now)
         return stored, worth_auditing
+
+    # --- the review cycle, from the patient's side ---
+
+    def review_events_for_patient(
+        self, assignment_id: str, patient_id: str
+    ) -> list[dict[str, object]]:
+        """Everything done with one of this patient's own forms, oldest first."""
+        return self._repo.list_review_events_for_patient_principal(assignment_id, patient_id)
+
+    def open_correction(
+        self, assignment: dict[str, object], patient_id: str
+    ) -> dict[str, object] | None:
+        """The correction request this form is currently reopened for.
+
+        ``None`` unless the form sits in ``needs_correction``, which is what
+        makes the status and the scope one answer rather than two that can
+        disagree. When it does, the newest ``correction_requested`` event is
+        the live one: handing the form back in moves the status off
+        ``needs_correction``, so an older request cannot still be open.
+        """
+        if str(assignment["status"]) != "needs_correction":
+            return None
+        events = self.review_events_for_patient(str(assignment["id"]), patient_id)
+        requests = [row for row in events if str(row["kind"]) == "correction_requested"]
+        return requests[-1] if requests else None
+
+    def outstanding_corrections(
+        self, assignment: dict[str, object], patient_id: str, correction: dict[str, object]
+    ) -> list[str]:
+        """Which named questions have not been answered again yet.
+
+        A question counts as redone when its live answer was written after
+        the correction was asked for. Comparing timestamps rather than
+        looking for a ``superseded_by`` covers the question that had no
+        answer to supersede — a correction can name one the patient skipped.
+        """
+        asked_at = correction["created_at"]
+        live = {
+            str(row["item_id"]): row
+            for row in self._repo.list_live_responses(str(assignment["id"]), patient_id)
+        }
+        outstanding: list[str] = []
+        for item_id in event_item_ids(correction):
+            row = live.get(item_id)
+            if row is None or not _written_after(row, asked_at):
+                outstanding.append(item_id)
+        return outstanding
 
     def submit(
         self,
@@ -371,6 +480,13 @@ class IntakeAssignmentService:
            than reimplemented: a second scorer is a second set of bands to
            drift, and the chart reads these rows from one place.
 
+        A form that was reopened for corrections is checked first, before
+        any of that: every question the practice named has to have been
+        answered again, or this is :class:`CorrectionOutstandingError` and
+        nothing is touched. Finishing the form is not the same as doing what
+        was asked — the rest of the answers were already complete, which is
+        how the form got handed in the first time.
+
         The whole thing rides the request's transaction, so a failure
         anywhere leaves the form exactly as unfinished as it was.
         """
@@ -378,6 +494,12 @@ class IntakeAssignmentService:
             raise AssignmentClosedError(str(assignment["id"]))
 
         assignment_id = str(assignment["id"])
+        reopened = self.open_correction(assignment, patient_id)
+        if reopened is not None:
+            outstanding = self.outstanding_corrections(assignment, patient_id, reopened)
+            if outstanding:
+                raise CorrectionOutstandingError(outstanding)
+
         completion = self.progress(assignment, patient_id)
         if not completion.complete:
             raise IncompleteFormError(completion.missing)
@@ -387,6 +509,24 @@ class IntakeAssignmentService:
         submitted = self._submit_with_receipt(assignment_id, patient_id, now)
         if submitted is None:
             raise AssignmentClosedError(assignment_id)
+
+        if reopened is not None:
+            # Written beside the status change rather than after it, on the
+            # same transaction: "the form came back" and "the corrections
+            # were made" are one fact, and a record that can hold one
+            # without the other is a record that will.
+            self._repo.add_patient_review_event(
+                {
+                    "id": str(uuid.uuid4()),
+                    "assignment_id": assignment_id,
+                    "patient_id": patient_id,
+                    "kind": PATIENT_REVIEW_EVENT_KIND,
+                    "item_ids": event_item_ids(reopened),
+                    "note_to_patient": None,
+                    "created_by": patient_id,
+                    "created_at": now,
+                }
+            )
 
         recorded = [
             measures.create_self_report(
@@ -450,6 +590,30 @@ def _starts_a_visit(assignment: dict[str, object], now: datetime) -> bool:
     return (now - last).total_seconds() >= AUDIT_COALESCE_SECONDS
 
 
+def event_item_ids(event: dict[str, object]) -> list[str]:
+    """The questions a review event names, read defensively.
+
+    JSONB, so what comes back is whatever was stored. A row whose
+    ``item_ids`` is not a list reads as naming nothing, which reopens no
+    question — the safe direction for a value this module uses to decide
+    what a patient may write.
+
+    Public because both route surfaces render the same list, and a second
+    reader of a JSON column is a second chance to disagree about what an
+    unexpected shape means.
+    """
+    raw = event.get("item_ids")
+    return [str(item) for item in raw] if isinstance(raw, list) else []
+
+
+def _written_after(row: dict[str, object], moment: object) -> bool:
+    """True when this answer was written at or after *moment*."""
+    written = row.get("updated_at")
+    if not isinstance(written, datetime) or not isinstance(moment, datetime):
+        return False
+    return written >= moment
+
+
 def _parse(row: dict[str, object]) -> ItemConfig | None:
     """One stored item's configuration, or ``None`` if it no longer parses."""
     try:
@@ -467,9 +631,12 @@ __all__ = [
     "RECEIPT_ATTEMPTS",
     "AnswerError",
     "AssignmentClosedError",
+    "CorrectionOutstandingError",
+    "CorrectionScopeError",
     "FrozenResponseError",
     "IncompleteFormError",
     "IntakeAssignmentService",
     "ReceiptUnavailableError",
     "UnpublishedVersionError",
+    "event_item_ids",
 ]
