@@ -223,9 +223,7 @@ class TestTheDatabaseEnforcesOnePermissionInForce:
 
             assert second["id"] != first["id"]
             in_force = [
-                row
-                for row in service.list_active()
-                if row["instrument_code"] == RESTRICTED_SECOND
+                row for row in service.list_active() if row["instrument_code"] == RESTRICTED_SECOND
             ]
             assert [row["license_reference"] for row in in_force] == ["new"]
             session.commit()
