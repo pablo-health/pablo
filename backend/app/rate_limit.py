@@ -603,12 +603,19 @@ _portal_recover_slug_limiter: RateLimiter | None = None
 
 
 def _get_portal_redeem_ip_limiter() -> RateLimiter:
-    """20/min per address. A household or a waiting-room network can carry
-    several patients redeeming at once; a sweep cannot."""
+    """Per address, defaulting to 20/min. A household or a waiting-room
+    network can carry several patients redeeming at once; a sweep cannot.
+    Configurable (``portal_redeem_ip_rate_per_min``) because a local-stack
+    test suite drives many invitations through one client address, which a
+    household never does."""
     global _portal_redeem_ip_limiter  # noqa: PLW0603
     if _portal_redeem_ip_limiter is None:
+        from .settings import get_settings  # noqa: PLC0415
+
+        settings = get_settings()
         _portal_redeem_ip_limiter = NamespacedLimiter(
-            _create_limiter(max_requests=20, window_seconds=60), "portal-redeem-ip:"
+            _create_limiter(max_requests=settings.portal_redeem_ip_rate_per_min, window_seconds=60),
+            "portal-redeem-ip:",
         )
         logger.info("Portal redeem IP rate limiter: %s", type(_portal_redeem_ip_limiter).__name__)
     return _portal_redeem_ip_limiter
@@ -631,27 +638,43 @@ def _get_portal_redeem_invite_limiter() -> RateLimiter:
 
 
 def _get_portal_refresh_ip_limiter() -> RateLimiter:
-    """60/min per address. Refresh is a normal background call for an open
-    portal session, so this is a runaway-client guard rather than a guessing
-    control — a forged session token is refused by its signature."""
+    """Per address, defaulting to 60/min. Refresh is a normal background call
+    for an open portal session, so this is a runaway-client guard rather than
+    a guessing control — a forged session token is refused by its signature.
+    Configurable (``portal_refresh_ip_rate_per_min``); see the redeem limiter
+    above for why."""
     global _portal_refresh_ip_limiter  # noqa: PLW0603
     if _portal_refresh_ip_limiter is None:
+        from .settings import get_settings  # noqa: PLC0415
+
+        settings = get_settings()
         _portal_refresh_ip_limiter = NamespacedLimiter(
-            _create_limiter(max_requests=60, window_seconds=60), "portal-refresh-ip:"
+            _create_limiter(
+                max_requests=settings.portal_refresh_ip_rate_per_min, window_seconds=60
+            ),
+            "portal-refresh-ip:",
         )
         logger.info("Portal refresh IP rate limiter: %s", type(_portal_refresh_ip_limiter).__name__)
     return _portal_refresh_ip_limiter
 
 
 def _get_portal_practice_resolve_ip_limiter() -> RateLimiter:
-    """30/min per address. The slug directory carries no credential, but it is
-    still a lookup surface anyone can sweep to enumerate live practices — this
-    bounds that the way the public-booking browse limiter bounds slug-guessing
-    on booking links."""
+    """Per address, defaulting to 30/min. The slug directory carries no
+    credential, but it is still a lookup surface anyone can sweep to
+    enumerate live practices — this bounds that the way the public-booking
+    browse limiter bounds slug-guessing on booking links. Configurable
+    (``portal_practice_resolve_ip_rate_per_min``); see the redeem limiter
+    above for why."""
     global _portal_practice_resolve_ip_limiter  # noqa: PLW0603
     if _portal_practice_resolve_ip_limiter is None:
+        from .settings import get_settings  # noqa: PLC0415
+
+        settings = get_settings()
         _portal_practice_resolve_ip_limiter = NamespacedLimiter(
-            _create_limiter(max_requests=30, window_seconds=60), "portal-practice-resolve-ip:"
+            _create_limiter(
+                max_requests=settings.portal_practice_resolve_ip_rate_per_min, window_seconds=60
+            ),
+            "portal-practice-resolve-ip:",
         )
         logger.info(
             "Portal practice-resolve IP rate limiter: %s",
@@ -661,18 +684,26 @@ def _get_portal_practice_resolve_ip_limiter() -> RateLimiter:
 
 
 def _get_portal_recover_ip_limiter() -> RateLimiter:
-    """5/hour per address on account recovery.
+    """Per address, defaulting to 5/hour on account recovery.
 
     Tighter than anything else on the portal surface, because the request
     body is an email address and the route's whole job is to answer the same
     way whether or not it matched. A uniform answer stops the response being
     an oracle; it does nothing about volume, and a caller who can ask this
     thousands of times is mailing sign-in links to whoever they like at
-    whatever rate they like. This is what bounds that."""
+    whatever rate they like. This is what bounds that. Configurable
+    (``portal_recover_ip_rate_per_hour``); see the redeem limiter above for
+    why."""
     global _portal_recover_ip_limiter  # noqa: PLW0603
     if _portal_recover_ip_limiter is None:
+        from .settings import get_settings  # noqa: PLC0415
+
+        settings = get_settings()
         _portal_recover_ip_limiter = NamespacedLimiter(
-            _create_limiter(max_requests=5, window_seconds=3_600), "portal-recover-ip:"
+            _create_limiter(
+                max_requests=settings.portal_recover_ip_rate_per_hour, window_seconds=3_600
+            ),
+            "portal-recover-ip:",
         )
         logger.info("Portal recover IP rate limiter: %s", type(_portal_recover_ip_limiter).__name__)
     return _portal_recover_ip_limiter

@@ -127,6 +127,14 @@ services:
       - PORTAL_INVITE_DELIVERY=smtp
       - PORTAL_SMS_GATEWAY=capture
       - PORTAL_SMS_CAPTURE_URL=http://fake-sms:8026
+      # Every spec in the compose lane redeems through the same client
+      # address, so the per-address portal budgets below have to cover a
+      # whole suite rather than one household. The engine's own defaults
+      # (app.settings) are unchanged; this lane alone runs generous.
+      - PORTAL_REDEEM_IP_RATE_PER_MIN=200
+      - PORTAL_REFRESH_IP_RATE_PER_MIN=600
+      - PORTAL_PRACTICE_RESOLVE_IP_RATE_PER_MIN=300
+      - PORTAL_RECOVER_IP_RATE_PER_HOUR=200
       # Somewhere for a file to go. A document upload is browser→storage
       # direct against a signed URL, so no fake can stand in for it at the
       # API: the browser has to reach a real object store and the store has
