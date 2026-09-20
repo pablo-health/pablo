@@ -66,7 +66,20 @@ disclosure and is recorded; a patient reading their own messages is not,
 and is not. Sends and thread creation are recorded on both sides, and
 marking a message read is recorded because "this was delivered and opened"
 is the fact a dispute turns on. Every payload carries ids and counts —
-never a subject, never a body.
+never a subject, never a body, never a filename.
+
+**A message may carry files, and they are chart documents.** Every send
+route takes an optional ``attachment_ids``; each id names a document the
+sender already uploaded and finalized through their own document routes
+with category ``message``. Nothing is uploaded here and no bytes pass
+through these handlers — the link is recorded, and the file is downloaded
+afterwards through whichever document route belongs to the principal
+asking. What makes an id usable is checked against the caller's OWN
+surface: a patient may send a file they uploaded themselves, a clinician
+one they uploaded themselves onto that thread's chart, and neither may
+send a file that is already on another message. A refusal is a 422 that
+names the rule and says nothing about whose document it was, so the field
+is not a way to ask which ids exist.
 
 **After a message is stored, registered post-message callbacks run.** A
 deployment may configure them; the default is none. See
@@ -77,18 +90,21 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Annotated
+from typing import Annotated, NoReturn
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request, status
 
-from ..api_errors import ConflictError, NotFoundError
+from ..api_errors import ConflictError, NotFoundError, UnprocessableEntityError
 from ..auth.patient_context import PatientContext, get_patient_context
 from ..auth.route_access import subscription_exempt
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
 from ..models import (
     AssignThreadRequest,
     AuditAction,
+    DocumentCategory,
     MarkThreadReadResponse,
+    MessageAttachment,
+    PatientDocument,
     PatientMessage,
     PatientMessageResponse,
     PatientMessageThread,
@@ -109,7 +125,8 @@ from ..models.patient_message import (
     ThreadAssignmentFilter,
 )
 from ..rate_limit import get_patient_message_send_limiter
-from ..repositories import PatientMessageRepository
+from ..repositories import PatientDocumentRepository, PatientMessageRepository
+from ..repositories import get_patient_document_repository as _document_repo_factory
 from ..repositories import get_patient_message_repository as _repo_factory
 from ..services import AuditService, get_audit_service
 from ..services.patient_message_hooks import PatientMessageEvent, dispatch_patient_message
@@ -145,6 +162,19 @@ def get_patient_message_repository() -> PatientMessageRepository:
     return _repo_factory()
 
 
+def get_patient_document_repository() -> PatientDocumentRepository:
+    """The documents repository, for checking what may be attached.
+
+    Shared by both surfaces for the same reason the one above is, and
+    unarmed for the same reason: the principal each route depends on has
+    already set the ``search_path`` by the time this runs. It is the
+    documents repository rather than the documents service because nothing
+    here touches storage — an attachment is a row that already exists, and
+    the only question is whether this caller may send it.
+    """
+    return _document_repo_factory()
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -172,6 +202,147 @@ def _accessible_thread(
     if thread is None:
         raise NotFoundError("Thread not found", {"thread_id": thread_id})
     return thread
+
+
+def _attachments_of(
+    messages: list[PatientMessage], patient_id: str, repo: PatientMessageRepository
+) -> list[PatientMessage]:
+    """Fill in what each message carried, in one read for the whole thread."""
+    by_message = repo.list_attachments([m.id for m in messages], patient_id)
+    for message in messages:
+        message.attachments = by_message.get(message.id, [])
+    return messages
+
+
+def _as_attachments(message_id: str, documents: list[PatientDocument]) -> list[MessageAttachment]:
+    """The reply payload's attachments, off the documents just validated.
+
+    Built from what the send already read rather than read back, so the
+    response cannot describe a link the write did not make.
+    """
+    return [
+        MessageAttachment(
+            message_id=message_id,
+            document_id=document.id,
+            filename=document.filename,
+            mime_type=document.mime_type,
+            size_bytes=document.size_bytes,
+        )
+        for document in documents
+    ]
+
+
+def _refuse_attachment() -> NoReturn:
+    """One answer for every way an id fails to be attachable.
+
+    Unknown, unfinalized, the wrong category, somebody else's chart, not
+    the caller's own upload — all of it lands here, because telling them
+    apart would make this field a way to ask which document ids exist and
+    who they belong to. The rule the caller can act on is in the code.
+    """
+    raise UnprocessableEntityError(
+        "That file can't be attached.",
+        code="ATTACHMENT_NOT_AVAILABLE",
+    )
+
+
+def _refuse_reused_attachment() -> NoReturn:
+    raise UnprocessableEntityError(
+        "That file has already been sent.",
+        code="ATTACHMENT_ALREADY_SENT",
+    )
+
+
+def _usable_or_refuse(document: PatientDocument | None) -> PatientDocument:
+    """What every attachment must be, whoever is sending it.
+
+    On the chart, finished uploading, and filed as correspondence rather
+    than as something else the sender happens to be able to read.
+    """
+    # The scan gate joins this test when the scanner seam lands: an
+    # attachment will also have to be a document the scanner cleared.
+    if (
+        document is None
+        or document.finalized_at is None
+        or document.category is not DocumentCategory.MESSAGE
+    ):
+        _refuse_attachment()
+    return document
+
+
+def _not_already_sent(
+    documents: list[PatientDocument], patient_id: str, repo: PatientMessageRepository
+) -> None:
+    """A file rides on one message or none.
+
+    Asked only of documents already shown to be the caller's own, so the
+    answer discloses nothing about anybody else's chart. The database says
+    the same thing with a unique constraint; this is what turns it into a
+    422 the sender can read instead of a failed write.
+    """
+    if repo.already_attached([d.id for d in documents], patient_id):
+        _refuse_reused_attachment()
+
+
+def _no_duplicates(attachment_ids: list[str]) -> None:
+    """The same id twice in one send is the same rule, caught a step early."""
+    if len(set(attachment_ids)) != len(attachment_ids):
+        _refuse_reused_attachment()
+
+
+def _patient_attachments(
+    attachment_ids: list[str],
+    patient: PatientContext,
+    documents: PatientDocumentRepository,
+    repo: PatientMessageRepository,
+) -> list[PatientDocument]:
+    """The documents a patient may send: their own uploads, on their own chart.
+
+    ``get_for_patient_principal`` already narrows to this patient's chart
+    and to the categories their own surface carries; the uploader test on
+    top is what keeps a patient from forwarding something a clinician filed
+    for them under the same category.
+    """
+    if not attachment_ids:
+        return []
+    _no_duplicates(attachment_ids)
+    resolved = [
+        _usable_or_refuse(documents.get_for_patient_principal(document_id, patient.patient_id))
+        for document_id in attachment_ids
+    ]
+    for document in resolved:
+        if document.uploaded_by_patient_id != patient.patient_id:
+            _refuse_attachment()
+    _not_already_sent(resolved, patient.patient_id, repo)
+    return resolved
+
+
+def _clinician_attachments(
+    attachment_ids: list[str],
+    user: User,
+    thread: PatientMessageThread,
+    documents: PatientDocumentRepository,
+    repo: PatientMessageRepository,
+) -> list[PatientDocument]:
+    """The documents a clinician may send: their own uploads, on this chart.
+
+    Their own rather than any they can read, which is the same rule the
+    patient side keeps and for the same reason — a reply should send what
+    the replier meant to send, not whatever happens to be reachable on the
+    chart. Attaching a colleague's upload, or the patient's own, is a
+    different act and would want a different route.
+    """
+    if not attachment_ids:
+        return []
+    _no_duplicates(attachment_ids)
+    resolved = [
+        _usable_or_refuse(documents.get(document_id, user.id)) for document_id in attachment_ids
+    ]
+    for document in resolved:
+        if document.user_id != user.id or document.patient_id != thread.patient_id:
+            _refuse_attachment()
+    _not_already_sent(resolved, thread.patient_id, repo)
+    return resolved
 
 
 def _schedule_hooks(
@@ -218,6 +389,7 @@ def start_thread(
     background_tasks: BackgroundTasks,
     patient: CurrentPatient,
     repo: PatientMessageRepository = Depends(get_patient_message_repository),
+    documents: PatientDocumentRepository = Depends(get_patient_document_repository),
     audit: AuditService = Depends(get_audit_service),
     _: None = Depends(subscription_exempt),
 ) -> PatientMessageThreadDetailResponse:
@@ -228,6 +400,7 @@ def start_thread(
     lapsed should not silently stop accepting its patients' messages.
     """
     get_patient_message_send_limiter().check(patient.patient_id)
+    attached = _patient_attachments(request_body.attachment_ids, patient, documents, repo)
 
     now = utc_now()
     thread = PatientMessageThread(
@@ -247,6 +420,13 @@ def start_thread(
         created_at=now,
     )
     thread, message = repo.add_patient_thread(thread, message)
+    repo.link_attachments(
+        message_id=message.id,
+        patient_id=patient.patient_id,
+        document_ids=[d.id for d in attached],
+        created_at=now,
+    )
+    message.attachments = _as_attachments(message.id, attached)
 
     audit.log_patient_principal_action(
         action=AuditAction.PATIENT_MESSAGE_THREAD_CREATED,
@@ -256,13 +436,19 @@ def start_thread(
         resource_id=thread.id,
         changes={"has_subject": thread.subject is not None},
     )
+    # How many files went with it, never which. The document ids are on
+    # their own upload records; a filename is not on any audit row.
     audit.log_patient_principal_action(
         action=AuditAction.PATIENT_MESSAGE_SENT,
         request=request,
         patient_id=patient.patient_id,
         resource_type=ResourceType.PATIENT_MESSAGE_THREAD,
         resource_id=thread.id,
-        changes={"message_id": message.id, "sender": SENDER_PATIENT},
+        changes={
+            "message_id": message.id,
+            "sender": SENDER_PATIENT,
+            "attachment_count": len(attached),
+        },
     )
     _schedule_hooks(
         background_tasks,
@@ -285,6 +471,7 @@ def send_patient_message(
     background_tasks: BackgroundTasks,
     patient: CurrentPatient,
     repo: PatientMessageRepository = Depends(get_patient_message_repository),
+    documents: PatientDocumentRepository = Depends(get_patient_document_repository),
     audit: AuditService = Depends(get_audit_service),
     _: None = Depends(subscription_exempt),
 ) -> PatientMessageResponse:
@@ -293,13 +480,18 @@ def send_patient_message(
     A closed thread is refused rather than silently reopened: the practice
     ended this conversation, and the patient's next question deserves its
     own thread instead of arriving under a subject somebody already
-    answered.
+    answered. That check comes before the attachments are looked at, so a
+    patient whose thread was closed is told that and not told their file is
+    unusable — the first answer is the one they can act on.
     """
     get_patient_message_send_limiter().check(patient.patient_id)
 
     thread = _own_thread(thread_id, patient, repo)
     if thread.status == THREAD_STATUS_CLOSED:
         raise ConflictError(CLOSED_THREAD_MESSAGE, {"thread_id": thread.id})
+
+    attached = _patient_attachments(request_body.attachment_ids, patient, documents, repo)
+    now = utc_now()
     message = repo.add_patient_message(
         PatientMessage(
             id=str(uuid.uuid4()),
@@ -307,16 +499,27 @@ def send_patient_message(
             patient_id=patient.patient_id,
             sender=SENDER_PATIENT,
             body=request_body.body,
-            created_at=utc_now(),
+            created_at=now,
         )
     )
+    repo.link_attachments(
+        message_id=message.id,
+        patient_id=patient.patient_id,
+        document_ids=[d.id for d in attached],
+        created_at=now,
+    )
+    message.attachments = _as_attachments(message.id, attached)
     audit.log_patient_principal_action(
         action=AuditAction.PATIENT_MESSAGE_SENT,
         request=request,
         patient_id=patient.patient_id,
         resource_type=ResourceType.PATIENT_MESSAGE_THREAD,
         resource_id=thread.id,
-        changes={"message_id": message.id, "sender": SENDER_PATIENT},
+        changes={
+            "message_id": message.id,
+            "sender": SENDER_PATIENT,
+            "attachment_count": len(attached),
+        },
     )
     _schedule_hooks(
         background_tasks,
@@ -358,7 +561,9 @@ def get_patient_thread(
     """One of the patient's own threads with its messages. Not audited; see above."""
     thread = _own_thread(thread_id, patient, repo)
     messages = repo.list_patient_messages(thread.id, patient.patient_id)
-    return PatientMessageThreadDetailResponse.from_thread_with_messages(thread, messages)
+    return PatientMessageThreadDetailResponse.from_thread_with_messages(
+        thread, _attachments_of(messages, patient.patient_id, repo)
+    )
 
 
 @patient_messages_router.post("/threads/{thread_id}/read", response_model=MarkThreadReadResponse)
@@ -440,14 +645,17 @@ def get_thread(
 ) -> PatientMessageThreadDetailResponse:
     """One thread with its messages — a PHI disclosure, recorded as one."""
     thread = _accessible_thread(thread_id, user, repo)
-    messages = repo.list_messages(thread.id, user.id)
+    messages = _attachments_of(repo.list_messages(thread.id, user.id), thread.patient_id, repo)
     audit.log_patient_message_action(
         action=AuditAction.PATIENT_MESSAGE_THREAD_VIEWED,
         user=user,
         request=request,
         resource_id=thread.id,
         patient_id=thread.patient_id,
-        changes={"message_count": len(messages)},
+        changes={
+            "message_count": len(messages),
+            "attachment_count": sum(len(m.attachments) for m in messages),
+        },
     )
     return PatientMessageThreadDetailResponse.from_thread_with_messages(thread, messages)
 
@@ -465,19 +673,25 @@ def reply_to_thread(
     user: User = Depends(require_baa_acceptance),
     ctx: TenantContext = Depends(get_tenant_context),
     repo: PatientMessageRepository = Depends(get_patient_message_repository),
+    documents: PatientDocumentRepository = Depends(get_patient_document_repository),
     audit: AuditService = Depends(get_audit_service),
 ) -> PatientMessageResponse:
     """Write back to the patient. This is the other half of the loop.
 
     Without it the store is somewhere a patient can write and nobody can
-    answer, which is worse than not having it.
+    answer, which is worse than not having it. A reply may carry files on
+    the same terms the patient's own send does — see the module docstring.
 
     Replying into a closed thread reopens it, in the repository's own
     transaction, and the reopening is recorded alongside the send — two
-    facts about one request rather than two requests.
+    facts about one request rather than two requests. A closed thread is
+    therefore no obstacle to attaching: the reply is what reopens it, so
+    there is nothing here for the attachment rules to refuse.
     """
     thread = _accessible_thread(thread_id, user, repo)
     was_closed = thread.status == THREAD_STATUS_CLOSED
+    attached = _clinician_attachments(request_body.attachment_ids, user, thread, documents, repo)
+    now = utc_now()
     message = repo.add_reply(
         PatientMessage(
             id=str(uuid.uuid4()),
@@ -485,17 +699,28 @@ def reply_to_thread(
             patient_id=thread.patient_id,
             sender=SENDER_CLINICIAN,
             body=request_body.body,
-            created_at=utc_now(),
+            created_at=now,
         ),
         user.id,
     )
+    repo.link_attachments(
+        message_id=message.id,
+        patient_id=thread.patient_id,
+        document_ids=[d.id for d in attached],
+        created_at=now,
+    )
+    message.attachments = _as_attachments(message.id, attached)
     audit.log_patient_message_action(
         action=AuditAction.PATIENT_MESSAGE_SENT,
         user=user,
         request=request,
         resource_id=thread.id,
         patient_id=thread.patient_id,
-        changes={"message_id": message.id, "sender": SENDER_CLINICIAN},
+        changes={
+            "message_id": message.id,
+            "sender": SENDER_CLINICIAN,
+            "attachment_count": len(attached),
+        },
     )
     if was_closed:
         audit.log_patient_message_action(

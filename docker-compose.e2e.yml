@@ -44,6 +44,8 @@ services:
       # The frontend shares this network namespace (see its network_mode),
       # so its port is published on this service.
       - "${E2E_FRONTEND_PORT:-3000}:3000"
+      # And so does the object store, for the reason its env block gives.
+      - "9000:9000"
     environment:
       - DEBUG=true
       - LOG_LEVEL=INFO
@@ -125,6 +127,33 @@ services:
       - PORTAL_INVITE_DELIVERY=smtp
       - PORTAL_SMS_GATEWAY=capture
       - PORTAL_SMS_CAPTURE_URL=http://fake-sms:8026
+      # Every spec in the compose lane redeems through the same client
+      # address, so the per-address portal budgets below have to cover a
+      # whole suite rather than one household. The engine's own defaults
+      # (app.settings) are unchanged; this lane alone runs generous.
+      - PORTAL_REDEEM_IP_RATE_PER_MIN=200
+      - PORTAL_REFRESH_IP_RATE_PER_MIN=600
+      - PORTAL_PRACTICE_RESOLVE_IP_RATE_PER_MIN=300
+      - PORTAL_RECOVER_IP_RATE_PER_HOUR=200
+      # Somewhere for a file to go. A document upload is browser→storage
+      # direct against a signed URL, so no fake can stand in for it at the
+      # API: the browser has to reach a real object store and the store has
+      # to check a real signature. MinIO speaks S3, which this codebase
+      # already has a provider for (see file_storage.py), and boto3 is in
+      # the dev dependency group this image installs.
+      #
+      # The URL is signed for the host the browser will use, and the
+      # backend shares its network namespace, so ONE address serves both —
+      # which is why the port is fixed rather than overridable: a published
+      # port that disagreed with the signed one would fail the signature,
+      # not the connection, and read as "storage rejected the upload".
+      - FILE_STORAGE_PROVIDER=s3
+      - AWS_S3_ENDPOINT_URL=http://localhost:9000
+      - AWS_REGION=us-east-1
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=e2e-not-a-real-key
+      - AWS_SECRET_ACCESS_KEY=e2e-not-a-real-secret
+      - PATIENT_DOCUMENTS_GCS_BUCKET=pablo-e2e-documents
       # Video sessions. Only the two providers that need no vendor account
       # are offered here: a pasted link, and a clinician's own waiting room.
       # Zoom and Google Meet each need a real connection to produce a room,
@@ -171,6 +200,52 @@ services:
         condition: service_healthy
     networks:
       - e2e-net
+
+  # Object storage, in the backend's network namespace so that one address
+  # — localhost:9000 — is the store from inside the stack AND from the
+  # browser on the host. A presigned URL signs the host it was made for, so
+  # two addresses would mean a signature that never verifies.
+  #
+  # It cannot depend on the backend being HEALTHY (sharing a namespace
+  # already makes it start second, and the backend does not need a bucket
+  # to serve), so nothing here gates boot. What gates the suite is
+  # create-bucket, which the frontend waits on.
+  storage:
+    # quay.io, not Docker Hub: MinIO's Hub repository no longer serves
+    # pulls, so ``minio/minio:<tag>`` fails with a denied-access error that
+    # reads like a missing tag.
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: ["server", "/data", "--address", ":9000"]
+    network_mode: "service:backend"
+    environment:
+      - MINIO_ROOT_USER=e2e-not-a-real-key
+      - MINIO_ROOT_PASSWORD=e2e-not-a-real-secret
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 3s
+      timeout: 5s
+      start_period: 5s
+      retries: 20
+    depends_on:
+      backend:
+        condition: service_started
+
+  # The bucket the document routes are configured with. One shot: MinIO has
+  # no "create on first write", and an upload against a missing bucket is a
+  # 500 from the signing call rather than anything a spec could read.
+  create-bucket:
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+    network_mode: "service:backend"
+    entrypoint:
+      [
+        "sh",
+        "-c",
+        "mc alias set e2e http://localhost:9000 e2e-not-a-real-key e2e-not-a-real-secret && mc mb --ignore-existing e2e/pablo-e2e-documents",
+      ]
+    restart: "no"
+    depends_on:
+      storage:
+        condition: service_healthy
 
   # A SECOND practice, so cross-tenant isolation can be tested through the app
   # rather than only at the integration layer. Runs once, after the backend is
@@ -263,6 +338,14 @@ services:
       # spec failing on a blank page while the API-only ones passed.
       - API_URL=http://localhost:8000
       - PUBLIC_API_URL=http://localhost:${E2E_BACKEND_PORT:-8000}
+      # A document upload goes browser→storage direct, so the object store
+      # is an origin the page dials and the Content-Security-Policy has to
+      # name it. A managed deployment leaves this unset — its signed URLs
+      # are on storage.googleapis.com, which the policy already allows —
+      # but this stack's store is MinIO, and without this the browser
+      # blocks the upload while the init call that created the row
+      # succeeds, so nothing server-side says anything went wrong.
+      - PUBLIC_FILE_STORAGE_URL=http://localhost:9000
       # The booking pages are reached with no session: the link is the
       # credential. A deployment that publishes them says so here, and the
       # auth middleware unions this into its own allowlist.
@@ -298,6 +381,13 @@ services:
       # the point. A non-zero exit still fails the stack, which is correct: a
       # suite that needs the second practice should not run without it.
       seed-second-practice:
+        condition: service_completed_successfully
+      # Same reasoning as the line above: ``up --wait`` returns when every
+      # service is running or healthy, and a one-shot that has exited is
+      # neither — so naming it here is what makes the bucket's creation
+      # part of "the stack is ready" rather than a race a document spec
+      # loses occasionally.
+      create-bucket:
         condition: service_completed_successfully
 
   firebase-auth:

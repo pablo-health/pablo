@@ -147,7 +147,7 @@ describe("PortalMessaging", () => {
     await user.click(screen.getByTestId("portal-messaging-composer-send"))
 
     await waitFor(() =>
-      expect(api.sendMessage).toHaveBeenCalledWith(TOKEN, "t1", "Thursday works"),
+      expect(api.sendMessage).toHaveBeenCalledWith(TOKEN, "t1", "Thursday works", []),
     )
   })
 

@@ -81,6 +81,7 @@ from ..models.patient_intake_assignment_api import (
     IntakeAssignmentDetailResponse,
     IntakeAssignmentItemResponse,
     IntakeAssignmentResponse,
+    IntakeCorrectionResponse,
     IntakeProgressResponse,
     IntakeSubmissionResponse,
     SaveAnswerRequest,
@@ -105,10 +106,13 @@ from ..request_context import extract_request_context
 from ..services.audit_service import AuditService, get_audit_service
 from ..services.patient_intake_assignment_service import (
     AssignmentClosedError,
+    CorrectionOutstandingError,
+    CorrectionScopeError,
     FrozenResponseError,
     IncompleteFormError,
     IntakeAssignmentService,
     UnpublishedVersionError,
+    event_item_ids,
 )
 from ..services.patient_intake_signature_service import (
     AlreadySignedError,
@@ -292,6 +296,12 @@ def get_my_assignment(
 ) -> IntakeAssignmentDetailResponse:
     """One form, its questions in order, and whatever has been saved so far.
 
+    Carries ``correction`` when the practice has sent named questions back:
+    the note they wrote, the questions they named, and which of those have
+    not been answered again yet. Its presence is the whole answer to "am I
+    being asked to redo something", so the portal never has to infer that
+    from a status string.
+
     Another patient's assignment id is a 404, indistinguishable from an id
     that does not exist — so the surface never confirms that somebody
     else's form is real.
@@ -302,6 +312,7 @@ def get_my_assignment(
     base = _assignment_response(service, assignment, patient.patient_id)
     return IntakeAssignmentDetailResponse(
         **base.model_dump(),
+        correction=_correction_response(service, assignment, patient.patient_id),
         items=[
             IntakeAssignmentItemResponse(
                 id=str(row["id"]),
@@ -339,6 +350,11 @@ def save_my_answer(
     accumulating two, so a retry after a dropped connection is safe. The
     first save moves the form from "sent" to "in progress", and a form that
     has been handed in or withdrawn is a 409 rather than a silent no-op.
+
+    A form the practice sent back is open only where they said. A question
+    the correction request did not name is a 409 with a sentence of its own
+    — it is not that the form is closed, it is that this part of it is
+    settled and the rest is what they are waiting on.
     """
     _require_stepped_up(patient)
     assignment = _own_assignment(service, assignment_id, patient.patient_id)
@@ -347,6 +363,11 @@ def save_my_answer(
         _saved, worth_auditing = service.save_answer(
             assignment, patient.patient_id, item_id, body.value
         )
+    except CorrectionScopeError as exc:
+        raise ConflictError(
+            "Your practice asked you to look at a different question.",
+            {"assignment_id": assignment_id, "item_id": item_id},
+        ) from exc
     except (AssignmentClosedError, FrozenResponseError) as exc:
         raise ConflictError(
             "This form is no longer open for changes.", {"assignment_id": assignment_id}
@@ -563,14 +584,25 @@ def submit_my_assignment(
     receipt for one set of answers, and the second caller is told the form
     is closed rather than quietly given the first receipt back.
 
+    A form the practice sent back is a 422 too while any question they
+    named is still unredone, and the message says so rather than talking
+    about the form being unfinished — the rest of it was finished the first
+    time, which is how it came to be reviewed at all.
+
     On success the answers stop being drafts, every measure on the form is
     scored onto the chart, and the response carries the receipt.
     """
     _require_stepped_up(patient)
     assignment = _own_assignment(service, assignment_id, patient.patient_id)
+    correcting = service.open_correction(assignment, patient.patient_id) is not None
 
     try:
         submission = service.submit(assignment, patient.patient_id, measures)
+    except CorrectionOutstandingError as exc:
+        raise UnprocessableEntityError(
+            "Your practice is still waiting on one of these.",
+            {"missing": exc.outstanding},
+        ) from exc
     except IncompleteFormError as exc:
         raise UnprocessableEntityError(
             "Some questions still need an answer.", {"missing": exc.missing}
@@ -591,6 +623,17 @@ def submit_my_assignment(
         resource_id=assignment_id,
         changes={"instruments": [m.instrument for m in submission.measures]},
     )
+    if correcting:
+        # Beside the submission rather than instead of it: one says a form
+        # arrived, the other that what the practice asked for was done, and
+        # a reader of the log wants both.
+        audit.log_patient_principal_action(
+            action=AuditAction.PATIENT_INTAKE_CORRECTED,
+            request=request,
+            patient_id=patient.patient_id,
+            resource_type=ResourceType.PATIENT_INTAKE_ASSIGNMENT,
+            resource_id=assignment_id,
+        )
 
     submitted = submission.assignment
     return IntakeSubmissionResponse(
@@ -608,6 +651,28 @@ def submit_my_assignment(
             for m in submission.measures
         ],
         notes=submission.notes,
+    )
+
+
+def _correction_response(
+    service: IntakeAssignmentService, assignment: dict[str, object], patient_id: str
+) -> IntakeCorrectionResponse | None:
+    """What the practice has asked this patient to redo, if anything.
+
+    ``None`` unless the form is open for corrections, so the portal reads
+    presence rather than comparing a status string. ``outstanding`` is
+    computed from the rows here, like every other statement about progress
+    on this surface — a client never works out for itself whether the form
+    can go back.
+    """
+    correction = service.open_correction(assignment, patient_id)
+    if correction is None:
+        return None
+    return IntakeCorrectionResponse(
+        requested_at=correction["created_at"],  # type: ignore[arg-type]
+        note=_optional_str(correction.get("note_to_patient")),
+        item_ids=event_item_ids(correction),
+        outstanding=service.outstanding_corrections(assignment, patient_id, correction),
     )
 
 
@@ -810,11 +875,22 @@ def withdraw_intake_assignment(
     return _assignment_response(service, withdrawn, patient_id)
 
 
+# Shared with the review surface next door, which renders the same three
+# shapes out of the same rows. Aliases rather than a rename, so the call
+# sites above stay as they read and the seam is one place rather than
+# scattered underscores crossing a module boundary.
+assignment_response = _assignment_response
+signature_response = _signature_response
+optional_str = _optional_str
+
 __all__ = [
+    "assignment_response",
     "clinician_router",
     "get_clinician_intake_assignment_service",
     "get_clinician_patient_repository",
     "get_patient_intake_assignment_service",
     "get_patient_intake_signature_service",
+    "optional_str",
     "router",
+    "signature_response",
 ]

@@ -54,10 +54,18 @@ class PatientIntakeSignatureRepository(ABC):
     def list_live_for_assignment(
         self, assignment_id: str, patient_id: str
     ) -> list[dict[str, object]]:
-        """The calling patient's live signatures on one of their own forms.
+        """The live signatures on one form, oldest first.
 
         Oldest first, so a document asking for two signatures reads in the
         order they were given.
+
+        The predicate is the ``(assignment, patient)`` pair and nothing
+        else, so both principals reach it through the same method: a
+        patient passes the id off their own session, a clinician passes the
+        one they already verified a grant on. Which rows come back is then
+        the row policy's answer — the patient arm for one, the
+        ``has_patient_access`` arm for the other — rather than a second
+        access check written twice.
         """
 
     @abstractmethod

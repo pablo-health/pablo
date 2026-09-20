@@ -1170,6 +1170,33 @@ class Settings(BaseSettings):
             "portal_sms_gateway."
         ),
     )
+    # Per-address burst limits on the portal's unauthenticated surface. Each
+    # keys on the caller's IP, so a stack driving many patients through
+    # sign-in from one address (a shared local-stack test suite, a household,
+    # a waiting-room network) shares one budget across all of them. The
+    # defaults are the production posture described beside each route in
+    # app.rate_limit; a deployment that legitimately drives more traffic
+    # through one address raises the setting rather than the code.
+    portal_redeem_ip_rate_per_min: int = Field(
+        default=20,
+        ge=1,
+        description="Max portal invitation redemptions per source address per minute.",
+    )
+    portal_refresh_ip_rate_per_min: int = Field(
+        default=60,
+        ge=1,
+        description="Max portal session refreshes per source address per minute.",
+    )
+    portal_practice_resolve_ip_rate_per_min: int = Field(
+        default=30,
+        ge=1,
+        description="Max portal practice-slug lookups per source address per minute.",
+    )
+    portal_recover_ip_rate_per_hour: int = Field(
+        default=5,
+        ge=1,
+        description="Max portal account-recovery requests per source address per hour.",
+    )
     # Which patient-facing modules this deployment serves in the portal.
     #
     # A comma-separated string rather than a list field: pydantic-settings

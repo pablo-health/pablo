@@ -73,6 +73,11 @@ export interface PatientDocumentResponse {
   extraction_status: ExtractionStatus
   text_extraction_failed: boolean
   uploaded_by: DocumentUploader
+  /**
+   * The conversation a `message` document arrived on. Null on every other
+   * category, and on any surface that did not look the link up.
+   */
+  message_thread_id?: string | null
 }
 
 export interface PatientDocumentListResponse {

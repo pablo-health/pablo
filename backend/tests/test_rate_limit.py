@@ -22,6 +22,10 @@ from app.rate_limit import (
     NamespacedLimiter,
     RedisSlidingWindow,
     _get_passkey_login_limiter,
+    _get_portal_practice_resolve_ip_limiter,
+    _get_portal_recover_ip_limiter,
+    _get_portal_redeem_ip_limiter,
+    _get_portal_refresh_ip_limiter,
     _get_preauth_limiter,
     _get_public_booking_browse_limiter,
     _get_public_booking_write_limiter,
@@ -343,6 +347,12 @@ def _settings_stub(**overrides: int) -> MagicMock:
     settings.upload_rate_per_min = overrides.get("upload_rate_per_min", 100)
     settings.upload_rate_per_hour = overrides.get("upload_rate_per_hour", 100)
     settings.ehr_navigate_daily_limit = overrides.get("ehr_navigate_daily_limit", 100)
+    settings.portal_redeem_ip_rate_per_min = overrides.get("portal_redeem_ip_rate_per_min", 100)
+    settings.portal_refresh_ip_rate_per_min = overrides.get("portal_refresh_ip_rate_per_min", 100)
+    settings.portal_practice_resolve_ip_rate_per_min = overrides.get(
+        "portal_practice_resolve_ip_rate_per_min", 100
+    )
+    settings.portal_recover_ip_rate_per_hour = overrides.get("portal_recover_ip_rate_per_hour", 100)
     return settings
 
 
@@ -352,10 +362,18 @@ def _reset_limiter_singletons():
     rate_limit._chat_send_limiter = None
     rate_limit._audio_upload_limiter = None
     rate_limit._ehr_navigate_limiter = None
+    rate_limit._portal_redeem_ip_limiter = None
+    rate_limit._portal_refresh_ip_limiter = None
+    rate_limit._portal_practice_resolve_ip_limiter = None
+    rate_limit._portal_recover_ip_limiter = None
     yield
     rate_limit._chat_send_limiter = None
     rate_limit._audio_upload_limiter = None
     rate_limit._ehr_navigate_limiter = None
+    rate_limit._portal_redeem_ip_limiter = None
+    rate_limit._portal_refresh_ip_limiter = None
+    rate_limit._portal_practice_resolve_ip_limiter = None
+    rate_limit._portal_recover_ip_limiter = None
 
 
 def test_redis_composite_hourly_window_survives_per_minute_pruning() -> None:
@@ -418,6 +436,42 @@ def test_chat_audio_ehr_limiter_budgets_are_independent() -> None:
         # Same raw key, different endpoint limiters: still fresh budgets.
         audio_limiter.check("user-1")
         ehr_limiter.check("user-1")
+
+
+@pytest.mark.parametrize(
+    ("getter", "setting_name", "budget"),
+    [
+        (_get_portal_redeem_ip_limiter, "portal_redeem_ip_rate_per_min", 2),
+        (_get_portal_refresh_ip_limiter, "portal_refresh_ip_rate_per_min", 2),
+        (
+            _get_portal_practice_resolve_ip_limiter,
+            "portal_practice_resolve_ip_rate_per_min",
+            2,
+        ),
+        (_get_portal_recover_ip_limiter, "portal_recover_ip_rate_per_hour", 2),
+    ],
+)
+def test_portal_per_address_limiter_honours_its_setting(
+    getter: Any, setting_name: str, budget: int
+) -> None:
+    """Each portal per-address limiter is sized off its own setting rather
+    than a number baked into the code.
+
+    This is the fix for a compose-lane test suite driving many patients'
+    redemptions, refreshes and lookups through one shared client address: a
+    deployment (or a test lane) that needs a bigger budget for one address
+    raises the setting, and the engine's own default is untouched.
+    """
+    settings = _settings_stub(**{setting_name: budget})
+
+    with patch("app.settings.get_settings", return_value=settings):
+        limiter = getter()
+        for _ in range(budget):
+            limiter.check("203.0.113.42")
+
+        with pytest.raises(HTTPException) as exc:
+            limiter.check("203.0.113.42")
+        assert exc.value.status_code == status.HTTP_429_TOO_MANY_REQUESTS
 
 
 def test_namespaced_limiter_prefixes_key_before_delegating() -> None:
