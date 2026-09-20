@@ -28,8 +28,16 @@ has to be an index rather than a table constraint.
 Idempotent, like every revision in this chain: it is fanned out once per
 practice schema.
 
+Originally cut on ``c5f80a214d9e`` and re-pointed at ``d4a7b1e93c26`` after
+the fact. Both were cut off the same parent and landed within minutes of
+each other, which left the chain with two heads — a state git merges
+without complaint and alembic refuses to run at all. Landing order is
+chain order, so the one that merged second re-points; the table this
+creates is untouched either way, because nothing in it depends on what
+came before.
+
 Revision ID: d1b6a934f7c0
-Revises: c5f80a214d9e
+Revises: d4a7b1e93c26
 Create Date: 2026-09-20
 """
 
@@ -43,7 +51,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 revision: str = "d1b6a934f7c0"
-down_revision: str | Sequence[str] | None = "c5f80a214d9e"
+down_revision: str | Sequence[str] | None = "d4a7b1e93c26"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
