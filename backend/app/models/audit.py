@@ -252,6 +252,15 @@ class AuditAction(StrEnum):
     # patient id, never any answer.
     PATIENT_INTAKE_SUBMITTED = "patient_intake_submitted"
 
+    # A clinician read a patient's intake submissions. The form carries
+    # free text the patient wrote — what brings them in, and anything they
+    # said was wrong about their name or date of birth — so opening it is a
+    # disclosure of patient-authored content, audited like a chat read
+    # rather than like a score. Patient-scoped: ``resource_id`` is the
+    # patient id and the payload carries how many submissions came back,
+    # never any of their words.
+    PATIENT_INTAKE_SUBMISSION_VIEWED = "patient_intake_submission_viewed"
+
     # Secure patient messaging. Both principals write these: a patient
     # starting a thread or sending into one, and a clinician replying. The
     # actor is what ``actor_type`` separates, so the action names say what

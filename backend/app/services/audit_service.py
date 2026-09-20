@@ -42,6 +42,11 @@ _COALESCED_READ_ACTIONS: frozenset[AuditAction] = frozenset(
         AuditAction.CHAT_CONVERSATION_VIEWED,
         AuditAction.CHAT_CONVERSATION_LIST_VIEWED,
         AuditAction.PATIENT_DOCUMENT_VIEWED,
+        # The intake card sits on the chart, so this read fires on every
+        # visit to the page and refetches with it. Coalescing keeps one row
+        # per clinician per patient per window, which is the granularity the
+        # disclosure has anyway: the whole submission list, at once.
+        AuditAction.PATIENT_INTAKE_SUBMISSION_VIEWED,
         # The calendar list audits one of these per appointment it returns
         # (the payload carries the patient's display name), and refetches on
         # every mutation — without coalescing a single busy calendar session
