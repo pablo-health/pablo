@@ -105,6 +105,16 @@ class IntakePacketRepository(ABC):
         :class:`app.services.intake_packet_service.IntakePacketService`.
         """
 
+    @abstractmethod
+    def set_item_config(self, item_id: str, config: dict[str, object]) -> dict[str, object] | None:
+        """Rewrite one item's configuration in place. ``None`` if no such id.
+
+        Narrower than :meth:`replace_items` on purpose. The one caller is
+        the publisher pinning a consent item's document version, and going
+        through the wholesale swap would give every item on the version a
+        new id — ids that an assignment's saved answers point at.
+        """
+
 
 class InMemoryIntakePacketRepository(IntakePacketRepository):
     """In-memory repository for unit tests."""
@@ -194,3 +204,11 @@ class InMemoryIntakePacketRepository(IntakePacketRepository):
     ) -> list[dict[str, object]]:
         self.items[version_id] = [dict(r) for r in rows]
         return self.list_items(version_id)
+
+    def set_item_config(self, item_id: str, config: dict[str, object]) -> dict[str, object] | None:
+        for rows in self.items.values():
+            for row in rows:
+                if str(row["id"]) == item_id:
+                    row["config"] = dict(config)
+                    return dict(row)
+        return None

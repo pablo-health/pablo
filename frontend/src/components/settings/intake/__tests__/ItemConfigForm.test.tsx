@@ -18,6 +18,7 @@ import userEvent from "@testing-library/user-event"
 
 import { ItemConfigForm } from "../ItemConfigForm"
 import type { ItemConfig, ItemType } from "@/types/intakePackets"
+import { DOCUMENT_PICKER_LABEL, NO_PUBLISHED_DOCUMENTS } from "../intakeCopy"
 
 const onChange = vi.fn()
 
@@ -173,5 +174,53 @@ describe("ItemConfigForm", () => {
     // beside the name rather than in here — see IntakeItemEditor.
     const { container } = form(itemType)
     expect(container).toBeEmptyDOMElement()
+  })
+})
+
+describe("ItemConfigForm: the consent document picker", () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  const DOCUMENTS = [
+    { document_key: "key-1", title: "Consent for treatment" },
+    { document_key: "key-2", title: "Telehealth agreement" },
+  ]
+
+  function consentForm(config: ItemConfig = {}, documents = DOCUMENTS) {
+    return render(
+      <ItemConfigForm
+        itemType="consent_document"
+        config={config}
+        onChange={onChange}
+        idPrefix="test"
+        documents={documents}
+      />
+    )
+  }
+
+  it("offers each published document by name", async () => {
+    const user = userEvent.setup()
+    consentForm()
+
+    await user.click(screen.getByLabelText(DOCUMENT_PICKER_LABEL))
+
+    expect(screen.getByRole("option", { name: "Consent for treatment" })).toBeInTheDocument()
+    expect(screen.getByRole("option", { name: "Telehealth agreement" })).toBeInTheDocument()
+  })
+
+  it("picking one stores the document, not a version of it", async () => {
+    const user = userEvent.setup()
+    consentForm()
+
+    await user.click(screen.getByLabelText(DOCUMENT_PICKER_LABEL))
+    await user.click(screen.getByRole("option", { name: "Telehealth agreement" }))
+
+    expect(lastConfig()).toEqual({ document_key: "key-2" })
+  })
+
+  it("with nothing published it says what to do first", () => {
+    consentForm({}, [])
+
+    expect(screen.getByText(NO_PUBLISHED_DOCUMENTS)).toBeInTheDocument()
+    expect(screen.queryByLabelText(DOCUMENT_PICKER_LABEL)).not.toBeInTheDocument()
   })
 })

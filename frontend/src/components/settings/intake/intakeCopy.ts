@@ -89,3 +89,28 @@ export const NO_QUESTIONS = "Nothing on this form yet."
  */
 export const PUBLISHED_NOTICE =
   "This version has been published. Start a new version to change the questions."
+
+export const DOCUMENTS_TITLE = "Documents"
+export const DOCUMENTS_DESCRIPTION = "What people read and sign before you see them."
+export const DOCUMENTS_EMPTY = "No documents yet."
+export const NEW_DOCUMENT_NAME = "New document"
+export const ADD_DOCUMENT = "Add a document"
+export const DOCUMENT_NAME_LABEL = "Name"
+export const DOCUMENT_BODY_LABEL = "What they read"
+export const DOCUMENT_PREVIEW_LABEL = "Preview"
+export const NEW_DOCUMENT_VERSION_BUTTON = "Start a new version"
+
+/**
+ * Shown on a published version instead of the editor.
+ *
+ * Same shape as the form notice: what to do, not what is forbidden. A
+ * published document is what somebody's signature was a signature to, so a
+ * change goes on a new version.
+ */
+export const DOCUMENT_PUBLISHED_NOTICE =
+  "This version has been published. Start a new version to change the wording."
+
+/** Shown under the picker when the practice has nothing published to pick. */
+export const NO_PUBLISHED_DOCUMENTS = "Publish a document first, then you can ask for it here."
+
+export const DOCUMENT_PICKER_LABEL = "Which document"

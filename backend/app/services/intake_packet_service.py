@@ -23,6 +23,12 @@ Publishing validates the whole list rather than each item as it arrives,
 because two of the rules are about the list: keys have to be unique across
 it, and a visibility rule may only point backwards within it. A draft is
 allowed to be half-built; publishing is where it has to make sense.
+
+Publishing is also where a consent item stops naming a document and starts
+naming one revision of it. The practice picks the document; the revision it
+gets pinned to is whichever was live at the moment the form was frozen, so
+the practice can keep revising the document afterwards without touching a
+form that has already gone out.
 """
 
 from __future__ import annotations
@@ -32,6 +38,7 @@ from typing import TYPE_CHECKING
 
 from ..intake.items import (
     DISPLAY_ONLY_ITEM_TYPES,
+    ConsentDocumentConfig,
     ItemConfigError,
     ItemDraft,
     stored_config,
@@ -40,6 +47,7 @@ from ..intake.items import (
 from ..utcnow import utc_now
 
 if TYPE_CHECKING:
+    from ..intake.items import ItemConfig, PublishedDocumentLookup
     from ..repositories.intake_packet import IntakePacketRepository
 
 
@@ -60,8 +68,13 @@ def _optional_str(value: object) -> str | None:
 class IntakePacketService:
     """Templates, versions and items, with the freeze enforced."""
 
-    def __init__(self, repo: IntakePacketRepository) -> None:
+    def __init__(
+        self,
+        repo: IntakePacketRepository,
+        published_document: PublishedDocumentLookup | None = None,
+    ) -> None:
         self._repo = repo
+        self._published_document = published_document
 
     # --- templates ---
 
@@ -203,12 +216,20 @@ class IntakePacketService:
         return self._repo.replace_items(version_id, rows)
 
     def publish(self, version_id: str, published_by: str) -> dict[str, object]:
-        """Validate a draft's items and freeze it.
+        """Validate a draft's items, pin its documents, and freeze it.
 
         Raises :class:`ItemConfigError` naming the item that is wrong, or
         :class:`PublishedVersionError` if the version is already frozen.
         Nothing is written unless every item passes, so a refused publish
         leaves the draft exactly as it was.
+
+        **Pinning happens between the validation and the freeze**, which is
+        the only window it can. A consent item stores the document a
+        practice picked; what a patient signs has to be one exact revision
+        of that document, and the revision to use is whichever was current
+        the moment the form went live. Writing it afterwards would be an
+        edit to a frozen version; writing it earlier would leave a draft
+        carrying a pin that goes stale every time the document is revised.
         """
         version = self._repo.get_version(version_id)
         if version is None:
@@ -216,7 +237,8 @@ class IntakePacketService:
         if version["published_at"] is not None:
             raise PublishedVersionError(version_id)
 
-        validate_item_list(
+        rows = self._repo.list_items(version_id)
+        configs = validate_item_list(
             [
                 ItemDraft(
                     key=str(row["key"]),
@@ -227,13 +249,40 @@ class IntakePacketService:
                     help_text=_optional_str(row.get("help_text")),
                     config=stored_config(row["config"]),
                 )
-                for row in self._repo.list_items(version_id)
-            ]
+                for row in rows
+            ],
+            published_document=self._published_document,
         )
+        self._pin_documents(rows, configs)
+
         published = self._repo.mark_published(version_id, utc_now(), published_by)
         if published is None:  # pragma: no cover — read above proves it exists
             raise LookupError(version_id)
         return published
+
+    def _pin_documents(self, rows: list[dict[str, object]], configs: list[ItemConfig]) -> None:
+        """Record on each consent item which revision of its document is live.
+
+        ``configs`` came from ``rows`` in order, so the two zip. A service
+        built without a document lookup writes nothing and validates
+        nothing about documents — it is the shape a caller with no document
+        store gets, and the route that publishes always supplies one.
+        """
+        if self._published_document is None:
+            return
+        for row, config in zip(rows, configs, strict=True):
+            if not isinstance(config, ConsentDocumentConfig):
+                continue
+            version_id = self._published_document(config.document_key)
+            if version_id is None:  # pragma: no cover — validation refused this already
+                continue
+            self._repo.set_item_config(
+                str(row["id"]),
+                {
+                    **stored_config(row["config"]),
+                    "document_version_id": version_id,
+                },
+            )
 
 
 __all__ = ["IntakePacketService", "ItemConfigError", "PublishedVersionError"]

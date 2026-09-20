@@ -34,6 +34,7 @@ one; see :data:`LABEL_REQUIRED_ITEM_TYPES`.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
@@ -70,10 +71,14 @@ ITEM_TYPES: tuple[str, ...] = (
 DISPLAY_ONLY_ITEM_TYPES = DISPLAY_ONLY_TARGETS
 
 #: Items a practice writes the question for, and so may not publish without
-#: one. The rest are the engine's own: ``section`` and ``instructions`` carry
-#: their text in ``config``, and ``demographics``, ``reason`` and
-#: ``instrument`` are asked in wording the engine serves — a label on one of
-#: those overrides the heading and is never required.
+#: one.
+#:
+#: The rest already have their wording somewhere else. ``section`` and
+#: ``instructions`` carry their text in ``config``; ``demographics``,
+#: ``reason`` and ``instrument`` are asked in wording the engine serves; and
+#: a ``consent_document`` is named by the document it points at, which has a
+#: title of its own. A label on any of those overrides the heading and is
+#: never required.
 LABEL_REQUIRED_ITEM_TYPES: frozenset[str] = frozenset(
     {
         "free_text",
@@ -85,7 +90,6 @@ LABEL_REQUIRED_ITEM_TYPES: frozenset[str] = frozenset(
         "date",
         "emergency_contact",
         "guardian",
-        "consent_document",
         "insurance_card",
         "document_request",
     }
@@ -107,6 +111,13 @@ SELF_REPORT_INSTRUMENTS = frozenset(INSTRUMENT_REGISTRY) & frozenset(ITEM_TEXT)
 ITEM_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 _MAX_OPTIONS = 40
+
+#: Given a document key, the id of its newest published version — or
+#: ``None`` if that document has never been published. A callable rather
+#: than a repository so that this module keeps knowing nothing about
+#: storage: the question a form asks about a document is "can somebody sign
+#: it", and this is that question with nothing else attached.
+type PublishedDocumentLookup = Callable[[str], str | None]
 
 
 class ItemConfigError(ValueError):
@@ -289,13 +300,22 @@ class InstrumentConfig(_BaseConfig):
 class ConsentDocumentConfig(_BaseConfig):
     """A document the patient reads and signs.
 
-    ``document_id`` points at the practice's own consent document. Nothing
-    stores those yet, so publishing this type is refused for now — see
-    :func:`validate_item_list`.
+    Two ids, and the difference between them is the whole design.
+    ``document_key`` is the document — what the practice picked in the
+    editor, and what stays the same across every revision of that text.
+    ``document_version_id`` is the exact revision, pinned by the publisher
+    when the form is frozen, so a signature can always be read back against
+    the words that were on the screen.
+
+    A practice never sets the second one: it is absent on a draft and
+    present on every published version. That is why it is optional here
+    rather than required — the same model has to parse an item mid-edit and
+    an item that has gone live.
     """
 
     item_type: Literal["consent_document"]
-    document_id: str
+    document_key: str
+    document_version_id: str | None = None
 
 
 class InsuranceCardConfig(_BaseConfig):
@@ -387,14 +407,25 @@ def _first_message(exc: ValidationError) -> str:
     return f"{location}: {message}" if location else message
 
 
-def validate_item_list(items: list[ItemDraft]) -> list[ItemConfig]:
+def validate_item_list(
+    items: list[ItemDraft],
+    *,
+    published_document: PublishedDocumentLookup | None = None,
+) -> list[ItemConfig]:
     """Check a whole version's items the way publishing does.
 
     Everything that cannot be judged one item at a time happens here: keys
     are unique, a question the practice wrote has the wording it will be
-    asked in, a rule points backwards at a question that can answer it, and
-    a type whose storage has not shipped yet is refused rather than accepted
-    and left dangling.
+    asked in, a rule points backwards at a question that can answer it,
+    and a consent item names a document somebody can actually sign.
+
+    ``published_document`` answers the published version id for a document
+    key, or ``None`` if that document has never been published. It is
+    optional because the question is about the practice's documents rather
+    than about the item, and a caller holding no document store has nothing
+    to ask; left out, a consent item is checked for shape and not for what
+    it points at. The route that publishes always supplies one, so a form
+    cannot go live naming a document nobody could sign.
 
     Raises :class:`ItemConfigError` naming the item that is wrong. The
     message is what the editor shows next to that item, so it says what to do
@@ -420,9 +451,13 @@ def validate_item_list(items: list[ItemDraft]) -> list[ItemConfig]:
         except ItemConfigError as exc:
             raise ItemConfigError(f"{item.key}: {exc}") from exc
 
-        if item.item_type == "consent_document":
+        if (
+            isinstance(config, ConsentDocumentConfig)
+            and published_document is not None
+            and published_document(config.document_key) is None
+        ):
             raise ItemConfigError(
-                f"{item.key}: consent documents are not ready to be added to a form yet."
+                f"{item.key}: publish this document before you ask anybody to sign it."
             )
 
         _check_label(item)
@@ -488,9 +523,11 @@ __all__ = [
     "LABEL_REQUIRED_ITEM_TYPES",
     "SELF_REPORT_INSTRUMENTS",
     "ChoiceOption",
+    "ConsentDocumentConfig",
     "ItemConfig",
     "ItemConfigError",
     "ItemDraft",
+    "PublishedDocumentLookup",
     "VisibleWhen",
     "validate_item_config",
     "validate_item_list",

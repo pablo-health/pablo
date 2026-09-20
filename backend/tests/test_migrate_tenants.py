@@ -14,6 +14,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, cast
 
+from app.db import RlsReconcileCounts
 from app.db.migrate_tenants import (
     TenantResult,
     TenantStatus,
@@ -42,17 +43,17 @@ def _reconciler(calls: list[str], *, raises_on: str | None = None):
     are decidable without one.
     """
 
-    def _reconcile(engine: Engine, schema: str) -> int:
+    def _reconcile(engine: Engine, schema: str) -> RlsReconcileCounts:
         calls.append(schema)
         if schema == raises_on:
             raise RuntimeError("policy apply blew up")
-        return 42
+        return RlsReconcileCounts(applied=42, skipped=1)
 
     return _reconcile
 
 
-def _no_reconcile(engine: Engine, schema: str) -> int:
-    return 0
+def _no_reconcile(engine: Engine, schema: str) -> RlsReconcileCounts:
+    return RlsReconcileCounts(applied=0, skipped=0)
 
 
 def test_fan_out_invokes_runner_per_schema_in_order() -> None:

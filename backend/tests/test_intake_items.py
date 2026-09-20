@@ -153,9 +153,33 @@ class TestTheWholeList:
         with pytest.raises(ItemConfigError, match="cannot be a question's name"):
             validate_item_list([_draft("Reason For Visit", "reason")])
 
-    def test_a_consent_document_is_refused_until_documents_ship(self) -> None:
-        with pytest.raises(ItemConfigError, match="not ready to be added"):
-            validate_item_list([_draft("consent", "consent_document", document_id="x")])
+    def test_a_consent_document_has_to_name_a_document(self) -> None:
+        with pytest.raises(ItemConfigError, match="document_key"):
+            validate_item_list([_draft("consent", "consent_document")])
+
+    def test_a_consent_document_passes_with_no_lookup_to_ask(self) -> None:
+        """The editor's own validation has no document store to consult.
+
+        Saving a draft goes through the same function as publishing, and a
+        practice picking a document it has not published yet is a normal
+        thing to have half-done.
+        """
+        parsed = validate_item_list([_draft("consent", "consent_document", document_key="doc-1")])
+        assert parsed[0].item_type == "consent_document"
+
+    def test_an_unpublished_document_cannot_be_asked_for(self) -> None:
+        with pytest.raises(ItemConfigError, match="publish this document"):
+            validate_item_list(
+                [_draft("consent", "consent_document", document_key="doc-1")],
+                published_document=lambda _key: None,
+            )
+
+    def test_a_published_document_can_be_asked_for(self) -> None:
+        parsed = validate_item_list(
+            [_draft("consent", "consent_document", document_key="doc-1")],
+            published_document=lambda _key: "version-7",
+        )
+        assert parsed[0].item_type == "consent_document"
 
     def test_the_item_that_is_wrong_is_named(self) -> None:
         with pytest.raises(ItemConfigError, match=r"^how_bad:"):
@@ -349,7 +373,7 @@ class TestEveryQuestionCarriesItsWording:
     item and "which question" is the only thing a therapist needs from it.
     """
 
-    @pytest.mark.parametrize("item_type", sorted(LABEL_REQUIRED_ITEM_TYPES - {"consent_document"}))
+    @pytest.mark.parametrize("item_type", sorted(LABEL_REQUIRED_ITEM_TYPES))
     def test_a_question_the_practice_wrote_needs_one(self, item_type: str) -> None:
         with pytest.raises(ItemConfigError, match="mood: write the question"):
             validate_item_list([_unlabelled("mood", item_type)])
@@ -360,6 +384,10 @@ class TestEveryQuestionCarriesItsWording:
 
     def test_a_measure_is_asked_the_way_the_measure_asks_it(self) -> None:
         validate_item_list([_unlabelled("phq9", "instrument", code="phq9")])
+
+    def test_a_consent_is_named_by_the_document_it_points_at(self) -> None:
+        """Which already has a title, so a second one would be two to change."""
+        validate_item_list([_unlabelled("consent", "consent_document", document_key="doc-1")])
 
     def test_a_label_on_one_of_those_is_an_override_rather_than_a_refusal(self) -> None:
         validate_item_list(

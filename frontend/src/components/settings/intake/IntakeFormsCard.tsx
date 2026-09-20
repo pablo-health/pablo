@@ -6,6 +6,7 @@ import { Plus } from "lucide-react"
 import { useState } from "react"
 import { SettingsBadge, SettingsCard } from "@/components/settings/ui"
 import { Button } from "@/components/ui/button"
+import { usePublishedIntakeDocuments } from "@/hooks/useIntakeDocuments"
 import {
   useCreateIntakeTemplate,
   useCreateIntakeVersion,
@@ -47,6 +48,7 @@ function latestVersion(template: IntakeTemplate) {
  */
 export function IntakeFormsCard() {
   const { data: templates } = useIntakeTemplates()
+  const { data: documents } = usePublishedIntakeDocuments()
   const createTemplate = useCreateIntakeTemplate()
   const createVersion = useCreateIntakeVersion()
   const saveItems = useSaveIntakeItems()
@@ -56,6 +58,14 @@ export function IntakeFormsCard() {
   const [openVersionId, setOpenVersionId] = useState<string | null>(null)
 
   const list = templates ?? []
+  // What a consent question can point at. The server answers this one
+  // rather than the editor filtering the full list: a document somebody is
+  // midway through revising is still askable, and its published version is
+  // the one to offer.
+  const publishedDocuments = (documents ?? []).map((document) => ({
+    document_key: document.document_key,
+    title: document.title,
+  }))
   const openTemplate = list.find((t) => t.id === openTemplateId) ?? null
   const versionId =
     openVersionId ?? (openTemplate ? (latestVersion(openTemplate)?.id ?? null) : null)
@@ -143,6 +153,7 @@ export function IntakeFormsCard() {
                     saving={saveItems.isPending}
                     publishing={publish.isPending}
                     publishError={messageOf(publish.error) ?? messageOf(saveItems.error)}
+                    documents={publishedDocuments}
                   />
                 </div>
               )}
