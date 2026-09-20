@@ -27,10 +27,19 @@ from typing import TYPE_CHECKING
 from sqlalchemy import String, Uuid, bindparam, or_, select, text
 
 from ...db.models import PatientClinicianRow, PatientDocumentRow
-from ...models import DocumentCategory, ExtractionStatus, PatientDocument
+from ...models import (
+    PATIENT_FACING_CATEGORIES,
+    DocumentCategory,
+    ExtractionStatus,
+    PatientDocument,
+)
 from ..patient_document import FinalizedExtraction, PatientDocumentRepository
 
 _RESTRICTED_CATEGORIES = ("therapist_private", "psychotherapy_notes")
+
+# Rendered from the enum, not spelled out, so this filter and the row
+# policy that backs it cannot describe different sets.
+_PATIENT_FACING_CATEGORY_VALUES = tuple(sorted(c.value for c in PATIENT_FACING_CATEGORIES))
 
 _HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindparams(
     bindparam("pid", type_=Uuid(as_uuid=False)),
@@ -77,6 +86,7 @@ class PostgresPatientDocumentRepository(PatientDocumentRepository):
             created_at=document.created_at,
             finalized_at=document.finalized_at,
             deleted_at=document.deleted_at,
+            uploaded_by_patient_id=document.uploaded_by_patient_id,
         )
         self._session.add(row)
         self._session.flush()
@@ -247,6 +257,60 @@ class PostgresPatientDocumentRepository(PatientDocumentRepository):
         )
         return [_row_to_document(row) for row in rows]
 
+    # --- the patient's own side ---------------------------------------
+
+    def mark_finalized_for_patient_principal(
+        self,
+        document_id: str,
+        patient_id: str,
+        *,
+        size_bytes: int,
+        finalized_at: object,
+    ) -> PatientDocument | None:
+        row = self._session.execute(
+            select(PatientDocumentRow).where(
+                PatientDocumentRow.id == document_id,
+                PatientDocumentRow.uploaded_by_patient_id == patient_id,
+                PatientDocumentRow.deleted_at.is_(None),
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            return None
+        row.size_bytes = size_bytes
+        row.finalized_at = finalized_at  # type: ignore[assignment]
+        self._session.flush()
+        return _row_to_document(row)
+
+    def get_for_patient_principal(
+        self, document_id: str, patient_id: str
+    ) -> PatientDocument | None:
+        row = self._session.execute(
+            select(PatientDocumentRow).where(
+                PatientDocumentRow.id == document_id,
+                PatientDocumentRow.patient_id == patient_id,
+                PatientDocumentRow.category.in_(_PATIENT_FACING_CATEGORY_VALUES),
+                PatientDocumentRow.deleted_at.is_(None),
+            )
+        ).scalar_one_or_none()
+        return _row_to_document(row) if row else None
+
+    def list_for_patient_principal(self, patient_id: str) -> list[PatientDocument]:
+        rows = (
+            self._session.execute(
+                select(PatientDocumentRow)
+                .where(
+                    PatientDocumentRow.patient_id == patient_id,
+                    PatientDocumentRow.category.in_(_PATIENT_FACING_CATEGORY_VALUES),
+                    PatientDocumentRow.deleted_at.is_(None),
+                    PatientDocumentRow.finalized_at.is_not(None),
+                )
+                .order_by(PatientDocumentRow.created_at.desc())
+            )
+            .scalars()
+            .all()
+        )
+        return [_row_to_document(row) for row in rows]
+
 
 def _row_to_document(row: PatientDocumentRow) -> PatientDocument:
     finalized_at: datetime | None = row.finalized_at
@@ -266,6 +330,7 @@ def _row_to_document(row: PatientDocumentRow) -> PatientDocument:
         created_at=row.created_at,
         finalized_at=finalized_at,
         deleted_at=deleted_at,
+        uploaded_by_patient_id=row.uploaded_by_patient_id,
         # NULL = extracted synchronously pre-worker-offload — read as COMPLETE.
         extraction_status=(
             ExtractionStatus(row.extraction_status)

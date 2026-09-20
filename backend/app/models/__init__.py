@@ -67,7 +67,12 @@ from .patient_chat_api import (
     SendPatientChatMessageRequest,
     UpdatePatientChatConversationRequest,
 )
-from .patient_document import DocumentCategory, ExtractionStatus, PatientDocument
+from .patient_document import (
+    PATIENT_FACING_CATEGORIES,
+    DocumentCategory,
+    ExtractionStatus,
+    PatientDocument,
+)
 from .patient_message import PatientMessage, PatientMessageThread
 from .patient_message_api import (
     MarkThreadReadResponse,
@@ -145,6 +150,7 @@ from .user import (
 
 __all__ = [
     "CONFIDENCE_THRESHOLDS",
+    "PATIENT_FACING_CATEGORIES",
     "AcceptBAARequest",
     "AcknowledgeSecurityGuideRequest",
     "AppointmentListResponse",

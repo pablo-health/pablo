@@ -2,7 +2,7 @@
 
 """Patient document API routes (THERAPY-ak6m.2).
 
-Endpoints:
+The clinician's surface:
 
   POST   /api/patients/{patient_id}/documents/init   -> signed PUT URL
   POST   /api/documents/{document_id}/finalize       -> verify + queue extraction (202)
@@ -12,32 +12,45 @@ Endpoints:
   DELETE /api/documents/{document_id}                -> soft delete
   POST   /api/internal/jobs/finalize-document        -> Cloud Tasks worker: extract
 
+The patient's own, added later and covered in full further down:
+
+  POST   /api/patient/documents/init                 -> signed PUT URL
+  POST   /api/patient/documents/{document_id}/finalize
+  GET    /api/patient/documents                      -> their own, newest first
+  GET    /api/patient/documents/{document_id}/file   -> signed GET URL
+
 The signed-URL flow (THERAPY-ak6m.2's design departure from a
 multipart server-proxy) keeps Cloud Run bandwidth and memory flat at
 arbitrary client count — uploads go browser→GCS directly. Backend
 re-verifies size and mime type at finalize time as defense-in-depth.
+Both halves use it, unchanged.
 
 Access model: per CLAUDE.md guardrail #1, every endpoint that touches
 patient data injects ``audit: AuditService`` and emits a matching
-``PATIENT_DOCUMENT_*`` event. Tenant scoping is provided by the
-existing ``get_tenant_context`` Depends chain; RLS at the DB level is
-the backstop in case an app-layer filter is dropped.
+``PATIENT_DOCUMENT_*`` event. The clinician half is tenant-scoped by
+the ``get_tenant_context`` Depends chain; the patient half by
+``get_patient_context``, which arms the patient RLS GUC instead and
+carries no clinician reach. RLS at the DB level is the backstop in
+case an app-layer filter is dropped, for either principal.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
 from ..api_errors import (
     BadRequestError,
+    ForbiddenError,
     NotFoundError,
     ServerError,
     UnprocessableEntityError,
 )
+from ..auth.patient_context import AuthStrength, PatientContext, get_patient_context
+from ..auth.route_access import subscription_exempt
 from ..auth.service import (
     TenantContext,
     get_tenant_context,
@@ -45,6 +58,8 @@ from ..auth.service import (
     require_cloud_tasks_invoker,
 )
 from ..models import AuditAction, DocumentCategory, ExtractionStatus, PatientDocument, User
+from ..models.audit import ResourceType
+from ..rate_limit import get_patient_document_init_limiter
 from ..repositories import (
     PatientDocumentRepository,
     PatientRepository,
@@ -223,6 +238,11 @@ class PatientDocumentResponse(BaseModel):
     # or a 'complete' one with no text (e.g. scanned PDF, OCR unavailable),
     # is not a failure.
     text_extraction_failed: bool = False
+    # Who put this on the chart. A document that came from the patient was
+    # not reviewed by anyone before it arrived, and reading it is a
+    # different act from reading something a colleague filed — so the chart
+    # gets to say which without inferring it from a missing field.
+    uploaded_by: Literal["patient", "clinician"] = "clinician"
 
     @classmethod
     def from_document(
@@ -243,6 +263,7 @@ class PatientDocumentResponse(BaseModel):
             extracted_text=(document.extracted_text if include_extracted_text else None),
             extraction_status=document.extraction_status,
             text_extraction_failed=(document.extraction_status == ExtractionStatus.FAILED),
+            uploaded_by=("patient" if document.uploaded_by == "patient" else "clinician"),
         )
 
 
@@ -601,6 +622,294 @@ def download_document_file(
         mime_type=document.mime_type,
         size_bytes=document.size_bytes,
         category=document.category.value,
+    )
+    return DocumentDownloadUrlResponse(url=signed_url)
+
+
+# ---------------------------------------------------------------------------
+# The patient's own side
+# ---------------------------------------------------------------------------
+#
+# A patient sends in a file the practice asked for: a photo of an insurance
+# card before a first appointment, a letter to go with a message. Same
+# bucket, same accepted types, same size cap, same two-phase signed-URL
+# upload as the clinician half above. Four things make it a separate surface
+# rather than the same routes with a wider door.
+#
+# * **There is no patient id in any path.** It comes off the principal, so a
+#   request cannot name a chart and there is nothing to compare.
+# * **Step-up is required**, as on every patient route that touches clinical
+#   content. A link that reached the wrong inbox is one factor in a
+#   stranger's hands.
+# * **The categories are the patient's own.** Uploads land in the two this
+#   surface exists for, and reads return only those — a clinician's working
+#   material and the psychotherapy-notes carve-out are on the same chart and
+#   do not come out of a portal. Enforced in the request model, again in the
+#   repository, and again in the row policy.
+# * **No delete.** A file someone sent to their practice is the practice's
+#   record of what arrived. Removing it is a conversation, not a button.
+
+
+patient_router = APIRouter(prefix="/api/patient/documents", tags=["patient-documents"])
+
+CurrentPatient = Annotated[PatientContext, Depends(get_patient_context)]
+
+
+def _require_stepped_up(patient: PatientContext) -> None:
+    """Refuse a single-factor principal on every route here.
+
+    Same bar as the rest of the patient surface, for the same reason: one
+    factor reaching the wrong person should not open a chart.
+    """
+    if patient.auth_strength is not AuthStrength.STEPPED_UP:
+        raise ForbiddenError("Confirm it is you to continue.", code="STEP_UP_REQUIRED")
+
+
+def get_patient_documents_service_for_patient(
+    settings: Settings = Depends(get_settings),
+    patient: PatientContext = Depends(get_patient_context),
+) -> PatientDocumentsService:
+    """The document service on the patient-armed session.
+
+    Deliberately not the clinician router's dependency of the same shape:
+    that one depends on ``get_tenant_context``, which a patient principal
+    cannot satisfy and should not. The tenant prefix on the object name comes
+    from the principal's own schema, so a patient's file lands under the same
+    path layout a clinician's does.
+    """
+    from ..services.document_ai_ocr import DocumentAiOcrClient
+
+    return PatientDocumentsService(
+        repo=_patient_document_repo_factory(),
+        settings=settings,
+        tenant_id=patient.practice_schema,
+        ocr_client=DocumentAiOcrClient(settings=settings),
+    )
+
+
+class PatientInitUploadRequest(BaseModel):
+    """What a patient says they are about to send.
+
+    ``category`` has no default. The clinician request model defaults to
+    ``chart`` because that is where most of a chart's documents belong; here
+    a default would mean a client that omitted the field silently filed an
+    insurance card as correspondence. The two values are the two reasons
+    this surface exists, so naming one is no burden.
+    """
+
+    filename: str = Field(min_length=1, max_length=512)
+    mime_type: str = Field(min_length=1, max_length=100)
+    size_bytes: int = Field(gt=0)
+    category: Literal["intake_artifact", "message"]
+
+
+@patient_router.post("/init", status_code=status.HTTP_201_CREATED)
+def init_patient_document_upload(
+    body: PatientInitUploadRequest,
+    http_request: Request,
+    patient: CurrentPatient,
+    service: PatientDocumentsService = Depends(get_patient_documents_service_for_patient),
+    audit: AuditService = Depends(get_audit_service),
+    _: None = Depends(subscription_exempt),
+) -> InitUploadResponse:
+    """Mint a signed PUT URL the patient's browser uploads to directly.
+
+    Exempt from the subscription gate: a patient does not hold the practice's
+    subscription, and a document they were asked for should not fail for a
+    billing state they cannot see.
+
+    The row is inserted with ``finalized_at=NULL``, so an upload that is
+    started and abandoned never appears anywhere.
+    """
+    _require_stepped_up(patient)
+    get_patient_document_init_limiter().check(patient.patient_id)
+
+    try:
+        result = service.init_upload(
+            patient_id=patient.patient_id,
+            uploaded_by_patient_id=patient.patient_id,
+            filename=body.filename,
+            mime_type=body.mime_type,
+            size_bytes=body.size_bytes,
+            category=DocumentCategory(body.category),
+        )
+    except UnsupportedMimeTypeError as exc:
+        raise UnprocessableEntityError(
+            "Unsupported document type",
+            {"mime_type": exc.mime_type},
+            code="UNSUPPORTED_MIME_TYPE",
+        ) from exc
+    except FileTooLargeError as exc:
+        raise BadRequestError(
+            "File too large",
+            {"max_bytes": exc.max_bytes, "size_bytes": exc.size_bytes},
+            code="FILE_TOO_LARGE",
+        ) from exc
+    except DocumentsBucketNotConfiguredError as exc:
+        raise ServerError(
+            "Patient document uploads are not configured on this deployment",
+            code="DOCUMENTS_NOT_CONFIGURED",
+        ) from exc
+
+    # Which document, of what kind and how big. Not the filename: people
+    # name files after what is in them, and this is the six-year record.
+    audit.log_patient_principal_action(
+        action=AuditAction.PATIENT_DOCUMENT_UPLOAD_INITIATED,
+        request=http_request,
+        patient_id=patient.patient_id,
+        resource_type=ResourceType.PATIENT_DOCUMENT,
+        resource_id=result.document.id,
+        session_id=patient.session_id,
+        changes={
+            "category": body.category,
+            "mime_type": body.mime_type,
+            "size_bytes": body.size_bytes,
+        },
+    )
+
+    return InitUploadResponse(
+        document_id=result.document.id,
+        upload=result.upload,
+        max_bytes=result.max_bytes,
+    )
+
+
+@patient_router.post("/{document_id}/finalize")
+def finalize_patient_document_upload(
+    document_id: str,
+    http_request: Request,
+    patient: CurrentPatient,
+    service: PatientDocumentsService = Depends(get_patient_documents_service_for_patient),
+    audit: AuditService = Depends(get_audit_service),
+    _: None = Depends(subscription_exempt),
+) -> PatientDocumentResponse:
+    """Confirm the upload finished, and put the document on the chart.
+
+    The stored object is checked against the same size and type rules the
+    signed URL carried, so a tampered constraint is caught here rather than
+    trusted. Until this succeeds the document is not on the chart.
+
+    Idempotent: calling it again on a finished upload returns the same
+    document, so a retry after a dropped connection is not a second one.
+    """
+    _require_stepped_up(patient)
+
+    try:
+        document = service.finalize_patient_upload(
+            document_id=document_id,
+            patient_id=patient.patient_id,
+        )
+    except UploadNotCompleteError as exc:
+        raise BadRequestError(
+            "That upload has not finished.",
+            {"document_id": document_id},
+            code="UPLOAD_NOT_COMPLETE",
+        ) from exc
+    except FileTooLargeError as exc:
+        raise BadRequestError(
+            "That file is too large.",
+            {"max_bytes": exc.max_bytes, "size_bytes": exc.size_bytes},
+            code="FILE_TOO_LARGE",
+        ) from exc
+    except UnsupportedMimeTypeError as exc:
+        raise UnprocessableEntityError(
+            "Unsupported document type",
+            {"mime_type": exc.mime_type},
+            code="UNSUPPORTED_MIME_TYPE",
+        ) from exc
+    except DocumentsBucketNotConfiguredError as exc:
+        raise ServerError(
+            "Patient document uploads are not configured on this deployment",
+            code="DOCUMENTS_NOT_CONFIGURED",
+        ) from exc
+    except PatientDocumentError as exc:
+        # Another patient's id and an id that never existed answer the same
+        # way, so nothing here says which documents exist.
+        raise NotFoundError("Document not found", {"document_id": document_id}) from exc
+
+    audit.log_patient_principal_action(
+        action=AuditAction.PATIENT_DOCUMENT_UPLOADED,
+        request=http_request,
+        patient_id=patient.patient_id,
+        resource_type=ResourceType.PATIENT_DOCUMENT,
+        resource_id=document.id,
+        session_id=patient.session_id,
+        changes={
+            "category": document.category.value,
+            "mime_type": document.mime_type,
+            "size_bytes": document.size_bytes,
+        },
+    )
+    return PatientDocumentResponse.from_document(document)
+
+
+@patient_router.get("")
+def list_own_documents(
+    patient: CurrentPatient,
+    service: PatientDocumentsService = Depends(get_patient_documents_service_for_patient),
+    _: None = Depends(subscription_exempt),
+) -> PatientDocumentListResponse:
+    """What this patient has sent in, newest first.
+
+    Not audited, and that is the settled model rather than an omission: the
+    log records disclosures, and a person reading their own record is not
+    one. It is listed in ``AUDIT_EXEMPT_PHI_ROUTES`` as a reviewed decision
+    rather than left to look like a route that forgot. Every write on this
+    surface IS recorded, the download beside it is recorded, and so is every
+    clinician read of the same rows — those are disclosures to somebody else.
+    """
+    _require_stepped_up(patient)
+    documents = service.list_for_patient_principal(patient.patient_id)
+    return PatientDocumentListResponse(
+        data=[PatientDocumentResponse.from_document(d) for d in documents],
+        total=len(documents),
+    )
+
+
+@patient_router.get("/{document_id}/file")
+def download_own_document_file(
+    document_id: str,
+    http_request: Request,
+    patient: CurrentPatient,
+    disposition: Literal["attachment", "inline"] = Query("attachment"),
+    service: PatientDocumentsService = Depends(get_patient_documents_service_for_patient),
+    audit: AuditService = Depends(get_audit_service),
+    _: None = Depends(subscription_exempt),
+) -> DocumentDownloadUrlResponse:
+    """A short-lived signed URL for one of this patient's own documents.
+
+    Audited, where the list above is not. Reading your own record is not a
+    disclosure, but minting a URL that authorizes the object fetch on its own
+    is disclosure-shaped: it leaves the request, it works without a bearer
+    token, and whoever holds it can fetch the file. The row goes on the
+    record before the URL is returned, so a connection dropped afterwards
+    still leaves the access logged.
+    """
+    _require_stepped_up(patient)
+
+    try:
+        result = service.signed_download_url_for_patient(
+            document_id,
+            patient.patient_id,
+            disposition=disposition,
+        )
+    except DocumentsBucketNotConfiguredError as exc:
+        raise ServerError(
+            "Patient document uploads are not configured on this deployment",
+            code="DOCUMENTS_NOT_CONFIGURED",
+        ) from exc
+    if result is None:
+        raise NotFoundError("Document not found", {"document_id": document_id})
+
+    document, signed_url = result
+    audit.log_patient_principal_action(
+        action=AuditAction.PATIENT_DOCUMENT_DOWNLOADED,
+        request=http_request,
+        patient_id=patient.patient_id,
+        resource_type=ResourceType.PATIENT_DOCUMENT,
+        resource_id=document.id,
+        session_id=patient.session_id,
+        changes={"category": document.category.value, "disposition": disposition},
     )
     return DocumentDownloadUrlResponse(url=signed_url)
 

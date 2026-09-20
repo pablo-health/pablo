@@ -2,8 +2,13 @@
 
 """Patient document domain dataclass (THERAPY-ak6m.2).
 
-A ``PatientDocument`` is a clinician-uploaded file (PDF, PNG, JPEG)
-attached to a patient's chart. v1 lifecycle is two-phase:
+A ``PatientDocument`` is a file (PDF, PNG, JPEG) attached to a patient's
+chart. Two principals put one there — a clinician, or the patient the
+chart is about — and exactly one of ``user_id`` and
+``uploaded_by_patient_id`` says which. The database enforces that with a
+CHECK rather than trusting either writer to keep the pair honest.
+
+v1 lifecycle is two-phase:
 
 1. ``init`` mints a V4 signed PUT URL and inserts a row with
    ``finalized_at=NULL`` — placeholder, not yet visible in list reads.
@@ -30,7 +35,7 @@ from enum import StrEnum
 class DocumentCategory(StrEnum):
     """Access + disclosure classification for an uploaded document.
 
-    Four values, chosen to give us regulatory hooks now and physical-
+    Six values, chosen to give us regulatory hooks now and physical-
     separation room later (the enum can become a partition predicate
     if compliance review pushes for separate tables or buckets).
 
@@ -45,6 +50,18 @@ class DocumentCategory(StrEnum):
       to anyone with a ``patient_clinicians`` grant on the patient and
       releasable via the standard right-of-access workflow. Not
       restricted, not uploader-only.
+
+    * ``INTAKE_ARTIFACT`` — something a patient was asked to send in
+      before they are seen: a photo of an insurance card, a referral
+      letter, a prior record they had to hand. Same access class as
+      ``CHART``.
+
+    * ``MESSAGE`` — a file attached to secure correspondence between
+      the patient and the practice. Same access class as ``CHART``.
+
+    ``INTAKE_ARTIFACT`` and ``MESSAGE`` are the two a patient may
+    upload into and read back themselves; see :attr:`is_patient_facing`
+    for what rests on that.
 
     * ``THERAPIST_PRIVATE`` — provider's working material, uploader-
       only. Outside the standard patient record but without the
@@ -78,6 +95,8 @@ class DocumentCategory(StrEnum):
 
     CHART = "chart"
     CONSENT = "consent"
+    INTAKE_ARTIFACT = "intake_artifact"
+    MESSAGE = "message"
     THERAPIST_PRIVATE = "therapist_private"
     PSYCHOTHERAPY_NOTES = "psychotherapy_notes"
 
@@ -88,6 +107,37 @@ class DocumentCategory(StrEnum):
             DocumentCategory.THERAPIST_PRIVATE,
             DocumentCategory.PSYCHOTHERAPY_NOTES,
         )
+
+    @property
+    def is_patient_facing(self) -> bool:
+        """Categories the patient themselves may upload into and read back.
+
+        The complement is not "private" — ``chart`` and ``consent`` hold
+        plenty a patient is entitled to receive. It is that the patient
+        portal is not the surface those come out of: a right-of-access
+        request is a workflow with an identity check and a response
+        deadline, and ``psychotherapy_notes`` is carved out of it
+        altogether (§164.524(a)(1)(i)). So this is the set the patient's
+        own routes read and write, and everything else on their chart
+        reaches them the way the regulation says it does.
+
+        Three layers test it, and each is the backstop for a different
+        mistake: the request model refuses an unacceptable category
+        outright, the repository filters reads to this set, and the row
+        policy carries it too so a route that forgot cannot disclose a
+        note by asking for it.
+        """
+        return self in (
+            DocumentCategory.INTAKE_ARTIFACT,
+            DocumentCategory.MESSAGE,
+        )
+
+
+#: The same set as a plain value, for the SQL predicates and the response
+#: models that cannot call a property on a member they do not yet have.
+PATIENT_FACING_CATEGORIES: frozenset[DocumentCategory] = frozenset(
+    c for c in DocumentCategory if c.is_patient_facing
+)
 
 
 class ExtractionStatus(StrEnum):
@@ -114,9 +164,17 @@ class ExtractionStatus(StrEnum):
 
 @dataclass
 class PatientDocument:
+    """One uploaded file, and exactly one uploader.
+
+    ``user_id`` names the clinician who uploaded it; ``uploaded_by_patient_id``
+    names the patient. Precisely one is set — the database says so with a
+    CHECK, and :attr:`uploaded_by` is how a reader asks which without
+    re-deriving the rule.
+    """
+
     id: str
     patient_id: str
-    user_id: str
+    user_id: str | None
     filename: str
     mime_type: str
     gcs_path: str
@@ -133,3 +191,17 @@ class PatientDocument:
     # Legacy rows (extracted synchronously, pre-THERAPY-ul6d) read as
     # COMPLETE — see ExtractionStatus docstring.
     extraction_status: ExtractionStatus = field(default=ExtractionStatus.COMPLETE)
+    #: Set when the patient uploaded it themselves; NULL when a clinician
+    #: did. Always the chart's own patient — the row policy pins it to the
+    #: calling principal, and no route takes it from a request body.
+    uploaded_by_patient_id: str | None = None
+
+    @property
+    def uploaded_by(self) -> str:
+        """``'patient'`` or ``'clinician'`` — who put this on the chart.
+
+        Read off ``uploaded_by_patient_id`` rather than off ``user_id``,
+        because that is the column the patient path sets. A row with
+        neither cannot exist: the CHECK refuses it.
+        """
+        return "patient" if self.uploaded_by_patient_id is not None else "clinician"
