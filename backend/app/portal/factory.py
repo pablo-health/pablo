@@ -28,7 +28,9 @@ from .adapters import CapturingSmsGateway, ConsoleSmsGateway, SmtpInviteDelivery
 from .delivery import (
     DeliveryNotConfigured,
     DeliveryNotConfiguredError,
+    NoticesNotConfigured,
     PortalInviteDelivery,
+    PortalNoticeDelivery,
     SmsGateway,
 )
 from .service import PortalAuthConfig, PortalAuthService
@@ -55,6 +57,7 @@ INVITE_FRAGMENT_KEY = "invite"
 
 _invite_delivery_factory: Callable[[], PortalInviteDelivery] | None = None
 _sms_gateway_factory: Callable[[], SmsGateway] | None = None
+_notice_delivery_factory: Callable[[], PortalNoticeDelivery] | None = None
 
 
 def register_invite_delivery(factory: Callable[[], PortalInviteDelivery]) -> None:
@@ -73,15 +76,27 @@ def register_sms_gateway(factory: Callable[[], SmsGateway]) -> None:
     _sms_gateway_factory = factory
 
 
+def register_notice_delivery(factory: Callable[[], PortalNoticeDelivery]) -> None:
+    """Supply the adapter that tells a patient something is waiting.
+
+    The engine ships no default beyond the one that sends nothing: a notice
+    is a link and a name, and how a practice words that is theirs. A
+    deployment that wants the mail calls this once at startup.
+    """
+    global _notice_delivery_factory  # noqa: PLW0603
+    _notice_delivery_factory = factory
+
+
 def reset_delivery_registrations() -> None:
-    """Drop both registrations, restoring the settings-driven defaults.
+    """Drop every registration, restoring the settings-driven defaults.
 
     For tests, which would otherwise leak a registered adapter from one
     case into every case after it through these module-level slots.
     """
-    global _invite_delivery_factory, _sms_gateway_factory  # noqa: PLW0603
+    global _invite_delivery_factory, _sms_gateway_factory, _notice_delivery_factory  # noqa: PLW0603
     _invite_delivery_factory = None
     _sms_gateway_factory = None
+    _notice_delivery_factory = None
 
 
 def _default_now() -> int:
@@ -128,6 +143,34 @@ def sms_gateway_from_settings() -> SmsGateway:
     return CapturingSmsGateway(base_url=settings.portal_sms_capture_url)
 
 
+def notice_delivery_from_settings() -> PortalNoticeDelivery:
+    """The registered adapter, or the one that mentions nothing to anybody.
+
+    No settings branch, unlike the two invitation channels. There is nothing
+    to configure: a notice carries a name and a link, so an adapter is the
+    only thing that could vary and a deployment supplies it through
+    :func:`register_notice_delivery`.
+    """
+    if _notice_delivery_factory is not None:
+        return _notice_delivery_factory()
+    return NoticesNotConfigured()
+
+
+def build_portal_link(*, slug: str) -> str:
+    """The practice's own portal page, with no credential on it.
+
+    What a notice points at. Deliberately not :func:`build_invite_link`:
+    this link is safe in an inbox precisely because it opens a page that
+    asks who you are, rather than carrying an answer to that question.
+    """
+    base = get_settings().portal_web_base_url.rstrip("/")
+    if not base:
+        raise DeliveryNotConfiguredError(
+            "No portal web origin is configured; there is no link to mint."
+        )
+    return f"{base}{PORTAL_PRACTICE_PATH.format(slug=quote(slug, safe=''))}"
+
+
 def build_invite_link(*, slug: str, token: str) -> str:
     """The magic link a patient clicks, or raise if there is nowhere to point.
 
@@ -168,3 +211,8 @@ def get_invite_delivery() -> PortalInviteDelivery:
 def get_sms_gateway() -> SmsGateway:
     """FastAPI dependency — the indirection route tests override."""
     return sms_gateway_from_settings()
+
+
+def get_notice_delivery() -> PortalNoticeDelivery:
+    """FastAPI dependency — the indirection route tests override."""
+    return notice_delivery_from_settings()

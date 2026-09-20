@@ -77,6 +77,7 @@ from .routes import (
     patient_documents,
     patient_intake,
     patient_intake_assignments,
+    patient_intake_review,
     patient_messages,
     patient_payments,
     patient_profile,
@@ -375,6 +376,10 @@ app.include_router(intake_documents.patient_router)
 # clinician door.
 app.include_router(patient_intake_assignments.router)
 app.include_router(patient_intake_assignments.clinician_router)
+# Reading a form that came back and answering it: corrections, acceptance,
+# and a value entered for somebody in the room. Clinician-only, so it is
+# unconditional for the same reason the read beside it is.
+app.include_router(patient_intake_review.clinician_router)
 # Companion launch-intent handoff. Mounted only when the flag is on so
 # /api/launch/* returns 404 until the desktop companions ship the
 # verified-link redemption path. See docs/design/companion-thin-client.md.
