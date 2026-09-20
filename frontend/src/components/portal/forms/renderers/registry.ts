@@ -8,18 +8,20 @@
  * a practice that puts a question on a form this portal cannot ask yet gets
  * a patient who is told so rather than a blank screen.
  *
- * **Which types are missing is not an oversight.** Three are file-backed —
- * a consent to sign, a photo of an insurance card, any other upload — and
- * nothing stores a file yet; the save route refuses an answer to one. The
- * other two, an emergency contact and a guardian, are standard blocks of
- * fields whose screens have not been built.
+ * **Which types are missing is not an oversight.** Two are upload-backed —
+ * a photo of an insurance card, any other file — and nothing stores a file
+ * yet; the save route refuses an answer to one. The other two, an emergency
+ * contact and a guardian, are standard blocks of fields whose screens have
+ * not been built.
  *
- * What is here divides into two, and the difference is where the question
+ * What is here divides into three, and the difference is where the question
  * comes from. Demographics, reason and a measure are asked in wording the
- * engine owns and serves, so those renderers read the form response.
- * Everything else is a question the practice wrote, and carries it on the
- * item as `label` and `help_text` — which is why those renderers share one
- * frame.
+ * engine owns and serves, so those renderers read the form response. Most of
+ * the rest are questions the practice wrote, carried on the item as `label`
+ * and `help_text`, which is why those renderers share one frame. A consent
+ * document is the third: the words are a stored document the renderer
+ * fetches, and signing is its own route rather than the walk's save — see
+ * `writesItself` in `./types`.
  *
  * The server draws the same line from the other side: it refuses an answer
  * to a file-backed item with a 422, and a form still needing one cannot be
@@ -29,6 +31,7 @@
  */
 
 import { multiChoiceRenderer, singleChoiceRenderer } from "./ChoiceItem"
+import { consentDocumentRenderer } from "./ConsentDocumentItem"
 import { dateRenderer } from "./DateItem"
 import { demographicsRenderer } from "./DemographicsItem"
 import { instructionsRenderer, sectionRenderer, unavailableRenderer } from "./DisplayItem"
@@ -53,6 +56,7 @@ const RENDERERS: Record<string, ItemRenderer> = {
   scale: scaleRenderer,
   number: numberRenderer,
   date: dateRenderer,
+  consent_document: consentDocumentRenderer,
 }
 
 /** The renderer for one item type; the "available soon" one for the rest. */

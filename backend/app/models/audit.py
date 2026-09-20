@@ -334,6 +334,18 @@ class AuditAction(StrEnum):
     # follows a gap — see ``IntakeAssignmentService.save_answer``.
     PATIENT_INTAKE_DRAFT_SAVED = "patient_intake_draft_saved"
 
+    # A patient typed their name against a consent document. The actor is
+    # the patient, so this is a write by the subject rather than a
+    # disclosure — and unlike a saved answer it is never coalesced: signing
+    # is the event the whole record exists for, and two signatures minutes
+    # apart are two agreements, not one sitting.
+    #
+    # The payload carries the document version that was signed and the role
+    # it was signed in, and nothing else. Not the typed name: that is the
+    # signature itself, it lives on the row, and copying it here would put a
+    # person's name in a second place for no question it helps answer.
+    PATIENT_CONSENT_SIGNED = "patient_consent_signed"
+
     # Secure patient messaging. Both principals write these: a patient
     # starting a thread or sending into one, and a clinician replying. The
     # actor is what ``actor_type`` separates, so the action names say what

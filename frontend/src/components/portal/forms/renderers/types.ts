@@ -6,6 +6,13 @@
  * One renderer per item type, looked up in the registry. A new item type is
  * a renderer added there and nothing else: the walk, the review screen and
  * the save path have no list of types between them.
+ *
+ * **Most renderers only collect a value.** They call `onChange`, the walk
+ * saves it on Continue, and they never touch the network. A consent document
+ * is the exception: signing is its own route with its own refusals, so that
+ * renderer writes for itself and tells the walk to re-read afterwards. The
+ * two extra props below are what let it, and every other renderer ignores
+ * them.
  */
 
 import type { ComponentType } from "react"
@@ -25,6 +32,22 @@ export interface ItemRendererProps {
    * loading, or on a deployment whose route did not answer.
    */
   form: IntakeForm | null
+  /** The assignment being filled in, for a renderer that calls a route. */
+  assignmentId: string
+  /** The portal session, for a renderer that calls a route. */
+  sessionToken: string
+  /**
+   * Raised by a renderer that wrote something itself, so the walk re-reads
+   * the assignment. What comes back carries the server's answer about
+   * progress, which is the only thing any client may believe about it.
+   */
+  onWrote: () => void
+  /**
+   * Raised when a request comes back 401, or 403 for a session that never
+   * stepped up. The shell owns both, and a renderer cannot raise a step-up
+   * from inside a form.
+   */
+  onSessionLost: () => void
 }
 
 export interface ItemRenderer {
@@ -54,4 +77,13 @@ export interface ItemRenderer {
   summary: (value: AnswerValue | null, item: IntakeAssignmentItem, form: IntakeForm | null) => string | null
   /** True when this item carries the crisis line. */
   crisisFooter?: boolean
+  /**
+   * True when this renderer writes through a route of its own.
+   *
+   * Separate from `answerable`, which says whether the walk's save route
+   * will store a value for this type. A consent document is neither saved
+   * by the walk nor skipped by it: the renderer signs, and the walk counts
+   * the question and shows it on the review screen like any other.
+   */
+  writesItself?: boolean
 }

@@ -28,6 +28,7 @@ import { buildApiUrl } from "@/lib/api/client"
 
 const FORM_PATH = "/api/patient/intake/form"
 const ASSIGNMENTS_PATH = "/api/patient/intake/assignments"
+const DOCUMENTS_PATH = "/api/patient/intake/documents"
 
 /** One answer choice, and the value it scores. Mirrors `IntakeResponseOptionResponse`. */
 export interface IntakeResponseOption {
@@ -343,6 +344,105 @@ export async function saveAnswer(
     sessionToken,
     `${ASSIGNMENTS_PATH}/${encodeURIComponent(assignmentId)}/items/${encodeURIComponent(itemId)}`,
     { method: "PUT", body: { value } },
+  )
+}
+
+/**
+ * One published consent document, as the person being asked to sign sees it.
+ * Mirrors `PatientDocumentResponse`.
+ *
+ * `rendered_html` was built by the server from the markdown a practice typed,
+ * by escaping first and emitting a fixed set of tags second — so there is no
+ * character the practice could type that reaches the browser as markup. That
+ * is why this is the one place in the portal that sets inner HTML.
+ *
+ * No `body_markdown`: the rendered words are what is read, and the digest is
+ * taken over those words rather than over their source.
+ */
+export interface PatientConsentDocument {
+  id: string
+  document_key: string
+  title: string
+  rendered_html: string
+  version: number
+  digest: string
+  requires_signature: boolean
+  /** Who this document asks to sign: the patient, and sometimes a guardian. */
+  signer_roles: string[]
+  /**
+   * The sentence a signature taken now would be agreed under.
+   *
+   * Served rather than written here, because its version is recorded on the
+   * signature — a copy in this module would be free to drift from what a
+   * stored signature says was agreed.
+   */
+  consent_statement: string
+  consent_statement_version: string
+}
+
+/** `POST …/signatures` — what was recorded. Mirrors `IntakeSignatureResponse`. */
+export interface IntakeSignature {
+  id: string
+  assignment_id: string
+  item_id: string
+  document_version_id: string
+  document_digest: string
+  signer_role: string
+  signer_typed_name: string
+  consent_statement_version: string
+  /** The sentence that was agreed under, resolved from the stored version. */
+  consent_statement: string
+  signed_at: string
+  auth_strength: string
+  session_id: string | null
+  evidence_digest: string
+}
+
+/** The document somebody is about to sign, by the version the form pinned. */
+export async function fetchConsentDocument(
+  sessionToken: string,
+  documentId: string,
+): Promise<PatientConsentDocument> {
+  return request<PatientConsentDocument>(
+    sessionToken,
+    `${DOCUMENTS_PATH}/${encodeURIComponent(documentId)}`,
+  )
+}
+
+/**
+ * What this patient has already signed on one form, oldest first.
+ *
+ * Read from the server rather than remembered by the browser that took the
+ * signature: a form somebody signed yesterday on another device still has to
+ * look signed today.
+ */
+export async function listSignatures(
+  sessionToken: string,
+  assignmentId: string,
+): Promise<IntakeSignature[]> {
+  return request<IntakeSignature[]>(
+    sessionToken,
+    `${ASSIGNMENTS_PATH}/${encodeURIComponent(assignmentId)}/signatures`,
+  )
+}
+
+/**
+ * Type a name against one of the consent documents on a form.
+ *
+ * Not idempotent, unlike saving an answer, and deliberately so: signing twice
+ * is refused with a 409 rather than quietly returning the first signature.
+ * Two agreements minutes apart are two events, and the server is what decides
+ * whether the second one is real.
+ */
+export async function signConsentDocument(
+  sessionToken: string,
+  assignmentId: string,
+  body: { item_id: string; signer_role: string; typed_name: string; affirm: boolean },
+): Promise<IntakeSignature> {
+  return request<IntakeSignature>(
+    sessionToken,
+    `${ASSIGNMENTS_PATH}/${encodeURIComponent(assignmentId)}/signatures`,
+    { method: "POST", body },
   )
 }
 

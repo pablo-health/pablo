@@ -25,11 +25,17 @@ on.
   question rather than which field of which model failed, and it never
   repeats the value back, because the value is the patient's own words.
 
-The three file-backed types — a consent document to sign, a photo of an
-insurance card, any other requested upload — have nowhere to put a file
-yet, so they are refused here rather than accepted and left pointing at
-nothing. That is the same posture publishing already takes on a consent
-item.
+The two upload-backed types — a photo of an insurance card, any other
+requested file — have nowhere to put a file yet, so they are refused here
+rather than accepted and left pointing at nothing.
+
+**A consent document is answered by signing it, not by sending a value.**
+Its answer is real (see :func:`validate_consent_document`) and completion
+counts it, but the only thing that writes one is the signature route: the
+value names a signature row, and a value the patient composed themselves
+would name nothing. :data:`SIGNED_ITEM_TYPES` is how the save path tells
+the two apart — it refuses these types outright, so the shape below is
+never something a patient can put on the wire.
 """
 
 from __future__ import annotations
@@ -71,7 +77,18 @@ CONTACT_MAX_LEN = 200
 _DISPLAY_ONLY = frozenset({"section", "instructions"})
 
 #: Questions whose answer is a file. Nothing stores one yet.
-_NOT_YET_ANSWERABLE = frozenset({"consent_document", "insurance_card", "document_request"})
+_NOT_YET_ANSWERABLE = frozenset({"insurance_card", "document_request"})
+
+#: Questions whose answer is written by a route of its own rather than by
+#: the save path.
+#:
+#: Load-bearing, and the reason it is a module constant rather than a check
+#: inside one function: a consent item's answer says "signature <id> exists",
+#: and a patient who could send that value through the ordinary save route
+#: would be asserting a signature nobody took. The save path refuses every
+#: type named here, so the only writer is the route that also writes the row
+#: the value points at. See ``IntakeAssignmentService.save_answer``.
+SIGNED_ITEM_TYPES: frozenset[str] = frozenset({"consent_document"})
 
 
 class AnswerError(ValueError):
@@ -246,6 +263,27 @@ def validate_instrument(value: Mapping[str, object], config: InstrumentConfig) -
         raise AnswerError(f"Question {missing[0]} has not been answered yet.")
 
 
+def validate_consent_document(value: Mapping[str, object]) -> None:
+    """A consent item, answered by pointing at the signature that was taken.
+
+    ``{"signed": true, "signature_id": "…"}`` and nothing else. The value is
+    a reference rather than content: what was agreed to lives on the
+    signature row, which carries the document version, the digest of the
+    words, who signed and under which wording.
+
+    ``signed`` is false while a document still needs a signature somebody
+    has not given — a document a practice asks a guardian to sign as well as
+    the patient sits there with one signature and is not finished. So this
+    refuses it, and completion reports the item as outstanding, which is the
+    truthful answer rather than the convenient one.
+    """
+    if value.get("signed") is not True:
+        raise AnswerError("This document still needs to be signed.")
+    signature_id = value.get("signature_id")
+    if not isinstance(signature_id, str) or not signature_id.strip():
+        raise AnswerError("This document still needs to be signed.")
+
+
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
@@ -282,18 +320,26 @@ def validate_answer(config: ItemConfig, value: object, *, today: date | None = N
     elif isinstance(config, InstrumentConfig):
         validate_instrument(value, config)
     else:
-        # The four the engine shapes itself, which share one config member
-        # and so are told apart by their type rather than by their class.
+        # Everything whose shape the practice does not configure. These are
+        # told apart by their item type rather than by their config class:
+        # four of them share one config member, and adding a branch per type
+        # to the chain above would say nothing the mapping does not.
         _FIXED_SHAPE[config.item_type](value)
 
 
-#: The engine's own questions, whose shape a practice cannot configure.
-#: Keyed by item type because all four parse to the same config member.
+#: Questions whose answer has a shape a practice cannot configure, keyed by
+#: item type.
+#:
+#: Four are the engine's own questions, which all parse to the same config
+#: member. The fifth is a consent document, whose answer is a reference to
+#: the signature that settled it — a shape nothing in the item's
+#: configuration varies either.
 _FIXED_SHAPE = {
     "demographics": validate_demographics,
     "reason": validate_reason,
     "emergency_contact": validate_emergency_contact,
     "guardian": validate_guardian,
+    "consent_document": validate_consent_document,
 }
 
 
@@ -309,9 +355,11 @@ def is_answered(config: ItemConfig, value: object, *, today: date | None = None)
 __all__ = [
     "CONTACT_MAX_LEN",
     "REASON_MAX_LEN",
+    "SIGNED_ITEM_TYPES",
     "AnswerError",
     "is_answered",
     "validate_answer",
+    "validate_consent_document",
     "validate_date",
     "validate_demographics",
     "validate_emergency_contact",

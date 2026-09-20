@@ -94,6 +94,62 @@ export const ALREADY_SENT_BODY =
  */
 export const ITEM_UNAVAILABLE = "This step will be available soon."
 
+/**
+ * Signing a consent document.
+ *
+ * The screen says what typing a name does and stops. It does not say what
+ * the signature is worth in law — that depends on where a practice operates
+ * and on facts the product cannot check — and it does not recite what will
+ * not happen to the document afterwards, which would introduce machinery
+ * nobody had asked about.
+ *
+ * The consent statement itself is NOT here. It is served with the document,
+ * because the version of it is recorded on every signature — a copy in the
+ * front end would be free to drift from what a stored signature says was
+ * agreed, and nothing would look wrong when it did.
+ */
+export const CONSENT_LOADING = "Loading this document…"
+export const CONSENT_LOAD_FAILED = "We couldn't load this document. Try again in a moment."
+export const CONSENT_NAME_LABEL = "Type your full name"
+export const CONSENT_SIGN = "Sign"
+export const CONSENT_SIGNING = "Signing…"
+export const CONSENT_SIGNED_BADGE = "Signed"
+export const CONSENT_SIGN_FAILED = "We couldn't record that. Try again in a moment."
+
+/** Who is signing, on a document that asks for more than one signature. */
+export const CONSENT_ROLE_LABEL = "Who is signing?"
+export const CONSENT_ROLE_PATIENT = "I'm signing for myself"
+export const CONSENT_ROLE_GUARDIAN = "I'm signing for the patient"
+export const CONSENT_GUARDIAN_NOTE =
+  "If you are completing this for the patient, enter your own name."
+
+/** Still outstanding on a document that asks for two signatures. */
+export const CONSENT_AWAITING_GUARDIAN = "This document also needs a signature from an adult completing it for the patient."
+export const CONSENT_AWAITING_PATIENT = "This document also needs the patient's own signature."
+
+/**
+ * A newer version has been published and this document asks for a fresh
+ * signature. Says what to do rather than what went wrong: the practice sends
+ * the new version, and nothing the patient typed was lost.
+ */
+export const CONSENT_NEEDS_RESIGN =
+  "There's a newer version of this document. Your practice will send it to you to read and sign."
+
+/** How a recorded signature reads back on the screen. */
+export function consentSignedBy(name: string, signedAt: string): string {
+  return `${name} — ${signedAt}`
+}
+
+/**
+ * What the review screen calls a consent item the practice gave no wording.
+ *
+ * The document's own title is the natural name, and the review screen has
+ * only the item — the title arrives with the document, which that screen
+ * does not fetch. So it says what kind of question it is rather than
+ * inventing a heading the practice never wrote.
+ */
+export const CONSENT_REVIEW_LABEL = "Consent document"
+
 /** The demographics question. */
 export const IDENTITY_HEADING = "Is this you?"
 export const IDENTITY_CONFIRM = "Yes, that's me"

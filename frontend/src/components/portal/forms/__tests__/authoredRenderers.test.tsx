@@ -26,10 +26,31 @@ import { rendererFor } from "../renderers/registry"
 import type { AnswerValue } from "../renderers/types"
 import { INTAKE_FORM, authoredItem } from "./formFixtures"
 
+/**
+ * What the walk hands a renderer that writes through a route of its own.
+ *
+ * Inert here: every renderer in this file collects a value and calls
+ * `onChange`. The consent document is the exception and has its own file.
+ */
+const ROUTE_PROPS = {
+  assignmentId: "00000000-0000-4000-8000-00000000000a",
+  sessionToken: "session-token",
+  onWrote: () => {},
+  onSessionLost: () => {},
+}
+
 function renderItem(item: IntakeAssignmentItem, value: AnswerValue | null = null) {
   const onChange = vi.fn()
   const renderer = rendererFor(item.item_type)
-  render(<renderer.Component item={item} value={value} onChange={onChange} form={INTAKE_FORM} />)
+  render(
+    <renderer.Component
+      item={item}
+      value={value}
+      onChange={onChange}
+      form={INTAKE_FORM}
+      {...ROUTE_PROPS}
+    />,
+  )
   return { onChange, renderer }
 }
 

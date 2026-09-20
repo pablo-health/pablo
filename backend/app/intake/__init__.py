@@ -16,10 +16,22 @@ what a valid item is.
 of question means. :mod:`app.intake.completion` puts the two together and
 says whether a form is finished, which is the one question no client is
 allowed to answer for itself.
+
+A consent item is answered by signing rather than by sending a value, and
+three small modules carry what that record is made of:
+:mod:`app.intake.documents` reduces the words to a digest,
+:mod:`app.intake.consent_statement` holds the versioned sentence somebody
+agrees under, and :mod:`app.intake.signatures` folds a stored signature's
+evidence into one string that can be checked against the row later.
 """
 
-from .answers import AnswerError, is_answered, validate_answer
+from .answers import SIGNED_ITEM_TYPES, AnswerError, is_answered, validate_answer
 from .completion import Completion, CompletionItem, assess, every_item_visible
+from .consent_statement import (
+    CONSENT_STATEMENTS,
+    CURRENT_CONSENT_STATEMENT_VERSION,
+    consent_statement,
+)
 from .items import (
     DISPLAY_ONLY_ITEM_TYPES,
     ITEM_TYPES,
@@ -30,10 +42,15 @@ from .items import (
     validate_item_config,
     validate_item_list,
 )
+from .signatures import EVIDENCE_FIELDS, evidence_digest
 
 __all__ = [
+    "CONSENT_STATEMENTS",
+    "CURRENT_CONSENT_STATEMENT_VERSION",
     "DISPLAY_ONLY_ITEM_TYPES",
+    "EVIDENCE_FIELDS",
     "ITEM_TYPES",
+    "SIGNED_ITEM_TYPES",
     "AnswerError",
     "Completion",
     "CompletionItem",
@@ -42,7 +59,9 @@ __all__ = [
     "ItemDraft",
     "VisibleWhen",
     "assess",
+    "consent_statement",
     "every_item_visible",
+    "evidence_digest",
     "is_answered",
     "validate_answer",
     "validate_item_config",

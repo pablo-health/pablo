@@ -40,13 +40,36 @@ function itemOf(
 function renderItem(item: IntakeAssignmentItem, value: AnswerValue | null = null) {
   const onChange = vi.fn()
   const renderer = rendererFor(item.item_type)
-  render(<renderer.Component item={item} value={value} onChange={onChange} form={INTAKE_FORM} />)
+  render(
+    <renderer.Component
+      item={item}
+      value={value}
+      onChange={onChange}
+      form={INTAKE_FORM}
+      {...ROUTE_PROPS}
+    />,
+  )
   return { onChange, renderer }
+}
+
+/**
+ * What the walk hands a renderer that writes through a route of its own.
+ *
+ * Inert here: every renderer in this file collects a value and calls
+ * `onChange`. The consent document is the exception and has its own file,
+ * where these are wired to a stubbed client.
+ */
+const ROUTE_PROPS = {
+  assignmentId: "00000000-0000-4000-8000-00000000000a",
+  sessionToken: "session-token",
+  onWrote: () => {},
+  onSessionLost: () => {},
 }
 
 describe("the registry", () => {
   it("draws every question but the ones that need a file or a screen of their own", () => {
     expect(RENDERED_ITEM_TYPES.sort()).toEqual([
+      "consent_document",
       "date",
       "demographics",
       "free_text",
@@ -63,7 +86,7 @@ describe("the registry", () => {
   })
 
   it("says a question it cannot ask is a step still to come", () => {
-    renderItem(itemOf("consent_document", { document_id: "doc-1" }))
+    renderItem(itemOf("insurance_card", { sides: "both" }, "A photo of your card"))
 
     expect(screen.getByTestId("forms-item-unavailable")).toHaveTextContent(
       "This step will be available soon.",
@@ -73,6 +96,15 @@ describe("the registry", () => {
   it("keeps an unaskable question off the review screen", () => {
     expect(rendererFor("document_request").answerable).toBe(false)
     expect(rendererFor("insurance_card").answerable).toBe(false)
+    expect(rendererFor("document_request").writesItself).toBeUndefined()
+    expect(rendererFor("insurance_card").writesItself).toBeUndefined()
+  })
+
+  it("counts a consent document as a question even though the walk cannot save it", () => {
+    // Its answer names a signature row, so the save route refuses the type
+    // outright — but it is still a question, so it is counted and reviewed.
+    expect(rendererFor("consent_document").answerable).toBe(false)
+    expect(rendererFor("consent_document").writesItself).toBe(true)
   })
 })
 
