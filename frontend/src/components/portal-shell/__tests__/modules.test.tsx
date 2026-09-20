@@ -4,7 +4,8 @@
  * What the engine mounts in the portal, and where it gets registered from.
  *
  * The order is product order — a patient meets the forms they were asked
- * for before messaging — and the registration has to run in the browser's
+ * for before messaging, and both before the appointments they come back to
+ * check — and the registration has to run in the browser's
  * module graph. A
  * side-effect import from a server component fills the registry on the
  * server and leaves the browser's empty, which fails as slots that simply
@@ -22,11 +23,33 @@ beforeEach(() => {
 })
 
 describe("portal modules", () => {
-  it("registers forms, then messaging", async () => {
+  it("registers forms, then messaging, then appointments", async () => {
     await import("../modules")
     const { getPortalSlots } = await import("../slots")
 
-    expect(getPortalSlots().map((slot) => slot.id)).toEqual(["forms", "messaging"])
+    expect(getPortalSlots().map((slot) => slot.id)).toEqual([
+      "forms",
+      "messaging",
+      "appointments",
+    ])
+  })
+
+  it("gates each slot on the module the deployment names", async () => {
+    /**
+     * The slot id and the module name are separate fields and only coincide
+     * for two of the three: the forms slot belongs to the `intake` module,
+     * which is the name the engine mounts routes under and the deployment
+     * configures. Pinning the pairs here means a rename on either side has
+     * to be deliberate.
+     */
+    await import("../modules")
+    const { getPortalSlots } = await import("../slots")
+
+    expect(getPortalSlots().map((slot) => [slot.id, slot.module])).toEqual([
+      ["forms", "intake"],
+      ["messaging", "messaging"],
+      ["appointments", "appointments"],
+    ])
   })
 
   it("is imported by the shell's client component", () => {

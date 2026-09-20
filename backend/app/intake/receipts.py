@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""The short code a patient is given when they hand a form in.
+"""What a patient is given when they hand a form in: a code, and any notes.
 
 A receipt is not a credential. It unlocks nothing, it is not a second
 factor, and knowing one gets nobody near a record — which is why it can be
@@ -29,6 +29,14 @@ unique index inside the tenant schema, and :func:`new_receipt_code` is
 called again when it refuses. That is the only correct place for it — two
 requests can generate the same code at the same moment, and only the index
 can arbitrate.
+
+A receipt can also carry a note, and there is one thing it says today. A
+form that branches can be answered in an order that leaves an answer behind
+somebody's own later change: they said yes, answered the question that
+opened, went back and said no. The question is no longer asked, so what
+they typed into it is not handed in — and being told that on the way out is
+better than finding it missing from the chart later. See
+:func:`withheld_answers_note`.
 """
 
 from __future__ import annotations
@@ -55,4 +63,33 @@ def new_receipt_code() -> str:
     return "".join(secrets.choice(RECEIPT_ALPHABET) for _ in range(RECEIPT_LENGTH))
 
 
-__all__ = ["RECEIPT_ALPHABET", "RECEIPT_LENGTH", "new_receipt_code"]
+def withheld_answers_note(count: int) -> str | None:
+    """The note for *count* answers to questions the form stopped asking.
+
+    ``None`` when there were none, which is the ordinary case and the one a
+    receipt says nothing about — a screen that explains what did not happen
+    every time somebody hands a form in is a screen teaching branching to
+    people who did not ask.
+
+    One sentence when there were. It says what happened rather than why the
+    form works this way: the patient changed an earlier answer, the
+    questions that answer had opened are no longer asked, and what they had
+    already put for them is not part of what the practice receives. Finding
+    that out here is better than the clinician finding an answer in the
+    chart to a question this patient was not, in the end, asked.
+    """
+    if count < 1:
+        return None
+    if count == 1:
+        return "One question stopped applying as you answered, so your answer to it wasn't sent."
+    return (
+        f"{count} questions stopped applying as you answered, so your answers to them weren't sent."
+    )
+
+
+__all__ = [
+    "RECEIPT_ALPHABET",
+    "RECEIPT_LENGTH",
+    "new_receipt_code",
+    "withheld_answers_note",
+]

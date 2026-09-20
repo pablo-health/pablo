@@ -926,10 +926,28 @@ class PatientMessageThreadRow(Base):
     tenant scope is the schema location, as everywhere else here.
 
     ``subject`` is typed by the patient and may be absent; a thread with no
-    subject is an ordinary thread, not a defective one. ``status`` exists so
-    a practice can close a resolved thread later; nothing writes ``'closed'``
-    yet, and there is deliberately no route that does — the column ships
-    ahead of its lifecycle so adding one needs no migration.
+    subject is an ordinary thread, not a defective one. ``status`` is the
+    lifecycle: a practice closes a resolved thread, and a clinician writing
+    back into a closed one reopens it in the same statement, so ``closed_at``
+    and ``status`` cannot disagree.
+
+    ``closed_by`` and ``assigned_user_id`` hold clinician user ids and are
+    plain columns rather than foreign keys, matching every other user id in
+    this schema — the users live in ``platform``.
+
+    **``assigned_user_id`` routes, it does not gate.** Any clinician holding
+    a ``patient_clinicians`` grant reads and answers this thread whether it
+    is assigned to them, to somebody else, or to nobody; the column exists so
+    a group practice can divide the work, and the row policies never mention
+    it. A reader looking for the access rule should look at
+    ``has_patient_access`` and stop.
+
+    ``clinician_last_read_at`` is one timestamp for the practice side, not
+    one per clinician: what a thread list needs is "has anything arrived
+    since somebody here looked", and per-clinician state would be a second
+    table to answer a question nobody asked. The patient side keeps its own
+    per-message ``read_at`` on :class:`PatientMessageRow`, which is a
+    different fact and stays separate.
 
     ``last_message_at`` is denormalized from the newest message so a patient's
     thread list sorts without touching the message table.
@@ -938,14 +956,28 @@ class PatientMessageThreadRow(Base):
     primary key and is not: it is the target of the composite foreign key on
     :class:`PatientMessageRow`, which is what stops a message's denormalized
     ``patient_id`` from ever disagreeing with its thread's owner.
+
+    Deleting a patient takes their correspondence with it, the same as their
+    notes: ``patient_id`` cascades from ``patients``, and the messages
+    cascade from the thread. Retention is the chart's retention — there is no
+    separate lifetime for what a patient wrote here.
     """
 
     __tablename__ = "patient_message_threads"
 
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
-    patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("patients.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     subject: Mapped[str | None] = mapped_column(String(200))
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    closed_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    assigned_user_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    clinician_last_read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     last_message_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 

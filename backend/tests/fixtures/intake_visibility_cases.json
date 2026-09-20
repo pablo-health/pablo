@@ -1,0 +1,539 @@
+{
+  "_comment": [
+    "The visibility rule table, run by both ports of the evaluator: Python in",
+    "backend/tests/test_intake_visibility.py and TypeScript in",
+    "frontend/src/lib/intake/__tests__/visibility.test.ts. This file is the",
+    "original; the copy under frontend/ is written by",
+    "scripts/sync_intake_visibility_fixtures.py and pinned identical by",
+    "backend/tests/test_intake_visibility_fixture_sync.py. Edit this one.",
+    "",
+    "Each case is a whole form: 'items' in the order the patient reads them,",
+    "'answers' keyed by item key, and 'visible' naming every item. An item's",
+    "'instrument_items' is how many items its measure has, and is present only",
+    "on a measure."
+  ],
+  "cases": [
+    {
+      "name": "a question with no rule is asked of everybody",
+      "items": [{ "key": "reason" }, { "key": "sleep" }],
+      "answers": {},
+      "visible": { "reason": true, "sleep": true }
+    },
+
+    {
+      "name": "eq: the chosen answer is the one the rule names",
+      "items": [
+        { "key": "drinks" },
+        {
+          "key": "how_often",
+          "visible_when": { "item_key": "drinks", "op": "eq", "value": "yes" }
+        }
+      ],
+      "answers": { "drinks": { "key": "yes" } },
+      "visible": { "drinks": true, "how_often": true }
+    },
+    {
+      "name": "eq: a different answer was chosen",
+      "items": [
+        { "key": "drinks" },
+        {
+          "key": "how_often",
+          "visible_when": { "item_key": "drinks", "op": "eq", "value": "yes" }
+        }
+      ],
+      "answers": { "drinks": { "key": "no" } },
+      "visible": { "drinks": true, "how_often": false }
+    },
+    {
+      "name": "neq: anything but the answer the rule names",
+      "items": [
+        { "key": "drinks" },
+        {
+          "key": "why_not",
+          "visible_when": { "item_key": "drinks", "op": "neq", "value": "yes" }
+        }
+      ],
+      "answers": { "drinks": { "key": "no" } },
+      "visible": { "drinks": true, "why_not": true }
+    },
+    {
+      "name": "neq: the answer the rule names was chosen after all",
+      "items": [
+        { "key": "drinks" },
+        {
+          "key": "why_not",
+          "visible_when": { "item_key": "drinks", "op": "neq", "value": "yes" }
+        }
+      ],
+      "answers": { "drinks": { "key": "yes" } },
+      "visible": { "drinks": true, "why_not": false }
+    },
+    {
+      "name": "in: the chosen answer is one of several the rule names",
+      "items": [
+        { "key": "living" },
+        {
+          "key": "who_with",
+          "visible_when": {
+            "item_key": "living",
+            "op": "in",
+            "value": ["family", "partner"]
+          }
+        }
+      ],
+      "answers": { "living": { "key": "partner" } },
+      "visible": { "living": true, "who_with": true }
+    },
+    {
+      "name": "in: the chosen answer is none of them",
+      "items": [
+        { "key": "living" },
+        {
+          "key": "who_with",
+          "visible_when": {
+            "item_key": "living",
+            "op": "in",
+            "value": ["family", "partner"]
+          }
+        }
+      ],
+      "answers": { "living": { "key": "alone" } },
+      "visible": { "living": true, "who_with": false }
+    },
+
+    {
+      "name": "eq on a yes-or-no: yes is yes, and is not one",
+      "items": [
+        { "key": "medication" },
+        {
+          "key": "which_medication",
+          "visible_when": { "item_key": "medication", "op": "eq", "value": true }
+        }
+      ],
+      "answers": { "medication": { "yes": true, "follow_up": "Started in March." } },
+      "visible": { "medication": true, "which_medication": true }
+    },
+    {
+      "name": "eq on a yes-or-no: they said no",
+      "items": [
+        { "key": "medication" },
+        {
+          "key": "which_medication",
+          "visible_when": { "item_key": "medication", "op": "eq", "value": true }
+        }
+      ],
+      "answers": { "medication": { "yes": false } },
+      "visible": { "medication": true, "which_medication": false }
+    },
+
+    {
+      "name": "gte and lte on a number",
+      "items": [
+        { "key": "hours_slept" },
+        {
+          "key": "long_sleep",
+          "visible_when": { "item_key": "hours_slept", "op": "gte", "value": 9 }
+        },
+        {
+          "key": "short_sleep",
+          "visible_when": { "item_key": "hours_slept", "op": "lte", "value": 5 }
+        }
+      ],
+      "answers": { "hours_slept": { "value": 9 } },
+      "visible": { "hours_slept": true, "long_sleep": true, "short_sleep": false }
+    },
+    {
+      "name": "gte and lte on a number, the other way round",
+      "items": [
+        { "key": "hours_slept" },
+        {
+          "key": "long_sleep",
+          "visible_when": { "item_key": "hours_slept", "op": "gte", "value": 9 }
+        },
+        {
+          "key": "short_sleep",
+          "visible_when": { "item_key": "hours_slept", "op": "lte", "value": 5 }
+        }
+      ],
+      "answers": { "hours_slept": { "value": 4.5 } },
+      "visible": { "hours_slept": true, "long_sleep": false, "short_sleep": true }
+    },
+    {
+      "name": "gte on a scale",
+      "items": [
+        { "key": "stress" },
+        {
+          "key": "what_helps",
+          "visible_when": { "item_key": "stress", "op": "gte", "value": 7 }
+        }
+      ],
+      "answers": { "stress": { "value": 8 } },
+      "visible": { "stress": true, "what_helps": true }
+    },
+
+    {
+      "name": "gte on a date: a day on or after the one the rule names",
+      "items": [
+        { "key": "date_of_birth" },
+        {
+          "key": "guardian",
+          "visible_when": {
+            "item_key": "date_of_birth",
+            "op": "gte",
+            "value": "2008-09-20"
+          }
+        }
+      ],
+      "answers": { "date_of_birth": { "value": "2011-04-02" } },
+      "visible": { "date_of_birth": true, "guardian": true }
+    },
+    {
+      "name": "gte on a date: a day before the one the rule names",
+      "items": [
+        { "key": "date_of_birth" },
+        {
+          "key": "guardian",
+          "visible_when": {
+            "item_key": "date_of_birth",
+            "op": "gte",
+            "value": "2008-09-20"
+          }
+        }
+      ],
+      "answers": { "date_of_birth": { "value": "1990-03-14" } },
+      "visible": { "date_of_birth": true, "guardian": false }
+    },
+
+    {
+      "name": "eq on an answer written in words",
+      "items": [
+        { "key": "referred_by" },
+        {
+          "key": "referrer_name",
+          "visible_when": {
+            "item_key": "referred_by",
+            "op": "eq",
+            "value": "Another clinician"
+          }
+        }
+      ],
+      "answers": { "referred_by": { "text": "Another clinician" } },
+      "visible": { "referred_by": true, "referrer_name": true }
+    },
+
+    {
+      "name": "answered: anything at all is enough",
+      "items": [
+        { "key": "allergies" },
+        {
+          "key": "allergy_detail",
+          "visible_when": { "item_key": "allergies", "op": "answered" }
+        }
+      ],
+      "answers": { "allergies": { "text": "Penicillin." } },
+      "visible": { "allergies": true, "allergy_detail": true }
+    },
+    {
+      "name": "answered: nothing saved is not an answer",
+      "items": [
+        { "key": "allergies" },
+        {
+          "key": "allergy_detail",
+          "visible_when": { "item_key": "allergies", "op": "answered" }
+        }
+      ],
+      "answers": {},
+      "visible": { "allergies": true, "allergy_detail": false }
+    },
+    {
+      "name": "answered: an empty answer is nothing saved",
+      "items": [
+        { "key": "allergies" },
+        {
+          "key": "allergy_detail",
+          "visible_when": { "item_key": "allergies", "op": "answered" }
+        }
+      ],
+      "answers": { "allergies": {} },
+      "visible": { "allergies": true, "allergy_detail": false }
+    },
+
+    {
+      "name": "an unanswered trigger hides, whichever operator is asking",
+      "items": [
+        { "key": "drinks" },
+        { "key": "hours_slept" },
+        { "key": "phq9", "instrument_items": 9 },
+        {
+          "key": "by_eq",
+          "visible_when": { "item_key": "drinks", "op": "eq", "value": "yes" }
+        },
+        {
+          "key": "by_neq",
+          "visible_when": { "item_key": "drinks", "op": "neq", "value": "yes" }
+        },
+        {
+          "key": "by_in",
+          "visible_when": { "item_key": "drinks", "op": "in", "value": ["yes", "no"] }
+        },
+        {
+          "key": "by_gte",
+          "visible_when": { "item_key": "hours_slept", "op": "gte", "value": 0 }
+        },
+        {
+          "key": "by_lte",
+          "visible_when": { "item_key": "hours_slept", "op": "lte", "value": 24 }
+        },
+        {
+          "key": "by_answered",
+          "visible_when": { "item_key": "drinks", "op": "answered" }
+        },
+        {
+          "key": "by_score_gte",
+          "visible_when": { "item_key": "phq9", "op": "score_gte", "value": 0 }
+        },
+        {
+          "key": "by_score_lte",
+          "visible_when": { "item_key": "phq9", "op": "score_lte", "value": 27 }
+        },
+        {
+          "key": "by_item_gte",
+          "visible_when": {
+            "item_key": "phq9",
+            "op": "item_gte",
+            "value": { "item": 9, "value": 0 }
+          }
+        }
+      ],
+      "answers": {},
+      "visible": {
+        "drinks": true,
+        "hours_slept": true,
+        "phq9": true,
+        "by_eq": false,
+        "by_neq": false,
+        "by_in": false,
+        "by_gte": false,
+        "by_lte": false,
+        "by_answered": false,
+        "by_score_gte": false,
+        "by_score_lte": false,
+        "by_item_gte": false
+      }
+    },
+
+    {
+      "name": "several answers picked: eq asks whether that one is among them",
+      "items": [
+        { "key": "supports" },
+        {
+          "key": "family_detail",
+          "visible_when": { "item_key": "supports", "op": "eq", "value": "family" }
+        },
+        {
+          "key": "nobody_detail",
+          "visible_when": { "item_key": "supports", "op": "neq", "value": "nobody" }
+        },
+        {
+          "key": "either_detail",
+          "visible_when": {
+            "item_key": "supports",
+            "op": "in",
+            "value": ["work", "faith"]
+          }
+        }
+      ],
+      "answers": { "supports": { "keys": ["family", "friends"] } },
+      "visible": {
+        "supports": true,
+        "family_detail": true,
+        "nobody_detail": true,
+        "either_detail": false
+      }
+    },
+
+    {
+      "name": "score_gte: a finished measure at or above the threshold",
+      "items": [
+        { "key": "phq2", "instrument_items": 2 },
+        {
+          "key": "phq9",
+          "instrument_items": 9,
+          "visible_when": { "item_key": "phq2", "op": "score_gte", "value": 3 }
+        }
+      ],
+      "answers": { "phq2": { "item_scores": { "1": 2, "2": 1 } } },
+      "visible": { "phq2": true, "phq9": true }
+    },
+    {
+      "name": "score_gte: a finished measure below the threshold",
+      "items": [
+        { "key": "phq2", "instrument_items": 2 },
+        {
+          "key": "phq9",
+          "instrument_items": 9,
+          "visible_when": { "item_key": "phq2", "op": "score_gte", "value": 3 }
+        }
+      ],
+      "answers": { "phq2": { "item_scores": { "1": 1, "2": 1 } } },
+      "visible": { "phq2": true, "phq9": false }
+    },
+    {
+      "name": "score_lte",
+      "items": [
+        { "key": "gad7", "instrument_items": 7 },
+        {
+          "key": "what_helps",
+          "visible_when": { "item_key": "gad7", "op": "score_lte", "value": 4 }
+        }
+      ],
+      "answers": {
+        "gad7": {
+          "item_scores": { "1": 1, "2": 0, "3": 1, "4": 0, "5": 1, "6": 0, "7": 0 }
+        }
+      },
+      "visible": { "gad7": true, "what_helps": true }
+    },
+    {
+      "name": "item_gte: one item of a finished measure is at the threshold",
+      "items": [
+        { "key": "phq9", "instrument_items": 9 },
+        {
+          "key": "safety_screen",
+          "visible_when": {
+            "item_key": "phq9",
+            "op": "item_gte",
+            "value": { "item": 9, "value": 1 }
+          }
+        }
+      ],
+      "answers": {
+        "phq9": {
+          "item_scores": {
+            "1": 1, "2": 1, "3": 0, "4": 0, "5": 0,
+            "6": 0, "7": 0, "8": 0, "9": 2
+          }
+        }
+      },
+      "visible": { "phq9": true, "safety_screen": true }
+    },
+    {
+      "name": "item_gte: that item was answered below the threshold",
+      "items": [
+        { "key": "phq9", "instrument_items": 9 },
+        {
+          "key": "safety_screen",
+          "visible_when": {
+            "item_key": "phq9",
+            "op": "item_gte",
+            "value": { "item": 9, "value": 1 }
+          }
+        }
+      ],
+      "answers": {
+        "phq9": {
+          "item_scores": {
+            "1": 3, "2": 3, "3": 3, "4": 3, "5": 3,
+            "6": 3, "7": 3, "8": 3, "9": 0
+          }
+        }
+      },
+      "visible": { "phq9": true, "safety_screen": false }
+    },
+    {
+      "name": "a measure part-way through settles nothing, on any operator",
+      "items": [
+        { "key": "phq9", "instrument_items": 9 },
+        {
+          "key": "by_score",
+          "visible_when": { "item_key": "phq9", "op": "score_gte", "value": 1 }
+        },
+        {
+          "key": "by_item",
+          "visible_when": {
+            "item_key": "phq9",
+            "op": "item_gte",
+            "value": { "item": 9, "value": 1 }
+          }
+        }
+      ],
+      "answers": {
+        "phq9": {
+          "item_scores": { "1": 3, "2": 3, "3": 3, "4": 3, "5": 3, "6": 3, "7": 3, "9": 3 }
+        }
+      },
+      "visible": { "phq9": true, "by_score": false, "by_item": false }
+    },
+
+    {
+      "name": "chained: A shows B, B shows C, and all three hold",
+      "items": [
+        { "key": "substances" },
+        {
+          "key": "which",
+          "visible_when": { "item_key": "substances", "op": "eq", "value": true }
+        },
+        {
+          "key": "how_often",
+          "visible_when": { "item_key": "which", "op": "eq", "value": "alcohol" }
+        }
+      ],
+      "answers": {
+        "substances": { "yes": true },
+        "which": { "key": "alcohol" }
+      },
+      "visible": { "substances": true, "which": true, "how_often": true }
+    },
+    {
+      "name": "chained: the first answer changed, so neither B nor C is asked",
+      "items": [
+        { "key": "substances" },
+        {
+          "key": "which",
+          "visible_when": { "item_key": "substances", "op": "eq", "value": true }
+        },
+        {
+          "key": "how_often",
+          "visible_when": { "item_key": "which", "op": "eq", "value": "alcohol" }
+        }
+      ],
+      "answers": {
+        "substances": { "yes": false },
+        "which": { "key": "alcohol" }
+      },
+      "visible": { "substances": true, "which": false, "how_often": false }
+    },
+    {
+      "name": "a hidden question's answer is not offered to anything after it",
+      "items": [
+        { "key": "pregnant" },
+        {
+          "key": "due_date",
+          "visible_when": { "item_key": "pregnant", "op": "eq", "value": true }
+        },
+        {
+          "key": "midwife",
+          "visible_when": { "item_key": "due_date", "op": "answered" }
+        }
+      ],
+      "answers": {
+        "pregnant": { "yes": false },
+        "due_date": { "value": "2026-12-01" }
+      },
+      "visible": { "pregnant": true, "due_date": false, "midwife": false }
+    },
+
+    {
+      "name": "a rule naming nothing on the form hides the question",
+      "items": [
+        { "key": "sleep" },
+        {
+          "key": "orphan",
+          "visible_when": { "item_key": "gone", "op": "answered" }
+        }
+      ],
+      "answers": { "sleep": { "text": "Waking at four." } },
+      "visible": { "sleep": true, "orphan": false }
+    }
+  ]
+}

@@ -100,14 +100,30 @@ class PatientMessageResponse(BaseModel):
         )
 
 
+class AssignThreadRequest(BaseModel):
+    """``POST /api/message-threads/{thread_id}/assign`` body.
+
+    ``null`` is a real answer and means "nobody" — unassigning is how a
+    thread goes back to the pool, so it is the same route rather than a
+    DELETE that reads as removing the thread.
+    """
+
+    user_id: str | None = None
+
+
 class PatientMessageThreadResponse(BaseModel):
     id: str
     subject: str | None = None
     status: str
     created_at: datetime
     last_message_at: datetime
-    # Only the patient's own list fills this in — a count of what they have
-    # not read is not a fact about the clinician looking at the thread.
+    closed_at: datetime | None = None
+    closed_by: str | None = None
+    assigned_user_id: str | None = None
+    # Both lists fill this in, and they count different things: the patient's
+    # is what the practice sent them and they have not opened, the clinician's
+    # is what the patient has sent since anybody at the practice looked. A
+    # thread opened on its own carries no count either way.
     unread_count: int | None = None
 
     @staticmethod
@@ -120,6 +136,9 @@ class PatientMessageThreadResponse(BaseModel):
             status=thread.status,
             created_at=thread.created_at,
             last_message_at=thread.last_message_at,
+            closed_at=thread.closed_at,
+            closed_by=thread.closed_by,
+            assigned_user_id=thread.assigned_user_id,
             unread_count=unread_count,
         )
 
@@ -137,6 +156,9 @@ class PatientMessageThreadDetailResponse(PatientMessageThreadResponse):
             status=thread.status,
             created_at=thread.created_at,
             last_message_at=thread.last_message_at,
+            closed_at=thread.closed_at,
+            closed_by=thread.closed_by,
+            assigned_user_id=thread.assigned_user_id,
             messages=[PatientMessageResponse.from_message(m) for m in messages],
         )
 
@@ -152,9 +174,22 @@ class MarkThreadReadResponse(BaseModel):
     marked_read: int
 
 
+class ThreadExportResponse(BaseModel):
+    """A whole conversation, for the record.
+
+    The same fields the reading surfaces already show, arranged so a
+    transcript can be filed or handed on without a second call. Rendering it
+    for a human is somebody else's job; this is the machine-readable form.
+    """
+
+    thread: PatientMessageThreadResponse
+    messages: list[PatientMessageResponse]
+
+
 __all__ = [
     "MAX_MESSAGE_BODY",
     "MAX_SUBJECT",
+    "AssignThreadRequest",
     "MarkThreadReadResponse",
     "MessageAttachmentResponse",
     "PatientMessageResponse",
@@ -163,4 +198,5 @@ __all__ = [
     "PatientMessageThreadResponse",
     "SendMessageRequest",
     "StartThreadRequest",
+    "ThreadExportResponse",
 ]
