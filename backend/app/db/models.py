@@ -587,6 +587,21 @@ class PatientIntakeAssignmentRow(Base):
     :class:`PatientIntakeResponseRow`, which keeps that table's denormalized
     ``patient_id`` from ever disagreeing with the assignment's owner. Same
     pattern, and the same reason, as :class:`PatientMessageThreadRow`.
+
+    ``receipt_code`` is what the patient is given when they hand the form
+    in — a short, unambiguous code that unlocks nothing and exists so the
+    two sides of a phone call can name the same submission. NULL until
+    then, and unique within the practice, which is the scope that matters:
+    the schema is the boundary, so a code only ever has to be findable
+    here. See :mod:`app.intake.receipts`.
+
+    ``legacy_submission_id`` is set only on a row adopted from the fixed
+    intake form that shipped before a practice could build its own. Unique,
+    so adopting twice is refused by the database rather than by the command
+    remembering to check — which is what makes
+    ``app.bin.adopt_intake_submissions`` safe to re-run. NULL on every row
+    a patient filled in through the portal, which is all of them but the
+    first batch.
     """
 
     __tablename__ = "patient_intake_assignments"
@@ -608,6 +623,8 @@ class PatientIntakeAssignmentRow(Base):
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     withdrawn_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    receipt_code: Mapped[str | None] = mapped_column(String(16))
+    legacy_submission_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
@@ -617,6 +634,18 @@ class PatientIntakeAssignmentRow(Base):
             name="ck_patient_intake_assignments_status",
         ),
         UniqueConstraint("id", "patient_id", name="uq_patient_intake_assignments_id_patient"),
+        # Unique indexes rather than unique constraints, so the revision that
+        # adds them to an existing practice can be written with ``CREATE
+        # UNIQUE INDEX IF NOT EXISTS`` and stay idempotent under the fan-out.
+        # A unique constraint has no such form, and the two are not the same
+        # shape in the catalog — which is exactly what the fresh-versus-
+        # migrated comparison in the integration suite would catch.
+        Index("uq_patient_intake_assignments_receipt", "receipt_code", unique=True),
+        Index(
+            "uq_patient_intake_assignments_legacy_submission",
+            "legacy_submission_id",
+            unique=True,
+        ),
         Index(
             "uq_patient_intake_assignments_active",
             "patient_id",

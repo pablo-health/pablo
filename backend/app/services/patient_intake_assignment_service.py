@@ -26,6 +26,14 @@ done. A stored flag would be a second copy of a fact the rows already carry.
 goes through the same validator the eventual submit will use, so a draft
 cannot quietly hold something that will be refused later. What the route
 layer adds on top is which rows a patient may touch at all.
+
+**What was handed in is never edited.** Submitting freezes every answer,
+and no path here updates the value on a frozen row — a correction, when
+that lands, writes a successor and points the old row at it. The guard is
+here rather than only on the assignment's status because the two are
+different statements: the status says the form is closed, and this says
+that even an open form cannot rewrite an answer that has already been
+read. See :meth:`IntakeAssignmentService.save_answer`.
 """
 
 from __future__ import annotations
@@ -36,12 +44,20 @@ from typing import TYPE_CHECKING
 
 from ..intake.answers import AnswerError, validate_answer
 from ..intake.completion import Completion, CompletionItem, assess
-from ..intake.items import ItemConfigError, stored_config, validate_item_config
-from ..repositories.patient_intake_assignment import WRITABLE_STATUSES
+from ..intake.items import (
+    InstrumentConfig,
+    ItemConfigError,
+    stored_config,
+    validate_item_config,
+)
+from ..intake.receipts import new_receipt_code
+from ..repositories.patient_intake_assignment import WRITABLE_STATUSES, ReceiptCollisionError
 from ..utcnow import utc_now
 
 if TYPE_CHECKING:
     from ..intake.items import ItemConfig
+    from ..outcome_measures.schemas import OutcomeMeasureResponse
+    from ..outcome_measures.service import OutcomeMeasureService
     from ..repositories.intake_packet import IntakePacketRepository
     from ..repositories.patient_intake_assignment import PatientIntakeAssignmentRepository
 
@@ -51,6 +67,12 @@ if TYPE_CHECKING:
 #: :meth:`IntakeAssignmentService.save_answer`.
 AUDIT_COALESCE_SECONDS = 900
 
+#: How many receipt codes to try before giving up. A collision needs two
+#: submissions in one practice to draw the same one out of thirty to the
+#: eighth, so reaching two is already a signal that something other than
+#: chance is going on — and a bounded loop cannot spin.
+RECEIPT_ATTEMPTS = 5
+
 
 class UnpublishedVersionError(RuntimeError):
     """An attempt to send a version of a form that is still a draft."""
@@ -58,6 +80,32 @@ class UnpublishedVersionError(RuntimeError):
 
 class AssignmentClosedError(RuntimeError):
     """An attempt to answer a form that is no longer the patient's to fill in."""
+
+
+class FrozenResponseError(RuntimeError):
+    """An attempt to change an answer that has already been handed in."""
+
+
+class IncompleteFormError(RuntimeError):
+    """A form handed in with required questions still unanswered.
+
+    Carries the item ids, in the order the form asks them, so the portal can
+    send somebody to the first one rather than telling them to look.
+    """
+
+    def __init__(self, missing: list[str]) -> None:
+        super().__init__(f"{len(missing)} question(s) outstanding")
+        self.missing = missing
+
+
+class ReceiptUnavailableError(RuntimeError):
+    """Every receipt code offered was already in use.
+
+    Practically unreachable — see :data:`RECEIPT_ATTEMPTS`. It exists so the
+    loop that generates them has an end, and so the one condition under
+    which a submit cannot be completed has a name rather than a silent
+    fall-through.
+    """
 
 
 class IntakeAssignmentService:
@@ -113,6 +161,8 @@ class IntakeAssignmentService:
                 "submitted_at": None,
                 "accepted_at": None,
                 "withdrawn_at": None,
+                "receipt_code": None,
+                "legacy_submission_id": None,
                 "updated_at": now,
             },
             assigned_by,
@@ -161,11 +211,28 @@ class IntakeAssignmentService:
         return self._packets.get_template(template_id)
 
     def answers(self, assignment_id: str, patient_id: str) -> dict[str, dict[str, object]]:
-        """The patient's live draft answers, keyed by the item's id."""
+        """The patient's answers so far, keyed by the item's id.
+
+        Live rows, draft or handed in. Reading only the drafts would report
+        a submitted form as empty, because submitting is exactly what stops
+        its answers being drafts.
+        """
         return {
             str(row["item_id"]): _as_mapping(row["value"])
-            for row in self._repo.list_draft_responses(assignment_id, patient_id)
+            for row in self._repo.list_live_responses(assignment_id, patient_id)
         }
+
+    def answers_for_clinician(
+        self, assignment_id: str, user_id: str
+    ) -> dict[str, dict[str, object]]:
+        """The same answers, reached through the clinician's grant instead."""
+        return {
+            str(row["item_id"]): _as_mapping(row["value"])
+            for row in self._repo.list_responses_for_clinician(assignment_id, user_id)
+        }
+
+    def get_for_clinician(self, assignment_id: str, user_id: str) -> dict[str, object] | None:
+        return self._repo.get_assignment_for_clinician(assignment_id, user_id)
 
     def progress(self, assignment: dict[str, object], patient_id: str) -> Completion:
         """Whether this form can be handed in, and what is still missing.
@@ -214,9 +281,10 @@ class IntakeAssignmentService:
         every save bumps, so nothing new has to be stored to know it.
 
         Raises :class:`AssignmentClosedError` when the form is no longer the
-        patient's to fill in, ``LookupError`` when the item is not on its
-        version, and :class:`AnswerError` when the value does not fit the
-        question.
+        patient's to fill in, :class:`FrozenResponseError` when this
+        question's answer has already been handed in, ``LookupError`` when
+        the item is not on its version, and :class:`AnswerError` when the
+        value does not fit the question.
         """
         if str(assignment["status"]) not in WRITABLE_STATUSES:
             raise AssignmentClosedError(str(assignment["id"]))
@@ -237,6 +305,14 @@ class IntakeAssignmentService:
             raise AnswerError("This question cannot be answered as it is set up.")
         validate_answer(config, value)
 
+        # The immutability invariant, checked against the row rather than
+        # against the form's status. A reopened form is writable and still
+        # holds answers somebody has already read; those get a successor
+        # row when corrections land, never an edit in place.
+        existing = self._repo.get_live_response(str(assignment["id"]), patient_id, item_id)
+        if existing is not None and not existing["draft"]:
+            raise FrozenResponseError(str(existing["id"]))
+
         now = utc_now()
         worth_auditing = _starts_a_visit(assignment, now)
         stored = self._repo.save_draft_response(
@@ -254,6 +330,97 @@ class IntakeAssignmentService:
         )
         self._repo.record_save(str(assignment["id"]), patient_id, now)
         return stored, worth_auditing
+
+    def submit(
+        self,
+        assignment: dict[str, object],
+        patient_id: str,
+        measures: OutcomeMeasureService,
+    ) -> tuple[dict[str, object], list[OutcomeMeasureResponse]]:
+        """Hand a form in. Returns the submitted assignment and what it scored.
+
+        Four things happen, in an order chosen so that nothing is written
+        until everything that could refuse the submission has.
+
+        1. **Re-check every required question**, against the same
+           validators the saves went through. A draft can go stale — the
+           practice may have published nothing, but a date question with a
+           past-only bound judges a different day today than it did
+           yesterday — so the answer to "is this finished" is computed here
+           rather than trusted from the last save's response. An
+           unfinished form raises :class:`IncompleteFormError` and nothing
+           has been touched.
+        2. **Freeze the answers.** Every live draft stops being one, which
+           is what makes "what was submitted" a stable record.
+        3. **Record the submission and its receipt**, on a row that is
+           still the patient's to submit — so a second submit finds nothing
+           to move and raises :class:`AssignmentClosedError` rather than
+           overwriting the first receipt.
+        4. **Score every measure on the form** through the same
+           ``create_self_report`` the fixed intake form uses. Reused rather
+           than reimplemented: a second scorer is a second set of bands to
+           drift, and the chart reads these rows from one place.
+
+        The whole thing rides the request's transaction, so a failure
+        anywhere leaves the form exactly as unfinished as it was.
+        """
+        if str(assignment["status"]) not in WRITABLE_STATUSES:
+            raise AssignmentClosedError(str(assignment["id"]))
+
+        assignment_id = str(assignment["id"])
+        completion = self.progress(assignment, patient_id)
+        if not completion.complete:
+            raise IncompleteFormError(completion.missing)
+
+        now = utc_now()
+        self._repo.freeze_draft_responses(assignment_id, patient_id, now)
+        submitted = self._submit_with_receipt(assignment_id, patient_id, now)
+        if submitted is None:
+            raise AssignmentClosedError(assignment_id)
+
+        recorded = [
+            measures.create_self_report(
+                patient_id=patient_id,
+                instrument=code,
+                item_scores=scores,
+                administered_at=now,
+            )
+            for code, scores in self._instrument_answers(assignment, patient_id)
+        ]
+        return submitted, recorded
+
+    def _submit_with_receipt(
+        self, assignment_id: str, patient_id: str, now: datetime
+    ) -> dict[str, object] | None:
+        """Stamp the submission, trying another code if one is taken."""
+        for _ in range(RECEIPT_ATTEMPTS):
+            try:
+                return self._repo.mark_submitted(
+                    assignment_id, patient_id, now=now, receipt_code=new_receipt_code()
+                )
+            except ReceiptCollisionError:
+                continue
+        raise ReceiptUnavailableError(assignment_id)
+
+    def _instrument_answers(
+        self, assignment: dict[str, object], patient_id: str
+    ) -> list[tuple[str, dict[str, int]]]:
+        """Each measure on the form and the item scores answered against it.
+
+        In the order the form asks them, so the outcome-measure rows land
+        in the order the patient answered rather than in whatever order a
+        dictionary happened to hold.
+        """
+        saved = self.answers(str(assignment["id"]), patient_id)
+        found: list[tuple[str, dict[str, int]]] = []
+        for row in self._packets.list_items(str(assignment["version_id"])):
+            config = _parse(row)
+            if not isinstance(config, InstrumentConfig):
+                continue
+            scores = saved.get(str(row["id"]), {}).get("item_scores")
+            if isinstance(scores, dict):
+                found.append((config.code, {str(k): int(v) for k, v in scores.items()}))
+        return found
 
 
 def _starts_a_visit(assignment: dict[str, object], now: datetime) -> bool:
@@ -287,8 +454,12 @@ def _as_mapping(value: object) -> dict[str, object]:
 
 __all__ = [
     "AUDIT_COALESCE_SECONDS",
+    "RECEIPT_ATTEMPTS",
     "AnswerError",
     "AssignmentClosedError",
+    "FrozenResponseError",
+    "IncompleteFormError",
     "IntakeAssignmentService",
+    "ReceiptUnavailableError",
     "UnpublishedVersionError",
 ]

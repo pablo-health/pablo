@@ -21,12 +21,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from sqlalchemy import String, Uuid, bindparam, select, text
+from sqlalchemy.exc import IntegrityError
 
 from ...db.models import PatientIntakeAssignmentRow, PatientIntakeResponseRow
 from ..patient_intake_assignment import (
     ACTIVE_STATUSES,
     STATUS_TIMESTAMP_COLUMN,
+    WRITABLE_STATUSES,
     PatientIntakeAssignmentRepository,
+    ReceiptCollisionError,
 )
 
 if TYPE_CHECKING:
@@ -51,6 +54,8 @@ def _assignment_to_dict(row: PatientIntakeAssignmentRow) -> dict[str, object]:
         "submitted_at": row.submitted_at,
         "accepted_at": row.accepted_at,
         "withdrawn_at": row.withdrawn_at,
+        "receipt_code": row.receipt_code,
+        "legacy_submission_id": row.legacy_submission_id,
         "updated_at": row.updated_at,
     }
 
@@ -89,6 +94,8 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
             submitted_at=None,
             accepted_at=None,
             withdrawn_at=None,
+            receipt_code=None,
+            legacy_submission_id=None,
             updated_at=row["updated_at"],  # type: ignore[arg-type]
         )
         self._session.add(orm_row)
@@ -142,6 +149,14 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
             .first()
         )
         return _assignment_to_dict(row) if row else None
+
+    def list_responses_for_clinician(
+        self, assignment_id: str, user_id: str
+    ) -> list[dict[str, object]]:
+        row = self._session.get(PatientIntakeAssignmentRow, assignment_id)
+        if row is None or not self._has_access(row.patient_id, user_id):
+            return []
+        return self._live_responses(assignment_id, row.patient_id, drafts_only=False)
 
     def set_status_for_clinician(
         self, assignment_id: str, user_id: str, *, status: str, now: datetime
@@ -203,21 +218,36 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
         return _assignment_to_dict(row)
 
     def list_draft_responses(self, assignment_id: str, patient_id: str) -> list[dict[str, object]]:
-        rows = (
+        return self._live_responses(assignment_id, patient_id, drafts_only=True)
+
+    def list_live_responses(self, assignment_id: str, patient_id: str) -> list[dict[str, object]]:
+        return self._live_responses(assignment_id, patient_id, drafts_only=False)
+
+    def get_live_response(
+        self, assignment_id: str, patient_id: str, item_id: str
+    ) -> dict[str, object] | None:
+        # A draft first when there is one: a live draft and a frozen answer
+        # can coexist for the same question once a correction reopens it,
+        # and the draft is the row a save would touch.
+        row = (
             self._session.execute(
                 select(PatientIntakeResponseRow)
                 .where(
                     PatientIntakeResponseRow.assignment_id == assignment_id,
                     PatientIntakeResponseRow.patient_id == patient_id,
-                    PatientIntakeResponseRow.draft.is_(True),
+                    PatientIntakeResponseRow.item_id == item_id,
                     PatientIntakeResponseRow.superseded_by.is_(None),
                 )
-                .order_by(PatientIntakeResponseRow.item_id)
+                .order_by(
+                    PatientIntakeResponseRow.draft.desc(),
+                    PatientIntakeResponseRow.updated_at.desc(),
+                )
+                .limit(1)
             )
             .scalars()
-            .all()
+            .first()
         )
-        return [_response_to_dict(row) for row in rows]
+        return _response_to_dict(row) if row else None
 
     def save_draft_response(self, row: dict[str, object]) -> dict[str, object]:
         existing = self._session.execute(
@@ -251,7 +281,73 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
         self._session.flush()
         return _response_to_dict(orm_row)
 
+    def freeze_draft_responses(self, assignment_id: str, patient_id: str, now: datetime) -> int:
+        rows = (
+            self._session.execute(
+                select(PatientIntakeResponseRow).where(
+                    PatientIntakeResponseRow.assignment_id == assignment_id,
+                    PatientIntakeResponseRow.patient_id == patient_id,
+                    PatientIntakeResponseRow.draft.is_(True),
+                    PatientIntakeResponseRow.superseded_by.is_(None),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for row in rows:
+            row.draft = False
+            row.updated_at = now
+        self._session.flush()
+        return len(rows)
+
+    def mark_submitted(
+        self, assignment_id: str, patient_id: str, *, now: datetime, receipt_code: str
+    ) -> dict[str, object] | None:
+        row = self._session.execute(
+            select(PatientIntakeAssignmentRow).where(
+                PatientIntakeAssignmentRow.id == assignment_id,
+                PatientIntakeAssignmentRow.patient_id == patient_id,
+                PatientIntakeAssignmentRow.status.in_(tuple(WRITABLE_STATUSES)),
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            return None
+
+        # A savepoint, so a receipt that is already spoken for leaves the
+        # surrounding transaction usable and the caller can offer another
+        # one. Without it the failed flush would poison everything the
+        # request had already written, including the frozen answers.
+        savepoint = self._session.begin_nested()
+        row.status = "submitted"
+        row.submitted_at = now
+        row.updated_at = now
+        row.receipt_code = receipt_code
+        try:
+            self._session.flush()
+        except IntegrityError as exc:
+            savepoint.rollback()
+            raise ReceiptCollisionError(receipt_code) from exc
+        savepoint.commit()
+        return _assignment_to_dict(row)
+
     # --- helpers ---
+
+    def _live_responses(
+        self, assignment_id: str, patient_id: str, *, drafts_only: bool
+    ) -> list[dict[str, object]]:
+        statement = select(PatientIntakeResponseRow).where(
+            PatientIntakeResponseRow.assignment_id == assignment_id,
+            PatientIntakeResponseRow.patient_id == patient_id,
+            PatientIntakeResponseRow.superseded_by.is_(None),
+        )
+        if drafts_only:
+            statement = statement.where(PatientIntakeResponseRow.draft.is_(True))
+        rows = (
+            self._session.execute(statement.order_by(PatientIntakeResponseRow.item_id))
+            .scalars()
+            .all()
+        )
+        return [_response_to_dict(row) for row in rows]
 
     def _has_access(self, patient_id: str, user_id: str) -> bool:
         result = self._session.execute(

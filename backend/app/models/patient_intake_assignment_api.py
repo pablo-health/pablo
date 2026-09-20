@@ -71,6 +71,10 @@ class IntakeAssignmentResponse(BaseModel):
     status: str
     assigned_at: datetime
     submitted_at: datetime | None
+    #: The code the patient was given when they handed it in, absent until
+    #: then. Not a credential: it unlocks nothing and exists so a person on
+    #: the phone and a person at the chart can name the same submission.
+    receipt_code: str | None = None
     progress: IntakeProgressResponse
 
 
@@ -97,6 +101,60 @@ class IntakeAssignmentDetailResponse(IntakeAssignmentResponse):
     items: list[IntakeAssignmentItemResponse]
 
 
+class SubmittedMeasureResponse(BaseModel):
+    """One measure the submission scored, as the patient's receipt names it.
+
+    The total and the band are here because the patient answered the
+    questions that produced them and the chart shows them the same numbers.
+    Nothing interprets either: both come straight from the instrument
+    registry, which sums validated items and looks up a published band.
+    """
+
+    id: str
+    instrument: str
+    total_score: int | None
+    severity: str | None
+
+
+class IntakeSubmissionResponse(BaseModel):
+    """What handing a form in gives back.
+
+    ``receipt_code`` is the part a person writes down. The rest is what the
+    portal needs to stop showing the form as outstanding without asking
+    again.
+    """
+
+    assignment_id: str
+    version_id: str
+    submitted_at: datetime
+    receipt_code: str
+    measures: list[SubmittedMeasureResponse]
+
+
+class ClinicianIntakeAnswerResponse(BaseModel):
+    """One question and what this patient answered, read from the chart."""
+
+    id: str
+    key: str
+    position: int
+    item_type: str
+    required: bool
+    config: dict[str, object]
+    value: dict[str, object] | None
+
+
+class ClinicianIntakeAssignmentDetailResponse(IntakeAssignmentResponse):
+    """One assignment and the answers on it, for the clinician's chart.
+
+    The same rows the patient sees, from the other side of the room, which
+    is why reading this is a disclosure and reading the patient's own copy
+    is not.
+    """
+
+    patient_id: str
+    items: list[ClinicianIntakeAnswerResponse]
+
+
 class SavedAnswerResponse(BaseModel):
     """One saved answer, and what saving it did to the form as a whole.
 
@@ -112,11 +170,15 @@ class SavedAnswerResponse(BaseModel):
 
 
 __all__ = [
+    "ClinicianIntakeAnswerResponse",
+    "ClinicianIntakeAssignmentDetailResponse",
     "CreateAssignmentRequest",
     "IntakeAssignmentDetailResponse",
     "IntakeAssignmentItemResponse",
     "IntakeAssignmentResponse",
     "IntakeProgressResponse",
+    "IntakeSubmissionResponse",
     "SaveAnswerRequest",
     "SavedAnswerResponse",
+    "SubmittedMeasureResponse",
 ]
