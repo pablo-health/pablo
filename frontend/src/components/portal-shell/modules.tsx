@@ -2,7 +2,7 @@
 
 /**
  * What the engine mounts in the portal, in the order a patient meets it:
- * the forms they were asked for first, then messaging.
+ * the forms they were asked for first, then messaging, then appointments.
  *
  * Imported for its side effect by the shell, which is a client component.
  * That is the whole reason this file exists rather than the registrations
@@ -19,6 +19,7 @@
 
 "use client"
 
+import { PortalAppointments } from "@/components/portal/appointments"
 import { PortalForms } from "@/components/portal/forms"
 import { PortalMessaging } from "@/components/portal/messaging/PortalMessaging"
 import { registerPortalSlot, type PortalSlotProps } from "./slots"
@@ -29,6 +30,10 @@ function FormsSlot({ sessionToken }: PortalSlotProps) {
 
 function MessagingSlot({ sessionToken }: PortalSlotProps) {
   return <PortalMessaging sessionToken={sessionToken} />
+}
+
+function AppointmentsSlot({ sessionToken }: PortalSlotProps) {
+  return <PortalAppointments sessionToken={sessionToken} />
 }
 
 // ``module`` names the capability the deployment has to have turned on for
@@ -48,4 +53,16 @@ registerPortalSlot({
   Component: MessagingSlot,
   module: "messaging",
   label: "Messages",
+})
+// Last of the three, which is the product order rather than an accident:
+// paperwork is what a practice asks for before a first visit, messaging is
+// how a patient reaches them, and appointments is what they come back to
+// check. Here the slot id and the module name do coincide — unlike forms
+// above — because "appointments" is what both the deployment and the patient
+// call it.
+registerPortalSlot({
+  id: "appointments",
+  Component: AppointmentsSlot,
+  module: "appointments",
+  label: "Appointments",
 })
