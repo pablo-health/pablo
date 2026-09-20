@@ -1331,7 +1331,7 @@ def _apply_patient_principal_policies(
 
 def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant-table shape
     session: Session, schema_name: str
-) -> None:
+) -> int:
     """Enable Row-Level Security on every patient-scoped table in the schema.
 
     Two policy shapes, picked by what columns the table has:
@@ -1395,7 +1395,15 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
 
     Idempotent: DROP POLICY IF EXISTS before each CREATE so the policy
     body always tracks the current code; not_row_scoped tables DISABLE
-    RLS each run to heal a schema a prior version forced it on.
+    RLS each run to heal a schema a prior version forced it on. That is
+    what lets the per-tenant migrate fan-out re-run it over every schema
+    on every deploy (see ``migrate_tenants.reconcile_tenant_rls``), which
+    is how a table added by a revision — or a registration that changed
+    shape — reaches practices that already existed.
+
+    Returns the number of tables whose row-level security state it set:
+    the schema's tenant tables carrying one of the scoping columns. Zero
+    for the template schema and for a schema with no such table.
     """
     import logging
 
@@ -1404,7 +1412,7 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
     _validate_schema_name(schema_name)
     if schema_name == DEFAULT_PRACTICE_SCHEMA:
         logger.info("Skipping RLS on template schema '%s'", schema_name)
-        return
+        return 0
 
     # One query per schema; gives us {table_name: {columns...}} and lets
     # us pick the right policy shape per table.
@@ -1443,7 +1451,7 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
             "No tables with user_id or patient_id in schema '%s' — nothing to do",
             schema_name,
         )
-        return
+        return 0
 
     # `patient_clinicians` is the access table itself — applying the
     # access-function policy to its own backing table would cause an
@@ -1841,6 +1849,7 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
         )
 
     session.commit()
+    return len(tables)
 
 
 def rls_forced_tenant_tables() -> set[str]:
@@ -1870,7 +1879,12 @@ def rls_forced_tenant_tables() -> set[str]:
 def enable_rls_on_all_practice_schemas(engine: Engine | None = None) -> None:
     """Apply RLS to every existing practice_* schema (excluding the template).
 
-    Does NOT run automatically — call from a migration script or management command.
+    An operator command, for a schema the registry does not know about or
+    one being repaired out of band. The routine path no longer needs it:
+    the per-tenant migrate fan-out reconciles every registered schema on
+    every run (``migrate_tenants.fan_out``), so policies reach existing
+    practices without anyone remembering to call this.
+
     Skips the base 'practice' template schema and the 'platform' schema.
     """
     import logging

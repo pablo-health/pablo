@@ -34,6 +34,27 @@ def _runner(plan: dict[str, TenantStatus]):
     return _run
 
 
+def _reconciler(calls: list[str], *, raises_on: str | None = None):
+    """A stand-in for the RLS reconcile that records the schemas it saw.
+
+    The real one needs a database. What the fan-out owes callers is that it
+    runs per schema and that a failure changes the tenant's status, and both
+    are decidable without one.
+    """
+
+    def _reconcile(engine: Engine, schema: str) -> int:
+        calls.append(schema)
+        if schema == raises_on:
+            raise RuntimeError("policy apply blew up")
+        return 42
+
+    return _reconcile
+
+
+def _no_reconcile(engine: Engine, schema: str) -> int:
+    return 0
+
+
 def test_fan_out_invokes_runner_per_schema_in_order() -> None:
     plan = {
         "practice_a": TenantStatus.SUCCESS,
@@ -45,6 +66,7 @@ def test_fan_out_invokes_runner_per_schema_in_order() -> None:
         schemas=list(plan),
         runner=_runner(plan),
         max_workers=1,
+        reconciler=_no_reconcile,
     )
 
     assert [r.schema for r in results] == ["practice_a", "practice_b", "practice_c"]
@@ -60,6 +82,7 @@ def test_fan_out_parallel_preserves_input_order() -> None:
         schemas=list(plan),
         runner=_runner(plan),
         max_workers=4,
+        reconciler=_no_reconcile,
     )
     assert [r.schema for r in results] == list(plan)
 
@@ -81,6 +104,7 @@ def test_fan_out_parallel_actually_runs_concurrently() -> None:
         schemas=schemas,
         runner=_slow_runner,
         max_workers=5,
+        reconciler=_no_reconcile,
     )
     elapsed = time.monotonic() - t0
 
@@ -101,10 +125,81 @@ def test_fan_out_continues_past_failures() -> None:
         schemas=list(plan),
         runner=_runner(plan),
         max_workers=1,
+        reconciler=_no_reconcile,
     )
 
     # All three were attempted — one bad tenant must not abort the rest.
     assert [r.schema for r in results] == list(plan)
+
+
+def test_fan_out_reconciles_rls_on_every_migrated_schema() -> None:
+    """Including the schema that was already at head.
+
+    That case is the one that matters: a table's registration can change
+    with no revision beside it, so a practice already at head still needs
+    today's policies applied. Reconciling only after a real upgrade would
+    leave exactly the schemas nobody thought to look at.
+    """
+    plan = {
+        "practice_a": TenantStatus.SUCCESS,
+        "practice_b": TenantStatus.ALREADY_AT_HEAD,
+    }
+    seen: list[str] = []
+
+    results = fan_out(
+        engine=cast("Engine", None),
+        schemas=list(plan),
+        runner=_runner(plan),
+        max_workers=1,
+        reconciler=_reconciler(seen),
+    )
+
+    assert seen == ["practice_a", "practice_b"]
+    assert all(r.ok for r in results)
+
+
+def test_fan_out_skips_reconcile_for_a_failed_upgrade() -> None:
+    """A schema whose DDL did not land is not one to apply policies to."""
+    plan = {"practice_a": TenantStatus.SUCCESS, "practice_bad": TenantStatus.FAILED}
+    seen: list[str] = []
+
+    fan_out(
+        engine=cast("Engine", None),
+        schemas=list(plan),
+        runner=_runner(plan),
+        max_workers=1,
+        reconciler=_reconciler(seen),
+    )
+
+    assert seen == ["practice_a"]
+
+
+def test_fan_out_marks_a_failed_reconcile_as_a_failed_tenant() -> None:
+    """The upgrade succeeding is not the whole job.
+
+    A tenant whose policies could not be applied carries an unprotected or
+    deny-all table, so it must not report success and must not leave the
+    job exiting 0.
+    """
+    plan = {
+        "practice_ok": TenantStatus.SUCCESS,
+        "practice_norls": TenantStatus.ALREADY_AT_HEAD,
+    }
+    seen: list[str] = []
+
+    results = fan_out(
+        engine=cast("Engine", None),
+        schemas=list(plan),
+        runner=_runner(plan),
+        max_workers=1,
+        reconciler=_reconciler(seen, raises_on="practice_norls"),
+    )
+    by_schema = {r.schema: r for r in results}
+
+    assert by_schema["practice_ok"].ok
+    assert by_schema["practice_norls"].status is TenantStatus.FAILED
+    assert "reconcile" in by_schema["practice_norls"].detail
+    assert aggregate_exit_code(results) == 1
 
 
 def test_aggregate_exit_code_zero_when_all_ok() -> None:
