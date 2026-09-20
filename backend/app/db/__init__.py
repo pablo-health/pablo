@@ -998,9 +998,8 @@ def register_overlay_not_row_scoped(*table_names: str) -> None:
 # clinical record ABOUT the patient, not a record FOR them). Patient-
 # readability is a product decision, and no column shape implies it.
 #
-# Core seeds exactly one entry: a patient may read their own ``patients``
-# row, keyed on ``id``. Intake submissions, companion threads and
-# appointments register their own through this seam in their own changes.
+# Core seeds the tables below; anything added outside this file registers
+# itself through ``register_overlay_patient_scoped`` in its own change.
 #
 # IMPORTANT — where these policies do and do not apply. RLS is applied
 # per tenant schema, and ``enable_rls_on_schema`` deliberately returns
@@ -1017,6 +1016,11 @@ def register_overlay_not_row_scoped(*table_names: str) -> None:
 PATIENT_READABLE_TABLES: dict[str, str] = {
     "patients": "id",
     "outcome_measures": "patient_id",
+    # A patient fills in their own intake form and reads back what they
+    # submitted. The row is the patient's own answers, so both arms are
+    # theirs; the clinician side reaches the same rows through
+    # ``has_patient_access`` like every other per-patient chart table.
+    "patient_intake_submissions": "patient_id",
     # Read-only deliberately: booking and cancelling answer to the
     # practice's own rules — notice periods, which types are bookable,
     # whether a request needs confirming — so they belong to a route that
@@ -1055,6 +1059,9 @@ PATIENT_READABLE_TABLES: dict[str, str] = {
 # of admitting everyone.
 PATIENT_WRITABLE_TABLES: dict[str, str] = {
     "outcome_measures": "patient_id",
+    # Submitting the intake form is a patient INSERT, so the write arm is
+    # what makes the table usable at all from a patient principal.
+    "patient_intake_submissions": "patient_id",
     # A patient starts their own conversations and archives or purges them,
     # so the conversation row is writable. The turn loop then writes the
     # message rows — the user's turn and the assistant's reply — which is

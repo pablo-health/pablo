@@ -616,6 +616,17 @@ CREATE TABLE __TENANT_SCHEMA__.patient_documents (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.patient_intake_submissions (
+    id character varying(128) NOT NULL,
+    patient_id uuid NOT NULL,
+    submitted_at timestamp with time zone NOT NULL,
+    payload jsonb NOT NULL,
+    created_by character varying(128) NOT NULL,
+    created_at timestamp with time zone NOT NULL
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.patient_medications (
     id uuid NOT NULL,
     patient_id uuid NOT NULL,
@@ -1147,6 +1158,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_documents
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_submissions
+    ADD CONSTRAINT patient_intake_submissions_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_medications
     ADD CONSTRAINT patient_medications_pkey PRIMARY KEY (id);
 
@@ -1496,6 +1512,10 @@ CREATE INDEX ix_patient_documents_patient_deleted ON __TENANT_SCHEMA__.patient_d
 
 
 CREATE INDEX ix_patient_documents_user_id ON __TENANT_SCHEMA__.patient_documents USING btree (user_id);
+
+
+
+CREATE INDEX ix_patient_intake_submissions_patient_id ON __TENANT_SCHEMA__.patient_intake_submissions USING btree (patient_id);
 
 
 

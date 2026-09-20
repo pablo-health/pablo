@@ -389,6 +389,46 @@ class OutcomeMeasureRow(Base):
     )
 
 
+class PatientIntakeSubmissionRow(Base):
+    """A patient's raw, as-submitted intake form body.
+
+    Storage only. A row is the form a patient filled in before their first
+    appointment, captured as-is in ``payload``. It is not a scored result:
+    PHQ-9/GAD-7 scoring writes ``OutcomeMeasureRow`` with
+    ``source='patient_self_report'`` instead, so this table only ever holds
+    the raw submission a score may later be derived from.
+
+    Tenant scope is implicit in the schema location — every row in
+    ``practice_<id>.patient_intake_submissions`` belongs to that practice, so
+    there is no ``practice_id`` column. ``patient_id`` is a ``uuid`` rather
+    than a soft string id so the per-tenant ``has_patient_access`` policy
+    applies to these rows directly, the same as the other per-patient chart
+    tables.
+
+    ``submitted_at`` is the patient-supplied completion time; ``created_at``
+    is the server clock when the row was recorded. A submission is immutable
+    once recorded — no ``updated_at``, no soft-delete.
+    """
+
+    __tablename__ = "patient_intake_submissions"
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+
+    # uuid so the per-tenant has_patient_access RLS policy applies directly.
+    patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
+
+    # When the patient completed the form (patient-supplied, not backdated
+    # past the server's own record of it).
+    submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    # The raw, as-submitted form body. Per-question columns are a later
+    # concern; the whole answer set is stored as JSON.
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class PatientMedicationRow(Base):
     """Per-patient medication record.
 

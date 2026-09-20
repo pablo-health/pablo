@@ -228,6 +228,12 @@ class AuditAction(StrEnum):
     PATIENT_DOCUMENT_DELETED = "patient_document_deleted"
     PATIENT_DOCUMENT_OCR_INVOKED = "patient_document_ocr_invoked"
 
+    # A patient submitted their intake form. The actor is the patient
+    # themselves, so this is a write by the subject rather than a
+    # clinician disclosure; the payload carries the submission id and the
+    # patient id, never any answer.
+    PATIENT_INTAKE_SUBMITTED = "patient_intake_submitted"
+
     # Companion audio signed-URL upload (additive to the existing
     # multipart /upload-audio surface — companion app migrates at its
     # own pace). INIT fires when channel signed URLs are minted;
@@ -398,6 +404,7 @@ class ResourceType(StrEnum):
     TENANT_EXPORT = "tenant_export"
     CHAT_CONVERSATION = "chat_conversation"
     PATIENT_DOCUMENT = "patient_document"
+    PATIENT_INTAKE_SUBMISSION = "patient_intake_submission"
     INVITATION = "invitation"
     CLAIM = "claim"
     CLAIM_EXPORT = "claim_export"
