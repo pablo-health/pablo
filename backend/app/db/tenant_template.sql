@@ -685,6 +685,8 @@ CREATE TABLE __TENANT_SCHEMA__.patient_intake_assignments (
     accepted_at timestamp with time zone,
     withdrawn_at timestamp with time zone,
     updated_at timestamp with time zone NOT NULL,
+    receipt_code character varying(16),
+    legacy_submission_id uuid,
     CONSTRAINT ck_patient_intake_assignments_status CHECK (((status)::text = ANY ((ARRAY['assigned'::character varying, 'in_progress'::character varying, 'submitted'::character varying, 'needs_correction'::character varying, 'accepted'::character varying, 'withdrawn'::character varying])::text[])))
 );
 
@@ -1863,6 +1865,14 @@ CREATE UNIQUE INDEX uq_appointments_user_start_active ON __TENANT_SCHEMA__.appoi
 
 
 CREATE UNIQUE INDEX uq_patient_intake_assignments_active ON __TENANT_SCHEMA__.patient_intake_assignments USING btree (patient_id, version_id) WHERE ((status)::text <> ALL ((ARRAY['accepted'::character varying, 'withdrawn'::character varying])::text[]));
+
+
+
+CREATE UNIQUE INDEX uq_patient_intake_assignments_legacy_submission ON __TENANT_SCHEMA__.patient_intake_assignments USING btree (legacy_submission_id);
+
+
+
+CREATE UNIQUE INDEX uq_patient_intake_assignments_receipt ON __TENANT_SCHEMA__.patient_intake_assignments USING btree (receipt_code);
 
 
 

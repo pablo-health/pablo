@@ -39,6 +39,7 @@ from app.auth.patient_context import (
 from app.main import app as real_app
 from app.models import Patient
 from app.models.audit import ACTOR_TYPE_PATIENT, AuditAction, ResourceType
+from app.outcome_measures.service import OutcomeMeasureService
 from app.repositories import (
     InMemoryIntakePacketRepository,
     InMemoryPatientIntakeAssignmentRepository,
@@ -46,7 +47,9 @@ from app.repositories import (
     get_patient_repository,
 )
 from app.repositories.audit import InMemoryAuditRepository
+from app.repositories.outcome_measure import InMemoryOutcomeMeasureRepository
 from app.routes import patient_intake_assignments
+from app.routes.patient_intake import get_intake_outcome_measure_service
 from app.routes.patient_intake_assignments import (
     get_clinician_intake_assignment_service,
     get_clinician_patient_repository,
@@ -198,9 +201,28 @@ def service(
 
 
 @pytest.fixture
+def measure_repo() -> InMemoryOutcomeMeasureRepository:
+    repo = InMemoryOutcomeMeasureRepository()
+    repo.grant_all_access()
+    return repo
+
+
+@pytest.fixture
+def measures(measure_repo: InMemoryOutcomeMeasureRepository) -> OutcomeMeasureService:
+    """The real scoring service on in-memory storage.
+
+    Not a double: the totals a submission writes have to be the ones the
+    registry computes, and a stand-in would be free to agree with whatever
+    the test expected.
+    """
+    return OutcomeMeasureService(measure_repo)
+
+
+@pytest.fixture
 def patient_app(
     service: IntakeAssignmentService,
     audit_repo: InMemoryAuditRepository,
+    measures: OutcomeMeasureService,
     monkeypatch: pytest.MonkeyPatch,
 ) -> FastAPI:
     """The patient router alone, with a patient front door and no database."""
@@ -220,6 +242,7 @@ def patient_app(
     registry.register(_TwoPatientResolver())
     app.dependency_overrides[get_patient_resolver_registry] = lambda: registry
     app.dependency_overrides[get_patient_intake_assignment_service] = lambda: service
+    app.dependency_overrides[get_intake_outcome_measure_service] = lambda: measures
     app.dependency_overrides[get_audit_service] = lambda: AuditService(audit_repo)
 
     monkeypatch.setattr(patient_context_module, "get_db_session", object)
@@ -694,3 +717,233 @@ class TestListingAndWithdrawing:
         logged = [call.args[0] for call in mock_audit_service._repo.append.call_args_list]
         assert logged[-1].action == AuditAction.PATIENT_INTAKE_WITHDRAWN.value
         assert logged[-1].resource_id == assignment["id"]
+
+
+# ---------------------------------------------------------------------------
+# Handing the form in
+# ---------------------------------------------------------------------------
+
+
+def _answer_everything(
+    portal: TestClient,
+    service: IntakeAssignmentService,
+    assignment: dict[str, Any],
+    version_id: str,
+    *,
+    skip: str | None = None,
+) -> None:
+    """Fill the default form in from the portal, optionally leaving one blank."""
+    answers: dict[str, Any] = {
+        "demographics": {"name_confirmed": True, "dob_confirmed": True},
+        "reason": {"text": "Panic at work for about two months."},
+        "phq9": {"item_scores": dict(_PHQ9_COMPLETE)},
+        "gad7": {"item_scores": {str(i): 1 for i in range(1, 8)}},
+    }
+    for key, value in answers.items():
+        if key == skip:
+            continue
+        portal.put(
+            f"{ASSIGNMENTS}/{assignment['id']}/items/{_item_id(service, version_id, key)}",
+            json={"value": value},
+            headers=_auth(_TOKEN_A),
+        )
+
+
+def _submit(portal: TestClient, assignment_id: str, token: str = _TOKEN_A) -> Any:
+    return portal.post(f"{ASSIGNMENTS}/{assignment_id}/submit", headers=_auth(token))
+
+
+class TestSubmitting:
+    def test_an_unfinished_form_is_422_and_names_what_is_missing(
+        self,
+        portal: TestClient,
+        service: IntakeAssignmentService,
+        published_version: str,
+    ) -> None:
+        assignment = _seed_assignment(service, _PATIENT_A, published_version)
+        _answer_everything(portal, service, assignment, published_version, skip="gad7")
+
+        response = _submit(portal, str(assignment["id"]))
+        assert response.status_code == 422
+        assert response.json()["error"]["details"]["missing"] == [
+            _item_id(service, published_version, "gad7")
+        ]
+
+    def test_an_unfinished_form_is_left_exactly_as_it_was(
+        self,
+        portal: TestClient,
+        service: IntakeAssignmentService,
+        assignments: InMemoryPatientIntakeAssignmentRepository,
+        measure_repo: InMemoryOutcomeMeasureRepository,
+        published_version: str,
+    ) -> None:
+        assignment = _seed_assignment(service, _PATIENT_A, published_version)
+        _answer_everything(portal, service, assignment, published_version, skip="gad7")
+        before = len(assignments.list_draft_responses(str(assignment["id"]), _PATIENT_A))
+
+        _submit(portal, str(assignment["id"]))
+
+        current = portal.get(f"{ASSIGNMENTS}/{assignment['id']}", headers=_auth(_TOKEN_A)).json()
+        assert current["status"] == "in_progress"
+        assert current["receipt_code"] is None
+        assert len(assignments.list_draft_responses(str(assignment["id"]), _PATIENT_A)) == before
+        assert measure_repo.list_by_patient(_PATIENT_A, "clinician-1") == []
+
+    def test_a_finished_form_comes_back_with_a_receipt_and_its_scores(
+        self,
+        portal: TestClient,
+        service: IntakeAssignmentService,
+        published_version: str,
+    ) -> None:
+        assignment = _seed_assignment(service, _PATIENT_A, published_version)
+        _answer_everything(portal, service, assignment, published_version)
+
+        response = _submit(portal, str(assignment["id"]))
+        assert response.status_code == 200
+        body = response.json()
+        assert body["assignment_id"] == assignment["id"]
+        assert len(body["receipt_code"]) == 8
+        assert [m["instrument"] for m in body["measures"]] == ["phq9", "gad7"]
+        assert body["measures"][0]["total_score"] == sum(_PHQ9_COMPLETE.values())
+        assert body["measures"][0]["severity"] is not None
+
+    def test_the_form_then_reads_as_submitted_with_its_answers_still_there(
+        self,
+        portal: TestClient,
+        service: IntakeAssignmentService,
+        published_version: str,
+    ) -> None:
+        """Freezing an answer must not make the patient's own copy go blank."""
+        assignment = _seed_assignment(service, _PATIENT_A, published_version)
+        _answer_everything(portal, service, assignment, published_version)
+        submitted = _submit(portal, str(assignment["id"])).json()
+
+        detail = portal.get(f"{ASSIGNMENTS}/{assignment['id']}", headers=_auth(_TOKEN_A)).json()
+        assert detail["status"] == "submitted"
+        assert detail["receipt_code"] == submitted["receipt_code"]
+        assert detail["progress"] == {"complete": True, "missing": []}
+        assert all(item["value"] is not None for item in detail["items"])
+
+    def test_handing_it_in_twice_is_409(
+        self,
+        portal: TestClient,
+        service: IntakeAssignmentService,
+        measure_repo: InMemoryOutcomeMeasureRepository,
+        published_version: str,
+    ) -> None:
+        assignment = _seed_assignment(service, _PATIENT_A, published_version)
+        _answer_everything(portal, service, assignment, published_version)
+        _submit(portal, str(assignment["id"]))
+
+        second = _submit(portal, str(assignment["id"]))
+        assert second.status_code == 409
+        assert len(measure_repo.list_by_patient(_PATIENT_A, "clinician-1")) == 2
+
+    def test_saving_an_answer_after_handing_it_in_is_409(
+        self,
+        portal: TestClient,
+        service: IntakeAssignmentService,
+        published_version: str,
+    ) -> None:
+        assignment = _seed_assignment(service, _PATIENT_A, published_version)
+        _answer_everything(portal, service, assignment, published_version)
+        _submit(portal, str(assignment["id"]))
+
+        response = portal.put(
+            f"{ASSIGNMENTS}/{assignment['id']}/items/"
+            f"{_item_id(service, published_version, 'reason')}",
+            json={"value": {"text": "Actually, something else."}},
+            headers=_auth(_TOKEN_A),
+        )
+        assert response.status_code == 409
+
+    def test_b_cannot_hand_in_as_form(
+        self,
+        portal: TestClient,
+        service: IntakeAssignmentService,
+        published_version: str,
+    ) -> None:
+        """Another patient's id is a 404, the same as one that does not exist."""
+        mine = _seed_assignment(service, _PATIENT_A, published_version)
+        _answer_everything(portal, service, mine, published_version)
+
+        assert _submit(portal, str(mine["id"]), _TOKEN_B).status_code == 404
+        still = portal.get(f"{ASSIGNMENTS}/{mine['id']}", headers=_auth(_TOKEN_A)).json()
+        assert still["status"] == "in_progress"
+
+    def test_a_single_factor_session_cannot_hand_a_form_in(
+        self,
+        portal: TestClient,
+        service: IntakeAssignmentService,
+        published_version: str,
+    ) -> None:
+        assignment = _seed_assignment(service, _PATIENT_A, published_version)
+        response = _submit(portal, str(assignment["id"]), _TOKEN_A_WEAK)
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "STEP_UP_REQUIRED"
+
+    def test_it_is_recorded_with_the_measures_and_no_answer(
+        self,
+        portal: TestClient,
+        service: IntakeAssignmentService,
+        audit_repo: InMemoryAuditRepository,
+        published_version: str,
+    ) -> None:
+        assignment = _seed_assignment(service, _PATIENT_A, published_version)
+        _answer_everything(portal, service, assignment, published_version)
+        _submit(portal, str(assignment["id"]))
+
+        rows = _entries(audit_repo, _PATIENT_A)
+        submitted = [r for r in rows if r.action == AuditAction.PATIENT_INTAKE_SUBMITTED.value]
+        assert len(submitted) == 1
+        entry = submitted[0]
+        assert entry.actor_type == ACTOR_TYPE_PATIENT
+        assert entry.resource_type == ResourceType.PATIENT_INTAKE_ASSIGNMENT.value
+        assert entry.resource_id == str(assignment["id"])
+        assert entry.changes == {"instruments": ["phq9", "gad7"]}
+        assert "Panic" not in str(entry.changes)
+
+
+class TestTheClinicianReadsWhatWasAnswered:
+    def test_it_hands_back_the_questions_and_the_answers(
+        self,
+        chart: TestClient,
+        portal: TestClient,
+        service: IntakeAssignmentService,
+        published_version: str,
+    ) -> None:
+        assignment = _assign(chart, _PATIENT_A, published_version).json()
+        _answer_everything(portal, service, assignment, published_version)
+        _submit(portal, str(assignment["id"]))
+
+        body = chart.get(f"/api/patients/{_PATIENT_A}/intake-assignments/{assignment['id']}").json()
+        assert body["status"] == "submitted"
+        assert body["patient_id"] == _PATIENT_A
+        answers = {item["key"]: item["value"] for item in body["items"]}
+        assert answers["reason"] == {"text": "Panic at work for about two months."}
+        assert answers["phq9"] == {"item_scores": _PHQ9_COMPLETE}
+
+    def test_another_patients_assignment_is_404(
+        self, chart: TestClient, published_version: str
+    ) -> None:
+        theirs = _assign(chart, _PATIENT_B, published_version).json()
+        response = chart.get(f"/api/patients/{_PATIENT_A}/intake-assignments/{theirs['id']}")
+        assert response.status_code == 404
+
+    def test_reading_it_is_a_disclosure_and_is_recorded(
+        self,
+        chart: TestClient,
+        portal: TestClient,
+        service: IntakeAssignmentService,
+        mock_audit_service: AuditService,
+        published_version: str,
+    ) -> None:
+        assignment = _assign(chart, _PATIENT_A, published_version).json()
+        _answer_everything(portal, service, assignment, published_version)
+
+        chart.get(f"/api/patients/{_PATIENT_A}/intake-assignments/{assignment['id']}")
+
+        logged = [call.args[0] for call in mock_audit_service._repo.append.call_args_list]
+        assert logged[-1].action == AuditAction.PATIENT_INTAKE_SUBMISSION_VIEWED.value
+        assert logged[-1].resource_id == assignment["id"]
+        assert logged[-1].changes == {"count": 4}

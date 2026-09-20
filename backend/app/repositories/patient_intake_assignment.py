@@ -52,6 +52,17 @@ ASSIGNMENT_STATUSES: tuple[str, ...] = (*ACTIVE_STATUSES, "accepted", "withdrawn
 WRITABLE_STATUSES: frozenset[str] = frozenset({"assigned", "in_progress", "needs_correction"})
 
 
+class ReceiptCollisionError(RuntimeError):
+    """The receipt code offered for a submission is already in use here.
+
+    Raised by :meth:`PatientIntakeAssignmentRepository.mark_submitted` and
+    handled by generating another one. A separate type rather than letting
+    the database's own error out, because the caller's response to it is
+    "try again", which is not the response to any other integrity failure
+    on this table.
+    """
+
+
 class PatientIntakeAssignmentRepository(ABC):
     """Abstract base class for intake assignment and response data access."""
 
@@ -90,6 +101,17 @@ class PatientIntakeAssignmentRepository(ABC):
 
         "Live" is :data:`ACTIVE_STATUSES` — the same set the partial unique
         index is built on, which is what makes at most one row come back.
+        """
+
+    @abstractmethod
+    def list_responses_for_clinician(
+        self, assignment_id: str, user_id: str
+    ) -> list[dict[str, object]]:
+        """What the patient answered on one assignment, read by a clinician.
+
+        An empty list when *user_id* holds no grant on the patient — the
+        same answer an assignment with nothing saved against it gives, so
+        the shape of the response tells a caller without access nothing.
         """
 
     @abstractmethod
@@ -132,6 +154,28 @@ class PatientIntakeAssignmentRepository(ABC):
         """The live draft answers on one of the calling patient's assignments."""
 
     @abstractmethod
+    def list_live_responses(self, assignment_id: str, patient_id: str) -> list[dict[str, object]]:
+        """Every answer that has not been superseded, draft or handed in.
+
+        Wider than :meth:`list_draft_responses` by exactly the rows a submit
+        froze. That is what makes it the read a finished form needs: after
+        submission there are no drafts left, so the narrower method would
+        report an answered form as empty.
+        """
+
+    @abstractmethod
+    def get_live_response(
+        self, assignment_id: str, patient_id: str, item_id: str
+    ) -> dict[str, object] | None:
+        """This question's live answer on this assignment, whatever its state.
+
+        Answers the one question :meth:`save_draft_response` cannot ask for
+        itself: is the row that is already there still a draft? A frozen one
+        is a submitted answer, and changing it in place would rewrite what
+        somebody handed in.
+        """
+
+    @abstractmethod
     def save_draft_response(self, row: dict[str, object]) -> dict[str, object]:
         """Record an answer, replacing this question's live draft if there is one.
 
@@ -139,6 +183,34 @@ class PatientIntakeAssignmentRepository(ABC):
         the same key the partial unique index enforces — so answering a
         question twice updates one row rather than accumulating two. The
         ``id`` on *row* is used only when the row is new.
+        """
+
+    @abstractmethod
+    def freeze_draft_responses(self, assignment_id: str, patient_id: str, now: datetime) -> int:
+        """Turn every live draft on this assignment into a submitted answer.
+
+        Returns how many rows were frozen. One statement rather than a row
+        at a time, so a form is never half handed in: the whole set stops
+        being editable at the same instant the assignment does.
+        """
+
+    @abstractmethod
+    def mark_submitted(
+        self, assignment_id: str, patient_id: str, *, now: datetime, receipt_code: str
+    ) -> dict[str, object] | None:
+        """Record that the patient handed this form in, with their receipt.
+
+        Only moves a row the patient may still submit — the statuses in
+        :data:`WRITABLE_STATUSES`. A second submit therefore comes back
+        ``None`` rather than overwriting the first one's timestamp and
+        receipt, which is what lets the caller answer 409 without a
+        separate read that another request could race.
+
+        Raises :class:`ReceiptCollisionError` when *receipt_code* is already
+        spoken for in this practice, leaving the transaction usable so the
+        caller can try another one. Only the unique index can decide that:
+        two submissions can pick the same code in the same instant, and a
+        look-before-you-write check would let both through.
         """
 
 
@@ -201,6 +273,14 @@ class InMemoryPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
                 return dict(row)
         return None
 
+    def list_responses_for_clinician(
+        self, assignment_id: str, user_id: str
+    ) -> list[dict[str, object]]:
+        row = self.assignments.get(assignment_id)
+        if row is None or not self._can_access(str(row["patient_id"]), user_id):
+            return []
+        return self._live(assignment_id, str(row["patient_id"]), drafts_only=False)
+
     def set_status_for_clinician(
         self, assignment_id: str, user_id: str, *, status: str, now: datetime
     ) -> dict[str, object] | None:
@@ -235,16 +315,22 @@ class InMemoryPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
         return dict(row)
 
     def list_draft_responses(self, assignment_id: str, patient_id: str) -> list[dict[str, object]]:
+        return self._live(assignment_id, patient_id, drafts_only=True)
+
+    def list_live_responses(self, assignment_id: str, patient_id: str) -> list[dict[str, object]]:
+        return self._live(assignment_id, patient_id, drafts_only=False)
+
+    def get_live_response(
+        self, assignment_id: str, patient_id: str, item_id: str
+    ) -> dict[str, object] | None:
         rows = [
-            dict(r)
-            for r in self.responses.values()
-            if str(r["assignment_id"]) == assignment_id
-            and str(r["patient_id"]) == patient_id
-            and r["draft"]
-            and r["superseded_by"] is None
+            row
+            for row in self._live(assignment_id, patient_id, drafts_only=False)
+            if str(row["item_id"]) == item_id
         ]
-        rows.sort(key=lambda r: str(r["item_id"]))
-        return rows
+        # A draft first when there is one, as the Postgres sibling does.
+        rows.sort(key=lambda r: (not r["draft"], r["updated_at"]))  # type: ignore[return-value]
+        return rows[0] if rows else None
 
     def save_draft_response(self, row: dict[str, object]) -> dict[str, object]:
         existing = next(
@@ -265,7 +351,53 @@ class InMemoryPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
         self.responses[str(row["id"])] = dict(row)
         return dict(row)
 
+    def freeze_draft_responses(self, assignment_id: str, patient_id: str, now: datetime) -> int:
+        frozen = 0
+        for row in self.responses.values():
+            if (
+                str(row["assignment_id"]) == assignment_id
+                and str(row["patient_id"]) == patient_id
+                and row["draft"]
+                and row["superseded_by"] is None
+            ):
+                row["draft"] = False
+                row["updated_at"] = now
+                frozen += 1
+        return frozen
+
+    def mark_submitted(
+        self, assignment_id: str, patient_id: str, *, now: datetime, receipt_code: str
+    ) -> dict[str, object] | None:
+        row = self.assignments.get(assignment_id)
+        if row is None or str(row["patient_id"]) != patient_id:
+            return None
+        if str(row["status"]) not in WRITABLE_STATUSES:
+            return None
+        if any(
+            other["receipt_code"] == receipt_code
+            for other in self.assignments.values()
+            if other.get("receipt_code") is not None
+        ):
+            raise ReceiptCollisionError(receipt_code)
+        row["receipt_code"] = receipt_code
+        _apply_status(row, "submitted", now)
+        return dict(row)
+
     # --- helpers ---
+
+    def _live(
+        self, assignment_id: str, patient_id: str, *, drafts_only: bool
+    ) -> list[dict[str, object]]:
+        rows = [
+            dict(r)
+            for r in self.responses.values()
+            if str(r["assignment_id"]) == assignment_id
+            and str(r["patient_id"]) == patient_id
+            and r["superseded_by"] is None
+            and (r["draft"] or not drafts_only)
+        ]
+        rows.sort(key=lambda r: str(r["item_id"]))
+        return rows
 
     def _for_patient(self, patient_id: str) -> list[dict[str, object]]:
         rows = [dict(r) for r in self.assignments.values() if str(r["patient_id"]) == patient_id]
@@ -304,4 +436,5 @@ __all__ = [
     "WRITABLE_STATUSES",
     "InMemoryPatientIntakeAssignmentRepository",
     "PatientIntakeAssignmentRepository",
+    "ReceiptCollisionError",
 ]

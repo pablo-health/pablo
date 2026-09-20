@@ -70,8 +70,10 @@ _TREATING_CLINICIAN = "5b19c704-2e8a-5d31-b4f6-90c27ae1d385"
 # A clinician in the same practice with no grant on either patient.
 _STRANGER_CLINICIAN = "8d03f261-47b9-5a0c-92e1-3f6b8c05d417"
 
-# The revision this one follows. Rolling a schema back to it and forward
-# again replays exactly the revision under test.
+# The revision the assignment tables arrive in follows. Rolling a schema
+# back to it and forward again replays the two revisions under test: the
+# one that creates these tables and the one that adds the receipt and the
+# link to a legacy submission.
 _PARENT_REVISION = "b7e3f0c48d15"
 
 
@@ -313,20 +315,22 @@ def _unarmed(engine: Engine, schema: str) -> Connection:
     return conn
 
 
-def _assign(
+def _assign(  # noqa: PLR0913 — one keyword per column the caller varies
     conn: Connection,
     patient_id: str,
     version_id: str,
     assignment_id: str,
     *,
     status: str = "assigned",
+    legacy_id: str | None = None,
 ) -> str:
     conn.execute(
         text(
             f"INSERT INTO {_ASSIGNMENTS} "  # noqa: S608 — module constant, no caller input
-            "(id, patient_id, version_id, status, assigned_by, assigned_at, updated_at) "
+            "(id, patient_id, version_id, status, assigned_by, assigned_at, "
+            "legacy_submission_id, updated_at) "
             "VALUES (CAST(:id AS uuid), CAST(:pid AS uuid), CAST(:vid AS uuid), "
-            ":status, CAST(:u AS uuid), :now, :now)"
+            ":status, CAST(:u AS uuid), :now, CAST(:legacy AS uuid), :now)"
         ),
         {
             "id": assignment_id,
@@ -334,6 +338,7 @@ def _assign(
             "vid": version_id,
             "status": status,
             "u": _TREATING_CLINICIAN,
+            "legacy": legacy_id,
             "now": datetime.now(UTC).replace(microsecond=0),
         },
     )
@@ -702,6 +707,159 @@ class TestClinicianAccess:
             conn.rollback()
         finally:
             conn.close()
+
+
+class TestHandingAFormIn:
+    """Submitting, from the database's side of it.
+
+    The route layer is tested in ``backend/tests``; what only a real
+    Postgres can show is that a patient cannot hand in somebody else's
+    form, that a frozen answer stays readable to the clinician who has to
+    read it, and that two receipts cannot be the same.
+    """
+
+    @pytest.mark.usefixtures("drafts")
+    def test_a_cannot_hand_in_bs_form(
+        self,
+        engine: Engine,
+        tenant_schema: str,
+        two_patients: tuple[str, str],
+        assignments: tuple[str, str],
+    ) -> None:
+        """Invisible to the write, so the update lands on nothing."""
+        patient_a, _ = two_patients
+        assignment_a, assignment_b = assignments
+        conn = _as_patient(engine, tenant_schema, patient_a)
+        try:
+            # Control: A hands in their own, so the statement itself works.
+            own = _hand_in(conn, assignment_a, "AAAA2345")
+            assert own == 1
+            foreign = _hand_in(conn, assignment_b, "BBBB2345")
+            assert foreign == 0
+            conn.rollback()
+        finally:
+            conn.close()
+
+    def test_a_frozen_answer_is_still_the_clinicians_to_read(
+        self,
+        engine: Engine,
+        tenant_schema: str,
+        two_patients: tuple[str, str],
+        assignments: tuple[str, str],
+        drafts: tuple[str, str],
+    ) -> None:
+        """Freezing changes what a patient may edit, not who may read it."""
+        patient_a, _ = two_patients
+        assignment_a, _ = assignments
+        response_a, _ = drafts
+
+        patient = _as_patient(engine, tenant_schema, patient_a)
+        try:
+            patient.execute(
+                text(
+                    f"UPDATE {_RESPONSES} SET draft = false "  # noqa: S608
+                    "WHERE assignment_id = CAST(:a AS uuid)"
+                ),
+                {"a": assignment_a},
+            )
+            patient.commit()
+        finally:
+            patient.close()
+
+        clinician = _as_clinician(engine, tenant_schema, _TREATING_CLINICIAN)
+        try:
+            value = clinician.execute(
+                text(
+                    f"SELECT value->>'text' FROM {_RESPONSES} "  # noqa: S608
+                    "WHERE id = CAST(:id AS uuid)"
+                ),
+                {"id": response_a},
+            ).scalar()
+            assert value == "seed answer"
+        finally:
+            clinician.close()
+
+        # Put it back, so the tests after this one see the drafts they seeded.
+        restore = _as_patient(engine, tenant_schema, patient_a)
+        try:
+            restore.execute(
+                text(
+                    f"UPDATE {_RESPONSES} SET draft = true "  # noqa: S608
+                    "WHERE assignment_id = CAST(:a AS uuid)"
+                ),
+                {"a": assignment_a},
+            )
+            restore.commit()
+        finally:
+            restore.close()
+
+    def test_two_submissions_cannot_share_a_receipt(
+        self, engine: Engine, tenant_schema: str, assignments: tuple[str, str]
+    ) -> None:
+        """The unique index, which is what arbitrates a simultaneous draw."""
+        assignment_a, assignment_b = assignments
+        conn = _as_clinician(engine, tenant_schema, _TREATING_CLINICIAN)
+        try:
+            assert _hand_in(conn, assignment_a, "SAME2345") == 1
+            with pytest.raises(IntegrityError) as exc:
+                _hand_in(conn, assignment_b, "SAME2345")
+            assert "uq_patient_intake_assignments_receipt" in str(exc.value)
+            conn.rollback()
+        finally:
+            conn.close()
+
+    def test_a_legacy_submission_can_only_be_adopted_once(
+        self,
+        engine: Engine,
+        tenant_schema: str,
+        two_patients: tuple[str, str],
+        published_form: tuple[str, str],
+    ) -> None:
+        """What makes the adoption command safe to run twice.
+
+        Both rows go in as ``accepted``, which is what an adopted row
+        carries and is outside the live-assignment index — so the only
+        thing left to refuse the second one is the legacy link itself.
+        """
+        patient_a, _ = two_patients
+        version_id, _ = published_form
+        legacy_id = str(uuid.uuid4())
+        conn = _as_clinician(engine, tenant_schema, _TREATING_CLINICIAN)
+        try:
+            second_version = _second_version(conn, version_id)
+            _assign(
+                conn,
+                patient_a,
+                second_version,
+                str(uuid.uuid4()),
+                status="accepted",
+                legacy_id=legacy_id,
+            )
+            with pytest.raises(IntegrityError) as exc:
+                _assign(
+                    conn,
+                    patient_a,
+                    second_version,
+                    str(uuid.uuid4()),
+                    status="accepted",
+                    legacy_id=legacy_id,
+                )
+            assert "uq_patient_intake_assignments_legacy_submission" in str(exc.value)
+            conn.rollback()
+        finally:
+            conn.close()
+
+
+def _hand_in(conn: Connection, assignment_id: str, receipt: str) -> int:
+    """Move one assignment to ``submitted`` with a receipt. Returns rowcount."""
+    return conn.execute(
+        text(
+            f"UPDATE {_ASSIGNMENTS} SET status = 'submitted', "  # noqa: S608
+            "submitted_at = now(), receipt_code = :receipt, updated_at = now() "
+            "WHERE id = CAST(:id AS uuid)"
+        ),
+        {"id": assignment_id, "receipt": receipt},
+    ).rowcount
 
 
 class TestIntegrityConstraints:

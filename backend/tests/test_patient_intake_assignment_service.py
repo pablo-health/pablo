@@ -22,10 +22,13 @@ from typing import Any
 import pytest
 from app.intake.answers import AnswerError
 from app.intake.items import ItemDraft
+from app.intake.receipts import RECEIPT_ALPHABET, RECEIPT_LENGTH
+from app.outcome_measures.service import OutcomeMeasureService
 from app.repositories import (
     InMemoryIntakePacketRepository,
     InMemoryPatientIntakeAssignmentRepository,
 )
+from app.repositories.outcome_measure import InMemoryOutcomeMeasureRepository
 from app.repositories.patient_intake_assignment import (
     ACTIVE_STATUSES,
     ASSIGNMENT_STATUSES,
@@ -34,6 +37,8 @@ from app.repositories.patient_intake_assignment import (
 from app.services.intake_packet_service import IntakePacketService
 from app.services.patient_intake_assignment_service import (
     AssignmentClosedError,
+    FrozenResponseError,
+    IncompleteFormError,
     IntakeAssignmentService,
     UnpublishedVersionError,
 )
@@ -86,6 +91,19 @@ def service(
     return IntakeAssignmentService(assignments, packets)
 
 
+@pytest.fixture
+def measure_repo() -> InMemoryOutcomeMeasureRepository:
+    repo = InMemoryOutcomeMeasureRepository()
+    repo.grant_all_access()
+    return repo
+
+
+@pytest.fixture
+def measures(measure_repo: InMemoryOutcomeMeasureRepository) -> OutcomeMeasureService:
+    """The real scoring service, so the totals are the ones the chart shows."""
+    return OutcomeMeasureService(measure_repo)
+
+
 def _version(service: IntakePacketService, *, publish: bool = True) -> str:
     template = service.create_template("Intake", _CLINICIAN)
     version_id = str(service.list_versions(str(template["id"]))[0]["id"])
@@ -104,6 +122,19 @@ def _version(service: IntakePacketService, *, publish: bool = True) -> str:
 
 def _item(service: IntakeAssignmentService, version_id: str, key: str) -> str:
     return next(str(row["id"]) for row in service.items(version_id) if row["key"] == key)
+
+
+def _answered(service: IntakeAssignmentService, version_id: str) -> dict[str, Any]:
+    """An assignment with every required question answered, ready to hand in."""
+    assignment, _ = service.assign(_PATIENT, version_id, _CLINICIAN)
+    for key, value in (
+        ("reason", {"text": "Panic before every shift."}),
+        ("phq9", {"item_scores": dict(_PHQ9_COMPLETE)}),
+    ):
+        service.save_answer(assignment, _PATIENT, _item(service, version_id, key), value)
+    current = service.get_for_patient(str(assignment["id"]), _PATIENT)
+    assert current is not None
+    return dict(current)
 
 
 class TestSendingAForm:
@@ -282,6 +313,187 @@ class TestProgress:
 
         assignments.responses.clear()
         assert service.progress(assignment, _PATIENT).complete is False
+
+
+class TestHandingItIn:
+    def test_an_unfinished_form_is_refused_and_nothing_changes(
+        self,
+        service: IntakeAssignmentService,
+        assignments: InMemoryPatientIntakeAssignmentRepository,
+        measures: OutcomeMeasureService,
+        packet_service: IntakePacketService,
+    ) -> None:
+        version_id = _version(packet_service)
+        assignment, _ = service.assign(_PATIENT, version_id, _CLINICIAN)
+        service.save_answer(
+            assignment, _PATIENT, _item(service, version_id, "reason"), {"text": "Panic."}
+        )
+
+        with pytest.raises(IncompleteFormError) as exc:
+            service.submit(assignment, _PATIENT, measures)
+
+        assert exc.value.missing == [_item(service, version_id, "phq9")]
+        current = service.get_for_patient(str(assignment["id"]), _PATIENT)
+        assert current is not None
+        assert current["status"] == "in_progress"
+        assert current["receipt_code"] is None
+        assert len(assignments.list_draft_responses(str(assignment["id"]), _PATIENT)) == 1
+
+    def test_a_finished_form_freezes_scores_and_gets_a_receipt(
+        self,
+        service: IntakeAssignmentService,
+        assignments: InMemoryPatientIntakeAssignmentRepository,
+        measures: OutcomeMeasureService,
+        measure_repo: InMemoryOutcomeMeasureRepository,
+        packet_service: IntakePacketService,
+    ) -> None:
+        version_id = _version(packet_service)
+        assignment = _answered(service, version_id)
+
+        submitted, recorded = service.submit(assignment, _PATIENT, measures)
+
+        assert submitted["status"] == "submitted"
+        assert submitted["submitted_at"] is not None
+        assert set(str(submitted["receipt_code"])) <= set(RECEIPT_ALPHABET)
+        assert len(str(submitted["receipt_code"])) == RECEIPT_LENGTH
+
+        # Every draft is now an answer, so the narrower read is empty and
+        # the wider one still has both.
+        assert assignments.list_draft_responses(str(assignment["id"]), _PATIENT) == []
+        assert len(assignments.list_live_responses(str(assignment["id"]), _PATIENT)) == 2
+
+        assert [m.instrument for m in recorded] == ["phq9"]
+        assert recorded[0].total_score == sum(_PHQ9_COMPLETE.values())
+        assert recorded[0].source == "patient_self_report"
+        assert recorded[0].created_by == _PATIENT
+        assert len(measure_repo.list_by_patient(_PATIENT, _CLINICIAN)) == 1
+
+    def test_a_submitted_form_still_reads_as_complete(
+        self,
+        service: IntakeAssignmentService,
+        measures: OutcomeMeasureService,
+        packet_service: IntakePacketService,
+    ) -> None:
+        """Freezing an answer must not make it stop counting as one."""
+        version_id = _version(packet_service)
+        assignment = _answered(service, version_id)
+        submitted, _ = service.submit(assignment, _PATIENT, measures)
+        assert service.progress(submitted, _PATIENT).complete is True
+
+    def test_handing_it_in_twice_is_refused(
+        self,
+        service: IntakeAssignmentService,
+        measures: OutcomeMeasureService,
+        measure_repo: InMemoryOutcomeMeasureRepository,
+        packet_service: IntakePacketService,
+    ) -> None:
+        """The second call must not mint a second receipt or a second score."""
+        version_id = _version(packet_service)
+        assignment = _answered(service, version_id)
+        submitted, _ = service.submit(assignment, _PATIENT, measures)
+
+        with pytest.raises(AssignmentClosedError):
+            service.submit(submitted, _PATIENT, measures)
+
+        current = service.get_for_patient(str(assignment["id"]), _PATIENT)
+        assert current is not None
+        assert current["receipt_code"] == submitted["receipt_code"]
+        assert len(measure_repo.list_by_patient(_PATIENT, _CLINICIAN)) == 1
+
+    def test_two_submissions_do_not_share_a_receipt(
+        self,
+        service: IntakeAssignmentService,
+        measures: OutcomeMeasureService,
+        packet_service: IntakePacketService,
+    ) -> None:
+        receipts = set()
+        for _ in range(2):
+            version_id = _version(packet_service)
+            assignment = _answered(service, version_id)
+            submitted, _ = service.submit(assignment, _PATIENT, measures)
+            receipts.add(str(submitted["receipt_code"]))
+        assert len(receipts) == 2
+
+    def test_a_taken_receipt_is_tried_again_rather_than_raised(
+        self,
+        service: IntakeAssignmentService,
+        measures: OutcomeMeasureService,
+        packet_service: IntakePacketService,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Only the unique index can arbitrate, so the service retries.
+
+        The first draw is forced to collide; the second is a real one. A
+        submit that gave up on the first refusal would leave a patient
+        unable to hand a form in for a reason that is nobody's fault.
+        """
+        import app.services.patient_intake_assignment_service as module  # noqa: PLC0415
+
+        drawn = iter(["TAKEN234", "TAKEN234", "FREE2345"])
+        monkeypatch.setattr(module, "new_receipt_code", lambda: next(drawn))
+
+        first = _answered(service, _version(packet_service))
+        service.submit(first, _PATIENT, measures)
+
+        second = _answered(service, _version(packet_service))
+        submitted, _ = service.submit(second, _PATIENT, measures)
+        assert submitted["receipt_code"] == "FREE2345"
+
+
+class TestWhatWasHandedInIsNotEdited:
+    """The immutability invariant, stated where no route can skip it."""
+
+    def test_the_service_refuses_to_change_a_frozen_answer(
+        self,
+        service: IntakeAssignmentService,
+        assignments: InMemoryPatientIntakeAssignmentRepository,
+        measures: OutcomeMeasureService,
+        packet_service: IntakePacketService,
+    ) -> None:
+        """Even on a form that is open again, a frozen row is not edited.
+
+        The assignment is put back into a writable state deliberately, so
+        what this proves is about the ROW rather than about the form's
+        status — which is the invariant a correction has to honour when it
+        lands: a successor row, never an edit in place.
+        """
+        version_id = _version(packet_service)
+        assignment = _answered(service, version_id)
+        service.submit(assignment, _PATIENT, measures)
+
+        reopened = assignments.assignments[str(assignment["id"])]
+        reopened["status"] = "needs_correction"
+
+        before = assignments.list_live_responses(str(assignment["id"]), _PATIENT)
+        with pytest.raises(FrozenResponseError):
+            service.save_answer(
+                dict(reopened),
+                _PATIENT,
+                _item(service, version_id, "reason"),
+                {"text": "Rewriting what I handed in."},
+            )
+        assert assignments.list_live_responses(str(assignment["id"]), _PATIENT) == before
+
+    def test_an_unanswered_question_on_a_reopened_form_can_still_be_answered(
+        self,
+        service: IntakeAssignmentService,
+        assignments: InMemoryPatientIntakeAssignmentRepository,
+        measures: OutcomeMeasureService,
+        packet_service: IntakePacketService,
+    ) -> None:
+        """The control. Without it the refusal above could be blanket."""
+        version_id = _version(packet_service)
+        assignment = _answered(service, version_id)
+        service.submit(assignment, _PATIENT, measures)
+
+        reopened = assignments.assignments[str(assignment["id"])]
+        reopened["status"] = "needs_correction"
+
+        # ``note`` is optional and was never answered, so it has no frozen row.
+        stored, _ = service.save_answer(
+            dict(reopened), _PATIENT, _item(service, version_id, "note"), {"text": "One more."}
+        )
+        assert stored["draft"] is True
 
 
 class TestTheStatusVocabularyMatchesTheMigration:
