@@ -161,20 +161,17 @@ describe("ItemConfigForm", () => {
     expect(screen.queryByRole("option", { name: /DIRE/i })).not.toBeInTheDocument()
   })
 
-  it("an insurance card and a document request take a label", async () => {
-    const user = userEvent.setup()
-    form("document_request")
-
-    await user.type(screen.getByLabelText("What to ask for"), "I")
-
-    expect(lastConfig()).toEqual({ label: "I" })
+  it.each([
+    "demographics",
+    "reason",
+    "emergency_contact",
+    "guardian",
+    "insurance_card",
+    "document_request",
+  ] as ItemType[])("%s has nothing for a practice to set", (itemType) => {
+    // What to ask for on an upload is the item's own question, which lives
+    // beside the name rather than in here — see IntakeItemEditor.
+    const { container } = form(itemType)
+    expect(container).toBeEmptyDOMElement()
   })
-
-  it.each(["demographics", "reason", "emergency_contact", "guardian"] as ItemType[])(
-    "%s has nothing for a practice to set",
-    (itemType) => {
-      const { container } = form(itemType)
-      expect(container).toBeEmptyDOMElement()
-    }
-  )
 })

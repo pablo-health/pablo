@@ -204,6 +204,8 @@ class TestTheDefaultForm:
                         key=str(row["key"]),
                         item_type=str(row["item_type"]),
                         required=bool(row["required"]),
+                        label=row["label"],  # type: ignore[arg-type]
+                        help_text=row["help_text"],  # type: ignore[arg-type]
                         config=stored_config(row["config"]),
                     )
                     for row in repo.list_items(str(version["id"]))
@@ -224,6 +226,119 @@ class TestTheDefaultForm:
         try:
             assert len(repo.list_templates()) == 1
         finally:
+            session.close()
+
+
+class TestAQuestionCarriesItsOwnWording:
+    """The two columns a practice's own question is asked in.
+
+    On a freshly-provisioned schema, because provisioning applies the
+    captured template rather than the chain — a column added to the model
+    and not regenerated into the template exists for every practice that
+    migrated and for none created afterwards.
+    """
+
+    def test_a_fresh_schema_has_both_columns(self, two_practices: tuple[Engine, str, str]) -> None:
+        engine, schema, _ = two_practices
+        with engine.connect() as conn:
+            columns = {
+                row[0]: (row[1], row[2])
+                for row in conn.execute(
+                    text(
+                        "SELECT column_name, data_type, is_nullable "
+                        "FROM information_schema.columns "
+                        "WHERE table_schema = :s AND table_name = 'intake_item_definitions' "
+                        "AND column_name IN ('label', 'help_text')"
+                    ),
+                    {"s": schema},
+                )
+            }
+        assert columns == {
+            "label": ("character varying", "YES"),
+            "help_text": ("text", "YES"),
+        }
+
+    def test_the_seeded_form_is_unchanged_by_them(
+        self, two_practices: tuple[Engine, str, str]
+    ) -> None:
+        """Every question on it is one the engine words, so none carries any."""
+        engine, schema, _ = two_practices
+        session, repo = _repo_on(engine, schema)
+        try:
+            template = repo.list_templates()[0]
+            version = repo.list_versions(str(template["id"]))[0]
+            items = repo.list_items(str(version["id"]))
+
+            assert [i["label"] for i in items] == [None, None, None, None]
+            assert [i["help_text"] for i in items] == [None, None, None, None]
+        finally:
+            session.close()
+
+    def test_a_question_a_practice_wrote_survives_the_round_trip(
+        self, two_practices: tuple[Engine, str, str]
+    ) -> None:
+        from app.intake.items import ItemDraft  # noqa: PLC0415
+        from app.services.intake_packet_service import IntakePacketService  # noqa: PLC0415
+
+        engine, schema, _ = two_practices
+        session, repo = _repo_on(engine, schema)
+        try:
+            service = IntakePacketService(repo)
+            template = service.create_template("With questions", str(uuid.uuid4()))
+            version_id = str(service.list_versions(str(template["id"]))[0]["id"])
+            service.replace_items(
+                version_id,
+                [
+                    ItemDraft(
+                        key="sleep",
+                        item_type="free_text",
+                        label="How have you been sleeping?",
+                        help_text="A sentence or two is plenty.",
+                    )
+                ],
+            )
+
+            stored = repo.list_items(version_id)[0]
+            assert stored["label"] == "How have you been sleeping?"
+            assert stored["help_text"] == "A sentence or two is plenty."
+
+            # Publishing is what the wording is required for, and this form
+            # has it — so the freeze goes through rather than naming the item.
+            service.publish(version_id, str(uuid.uuid4()))
+        finally:
+            # Rolled back rather than committed: `search_path` is set on the
+            # connection this session holds, and a commit hands it back to
+            # the pool, so the next statement would run unscoped.
+            session.rollback()
+            session.close()
+
+    def test_a_new_version_carries_the_wording_forward(
+        self, two_practices: tuple[Engine, str, str]
+    ) -> None:
+        """A version 2 is built from version 1's rows, wording included."""
+        from app.intake.items import ItemDraft  # noqa: PLC0415
+        from app.services.intake_packet_service import IntakePacketService  # noqa: PLC0415
+
+        engine, schema, _ = two_practices
+        session, repo = _repo_on(engine, schema)
+        try:
+            service = IntakePacketService(repo)
+            template = service.create_template("Carried forward", str(uuid.uuid4()))
+            template_id = str(template["id"])
+            first = str(service.list_versions(template_id)[0]["id"])
+            service.replace_items(
+                first,
+                [ItemDraft(key="sleep", item_type="free_text", label="Sleeping any better?")],
+            )
+            service.publish(first, str(uuid.uuid4()))
+
+            second = service.create_version(template_id)
+
+            assert second is not None
+            carried = repo.list_items(str(second["id"]))[0]
+            assert carried["label"] == "Sleeping any better?"
+        finally:
+            session.rollback()
             session.close()
 
 

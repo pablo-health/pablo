@@ -18,13 +18,20 @@ import { RENDERED_ITEM_TYPES, rendererFor } from "../renderers/registry"
 import type { AnswerValue } from "../renderers/types"
 import { INTAKE_FORM, ITEM_IDS, SEEDED_ITEMS } from "./formFixtures"
 
-function itemOf(itemType: string, config: Record<string, unknown> = {}): IntakeAssignmentItem {
+function itemOf(
+  itemType: string,
+  config: Record<string, unknown> = {},
+  label: string | null = null,
+  helpText: string | null = null,
+): IntakeAssignmentItem {
   return {
     id: "00000000-0000-4000-8000-000000000000",
     key: itemType,
     position: 0,
     item_type: itemType,
     required: true,
+    label,
+    help_text: helpText,
     config,
     value: null,
   }
@@ -38,13 +45,20 @@ function renderItem(item: IntakeAssignmentItem, value: AnswerValue | null = null
 }
 
 describe("the registry", () => {
-  it("draws the questions whose wording the engine serves", () => {
+  it("draws every question but the ones that need a file or a screen of their own", () => {
     expect(RENDERED_ITEM_TYPES.sort()).toEqual([
+      "date",
       "demographics",
+      "free_text",
       "instructions",
       "instrument",
+      "multi_choice",
+      "number",
       "reason",
+      "scale",
       "section",
+      "single_choice",
+      "yes_no",
     ])
   })
 

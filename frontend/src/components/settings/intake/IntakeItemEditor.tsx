@@ -12,14 +12,22 @@ import { Toggle } from "@/components/settings/ui"
 import {
   DISPLAY_ONLY_ITEM_TYPES,
   ITEM_TYPES,
+  LABEL_REQUIRED_ITEM_TYPES,
+  NO_LABEL_ITEM_TYPES,
   type IntakeItemInput,
   type IntakeVersionDetail,
   type ItemType,
 } from "@/types/intakePackets"
 import {
   ADD_QUESTION,
+  HELP_TEXT_FIELD,
+  HELP_TEXT_PLACEHOLDER,
   ITEM_TYPE_HINTS,
   ITEM_TYPE_LABELS,
+  LABEL_FIELD,
+  LABEL_FIELD_OVERRIDE,
+  LABEL_OVERRIDE_PLACEHOLDER,
+  LABEL_PLACEHOLDER,
   NO_QUESTIONS,
   PUBLISHED_NOTICE,
   PUBLISH_BUTTON,
@@ -54,8 +62,66 @@ function toInput(items: IntakeVersionDetail["items"]): IntakeItemInput[] {
     item_type: item.item_type,
     required: item.required,
     resign_on_new_version: item.resign_on_new_version,
+    label: item.label,
+    help_text: item.help_text,
     config: item.config,
   }))
+}
+
+/**
+ * What one question is called in the list.
+ *
+ * The question itself once it has been written, because that is what a
+ * practice reading down the form is looking for. Its type until then, which
+ * is all there is to say about a question nobody has written yet.
+ */
+function itemHeading(item: { label: string | null; item_type: ItemType }): string {
+  const label = item.label?.trim()
+  return label ? label : (ITEM_TYPE_LABELS[item.item_type] ?? item.item_type)
+}
+
+/**
+ * The question a patient will read, and the line under it.
+ *
+ * On every type but a heading and a paragraph, which carry their text in
+ * their own settings. The engine's own questions get the same two boxes with
+ * different wording: theirs is an override of a heading Pablo already has,
+ * so an empty box there is the normal case rather than a gap.
+ */
+function QuestionWording({
+  item,
+  idPrefix,
+  onChange,
+}: {
+  item: IntakeItemInput
+  idPrefix: string
+  onChange: (changes: Partial<IntakeItemInput>) => void
+}) {
+  const written = LABEL_REQUIRED_ITEM_TYPES.includes(item.item_type)
+  return (
+    <>
+      <div>
+        <Label htmlFor={`${idPrefix}-label`}>
+          {written ? LABEL_FIELD : LABEL_FIELD_OVERRIDE}
+        </Label>
+        <Input
+          id={`${idPrefix}-label`}
+          value={item.label ?? ""}
+          placeholder={written ? LABEL_PLACEHOLDER : LABEL_OVERRIDE_PLACEHOLDER}
+          onChange={(e) => onChange({ label: e.target.value || null })}
+        />
+      </div>
+      <div>
+        <Label htmlFor={`${idPrefix}-help-text`}>{HELP_TEXT_FIELD}</Label>
+        <Input
+          id={`${idPrefix}-help-text`}
+          value={item.help_text ?? ""}
+          placeholder={HELP_TEXT_PLACEHOLDER}
+          onChange={(e) => onChange({ help_text: e.target.value || null })}
+        />
+      </div>
+    </>
+  )
 }
 
 /**
@@ -126,6 +192,8 @@ export function IntakeItemEditor({
         item_type: addType,
         required: !DISPLAY_ONLY_ITEM_TYPES.includes(addType),
         resign_on_new_version: false,
+        label: null,
+        help_text: null,
         config: {},
       },
     ])
@@ -139,7 +207,7 @@ export function IntakeItemEditor({
         <ol className="space-y-1">
           {version.items.map((item) => (
             <li key={item.id} className="text-sm text-foreground">
-              {ITEM_TYPE_LABELS[item.item_type] ?? item.item_type}
+              {itemHeading(item)}
               <span className="ml-2 text-[12.5px] text-muted-foreground">{item.key}</span>
             </li>
           ))}
@@ -166,7 +234,7 @@ export function IntakeItemEditor({
                   aria-expanded={open}
                 >
                   <div className="text-sm font-semibold text-foreground">
-                    {ITEM_TYPE_LABELS[item.item_type] ?? item.item_type}
+                    {itemHeading(item)}
                   </div>
                   <div className="mt-0.5 text-[12.5px] text-muted-foreground">{item.key}</div>
                 </button>
@@ -214,6 +282,13 @@ export function IntakeItemEditor({
                       onChange={(e) => patch(index, { key: e.target.value })}
                     />
                   </div>
+                  {!NO_LABEL_ITEM_TYPES.includes(item.item_type) && (
+                    <QuestionWording
+                      item={item}
+                      idPrefix={`${editorId}-${index}`}
+                      onChange={(changes) => patch(index, changes)}
+                    />
+                  )}
                   <ItemConfigForm
                     itemType={item.item_type}
                     config={item.config}

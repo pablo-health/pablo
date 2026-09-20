@@ -47,6 +47,16 @@ class PublishedVersionError(RuntimeError):
     """An attempt to change a version that has already been published."""
 
 
+def _blank_to_none(value: str | None) -> str | None:
+    """A field the editor sent empty, stored as unset."""
+    return value if value is not None and value.strip() else None
+
+
+def _optional_str(value: object) -> str | None:
+    """A nullable text column read back off a row."""
+    return value if isinstance(value, str) else None
+
+
 class IntakePacketService:
     """Templates, versions and items, with the freeze enforced."""
 
@@ -180,6 +190,11 @@ class IntakePacketService:
                 # refused, because the editor does not offer the toggle and
                 # a stored true would only ever be an artifact.
                 "required": item.required and item.item_type not in DISPLAY_ONLY_ITEM_TYPES,
+                # An empty box and an unwritten question are the same thing,
+                # so both store NULL. Otherwise a label the practice cleared
+                # would read as wording of zero characters at publish.
+                "label": _blank_to_none(item.label),
+                "help_text": _blank_to_none(item.help_text),
                 "config": item.config,
                 "resign_on_new_version": item.resign_on_new_version,
             }
@@ -208,6 +223,8 @@ class IntakePacketService:
                     item_type=str(row["item_type"]),
                     required=bool(row["required"]),
                     resign_on_new_version=bool(row["resign_on_new_version"]),
+                    label=_optional_str(row.get("label")),
+                    help_text=_optional_str(row.get("help_text")),
                     config=stored_config(row["config"]),
                 )
                 for row in self._repo.list_items(version_id)

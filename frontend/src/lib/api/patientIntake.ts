@@ -91,6 +91,10 @@ export interface IntakeAssignment {
  *
  * `config` is the item type's own settings, unparsed: what a valid shape
  * looks like is the server's decision and is made there.
+ *
+ * `label` is the question the practice wrote and `help_text` the line under
+ * it. Null on the questions the engine words for itself — those arrive in
+ * the form response instead, so the wording and the scorer cannot drift.
  */
 export interface IntakeAssignmentItem {
   id: string
@@ -98,6 +102,8 @@ export interface IntakeAssignmentItem {
   position: number
   item_type: string
   required: boolean
+  label: string | null
+  help_text: string | null
   config: Record<string, unknown>
   value: Record<string, unknown> | null
 }

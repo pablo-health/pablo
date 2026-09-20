@@ -192,6 +192,61 @@ class TestItems:
 
         assert response.status_code == 200, response.text
 
+    def test_a_question_comes_back_in_the_words_it_was_saved_in(
+        self, intake_client: TestClient
+    ) -> None:
+        template = _create(intake_client)
+
+        response = _items(
+            intake_client,
+            template["id"],
+            _draft_id(template),
+            [
+                {
+                    "key": "sleep",
+                    "item_type": "free_text",
+                    "label": "How have you been sleeping?",
+                    "help_text": "A sentence or two is plenty.",
+                }
+            ],
+        )
+
+        item = response.json()["items"][0]
+        assert item["label"] == "How have you been sleeping?"
+        assert item["help_text"] == "A sentence or two is plenty."
+
+    def test_a_question_nobody_has_written_yet_comes_back_unset(
+        self, intake_client: TestClient
+    ) -> None:
+        """Both are absent on the engine's own questions, and on a new one."""
+        template = _create(intake_client)
+
+        response = _items(
+            intake_client,
+            template["id"],
+            _draft_id(template),
+            [{"key": "reason", "item_type": "reason"}],
+        )
+
+        item = response.json()["items"][0]
+        assert item["label"] is None
+        assert item["help_text"] is None
+
+    def test_a_cleared_box_is_stored_as_unwritten(self, intake_client: TestClient) -> None:
+        """Otherwise a label a practice emptied would read as wording."""
+        template = _create(intake_client)
+
+        response = _items(
+            intake_client,
+            template["id"],
+            _draft_id(template),
+            [{"key": "sleep", "item_type": "free_text", "label": "   ", "help_text": ""}],
+        )
+
+        item = response.json()["items"][0]
+        assert item["label"] is None
+        assert item["help_text"] is None
+
     def test_a_version_from_another_form_is_404(self, intake_client: TestClient) -> None:
         """A version id is not a capability — it has to belong to the form."""
         mine = _create(intake_client, "Mine")
@@ -258,6 +313,7 @@ class TestPublishing:
                 {
                     "key": "how_bad",
                     "item_type": "scale",
+                    "label": "How bad has it been?",
                     "config": {"min": 9, "max": 1, "min_label": "a", "max_label": "b"},
                 }
             ],
@@ -267,6 +323,62 @@ class TestPublishing:
 
         assert response.status_code == 422
         assert response.json()["error"]["message"].startswith("how_bad:")
+
+    @pytest.mark.parametrize(
+        ("item_type", "config"),
+        [
+            ("free_text", {}),
+            (
+                "single_choice",
+                {"options": [{"key": "a", "label": "A"}, {"key": "b", "label": "B"}]},
+            ),
+            ("yes_no", {}),
+            ("number", {}),
+            ("date", {}),
+        ],
+    )
+    def test_a_question_with_nothing_to_ask_is_422_and_names_it(
+        self, intake_client: TestClient, item_type: str, config: dict
+    ) -> None:
+        template = _create(intake_client)
+        version_id = _draft_id(template)
+        _items(
+            intake_client,
+            template["id"],
+            version_id,
+            [{"key": "mood", "item_type": item_type, "config": config}],
+        )
+
+        response = self._publish(intake_client, template["id"], version_id)
+
+        assert response.status_code == 422
+        assert response.json()["error"]["message"].startswith("mood:")
+
+    @pytest.mark.parametrize(
+        ("item_type", "config"),
+        [
+            ("section", {"title": "About you"}),
+            ("instructions", {"body_markdown": "Take your time."}),
+            ("demographics", {}),
+            ("reason", {}),
+            ("instrument", {"code": "phq9"}),
+        ],
+    )
+    def test_the_engine_words_its_own_questions_and_publishes_without_one(
+        self, intake_client: TestClient, item_type: str, config: dict
+    ) -> None:
+        template = _create(intake_client)
+        version_id = _draft_id(template)
+        _items(
+            intake_client,
+            template["id"],
+            version_id,
+            [{"key": "q", "item_type": item_type, "config": config}],
+        )
+
+        response = self._publish(intake_client, template["id"], version_id)
+
+        assert response.status_code == 200, response.text
 
     def test_a_forward_reference_is_422(self, intake_client: TestClient) -> None:
         template = _create(intake_client)
@@ -279,9 +391,10 @@ class TestPublishing:
                 {
                     "key": "follow_up",
                     "item_type": "free_text",
+                    "label": "Tell us more",
                     "config": {"visible_when": {"item_key": "screener", "op": "answered"}},
                 },
-                {"key": "screener", "item_type": "yes_no"},
+                {"key": "screener", "item_type": "yes_no", "label": "Have you been seen before?"},
             ],
         )
 

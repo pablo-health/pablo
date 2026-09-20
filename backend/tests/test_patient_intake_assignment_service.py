@@ -112,7 +112,13 @@ def _version(service: IntakePacketService, *, publish: bool = True) -> str:
         [
             ItemDraft(key="reason", item_type="reason"),
             ItemDraft(key="phq9", item_type="instrument", config={"code": "phq9"}),
-            ItemDraft(key="note", item_type="free_text", required=False, config={"max_len": 50}),
+            ItemDraft(
+                key="note",
+                item_type="free_text",
+                required=False,
+                label="Anything else you want us to know?",
+                config={"max_len": 50},
+            ),
         ],
     )
     if publish:

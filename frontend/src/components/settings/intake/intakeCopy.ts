@@ -54,6 +54,22 @@ export const SELF_REPORT_INSTRUMENTS: { code: string; label: string }[] = [
   { code: "gad7", label: "GAD-7" },
 ]
 
+/**
+ * The question itself, and the line under it.
+ *
+ * Two fields on every question a practice writes. The placeholder says what
+ * goes in the box rather than that the box is required — the server refuses
+ * the publish and names the question, which is the moment it matters.
+ */
+export const LABEL_FIELD = "Question"
+export const LABEL_PLACEHOLDER = "Question the patient will see"
+export const HELP_TEXT_FIELD = "Help text (optional)"
+export const HELP_TEXT_PLACEHOLDER = "Anything that helps them answer it"
+
+/** The label field on the questions the engine already words. */
+export const LABEL_FIELD_OVERRIDE = "Heading (optional)"
+export const LABEL_OVERRIDE_PLACEHOLDER = "Leave empty to ask it as Pablo words it"
+
 export const FORMS_TITLE = "Forms"
 export const FORMS_DESCRIPTION = "What your intake asks, and who it asks it of."
 export const EMPTY_STATE = "No forms yet."

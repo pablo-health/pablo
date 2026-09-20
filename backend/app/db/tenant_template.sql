@@ -486,6 +486,8 @@ CREATE TABLE __TENANT_SCHEMA__.intake_item_definitions (
     required boolean DEFAULT true NOT NULL,
     config jsonb DEFAULT '{}'::jsonb NOT NULL,
     resign_on_new_version boolean DEFAULT false NOT NULL,
+    label character varying(300),
+    help_text text,
     CONSTRAINT ck_intake_item_definitions_type CHECK (((item_type)::text = ANY ((ARRAY['section'::character varying, 'instructions'::character varying, 'demographics'::character varying, 'reason'::character varying, 'free_text'::character varying, 'single_choice'::character varying, 'multi_choice'::character varying, 'yes_no'::character varying, 'scale'::character varying, 'number'::character varying, 'date'::character varying, 'instrument'::character varying, 'emergency_contact'::character varying, 'guardian'::character varying, 'consent_document'::character varying, 'insurance_card'::character varying, 'document_request'::character varying])::text[])))
 );
 

@@ -46,6 +46,8 @@ const DRAFT: IntakeVersionDetail = {
       item_type: "reason",
       required: true,
       resign_on_new_version: false,
+      label: null,
+      help_text: null,
       config: {},
     },
   ],

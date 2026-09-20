@@ -308,21 +308,9 @@ export function ItemConfigForm({ itemType, config, onChange, idPrefix }: ItemCon
         </div>
       )
 
-    case "insurance_card":
-    case "document_request":
-      return (
-        <div>
-          <Label htmlFor={`${idPrefix}-label`}>What to ask for</Label>
-          <Input
-            id={`${idPrefix}-label`}
-            value={text(config, "label")}
-            onChange={(e) => set("label", e.target.value)}
-          />
-        </div>
-      )
-
     default:
-      // demographics, reason, emergency_contact, guardian and consent_document
+      // What to ask for on a file upload is the item's own question, and the
+      // rest — demographics, reason, emergency_contact, guardian, consent —
       // have nothing for a practice to set: the engine fixes their shape.
       return null
   }

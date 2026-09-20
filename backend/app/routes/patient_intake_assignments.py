@@ -263,6 +263,8 @@ def get_my_assignment(
                 position=int(row["position"]),  # type: ignore[call-overload]
                 item_type=str(row["item_type"]),
                 required=bool(row["required"]),
+                label=_optional_str(row.get("label")),
+                help_text=_optional_str(row.get("help_text")),
                 config=stored_config(row["config"]),
                 value=saved.get(str(row["id"])),
             )
@@ -551,6 +553,8 @@ def get_patient_intake_assignment(
                 position=int(row["position"]),  # type: ignore[call-overload]
                 item_type=str(row["item_type"]),
                 required=bool(row["required"]),
+                label=_optional_str(row.get("label")),
+                help_text=_optional_str(row.get("help_text")),
                 config=stored_config(row["config"]),
                 value=saved.get(str(row["id"])),
             )

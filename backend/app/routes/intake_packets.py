@@ -97,8 +97,15 @@ def _item_response(row: dict[str, object]) -> IntakeItemResponse:
         item_type=str(row["item_type"]),
         required=bool(row["required"]),
         resign_on_new_version=bool(row["resign_on_new_version"]),
+        label=_optional_str(row.get("label")),
+        help_text=_optional_str(row.get("help_text")),
         config=stored_config(row["config"]),
     )
+
+
+def _optional_str(value: object) -> str | None:
+    """A nullable text column, read off a row that hands back ``object``."""
+    return str(value) if value is not None else None
 
 
 def _template_response(
@@ -254,6 +261,8 @@ def replace_items(
             item_type=item.item_type,
             required=item.required,
             resign_on_new_version=item.resign_on_new_version,
+            label=item.label,
+            help_text=item.help_text,
             config=item.config,
         )
         for item in body.items

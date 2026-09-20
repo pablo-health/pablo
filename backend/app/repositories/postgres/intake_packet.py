@@ -55,6 +55,11 @@ def _version_to_dict(row: IntakePacketVersionRow) -> dict[str, object]:
     }
 
 
+def _optional_str(value: object) -> str | None:
+    """A nullable text column on the way into a row."""
+    return value if isinstance(value, str) else None
+
+
 def _item_to_dict(row: IntakeItemDefinitionRow) -> dict[str, object]:
     return {
         "id": row.id,
@@ -63,6 +68,8 @@ def _item_to_dict(row: IntakeItemDefinitionRow) -> dict[str, object]:
         "position": row.position,
         "item_type": row.item_type,
         "required": row.required,
+        "label": row.label,
+        "help_text": row.help_text,
         "config": row.config,
         "resign_on_new_version": row.resign_on_new_version,
     }
@@ -211,6 +218,8 @@ class PostgresIntakePacketRepository(IntakePacketRepository):
                     position=int(row["position"]),  # type: ignore[call-overload]
                     item_type=str(row["item_type"]),
                     required=bool(row["required"]),
+                    label=_optional_str(row.get("label")),
+                    help_text=_optional_str(row.get("help_text")),
                     config=row["config"],  # type: ignore[arg-type]
                     resign_on_new_version=bool(row["resign_on_new_version"]),
                 )

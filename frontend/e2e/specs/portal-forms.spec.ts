@@ -30,9 +30,21 @@ interface IntakeVersion {
 }
 
 interface IntakeTemplate {
+  id: string
   name: string
   archived_at: string | null
   versions: IntakeVersion[]
+}
+
+interface IntakeItem {
+  key: string
+  label: string | null
+  help_text: string | null
+}
+
+interface IntakeVersionDetail extends IntakeVersion {
+  template_id: string
+  items: IntakeItem[]
 }
 
 interface Assignment {
@@ -53,6 +65,58 @@ async function defaultIntakeVersion(api: ApiClient): Promise<string> {
   expect(published.length, "the seeded version ships published").toBeGreaterThan(0)
   return published[0].id
 }
+
+/**
+ * Build and publish a form of the practice's own, through the builder's API.
+ *
+ * Two questions the engine has no wording for: a written answer and a set of
+ * choices. Which is the point — the seeded form asks only questions Pablo
+ * words itself, so it cannot show that a question a practice typed reaches
+ * the patient in the words they typed.
+ */
+async function publishAuthoredForm(api: ApiClient): Promise<string> {
+  const template = await api.post<IntakeTemplate>("/api/intake/templates", {
+    name: `Sleep and mood ${Date.now().toString(36)}`,
+  })
+  const draftId = template.versions[0].id
+
+  const saved = await api.put<IntakeVersionDetail>(
+    `/api/intake/templates/${template.id}/versions/${draftId}/items`,
+    {
+      items: [
+        {
+          key: "sleep",
+          item_type: "free_text",
+          label: SLEEP_QUESTION,
+          help_text: SLEEP_HELP,
+          config: { max_len: 500 },
+        },
+        {
+          key: "mornings",
+          item_type: "single_choice",
+          label: MORNINGS_QUESTION,
+          config: {
+            options: [
+              { key: "easy", label: "Easily" },
+              { key: "hard", label: "With difficulty" },
+            ],
+          },
+        },
+      ],
+    },
+  )
+  expect(saved.items.map((item) => item.label)).toEqual([SLEEP_QUESTION, MORNINGS_QUESTION])
+
+  const published = await api.post<IntakeVersionDetail>(
+    `/api/intake/templates/${template.id}/versions/${draftId}/publish`,
+  )
+  expect(published.published_at).not.toBeNull()
+  return published.id
+}
+
+const SLEEP_QUESTION = "How have you been sleeping lately?"
+const SLEEP_HELP = "A sentence or two is plenty."
+const MORNINGS_QUESTION = "How do you get going in the mornings?"
 
 /**
  * Invite a patient and sign them in through the shell, as the patient does:
@@ -164,5 +228,53 @@ test.describe("portal forms", () => {
     )
     expect(onChart.status).toBe("submitted")
     expect(onChart.receipt_code).toMatch(/^[2-9A-HJ-NP-TV-Z]{8}$/)
+  })
+
+  test("a patient answers questions the practice wrote itself", async ({ api, page }) => {
+    const suffix = Date.now().toString(36)
+    const email = `authored-${suffix}@example.com`
+    const phone = `+1555${`${Date.now()}`.slice(-7)}`
+
+    const patient = await givePatient(api, { email, phone, date_of_birth: "1985-07-21" })
+    const versionId = await publishAuthoredForm(api)
+
+    const assigned = await api.post<Assignment>(
+      `/api/patients/${patient.id}/intake-assignments`,
+      { version_id: versionId },
+    )
+
+    await signIn(api, page, patient.id, email, phone)
+    await expect(page.getByTestId("forms-list-state")).toContainText("2 questions left")
+    await page.getByTestId("forms-list-open").click()
+
+    // The question is the practice's own sentence, not a heading this
+    // browser invented, and the help text is under it.
+    await expect(page.getByRole("heading", { name: SLEEP_QUESTION })).toBeVisible()
+    await expect(page.getByTestId("forms-question-help")).toHaveText(SLEEP_HELP)
+    await page.getByTestId("forms-free-text").fill("Waking around four most nights.")
+    await page.getByTestId("forms-continue").click()
+
+    await expect(page.getByRole("heading", { name: MORNINGS_QUESTION })).toBeVisible()
+    await page
+      .getByTestId("forms-single-choice")
+      .getByRole("radio", { name: "With difficulty" })
+      .check()
+    await page.getByTestId("forms-continue").click()
+
+    // The review screen names each question the way it was asked, and
+    // repeats the answer rather than interpreting it.
+    await expect(page.getByTestId("forms-review")).toContainText(SLEEP_QUESTION)
+    await expect(page.getByTestId("forms-review")).toContainText("Waking around four most nights.")
+    await expect(page.getByTestId("forms-review")).toContainText("With difficulty")
+    await page.getByTestId("forms-submit").click()
+    await expect(page.getByTestId("forms-receipt-code")).toHaveText(/^[2-9A-HJ-NP-TV-Z]{8}$/)
+
+    // What the chart holds is the answer the patient gave, under the
+    // question the practice wrote.
+    const onChart = await api.get<{ status: string; items: { key: string; label: string | null }[] }>(
+      `/api/patients/${patient.id}/intake-assignments/${assigned.id}`,
+    )
+    expect(onChart.status).toBe("submitted")
+    expect(onChart.items.map((item) => item.label)).toEqual([SLEEP_QUESTION, MORNINGS_QUESTION])
   })
 })
