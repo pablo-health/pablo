@@ -19,6 +19,7 @@
  * practice, rather than offering a control that does nothing.
  */
 
+import type { Locator, Page } from "@playwright/test"
 import { expect, test } from "../fixtures/auth"
 import type { ApiClient } from "../fixtures/api"
 import {
@@ -59,6 +60,40 @@ async function givePortalPatient(api: ApiClient): Promise<{
   const { email, phone } = givePortalContactDetails()
   const patient = await givePatient(api, { email, phone, date_of_birth: "1988-04-02" })
   return { patient, email, phone }
+}
+
+/**
+ * The upcoming list, and the list of what is over.
+ *
+ * Both draw the same row, so a bare `appointments-row` spans the two as soon
+ * as anything has been cancelled — and a reschedule cancels something. The
+ * upcoming list is the page's `<section>`; what is over lives in a `<details>`
+ * that carries its own test id.
+ */
+function upcomingRows(page: Page): Locator {
+  return page.getByTestId("appointments-list").locator("section").getByTestId("appointments-row")
+}
+
+function pastRows(page: Page): Locator {
+  return page.getByTestId("appointments-past").getByTestId("appointments-row")
+}
+
+/**
+ * This patient's appointments once the diary holds `count` of them.
+ *
+ * A booking is committed before the portal answers, but the clinician's range
+ * query has been observed answering 200 with nothing in it immediately after —
+ * so reading once turns a settling window into a failed assertion about the
+ * wrong thing. Polling for the count this step expects keeps the assertions
+ * that follow about what the appointments ARE.
+ */
+async function diaryOnceItHolds(
+  api: ApiClient,
+  patientId: string,
+  count: number,
+): Promise<ClinicianAppointment[]> {
+  await expect.poll(async () => (await diaryFor(api, patientId)).length).toBe(count)
+  return diaryFor(api, patientId)
 }
 
 async function diaryFor(api: ApiClient, patientId: string): Promise<ClinicianAppointment[]> {
@@ -122,39 +157,62 @@ test.describe("portal appointments", () => {
     await page.getByTestId("appointments-confirmation-done").click()
 
     // --- and it is on the list ----------------------------------------------
-    await expect(page.getByTestId("appointments-row")).toHaveCount(1)
-    await expect(page.getByTestId("appointments-row-when")).toContainText(firstSlot)
+    await expect(upcomingRows(page)).toHaveCount(1)
+    await expect(upcomingRows(page).getByTestId("appointments-row-when")).toContainText(firstSlot)
 
     // The clinician's diary has it too, which is the half a portal-only
     // assertion cannot see.
-    const afterBooking = await diaryFor(api, patient.id)
-    expect(afterBooking).toHaveLength(1)
+    const afterBooking = await diaryOnceItHolds(api, patient.id, 1)
     expect(["pending", "confirmed"]).toContain(afterBooking[0].status)
+
+    // What the list says now, so the assertion after the move is about the
+    // time changing rather than about how a time is spelled. The two screens
+    // format an instant differently — the confirmation writes the day out in
+    // full, the list abbreviates it — so comparing their text would compare
+    // the formatter.
+    const bookedWhen = await upcomingRows(page).getByTestId("appointments-row-when").innerText()
 
     // --- move it ------------------------------------------------------------
     await page.getByTestId("appointments-row-reschedule").click()
     await expect(page.getByTestId("appointments-slot-picker")).toBeVisible()
 
-    // A day further out again, so the new time is a different one.
+    // Days further out again, so the new time is a different one. The opening
+    // is taken without reading it first, which is not carelessness: above, the
+    // first two days are inside the notice period and offer nothing, so "wait
+    // until an opening is on screen" genuinely waits for the day walked to.
+    // Here the picker opens on a day that already has openings, the same wait
+    // is satisfied by the grid already there, and text read back can belong to
+    // a day since walked past. Whichever opening is taken, it is not the one
+    // being given up, and that is what the assertions below are about.
     await page.getByTestId("appointments-slots-next").click()
     await page.getByTestId("appointments-slots-next").click()
     await page.getByTestId("appointments-slots-next").click()
-    await expect(page.getByTestId("appointments-slot").first()).toBeVisible()
-
-    const newSlot = await page.getByTestId("appointments-slot").first().innerText()
     await page.getByTestId("appointments-slot").first().click()
+
+    await expect(page.getByTestId("appointments-confirm")).toBeVisible()
     await page.getByTestId("appointments-confirm-submit").click()
 
     await expect(page.getByTestId("appointments-confirmation")).toBeVisible()
     await page.getByTestId("appointments-confirmation-done").click()
 
-    // Still one appointment — moved, not duplicated — and at the new time.
-    await expect(page.getByTestId("appointments-row")).toHaveCount(1)
-    await expect(page.getByTestId("appointments-row-when")).toContainText(newSlot)
-    const afterMove = await diaryFor(api, patient.id)
-    expect(afterMove).toHaveLength(1)
-    expect(afterMove[0].id).toBe(afterBooking[0].id)
-    expect(afterMove[0].start_at).not.toBe(afterBooking[0].start_at)
+    // A move is a cancellation and a booking rather than an edit, and the
+    // engine says so: the time given up survives as its own record, which is
+    // what a late-change fee is charged against. So the patient has one
+    // upcoming appointment at a time that is not the one they gave up, the
+    // time they gave up is under past, and the id has changed.
+    await expect(upcomingRows(page)).toHaveCount(1)
+    await expect(upcomingRows(page).getByTestId("appointments-row-when")).not.toHaveText(bookedWhen)
+    await expect(pastRows(page)).toHaveCount(1)
+    await expect(pastRows(page).getByTestId("appointments-row-when")).toHaveText(bookedWhen)
+
+    const afterMove = await diaryOnceItHolds(api, patient.id, 2)
+    const stillOn = afterMove.filter((appointment) => appointment.status !== "cancelled")
+    expect(stillOn).toHaveLength(1)
+    expect(stillOn[0].id).not.toBe(afterBooking[0].id)
+    expect(stillOn[0].start_at).not.toBe(afterBooking[0].start_at)
+    expect(afterMove.filter((a) => a.id === afterBooking[0].id).map((a) => a.status)).toEqual([
+      "cancelled",
+    ])
 
     // --- cancel it ----------------------------------------------------------
     await page.getByTestId("appointments-row-cancel").click()
@@ -164,9 +222,13 @@ test.describe("portal appointments", () => {
     await expect(page.getByTestId("appointments-none-upcoming")).toBeVisible()
     await expect(page.getByTestId("appointments-past")).toBeVisible()
 
-    const afterCancel = await diaryFor(api, patient.id)
-    expect(afterCancel).toHaveLength(1)
-    expect(afterCancel[0].status).toBe("cancelled")
+    // Both records — the time given up in the move, and the one just
+    // cancelled — and nothing of this patient's still standing.
+    const afterCancel = await diaryOnceItHolds(api, patient.id, 2)
+    expect(afterCancel.map((appointment) => appointment.status)).toEqual([
+      "cancelled",
+      "cancelled",
+    ])
   })
 
   test("a patient of a practice that books another way sees their list and how to reach it", async ({
