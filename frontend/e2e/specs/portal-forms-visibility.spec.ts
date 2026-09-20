@@ -20,16 +20,18 @@
  * - **Yes, then no.** The answer given while it was shown is not handed in,
  *   the receipt says so, and the chart does not hold it.
  *
- * Both factors come from the stand-in their channel is wired to: the link
- * out of the mail server, the step-up code out of the text-message gateway.
+ * **One patient, one sign-in, three forms.** Redeeming a portal invitation
+ * is rate limited per caller, and every spec in this suite reaches the
+ * stack from the same address — so a spec that signs in once per journey
+ * spends a budget its neighbours need. Three assignments on one patient
+ * cost one sign-in and prove the same three things.
  */
 
 import { expect, test } from "../fixtures/auth"
 import type { Page } from "@playwright/test"
 import type { ApiClient } from "../fixtures/api"
-import { firstLink, mail } from "../fixtures/mail"
+import { givePortalInvitation, signInToPortal } from "../fixtures/portal"
 import { givePatient } from "../fixtures/scenarios"
-import { sms, stepUpCode } from "../fixtures/sms"
 
 interface IntakeVersion {
   id: string
@@ -63,6 +65,7 @@ interface Assignment {
 
 const TRIGGER = "Do you drink alcohol or use any other substances?"
 const FOLLOW_UP = "What, and roughly how often?"
+const ANSWER = "Wine, four or five nights a week."
 
 /**
  * Publish a two-question form whose second question a "yes" opens.
@@ -72,9 +75,9 @@ const FOLLOW_UP = "What, and roughly how often?"
  * fixture written straight into the database would skip the check this
  * feature most depends on.
  */
-async function publishBranchingForm(api: ApiClient): Promise<string> {
+async function publishBranchingForm(api: ApiClient, name: string): Promise<string> {
   const template = await api.post<IntakeTemplate>("/api/intake/templates", {
-    name: `Substance use ${Date.now().toString(36)}`,
+    name: `Substance use ${name} ${Date.now().toString(36)}`,
   })
   const draftId = template.versions[0].id
 
@@ -103,49 +106,28 @@ async function publishBranchingForm(api: ApiClient): Promise<string> {
   return published.id
 }
 
-/** Invite a patient and sign them in through the shell, as the patient does. */
-async function signIn(
-  api: ApiClient,
-  page: Page,
-  patientId: string,
-  email: string,
-  phone: string,
-): Promise<void> {
-  await api.post(`/api/patients/${patientId}/portal-invite`)
-
-  const link = firstLink(await mail.waitFor(email))
-  const otp = stepUpCode(await sms.waitFor(phone))
-
-  await page.goto(link)
-  await page.getByTestId("portal-shell-otp-input").fill(otp)
-  await page.getByTestId("portal-shell-otp-submit").click()
-  await expect(page.getByTestId("portal-shell-active")).toBeVisible()
+/** Send one of these forms to a patient. */
+async function assign(api: ApiClient, patientId: string, name: string): Promise<Assignment> {
+  return api.post<Assignment>(`/api/patients/${patientId}/intake-assignments`, {
+    version_id: await publishBranchingForm(api, name),
+  })
 }
 
-/** A patient with a mailbox and a phone, and the form already on their list. */
-async function invited(
-  api: ApiClient,
-  page: Page,
-  label: string,
-): Promise<{ patientId: string; assignment: Assignment }> {
-  const suffix = `${label}-${Date.now().toString(36)}`
-  const email = `${suffix}@example.com`
-  const phone = `+1555${`${Date.now()}`.slice(-7)}`
-
-  const patient = await givePatient(api, { email, phone, date_of_birth: "1990-06-11" })
-  const versionId = await publishBranchingForm(api)
-  const assignment = await api.post<Assignment>(
-    `/api/patients/${patient.id}/intake-assignments`,
-    { version_id: versionId },
-  )
-
-  await signIn(api, page, patient.id, email, phone)
-  await page.getByTestId("forms-list-open").click()
+/** Open one of the forms on the patient's list, at its first question. */
+async function open(page: Page, assignment: Assignment): Promise<void> {
+  await page
+    .getByTestId(`forms-list-row-${assignment.id}`)
+    .getByTestId("forms-list-open")
+    .click()
   await expect(page.getByRole("heading", { name: TRIGGER })).toBeVisible()
-  return { patientId: patient.id, assignment }
 }
 
-/** What the clinician's chart holds for one question, by its key. */
+/** Read the receipt, then go back to the list for the next form. */
+async function receipt(page: Page): Promise<void> {
+  await expect(page.getByTestId("forms-receipt-code")).toHaveText(/^[2-9A-HJ-NP-TV-Z]{8}$/)
+}
+
+/** What the clinician's chart holds for each question, by its key. */
 async function onChart(
   api: ApiClient,
   patientId: string,
@@ -160,17 +142,25 @@ async function onChart(
   }
 }
 
-test.describe("portal forms: a question asked only of some people", () => {
-  test("answering no never asks the follow-up, and the form still goes in", async ({
-    api,
-    page,
-  }) => {
-    const { patientId, assignment } = await invited(api, page, "no")
+test("a question is asked only of the people it applies to", async ({ api, page }) => {
+  const stamp = Date.now().toString(36)
+  const email = `visibility-${stamp}@example.com`
+  const phone = `+1555${`${Date.now()}`.slice(-7)}`
 
-    // The server counts both questions outstanding before anything is said:
-    // nobody has answered the one the other depends on.
-    expect(assignment.progress.complete).toBe(false)
+  const patient = await givePatient(api, { email, phone, date_of_birth: "1990-06-11" })
+  const saidNo = await assign(api, patient.id, "no")
+  const saidYes = await assign(api, patient.id, "yes")
+  const changedMind = await assign(api, patient.id, "changed")
 
+  // Both questions are outstanding before anything is said: nobody has
+  // answered the one the other depends on.
+  expect(saidNo.progress.complete).toBe(false)
+
+  await signInToPortal(page, await givePortalInvitation(api, patient.id, email, phone))
+  await expect(page.getByTestId("forms-list")).toBeVisible()
+
+  await test.step("answering no never asks the follow-up, and the form still goes in", async () => {
+    await open(page, saidNo)
     await page.getByTestId("forms-yes-no").getByText("No", { exact: true }).click()
     await page.getByTestId("forms-continue").click()
 
@@ -181,19 +171,19 @@ test.describe("portal forms: a question asked only of some people", () => {
     await expect(page.getByTestId("forms-review")).not.toContainText(FOLLOW_UP)
 
     await page.getByTestId("forms-submit").click()
-    await expect(page.getByTestId("forms-receipt-code")).toHaveText(/^[2-9A-HJ-NP-TV-Z]{8}$/)
+    await receipt(page)
     // Nothing was left out, so the receipt has nothing to add.
     await expect(page.getByTestId("forms-receipt-notes")).toHaveCount(0)
+    await page.getByTestId("forms-receipt-close").click()
 
-    const chart = await onChart(api, patientId, assignment.id)
+    const chart = await onChart(api, patient.id, saidNo.id)
     expect(chart.status).toBe("submitted")
     expect(chart.answers.substances).toEqual({ yes: false })
     expect(chart.answers.which).toBeNull()
   })
 
-  test("answering yes asks the follow-up, and will not take it blank", async ({ api, page }) => {
-    const { patientId, assignment } = await invited(api, page, "yes")
-
+  await test.step("answering yes asks the follow-up, and will not take it blank", async () => {
+    await open(page, saidYes)
     await page.getByTestId("forms-yes-no").getByText("Yes", { exact: true }).click()
     await page.getByTestId("forms-continue").click()
 
@@ -205,32 +195,29 @@ test.describe("portal forms: a question asked only of some people", () => {
     await expect(page.getByTestId("forms-item-error")).toBeVisible()
     await expect(page.getByRole("heading", { name: FOLLOW_UP })).toBeVisible()
 
-    await page.getByTestId("forms-free-text").fill("Wine, four or five nights a week.")
+    await page.getByTestId("forms-free-text").fill(ANSWER)
     await page.getByTestId("forms-continue").click()
 
     await expect(page.getByTestId("forms-review")).toContainText(FOLLOW_UP)
     await page.getByTestId("forms-submit").click()
-    await expect(page.getByTestId("forms-receipt-code")).toHaveText(/^[2-9A-HJ-NP-TV-Z]{8}$/)
+    await receipt(page)
+    await page.getByTestId("forms-receipt-close").click()
 
-    const chart = await onChart(api, patientId, assignment.id)
-    expect(chart.answers.which).toEqual({ text: "Wine, four or five nights a week." })
+    const chart = await onChart(api, patient.id, saidYes.id)
+    expect(chart.answers.which).toEqual({ text: ANSWER })
   })
 
-  test("taking the yes back leaves the answer out, and the receipt says so", async ({
-    api,
-    page,
-  }) => {
-    const { patientId, assignment } = await invited(api, page, "changed")
-
+  await test.step("taking the yes back leaves the answer out, and the receipt says so", async () => {
+    await open(page, changedMind)
     await page.getByTestId("forms-yes-no").getByText("Yes", { exact: true }).click()
     await page.getByTestId("forms-continue").click()
 
     await expect(page.getByRole("heading", { name: FOLLOW_UP })).toBeVisible()
-    await page.getByTestId("forms-free-text").fill("Wine, four or five nights a week.")
+    await page.getByTestId("forms-free-text").fill(ANSWER)
     await page.getByTestId("forms-continue").click()
     await expect(page.getByTestId("forms-review")).toBeVisible()
 
-    // Back to the first question, and the answer changes.
+    // Back into the first question, and the answer changes.
     await page.getByTestId("forms-review-edit").first().click()
     await expect(page.getByRole("heading", { name: TRIGGER })).toBeVisible()
     await page.getByTestId("forms-yes-no").getByText("No", { exact: true }).click()
@@ -240,12 +227,12 @@ test.describe("portal forms: a question asked only of some people", () => {
     await expect(page.getByTestId("forms-review")).not.toContainText(FOLLOW_UP)
     await page.getByTestId("forms-submit").click()
 
-    await expect(page.getByTestId("forms-receipt-code")).toHaveText(/^[2-9A-HJ-NP-TV-Z]{8}$/)
+    await receipt(page)
     await expect(page.getByTestId("forms-receipt-notes")).toContainText("stopped applying")
 
     // And the chart does not hold an answer to a question this patient was
     // not, in the end, asked.
-    const chart = await onChart(api, patientId, assignment.id)
+    const chart = await onChart(api, patient.id, changedMind.id)
     expect(chart.status).toBe("submitted")
     expect(chart.answers.substances).toEqual({ yes: false })
     expect(chart.answers.which).toBeNull()
