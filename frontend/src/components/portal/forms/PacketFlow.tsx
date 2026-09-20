@@ -132,11 +132,23 @@ export function PacketFlow({
    * Re-read rather than patched in place: what comes back carries the
    * server's answer about progress, and no client is allowed to work that
    * out for itself.
+   *
+   * **Pinning the screen first is what stops the re-read moving the
+   * patient.** Where the walk sits is derived from `progress.missing` until
+   * somebody navigates, so a write that settles the last outstanding
+   * question would otherwise make the very next render resume at the review
+   * screen — signing a one-question form would whisk it away before the
+   * signature it just took had been shown. Writing the current index into
+   * state says "the patient is here", and Continue is what moves them.
    */
-  const handleRendererWrite = useCallback(() => {
-    onChanged()
-    void queryClient.invalidateQueries({ queryKey: assignmentKey(sessionToken, assignmentId) })
-  }, [onChanged, queryClient, sessionToken, assignmentId])
+  const pinAndReread = useCallback(
+    (index: number) => {
+      setScreen({ kind: "item", index })
+      onChanged()
+      void queryClient.invalidateQueries({ queryKey: assignmentKey(sessionToken, assignmentId) })
+    },
+    [onChanged, queryClient, sessionToken, assignmentId],
+  )
 
   const save = useMutation({
     mutationFn: ({ item, value }: { item: IntakeAssignmentItem; value: AnswerValue }) =>
@@ -266,7 +278,7 @@ export function PacketFlow({
       form={form}
       assignmentId={assignmentId}
       sessionToken={sessionToken}
-      onWrote={handleRendererWrite}
+      onWrote={() => pinAndReread(current.index)}
       onSessionLost={onSessionLost}
       onBack={
         current.index === 0

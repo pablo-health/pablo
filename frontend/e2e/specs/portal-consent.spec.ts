@@ -207,10 +207,16 @@ test.describe("portal consent signatures", () => {
 
     // --- the tab is reloaded ------------------------------------------------
     // Nothing was kept in this browser, so a form that still looks signed is
-    // reading the server's own answer.
+    // reading the server's own answer. With nothing outstanding it reopens on
+    // the review screen, which is where the server says the patient is.
     await page.reload()
     await expect(page.getByTestId("forms-list-state")).toContainText("Ready to send")
     await page.getByTestId("forms-list-open").click()
+    await expect(page.getByTestId("forms-review")).toBeVisible()
+    await expect(page.getByTestId("forms-review")).toContainText("Signed")
+
+    // And the signature itself survived the reload, not just the fact of it.
+    await page.getByTestId("forms-review-edit").click()
     await expect(page.getByTestId("forms-consent-signed")).toContainText("Ada Lovelace")
 
     // --- check, then send ---------------------------------------------------

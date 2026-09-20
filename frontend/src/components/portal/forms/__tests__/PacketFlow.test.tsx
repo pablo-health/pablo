@@ -36,6 +36,10 @@ vi.mock("@/lib/api/patientIntake", async (importOriginal) => {
     fetchAssignment: vi.fn(),
     saveAnswer: vi.fn(),
     submitAssignment: vi.fn(),
+    // The consent renderer calls these itself; the walk never does.
+    fetchConsentDocument: vi.fn(),
+    listSignatures: vi.fn(),
+    signConsentDocument: vi.fn(),
   }
 })
 
@@ -328,6 +332,120 @@ describe("review and sending", () => {
     await user.click(screen.getByTestId("forms-submit"))
 
     expect(await screen.findByTestId("forms-already-sent")).toBeInTheDocument()
+  })
+})
+
+describe("a question whose renderer writes for itself", () => {
+  /**
+   * A form whose only question is a consent document, unsigned.
+   *
+   * The consent renderer fetches the document and the signatures itself, so
+   * both are stubbed; what is under test is what the WALK does when that
+   * renderer reports a write.
+   */
+  const CONSENT_ITEM_ID = "55555555-5555-4555-8555-555555555555"
+  const DOCUMENT_ID = "66666666-6666-4666-8666-666666666666"
+  const STATEMENT = "By typing my name I agree that this is my electronic signature."
+
+  const consentItem = {
+    id: CONSENT_ITEM_ID,
+    key: "consent",
+    position: 0,
+    item_type: "consent_document",
+    required: true,
+    label: null,
+    help_text: null,
+    config: { document_key: "doc-key", document_version_id: DOCUMENT_ID },
+    value: null,
+  }
+
+  const signatureRow: api.IntakeSignature = {
+    id: "77777777-7777-4777-8777-777777777777",
+    assignment_id: ASSIGNMENT_ID,
+    item_id: CONSENT_ITEM_ID,
+    document_version_id: DOCUMENT_ID,
+    document_digest: "a".repeat(64),
+    signer_role: "patient",
+    signer_typed_name: "Ada Lovelace",
+    consent_statement_version: "1",
+    consent_statement: STATEMENT,
+    signed_at: "2026-09-20T14:30:00+00:00",
+    auth_strength: "stepped_up",
+    session_id: "session-handle",
+    evidence_digest: "b".repeat(64),
+  }
+
+  const consentOnly = () =>
+    assignmentDetail({
+      items: [consentItem],
+      progress: { complete: false, missing: [CONSENT_ITEM_ID] },
+    })
+
+  beforeEach(() => {
+    vi.mocked(api.fetchAssignment).mockResolvedValue(consentOnly())
+    vi.mocked(api.fetchConsentDocument).mockResolvedValue({
+      id: DOCUMENT_ID,
+      document_key: "doc-key",
+      title: "Consent to treatment",
+      rendered_html: "<p>You are agreeing to be treated here.</p>",
+      version: 1,
+      digest: "a".repeat(64),
+      requires_signature: true,
+      signer_roles: ["patient"],
+      consent_statement: STATEMENT,
+      consent_statement_version: "1",
+    })
+    vi.mocked(api.listSignatures).mockResolvedValue([])
+    vi.mocked(api.signConsentDocument).mockResolvedValue(signatureRow)
+  })
+
+  it("counts it as a question even though Continue does not save it", async () => {
+    renderFlow()
+
+    expect(await screen.findByTestId("forms-progress")).toHaveTextContent("Question 1 of 1")
+  })
+
+  it("never sends it through the save route", async () => {
+    const user = userEvent.setup()
+    renderFlow()
+    await screen.findByTestId("forms-consent")
+
+    await user.click(screen.getByTestId("forms-continue"))
+
+    // Its answer names a signature row, and only the signing route may write
+    // one — so Continue moves and nothing else.
+    expect(api.saveAnswer).not.toHaveBeenCalled()
+    expect(await screen.findByTestId("forms-review")).toBeInTheDocument()
+  })
+
+  it("stays on the question after a signature instead of jumping to review", async () => {
+    // Where the walk sits is derived from `progress.missing` until somebody
+    // navigates. Signing the last outstanding question empties that list, so
+    // without pinning, the re-read would whisk the patient to the review
+    // screen before the signature it had just taken was ever shown.
+    const user = userEvent.setup()
+    renderFlow()
+    await screen.findByTestId("forms-consent")
+
+    vi.mocked(api.fetchAssignment).mockResolvedValue(
+      assignmentDetail({
+        items: [{ ...consentItem, value: { signed: true, signature_id: signatureRow.id } }],
+        progress: { complete: true, missing: [] },
+      }),
+    )
+    vi.mocked(api.listSignatures).mockResolvedValue([signatureRow])
+
+    await user.click(screen.getByTestId("forms-consent-affirm"))
+    await user.type(screen.getByTestId("forms-consent-name"), "Ada Lovelace")
+    await user.click(screen.getByTestId("forms-consent-sign"))
+
+    expect(await screen.findByTestId("forms-consent-signed")).toHaveTextContent("Ada Lovelace")
+    expect(screen.queryByTestId("forms-review")).not.toBeInTheDocument()
+    expect(onChanged).toHaveBeenCalled()
+
+    // And Continue is still what moves them on.
+    await user.click(screen.getByTestId("forms-continue"))
+    expect(await screen.findByTestId("forms-review")).toBeInTheDocument()
   })
 })
 
