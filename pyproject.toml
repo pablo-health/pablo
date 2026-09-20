@@ -272,6 +272,9 @@ ignore = [
                 # type cannot move into a TYPE_CHECKING block
     "S105",     # token_type is the OAuth response field name, not a secret
 ]
+"backend/app/portal/practice_routes.py" = [
+    "TC001",    # same: User arrives through Annotated[..., Depends(...)]
+]
 "backend/app/portal/tenant_gateway.py" = [
     "TC002",    # Session is injected through Annotated[..., Depends(...)] and
                 # so is resolved at runtime, same as routes.py above

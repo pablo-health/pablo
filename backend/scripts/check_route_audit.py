@@ -195,6 +195,11 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # redemption that carries the forensic weight.
         ("post", "/api/patient/auth/redeem"),  # audited in the tenant gateway
         ("post", "/api/patient/auth/refresh"),  # rotation of an already-recorded session
+        # portal/practice_routes.py — the public practice directory. A slug in,
+        # a practice's own display name out; no chart is opened and no patient
+        # is named, so there is no access to attribute to anybody.
+        ("get", "/api/portal/practices/{slug}"),  # slug to display name, no PHI
+        ("post", "/api/portal/practice-slug"),  # mints the practice's own address
         # payment_webhooks.py — signature-verified processor callback. It moves
         # a ledger row's status from an event the processor signed; there is no
         # authenticated principal to attribute an access to, and it discloses

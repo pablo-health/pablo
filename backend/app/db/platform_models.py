@@ -284,6 +284,46 @@ class ClaimReviewRow(PlatformBase):
     held_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class PortalPracticeSlugRow(PlatformBase):
+    """The public name a practice's portal address resolves through.
+
+    Platform-scoped for the same inversion as ``BookingLinkRow``: the portal
+    shell's first call is unauthenticated and carries only the slug out of its
+    own URL, so the practice has to be resolved FROM the slug before any
+    session exists or any tenant schema can be selected.
+
+    A directory beside ``PracticeRow`` rather than a column on it, because
+    ``PracticeRow`` has no public name to offer — ``schema_name`` is an
+    internal identifier and is never URL-exposed.
+
+    **Deliberately not ``booking_links.slug``.** That slug is unique too, and
+    it is the wrong thing: it belongs to one booking link rather than to the
+    practice, a practice may hold several or none, and a link the clinician
+    retires would take the portal address down with it. This is the practice's
+    own address, and ``practice_id`` is UNIQUE so there is exactly one of it.
+
+    No PHI: a slug, a practice id, and the practice's own display name — a
+    business name the practice already shows the people it treats.
+
+    The table name is the one these rows already carry in deployed
+    installations; renaming it would orphan every address in circulation.
+    """
+
+    __tablename__ = "companion_practice_slugs"
+    __table_args__ = {"schema": PLATFORM_SCHEMA}
+
+    slug: Mapped[str] = mapped_column(String(63), primary_key=True)
+    practice_id: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    #: A practice that has turned its portal off keeps its address claimed.
+    #: The resolve route answers the same 404 either way — see
+    #: ``app.portal.practice_routes``.
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class SetupTokenRow(PlatformBase):
     """Short-lived token to pass email from marketing signup to login page.
 
