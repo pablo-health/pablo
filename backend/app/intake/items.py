@@ -538,19 +538,30 @@ def _check_visibility(key: str, rule: VisibleWhen, earlier: dict[str, Referenced
         raise ItemConfigError(f"{key}: {exc}") from exc
 
 
+def instrument_item_count(config: ItemConfig | None) -> int | None:
+    """How many items the measure this question asks has, or ``None``.
+
+    ``None`` for every question that is not a measure, and for one whose
+    settings no longer parse. Public because evaluating a rule against a
+    score needs the number and :mod:`app.intake.visibility` deliberately
+    knows nothing about the instrument registry — the answer it is handed
+    has to come from whoever already has the config.
+    """
+    if not isinstance(config, InstrumentConfig):
+        return None
+    return INSTRUMENT_REGISTRY[config.code].item_count
+
+
 def _as_reference(key: str, item_type: str, config: ItemConfig) -> ReferencedItem:
     """Flatten a parsed item to what a later item's rule needs to know."""
     options: frozenset[str] = frozenset()
     if isinstance(config, SingleChoiceConfig | MultiChoiceConfig):
         options = frozenset(option.key for option in config.options)
-    item_count: int | None = None
-    if isinstance(config, InstrumentConfig):
-        item_count = INSTRUMENT_REGISTRY[config.code].item_count
     return ReferencedItem(
         key=key,
         item_type=item_type,
         option_keys=options,
-        instrument_item_count=item_count,
+        instrument_item_count=instrument_item_count(config),
     )
 
 
@@ -572,6 +583,7 @@ __all__ = [
     "ItemDraft",
     "PublishedDocumentLookup",
     "VisibleWhen",
+    "instrument_item_count",
     "validate_item_config",
     "validate_item_list",
 ]

@@ -302,6 +302,14 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # the caller is disclosed by it and there is no access to attribute.
         # Sign-out on the same surface IS audited.
         ("get", "/api/patient/capabilities"),  # deployment shape, identical for every caller
+        # patient_booking.py — the practice's own scheduling policy: whether it
+        # takes bookings online, which appointment types it opened, its notice
+        # and cutoff windows, and the phone number it publishes. Like the
+        # capability document above, the answer is identical for every patient
+        # of the practice, so it attributes no access to anyone and names no
+        # appointment, no id and no count. Every route beside it that reads or
+        # writes this patient's own diary IS audited.
+        ("get", "/api/patient/booking/options"),  # practice policy, identical for every caller
         # payment_webhooks.py — signature-verified processor callback. It moves
         # a ledger row's status from an event the processor signed; there is no
         # authenticated principal to attribute an access to, and it discloses

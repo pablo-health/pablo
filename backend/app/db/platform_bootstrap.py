@@ -108,6 +108,11 @@ def bring_platform_to_head(engine: Engine, alembic_ini: str = "alembic.ini") -> 
     Not called at boot either. Schema changes belong to the migrate job, which
     runs before the rollout with its output in the log; boot checks and refuses.
     See :func:`require_platform_schema`.
+
+    Once the chain is at head this also reconciles practice owners
+    (:func:`app.db.practice_owner.reconcile_practice_owners`) — a one-off for
+    rows registered before an owner was ever recorded, which is here for the
+    same reason the rest of this module is.
     """
     # Imported here: alembic is a deploy-time dependency of this function, not of
     # the module, and ``app.db`` is imported by everything.
@@ -145,6 +150,15 @@ def bring_platform_to_head(engine: Engine, alembic_ini: str = "alembic.ini") -> 
             command.stamp(config, BASELINE_REVISION)
 
         command.upgrade(config, "head")
+
+    # After the chain, and in its own transaction, because this is data rather
+    # than schema: a failure here leaves the schema work committed and still
+    # fails the job, which is the honest pair. Practices registered before the
+    # sign-in path started recording owners learn theirs here, once, from the
+    # email they were registered under.
+    from .practice_owner import reconcile_practice_owners
+
+    reconcile_practice_owners(engine)
 
 
 def require_platform_schema(engine: Engine) -> None:

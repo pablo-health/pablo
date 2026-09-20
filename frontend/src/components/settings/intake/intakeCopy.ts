@@ -137,3 +137,23 @@ export const CARD_COLLECT_FIELDS_HELP =
 export const BLANK_FORM_PICKER_LABEL = "Offer a form to download (optional)"
 export const NO_BLANK_FORM_CHOICE = "Don't offer one"
 export const NO_BLANK_FORMS = "Upload a blank form first, then you can offer it here."
+
+/**
+ * Asking a question only of the people it applies to.
+ *
+ * The picker says what it does and stops. It does not explain that a rule
+ * can only look backwards, or what happens to an answer somebody gives and
+ * then makes irrelevant — the first is enforced by which questions the
+ * picker offers, and the second is the patient's receipt to carry, not a
+ * paragraph for a therapist building a form.
+ */
+export const VISIBILITY_TITLE = "Show only when"
+export const VISIBILITY_ALWAYS = "Always ask this"
+export const VISIBILITY_QUESTION_LABEL = "Based on"
+export const VISIBILITY_CONDITION_LABEL = "When they"
+export const VISIBILITY_VALUE_LABEL = "Value"
+export const VISIBILITY_ITEM_NUMBER_LABEL = "Question number"
+
+/** Shown on the first question on a form, which has nothing to depend on. */
+export const VISIBILITY_NOTHING_EARLIER =
+  "This is the first question that can be answered, so there is nothing to base it on yet."

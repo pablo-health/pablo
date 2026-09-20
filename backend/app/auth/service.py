@@ -476,6 +476,16 @@ def get_tenant_context(
             practice_id, schema_name = practice
             _await_provisioning_ready(practice_id)
             tenant_id_var.set(practice_id)
+            # A practice is registered under an email before anyone has signed
+            # in, so this is the first moment both halves of "who owns it" are
+            # in hand: the registered address, and the account it belongs to.
+            # Conditional on the practice having no owner yet, so it is a
+            # one-time write that a re-login cannot disturb — see
+            # ``app.db.practice_owner`` for the rule and what it refuses to
+            # infer.
+            from ..db.practice_owner import record_owner_on_sign_in
+
+            record_owner_on_sign_in(practice_id, email, str(pablo_user_id))
             # search_path is already set by DatabaseSessionMiddleware
             # before any dependency runs — see
             # `app.db.middleware.DatabaseSessionMiddleware._resolve_schema_from_request`.

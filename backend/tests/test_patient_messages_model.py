@@ -49,6 +49,10 @@ def test_exact_column_sets() -> None:
         "patient_id",
         "subject",
         "status",
+        "closed_at",
+        "closed_by",
+        "assigned_user_id",
+        "clinician_last_read_at",
         "created_at",
         "last_message_at",
     } == _THREAD_COLUMNS
@@ -94,6 +98,35 @@ def test_composite_fk_ties_the_denormalized_patient_to_the_thread() -> None:
     assert [c.name for c in fk.columns] == ["thread_id", "patient_id"]
     assert [e.column.name for e in fk.elements] == ["id", "patient_id"]
     assert fk.ondelete == "CASCADE"
+
+
+def test_the_thread_cascades_from_its_patient() -> None:
+    """Retention is the chart's retention: no patient, no correspondence."""
+    fks = [
+        fk
+        for fk in PatientMessageThreadRow.__table__.foreign_key_constraints
+        if [c.name for c in fk.columns] == ["patient_id"]
+    ]
+    assert len(fks) == 1, "the thread no longer cascades from patients"
+    assert [e.column.table.name for e in fks[0].elements] == ["patients"]
+    assert fks[0].ondelete == "CASCADE"
+
+
+def test_the_lifecycle_columns_are_all_nullable() -> None:
+    """A thread that was never closed or assigned has nothing to say about it."""
+    for name in ("closed_at", "closed_by", "assigned_user_id", "clinician_last_read_at"):
+        assert PatientMessageThreadRow.__table__.columns[name].nullable is True, name
+
+
+def test_assignment_is_not_a_user_id_column() -> None:
+    """``enable_rls_on_schema`` force-policies on a column named ``user_id``.
+
+    Naming the assignee that would have made a routing hint look like an
+    ownership claim to the policy builder. It is ``assigned_user_id``, and
+    the table's isolation stays the patient arm it already had.
+    """
+    assert "user_id" not in _THREAD_COLUMNS
+    assert "assigned_user_id" in _THREAD_COLUMNS
 
 
 def test_thread_has_the_unique_constraint_the_fk_targets() -> None:

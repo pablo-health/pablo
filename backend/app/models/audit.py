@@ -382,6 +382,20 @@ class AuditAction(StrEnum):
     # A clinician opening a thread — a PHI disclosure, at the granularity of
     # which thread was opened.
     PATIENT_MESSAGE_THREAD_VIEWED = "patient_message_thread_viewed"
+    # The lifecycle, all clinician-side. Closing and reopening say when a
+    # practice considered a conversation finished and when it started again,
+    # which is what somebody reconstructing the correspondence needs.
+    # REOPENED is also written when a reply lands in a closed thread, because
+    # from the record's point of view that is the same event.
+    PATIENT_MESSAGE_THREAD_CLOSED = "patient_message_thread_closed"
+    PATIENT_MESSAGE_THREAD_REOPENED = "patient_message_thread_reopened"
+    # Who a practice pointed a thread at. Routing, not access — the payload
+    # carries the assignee's user id so a later reader can see who was asked
+    # to answer.
+    PATIENT_MESSAGE_THREAD_ASSIGNED = "patient_message_thread_assigned"
+    # A whole conversation leaving as a transcript. Recorded at the same
+    # granularity as opening one, because it is the same disclosure in bulk.
+    PATIENT_MESSAGE_THREAD_EXPORTED = "patient_message_thread_exported"
 
     # Companion audio signed-URL upload (additive to the existing
     # multipart /upload-audio surface — companion app migrates at its
