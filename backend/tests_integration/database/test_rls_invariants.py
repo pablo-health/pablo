@@ -89,6 +89,8 @@ TENANT_SCOPED_TABLES = (
     "appointments",
     "patient_documents",
     "patient_intake_submissions",
+    "patient_message_threads",
+    "patient_messages",
     "supervision_relationships",
     "supervision_hours",
 )

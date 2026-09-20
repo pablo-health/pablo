@@ -80,6 +80,11 @@ from .patient_document import (
     InMemoryPatientDocumentRepository,
     PatientDocumentRepository,
 )
+from .patient_message import (
+    InMemoryPatientMessageRepository,
+    PatientMessageAccessDeniedError,
+    PatientMessageRepository,
+)
 from .session import (
     InMemoryTherapySessionRepository,
     TherapySessionRepository,
@@ -297,6 +302,13 @@ def get_outcome_measure_repository() -> OutcomeMeasureRepository:
     return PostgresOutcomeMeasureRepository(_get_pg_session())
 
 
+def get_patient_message_repository() -> PatientMessageRepository:
+    """Get secure patient messaging repository instance."""
+    from .postgres.patient_message import PostgresPatientMessageRepository
+
+    return PostgresPatientMessageRepository(_get_pg_session())
+
+
 def get_diagnostic_assessment_repository() -> DiagnosticAssessmentRepository:
     """Get diagnostic assessment repository instance."""
     from .postgres.diagnostic_assessment import PostgresDiagnosticAssessmentRepository
@@ -344,6 +356,7 @@ __all__ = [
     "InMemoryMedicationRepository",
     "InMemoryNotesRepository",
     "InMemoryPatientDocumentRepository",
+    "InMemoryPatientMessageRepository",
     "InMemoryPatientRepository",
     "InMemoryTherapySessionRepository",
     "InMemoryUserRepository",
@@ -351,6 +364,8 @@ __all__ = [
     "MedicationRepository",
     "NotesRepository",
     "PatientDocumentRepository",
+    "PatientMessageAccessDeniedError",
+    "PatientMessageRepository",
     "PatientRepository",
     "TherapySessionRepository",
     "UserRepository",
@@ -379,6 +394,7 @@ __all__ = [
     "get_outcome_measure_repository",
     "get_patient_coverage_repository",
     "get_patient_document_repository",
+    "get_patient_message_repository",
     "get_patient_payment_repository",
     "get_patient_repository",
     "get_payer_repository",

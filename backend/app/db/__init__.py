@@ -1021,6 +1021,18 @@ PATIENT_READABLE_TABLES: dict[str, str] = {
     # theirs; the clinician side reaches the same rows through
     # ``has_patient_access`` like every other per-patient chart table.
     "patient_intake_submissions": "patient_id",
+    # A patient's own secure-message threads and the messages in them. Both
+    # halves are the patient's: they start the thread, they write into it,
+    # and they read what the practice wrote back. The clinician side reaches
+    # the same rows through ``has_patient_access``, so a thread is visible to
+    # whoever is treating the patient and to nobody else.
+    #
+    # ``patient_messages`` carries its own ``patient_id`` rather than being
+    # scoped through its thread, which is why neither table needs a bespoke
+    # predicate here. See ``PatientMessageRow`` for why the column is
+    # denormalized and what keeps it honest.
+    "patient_message_threads": "patient_id",
+    "patient_messages": "patient_id",
     # Read-only deliberately: booking and cancelling answer to the
     # practice's own rules — notice periods, which types are bookable,
     # whether a request needs confirming — so they belong to a route that
@@ -1062,6 +1074,17 @@ PATIENT_WRITABLE_TABLES: dict[str, str] = {
     # Submitting the intake form is a patient INSERT, so the write arm is
     # what makes the table usable at all from a patient principal.
     "patient_intake_submissions": "patient_id",
+    # Starting a thread and sending a message are both patient INSERTs, and
+    # marking a message read is a patient UPDATE. The row-level grant is
+    # therefore wider than the three routes that use it — a patient could,
+    # as far as the policy is concerned, rewrite the body of a message they
+    # sent. Which column may change is the route layer's decision and is
+    # made there: the mark-read route touches ``read_at`` and nothing else,
+    # and no route anywhere updates ``body`` or ``sender``. Same posture as
+    # ``outcome_measures``, and for the same reason — RLS has no column
+    # granularity to express it with.
+    "patient_message_threads": "patient_id",
+    "patient_messages": "patient_id",
     # A patient starts their own conversations and archives or purges them,
     # so the conversation row is writable. The turn loop then writes the
     # message rows — the user's turn and the assistant's reply — which is
