@@ -957,6 +957,10 @@ _OVERLAY_NOT_ROW_SCOPED: set[str] = set()
 #     ``patient_id`` to key a policy on, and they are considered only
 #     because they carry an ``id``. What a patient ANSWERS is a different
 #     table entirely, and that one is per-patient and row-scoped.
+#   * instrument_license_attestations — the practice's record that it holds
+#     permission to use a use-restricted instrument. Practice-level for the
+#     same reason as the intake tables: a licence is held by the practice,
+#     and ``attested_by`` names who recorded it rather than who owns it.
 #   * intake_documents — the consent documents a practice asks people to
 #     read and sign, one row per version. Practice-level for the same
 #     reason as the three above: the text is the same whoever it is sent
@@ -992,6 +996,7 @@ _CORE_NOT_ROW_SCOPED: frozenset[str] = frozenset(
         "intake_packet_versions",
         "intake_item_definitions",
         "intake_documents",
+        "instrument_license_attestations",
         "intake_blank_forms",
         "companion_auth_challenges",
         "companion_sessions",

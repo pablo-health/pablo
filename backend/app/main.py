@@ -64,6 +64,7 @@ from .routes import (
     ehr_routes,
     ext_auth,
     ical_sync,
+    instrument_licenses,
     intake_blank_forms,
     intake_documents,
     intake_packets,
@@ -370,6 +371,11 @@ app.include_router(patient_intake.clinician_router)
 # the ordinary clinician door: a practice editing its own paperwork touches
 # no patient data and needs no patient front door to be open.
 app.include_router(intake_packets.router)
+# What the engine knows about each instrument, and what this practice is
+# licensed to ask. Same door and same reason as the form builder: an
+# instrument's rights are a fact about the instrument, and a practice's
+# permission is its own record, so nothing here is anybody's chart.
+app.include_router(instrument_licenses.router)
 # The documents a practice asks people to sign, and the portal's read of
 # one. Unconditional for the same two reasons as the pair above: the
 # clinician half is ordinary practice paperwork behind the ordinary door,

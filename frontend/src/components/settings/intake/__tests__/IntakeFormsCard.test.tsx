@@ -32,6 +32,12 @@ vi.mock("@/hooks/useIntakeDocuments", () => ({
   usePublishedIntakeDocuments: () => mockUsePublishedDocuments(),
 }))
 
+// The measure picker is built from the server's catalogue. Nothing on this
+// card reads it, but the card holds the query, so it has to answer.
+vi.mock("@/hooks/useInstruments", () => ({
+  useInstruments: () => ({ data: [] }),
+}))
+
 // And which blank forms a document question could offer. Same arrangement
 // and same reason as the documents above.
 const mockUseBlankForms = vi.fn()

@@ -4,6 +4,7 @@
 
 import { IntakeDocumentsCard } from "../intake/IntakeDocumentsCard"
 import { IntakeFormsCard } from "../intake/IntakeFormsCard"
+import { LicensedInstrumentsCard } from "../intake/LicensedInstrumentsCard"
 import { SettingsCard } from "../ui"
 
 /**
@@ -16,13 +17,16 @@ import { SettingsCard } from "../ui"
  *
  * Documents come after forms because that is the order a practice meets
  * them: the form is the thing being built, and a document is something a
- * question on it points at.
+ * question on it points at. Licensed instruments come last for the same
+ * reason: a practice arrives at it from a measure the form builder would
+ * not let it add.
  */
 export function PatientPortalPage() {
   return (
     <>
       <IntakeFormsCard />
       <IntakeDocumentsCard />
+      <LicensedInstrumentsCard />
       <SettingsCard title="Patient sign-in">
         <p className="text-sm text-muted-foreground">
           How people get into the portal will be configured here.

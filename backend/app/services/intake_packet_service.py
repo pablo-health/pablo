@@ -24,6 +24,12 @@ because two of the rules are about the list: keys have to be unique across
 it, and a visibility rule may only point backwards within it. A draft is
 allowed to be half-built; publishing is where it has to make sense.
 
+Publishing is also the one moment a use-restricted measure is checked
+against what the practice is licensed to ask. That is why withdrawing a
+licence leaves every form already published still working: the check
+happened when the version was frozen, and reaching back into a frozen
+version is the thing this whole module exists to prevent.
+
 Publishing is also where a consent item stops naming a document and starts
 naming one revision of it. The practice picks the document; the revision it
 gets pinned to is whichever was live at the moment the form was frozen, so
@@ -47,7 +53,7 @@ from ..intake.items import (
 from ..utcnow import utc_now
 
 if TYPE_CHECKING:
-    from ..intake.items import ItemConfig, PublishedDocumentLookup
+    from ..intake.items import InstrumentAttested, ItemConfig, PublishedDocumentLookup
     from ..repositories.intake_packet import IntakePacketRepository
 
 
@@ -72,9 +78,11 @@ class IntakePacketService:
         self,
         repo: IntakePacketRepository,
         published_document: PublishedDocumentLookup | None = None,
+        instrument_attested: InstrumentAttested | None = None,
     ) -> None:
         self._repo = repo
         self._published_document = published_document
+        self._instrument_attested = instrument_attested
 
     # --- templates ---
 
@@ -252,6 +260,7 @@ class IntakePacketService:
                 for row in rows
             ],
             published_document=self._published_document,
+            instrument_attested=self._instrument_attested,
         )
         self._pin_documents(rows, configs)
 

@@ -482,6 +482,18 @@ CREATE TABLE __TENANT_SCHEMA__.ical_sync_configs (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.instrument_license_attestations (
+    id uuid NOT NULL,
+    instrument_code character varying(32) NOT NULL,
+    attested_by uuid NOT NULL,
+    attested_at timestamp with time zone NOT NULL,
+    license_reference character varying(200),
+    notes text,
+    revoked_at timestamp with time zone
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.intake_blank_forms (
     id uuid NOT NULL,
     title character varying(200) NOT NULL,
@@ -1371,6 +1383,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.ical_sync_configs
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.instrument_license_attestations
+    ADD CONSTRAINT instrument_license_attestations_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.intake_blank_forms
     ADD CONSTRAINT intake_blank_forms_pkey PRIMARY KEY (id);
 
@@ -2079,6 +2096,10 @@ CREATE INDEX ix_therapy_sessions_user_id ON __TENANT_SCHEMA__.therapy_sessions U
 
 
 CREATE UNIQUE INDEX uq_appointments_user_start_active ON __TENANT_SCHEMA__.appointments USING btree (user_id, start_at) WHERE ((status)::text <> 'cancelled'::text);
+
+
+
+CREATE UNIQUE INDEX uq_instrument_license_attestations_active ON __TENANT_SCHEMA__.instrument_license_attestations USING btree (instrument_code) WHERE (revoked_at IS NULL);
 
 
 
