@@ -19,6 +19,19 @@ reconciling tables — for tenants provisioned before a new model table
 (e.g. ``audit_logs``) was added, that left the schema missing tables
 while alembic believed it was caught up, masking real failures and making
 future ``upgrade head`` calls a no-op against the broken state.
+
+The fan-out also re-applies row-level security to every schema it visits
+(:func:`reconcile_tenant_rls`). A revision creates tables; it does not
+create policies, and ``enable_rls_on_schema`` used to run only when a
+schema was provisioned. So a practice that already existed when a
+revision landed got the new table with no row policy at all, and a table
+whose registration changed kept the policy set it was born with — while
+a practice provisioned the next day was correct, because the template
+captures the policies. Reconciling here closes that gap without an
+operator step: it is idempotent, it runs even when the schema was
+already at head (a registration can change with no revision beside it),
+and a schema whose reconcile fails is reported FAILED rather than
+silently shipping a table that is unprotected or deny-all.
 """
 
 from __future__ import annotations
@@ -35,8 +48,14 @@ from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 
-from . import DEFAULT_PRACTICE_SCHEMA, PLATFORM_SCHEMA, _validate_schema_name
+from . import (
+    DEFAULT_PRACTICE_SCHEMA,
+    PLATFORM_SCHEMA,
+    _validate_schema_name,
+    enable_rls_on_schema,
+)
 from .provisioning import _ALEMBIC_INI_PATH
 
 if TYPE_CHECKING:
@@ -81,6 +100,33 @@ class _AlembicRunner(Protocol):
     """
 
     def __call__(self, engine: Engine, schema: str) -> TenantResult: ...
+
+
+class _RlsReconciler(Protocol):
+    """Callable that re-applies row policies to one schema, returning a count.
+
+    Extracted for the same reason as :class:`_AlembicRunner`: the fan-out's
+    own logic can then be tested without a database.
+    """
+
+    def __call__(self, engine: Engine, schema: str) -> int: ...
+
+
+def reconcile_tenant_rls(engine: Engine, schema: str) -> int:
+    """Re-apply row-level security to one tenant schema; return tables touched.
+
+    Runs ``enable_rls_on_schema`` on its own session, with the tenant
+    schema on the search path so the policy bodies referencing
+    ``has_patient_access`` resolve — the same posture provisioning uses.
+    Raises whatever the reconcile raises; the fan-out turns that into a
+    FAILED tenant.
+    """
+    _validate_schema_name(schema)
+    with Session(engine) as session:
+        # Operator job: schema validated by _validate_schema_name(); not web-reachable.
+        # nosemgrep
+        session.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
+        return enable_rls_on_schema(session, schema)
 
 
 def list_active_tenant_schemas(engine: Engine) -> list[str]:
@@ -228,11 +274,34 @@ def upgrade_tenant_schema(
         return TenantResult(schema, TenantStatus.FAILED, str(exc))
 
 
+def _reconcile_one(
+    engine: Engine,
+    schema: str,
+    result: TenantResult,
+    reconciler: Callable[[Engine, str], int],
+) -> TenantResult:
+    """Reconcile one schema's row policies; fold the outcome into ``result``.
+
+    A successful reconcile leaves the upgrade's own result alone and logs
+    what it touched. A failure replaces it, because the alternative is a
+    fan-out that exits 0 over a tenant carrying an unprotected table.
+    """
+    try:
+        tables = reconciler(engine, schema)
+    except Exception as exc:
+        logger.exception("tenant %s RLS reconcile failed", schema)
+        return TenantResult(schema, TenantStatus.FAILED, f"RLS reconcile failed: {exc}")
+
+    logger.info("tenant=%s rls_reconciled tables=%d", schema, tables)
+    return result
+
+
 def fan_out(
     engine: Engine,
     schemas: list[str],
     runner: _AlembicRunner | None = None,
     max_workers: int = DEFAULT_FAN_OUT_WORKERS,
+    reconciler: _RlsReconciler | None = None,
 ) -> list[TenantResult]:
     """Apply ``runner`` to each schema, continuing past failures.
 
@@ -245,6 +314,12 @@ def fan_out(
     once and threaded through; per-tenant ``ScriptDirectory`` rebuilds
     dominated wall-time for no-op runs (~14s per tenant under the old
     code path).
+
+    Every schema the runner did not fail on is then handed to
+    ``reconciler`` (:func:`reconcile_tenant_rls` by default), including
+    one that was already at head. A reconcile that raises turns that
+    tenant FAILED — a schema whose policies could not be applied is not a
+    tenant that migrated cleanly, and the exit code has to say so.
     """
     if runner is None:
         head = _alembic_head()
@@ -261,8 +336,12 @@ def fan_out(
     else:
         effective_runner = runner
 
+    effective_reconciler: Callable[[Engine, str], int] = reconciler or reconcile_tenant_rls
+
     def _run_one(schema: str) -> TenantResult:
         result = effective_runner(engine, schema)
+        if result.ok:
+            result = _reconcile_one(engine, schema, result, effective_reconciler)
         logger.info("tenant=%s status=%s %s", result.schema, result.status.value, result.detail)
         return result
 
