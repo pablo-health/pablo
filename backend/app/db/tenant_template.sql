@@ -786,6 +786,10 @@ CREATE TABLE __TENANT_SCHEMA__.patient_message_threads (
     status character varying(16) NOT NULL,
     created_at timestamp with time zone NOT NULL,
     last_message_at timestamp with time zone NOT NULL,
+    closed_at timestamp with time zone,
+    closed_by uuid,
+    assigned_user_id uuid,
+    clinician_last_read_at timestamp with time zone,
     CONSTRAINT ck_patient_message_threads_status CHECK (((status)::text = ANY ((ARRAY['open'::character varying, 'closed'::character varying])::text[])))
 );
 
@@ -2208,6 +2212,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_documents
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_medications
     ADD CONSTRAINT patient_medications_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_message_threads
+    ADD CONSTRAINT patient_message_threads_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
 
 
 
