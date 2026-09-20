@@ -272,3 +272,110 @@ class TestDisplayOnlyItems:
             ("reason", 0),
             ("b", 1),
         ]
+
+
+class TestPinningAConsentDocument:
+    """What a form points at, and what somebody actually signs.
+
+    A practice picks a DOCUMENT in the editor. A signature has to name one
+    exact revision of it, because the words are what was agreed to. Publish
+    is where the two meet: the form is frozen, and the revision that was
+    live at that moment is written onto the item.
+    """
+
+    @staticmethod
+    def _with_documents(
+        repo: InMemoryIntakePacketRepository, live: dict[str, str]
+    ) -> IntakePacketService:
+        return IntakePacketService(repo, live.get)
+
+    @staticmethod
+    def _consent_version(service: IntakePacketService, document_key: str) -> str:
+        template_id = str(service.create_template("Intake", _AUTHOR)["id"])
+        version_id = _draft_id(service, template_id)
+        service.replace_items(
+            version_id,
+            [
+                ItemDraft(key="reason", item_type="reason"),
+                ItemDraft(
+                    key="consent",
+                    item_type="consent_document",
+                    config={"document_key": document_key},
+                ),
+            ],
+        )
+        return version_id
+
+    def test_publishing_writes_the_live_revision_onto_the_item(
+        self, repo: InMemoryIntakePacketRepository
+    ) -> None:
+        service = self._with_documents(repo, {"doc-1": "revision-3"})
+        version_id = self._consent_version(service, "doc-1")
+
+        service.publish(version_id, _AUTHOR)
+
+        consent = next(i for i in service.list_items(version_id) if i["key"] == "consent")
+        assert consent["config"] == {
+            "document_key": "doc-1",
+            "document_version_id": "revision-3",
+        }
+
+    def test_a_draft_carries_no_revision(self, repo: InMemoryIntakePacketRepository) -> None:
+        """Pinning early would go stale every time the document is revised."""
+        service = self._with_documents(repo, {"doc-1": "revision-3"})
+        version_id = self._consent_version(service, "doc-1")
+
+        consent = next(i for i in service.list_items(version_id) if i["key"] == "consent")
+        assert consent["config"] == {"document_key": "doc-1"}
+
+    def test_a_document_nobody_can_sign_yet_refuses_the_publish(
+        self, repo: InMemoryIntakePacketRepository
+    ) -> None:
+        service = self._with_documents(repo, {})
+        version_id = self._consent_version(service, "doc-1")
+
+        with pytest.raises(ItemConfigError, match="publish this document"):
+            service.publish(version_id, _AUTHOR)
+
+        version = service.get_version(version_id)
+        assert version is not None
+        assert version["published_at"] is None
+
+    def test_revising_the_document_afterwards_leaves_the_form_alone(
+        self, repo: InMemoryIntakePacketRepository
+    ) -> None:
+        """The whole point of pinning at publish rather than reading through."""
+        live = {"doc-1": "revision-3"}
+        service = self._with_documents(repo, live)
+        version_id = self._consent_version(service, "doc-1")
+        service.publish(version_id, _AUTHOR)
+
+        live["doc-1"] = "revision-4"
+
+        consent = next(i for i in service.list_items(version_id) if i["key"] == "consent")
+        assert consent["config"] == {
+            "document_key": "doc-1",
+            "document_version_id": "revision-3",
+        }
+
+    def test_item_ids_survive_the_pin(self, repo: InMemoryIntakePacketRepository) -> None:
+        """A saved answer points at an item id, so publishing must not reissue them."""
+        service = self._with_documents(repo, {"doc-1": "revision-3"})
+        version_id = self._consent_version(service, "doc-1")
+        before = [str(i["id"]) for i in service.list_items(version_id)]
+
+        service.publish(version_id, _AUTHOR)
+
+        assert [str(i["id"]) for i in service.list_items(version_id)] == before
+
+    def test_a_form_with_no_consent_item_is_unaffected(
+        self, repo: InMemoryIntakePacketRepository
+    ) -> None:
+        service = self._with_documents(repo, {})
+        template_id = str(service.create_template("Intake", _AUTHOR)["id"])
+        version_id = _draft_id(service, template_id)
+        service.replace_items(version_id, _items())
+
+        service.publish(version_id, _AUTHOR)
+
+        assert all(i["config"] == {} for i in service.list_items(version_id))

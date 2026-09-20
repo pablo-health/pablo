@@ -477,6 +477,22 @@ CREATE TABLE __TENANT_SCHEMA__.ical_sync_configs (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.intake_documents (
+    id uuid NOT NULL,
+    document_key uuid NOT NULL,
+    title character varying(160) NOT NULL,
+    body_markdown text NOT NULL,
+    version integer NOT NULL,
+    digest character varying(64) NOT NULL,
+    published_at timestamp with time zone,
+    published_by uuid,
+    requires_signature boolean DEFAULT true NOT NULL,
+    signer_roles jsonb DEFAULT '["patient"]'::jsonb NOT NULL,
+    created_at timestamp with time zone NOT NULL
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.intake_item_definitions (
     id uuid NOT NULL,
     version_id uuid NOT NULL,
@@ -1253,6 +1269,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.ical_sync_configs
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.intake_documents
+    ADD CONSTRAINT intake_documents_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.intake_item_definitions
     ADD CONSTRAINT intake_item_definitions_pkey PRIMARY KEY (id);
 
@@ -1405,6 +1426,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.therapy_sessions
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.appointment_types
     ADD CONSTRAINT uq_appointment_types_user_name UNIQUE (user_id, name);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.intake_documents
+    ADD CONSTRAINT uq_intake_documents_version UNIQUE (document_key, version);
 
 
 
@@ -1648,6 +1674,10 @@ CREATE INDEX ix_ical_sync_configs_user_id ON __TENANT_SCHEMA__.ical_sync_configs
 
 
 
+CREATE INDEX ix_intake_documents_document_key ON __TENANT_SCHEMA__.intake_documents USING btree (document_key);
+
+
+
 CREATE INDEX ix_intake_item_definitions_version_id ON __TENANT_SCHEMA__.intake_item_definitions USING btree (version_id);
 
 
@@ -1861,6 +1891,10 @@ CREATE INDEX ix_therapy_sessions_user_id ON __TENANT_SCHEMA__.therapy_sessions U
 
 
 CREATE UNIQUE INDEX uq_appointments_user_start_active ON __TENANT_SCHEMA__.appointments USING btree (user_id, start_at) WHERE ((status)::text <> 'cancelled'::text);
+
+
+
+CREATE UNIQUE INDEX uq_intake_documents_draft ON __TENANT_SCHEMA__.intake_documents USING btree (document_key) WHERE (published_at IS NULL);
 
 
 

@@ -24,7 +24,7 @@ import {
   PUBLISHED_NOTICE,
   PUBLISH_BUTTON,
 } from "./intakeCopy"
-import { ItemConfigForm } from "./ItemConfigForm"
+import { ItemConfigForm, type PublishedDocument } from "./ItemConfigForm"
 
 interface IntakeItemEditorProps {
   version: IntakeVersionDetail
@@ -34,10 +34,9 @@ interface IntakeItemEditorProps {
   publishing?: boolean
   /** What the server said when it refused to publish, shown as it said it. */
   publishError?: string | null
+  /** The practice's published documents, for a consent item to point at. */
+  documents?: PublishedDocument[]
 }
-
-/** Types a practice can add. Consent documents are not storable yet. */
-const ADDABLE_TYPES = ITEM_TYPES.filter((t) => t !== "consent_document")
 
 function nextKey(label: string, taken: string[]): string {
   const base = label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "")
@@ -76,6 +75,7 @@ export function IntakeItemEditor({
   saving,
   publishing,
   publishError,
+  documents,
 }: IntakeItemEditorProps) {
   const [items, setItems] = useState<IntakeItemInput[]>(() => toInput(version.items))
   const [openIndex, setOpenIndex] = useState<number | null>(null)
@@ -219,6 +219,7 @@ export function IntakeItemEditor({
                     config={item.config}
                     onChange={(config) => patch(index, { config })}
                     idPrefix={`${editorId}-${index}`}
+                    documents={documents}
                   />
                   {!displayOnly && (
                     <div className="flex items-center justify-between">
@@ -243,7 +244,7 @@ export function IntakeItemEditor({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {ADDABLE_TYPES.map((type) => (
+            {ITEM_TYPES.map((type) => (
               <SelectItem key={type} value={type}>
                 {ITEM_TYPE_LABELS[type] ?? type}
               </SelectItem>

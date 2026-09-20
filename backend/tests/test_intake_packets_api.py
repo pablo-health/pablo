@@ -368,3 +368,103 @@ class TestNewVersions:
 
         frozen = intake_client.get(f"{BASE}/{template['id']}/versions/{first}").json()
         assert [i["key"] for i in frozen["items"]] == ["demographics", "reason"]
+
+
+class TestConsentItems:
+    """A form that asks somebody to sign a document.
+
+    The editor picks a document; publishing is what decides which revision
+    of it the patient will actually be shown. Both halves surface here as
+    status codes, because that is what the editor acts on.
+    """
+
+    _KEY = "44444444-4444-4444-8444-444444444444"
+
+    @pytest.fixture
+    def with_documents(
+        self, client: TestClient, packet_repo: InMemoryIntakePacketRepository
+    ) -> TestClient:
+        """The clinician client, with one published document to point at."""
+        live = {self._KEY: "revision-9"}
+        app.dependency_overrides[get_intake_packet_service] = lambda: IntakePacketService(
+            packet_repo, live.get
+        )
+        return client
+
+    @pytest.fixture
+    def without_documents(
+        self, client: TestClient, packet_repo: InMemoryIntakePacketRepository
+    ) -> TestClient:
+        """The same, with nothing published to point at."""
+        app.dependency_overrides[get_intake_packet_service] = lambda: IntakePacketService(
+            packet_repo, lambda _key: None
+        )
+        return client
+
+    def _form_with_consent(self, client: TestClient) -> tuple[str, str]:
+        template = _create(client)
+        version_id = _draft_id(template)
+        _items(
+            client,
+            str(template["id"]),
+            version_id,
+            [
+                {"key": "reason", "item_type": "reason"},
+                {
+                    "key": "consent",
+                    "item_type": "consent_document",
+                    "config": {"document_key": self._KEY},
+                },
+            ],
+        )
+        return str(template["id"]), version_id
+
+    def test_an_unpublished_document_is_422_and_says_what_to_do(
+        self, without_documents: TestClient
+    ) -> None:
+        template_id, version_id = self._form_with_consent(without_documents)
+
+        response = without_documents.post(f"{BASE}/{template_id}/versions/{version_id}/publish")
+
+        assert response.status_code == 422
+        assert "publish this document" in response.json()["error"]["message"]
+
+    def test_a_refused_publish_leaves_the_draft_a_draft(
+        self, without_documents: TestClient
+    ) -> None:
+        template_id, version_id = self._form_with_consent(without_documents)
+        without_documents.post(f"{BASE}/{template_id}/versions/{version_id}/publish")
+
+        version = without_documents.get(f"{BASE}/{template_id}/versions/{version_id}").json()
+        assert version["published_at"] is None
+
+    def test_publishing_pins_the_revision_onto_the_item(self, with_documents: TestClient) -> None:
+        template_id, version_id = self._form_with_consent(with_documents)
+
+        response = with_documents.post(f"{BASE}/{template_id}/versions/{version_id}/publish")
+
+        assert response.status_code == 200, response.text
+        consent = next(i for i in response.json()["items"] if i["key"] == "consent")
+        assert consent["config"] == {
+            "document_key": self._KEY,
+            "document_version_id": "revision-9",
+        }
+
+    def test_a_draft_can_be_saved_before_the_document_exists(
+        self, without_documents: TestClient
+    ) -> None:
+        """Half-built is a normal state for a form somebody is still writing."""
+        template = _create(without_documents)
+        response = _items(
+            without_documents,
+            str(template["id"]),
+            _draft_id(template),
+            [
+                {
+                    "key": "consent",
+                    "item_type": "consent_document",
+                    "config": {"document_key": self._KEY},
+                }
+            ],
+        )
+        assert response.status_code == 200, response.text

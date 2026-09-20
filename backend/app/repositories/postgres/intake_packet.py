@@ -217,3 +217,11 @@ class PostgresIntakePacketRepository(IntakePacketRepository):
             )
         self._session.flush()
         return self.list_items(version_id)
+
+    def set_item_config(self, item_id: str, config: dict[str, object]) -> dict[str, object] | None:
+        row = self._session.get(IntakeItemDefinitionRow, item_id)
+        if row is None:
+            return None
+        row.config = config
+        self._session.flush()
+        return _item_to_dict(row)

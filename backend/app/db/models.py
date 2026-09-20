@@ -549,6 +549,66 @@ class IntakeItemDefinitionRow(Base):
     )
 
 
+class IntakeDocumentRow(Base):
+    """One version of one document the practice asks people to read and sign.
+
+    Practice-level like the three tables above, and registered
+    not-row-scoped for the same reason: a consent document is the
+    practice's own paperwork, identical whoever it is sent to, so there is
+    no ``user_id`` or ``patient_id`` to key a row policy on. What somebody
+    SIGNED is a different table, per-patient and row-scoped.
+
+    **A row is a version, not a document.** ``document_key`` is the
+    document; ``version`` numbers its revisions; the primary key identifies
+    one revision of one document. Publishing a change never edits a row —
+    it writes a new one with the same key and the next number — because a
+    signature points at a version, and rewriting the text under it would
+    change what somebody agreed to while leaving nothing in the record
+    looking wrong.
+
+    ``digest`` is the sha256 of the version's canonical text (see
+    :mod:`app.intake.documents`), maintained on every write so a draft and
+    a published version are read the same way. It is the evidence a
+    signature carries, which is why it is taken over the words rather than
+    over any rendering of them.
+
+    Two rules live in indexes. ``uq_intake_documents_version`` says a
+    document has one row per number. ``uq_intake_documents_draft`` is
+    partial on ``published_at IS NULL`` and says a document has at most one
+    unpublished draft — the same "there is only ever one thing being
+    edited" rule the packet versions follow, enforced here by the database
+    because the practice can start a new version from more than one screen.
+
+    ``signer_roles`` is who has to sign: the patient, and a guardian where
+    the practice asks for one. A list rather than a pair of booleans so the
+    stored value reads the way the setting does.
+    """
+
+    __tablename__ = "intake_documents"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    document_key: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    body_markdown: Mapped[str] = mapped_column(Text, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    published_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    requires_signature: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    signer_roles: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("document_key", "version", name="uq_intake_documents_version"),
+        Index(
+            "uq_intake_documents_draft",
+            "document_key",
+            unique=True,
+            postgresql_where=text("published_at IS NULL"),
+        ),
+    )
+
+
 class PatientIntakeAssignmentRow(Base):
     """One patient being asked to fill in one version of one form.
 
