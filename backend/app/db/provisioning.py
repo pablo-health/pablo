@@ -30,6 +30,7 @@ from . import (
     PLATFORM_SCHEMA,
     _validate_schema_name,
 )
+from .intake_seed import seed_default_intake_packet
 from .platform_bootstrap import require_platform_schema
 from .platform_models import PracticeRow
 
@@ -404,6 +405,11 @@ def _create_practice_schema_locked(engine: Engine, schema_name: str) -> None:
     else:
         _apply_tenant_template(engine, schema_name)
         _stamp_alembic_at_head(engine, schema_name)
+        # The form every practice starts with. Here rather than in a
+        # migration because the chain is not what builds a fresh schema —
+        # a revision that inserted rows would run for practices that
+        # already exist and never for the ones being created.
+        seed_default_intake_packet(engine, schema_name)
         # Hooks fire only on the fresh-template path. A downstream
         # deployment's overlay hook lays down its own per-tenant
         # addendum + stamps its own tenant-chain bookkeeping so the

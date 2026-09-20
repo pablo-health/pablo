@@ -949,8 +949,24 @@ _OVERLAY_NOT_ROW_SCOPED: set[str] = set()
 #     DO carry ``patient_id`` and get the patient-access policy.
 #   * users — vestigial per-tenant table. Runtime identity lives in the
 #     platform schema; nothing reads this per-tenant copy.
+#   * intake_packet_templates / intake_packet_versions /
+#     intake_item_definitions — the practice's own intake forms and the
+#     questions on them. Practice-level like the three above: a form is the
+#     same paperwork whoever it is sent to, so there is no ``user_id`` /
+#     ``patient_id`` to key a policy on, and they are considered only
+#     because they carry an ``id``. What a patient ANSWERS is a different
+#     table entirely, and that one is per-patient and row-scoped.
 _CORE_NOT_ROW_SCOPED: frozenset[str] = frozenset(
-    {"ehr_routes", "scheduling_policy", "practice_billing_profile", "payers", "users"}
+    {
+        "ehr_routes",
+        "scheduling_policy",
+        "practice_billing_profile",
+        "payers",
+        "users",
+        "intake_packet_templates",
+        "intake_packet_versions",
+        "intake_item_definitions",
+    }
 )
 
 

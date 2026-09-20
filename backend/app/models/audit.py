@@ -243,6 +243,14 @@ class AuditAction(StrEnum):
     # never any of their words.
     PATIENT_INTAKE_SUBMISSION_VIEWED = "patient_intake_submission_viewed"
 
+    # A clinician published a version of an intake form. Not a disclosure —
+    # a form is the practice's own paperwork and holds nobody's answers — but
+    # it is what every submission afterwards will be read against, so which
+    # version went live and when is worth having on the record. The payload
+    # carries the template and version ids and the number of items, never the
+    # questions.
+    INTAKE_TEMPLATE_PUBLISHED = "intake_template_published"
+
     # Secure patient messaging. Both principals write these: a patient
     # starting a thread or sending into one, and a clinician replying. The
     # actor is what ``actor_type`` separates, so the action names say what
@@ -438,6 +446,7 @@ class ResourceType(StrEnum):
     CHAT_CONVERSATION = "chat_conversation"
     PATIENT_DOCUMENT = "patient_document"
     PATIENT_INTAKE_SUBMISSION = "patient_intake_submission"
+    INTAKE_PACKET_VERSION = "intake_packet_version"
     PATIENT_MESSAGE_THREAD = "patient_message_thread"
     INVITATION = "invitation"
     CLAIM = "claim"

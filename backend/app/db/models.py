@@ -430,6 +430,125 @@ class PatientIntakeSubmissionRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class IntakePacketTemplateRow(Base):
+    """A named intake form the practice builds, across all its versions.
+
+    Practice-level, not per-patient: this is the practice's own paperwork,
+    the same for everyone it is sent to. There is no ``user_id`` or
+    ``patient_id`` to scope a row by, so — like ``payers`` and
+    ``scheduling_policy`` — its isolation boundary is the tenant schema and
+    RLS is deliberately off (``_CORE_NOT_ROW_SCOPED`` in :mod:`app.db`).
+
+    ``created_by`` is NULL on the form every practice starts with, which is
+    laid down when the schema is provisioned and so has no author. A NULL
+    there reads as "this came with Pablo", which is exactly what it means.
+
+    Archiving is ``archived_at``, not a delete. A version that a patient
+    filled in has to stay readable for as long as their record does, and the
+    published versions hang off this row.
+    """
+
+    __tablename__ = "intake_packet_templates"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    created_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class IntakePacketVersionRow(Base):
+    """One numbered version of an intake form.
+
+    A version is a draft until ``published_at`` is set, and frozen after.
+    That is what lets an answered form be read back against the exact
+    questions it asked: editing a published version in place would rewrite
+    the past, so the editor makes a new version from the old one instead.
+
+    The freeze is enforced in the service layer rather than by a constraint,
+    because what it forbids is a write to a *different* table — the item rows
+    that point here. A CHECK cannot see across that join, and a trigger would
+    put the rule somewhere no reader of this model would look for it.
+
+    ``published_by`` is NULL while a version is a draft, and also on the
+    version that ships with a fresh practice schema — nobody published that
+    one either.
+    """
+
+    __tablename__ = "intake_packet_versions"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    template_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("intake_packet_templates.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    published_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("template_id", "version", name="uq_intake_packet_versions_number"),
+    )
+
+
+class IntakeItemDefinitionRow(Base):
+    """One question, or one piece of display text, on one version of a form.
+
+    ``item_type`` is constrained to the vocabulary in
+    :mod:`app.intake.items`, and ``config`` is that type's own settings —
+    the choices a question offers, the ends of a scale, which measure to ask.
+    JSONB because every type's settings are a different shape and none of
+    them is ever queried; the type column is what the database constrains,
+    and the discriminated union in ``app.intake.items`` is what constrains
+    the blob.
+
+    ``key`` is the practice's own name for the question ("substance_use"),
+    unique within a version and assigned when the item is created. Rules
+    point at it rather than at a position, so reordering a form cannot
+    silently re-point one at a different question.
+
+    ``position`` is the order the patient sees, unique per version so two
+    items cannot claim the same place.
+
+    ``resign_on_new_version`` marks an item whose answer does not carry
+    forward — a consent that has to be given again when the form it is part
+    of changes. Nothing reads it yet; it ships with the column it belongs to
+    rather than costing a migration later.
+    """
+
+    __tablename__ = "intake_item_definitions"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    version_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("intake_packet_versions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    key: Mapped[str] = mapped_column(String(64), nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    item_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    config: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    resign_on_new_version: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "item_type IN ("
+            "'section','instructions','demographics','reason','free_text',"
+            "'single_choice','multi_choice','yes_no','scale','number','date',"
+            "'instrument','emergency_contact','guardian','consent_document',"
+            "'insurance_card','document_request')",
+            name="ck_intake_item_definitions_type",
+        ),
+        UniqueConstraint("version_id", "position", name="uq_intake_item_definitions_position"),
+        UniqueConstraint("version_id", "key", name="uq_intake_item_definitions_key"),
+    )
+
+
 class PatientMessageThreadRow(Base):
     """One secure-message conversation between a patient and their practice.
 
