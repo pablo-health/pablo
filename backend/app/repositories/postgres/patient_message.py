@@ -318,3 +318,22 @@ class PostgresPatientMessageRepository(PatientMessageRepository):
             .order_by(PatientMessageAttachmentRow.created_at.asc())
         ).all()
         return _group_attachments(rows)
+
+    def thread_ids_for_documents(self, document_ids: list[str], patient_id: str) -> dict[str, str]:
+        if not document_ids:
+            return {}
+        rows = self._session.execute(
+            select(
+                PatientMessageAttachmentRow.document_id,
+                PatientMessageRow.thread_id,
+            )
+            .join(
+                PatientMessageRow,
+                PatientMessageRow.id == PatientMessageAttachmentRow.message_id,
+            )
+            .where(
+                PatientMessageAttachmentRow.document_id.in_(document_ids),
+                PatientMessageAttachmentRow.patient_id == patient_id,
+            )
+        ).all()
+        return {row[0]: row[1] for row in rows}

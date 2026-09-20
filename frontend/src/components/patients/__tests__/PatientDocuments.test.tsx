@@ -138,4 +138,46 @@ describe("PatientDocuments", () => {
       ).toBeInTheDocument()
     })
   })
+
+  describe("what the padlock means", () => {
+    it("marks a file sent on a message, and does not call it private", () => {
+      mockUsePatientDocuments.mockReturnValue({
+        data: {
+          data: [
+            makeDoc({
+              id: "doc-msg",
+              filename: "insurance-card.png",
+              category: "message",
+              uploaded_by: "patient",
+              message_thread_id: "t-1",
+            }),
+          ],
+          total: 1,
+        },
+        isLoading: false,
+        error: null,
+      })
+      render(<PatientDocuments patientId="patient-1" />, { wrapper: createWrapper() })
+
+      expect(screen.getByText(/sent in a message/i)).toBeInTheDocument()
+      expect(screen.getByTestId("patient-document-thread-doc-msg")).toBeInTheDocument()
+      expect(
+        screen.queryByLabelText(/only you can see this/i),
+      ).not.toBeInTheDocument()
+    })
+
+    it("still locks the two categories only their uploader can see", () => {
+      mockUsePatientDocuments.mockReturnValue({
+        data: {
+          data: [makeDoc({ id: "doc-notes", category: "psychotherapy_notes" })],
+          total: 1,
+        },
+        isLoading: false,
+        error: null,
+      })
+      render(<PatientDocuments patientId="patient-1" />, { wrapper: createWrapper() })
+
+      expect(screen.getByLabelText(/only you can see this/i)).toBeInTheDocument()
+    })
+  })
 })

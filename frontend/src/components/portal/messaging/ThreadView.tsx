@@ -14,6 +14,11 @@
  *
  * The thread's status is shown, but there is nothing here to close a
  * thread with. That lifecycle belongs to the practice side.
+ *
+ * A file on a message is a link and not a preview. The browser is better
+ * at showing a PDF than anything written here would be, and the URL behind
+ * the link is minted per click and short-lived — so it is fetched when the
+ * patient asks for it rather than held in the payload.
  */
 
 "use client"
@@ -22,18 +27,24 @@ import { useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import type {
   PatientMessage,
+  PatientMessageAttachment,
   PatientMessageThreadDetail,
 } from "@/lib/api/patientMessages"
-import { MessageComposer } from "./MessageComposer"
+import { formatFileSize, MessageComposer } from "./MessageComposer"
+import type { ComposerAttachment } from "./MessageComposer"
 
 export interface ThreadViewProps {
   thread: PatientMessageThreadDetail
   onMarkRead: (threadId: string) => void
-  onSend: (body: string) => Promise<unknown>
+  onSend: (body: string, attachmentIds: string[]) => Promise<unknown>
   sending: boolean
   slaText?: string | null
   sendError?: string | null
   onBack?: () => void
+  /** Upload a picked file; absent means this thread offers no attaching. */
+  onAttach?: (file: File) => Promise<ComposerAttachment>
+  /** Open one of this thread's files. Absent means the chips do not link. */
+  onOpenAttachment?: (attachment: PatientMessageAttachment) => void
 }
 
 function senderLabel(sender: PatientMessage["sender"]): string {
@@ -58,6 +69,8 @@ export function ThreadView({
   slaText,
   sendError,
   onBack,
+  onAttach,
+  onOpenAttachment,
 }: ThreadViewProps) {
   const markedThreadId = useRef<string | null>(null)
 
@@ -106,6 +119,29 @@ export function ThreadView({
                 {senderLabel(message.sender)} · {formatSent(message.created_at)}
               </p>
               <p className="mt-1 whitespace-pre-wrap">{message.body}</p>
+              {message.attachments && message.attachments.length > 0 && (
+                <ul
+                  className="mt-2 flex flex-col gap-1"
+                  data-testid={`portal-messaging-attachments-${message.id}`}
+                >
+                  {message.attachments.map((attachment) => (
+                    <li key={attachment.document_id}>
+                      <button
+                        type="button"
+                        data-testid={`portal-messaging-attachment-${attachment.document_id}`}
+                        className="text-sm underline"
+                        disabled={!onOpenAttachment}
+                        onClick={() => onOpenAttachment?.(attachment)}
+                      >
+                        {attachment.filename}
+                      </button>
+                      <span className="ml-2 text-xs opacity-80">
+                        {formatFileSize(attachment.size_bytes)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </li>
           )
         })}
@@ -116,6 +152,7 @@ export function ThreadView({
         sending={sending}
         slaText={slaText}
         error={sendError}
+        onAttach={onAttach}
       />
     </div>
   )

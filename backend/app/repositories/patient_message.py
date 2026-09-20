@@ -172,6 +172,16 @@ class PatientMessageRepository(ABC):
         it with ``.get(id, [])``.
         """
 
+    @abstractmethod
+    def thread_ids_for_documents(self, document_ids: list[str], patient_id: str) -> dict[str, str]:
+        """Which thread each of these documents was sent on, where any was.
+
+        The reverse of the link, for the chart: a document filed as
+        correspondence is more useful when the reader can get to the
+        conversation it came from. Documents that went on no message are
+        absent from the mapping.
+        """
+
 
 class InMemoryPatientMessageRepository(PatientMessageRepository):
     """In-memory repository for unit tests.
@@ -343,4 +353,23 @@ class InMemoryPatientMessageRepository(PatientMessageRepository):
                     size_bytes=size_bytes,
                 )
             )
+        return found
+
+    def thread_ids_for_documents(self, document_ids: list[str], patient_id: str) -> dict[str, str]:
+        wanted = set(document_ids)
+        found: dict[str, str] = {}
+        for document_id, (message_id, owner) in self._attachments.items():
+            if document_id not in wanted or owner != patient_id:
+                continue
+            thread = next(
+                (
+                    m.thread_id
+                    for messages in self._messages.values()
+                    for m in messages
+                    if m.id == message_id
+                ),
+                None,
+            )
+            if thread is not None:
+                found[document_id] = thread
         return found

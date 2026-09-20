@@ -62,12 +62,16 @@ from ..models.audit import ResourceType
 from ..rate_limit import get_patient_document_init_limiter
 from ..repositories import (
     PatientDocumentRepository,
+    PatientMessageRepository,
     PatientRepository,
     UserRepository,
     get_user_repository,
 )
 from ..repositories import (
     get_patient_document_repository as _patient_document_repo_factory,
+)
+from ..repositories import (
+    get_patient_message_repository as _message_repo_factory,
 )
 from ..repositories import (
     get_patient_repository as _patient_repo_factory,
@@ -134,6 +138,19 @@ def get_patient_repository(
     _ctx: TenantContext = Depends(get_tenant_context),
 ) -> PatientRepository:
     return _patient_repo_factory()
+
+
+def get_message_repository_for_documents(
+    _ctx: TenantContext = Depends(get_tenant_context),
+) -> PatientMessageRepository:
+    """The messaging repository, for the thread a ``message`` document came on.
+
+    Only the reverse link is read here. Which documents the caller may see
+    is still the documents service's answer, and this is asked afterwards
+    about that answer — so the chart gains a way back to the conversation
+    without gaining a second opinion on who may read it.
+    """
+    return _message_repo_factory()
 
 
 def get_patient_document_repository(
@@ -243,6 +260,13 @@ class PatientDocumentResponse(BaseModel):
     # different act from reading something a colleague filed — so the chart
     # gets to say which without inferring it from a missing field.
     uploaded_by: Literal["patient", "clinician"] = "clinician"
+    # The conversation a ``message`` document arrived on, where the caller
+    # asked for it. A file sent as correspondence reads differently from
+    # one filed on its own, and the words it came with are the difference —
+    # so the chart can offer them rather than leaving a reader to go
+    # looking. NULL on every other category, and on a surface that did not
+    # look the link up.
+    message_thread_id: str | None = None
 
     @classmethod
     def from_document(
@@ -250,6 +274,7 @@ class PatientDocumentResponse(BaseModel):
         document: PatientDocument,
         *,
         include_extracted_text: bool = False,
+        message_thread_id: str | None = None,
     ) -> PatientDocumentResponse:
         return cls(
             id=document.id,
@@ -264,6 +289,7 @@ class PatientDocumentResponse(BaseModel):
             extraction_status=document.extraction_status,
             text_extraction_failed=(document.extraction_status == ExtractionStatus.FAILED),
             uploaded_by=("patient" if document.uploaded_by == "patient" else "clinician"),
+            message_thread_id=message_thread_id,
         )
 
 
@@ -531,17 +557,31 @@ def list_patient_documents(
     user: User = Depends(require_baa_acceptance),
     patient_repo: PatientRepository = Depends(get_patient_repository),
     service: PatientDocumentsService = Depends(get_patient_documents_service),
+    messages: PatientMessageRepository = Depends(get_message_repository_for_documents),
     audit: AuditService = Depends(get_audit_service),
 ) -> PatientDocumentListResponse:
-    """List the caller's documents for a patient, newest first."""
+    """List the caller's documents for a patient, newest first.
+
+    A ``message`` document carries the thread it arrived on. The lookup is
+    one query for the whole page, and it asks only about documents this
+    caller was already shown — a grant on the patient is what got them
+    here, and the same grant is what reaches the thread.
+    """
     patient = patient_repo.get(patient_id, user.id)
     if patient is None:
         raise NotFoundError("Patient not found", {"patient_id": patient_id})
 
     documents = service.list_for_patient(patient_id, user.id)
+    threads = messages.thread_ids_for_documents(
+        [d.id for d in documents if d.category is DocumentCategory.MESSAGE],
+        patient_id,
+    )
     audit.log_patient_action(AuditAction.PATIENT_VIEWED, user, http_request, patient)
     return PatientDocumentListResponse(
-        data=[PatientDocumentResponse.from_document(d) for d in documents],
+        data=[
+            PatientDocumentResponse.from_document(d, message_thread_id=threads.get(d.id))
+            for d in documents
+        ],
         total=len(documents),
     )
 
