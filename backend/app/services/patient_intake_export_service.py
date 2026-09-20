@@ -23,6 +23,11 @@ replaced them.
 questions this patient was shown is computed by the same completion walk the
 portal and the submit path use — never decided here, and never inferred from
 an answer being absent.
+
+**Files are named, not carried.** A form that asked for a photograph of an
+insurance card produces a list of what arrived and a link back to the
+document route, and never the bytes. The document is filed, forwarded and
+printed; a photograph embedded in it goes everywhere it goes.
 """
 
 from __future__ import annotations
@@ -34,6 +39,7 @@ from ..intake.consent_statement import consent_statement
 from ..intake.documents import render_html
 from ..intake.export import (
     ExportAnswer,
+    ExportArtifact,
     ExportEvent,
     ExportItem,
     ExportSignature,
@@ -44,9 +50,14 @@ from ..intake.export import (
 from ..intake.items import InstructionsConfig
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from datetime import tzinfo
+
     from ..intake.export import AnswerState
     from ..intake.items import ItemConfig
     from ..repositories.intake_document import IntakeDocumentRepository
+    from ..repositories.patient_document import PatientDocumentRepository
+    from ..repositories.patient_intake_artifact import PatientIntakeArtifactRepository
     from ..repositories.patient_intake_signature import PatientIntakeSignatureRepository
     from .patient_intake_assignment_service import IntakeAssignmentService
     from .patient_intake_review_service import IntakeReviewService
@@ -61,11 +72,15 @@ class IntakeExportService:
         reviews: IntakeReviewService,
         signatures: PatientIntakeSignatureRepository,
         documents: IntakeDocumentRepository,
+        artifacts: PatientIntakeArtifactRepository,
+        files: PatientDocumentRepository,
     ) -> None:
         self._assignments = assignments
         self._reviews = reviews
         self._signatures = signatures
         self._documents = documents
+        self._artifacts = artifacts
+        self._files = files
 
     def build(
         self,
@@ -77,6 +92,9 @@ class IntakeExportService:
         packet_name: str,
         version: int,
         practice_name: str | None,
+        exported_at: datetime,
+        timezone: tzinfo,
+        document_url: Callable[[str], str],
     ) -> IntakeExport:
         """Everything the document prints, for one form on one chart.
 
@@ -84,11 +102,17 @@ class IntakeExportService:
         patient's chart and that the clinician holds a grant on it; every
         read below carries the grant as well, so a caller that had not
         would get an empty document rather than somebody else's.
+
+        ``exported_at`` and ``timezone`` come in rather than being read
+        here: when the copy was taken is the route's fact, which is what
+        lets a test fix it, and which frame to write it in is the
+        practice's.
         """
         assignment_id = str(assignment["id"])
         patient_id = str(assignment["patient_id"])
         hidden = set(self._assignments.progress(assignment, patient_id).hidden)
         history = self._responses_by_item(assignment_id, user_id)
+        items = self._assignments.items(str(assignment["version_id"]))
 
         return IntakeExport(
             practice_name=practice_name,
@@ -102,10 +126,13 @@ class IntakeExportService:
             submitted_at=_moment(assignment.get("submitted_at")),
             accepted_at=_moment(assignment.get("accepted_at")),
             withdrawn_at=_moment(assignment.get("withdrawn_at")),
+            exported_at=exported_at,
+            timezone=timezone,
             items=[
                 self._item(row, history.get(str(row["id"]), []), shown=str(row["id"]) not in hidden)
-                for row in self._assignments.items(str(assignment["version_id"]))
+                for row in items
             ],
+            artifacts=self._artifact_list(assignment_id, user_id, items, document_url),
             signatures=[
                 self._signature(row)
                 for row in self._signatures.list_live_for_assignment(assignment_id, patient_id)
@@ -119,6 +146,56 @@ class IntakeExportService:
                 for row in self._reviews.events(assignment_id, user_id)
             ],
         )
+
+    # --- the files a form collected ---
+
+    def _artifact_list(
+        self,
+        assignment_id: str,
+        user_id: str,
+        items: list[dict[str, object]],
+        document_url: Callable[[str], str],
+    ) -> list[ExportArtifact]:
+        """Every file on the form, named by the question that asked for it.
+
+        A file whose document the caller cannot reach is left out, which is
+        the same thing the chart's own list does with it. The artifact rows
+        arrive oldest first, so the front of a card reads before the back
+        when they were sent in that order.
+        """
+        rows = self._artifacts.list_for_clinician(assignment_id, user_id)
+        if not rows:
+            return []
+
+        files = {
+            document.id: document
+            for document in self._files.get_many([str(row["document_id"]) for row in rows], user_id)
+        }
+        headings = {
+            str(row["id"]): item_heading(
+                self._assignments.config_for(row),
+                _optional_str(row.get("label")),
+                str(row["key"]),
+                str(row["item_type"]),
+            )
+            for row in items
+        }
+        listed: list[ExportArtifact] = []
+        for row in rows:
+            document = files.get(str(row["document_id"]))
+            if document is None:
+                continue
+            item_id = str(row["item_id"])
+            listed.append(
+                ExportArtifact(
+                    heading=headings.get(item_id, item_id),
+                    filename=document.filename,
+                    side=_optional_str(row.get("side")),
+                    size_bytes=document.size_bytes,
+                    url=document_url(document.id),
+                )
+            )
+        return listed
 
     # --- one question ---
 

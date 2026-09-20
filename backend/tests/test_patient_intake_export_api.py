@@ -7,48 +7,66 @@ portal's own routes: what is under test here is the document and the door in
 front of it, and the round trip the patient makes has its own tests next
 door in ``test_patient_intake_assignments_api.py``.
 
-Four things are proven, and each one is a property somebody could lose
+Six things are proven, and each one is a property somebody could lose
 without any other test noticing:
 
-* the file is self-contained — no script, no address it would fetch from;
-* every value is escaped, including one that is a script tag;
-* two exports of one form are the same bytes;
+* the file is self-contained — no script, and nothing it fetches on open;
+* every value is escaped, including one that is a script tag and a
+  filename that is one;
+* two exports of one form are the same bytes but for the line that says
+  when the copy was taken, which is why the clock is a dependency;
+* moments are written in the practice's own day, with the zone named;
+* the files a form collected are named and linked, never embedded;
 * a form on somebody else's chart is a 404, and every export is audited.
 """
 
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
+from zoneinfo import ZoneInfo
 
 import pytest
 from app.intake.signatures import evidence_digest
 from app.main import app as real_app
-from app.models import Patient
+from app.models import DocumentCategory, Patient, PatientDocument
 from app.models.audit import AuditAction
 from app.outcome_measures.service import OutcomeMeasureService
 from app.repositories import (
     InMemoryIntakeDocumentRepository,
     InMemoryIntakePacketRepository,
+    InMemoryPatientDocumentRepository,
+    InMemoryPatientIntakeArtifactRepository,
     InMemoryPatientIntakeAssignmentRepository,
     InMemoryPatientIntakeSignatureRepository,
     InMemoryPatientRepository,
     get_patient_repository,
 )
+from app.repositories.coverage import (
+    InMemoryPatientCoverageRepository,
+    InMemoryPayerRepository,
+)
 from app.repositories.outcome_measure import InMemoryOutcomeMeasureRepository
 from app.routes.patient_intake_assignments import (
     get_clinician_intake_assignment_service,
+    get_clinician_patient_document_repository,
     get_clinician_patient_repository,
 )
 from app.routes.patient_intake_export import (
+    get_clinician_intake_artifact_repository,
     get_clinician_intake_document_repository,
+    get_document_url_base,
+    get_export_clock,
     get_practice_name,
+    get_practice_timezone,
 )
 from app.routes.patient_intake_review import (
     get_clinician_signature_repository,
     get_intake_review_service,
 )
 from app.services.intake_packet_service import IntakePacketService
+from app.services.patient_intake_artifact_service import IntakeArtifactService
 from app.services.patient_intake_assignment_service import IntakeAssignmentService
 from app.services.patient_intake_review_service import IntakeReviewService
 from app.utcnow import utc_now
@@ -61,6 +79,16 @@ _PATIENT_A = "11111111-1111-4111-8111-111111111111"
 _PATIENT_B = "22222222-2222-4222-8222-222222222222"
 _CLINICIAN = "test-user-123"
 _PRACTICE = "Bramble Street Counseling"
+
+#: The clock the route is handed, so two exports can be compared byte for
+#: byte and a second one a minute later can be asked what changed.
+_TAKEN = datetime(2026, 3, 14, 17, 5, tzinfo=UTC)
+_NEW_YORK = ZoneInfo("America/New_York")
+_URL_BASE = "https://pablo.example"
+
+#: A filename that is also a script tag. People name files, so the escape
+#: has to hold against one somebody actually typed.
+_SCRIPTED_FILENAME = "<script>alert('f')</script>.png"
 
 #: An answer that is also a script tag, so escaping is proven against the
 #: value a patient could actually type rather than against a fixture that
@@ -113,6 +141,23 @@ _ITEMS: list[dict[str, Any]] = [
         "label": "What wakes you?",
         "required": True,
     },
+    # Two questions answered by sending a file. Optional, so a form can be
+    # handed in with nothing attached and the attachments section can be
+    # proven absent as well as present.
+    {
+        "key": "card",
+        "item_type": "insurance_card",
+        "config": {"sides": "both"},
+        "label": "A photo of your insurance card",
+        "required": False,
+    },
+    {
+        "key": "records",
+        "item_type": "document_request",
+        "config": {},
+        "label": "Any records from a previous provider",
+        "required": False,
+    },
 ]
 
 _ANSWERS: dict[str, dict[str, object]] = {
@@ -153,6 +198,27 @@ def documents_repo() -> InMemoryIntakeDocumentRepository:
 
 
 @pytest.fixture
+def artifacts_repo() -> InMemoryPatientIntakeArtifactRepository:
+    repo = InMemoryPatientIntakeArtifactRepository()
+    repo.grant_access(_PATIENT_A, _CLINICIAN)
+    repo.grant_access(_PATIENT_B, _CLINICIAN)
+    return repo
+
+
+@pytest.fixture
+def files_repo() -> InMemoryPatientDocumentRepository:
+    """Granted on A's chart only, so "cannot reach it" is a real state.
+
+    Deliberately narrower than the artifact store beside it: that is what
+    lets a test put a row on the form whose document this caller may not
+    read, which is the case the document has to leave out.
+    """
+    repo = InMemoryPatientDocumentRepository()
+    repo.grant_access(_PATIENT_A, _CLINICIAN)
+    return repo
+
+
+@pytest.fixture
 def patients() -> InMemoryPatientRepository:
     repo = InMemoryPatientRepository()
     for patient_id, first, last in ((_PATIENT_A, "Ada", "Lovelace"), (_PATIENT_B, "Grace", "H")):
@@ -186,6 +252,24 @@ def reviews(
     packets: InMemoryIntakePacketRepository,
 ) -> IntakeReviewService:
     return IntakeReviewService(assignments_repo, packets)
+
+
+@pytest.fixture
+def artifact_service(
+    artifacts_repo: InMemoryPatientIntakeArtifactRepository,
+    assignments_repo: InMemoryPatientIntakeAssignmentRepository,
+    packets: InMemoryIntakePacketRepository,
+    files_repo: InMemoryPatientDocumentRepository,
+) -> IntakeArtifactService:
+    """The real attach path, so a test's rows are the ones it writes."""
+    return IntakeArtifactService(
+        artifacts_repo,
+        assignments_repo,
+        packets,
+        files_repo,
+        InMemoryPayerRepository(),
+        InMemoryPatientCoverageRepository(),
+    )
 
 
 @pytest.fixture
@@ -227,15 +311,28 @@ def chart(
     patients: InMemoryPatientRepository,
     signatures_repo: InMemoryPatientIntakeSignatureRepository,
     documents_repo: InMemoryIntakeDocumentRepository,
+    artifacts_repo: InMemoryPatientIntakeArtifactRepository,
+    files_repo: InMemoryPatientDocumentRepository,
 ) -> TestClient:
-    """The shared clinician client, with every intake store in memory."""
+    """The shared clinician client, with every intake store in memory.
+
+    The clock is pinned here. It is a dependency precisely so a test can
+    do this: the only thing in the document that would otherwise move
+    between two calls is the line saying when the copy was taken, and the
+    byte-for-byte comparison below is about everything else.
+    """
     real_app.dependency_overrides[get_clinician_intake_assignment_service] = lambda: service
     real_app.dependency_overrides[get_clinician_patient_repository] = lambda: patients
     real_app.dependency_overrides[get_patient_repository] = lambda: patients
     real_app.dependency_overrides[get_intake_review_service] = lambda: reviews
     real_app.dependency_overrides[get_clinician_signature_repository] = lambda: signatures_repo
     real_app.dependency_overrides[get_clinician_intake_document_repository] = lambda: documents_repo
+    real_app.dependency_overrides[get_clinician_intake_artifact_repository] = lambda: artifacts_repo
+    real_app.dependency_overrides[get_clinician_patient_document_repository] = lambda: files_repo
     real_app.dependency_overrides[get_practice_name] = lambda: _PRACTICE
+    real_app.dependency_overrides[get_export_clock] = lambda: _TAKEN
+    real_app.dependency_overrides[get_practice_timezone] = lambda: UTC
+    real_app.dependency_overrides[get_document_url_base] = lambda: _URL_BASE
     return client
 
 
@@ -248,6 +345,19 @@ def _item_id(service: IntakeAssignmentService, version_id: str, key: str) -> str
     return next(str(row["id"]) for row in service.items(version_id) if row["key"] == key)
 
 
+def _hand_in(
+    service: IntakeAssignmentService,
+    measures: OutcomeMeasureService,
+    assignment: dict[str, object],
+    version_id: str,
+    patient_id: str = _PATIENT_A,
+) -> dict[str, object]:
+    """Answer the typed questions on a form and send it."""
+    for key, answer in _ANSWERS.items():
+        service.save_answer(assignment, patient_id, _item_id(service, version_id, key), answer)
+    return service.submit(assignment, patient_id, measures).assignment
+
+
 def _submitted(
     service: IntakeAssignmentService,
     measures: OutcomeMeasureService,
@@ -256,9 +366,7 @@ def _submitted(
 ) -> dict[str, object]:
     """One assignment, answered and handed in."""
     assignment, _ = service.assign(patient_id, version_id, _CLINICIAN)
-    for key, answer in _ANSWERS.items():
-        service.save_answer(assignment, patient_id, _item_id(service, version_id, key), answer)
-    return service.submit(assignment, patient_id, measures).assignment
+    return _hand_in(service, measures, assignment, version_id, patient_id)
 
 
 def _export(chart: TestClient, assignment_id: str, patient_id: str = _PATIENT_A) -> Any:
@@ -310,6 +418,56 @@ def _sign(
         "superseded_at": None,
     }
     signatures.add({**row, "evidence_digest": evidence_digest(row)})
+
+
+def _upload(
+    files: InMemoryPatientDocumentRepository,
+    *,
+    filename: str,
+    size_bytes: int = 2048,
+    patient_id: str = _PATIENT_A,
+) -> str:
+    """A document as the patient's own upload path leaves one behind."""
+    document_id = str(uuid.uuid4())
+    now = utc_now()
+    files.add(
+        PatientDocument(
+            id=document_id,
+            patient_id=patient_id,
+            user_id=None,
+            uploaded_by_patient_id=patient_id,
+            filename=filename,
+            mime_type="image/png",
+            gcs_path=f"tenant/intake_artifact/{document_id}",
+            size_bytes=size_bytes,
+            category=DocumentCategory.INTAKE_ARTIFACT,
+            created_at=now,
+            finalized_at=now,
+        )
+    )
+    return document_id
+
+
+def _attach(
+    artifacts: IntakeArtifactService,
+    files: InMemoryPatientDocumentRepository,
+    assignment: dict[str, object],
+    item_id: str,
+    *,
+    filename: str,
+    side: str | None = None,
+    size_bytes: int = 2048,
+    patient_id: str = _PATIENT_A,
+) -> str:
+    """Upload a file and attach it to a question, the way the portal does.
+
+    Through the real service rather than by writing rows, so the item's
+    answer ends up in the shape the attach route actually writes — which
+    is what the question's own line on the document is rendered from.
+    """
+    document_id = _upload(files, filename=filename, size_bytes=size_bytes, patient_id=patient_id)
+    artifacts.attach(assignment, patient_id, item_id, document_id, side)
+    return document_id
 
 
 def _logged(mock_audit_service: AuditService) -> list[Any]:
@@ -381,7 +539,13 @@ class TestDocument:
         signatures_repo: InMemoryPatientIntakeSignatureRepository,
         documents_repo: InMemoryIntakeDocumentRepository,
     ) -> None:
-        """Self-contained is the whole promise: no script, nothing remote."""
+        """Self-contained is the whole promise: no script, nothing fetched.
+
+        The one address the document may carry is the link beside an
+        attached file, which opens nothing until somebody clicks it — so
+        the form under test here has nothing attached, and the file with
+        attachments is checked below for the narrower rule.
+        """
         assignment = _submitted(service, measures, published_version)
         _sign(signatures_repo, documents_repo, str(assignment["id"]))
         body = _export(chart, str(assignment["id"])).text
@@ -421,6 +585,42 @@ class TestDocument:
         first = _export(chart, str(assignment["id"]))
         second = _export(chart, str(assignment["id"]))
         assert first.content == second.content
+
+    def test_two_exports_a_minute_apart_differ_only_in_when_they_were_taken(
+        self,
+        chart: TestClient,
+        service: IntakeAssignmentService,
+        measures: OutcomeMeasureService,
+        published_version: str,
+    ) -> None:
+        """A copy has to say when it was taken; nothing else may move."""
+        assignment = _submitted(service, measures, published_version)
+        first = _export(chart, str(assignment["id"])).text.splitlines()
+
+        real_app.dependency_overrides[get_export_clock] = lambda: _TAKEN + timedelta(minutes=1)
+        later = _export(chart, str(assignment["id"])).text.splitlines()
+
+        assert len(first) == len(later)
+        differing = [(a, b) for a, b in zip(first, later, strict=True) if a != b]
+        assert len(differing) == 1
+        assert "Exported on 2026-03-14 17:05" in differing[0][0]
+        assert "Exported on 2026-03-14 17:06" in differing[0][1]
+
+    def test_moments_are_written_in_the_practices_own_day(
+        self,
+        chart: TestClient,
+        service: IntakeAssignmentService,
+        measures: OutcomeMeasureService,
+        published_version: str,
+    ) -> None:
+        """The file is read by the practice that produced it."""
+        real_app.dependency_overrides[get_practice_timezone] = lambda: _NEW_YORK
+        assignment = _submitted(service, measures, published_version)
+        body = _export(chart, str(assignment["id"])).text
+
+        assert "Exported on 2026-03-14 13:05 (America/New_York)" in body
+        assert " UTC" not in body
+        assert "EDT" in body or "EST" in body
 
     def test_a_measure_carries_its_total_and_band(
         self,
@@ -526,6 +726,229 @@ class TestDocument:
     ) -> None:
         assignment = _submitted(service, measures, published_version)
         assert "Signatures" not in _export(chart, str(assignment["id"])).text
+
+
+# ---------------------------------------------------------------------------
+# The files the form collected
+# ---------------------------------------------------------------------------
+
+
+class TestAttachedFiles:
+    def test_a_form_that_collected_nothing_has_no_attachments_section(
+        self,
+        chart: TestClient,
+        service: IntakeAssignmentService,
+        measures: OutcomeMeasureService,
+        published_version: str,
+    ) -> None:
+        """A heading explaining its own absence would be on most charts."""
+        assignment = _submitted(service, measures, published_version)
+        assert "Attached files" not in _export(chart, str(assignment["id"])).text
+
+    def test_each_file_is_named_sized_and_linked(
+        self,
+        chart: TestClient,
+        service: IntakeAssignmentService,
+        artifact_service: IntakeArtifactService,
+        files_repo: InMemoryPatientDocumentRepository,
+        measures: OutcomeMeasureService,
+        published_version: str,
+    ) -> None:
+        assignment, _ = service.assign(_PATIENT_A, published_version, _CLINICIAN)
+        front = _attach(
+            artifact_service,
+            files_repo,
+            assignment,
+            _item_id(service, published_version, "card"),
+            filename="card-front.png",
+            side="front",
+        )
+        _attach(
+            artifact_service,
+            files_repo,
+            assignment,
+            _item_id(service, published_version, "records"),
+            filename="referral.pdf",
+            size_bytes=5_242_880,
+        )
+        _hand_in(service, measures, assignment, published_version)
+
+        body = _export(chart, str(assignment["id"])).text
+
+        assert "Attached files" in body
+        assert "A photo of your insurance card" in body
+        assert "card-front.png (front)" in body
+        assert "2.0 KB" in body
+        assert "Any records from a previous provider" in body
+        assert "referral.pdf ·" in body
+        assert "5.0 MB" in body
+        assert f'href="{_URL_BASE}/api/documents/{front}/file"' in body
+
+    def test_a_link_is_absolute_even_when_nothing_is_configured(
+        self,
+        chart: TestClient,
+        service: IntakeAssignmentService,
+        artifact_service: IntakeArtifactService,
+        files_repo: InMemoryPatientDocumentRepository,
+        published_version: str,
+    ) -> None:
+        """A relative path in a file read outside the product resolves
+        against whatever opened it."""
+        real_app.dependency_overrides.pop(get_document_url_base)
+        assignment, _ = service.assign(_PATIENT_A, published_version, _CLINICIAN)
+        document = _attach(
+            artifact_service,
+            files_repo,
+            assignment,
+            _item_id(service, published_version, "records"),
+            filename="referral.pdf",
+        )
+
+        body = _export(chart, str(assignment["id"])).text
+        assert f'href="http://testserver/api/documents/{document}/file"' in body
+
+    def test_no_file_is_carried_in_the_document(
+        self,
+        chart: TestClient,
+        service: IntakeAssignmentService,
+        artifact_service: IntakeArtifactService,
+        files_repo: InMemoryPatientDocumentRepository,
+        measures: OutcomeMeasureService,
+        published_version: str,
+    ) -> None:
+        """A photograph printed into every copy cannot be un-sent."""
+        assignment, _ = service.assign(_PATIENT_A, published_version, _CLINICIAN)
+        _attach(
+            artifact_service,
+            files_repo,
+            assignment,
+            _item_id(service, published_version, "card"),
+            filename="card-front.png",
+            side="front",
+        )
+        _hand_in(service, measures, assignment, published_version)
+        body = _export(chart, str(assignment["id"])).text
+
+        assert "<img" not in body.lower()
+        assert "data:image" not in body
+        assert "src=" not in body
+
+    def test_the_question_that_asked_for_a_file_says_what_arrived(
+        self,
+        chart: TestClient,
+        service: IntakeAssignmentService,
+        artifact_service: IntakeArtifactService,
+        files_repo: InMemoryPatientDocumentRepository,
+        published_version: str,
+    ) -> None:
+        """And never the stored ids, which mean nothing off this deployment."""
+        assignment, _ = service.assign(_PATIENT_A, published_version, _CLINICIAN)
+        card = _item_id(service, published_version, "card")
+        front = _attach(
+            artifact_service,
+            files_repo,
+            assignment,
+            card,
+            filename="card-front.png",
+            side="front",
+        )
+        _attach(
+            artifact_service,
+            files_repo,
+            assignment,
+            card,
+            filename="card-back.png",
+            side="back",
+        )
+
+        body = _export(chart, str(assignment["id"])).text
+        assert "Front of the card sent." in body
+        assert "Back of the card sent." in body
+        # The id belongs to the link beside the file, and appears nowhere
+        # in the questions. A printed page cannot be clicked, so the link
+        # is written out as well as linked — hence twice, not once.
+        questions, attachments = body.split("<h2>Attached files</h2>")
+        assert front not in questions
+        assert attachments.count(front) == 2
+
+    def test_a_file_question_with_nothing_on_it_reads_as_unanswered(
+        self,
+        chart: TestClient,
+        service: IntakeAssignmentService,
+        measures: OutcomeMeasureService,
+        published_version: str,
+    ) -> None:
+        """Not the raw mapping the column happens to hold."""
+        assignment = _submitted(service, measures, published_version)
+        body = _export(chart, str(assignment["id"])).text
+
+        assert "A photo of your insurance card" in body
+        assert "documents:" not in body
+        assert "No answer." in body
+
+    def test_a_filename_that_is_a_script_tag_is_escaped(
+        self,
+        chart: TestClient,
+        service: IntakeAssignmentService,
+        artifact_service: IntakeArtifactService,
+        files_repo: InMemoryPatientDocumentRepository,
+        published_version: str,
+    ) -> None:
+        """People name files, so the escape has to hold against one."""
+        assignment, _ = service.assign(_PATIENT_A, published_version, _CLINICIAN)
+        _attach(
+            artifact_service,
+            files_repo,
+            assignment,
+            _item_id(service, published_version, "records"),
+            filename=_SCRIPTED_FILENAME,
+        )
+        body = _export(chart, str(assignment["id"])).text
+
+        assert "<script>alert" not in body
+        assert "&lt;script&gt;alert(&#x27;f&#x27;)&lt;/script&gt;.png" in body
+
+    def test_a_file_the_caller_cannot_reach_is_left_out(
+        self,
+        chart: TestClient,
+        service: IntakeAssignmentService,
+        artifact_service: IntakeArtifactService,
+        artifacts_repo: InMemoryPatientIntakeArtifactRepository,
+        files_repo: InMemoryPatientDocumentRepository,
+        published_version: str,
+    ) -> None:
+        """Left out rather than reported as unreadable, like the chart list.
+
+        Control first, so what the second assertion proves is the grant and
+        not an attachments section that was never going to have anything in
+        it. ``files_repo`` grants this clinician A's chart and not B's.
+        """
+        assignment, _ = service.assign(_PATIENT_A, published_version, _CLINICIAN)
+        records = _item_id(service, published_version, "records")
+        _attach(
+            artifact_service,
+            files_repo,
+            assignment,
+            records,
+            filename="mine.png",
+        )
+        out_of_reach = _upload(files_repo, filename="theirs.png", patient_id=_PATIENT_B)
+        artifacts_repo.add(
+            {
+                "id": str(uuid.uuid4()),
+                "assignment_id": str(assignment["id"]),
+                "patient_id": _PATIENT_B,
+                "item_id": records,
+                "document_id": out_of_reach,
+                "side": None,
+                "created_at": utc_now(),
+            }
+        )
+
+        body = _export(chart, str(assignment["id"])).text
+        assert "mine.png" in body
+        assert "theirs.png" not in body
+        assert out_of_reach not in body
 
 
 # ---------------------------------------------------------------------------

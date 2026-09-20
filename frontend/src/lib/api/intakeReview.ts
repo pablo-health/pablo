@@ -115,11 +115,69 @@ export interface IntakeReview extends IntakeAssignment {
   events: IntakeReviewEvent[]
 }
 
+/**
+ * One file a form collected, as the chart lists it.
+ *
+ * Carries what somebody needs in order to decide whether to open it — the
+ * name, the kind, the size, and the question it answers in the practice's
+ * own wording — and no bytes. Opening one goes through the clinician
+ * document route the rest of the chart already uses.
+ *
+ * `scan_status` is `null` on a deployment with no scanner, which is every
+ * deployment today. It is on the shape rather than missing from it because
+ * "nobody has looked at this file" and "this file was found clean" are
+ * different facts, and a screen must not read the first as the second.
+ */
+export interface IntakeChartArtifact {
+  id: string
+  item_id: string
+  item_label: string
+  side: string | null
+  document_id: string
+  filename: string
+  content_type: string
+  size_bytes: number
+  scan_status: string | null
+  created_at: string
+}
+
 /** The longest note the server will take on a correction request. */
 export const MAX_CORRECTION_NOTE_LENGTH = 1000
 
 function assignmentPath(patientId: string, assignmentId: string): string {
   return `/api/patients/${patientId}/intake-assignments/${assignmentId}`
+}
+
+/**
+ * Which forms this patient was asked for, and how far each one has got.
+ *
+ * Not a disclosure and not audited: it carries which form was sent, when,
+ * and a count of what is outstanding — no answer and no patient-authored
+ * word. Reading what they answered is the review below.
+ */
+export async function listIntakeAssignments(
+  patientId: string,
+  token?: string,
+): Promise<IntakeAssignment[]> {
+  return get<IntakeAssignment[]>(`/api/patients/${patientId}/intake-assignments`, token)
+}
+
+/**
+ * The files one form collected. Reading them is an audited disclosure.
+ *
+ * Its own call rather than a field on the review, because the chart shows
+ * the files whenever it is open and the answers only when somebody asks
+ * for them.
+ */
+export async function listIntakeArtifacts(
+  patientId: string,
+  assignmentId: string,
+  token?: string,
+): Promise<IntakeChartArtifact[]> {
+  return get<IntakeChartArtifact[]>(
+    `${assignmentPath(patientId, assignmentId)}/artifacts`,
+    token,
+  )
 }
 
 /** A form as the clinician reviews it. Reading it is an audited disclosure. */

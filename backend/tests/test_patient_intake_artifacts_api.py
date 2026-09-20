@@ -25,6 +25,7 @@ B's document id and still cannot put it on A's form.
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -39,13 +40,16 @@ from app.auth.patient_context import (
     get_patient_resolver_registry,
 )
 from app.intake.items import ItemDraft
-from app.models import DocumentCategory, PatientDocument
+from app.main import app as real_app
+from app.models import DocumentCategory, Patient, PatientDocument
 from app.models.audit import ACTOR_TYPE_PATIENT, AuditAction
 from app.repositories import (
     InMemoryIntakePacketRepository,
     InMemoryPatientDocumentRepository,
     InMemoryPatientIntakeArtifactRepository,
     InMemoryPatientIntakeAssignmentRepository,
+    InMemoryPatientRepository,
+    get_patient_repository,
 )
 from app.repositories.audit import InMemoryAuditRepository
 from app.repositories.coverage import (
@@ -54,6 +58,10 @@ from app.repositories.coverage import (
 )
 from app.routes import patient_intake_assignments
 from app.routes.patient_intake_assignments import (
+    get_clinician_intake_artifact_service,
+    get_clinician_intake_assignment_service,
+    get_clinician_patient_document_repository,
+    get_clinician_patient_repository,
     get_patient_intake_artifact_service,
     get_patient_intake_assignment_service,
 )
@@ -61,6 +69,7 @@ from app.services.audit_service import AuditService, get_audit_service
 from app.services.intake_packet_service import IntakePacketService
 from app.services.patient_intake_artifact_service import IntakeArtifactService
 from app.services.patient_intake_assignment_service import IntakeAssignmentService
+from app.settings import get_settings
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -757,3 +766,242 @@ class TestTheSaveRouteCannotForgeAnAttachment:
         )
         detail = portal.get(f"{ASSIGNMENTS}/{assignment['id']}", headers=_auth(_TOKEN_A)).json()
         assert card_item in detail["progress"]["missing"]
+
+
+# ---------------------------------------------------------------------------
+# The chart's side: what a clinician sees of the files
+# ---------------------------------------------------------------------------
+#
+# A read of its own rather than a field on the detail route, because the two
+# are read at different times: the chart shows the files whenever it is open,
+# and the answers only when somebody asks for them. What it adds over the
+# patient's own list is the file's own facts — what it is called, what kind it
+# is, how big — and the question's wording, so nothing on the chart is named
+# by an id.
+
+
+@pytest.fixture
+def chart_patients(mock_user_id: str) -> InMemoryPatientRepository:
+    """Both charts, created by the signed-in clinician so they hold a grant."""
+    repo = InMemoryPatientRepository()
+    now = datetime.now(UTC)
+    for patient_id, first, last in ((_PATIENT_A, "Ada", "Lovelace"), (_PATIENT_B, "Grace", "H")):
+        repo.create(
+            Patient(
+                id=patient_id,
+                first_name=first,
+                last_name=last,
+                created_at=now,
+                updated_at=now,
+            ),
+            mock_user_id,
+        )
+    return repo
+
+
+@pytest.fixture
+def chart(
+    client: TestClient,
+    assignment_service: IntakeAssignmentService,
+    artifact_service: IntakeArtifactService,
+    documents: InMemoryPatientDocumentRepository,
+    chart_patients: InMemoryPatientRepository,
+) -> TestClient:
+    """The shared clinician client, with every intake store in memory."""
+    real_app.dependency_overrides[get_clinician_intake_assignment_service] = lambda: (
+        assignment_service
+    )
+    real_app.dependency_overrides[get_clinician_intake_artifact_service] = lambda: artifact_service
+    real_app.dependency_overrides[get_clinician_patient_document_repository] = lambda: documents
+    real_app.dependency_overrides[get_clinician_patient_repository] = lambda: chart_patients
+    real_app.dependency_overrides[get_patient_repository] = lambda: chart_patients
+    return client
+
+
+@pytest.fixture
+def granted(
+    artifacts: InMemoryPatientIntakeArtifactRepository,
+    documents: InMemoryPatientDocumentRepository,
+    assignments: InMemoryPatientIntakeAssignmentRepository,
+    mock_user_id: str,
+) -> None:
+    """The signed-in clinician's grant on A's chart, and only A's.
+
+    The stores already grant ``_CLINICIAN``, which is the name the portal
+    half of this file uses; the clinician who signs in through the shared
+    client is somebody else, so the grant has to be given to them by name
+    for the refusals below to be about the grant and not about the name.
+    """
+    for repo in (artifacts, documents, assignments):
+        repo.grant_access(_PATIENT_A, mock_user_id)
+
+
+def _chart_artifacts(chart: TestClient, assignment_id: str, patient_id: str = _PATIENT_A):  # type: ignore[no-untyped-def]
+    return chart.get(f"/api/patients/{patient_id}/intake-assignments/{assignment_id}/artifacts")
+
+
+def _attached(
+    portal: TestClient,
+    documents: InMemoryPatientDocumentRepository,
+    assignment: dict[str, object],
+    item_id: str,
+    document_id: str,
+    *,
+    side: str | None = None,
+) -> None:
+    """Upload a file and attach it, through the portal's own routes."""
+    _upload(documents, _PATIENT_A, document_id=document_id)
+    response = _attach(portal, str(assignment["id"]), item_id, document_id, side=side)
+    assert response.status_code == 201, response.text
+
+
+class TestTheChartsList:
+    def test_it_carries_what_a_clinician_needs_to_open_a_file(
+        self,
+        chart: TestClient,
+        portal: TestClient,
+        documents: InMemoryPatientDocumentRepository,
+        assignment: dict[str, object],
+        card_item: str,
+        granted: None,
+    ) -> None:
+        _attached(portal, documents, assignment, card_item, _DOC_FRONT, side="front")
+
+        response = _chart_artifacts(chart, str(assignment["id"]))
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert len(body) == 1
+        assert body[0] == {
+            "id": body[0]["id"],
+            "item_id": card_item,
+            # The question's own wording, so nothing on the chart is named
+            # by an id.
+            "item_label": "A photo of your insurance card",
+            "side": "front",
+            "document_id": _DOC_FRONT,
+            "filename": "card.png",
+            "content_type": "image/png",
+            "size_bytes": 1234,
+            # No deployment scans yet, and absent is not "found clean".
+            "scan_status": None,
+            "created_at": body[0]["created_at"],
+        }
+
+    def test_files_come_back_oldest_first(
+        self,
+        chart: TestClient,
+        portal: TestClient,
+        documents: InMemoryPatientDocumentRepository,
+        assignment: dict[str, object],
+        card_item: str,
+        records_item: str,
+        granted: None,
+    ) -> None:
+        """So the front of a card reads before the back when it was sent first."""
+        _attached(portal, documents, assignment, card_item, _DOC_FRONT, side="front")
+        _attached(portal, documents, assignment, card_item, _DOC_BACK, side="back")
+        _attached(portal, documents, assignment, records_item, _DOC_RECORD)
+
+        body = _chart_artifacts(chart, str(assignment["id"])).json()
+        assert [row["document_id"] for row in body] == [_DOC_FRONT, _DOC_BACK, _DOC_RECORD]
+        assert [row["side"] for row in body] == ["front", "back", None]
+
+    def test_a_form_with_nothing_attached_is_an_empty_list(
+        self,
+        chart: TestClient,
+        assignment: dict[str, object],
+        granted: None,
+    ) -> None:
+        """Not a 404: the form exists, it just has no files on it."""
+        response = _chart_artifacts(chart, str(assignment["id"]))
+        assert response.status_code == 200
+        assert response.json() == []
+
+
+class TestTheChartsDoor:
+    def test_a_form_on_another_patients_chart_is_404(
+        self,
+        chart: TestClient,
+        assignment: dict[str, object],
+        granted: None,
+    ) -> None:
+        """The id names a form; the path must not say whose."""
+        assert _chart_artifacts(chart, str(assignment["id"]), _PATIENT_B).status_code == 404
+
+    def test_a_form_that_does_not_exist_is_404(self, chart: TestClient, granted: None) -> None:
+        assert _chart_artifacts(chart, str(uuid.uuid4())).status_code == 404
+
+    def test_a_clinician_with_no_grant_is_404(
+        self,
+        chart: TestClient,
+        assignment: dict[str, object],
+    ) -> None:
+        """No ``granted`` fixture, so this caller holds nothing on A's chart."""
+        assert _chart_artifacts(chart, str(assignment["id"])).status_code == 404
+
+
+class TestTheChartsAudit:
+    def test_reading_the_files_is_recorded_with_a_count_and_nothing_else(
+        self,
+        chart: TestClient,
+        portal: TestClient,
+        documents: InMemoryPatientDocumentRepository,
+        assignment: dict[str, object],
+        card_item: str,
+        granted: None,
+        mock_audit_service: AuditService,
+    ) -> None:
+        _attached(portal, documents, assignment, card_item, _DOC_FRONT, side="front")
+        assert _chart_artifacts(chart, str(assignment["id"])).status_code == 200
+
+        viewed = _viewed(mock_audit_service)
+        assert len(viewed) == 1
+        assert viewed[0].resource_id == str(assignment["id"])
+        assert viewed[0].changes == {"count": 1}
+        # Never the filename: people name files after what is in them.
+        assert "card.png" not in str(viewed[0].changes)
+
+    def test_two_reads_in_one_window_are_one_row(
+        self,
+        chart: TestClient,
+        assignment: dict[str, object],
+        granted: None,
+        mock_audit_service: AuditService,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The card on the chart fires this on every visit and every refetch."""
+        # One instance across both requests: a fresh one per call would
+        # have an empty key set and the gate would never close.
+        redis = _OneWindowRedis()
+        monkeypatch.setenv("AUDIT_READ_COALESCE_SECONDS", "900")
+        monkeypatch.setattr("app.redis_client.get_redis_client", lambda: redis)
+        get_settings.cache_clear()
+        try:
+            _chart_artifacts(chart, str(assignment["id"]))
+            _chart_artifacts(chart, str(assignment["id"]))
+        finally:
+            get_settings.cache_clear()
+
+        assert len(_viewed(mock_audit_service)) == 1
+
+
+class _OneWindowRedis:
+    """Enough of Redis for the coalescing gate: SET NX, never expiring."""
+
+    def __init__(self) -> None:
+        self._keys: set[str] = set()
+
+    def set(self, key: str, _value: str, *, nx: bool = False, ex: int | None = None) -> bool | None:
+        del ex  # the window never elapses inside one test
+        if nx and key in self._keys:
+            return None
+        self._keys.add(key)
+        return True
+
+
+def _viewed(mock_audit_service: AuditService) -> list[object]:
+    return [
+        call.args[0]
+        for call in mock_audit_service._repo.append.call_args_list
+        if call.args[0].action == AuditAction.PATIENT_INTAKE_ARTIFACTS_VIEWED.value
+    ]

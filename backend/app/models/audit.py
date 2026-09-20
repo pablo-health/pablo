@@ -369,6 +369,19 @@ class AuditAction(StrEnum):
     PATIENT_INTAKE_ARTIFACT_UPLOADED = "patient_intake_artifact_uploaded"
     PATIENT_INTAKE_ARTIFACT_REMOVED = "patient_intake_artifact_removed"
 
+    # A clinician read the files a form collected: what each one is called,
+    # how big it is, and which question it answers. A disclosure, so it is
+    # recorded — but a narrow one beside the submission read, which carries
+    # the patient's own words, so it is its own action rather than a second
+    # ``PATIENT_INTAKE_SUBMISSION_VIEWED``.
+    #
+    # The payload carries how many files came back and nothing about any of
+    # them. Never a filename: people name files after what is in them, and
+    # this log is not the place to keep that. Coalesced, like the submission
+    # read beside it — the card on the chart fires this on every visit and
+    # every refetch, and the disclosure has whole-form granularity anyway.
+    PATIENT_INTAKE_ARTIFACTS_VIEWED = "patient_intake_artifacts_viewed"
+
     # The review cycle: what a clinician did with a form after reading it.
     # None of these is a disclosure — they are writes ABOUT a patient — and
     # every payload carries item ids and nothing else. Never the note the

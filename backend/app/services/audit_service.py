@@ -47,6 +47,10 @@ _COALESCED_READ_ACTIONS: frozenset[AuditAction] = frozenset(
         # per clinician per patient per window, which is the granularity the
         # disclosure has anyway: the whole submission list, at once.
         AuditAction.PATIENT_INTAKE_SUBMISSION_VIEWED,
+        # The artifacts section of the same card, for the same reason: it
+        # fires on every visit to the chart and refetches with it, and the
+        # disclosure is the whole form's files at once.
+        AuditAction.PATIENT_INTAKE_ARTIFACTS_VIEWED,
         # The calendar list audits one of these per appointment it returns
         # (the payload carries the patient's display name), and refetches on
         # every mutation — without coalescing a single busy calendar session

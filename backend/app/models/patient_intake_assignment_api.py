@@ -118,6 +118,41 @@ class IntakeArtifactResponse(BaseModel):
     created_at: datetime
 
 
+class ClinicianIntakeArtifactResponse(BaseModel):
+    """One file a form collected, as the chart lists it.
+
+    Wider than the patient's own :class:`IntakeArtifactResponse` because
+    the chart is where somebody decides whether to open it: what the file
+    is called, what kind it is and how big, and which question it answers
+    in the practice's own wording rather than as an id.
+
+    The bytes are not here and there is no second path to them. Opening
+    one goes through the clinician document route the rest of the chart
+    already uses, which is the surface that mints a short-lived URL and
+    records the download.
+
+    ``scan_status`` is always ``None`` on a deployment with no scanner,
+    which is every deployment today. It is on the shape rather than
+    waiting for one because "nobody has looked at this file" and "this
+    file was found clean" are different facts, and a client that had to
+    infer the difference from a missing field would read the first as the
+    second.
+    """
+
+    id: str
+    item_id: str
+    #: What the question is called, never blank — the practice's own
+    #: wording when it wrote any, and the engine's heading otherwise.
+    item_label: str
+    side: str | None
+    document_id: str
+    filename: str
+    content_type: str
+    size_bytes: int
+    scan_status: str | None
+    created_at: datetime
+
+
 class IntakeCorrectionResponse(BaseModel):
     """What the practice has asked this patient to go back and redo.
 
@@ -286,6 +321,7 @@ __all__ = [
     "ArtifactWriteResponse",
     "AttachArtifactRequest",
     "ClinicianIntakeAnswerResponse",
+    "ClinicianIntakeArtifactResponse",
     "ClinicianIntakeAssignmentDetailResponse",
     "CreateAssignmentRequest",
     "IntakeArtifactResponse",

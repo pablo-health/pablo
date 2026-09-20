@@ -15,11 +15,13 @@ says it did.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 from app.intake.export import (
     ExportAnswer,
+    ExportArtifact,
     ExportEvent,
     ExportItem,
     ExportSignature,
@@ -31,6 +33,8 @@ from app.intake.export import (
 from app.intake.items import ItemConfig, validate_item_config
 
 _WHEN = datetime(2026, 3, 14, 9, 30, tzinfo=UTC)
+_TAKEN = datetime(2026, 3, 14, 17, 5, tzinfo=UTC)
+_NEW_YORK = ZoneInfo("America/New_York")
 _SCRIPT = "<script>alert('x')</script>"
 
 
@@ -52,11 +56,25 @@ def _export(**overrides: object) -> IntakeExport:
         "submitted_at": _WHEN,
         "accepted_at": None,
         "withdrawn_at": None,
+        "exported_at": _TAKEN,
+        "timezone": UTC,
         "items": [],
+        "artifacts": [],
         "signatures": [],
         "events": [],
     }
     return IntakeExport(**{**base, **overrides})  # type: ignore[arg-type] — a fixture builder
+
+
+def _artifact(**overrides: object) -> ExportArtifact:
+    base: dict[str, object] = {
+        "heading": "A photo of your insurance card",
+        "filename": "card-front.png",
+        "side": "front",
+        "size_bytes": 2048,
+        "url": "https://pablo.example/api/documents/doc-1/file",
+    }
+    return ExportArtifact(**{**base, **overrides})  # type: ignore[arg-type] — a fixture builder
 
 
 def _item(**overrides: object) -> ExportItem:
@@ -172,6 +190,43 @@ class TestAnswerLines:
         """Losing the question is bad enough without also losing the answer."""
         assert answer_lines(None, {"text": "Panic.", "note": "a"}) == ["note: a", "text: Panic."]
 
+    def test_a_card_reads_as_the_sides_that_arrived(self) -> None:
+        """In the order a card has them, not the order they were sent."""
+        config = _config("insurance_card", sides="both")
+        value = {
+            "documents": [
+                {"document_id": "doc-back", "side": "back"},
+                {"document_id": "doc-front", "side": "front"},
+            ]
+        }
+        assert answer_lines(config, value) == [
+            "Front of the card sent.",
+            "Back of the card sent.",
+        ]
+
+    def test_a_card_never_prints_a_document_id(self) -> None:
+        """An id is a handle into one deployment's storage and travels badly."""
+        config = _config("insurance_card", sides="front")
+        value = {"documents": [{"document_id": "doc-front", "side": "front"}]}
+        assert "doc-front" not in " ".join(answer_lines(config, value))
+
+    def test_a_document_request_reads_as_how_many_arrived(self) -> None:
+        config = _config("document_request")
+        one = {"documents": [{"document_id": "a"}]}
+        two = {"documents": [{"document_id": "a"}, {"document_id": "b"}]}
+        assert answer_lines(config, one) == ["1 file sent."]
+        assert answer_lines(config, two) == ["2 files sent."]
+
+    def test_a_file_question_with_nothing_on_it_reads_as_unanswered(self) -> None:
+        config = _config("document_request")
+        assert answer_lines(config, {"documents": []}) == []
+        assert answer_lines(_config("insurance_card"), {"documents": []}) == []
+
+    def test_a_file_answer_that_is_not_the_stored_shape_names_nothing(self) -> None:
+        """JSONB holds whatever was written; an unreadable value claims nothing."""
+        config = _config("document_request")
+        assert answer_lines(config, {"documents": "one"}) == []
+
 
 class TestItemHeading:
     def test_the_practices_own_wording_wins(self) -> None:
@@ -208,6 +263,29 @@ class TestRender:
     def test_the_same_form_renders_the_same_bytes(self) -> None:
         assert render(_export()) == render(_export())
 
+    def test_it_says_when_this_copy_was_taken(self) -> None:
+        """A chart copy with no date on it is a document nobody can place."""
+        page = render(_export())
+        assert "Exported on 2026-03-14 17:05 (UTC)" in page
+
+    def test_two_copies_a_minute_apart_differ_in_that_line_and_nowhere_else(self) -> None:
+        first = render(_export()).splitlines()
+        later = render(_export(exported_at=_TAKEN + timedelta(minutes=1))).splitlines()
+        differing = [(a, b) for a, b in zip(first, later, strict=True) if a != b]
+        assert len(first) == len(later)
+        assert len(differing) == 1
+        assert "Exported on" in differing[0][0]
+
+    def test_moments_are_written_in_the_practices_own_day(self) -> None:
+        """A clinician converting UTC in their head is doing arithmetic on
+        their own record."""
+        page = render(_export(timezone=_NEW_YORK))
+        assert "Exported on 2026-03-14 13:05 (America/New_York)" in page
+        # 09:30 UTC is 05:30 in New York on that date, and the page names
+        # the zone so the copy is unambiguous wherever it is forwarded.
+        assert "2026-03-14 05:30 EDT" in page
+        assert "09:30 UTC" not in page
+
     def test_a_practice_that_has_not_named_itself_gets_no_line(self) -> None:
         """Nothing here invents a name, and a blank line is not information."""
         assert "<header>\n<h1>" in render(_export(practice_name=None))
@@ -222,8 +300,20 @@ class TestRender:
             _export(items=[_item(help_text=_SCRIPT)]),
             _export(items=[_item(current=_answer([_SCRIPT]))]),
             _export(events=[_event(_SCRIPT)]),
+            _export(artifacts=[_artifact(filename=f"{_SCRIPT}.png")]),
+            _export(artifacts=[_artifact(heading=_SCRIPT)]),
         ],
-        ids=["patient", "packet", "receipt", "heading", "help", "answer", "note"],
+        ids=[
+            "patient",
+            "packet",
+            "receipt",
+            "heading",
+            "help",
+            "answer",
+            "note",
+            "filename",
+            "artifact-heading",
+        ],
     )
     def test_no_value_reaches_the_page_as_markup(self, export: IntakeExport) -> None:
         page = render(export)
@@ -237,6 +327,12 @@ class TestRender:
 
     def test_a_question_that_was_shown_and_skipped_says_that_instead(self) -> None:
         assert "No answer." in render(_export(items=[_item()]))
+
+    def test_a_file_question_nobody_was_shown_says_so_too(self) -> None:
+        """The rule is about the question, not about what kind it is."""
+        page = render(_export(items=[_item(item_type="insurance_card", shown=False)]))
+        assert "Not asked." in page
+        assert "No answer." not in page
 
     def test_an_earlier_answer_says_what_became_of_it(self) -> None:
         page = render(
@@ -259,6 +355,34 @@ class TestRender:
         page = render(_export())
         assert "Signatures" not in page
         assert "History" not in page
+        assert "Attached files" not in page
+
+    def test_an_attached_file_is_named_and_linked_rather_than_embedded(self) -> None:
+        """A photograph printed into a copy that gets forwarded cannot be
+        un-sent."""
+        page = render(_export(artifacts=[_artifact()]))
+        assert "Attached files" in page
+        assert "A photo of your insurance card" in page
+        assert "card-front.png (front)" in page
+        assert "2.0 KB" in page
+        assert 'href="https://pablo.example/api/documents/doc-1/file"' in page
+        assert "<img" not in page
+        assert "data:image" not in page
+
+    def test_a_file_that_answers_no_side_is_named_without_one(self) -> None:
+        page = render(_export(artifacts=[_artifact(side=None, filename="records.pdf")]))
+        assert "records.pdf ·" in page
+        assert "records.pdf (" not in page
+
+    @pytest.mark.parametrize(
+        ("size_bytes", "written"),
+        [(1, "1 bytes"), (900, "900 bytes"), (2048, "2.0 KB"), (5_242_880, "5.0 MB")],
+    )
+    def test_a_size_is_written_in_the_unit_a_person_would_say_it_in(
+        self, size_bytes: int, written: str
+    ) -> None:
+        page = render(_export(artifacts=[_artifact(size_bytes=size_bytes)]))
+        assert written in page
 
     def test_a_signature_prints_the_evidence_that_makes_it_checkable(self) -> None:
         page = render(

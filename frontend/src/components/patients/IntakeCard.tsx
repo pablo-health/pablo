@@ -5,6 +5,8 @@
 import { useState } from "react"
 import { AlertTriangle } from "lucide-react"
 
+import { IntakeArtifacts } from "@/components/patients/IntakeArtifacts"
+import { useIntakeArtifacts } from "@/hooks/useIntakeArtifacts"
 import { usePatientIntakeSubmissions } from "@/hooks/usePatientIntakeSubmissions"
 import type { PatientIntakeSubmission } from "@/types/patientIntakeSubmissions"
 
@@ -93,32 +95,38 @@ function SubmissionBody({
  * PHQ-9 and GAD-7 answers arrive as outcome measures and the chart already
  * trends and bands them, so this card carries no number and no severity
  * word. What it adds is the part of the form that has nowhere else to go —
- * the reason for the visit, and anything the patient said is wrong about
- * their own record.
+ * the reason for the visit, anything the patient said is wrong about their
+ * own record, and the files they sent in.
  *
  * The card removes itself when there is nothing to show, including on an
  * error: a chart with no intake form is the ordinary case for a patient who
  * came in before there was one, and an empty box explaining its own absence
- * would be on most charts in the practice.
+ * would be on most charts in the practice. Files count as something to
+ * show — a form that asked for a photograph of an insurance card and
+ * nothing else still put a file on the chart.
  */
 export function IntakeCard({ patientId }: IntakeCardProps) {
   const { data, error } = usePatientIntakeSubmissions(patientId)
+  const { groups } = useIntakeArtifacts(patientId)
   const [showEarlier, setShowEarlier] = useState(false)
 
-  if (error || !data || data.length === 0) return null
+  const submissions = error ? [] : (data ?? [])
+  if (submissions.length === 0 && groups.length === 0) return null
 
-  const [latest, ...earlier] = data
+  const [latest, ...earlier] = submissions
 
   return (
     <div className="card" data-testid="intake-card">
       <div className="mb-4 flex items-baseline justify-between gap-4">
         <h2 className="text-lg font-semibold text-neutral-900">Intake</h2>
-        <p className="text-sm text-neutral-500">
-          Submitted {formatDate(latest.submitted_at)}
-        </p>
+        {latest && (
+          <p className="text-sm text-neutral-500">
+            Submitted {formatDate(latest.submitted_at)}
+          </p>
+        )}
       </div>
 
-      <SubmissionBody submission={latest} />
+      {latest && <SubmissionBody submission={latest} />}
 
       {earlier.length > 0 && (
         <div className="mt-4 border-t border-border pt-4">
@@ -149,6 +157,8 @@ export function IntakeCard({ patientId }: IntakeCardProps) {
           )}
         </div>
       )}
+
+      <IntakeArtifacts patientId={patientId} groups={groups} />
     </div>
   )
 }
