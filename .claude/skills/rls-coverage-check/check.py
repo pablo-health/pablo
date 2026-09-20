@@ -89,7 +89,7 @@ class _FakeSession:
     def execute(self, statement: object, params: object = None) -> _FakeResult:  # noqa: ARG002
         sql = str(statement)
         if sql.strip().upper().startswith("SELECT TABLE_NAME"):
-            rows = [
+            rows: list[tuple[str, ...]] = [
                 (table, col, self._types_by_table.get(table, {}).get(col, "text"))
                 for table, cols in self._columns_by_table.items()
                 for col in cols
