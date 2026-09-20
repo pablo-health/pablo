@@ -55,7 +55,17 @@ _BACKEND = Path(__file__).resolve().parent.parent
 # the identical engine is portable to both repos; the per-repo copy only tunes
 # PHI_PATH_MARKERS and AUDIT_EXEMPT_PHI_ROUTES below.
 ROUTE_ROOTS: tuple[Path, ...] = tuple(
-    d for d in (_BACKEND / "app" / "routes", _BACKEND / "saas") if d.is_dir()
+    d
+    for d in (
+        _BACKEND / "app" / "routes",
+        # The portal's routes live in their own package rather than under
+        # app/routes/, and they are the one surface that mints a credential
+        # for a caller who had none. Named explicitly so moving them out of
+        # app/routes/ did not quietly move them out of this check too.
+        _BACKEND / "app" / "portal",
+        _BACKEND / "saas",
+    )
+    if d.is_dir()
 )
 
 # Path substrings that signal a route touches PHI or PHI-adjacent data.
@@ -114,6 +124,12 @@ AUDIT_EXEMPT_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # carry forensic weight.
         ("get", "/api/patient/messages/threads"),
         ("get", "/api/patient/messages/threads/{thread_id}"),
+        # portal/routes.py — whether this patient has a portal invitation in
+        # flight and how many live sessions they hold. Counters and booleans:
+        # no name, no contact detail, nothing clinical, and deliberately not
+        # the invitation itself. Matches the "/patients" marker on path text
+        # alone. Issuing and revoking on the same surface ARE audited.
+        ("get", "/api/patients/{patient_id}/portal-access"),
     }
 )
 
@@ -183,6 +199,22 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # already holds; discloses no patient data (the redeem step, which does
         # disclose the patient name, IS audited as launch_intent_redeemed)
         ("post", "/api/launch/intent"),  # mints opaque launch intent, no PHI disclosed
+        # portal/routes.py — the two unauthenticated credential routes. They
+        # disclose nothing: a magic link plus a code go in, a session token
+        # comes out, and every failure is the same 401. Redemption IS recorded
+        # — but by the tenant gateway that owns the transaction, on the
+        # patient-principal seam, because the row has to be written with the
+        # patient's GUC armed inside the same commit that burns the
+        # invitation. Rotation records nothing on purpose: it is the same
+        # authentication continuing, and a row per hour would bury the
+        # redemption that carries the forensic weight.
+        ("post", "/api/patient/auth/redeem"),  # audited in the tenant gateway
+        ("post", "/api/patient/auth/refresh"),  # rotation of an already-recorded session
+        # portal/practice_routes.py — the public practice directory. A slug in,
+        # a practice's own display name out; no chart is opened and no patient
+        # is named, so there is no access to attribute to anybody.
+        ("get", "/api/portal/practices/{slug}"),  # slug to display name, no PHI
+        ("post", "/api/portal/practice-slug"),  # mints the practice's own address
         # payment_webhooks.py — signature-verified processor callback. It moves
         # a ledger row's status from an event the processor signed; there is no
         # authenticated principal to attribute an access to, and it discloses

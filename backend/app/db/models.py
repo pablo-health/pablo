@@ -643,6 +643,80 @@ class PatientMessageRow(Base):
     )
 
 
+class PortalInviteChallengeRow(Base):
+    """One outstanding portal invitation, keyed by the invite token's ``jti``.
+
+    The invite token is signed and self-expiring, but SINGLE-USE and
+    attempt-limiting are not properties a stateless token can carry, and
+    this row is both. Created when a clinician issues an invitation;
+    ``consumed`` flips on the one successful redemption. Rows are kept after
+    consumption rather than deleted, so replaying the same token is a
+    *refusal* rather than an unknown-jti lookup miss — both answer 401 to
+    the caller, but only one of them is legible in the record afterwards.
+
+    ``otp_hash`` is an HMAC of the one-time code, peppered with the portal
+    signing key. The code itself is never stored, so this table on its own
+    yields nothing: a leaked magic link still cannot redeem.
+
+    Tenant scope is the schema location, as everywhere else here, so there
+    is no ``practice_id`` column. No column holds a name, a message or
+    anything clinical — a hash, two timestamps and a counter.
+
+    The table name predates the portal naming and is kept as it is: it is
+    the identity of rows that already exist in deployed practices, and
+    renaming it would orphan every invitation in flight.
+    """
+
+    __tablename__ = "companion_auth_challenges"
+    __table_args__ = (
+        # The clinician's revoke-all sweep, and the outstanding-invitation
+        # state the access-state route reads, both go by patient.
+        Index("ix_companion_auth_challenges_patient", "patient_id"),
+    )
+
+    jti: Mapped[str] = mapped_column(String(36), primary_key=True)
+    patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    otp_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    attempts: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    consumed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class PortalSessionRow(Base):
+    """One patient portal session, keyed by the session token's ``jti``.
+
+    A session token is only as good as its row: the resolver refuses a token
+    whose row is missing, revoked or past ``expires_at``, so a clinician's
+    revoke takes effect immediately rather than waiting out the token's TTL.
+
+    ``chain_started_at`` is what bounds sliding renewal. Refresh rotates the
+    ``jti`` (new row, old row retired), which on its own would let a session
+    live forever one hour at a time; carrying the ORIGINAL redemption's
+    timestamp forward through every rotation gives the chain a hard ceiling,
+    after which the patient redeems a fresh invitation.
+
+    Same two notes as the table above: tenant scope is the schema location,
+    and the name is kept so existing sessions stay the rows they are.
+    """
+
+    __tablename__ = "companion_sessions"
+    __table_args__ = (
+        # Revoke-all-for-this-patient is the clinician kill switch; it is
+        # the only query here that is not a primary-key lookup.
+        Index("ix_companion_sessions_patient", "patient_id"),
+    )
+
+    jti: Mapped[str] = mapped_column(String(36), primary_key=True)
+    patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # When the CHAIN this session belongs to was first redeemed — carried
+    # forward unchanged by every refresh. Bounds sliding renewal.
+    chain_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class PatientMedicationRow(Base):
     """Per-patient medication record.
 
