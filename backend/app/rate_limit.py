@@ -536,6 +536,42 @@ def get_intake_submit_limiter() -> RateLimiter:
     return _intake_submit_limiter
 
 
+# Patient document upload: per-patient burst limit on minting upload URLs.
+_patient_document_init_limiter: RateLimiter | None = None
+
+
+def get_patient_document_init_limiter() -> RateLimiter:
+    """Get the per-patient burst rate limiter for starting an upload.
+
+    Its own namespace, so a patient who has been writing to their practice
+    can still send in the card their intake form asked for.
+
+    What it bounds is not the bytes — the signed URL carries its own size
+    cap, and the storage layer enforces that whatever this says. It is the
+    minting: each call reserves an object path and writes a placeholder row,
+    and a caller who never uploads anything leaves both behind. Someone
+    sending in a few documents before a first appointment never meets these
+    windows; a script looping on the endpoint meets them immediately.
+    """
+    global _patient_document_init_limiter  # noqa: PLW0603
+    if _patient_document_init_limiter is None:
+        _patient_document_init_limiter = CompositeLimiter(
+            [
+                _create_windowed_limiter(
+                    "patient-document-init", max_requests=10, window_seconds=60
+                ),
+                _create_windowed_limiter(
+                    "patient-document-init", max_requests=60, window_seconds=3_600
+                ),
+            ]
+        )
+        logger.info(
+            "Patient document init rate limiter: %s",
+            type(_patient_document_init_limiter).__name__,
+        )
+    return _patient_document_init_limiter
+
+
 # Portal sign-in: the unauthenticated surface that mints patient sessions.
 #
 # Redemption is a guessing target — a six-digit code, on an endpoint anyone

@@ -24,6 +24,11 @@ export type AllowedDocumentMimeType = (typeof ALLOWED_DOCUMENT_MIME_TYPES)[numbe
  * - `consent`: a signed consent or authorization form attached to
  *   the patient's chart. Same access class as `chart` — not
  *   uploader-private.
+ * - `intake_artifact`: something the patient was asked to send in
+ *   before they are seen — an insurance card, a referral letter.
+ *   Same access class as `chart`.
+ * - `message`: a file attached to secure correspondence. Same access
+ *   class as `chart`.
  * - `therapist_private`: uploader-only. Provider working material.
  * - `psychotherapy_notes`: uploader-only. HIPAA §164.501 carve-out —
  *   subject to separate authorization for release and exempt from
@@ -32,11 +37,20 @@ export type AllowedDocumentMimeType = (typeof ALLOWED_DOCUMENT_MIME_TYPES)[numbe
 export const DOCUMENT_CATEGORIES = [
   "chart",
   "consent",
+  "intake_artifact",
+  "message",
   "therapist_private",
   "psychotherapy_notes",
 ] as const
 
 export type DocumentCategory = (typeof DOCUMENT_CATEGORIES)[number]
+
+/**
+ * Who put the document on the chart. Something the patient sent in was
+ * not reviewed by anyone before it arrived, which is worth knowing when
+ * reading it.
+ */
+export type DocumentUploader = "patient" | "clinician"
 
 /**
  * Lifecycle of the off-request text-extraction job. `pending` right after
@@ -58,6 +72,7 @@ export interface PatientDocumentResponse {
   extracted_text: string | null
   extraction_status: ExtractionStatus
   text_extraction_failed: boolean
+  uploaded_by: DocumentUploader
 }
 
 export interface PatientDocumentListResponse {

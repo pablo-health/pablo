@@ -1940,7 +1940,13 @@ class LlmUsageRow(Base):
 
 
 class PatientDocumentRow(Base):
-    """Clinician-uploaded patient document (THERAPY-ak6m.2).
+    """An uploaded patient document (THERAPY-ak6m.2).
+
+    Two principals write here and exactly one column says which: ``user_id``
+    for the clinician who uploaded it, ``uploaded_by_patient_id`` for the
+    patient. ``ck_patient_documents_one_uploader`` makes that exclusive, so a
+    row can neither claim both nor go unattributed — which is what lets the
+    chart say who a document came from without inferring it.
 
     Per-tenant. The RLS shape combines two policies keyed on ``category``
     (:class:`app.models.DocumentCategory` carries the regulatory rationale):
@@ -1952,6 +1958,11 @@ class PatientDocumentRow(Base):
       only ``user_id`` ownership. The predicate is identical for both; they
       stay distinct so disclosure workflows (release-of-records, right-of-
       access) can filter on the HIPAA-meaningful boundary later.
+
+    The patient principal has an additive arm of its own, narrowed to the
+    categories :attr:`app.models.DocumentCategory.is_patient_facing` names —
+    a patient reaching their own chart through the portal gets the documents
+    that surface belongs to, not the clinical record behind it.
 
     See :func:`app.db.enable_rls_on_schema` for the policy body.
 
@@ -1971,7 +1982,15 @@ class PatientDocumentRow(Base):
         ForeignKey("patients.id", ondelete="CASCADE"),
         nullable=False,
     )
-    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
+    # Nullable since patients upload too: the uploader is one column or the
+    # other, never both, and ck_patient_documents_one_uploader enforces it.
+    user_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False), index=True)
+    # Set only on a patient's own upload, and always to the chart's patient —
+    # the row policy pins it to the calling principal and no route reads it
+    # from a request body. No foreign key: ``patient_id`` beside it already
+    # carries the cascade, and a second one on the same patient would add a
+    # delete path without adding a constraint that column does not have.
+    uploaded_by_patient_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
     filename: Mapped[str] = mapped_column(Text, nullable=False)
     mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
     gcs_path: Mapped[str] = mapped_column(Text, nullable=False)
@@ -2008,8 +2027,13 @@ class PatientDocumentRow(Base):
     __table_args__ = (
         Index("ix_patient_documents_patient_deleted", "patient_id", "deleted_at"),
         CheckConstraint(
-            "category IN ('chart', 'consent', 'therapist_private', 'psychotherapy_notes')",
+            "category IN ('chart', 'consent', 'intake_artifact', 'message', "
+            "'therapist_private', 'psychotherapy_notes')",
             name="ck_patient_documents_category",
+        ),
+        CheckConstraint(
+            "(user_id IS NOT NULL) <> (uploaded_by_patient_id IS NOT NULL)",
+            name="ck_patient_documents_one_uploader",
         ),
         CheckConstraint(
             "extraction_status IS NULL OR extraction_status IN ('pending', 'complete', 'failed')",
