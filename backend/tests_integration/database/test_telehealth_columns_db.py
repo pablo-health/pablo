@@ -276,6 +276,15 @@ class TestTheStoredGrant:
         )
         session.commit()
 
-        assert store.delete(user_id) is True
+        # Each delete is called on its own line rather than inside the
+        # assertion. The call is what the test is exercising, and an assertion
+        # is allowed to not run — under ``python -O`` these would vanish and
+        # the test would pass having disconnected nothing.
+        removed = store.delete(user_id)
+        assert removed is True
         assert store.get(user_id) is None
-        assert store.delete(user_id) is False
+
+        # Pressing Disconnect on a connection that has already gone is not an
+        # error. The caller asked for it to be gone and it is.
+        removed_again = store.delete(user_id)
+        assert removed_again is False
