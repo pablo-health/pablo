@@ -674,6 +674,36 @@ CREATE TABLE __TENANT_SCHEMA__.patient_documents (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.patient_intake_assignments (
+    id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    version_id uuid NOT NULL,
+    status character varying(24) NOT NULL,
+    assigned_by uuid,
+    assigned_at timestamp with time zone NOT NULL,
+    submitted_at timestamp with time zone,
+    accepted_at timestamp with time zone,
+    withdrawn_at timestamp with time zone,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_patient_intake_assignments_status CHECK (((status)::text = ANY ((ARRAY['assigned'::character varying, 'in_progress'::character varying, 'submitted'::character varying, 'needs_correction'::character varying, 'accepted'::character varying, 'withdrawn'::character varying])::text[])))
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.patient_intake_responses (
+    id uuid NOT NULL,
+    assignment_id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    item_id uuid NOT NULL,
+    value jsonb NOT NULL,
+    draft boolean DEFAULT true NOT NULL,
+    superseded_by uuid,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.patient_intake_submissions (
     id character varying(128) NOT NULL,
     patient_id uuid NOT NULL,
@@ -1266,6 +1296,16 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_documents
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_assignments
+    ADD CONSTRAINT patient_intake_assignments_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_responses
+    ADD CONSTRAINT patient_intake_responses_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_submissions
     ADD CONSTRAINT patient_intake_submissions_pkey PRIMARY KEY (id);
 
@@ -1378,6 +1418,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.intake_item_definitions
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.intake_packet_versions
     ADD CONSTRAINT uq_intake_packet_versions_number UNIQUE (template_id, version);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_assignments
+    ADD CONSTRAINT uq_patient_intake_assignments_id_patient UNIQUE (id, patient_id);
 
 
 
@@ -1669,6 +1714,18 @@ CREATE INDEX ix_patient_documents_user_id ON __TENANT_SCHEMA__.patient_documents
 
 
 
+CREATE INDEX ix_patient_intake_assignments_patient_id ON __TENANT_SCHEMA__.patient_intake_assignments USING btree (patient_id);
+
+
+
+CREATE INDEX ix_patient_intake_assignments_version_id ON __TENANT_SCHEMA__.patient_intake_assignments USING btree (version_id);
+
+
+
+CREATE INDEX ix_patient_intake_responses_patient_id ON __TENANT_SCHEMA__.patient_intake_responses USING btree (patient_id);
+
+
+
 CREATE INDEX ix_patient_intake_submissions_patient_id ON __TENANT_SCHEMA__.patient_intake_submissions USING btree (patient_id);
 
 
@@ -1802,6 +1859,14 @@ CREATE INDEX ix_therapy_sessions_user_id ON __TENANT_SCHEMA__.therapy_sessions U
 
 
 CREATE UNIQUE INDEX uq_appointments_user_start_active ON __TENANT_SCHEMA__.appointments USING btree (user_id, start_at) WHERE ((status)::text <> 'cancelled'::text);
+
+
+
+CREATE UNIQUE INDEX uq_patient_intake_assignments_active ON __TENANT_SCHEMA__.patient_intake_assignments USING btree (patient_id, version_id) WHERE ((status)::text <> ALL ((ARRAY['accepted'::character varying, 'withdrawn'::character varying])::text[]));
+
+
+
+CREATE UNIQUE INDEX uq_patient_intake_responses_live_draft ON __TENANT_SCHEMA__.patient_intake_responses USING btree (assignment_id, item_id) WHERE ((superseded_by IS NULL) AND draft);
 
 
 
@@ -1968,6 +2033,21 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_coverage
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_coverage
     ADD CONSTRAINT fk_patient_coverage_payer_id_payers FOREIGN KEY (payer_id) REFERENCES __TENANT_SCHEMA__.payers(id) ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_assignments
+    ADD CONSTRAINT fk_patient_intake_assignments_version FOREIGN KEY (version_id) REFERENCES __TENANT_SCHEMA__.intake_packet_versions(id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_responses
+    ADD CONSTRAINT fk_patient_intake_responses_assignment FOREIGN KEY (assignment_id, patient_id) REFERENCES __TENANT_SCHEMA__.patient_intake_assignments(id, patient_id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_responses
+    ADD CONSTRAINT fk_patient_intake_responses_item FOREIGN KEY (item_id) REFERENCES __TENANT_SCHEMA__.intake_item_definitions(id);
 
 
 

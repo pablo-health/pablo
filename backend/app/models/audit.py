@@ -269,6 +269,26 @@ class AuditAction(StrEnum):
     # questions.
     INTAKE_TEMPLATE_PUBLISHED = "intake_template_published"
 
+    # A clinician asked a patient to fill in a version of a form, or took
+    # the request back. Both are writes ABOUT a patient rather than
+    # disclosures to one, and the payload carries which version was asked
+    # for — never a question and never an answer. Withdrawing is recorded
+    # as well as sending, because "we stopped asking" is the fact a later
+    # question about an unfinished form turns on.
+    PATIENT_INTAKE_ASSIGNED = "patient_intake_assigned"
+    PATIENT_INTAKE_WITHDRAWN = "patient_intake_withdrawn"
+
+    # A patient saved an answer on a form they were asked to fill in. The
+    # actor is the patient, so this is a write by the subject rather than a
+    # disclosure, and the payload carries the id of the question answered —
+    # never the answer.
+    #
+    # Coalesced per assignment: somebody works through a form a question at
+    # a time, and a row per saved question would bury the events that carry
+    # forensic weight. One row per visit, where a visit is a save that
+    # follows a gap — see ``IntakeAssignmentService.save_answer``.
+    PATIENT_INTAKE_DRAFT_SAVED = "patient_intake_draft_saved"
+
     # Secure patient messaging. Both principals write these: a patient
     # starting a thread or sending into one, and a clinician replying. The
     # actor is what ``actor_type`` separates, so the action names say what
@@ -465,6 +485,7 @@ class ResourceType(StrEnum):
     PATIENT_DOCUMENT = "patient_document"
     PATIENT_INTAKE_SUBMISSION = "patient_intake_submission"
     INTAKE_PACKET_VERSION = "intake_packet_version"
+    PATIENT_INTAKE_ASSIGNMENT = "patient_intake_assignment"
     PATIENT_MESSAGE_THREAD = "patient_message_thread"
     INVITATION = "invitation"
     CLAIM = "claim"

@@ -84,6 +84,11 @@ PHI_PATH_MARKERS: tuple[str, ...] = (
     "/patient/chat",
     "/patient/messages",
     "/message-threads",
+    # The patient's own intake surface: the form carries their name, their
+    # date of birth, why they came and how they have been feeling. Marked
+    # PHI so a route added here cannot be classified as ordinary metadata —
+    # the only exemptions it admits are the reviewed ones below.
+    "/patient/intake",
 )
 
 FORBIDDEN_UNDERSCORE_PARAMS: frozenset[str] = frozenset({"_audit", "_http_request"})
@@ -124,6 +129,20 @@ AUDIT_EXEMPT_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # carry forensic weight.
         ("get", "/api/patient/messages/threads"),
         ("get", "/api/patient/messages/threads/{thread_id}"),
+        # patient_intake_assignments.py — the patient reading a form they
+        # were asked to fill in, and what they have saved against it so
+        # far. Same principle as the two above: the audit log records
+        # disclosures, and a person reading their own answers is not one.
+        # The writes on this surface ARE recorded, and so is every
+        # clinician-side action on the same rows.
+        ("get", "/api/patient/intake/assignments"),
+        ("get", "/api/patient/intake/assignments/{assignment_id}"),
+        # patient_intake_assignments.py — which forms a patient was asked
+        # for and how many questions are still outstanding. It carries no
+        # answer and no word the patient wrote: the disclosure is reading
+        # what they answered, and that route audits. Sending a form and
+        # withdrawing one are both recorded on this same surface.
+        ("get", "/api/patients/{patient_id}/intake-assignments"),
         # portal/routes.py — whether this patient has a portal invitation in
         # flight and how many live sessions they hold. Counters and booleans:
         # no name, no contact detail, nothing clinical, and deliberately not

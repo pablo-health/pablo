@@ -1051,6 +1051,19 @@ PATIENT_READABLE_TABLES: dict[str, str] = {
     # theirs; the clinician side reaches the same rows through
     # ``has_patient_access`` like every other per-patient chart table.
     "patient_intake_submissions": "patient_id",
+    # A form a patient was asked to fill in, and the answers they have saved
+    # against it. Both rows are about that one patient: they read the
+    # questions, they write the answers, and they read their own answers
+    # back between sittings. The clinician side reaches the same rows
+    # through ``has_patient_access``, like every other per-patient chart
+    # table.
+    #
+    # ``patient_intake_responses`` carries its own ``patient_id`` rather
+    # than being scoped through its assignment, which is why neither table
+    # needs a bespoke predicate here. See ``PatientIntakeResponseRow`` for
+    # why the column is denormalized and what keeps it honest.
+    "patient_intake_assignments": "patient_id",
+    "patient_intake_responses": "patient_id",
     # A patient's own secure-message threads and the messages in them. Both
     # halves are the patient's: they start the thread, they write into it,
     # and they read what the practice wrote back. The clinician side reaches
@@ -1104,6 +1117,19 @@ PATIENT_WRITABLE_TABLES: dict[str, str] = {
     # Submitting the intake form is a patient INSERT, so the write arm is
     # what makes the table usable at all from a patient principal.
     "patient_intake_submissions": "patient_id",
+    # Saving an answer is a patient INSERT or UPDATE on
+    # ``patient_intake_responses``; the assignment beside it is written
+    # because the patient's first saved answer moves their own request from
+    # "sent" to "in progress". Both grants are wider than the routes that
+    # use them, as on the message tables and for the same reason — RLS has
+    # no column granularity to say "only ``value``, only on a draft" or
+    # "only ``status``, only forwards". Which column may change is the route
+    # layer's decision and is made there: the save route writes a draft's
+    # value and the assignment's status, no route anywhere takes a status
+    # from a patient, and a submitted or withdrawn assignment is refused
+    # before any write is attempted.
+    "patient_intake_assignments": "patient_id",
+    "patient_intake_responses": "patient_id",
     # Starting a thread and sending a message are both patient INSERTs, and
     # marking a message read is a patient UPDATE. The row-level grant is
     # therefore wider than the three routes that use it — a patient could,
