@@ -24,19 +24,39 @@ it back — and four things shape both.
 A resubmission is a new submission. Both tables are append-only records of an
 administration, so the second set of answers sits beside the first rather
 than replacing it, and the clinician sees both.
+
+The clinician's read of those submissions lives here too, on its own router
+under the ordinary chart prefix. It is the same table from the other side of
+the room, and three things separate the two surfaces.
+
+* **A different principal, checked a different way.** The patient routes take
+  a patient principal and step-up; this one takes a clinician who has
+  accepted the agreement and holds a grant on the chart. Neither credential
+  satisfies the other's door.
+* **It hands back the words, not the scores.** PHQ-9 and GAD-7 answers were
+  scored into outcome measures when they arrived, and the chart already
+  renders those. Re-exposing item scores here would put the same instrument
+  on the screen twice, from two sources that can disagree.
+* **Reading it is a disclosure.** What a patient wrote about why they came,
+  and anything they said the chart has wrong about them, is their own text.
+  The read goes on the audit log the way opening a conversation does.
 """
 
 from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, Request, status
+from pydantic import BaseModel
 
 from ..api_errors import BadRequestError, ForbiddenError, NotFoundError
 from ..auth.patient_context import AuthStrength, PatientContext, get_patient_context
 from ..auth.route_access import subscription_exempt
+from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
+from ..models import User  # noqa: TC001 — fastapi resolves the annotation at runtime
 from ..models.audit import AuditAction, ResourceType
 from ..models.patient_intake_api import (
     IntakeFormResponse,
@@ -67,6 +87,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/patient/intake", tags=["patient-intake"])
+
+# The clinician's read of the same table, under the chart prefix every other
+# per-patient read lives at. A separate router because the two surfaces share
+# no dependency: this one has a patient id in the path precisely because the
+# caller is not the patient.
+clinician_router = APIRouter(prefix="/api/patients", tags=["patient-intake"])
 
 CurrentPatient = Annotated[PatientContext, Depends(get_patient_context)]
 
@@ -254,4 +280,117 @@ def submit_intake(
     )
 
 
-__all__ = ["get_intake_outcome_measure_service", "router"]
+# ---------------------------------------------------------------------------
+# The clinician's read
+# ---------------------------------------------------------------------------
+
+
+def get_clinician_patient_repository(
+    _ctx: TenantContext = Depends(get_tenant_context),
+) -> PatientRepository:
+    """The patient repository on a tenant-scoped session.
+
+    Deliberately not the patient routes' dependency of the same shape: that
+    one is armed for a patient principal, which a clinician is not.
+    """
+    return get_patient_repository()
+
+
+def get_clinician_intake_submission_repository(
+    _ctx: TenantContext = Depends(get_tenant_context),
+) -> PatientIntakeSubmissionRepository:
+    """The submission repository on a tenant-scoped session."""
+    return get_patient_intake_submission_repository()
+
+
+class ClinicianIntakeSubmissionResponse(BaseModel):
+    """One submission as the chart shows it.
+
+    The item answers and the scores derived from them are deliberately
+    absent. They are on the outcome-measure rows, which the chart already
+    reads, trends and bands; a second copy here would be the same
+    instrument rendered twice from two places.
+
+    ``name_confirmed`` and ``dob_confirmed`` default to true for a row
+    written before the form asked, so an old submission reads as "nothing
+    flagged" rather than as a correction nobody made.
+    """
+
+    id: str
+    submitted_at: datetime
+    name_confirmed: bool
+    dob_confirmed: bool
+    corrections: str | None
+    reason_text: str
+
+
+def _submission_response(row: dict[str, object]) -> ClinicianIntakeSubmissionResponse:
+    """Project a stored row onto the fields the chart shows.
+
+    Reads defensively out of the JSON payload rather than indexing it: the
+    column is a record of what a form sent, and a row written by an earlier
+    version of that form is a normal thing to find, not an error.
+    """
+    payload = row.get("payload")
+    body: dict[str, object] = payload if isinstance(payload, dict) else {}
+    corrections = body.get("corrections")
+    reason_text = body.get("reason_text")
+    return ClinicianIntakeSubmissionResponse(
+        id=str(row["id"]),
+        submitted_at=row["submitted_at"],  # type: ignore[arg-type]
+        name_confirmed=bool(body.get("name_confirmed", True)),
+        dob_confirmed=bool(body.get("dob_confirmed", True)),
+        corrections=str(corrections) if corrections else None,
+        reason_text=str(reason_text) if reason_text else "",
+    )
+
+
+@clinician_router.get("/{patient_id}/intake-submissions")
+def list_patient_intake_submissions(
+    patient_id: str,
+    request: Request,
+    user: User = Depends(require_baa_acceptance),
+    patients: PatientRepository = Depends(get_clinician_patient_repository),
+    submissions: PatientIntakeSubmissionRepository = Depends(
+        get_clinician_intake_submission_repository
+    ),
+    audit: AuditService = Depends(get_audit_service),
+) -> list[ClinicianIntakeSubmissionResponse]:
+    """A patient's intake submissions, newest first.
+
+    No beta gate and no pagination. A practice that stops paying for some
+    optional thing should not lose sight of a clinical record it already
+    collected, and a patient files one of these before a first appointment
+    and rarely again.
+
+    A patient with no submissions is a 200 and an empty list, not a 404:
+    the chart exists, it just has nothing on this surface yet.
+    """
+    patient = patients.get(patient_id, user.id)
+    if patient is None:
+        raise NotFoundError("Patient not found", {"patient_id": patient_id})
+
+    rows = submissions.list_for_clinician(patient_id, user.id)
+
+    # How many were disclosed, and not a word of any of them.
+    audit.log(
+        action=AuditAction.PATIENT_INTAKE_SUBMISSION_VIEWED,
+        user=user,
+        request=request,
+        resource_type=ResourceType.PATIENT_INTAKE_SUBMISSION,
+        resource_id=patient_id,
+        patient=patient,
+        changes={"count": len(rows)},
+    )
+
+    return [_submission_response(row) for row in rows]
+
+
+__all__ = [
+    "ClinicianIntakeSubmissionResponse",
+    "clinician_router",
+    "get_clinician_intake_submission_repository",
+    "get_clinician_patient_repository",
+    "get_intake_outcome_measure_service",
+    "router",
+]

@@ -293,6 +293,11 @@ if settings.enable_patient_chat:
 # URL here answers 401, so a deployment that has no patient front door needs
 # no flag to keep it shut.
 app.include_router(patient_intake.router)
+# The clinician's read of what that form collected. Unconditional for a
+# different reason: it sits behind the ordinary clinician door, and an
+# already-collected clinical record should stay readable whatever else a
+# deployment has turned off.
+app.include_router(patient_intake.clinician_router)
 # Companion launch-intent handoff. Mounted only when the flag is on so
 # /api/launch/* returns 404 until the desktop companions ship the
 # verified-link redemption path. See docs/design/companion-thin-client.md.
