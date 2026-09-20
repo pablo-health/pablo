@@ -64,6 +64,7 @@ from .routes import (
     ehr_routes,
     ext_auth,
     ical_sync,
+    intake_documents,
     intake_packets,
     internal_transcription,
     launch,
@@ -356,6 +357,12 @@ app.include_router(patient_intake.clinician_router)
 # the ordinary clinician door: a practice editing its own paperwork touches
 # no patient data and needs no patient front door to be open.
 app.include_router(intake_packets.router)
+# The documents a practice asks people to sign, and the portal's read of
+# one. Unconditional for the same two reasons as the pair above: the
+# clinician half is ordinary practice paperwork behind the ordinary door,
+# and the patient half answers 401 with no resolver registered.
+app.include_router(intake_documents.router)
+app.include_router(intake_documents.patient_router)
 # Sending a form to a patient and them filling it in. Both routers are
 # unconditional for the reasons above: the patient half answers 401 with no
 # resolver registered, and the clinician half sits behind the ordinary

@@ -304,6 +304,16 @@ class AuditAction(StrEnum):
     # questions.
     INTAKE_TEMPLATE_PUBLISHED = "intake_template_published"
 
+    # A clinician published a version of a consent document. Not a
+    # disclosure — the text is the practice's own paperwork and names
+    # nobody — but it is the exact wording every signature taken from then
+    # on will be read back against, so which text went live and when is the
+    # record that makes a signature mean something. The payload carries the
+    # document key, the version number and the digest: the digest is how a
+    # signed record names its text, so it is the identifier worth keeping,
+    # and it is not the text itself.
+    INTAKE_DOCUMENT_PUBLISHED = "intake_document_published"
+
     # A clinician asked a patient to fill in a version of a form, or took
     # the request back. Both are writes ABOUT a patient rather than
     # disclosures to one, and the payload carries which version was asked
@@ -520,6 +530,7 @@ class ResourceType(StrEnum):
     PATIENT_DOCUMENT = "patient_document"
     PATIENT_INTAKE_SUBMISSION = "patient_intake_submission"
     INTAKE_PACKET_VERSION = "intake_packet_version"
+    INTAKE_DOCUMENT = "intake_document"
     PATIENT_INTAKE_ASSIGNMENT = "patient_intake_assignment"
     PATIENT_MESSAGE_THREAD = "patient_message_thread"
     INVITATION = "invitation"

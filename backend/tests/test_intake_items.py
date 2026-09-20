@@ -143,9 +143,33 @@ class TestTheWholeList:
         with pytest.raises(ItemConfigError, match="cannot be a question's name"):
             validate_item_list([_draft("Reason For Visit", "reason")])
 
-    def test_a_consent_document_is_refused_until_documents_ship(self) -> None:
-        with pytest.raises(ItemConfigError, match="not ready to be added"):
-            validate_item_list([_draft("consent", "consent_document", document_id="x")])
+    def test_a_consent_document_has_to_name_a_document(self) -> None:
+        with pytest.raises(ItemConfigError, match="document_key"):
+            validate_item_list([_draft("consent", "consent_document")])
+
+    def test_a_consent_document_passes_with_no_lookup_to_ask(self) -> None:
+        """The editor's own validation has no document store to consult.
+
+        Saving a draft goes through the same function as publishing, and a
+        practice picking a document it has not published yet is a normal
+        thing to have half-done.
+        """
+        parsed = validate_item_list([_draft("consent", "consent_document", document_key="doc-1")])
+        assert parsed[0].item_type == "consent_document"
+
+    def test_an_unpublished_document_cannot_be_asked_for(self) -> None:
+        with pytest.raises(ItemConfigError, match="publish this document"):
+            validate_item_list(
+                [_draft("consent", "consent_document", document_key="doc-1")],
+                published_document=lambda _key: None,
+            )
+
+    def test_a_published_document_can_be_asked_for(self) -> None:
+        parsed = validate_item_list(
+            [_draft("consent", "consent_document", document_key="doc-1")],
+            published_document=lambda _key: "version-7",
+        )
+        assert parsed[0].item_type == "consent_document"
 
     def test_the_item_that_is_wrong_is_named(self) -> None:
         with pytest.raises(ItemConfigError, match=r"^how_bad:"):

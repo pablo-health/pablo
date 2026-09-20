@@ -228,6 +228,13 @@ const baseQueryKeys = {
       [...baseQueryKeys.intakeTemplates.all, "version", templateId, versionId] as const,
   },
 
+  // Consent document query keys (the documents a practice asks people to sign)
+  intakeDocuments: {
+    all: ["intake-documents"] as const,
+    list: () => [...baseQueryKeys.intakeDocuments.all, "list"] as const,
+    published: () => [...baseQueryKeys.intakeDocuments.all, "published"] as const,
+  },
+
   // Note-type catalog query keys
   noteTypes: {
     all: ["note-types"] as const,

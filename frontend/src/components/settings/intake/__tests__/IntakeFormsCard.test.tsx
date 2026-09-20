@@ -23,6 +23,15 @@ const mockCreateVersion = vi.fn()
 const mockSaveItems = vi.fn()
 const mockPublish = vi.fn()
 
+// The card asks which documents a consent question could point at. The
+// picker itself is the item editor's test; here it only has to not be a
+// network call.
+const mockUsePublishedDocuments = vi.fn()
+
+vi.mock("@/hooks/useIntakeDocuments", () => ({
+  usePublishedIntakeDocuments: () => mockUsePublishedDocuments(),
+}))
+
 vi.mock("@/hooks/useIntakePackets", () => ({
   useIntakeTemplates: () => mockUseTemplates(),
   useIntakeVersion: (...args: unknown[]) => mockUseVersion(...args),
@@ -72,6 +81,7 @@ describe("IntakeFormsCard", () => {
     vi.clearAllMocks()
     mockUseTemplates.mockReturnValue({ data: [TEMPLATE] })
     mockUseVersion.mockReturnValue({ data: DRAFT })
+    mockUsePublishedDocuments.mockReturnValue({ data: [] })
   })
 
   it("says so when the practice has no forms", () => {
