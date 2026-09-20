@@ -36,6 +36,7 @@ from app.models.audit import AuditAction
 from app.portal import tokens
 from app.portal.delivery import CapturingInviteDelivery, DeliveryNotConfigured, FakeSmsGateway
 from app.portal.factory import get_invite_delivery, get_sms_gateway
+from app.portal.practice_routes import PracticeAddress
 from app.portal.routes import router
 from app.portal.store import InMemoryPortalAuthStore, InMemoryPortalSessionStore
 from app.portal.tenant_gateway import (
@@ -61,6 +62,7 @@ SIGNING_KEY = "route-test-signing-key-not-a-real-secret"
 PORTAL_ORIGIN = "https://portal.example.test"
 PRACTICE_ID = "practice-1"
 PRACTICE_SLUG = "example-therapy"
+PRACTICE_NAME = "Example Therapy"
 
 PATIENT_ID = "11111111-1111-4111-8111-111111111111"
 NO_PHONE_PATIENT_ID = "22222222-2222-4222-8222-222222222222"
@@ -185,8 +187,18 @@ def _practice_address(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setattr(
         "app.portal.routes.ensure_practice_slug",
-        lambda practice_id: PRACTICE_SLUG if practice_id == PRACTICE_ID else "wrong-practice",
+        lambda practice_id: _address(
+            PRACTICE_SLUG if practice_id == PRACTICE_ID else "wrong-practice"
+        ),
     )
+    monkeypatch.setattr(
+        "app.portal.routes.practice_address_for_schema",
+        lambda schema: _address(PRACTICE_SLUG) if schema == TENANT else None,
+    )
+
+
+def _address(slug: str, *, enabled: bool = True) -> PracticeAddress:
+    return PracticeAddress(slug=slug, display_name=PRACTICE_NAME, enabled=enabled)
 
 
 @pytest.fixture
@@ -346,6 +358,28 @@ def test_invite_422s_without_both_channels(
     assert delivery.sent == []
 
 
+def test_invite_409s_when_the_practice_turned_its_portal_off(
+    app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+    sms: FakeSmsGateway,
+    delivery: CapturingInviteDelivery,
+) -> None:
+    """An invitation to a page that answers 404 is worse than no invitation:
+    the clinician believes it was sent and the patient is the one who finds
+    out. Refused before anything is minted or sent."""
+    monkeypatch.setattr(
+        "app.portal.routes.ensure_practice_slug",
+        lambda _practice_id: _address(PRACTICE_SLUG, enabled=False),
+    )
+
+    response = TestClient(app).post(_invite_url())
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "PORTAL_DISABLED_FOR_PRACTICE"
+    assert sms.sent == []
+    assert delivery.sent == []
+
+
 def test_invite_404s_for_unknown_patient(client: TestClient) -> None:
     assert _issue(client, UNKNOWN_PATIENT_ID).status_code == 404
 
@@ -423,6 +457,51 @@ def test_redeem_mints_a_session_carrying_a_token_handle(
     assert claims.jti
     # The row that makes it revocable exists.
     assert stores.sessions.get(claims.jti) is not None
+
+
+def test_a_minted_session_says_which_practice_page_it_belongs_to(
+    client: TestClient,
+    delivery: CapturingInviteDelivery,
+    sms: FakeSmsGateway,
+) -> None:
+    """A magic link carries the address in its path, so the ordinary caller
+    already knows. These fields are for anything that arrives without one, and
+    they are on both routes so a rotation does not lose the answer."""
+    token, otp = _issue_and_capture(client, delivery, sms)
+
+    redeemed = _redeem(client, token, otp).json()
+
+    assert redeemed["practice_slug"] == PRACTICE_SLUG
+    assert redeemed["practice_display_name"] == PRACTICE_NAME
+
+    rotated = _refresh(client, redeemed["session_token"]).json()
+
+    assert rotated["practice_slug"] == PRACTICE_SLUG
+    assert rotated["practice_display_name"] == PRACTICE_NAME
+
+
+def test_a_session_still_mints_when_the_practice_has_no_address_yet(
+    client: TestClient,
+    delivery: CapturingInviteDelivery,
+    sms: FakeSmsGateway,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The credential is already committed by the time the address is read, so
+    a practice without one — or a platform hiccup reading it — must not turn a
+    completed sign-in into the uniform 401."""
+    token, otp = _issue_and_capture(client, delivery, sms)
+    monkeypatch.setattr(
+        "app.portal.routes.practice_address_for_schema",
+        lambda _schema: (_ for _ in ()).throw(RuntimeError("platform is having a moment")),
+    )
+
+    response = _redeem(client, token, otp)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["session_token"]
+    assert body["practice_slug"] is None
+    assert body["practice_display_name"] is None
 
 
 def test_redeem_enters_the_practice_from_the_token_claim(
