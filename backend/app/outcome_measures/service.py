@@ -11,9 +11,11 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING, cast
 
+from ..models.enums import OutcomeMeasureSource
 from ..repositories.outcome_measure import PatientOutcomeAccessDeniedError
 from ..utcnow import utc_now
 from .instruments import (
+    InstrumentValidationError,
     compute_total,
     get_instrument,
     is_complete,
@@ -23,6 +25,8 @@ from .instruments import (
 from .schemas import CreateOutcomeMeasureRequest, OutcomeMeasureResponse
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from ..repositories.outcome_measure import OutcomeMeasureRepository
 
 
@@ -155,6 +159,65 @@ class OutcomeMeasureService:
         except PatientOutcomeAccessDeniedError as exc:
             raise OutcomeMeasureNotFoundError(patient_id) from exc
         return self._build_response(saved)
+
+    def create_self_report(
+        self,
+        patient_id: str,
+        instrument: str,
+        item_scores: dict[str, int],
+        administered_at: datetime,
+    ) -> OutcomeMeasureResponse:
+        """Score and persist a screener the patient answered about themselves.
+
+        Separate from :meth:`create` rather than a flag on it, for two
+        reasons that both bite. ``create`` writes through the grant-checked
+        repository path, which a patient principal can never satisfy. And
+        the clinician route audits its call as a clinician administering an
+        instrument — a row that would name the wrong actor here. The caller
+        writes the audit entry for what actually happened.
+
+        Every item is required: an incomplete screener scores against bands
+        built for a complete one.
+
+        Raises
+        ------
+        UnknownInstrumentError
+            When the instrument code is not in the registry.
+        InstrumentValidationError
+            When item_scores fail the instrument's constraints, including
+            a missing item.
+        """
+        defn = get_instrument(instrument)
+        if defn is None:
+            raise UnknownInstrumentError(f"Unknown instrument {instrument!r}.")
+        validate_item_scores(defn, item_scores)
+        if not is_complete(defn, item_scores):
+            missing = sorted(defn.valid_keys - item_scores.keys(), key=int)
+            raise InstrumentValidationError(
+                f"Instrument {defn.code!r} is missing item(s) {missing}; every item is required."
+            )
+
+        now = utc_now()
+        row: dict[str, object] = {
+            "id": str(uuid.uuid4()),
+            "patient_id": patient_id,
+            "session_id": None,
+            "appointment_id": None,
+            "instrument": defn.code,
+            "total_score": compute_total(defn, item_scores),
+            "item_scores": item_scores,
+            "is_complete": True,
+            "source": OutcomeMeasureSource.PATIENT_SELF_REPORT.value,
+            "item_citations": None,
+            "administered_at": administered_at,
+            # The actor's id. A patient submission has no clinician behind
+            # it, so this column holds the patient who answered.
+            "created_by": patient_id,
+            "created_at": now,
+            "updated_at": now,
+            "deleted_at": None,
+        }
+        return self._build_response(self._repo.add_self_report(row))
 
     def soft_delete(self, measure_id: str, user_id: str) -> None:
         """Soft-delete a measure by setting ``deleted_at``.

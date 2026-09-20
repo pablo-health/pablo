@@ -103,6 +103,27 @@ class PostgresPatientRepository(PatientRepository):
         )
         return _row_to_patient(row) if row else None
 
+    def get_for_patient_principal(self, patient_id: str) -> Patient | None:
+        """The calling patient's own live chart row, or ``None``.
+
+        No grant join: the patient is the subject, not a clinician with
+        access to them. The ``patient_id`` predicate is the isolation, and
+        the ``rls_patient_self_read`` policy is the second layer.
+        """
+        if not _is_uuid(patient_id):
+            return None
+        row = (
+            self._session.execute(
+                select(PatientRow).where(
+                    PatientRow.id == patient_id,
+                    PatientRow.deleted_at.is_(None),
+                )
+            )
+            .scalars()
+            .one_or_none()
+        )
+        return _row_to_patient(row) if row else None
+
     def find_by_email(self, email: str, user_id: str) -> Patient | None:
         row = (
             self._session.execute(

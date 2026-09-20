@@ -101,13 +101,10 @@ class PostgresOutcomeMeasureRepository(OutcomeMeasureRepository):
 
     # --- writes ---
 
-    def add(self, row: dict[str, object], user_id: str) -> dict[str, object]:
-        patient_id = str(row["patient_id"])
-        if not self._has_access(patient_id, user_id):
-            raise PatientOutcomeAccessDeniedError(patient_id, user_id)
+    def _insert(self, row: dict[str, object]) -> dict[str, object]:
         orm_row = OutcomeMeasureRow(
             id=str(row["id"]),
-            patient_id=patient_id,
+            patient_id=str(row["patient_id"]),
             session_id=row.get("session_id"),  # type: ignore[arg-type]
             appointment_id=row.get("appointment_id"),  # type: ignore[arg-type]
             instrument=str(row["instrument"]),
@@ -125,6 +122,15 @@ class PostgresOutcomeMeasureRepository(OutcomeMeasureRepository):
         self._session.add(orm_row)
         self._session.flush()
         return _row_to_dict(orm_row)
+
+    def add(self, row: dict[str, object], user_id: str) -> dict[str, object]:
+        patient_id = str(row["patient_id"])
+        if not self._has_access(patient_id, user_id):
+            raise PatientOutcomeAccessDeniedError(patient_id, user_id)
+        return self._insert(row)
+
+    def add_self_report(self, row: dict[str, object]) -> dict[str, object]:
+        return self._insert(row)
 
     def update(self, row: dict[str, object], user_id: str) -> dict[str, object]:
         patient_id = str(row["patient_id"])

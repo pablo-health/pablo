@@ -28,6 +28,17 @@ class PatientRepository(ABC):
         """Get multiple patients by IDs, ensuring they belong to the user."""
         pass
 
+    @abstractmethod
+    def get_for_patient_principal(self, patient_id: str) -> Patient | None:
+        """The patient's own chart row, read as the patient.
+
+        No ``user_id``, because the reader is the subject: a patient holds
+        no ``patient_clinicians`` grant, so :meth:`get` would refuse them
+        their own record. The id comes off the authenticated principal
+        rather than the request, and the ``app.current_patient_id`` policy
+        on ``patients`` backs that up underneath.
+        """
+
     def get_last_name(self, patient_id: str, user_id: str) -> str | None:
         """Last name only, same access gate as :meth:`get`.
 
@@ -229,6 +240,12 @@ class InMemoryPatientRepository(PatientRepository):
             and p.id not in self._deleted_at
             and self._can_access(p.id, user_id)
         }
+
+    def get_for_patient_principal(self, patient_id: str) -> Patient | None:
+        patient = self._patients.get(patient_id)
+        if patient is None or patient_id in self._deleted_at:
+            return None
+        return patient
 
     def find_by_email(self, email: str, user_id: str) -> Patient | None:
         matches = [

@@ -62,6 +62,19 @@ class OutcomeMeasureRepository(ABC):
         """Insert a new row. Raises :class:`PatientOutcomeAccessDeniedError` if blocked."""
 
     @abstractmethod
+    def add_self_report(self, row: dict[str, object]) -> dict[str, object]:
+        """Insert a row the patient recorded about themselves.
+
+        No ``user_id`` and no grant check, because there is no clinician in
+        the room: a patient answering a screener holds no
+        ``patient_clinicians`` row and never will, so
+        :meth:`add` would refuse the only principal this path has. The
+        isolation is the one the rest of the patient surface uses — a
+        ``patient_id`` that came off the authenticated principal, and the
+        ``app.current_patient_id`` policy on the table underneath.
+        """
+
+    @abstractmethod
     def update(self, row: dict[str, object], user_id: str) -> dict[str, object]:
         """Update an existing row (full replacement).
 
@@ -133,6 +146,10 @@ class InMemoryOutcomeMeasureRepository(OutcomeMeasureRepository):
         patient_id = str(row["patient_id"])
         if not self._can_access(patient_id, user_id):
             raise PatientOutcomeAccessDeniedError(patient_id, user_id)
+        self._rows[str(row["id"])] = dict(row)
+        return dict(row)
+
+    def add_self_report(self, row: dict[str, object]) -> dict[str, object]:
         self._rows[str(row["id"])] = dict(row)
         return dict(row)
 
