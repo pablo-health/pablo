@@ -34,7 +34,7 @@ from ..models.patient_message import SENDER_PATIENT
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from ..models import PatientMessage, PatientMessageThread
+    from ..models import MessageAttachment, PatientMessage, PatientMessageThread
 
 
 class PatientMessageAccessDeniedError(Exception):
@@ -124,6 +124,54 @@ class PatientMessageRepository(ABC):
         never touches the patient's own messages.
         """
 
+    # ------------------------------------------------------------------
+    # Attachments — the same rows either principal reaches
+    # ------------------------------------------------------------------
+    #
+    # Not split by principal like the verbs above, because neither of these
+    # decides access. Linking happens only after the caller's own send has
+    # been authorized and the documents validated against that principal's
+    # own surface; reading happens only after the thread has been resolved
+    # for the caller. Both take ``patient_id`` so the query carries an
+    # explicit filter beside the row policy, as every read here does.
+
+    @abstractmethod
+    def link_attachments(
+        self,
+        *,
+        message_id: str,
+        patient_id: str,
+        document_ids: list[str],
+        created_at: datetime,
+    ) -> None:
+        """Record that these documents were sent on this message.
+
+        Called with ids already checked against the caller's own surface.
+        The database has the last word all the same: a document already on
+        another message, or one on another patient's chart, is refused by a
+        constraint rather than by the check that came first.
+        """
+
+    @abstractmethod
+    def already_attached(self, document_ids: list[str], patient_id: str) -> set[str]:
+        """Which of these documents are already on a message.
+
+        Scoped to the patient, because the answer is only ever asked about
+        documents the caller has already been shown to own — a wider read
+        would turn this into a way to probe for other people's files.
+        """
+
+    @abstractmethod
+    def list_attachments(
+        self, message_ids: list[str], patient_id: str
+    ) -> dict[str, list[MessageAttachment]]:
+        """The files on each of these messages, keyed by message id.
+
+        One call for a whole thread rather than one per message. Messages
+        with no attachments are absent from the mapping, so a caller reads
+        it with ``.get(id, [])``.
+        """
+
 
 class InMemoryPatientMessageRepository(PatientMessageRepository):
     """In-memory repository for unit tests.
@@ -132,17 +180,34 @@ class InMemoryPatientMessageRepository(PatientMessageRepository):
     :meth:`grant_access`, mirroring ``has_patient_access``. Nothing is
     granted by default: the cross-clinician invariants are the point of this
     table, so tests say out loud who may see what.
+
+    :meth:`describe_document` plays the same part for attachments. The real
+    :meth:`list_attachments` joins ``patient_documents`` for the three
+    descriptive fields, and there is no document table here — so a test that
+    expects a chip to read a filename says which filename, the way it says
+    who holds a grant.
     """
 
     def __init__(self) -> None:
         self._threads: dict[str, PatientMessageThread] = {}
         self._messages: dict[str, list[PatientMessage]] = {}
         self._access: set[tuple[str, str]] = set()
+        self._documents: dict[str, tuple[str, str, int]] = {}
+        # document_id -> (message_id, patient_id). Keyed on the document
+        # because that is the real table's unique constraint: a file rides
+        # on one message or none.
+        self._attachments: dict[str, tuple[str, str]] = {}
 
     # --- test setup helpers (mirror has_patient_access semantics) ---
 
     def grant_access(self, patient_id: str, user_id: str) -> None:
         self._access.add((patient_id, user_id))
+
+    def describe_document(
+        self, document_id: str, *, filename: str, mime_type: str, size_bytes: int
+    ) -> None:
+        """Stand in for the ``patient_documents`` row the real join reads."""
+        self._documents[document_id] = (filename, mime_type, size_bytes)
 
     def revoke_access(self, patient_id: str, user_id: str) -> None:
         self._access.discard((patient_id, user_id))
@@ -234,3 +299,48 @@ class InMemoryPatientMessageRepository(PatientMessageRepository):
                 message.read_at = read_at
                 changed += 1
         return changed
+
+    # --- attachments ---
+
+    def link_attachments(
+        self,
+        *,
+        message_id: str,
+        patient_id: str,
+        document_ids: list[str],
+        created_at: datetime,
+    ) -> None:
+        _ = created_at  # nothing here reads the link's own timestamp
+        for document_id in document_ids:
+            self._attachments[document_id] = (message_id, patient_id)
+
+    def already_attached(self, document_ids: list[str], patient_id: str) -> set[str]:
+        return {
+            document_id
+            for document_id in document_ids
+            if self._attachments.get(document_id, (None, None))[1] == patient_id
+        }
+
+    def list_attachments(
+        self, message_ids: list[str], patient_id: str
+    ) -> dict[str, list[MessageAttachment]]:
+        from ..models import MessageAttachment  # noqa: PLC0415 — avoids a cycle at import time
+
+        wanted = set(message_ids)
+        found: dict[str, list[MessageAttachment]] = {}
+        for document_id, (message_id, owner) in self._attachments.items():
+            if message_id not in wanted or owner != patient_id:
+                continue
+            filename, mime_type, size_bytes = self._documents.get(
+                document_id, (document_id, "application/octet-stream", 0)
+            )
+            found.setdefault(message_id, []).append(
+                MessageAttachment(
+                    message_id=message_id,
+                    document_id=document_id,
+                    filename=filename,
+                    mime_type=mime_type,
+                    size_bytes=size_bytes,
+                )
+            )
+        return found

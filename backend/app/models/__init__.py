@@ -73,9 +73,10 @@ from .patient_document import (
     ExtractionStatus,
     PatientDocument,
 )
-from .patient_message import PatientMessage, PatientMessageThread
+from .patient_message import MessageAttachment, PatientMessage, PatientMessageThread
 from .patient_message_api import (
     MarkThreadReadResponse,
+    MessageAttachmentResponse,
     PatientMessageResponse,
     PatientMessageThreadDetailResponse,
     PatientMessageThreadListResponse,
@@ -199,6 +200,8 @@ __all__ = [
     "GoalNavigationResponse",
     "LlmUsageRecord",
     "MarkThreadReadResponse",
+    "MessageAttachment",
+    "MessageAttachmentResponse",
     "Note",
     "NoteResponse",
     "ObjectiveNote",
