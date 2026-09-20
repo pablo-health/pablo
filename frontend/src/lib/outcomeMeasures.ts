@@ -11,6 +11,13 @@
  * severity — those come back from the API.
  *
  * PHQ-9 and GAD-7 are public-domain instruments.
+ *
+ * This is the clinician's manual-entry form. The patient-facing intake form
+ * is rendered from what `GET /api/patient/intake/form` returns, which the
+ * backend builds from `app.outcome_measures.item_text` — the same
+ * public-domain wording, served rather than bundled. Change the items here
+ * and change them there; a backend test pins both against the instrument
+ * registry, so a drifting item count fails there first.
  */
 
 export interface ResponseOption {

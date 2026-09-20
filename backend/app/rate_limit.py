@@ -508,6 +508,34 @@ def get_audio_upload_limiter() -> RateLimiter:
     return _audio_upload_limiter
 
 
+# Intake submit: per-patient burst limit (per-minute + per-hour sliding windows).
+_intake_submit_limiter: RateLimiter | None = None
+
+
+def get_intake_submit_limiter() -> RateLimiter:
+    """Get the per-patient burst rate limiter for the intake submit endpoint.
+
+    Its own namespace, not chat-send's. Two limiters handed the same raw key
+    share one budget (see :class:`NamespacedLimiter`), and a patient who has
+    been using the chat surface should still be able to submit the form their
+    clinician asked them for.
+
+    An intake form is submitted once, twice if a network error ate the first
+    try. The windows are generous enough that no honest patient meets them
+    and tight enough to bound what one credential can write.
+    """
+    global _intake_submit_limiter  # noqa: PLW0603
+    if _intake_submit_limiter is None:
+        _intake_submit_limiter = CompositeLimiter(
+            [
+                _create_windowed_limiter("intake-submit", max_requests=5, window_seconds=60),
+                _create_windowed_limiter("intake-submit", max_requests=20, window_seconds=3_600),
+            ]
+        )
+        logger.info("Intake submit rate limiter: %s", type(_intake_submit_limiter).__name__)
+    return _intake_submit_limiter
+
+
 def reset_preauth_limiter() -> None:
     """Reset the pre-auth rate limiter. Used by tests."""
     _get_preauth_limiter().reset()
