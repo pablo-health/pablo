@@ -66,6 +66,14 @@ os.environ.setdefault("ENVIRONMENT", "development")
 # module here changes behaviour.
 os.environ.setdefault("ENABLE_DPOP_VALIDATION", "true")
 
+# Mount the patient portal sign-in routes, and with them the default patient
+# resolver. Same placement and same reason as the two above: the app builds its
+# router list once, at import, from settings that are read once and cached.
+# ``api/test_portal_sign_in_e2e.py`` is the module that needs it — it drives
+# redemption over HTTP and then presents the minted session to a patient route,
+# which is only a test of anything if the real front door is registered.
+os.environ.setdefault("ENABLE_PATIENT_PORTAL", "true")
+
 
 class _PgState:
     container = None  # type: ignore[var-annotated]

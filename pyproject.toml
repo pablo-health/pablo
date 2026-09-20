@@ -259,6 +259,23 @@ ignore = [
     "TC001",    # enums imported from sibling modules used at runtime by Pydantic
     "TC003",    # datetime import needed at runtime for Pydantic field validation
 ]
+"backend/app/portal/adapters.py" = [
+    "ARG002",   # the console gateway drops the recipient on purpose and still
+                # has to take it: the protocol's keyword names are the contract
+]
+"backend/app/portal/delivery.py" = [
+    "ARG002",   # DeliveryNotConfigured refuses without reading its arguments,
+                # and its signatures are the two protocols it stands in for
+]
+"backend/app/portal/routes.py" = [
+    "TC001",    # FastAPI resolves Annotated[...] at runtime, so an injected
+                # type cannot move into a TYPE_CHECKING block
+    "S105",     # token_type is the OAuth response field name, not a secret
+]
+"backend/app/portal/tenant_gateway.py" = [
+    "TC002",    # Session is injected through Annotated[..., Depends(...)] and
+                # so is resolved at runtime, same as routes.py above
+]
 "backend/app/db/models.py" = [
     "TC003",    # datetime import needed at runtime for SQLAlchemy Mapped[] resolution
 ]

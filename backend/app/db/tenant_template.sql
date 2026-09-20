@@ -333,6 +333,29 @@ CREATE TABLE __TENANT_SCHEMA__.clinician_profiles (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.companion_auth_challenges (
+    jti character varying(36) NOT NULL,
+    patient_id uuid NOT NULL,
+    otp_hash text NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    attempts smallint DEFAULT 0 NOT NULL,
+    consumed boolean DEFAULT false NOT NULL
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.companion_sessions (
+    jti character varying(36) NOT NULL,
+    patient_id uuid NOT NULL,
+    issued_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    chain_started_at timestamp with time zone NOT NULL,
+    revoked_at timestamp with time zone
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.compliance_documents (
     id uuid NOT NULL,
     compliance_item_id uuid,
@@ -1113,6 +1136,16 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.clinician_profiles
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.companion_auth_challenges
+    ADD CONSTRAINT companion_auth_challenges_pkey PRIMARY KEY (jti);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.companion_sessions
+    ADD CONSTRAINT companion_sessions_pkey PRIMARY KEY (jti);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.compliance_documents
     ADD CONSTRAINT compliance_documents_pkey PRIMARY KEY (id);
 
@@ -1452,6 +1485,14 @@ CREATE INDEX ix_claims_patient_id ON __TENANT_SCHEMA__.claims USING btree (patie
 
 
 CREATE INDEX ix_claims_state ON __TENANT_SCHEMA__.claims USING btree (state);
+
+
+
+CREATE INDEX ix_companion_auth_challenges_patient ON __TENANT_SCHEMA__.companion_auth_challenges USING btree (patient_id);
+
+
+
+CREATE INDEX ix_companion_sessions_patient ON __TENANT_SCHEMA__.companion_sessions USING btree (patient_id);
 
 
 

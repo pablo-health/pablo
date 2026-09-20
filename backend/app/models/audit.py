@@ -228,6 +228,24 @@ class AuditAction(StrEnum):
     PATIENT_DOCUMENT_DELETED = "patient_document_deleted"
     PATIENT_DOCUMENT_OCR_INVOKED = "patient_document_ocr_invoked"
 
+    # Patient portal sign-in (``app.portal``). Two actors across three
+    # events, which is why the names say what happened rather than who did
+    # it: a clinician issues and withdraws an invitation, and the patient
+    # redeems one.
+    #
+    # Redemption is an authentication event, the same shape as
+    # RECOVERY_CODE_REDEEMED on the clinician side, and the one this path
+    # cannot afford to be missing: a completed authentication that nothing
+    # recorded is the § 164.312(b) gap.
+    #
+    # Payloads carry a random token handle and counts. Never the token, the
+    # link, the code, the email address or the phone number — a handle
+    # unlocks nothing on its own, and the rest are credentials or contact
+    # details that belong in exactly one place each.
+    PATIENT_PORTAL_INVITE_ISSUED = "patient_portal_invite_issued"
+    PATIENT_PORTAL_INVITE_REVOKED = "patient_portal_invite_revoked"
+    PATIENT_PORTAL_SESSION_REDEEMED = "patient_portal_session_redeemed"
+
     # A patient submitted their intake form. The actor is the patient
     # themselves, so this is a write by the subject rather than a
     # clinician disclosure; the payload carries the submission id and the

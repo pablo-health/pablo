@@ -38,6 +38,8 @@ from .outcome_measures.router import (
     outcome_measures_router,
     patient_outcome_measures_router,
 )
+from .portal import routes as portal_routes
+from .portal.resolver import register_portal_resolver
 from .routes import (
     admin,
     admin_pentest,
@@ -304,6 +306,15 @@ if settings.enable_launch_intent:
 app.include_router(booking_links.router)
 if settings.public_booking_enabled:
     app.include_router(public_booking.router)
+# Patient portal sign-in. Mounting it publishes a surface that mints
+# credentials for callers who have none, so it waits for the deployment to
+# say yes; with the flag off every path here answers 404. The resolver is
+# registered alongside it, because a session nothing can resolve is not a
+# session — and it registers on the process-wide registry, which is why this
+# happens once, here, rather than per request.
+if settings.enable_patient_portal:
+    app.include_router(portal_routes.router)
+    register_portal_resolver()
 
 
 @app.get("/api/health")

@@ -536,6 +536,101 @@ def get_intake_submit_limiter() -> RateLimiter:
     return _intake_submit_limiter
 
 
+# Portal sign-in: the unauthenticated surface that mints patient sessions.
+#
+# Redemption is a guessing target — a six-digit code, on an endpoint anyone
+# can reach. The challenge's own attempt cap is the real control, but it only
+# bounds guessing against ONE invitation. These windows bound the rest:
+#
+#   * per address, so one client cannot sweep many invitations (or many
+#     codes, if the cap were ever raised);
+#   * per INVITATION, so many addresses cannot grind one in parallel. The
+#     attempt counter is transactional and would catch that too, but only
+#     after the guesses have been made; this refuses them earlier and
+#     cheaper.
+#
+# Both keys are namespaced so they cannot collide with the pre-auth or
+# passkey budgets: a patient failing to redeem must not spend a clinician's
+# sign-in window, or the reverse.
+#
+# The per-invitation key is a token id, which a caller only learns by holding
+# a validly-signed invitation. Keying on an UNVERIFIED claim would let anyone
+# fill the keyspace with invented ids, and let them lock a real patient out
+# by spending that invitation's budget with forged tokens — so callers verify
+# the signature first and pass the id from verified claims.
+_portal_redeem_ip_limiter: RateLimiter | None = None
+_portal_redeem_invite_limiter: RateLimiter | None = None
+_portal_refresh_ip_limiter: RateLimiter | None = None
+
+
+def _get_portal_redeem_ip_limiter() -> RateLimiter:
+    """20/min per address. A household or a waiting-room network can carry
+    several patients redeeming at once; a sweep cannot."""
+    global _portal_redeem_ip_limiter  # noqa: PLW0603
+    if _portal_redeem_ip_limiter is None:
+        _portal_redeem_ip_limiter = NamespacedLimiter(
+            _create_limiter(max_requests=20, window_seconds=60), "portal-redeem-ip:"
+        )
+        logger.info("Portal redeem IP rate limiter: %s", type(_portal_redeem_ip_limiter).__name__)
+    return _portal_redeem_ip_limiter
+
+
+def _get_portal_redeem_invite_limiter() -> RateLimiter:
+    """10/hour against one invitation — comfortably above the challenge's
+    attempt cap, so a patient mistyping a code hits the cap (which is
+    legible: that invitation is used up) rather than a 429."""
+    global _portal_redeem_invite_limiter  # noqa: PLW0603
+    if _portal_redeem_invite_limiter is None:
+        _portal_redeem_invite_limiter = NamespacedLimiter(
+            _create_limiter(max_requests=10, window_seconds=3_600), "portal-redeem-invite:"
+        )
+        logger.info(
+            "Portal redeem per-invitation rate limiter: %s",
+            type(_portal_redeem_invite_limiter).__name__,
+        )
+    return _portal_redeem_invite_limiter
+
+
+def _get_portal_refresh_ip_limiter() -> RateLimiter:
+    """60/min per address. Refresh is a normal background call for an open
+    portal session, so this is a runaway-client guard rather than a guessing
+    control — a forged session token is refused by its signature."""
+    global _portal_refresh_ip_limiter  # noqa: PLW0603
+    if _portal_refresh_ip_limiter is None:
+        _portal_refresh_ip_limiter = NamespacedLimiter(
+            _create_limiter(max_requests=60, window_seconds=60), "portal-refresh-ip:"
+        )
+        logger.info("Portal refresh IP rate limiter: %s", type(_portal_refresh_ip_limiter).__name__)
+    return _portal_refresh_ip_limiter
+
+
+def require_portal_redeem_rate_limit(request: Request) -> None:
+    """Per-address window on redemption. A route dependency, so it runs first."""
+    _get_portal_redeem_ip_limiter().check(get_client_ip(request))
+
+
+def check_portal_redeem_invite_limit(jti: str) -> None:
+    """Per-invitation window. Call only with an id from VERIFIED claims."""
+    _get_portal_redeem_invite_limiter().check(jti)
+
+
+def require_portal_refresh_rate_limit(request: Request) -> None:
+    """Per-address window on session rotation."""
+    _get_portal_refresh_ip_limiter().check(get_client_ip(request))
+
+
+def reset_portal_limiters() -> None:
+    """Drop every portal window. Used by tests, which would otherwise leak
+    budget between cases through these module-level singletons."""
+    for limiter in (
+        _portal_redeem_ip_limiter,
+        _portal_redeem_invite_limiter,
+        _portal_refresh_ip_limiter,
+    ):
+        if limiter is not None:
+            limiter.reset()
+
+
 def reset_preauth_limiter() -> None:
     """Reset the pre-auth rate limiter. Used by tests."""
     _get_preauth_limiter().reset()
