@@ -435,10 +435,11 @@ class TestHandingItIn:
         submit that gave up on the first refusal would leave a patient
         unable to hand a form in for a reason that is nobody's fault.
         """
-        import app.services.patient_intake_assignment_service as module  # noqa: PLC0415
-
         drawn = iter(["TAKEN234", "TAKEN234", "FREE2345"])
-        monkeypatch.setattr(module, "new_receipt_code", lambda: next(drawn))
+        monkeypatch.setattr(
+            "app.services.patient_intake_assignment_service.new_receipt_code",
+            lambda: next(drawn),
+        )
 
         first = _answered(service, _version(packet_service))
         service.submit(first, _PATIENT, measures)

@@ -37,7 +37,6 @@ of anything.
 
 from __future__ import annotations
 
-import logging
 import uuid
 from typing import TYPE_CHECKING
 
@@ -63,8 +62,6 @@ if TYPE_CHECKING:
     from ..repositories.patient_document import PatientDocumentRepository
     from ..repositories.patient_intake_artifact import PatientIntakeArtifactRepository
     from ..repositories.patient_intake_assignment import PatientIntakeAssignmentRepository
-
-logger = logging.getLogger(__name__)
 
 
 class NotAnUploadItemError(RuntimeError):
