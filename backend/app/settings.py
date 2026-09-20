@@ -1050,6 +1050,16 @@ class Settings(BaseSettings):
         ge=1,
         description="Max chat-send calls per user per hour",
     )
+    patient_message_rate_per_min: int = Field(
+        default=10,
+        ge=1,
+        description="Max secure-message sends per patient per minute",
+    )
+    patient_message_rate_per_hour: int = Field(
+        default=100,
+        ge=1,
+        description="Max secure-message sends per patient per hour",
+    )
     upload_rate_per_min: int = Field(
         default=20,
         ge=1,

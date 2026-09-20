@@ -433,6 +433,51 @@ def get_chat_send_limiter() -> RateLimiter:
     return _chat_send_limiter
 
 
+# Secure patient messaging: per-patient burst limit.
+_patient_message_send_limiter: RateLimiter | None = None
+
+
+def get_patient_message_send_limiter() -> RateLimiter:
+    """Get the per-patient burst rate limiter for sending a secure message.
+
+    Keyed on the calling patient, not a clinician, and sized for someone
+    typing rather than someone driving a model: a patient writing to their
+    practice sends a handful of messages, and anything above that is a
+    script. Storage here is durable and the bodies are unbounded in
+    aggregate, so the limit protects the store itself rather than a
+    downstream spend.
+    """
+    global _patient_message_send_limiter  # noqa: PLW0603
+    if _patient_message_send_limiter is None:
+        from .settings import get_settings  # noqa: PLC0415
+
+        settings = get_settings()
+        _patient_message_send_limiter = CompositeLimiter(
+            [
+                _create_windowed_limiter(
+                    "patient-message-send",
+                    max_requests=settings.patient_message_rate_per_min,
+                    window_seconds=60,
+                ),
+                _create_windowed_limiter(
+                    "patient-message-send",
+                    max_requests=settings.patient_message_rate_per_hour,
+                    window_seconds=3_600,
+                ),
+            ]
+        )
+        logger.info(
+            "Patient message send rate limiter: %s",
+            type(_patient_message_send_limiter).__name__,
+        )
+    return _patient_message_send_limiter
+
+
+def reset_patient_message_send_limiter() -> None:
+    """Reset the patient-message send limiter. Used by tests."""
+    get_patient_message_send_limiter().reset()
+
+
 # Audio upload: per-user burst limit (per-minute + per-hour sliding windows).
 _audio_upload_limiter: RateLimiter | None = None
 

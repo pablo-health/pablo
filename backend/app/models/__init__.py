@@ -68,6 +68,16 @@ from .patient_chat_api import (
     UpdatePatientChatConversationRequest,
 )
 from .patient_document import DocumentCategory, ExtractionStatus, PatientDocument
+from .patient_message import PatientMessage, PatientMessageThread
+from .patient_message_api import (
+    MarkThreadReadResponse,
+    PatientMessageResponse,
+    PatientMessageThreadDetailResponse,
+    PatientMessageThreadListResponse,
+    PatientMessageThreadResponse,
+    SendMessageRequest,
+    StartThreadRequest,
+)
 from .scheduling import (
     AppointmentListResponse,
     AppointmentResponse,
@@ -182,6 +192,7 @@ __all__ = [
     "GoalNavigationRequest",
     "GoalNavigationResponse",
     "LlmUsageRecord",
+    "MarkThreadReadResponse",
     "Note",
     "NoteResponse",
     "ObjectiveNote",
@@ -193,6 +204,12 @@ __all__ = [
     "PatientDocument",
     "PatientExportData",
     "PatientListResponse",
+    "PatientMessage",
+    "PatientMessageResponse",
+    "PatientMessageThread",
+    "PatientMessageThreadDetailResponse",
+    "PatientMessageThreadListResponse",
+    "PatientMessageThreadResponse",
     "PatientNotesListResponse",
     "PatientResponse",
     "PatientSummary",
@@ -210,12 +227,14 @@ __all__ = [
     "ScheduleSessionRequest",
     "SecurityGuideStatusResponse",
     "SendChatMessageRequest",
+    "SendMessageRequest",
     "SendPatientChatMessageRequest",
     "SessionListResponse",
     "SessionResponse",
     "SessionSource",
     "SessionStatus",
     "SessionType",
+    "StartThreadRequest",
     "StructuredSOAPNoteModel",
     "SubjectiveNote",
     "TherapySession",

@@ -38,6 +38,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     Numeric,
@@ -427,6 +428,100 @@ class PatientIntakeSubmissionRow(Base):
 
     created_by: Mapped[str] = mapped_column(String(128), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class PatientMessageThreadRow(Base):
+    """One secure-message conversation between a patient and their practice.
+
+    The thread is the envelope; :class:`PatientMessageRow` holds the words.
+    Both live in the practice schema, so there is no ``practice_id`` column —
+    tenant scope is the schema location, as everywhere else here.
+
+    ``subject`` is typed by the patient and may be absent; a thread with no
+    subject is an ordinary thread, not a defective one. ``status`` exists so
+    a practice can close a resolved thread later; nothing writes ``'closed'``
+    yet, and there is deliberately no route that does — the column ships
+    ahead of its lifecycle so adding one needs no migration.
+
+    ``last_message_at`` is denormalized from the newest message so a patient's
+    thread list sorts without touching the message table.
+
+    The unique constraint on ``(id, patient_id)`` looks redundant next to the
+    primary key and is not: it is the target of the composite foreign key on
+    :class:`PatientMessageRow`, which is what stops a message's denormalized
+    ``patient_id`` from ever disagreeing with its thread's owner.
+    """
+
+    __tablename__ = "patient_message_threads"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
+    subject: Mapped[str | None] = mapped_column(String(200))
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_message_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('open','closed')",
+            name="ck_patient_message_threads_status",
+        ),
+        UniqueConstraint("id", "patient_id", name="uq_patient_message_threads_id_patient"),
+    )
+
+
+class PatientMessageRow(Base):
+    """One message in a :class:`PatientMessageThreadRow`.
+
+    ``patient_id`` is denormalized from the thread on purpose. Every
+    per-patient policy in :func:`app.db.enable_rls_on_schema` — the clinician
+    ``has_patient_access`` arm and the patient-principal arm alike — keys on a
+    ``patient_id`` column, so carrying it means this table needs no bespoke
+    policy branch at all. ``chat_messages`` is the counter-example: it has no
+    owning column, so it has a hand-written parent-join predicate in two
+    places. The composite foreign key to ``(id, patient_id)`` is what keeps
+    the denormalized copy honest — a message whose ``patient_id`` disagrees
+    with its thread's is rejected by the database, not by a convention.
+
+    ``body`` is plain ``Text``. "Encrypted at rest" is the storage layer's
+    job; there is no application-layer envelope here, and adding one would
+    put the practice's own clinicians outside their patients' messages.
+
+    ``sender`` names who wrote the message, not which credential posted it:
+    ``'practice'`` is for a message the practice itself sends without a
+    clinician composing it. Nothing in the engine writes that value today.
+
+    ``read_at`` is set when the *patient* reads a message somebody else sent
+    them. It stays NULL on the patient's own messages.
+    """
+
+    __tablename__ = "patient_messages"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    thread_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
+    sender: Mapped[str] = mapped_column(String(16), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint(
+            "sender IN ('patient','clinician','practice')",
+            name="ck_patient_messages_sender",
+        ),
+        ForeignKeyConstraint(
+            ["thread_id", "patient_id"],
+            ["patient_message_threads.id", "patient_message_threads.patient_id"],
+            ondelete="CASCADE",
+            name="fk_patient_messages_thread",
+        ),
+        Index(
+            "ix_patient_messages_thread_created",
+            "thread_id",
+            "created_at",
+        ),
+    )
 
 
 class PatientMedicationRow(Base):

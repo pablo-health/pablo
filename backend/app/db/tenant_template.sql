@@ -646,6 +646,31 @@ CREATE TABLE __TENANT_SCHEMA__.patient_medications (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.patient_message_threads (
+    id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    subject character varying(200),
+    status character varying(16) NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    last_message_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_patient_message_threads_status CHECK (((status)::text = ANY ((ARRAY['open'::character varying, 'closed'::character varying])::text[])))
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.patient_messages (
+    id uuid NOT NULL,
+    thread_id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    sender character varying(16) NOT NULL,
+    body text NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    read_at timestamp with time zone,
+    CONSTRAINT ck_patient_messages_sender CHECK (((sender)::text = ANY ((ARRAY['patient'::character varying, 'clinician'::character varying, 'practice'::character varying])::text[])))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.patient_payment_methods (
     id character varying(128) NOT NULL,
     patient_id uuid NOT NULL,
@@ -1168,6 +1193,16 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_medications
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_message_threads
+    ADD CONSTRAINT patient_message_threads_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_messages
+    ADD CONSTRAINT patient_messages_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_payment_methods
     ADD CONSTRAINT patient_payment_methods_pkey PRIMARY KEY (id);
 
@@ -1245,6 +1280,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.therapy_sessions
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.appointment_types
     ADD CONSTRAINT uq_appointment_types_user_name UNIQUE (user_id, name);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_message_threads
+    ADD CONSTRAINT uq_patient_message_threads_id_patient UNIQUE (id, patient_id);
 
 
 
@@ -1527,6 +1567,18 @@ CREATE INDEX ix_patient_medications_patient_status ON __TENANT_SCHEMA__.patient_
 
 
 
+CREATE INDEX ix_patient_message_threads_patient_id ON __TENANT_SCHEMA__.patient_message_threads USING btree (patient_id);
+
+
+
+CREATE INDEX ix_patient_messages_patient_id ON __TENANT_SCHEMA__.patient_messages USING btree (patient_id);
+
+
+
+CREATE INDEX ix_patient_messages_thread_created ON __TENANT_SCHEMA__.patient_messages USING btree (thread_id, created_at);
+
+
+
 CREATE INDEX ix_patients_deleted_at_partial ON __TENANT_SCHEMA__.patients USING btree (deleted_at) WHERE (deleted_at IS NOT NULL);
 
 
@@ -1792,6 +1844,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_coverage
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_coverage
     ADD CONSTRAINT fk_patient_coverage_payer_id_payers FOREIGN KEY (payer_id) REFERENCES __TENANT_SCHEMA__.payers(id) ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_messages
+    ADD CONSTRAINT fk_patient_messages_thread FOREIGN KEY (thread_id, patient_id) REFERENCES __TENANT_SCHEMA__.patient_message_threads(id, patient_id) ON DELETE CASCADE;
 
 
 
