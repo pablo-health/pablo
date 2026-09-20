@@ -12,18 +12,29 @@
  * rows look like, and whether the form can go is the server's answer — it
  * refuses an unfinished one and names what is outstanding. A screen that
  * decided for itself would be deciding about questions it cannot see.
+ *
+ * **A form sent back reads as one question, not a whole form again.** When
+ * a correction is open the heading says who is asking, the practice's own
+ * note sits under it, and the list is the questions they named. The note is
+ * shown as it was written; nothing here paraphrases it.
  */
 
 import { Button } from "@/components/ui/button"
-import type { IntakeAssignmentItem, IntakeForm } from "@/lib/api/patientIntake"
+import type {
+  IntakeAssignmentItem,
+  IntakeCorrection,
+  IntakeForm,
+} from "@/lib/api/patientIntake"
 import {
   BACK,
+  CORRECTION_SUBMIT,
   EDIT,
   REVIEW_BODY,
   REVIEW_HEADING,
   REVIEW_UNANSWERED,
   SUBMIT,
   SUBMITTING,
+  correctionHeading,
 } from "./formsCopy"
 import { rendererFor } from "./renderers/registry"
 import type { AnswerValue } from "./renderers/types"
@@ -32,6 +43,8 @@ interface ReviewScreenProps {
   items: IntakeAssignmentItem[]
   values: Record<string, AnswerValue | null>
   form: IntakeForm | null
+  /** Set while the practice has sent the form back. Absent otherwise. */
+  correction?: IntakeCorrection | null
   onEdit: (itemId: string) => void
   /** Absent when there is no question to step back to. */
   onBack: (() => void) | null
@@ -44,6 +57,7 @@ export function ReviewScreen({
   items,
   values,
   form,
+  correction = null,
   onEdit,
   onBack,
   onSubmit,
@@ -60,8 +74,21 @@ export function ReviewScreen({
 
   return (
     <div data-testid="forms-review" className="flex flex-col">
-      <h2 className="text-lg font-semibold text-neutral-900">{REVIEW_HEADING}</h2>
-      <p className="mt-2 text-sm text-neutral-600">{REVIEW_BODY}</p>
+      <h2 className="text-lg font-semibold text-neutral-900">
+        {correction ? correctionHeading(correction.item_ids.length) : REVIEW_HEADING}
+      </h2>
+      {correction ? (
+        correction.note && (
+          <p
+            data-testid="forms-correction-note"
+            className="mt-2 whitespace-pre-line rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-800"
+          >
+            {correction.note}
+          </p>
+        )
+      ) : (
+        <p className="mt-2 text-sm text-neutral-600">{REVIEW_BODY}</p>
+      )}
 
       <ul className="mt-5 flex flex-col divide-y divide-neutral-200 border-y border-neutral-200">
         {answerable.map((item) => (
@@ -99,7 +126,7 @@ export function ReviewScreen({
           disabled={submitting}
           onClick={onSubmit}
         >
-          {submitting ? SUBMITTING : SUBMIT}
+          {submitting ? SUBMITTING : correction ? CORRECTION_SUBMIT : SUBMIT}
         </Button>
       </div>
     </div>

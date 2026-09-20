@@ -29,6 +29,7 @@ export const LIST_START = "Start"
 export const LIST_SENT = "Sent"
 export const LIST_PROGRESS_DONE = "Ready to send"
 export const LIST_WITHDRAWN = "No longer needed"
+export const LIST_CORRECTION = "Your practice has a question"
 
 /** How much of a form is outstanding, from the count the server sent. */
 export function questionsLeft(outstanding: number): string {
@@ -63,6 +64,26 @@ export const REVIEW_BODY = "Have a look before you send this to your clinician."
 export const REVIEW_UNANSWERED = "Not answered yet"
 export const SUBMIT = "Send to my clinician"
 export const SUBMITTING = "Sending…"
+
+/**
+ * A form the practice has sent back with a question about one answer.
+ *
+ * The heading says who is asking and the note under it is the practice's
+ * own words, served with the form. Nothing here paraphrases the note or
+ * explains why they might be asking — the clinician wrote the reason, and a
+ * screen guessing at it would be guessing about somebody's care.
+ *
+ * It also does not recite what stays as it was. The rest of the form is not
+ * on screen, which says that already; a sentence promising the other
+ * answers are safe would introduce a worry nobody had.
+ */
+export const CORRECTION_HEADING = "Your clinician has asked about one thing"
+export const CORRECTION_HEADING_MANY = "Your clinician has asked about a few things"
+export const CORRECTION_SUBMIT = "Send this back"
+
+export function correctionHeading(count: number): string {
+  return count === 1 ? CORRECTION_HEADING : CORRECTION_HEADING_MANY
+}
 
 /**
  * The receipt. No totals and no bands: a PHQ-9 total is a number with a

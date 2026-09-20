@@ -29,6 +29,12 @@ import {
   sendMessage,
   startThread,
 } from "@/lib/api/patientMessages"
+import type { PatientMessageAttachment } from "@/lib/api/patientMessages"
+import {
+  getOwnDocumentDownloadUrl,
+  uploadOwnDocument,
+} from "@/lib/api/patientPortalDocuments"
+import type { ComposerAttachment } from "./MessageComposer"
 import { NewThreadFlow } from "./NewThreadFlow"
 import { ThreadList } from "./ThreadList"
 import { ThreadView } from "./ThreadView"
@@ -80,8 +86,8 @@ export function PortalMessaging({ sessionToken }: PortalMessagingProps) {
   })
 
   const send = useMutation({
-    mutationFn: (body: string) =>
-      sendMessage(sessionToken, openThreadId as string, body),
+    mutationFn: ({ body, attachmentIds }: { body: string; attachmentIds: string[] }) =>
+      sendMessage(sessionToken, openThreadId as string, body, attachmentIds),
     onSuccess: () => {
       if (openThreadId) {
         void queryClient.invalidateQueries({
@@ -130,6 +136,34 @@ export function PortalMessaging({ sessionToken }: PortalMessagingProps) {
     sendReset()
   }, [sendReset])
 
+  // Uploaded as soon as it is picked, because a send names documents that
+  // already exist. The composer holds the result as a chip and decides what
+  // a failure looks like; this only does the three calls.
+  const handleAttach = useCallback(
+    async (file: File): Promise<ComposerAttachment> => {
+      const document = await uploadOwnDocument(sessionToken, file, "message")
+      return {
+        documentId: document.id,
+        filename: document.filename,
+        sizeBytes: document.size_bytes,
+      }
+    },
+    [sessionToken],
+  )
+
+  // Minted per click and short-lived, so it is fetched when the patient asks
+  // rather than carried in the thread payload where it would go stale.
+  const handleOpenAttachment = useCallback(
+    (attachment: PatientMessageAttachment) => {
+      void getOwnDocumentDownloadUrl(sessionToken, attachment.document_id).then(
+        (url) => {
+          window.location.assign(url)
+        },
+      )
+    },
+    [sessionToken],
+  )
+
   if (composing) {
     return (
       <NewThreadFlow
@@ -164,12 +198,14 @@ export function PortalMessaging({ sessionToken }: PortalMessagingProps) {
       <ThreadView
         thread={thread.data}
         onMarkRead={handleMarkRead}
-        onSend={(body) => send.mutateAsync(body)}
+        onSend={(body, attachmentIds) => send.mutateAsync({ body, attachmentIds })}
         sending={send.isPending}
         slaText={slaText}
         sendError={send.isError ? SEND_FAILED : null}
         onBack={handleBack}
         onStartThread={handleStartThread}
+        onAttach={handleAttach}
+        onOpenAttachment={handleOpenAttachment}
       />
     )
   }

@@ -749,7 +749,23 @@ CREATE TABLE __TENANT_SCHEMA__.patient_intake_responses (
     draft boolean DEFAULT true NOT NULL,
     superseded_by uuid,
     created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL
+    updated_at timestamp with time zone NOT NULL,
+    provenance character varying(16) DEFAULT 'patient'::character varying NOT NULL,
+    CONSTRAINT ck_patient_intake_responses_provenance CHECK (((provenance)::text = ANY ((ARRAY['patient'::character varying, 'clinician'::character varying])::text[])))
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.patient_intake_review_events (
+    id uuid NOT NULL,
+    assignment_id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    kind character varying(24) NOT NULL,
+    item_ids jsonb DEFAULT '[]'::jsonb NOT NULL,
+    note_to_patient text,
+    created_by uuid,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_patient_intake_review_events_kind CHECK (((kind)::text = ANY ((ARRAY['correction_requested'::character varying, 'corrected'::character varying, 'accepted'::character varying, 'clinician_entered'::character varying])::text[])))
 );
 
 
@@ -803,6 +819,16 @@ CREATE TABLE __TENANT_SCHEMA__.patient_medications (
     deleted_at timestamp with time zone,
     stop_reason text,
     CONSTRAINT ck_patient_medications_status CHECK (((status)::text = ANY ((ARRAY['active'::character varying, 'discontinued'::character varying, 'on_hold'::character varying])::text[])))
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.patient_message_attachments (
+    id uuid NOT NULL,
+    message_id uuid NOT NULL,
+    document_id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    created_at timestamp with time zone NOT NULL
 );
 
 
@@ -1404,6 +1430,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_responses
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_review_events
+    ADD CONSTRAINT patient_intake_review_events_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_signatures
     ADD CONSTRAINT patient_intake_signatures_pkey PRIMARY KEY (id);
 
@@ -1416,6 +1447,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_submissions
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_medications
     ADD CONSTRAINT patient_medications_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_message_attachments
+    ADD CONSTRAINT patient_message_attachments_pkey PRIMARY KEY (id);
 
 
 
@@ -1529,13 +1565,28 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.intake_packet_versions
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_documents
+    ADD CONSTRAINT uq_patient_documents_id_patient UNIQUE (id, patient_id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_assignments
     ADD CONSTRAINT uq_patient_intake_assignments_id_patient UNIQUE (id, patient_id);
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_message_attachments
+    ADD CONSTRAINT uq_patient_message_attachments_document UNIQUE (document_id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_message_threads
     ADD CONSTRAINT uq_patient_message_threads_id_patient UNIQUE (id, patient_id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_messages
+    ADD CONSTRAINT uq_patient_messages_id_patient UNIQUE (id, patient_id);
 
 
 
@@ -1850,6 +1901,14 @@ CREATE INDEX ix_patient_intake_responses_patient_id ON __TENANT_SCHEMA__.patient
 
 
 
+CREATE INDEX ix_patient_intake_review_events_assignment ON __TENANT_SCHEMA__.patient_intake_review_events USING btree (assignment_id, created_at);
+
+
+
+CREATE INDEX ix_patient_intake_review_events_patient_id ON __TENANT_SCHEMA__.patient_intake_review_events USING btree (patient_id);
+
+
+
 CREATE INDEX ix_patient_intake_signatures_patient_id ON __TENANT_SCHEMA__.patient_intake_signatures USING btree (patient_id);
 
 
@@ -1863,6 +1922,14 @@ CREATE INDEX ix_patient_medications_patient_id ON __TENANT_SCHEMA__.patient_medi
 
 
 CREATE INDEX ix_patient_medications_patient_status ON __TENANT_SCHEMA__.patient_medications USING btree (patient_id, status);
+
+
+
+CREATE INDEX ix_patient_message_attachments_message ON __TENANT_SCHEMA__.patient_message_attachments USING btree (message_id);
+
+
+
+CREATE INDEX ix_patient_message_attachments_patient_id ON __TENANT_SCHEMA__.patient_message_attachments USING btree (patient_id);
 
 
 
@@ -2214,6 +2281,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_responses
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_review_events
+    ADD CONSTRAINT fk_patient_intake_review_events_assignment FOREIGN KEY (assignment_id, patient_id) REFERENCES __TENANT_SCHEMA__.patient_intake_assignments(id, patient_id) ON DELETE CASCADE;
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_signatures
     ADD CONSTRAINT fk_patient_intake_signatures_assignment FOREIGN KEY (assignment_id, patient_id) REFERENCES __TENANT_SCHEMA__.patient_intake_assignments(id, patient_id) ON DELETE CASCADE;
 
@@ -2226,6 +2298,16 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_signatures
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_signatures
     ADD CONSTRAINT fk_patient_intake_signatures_item FOREIGN KEY (item_id) REFERENCES __TENANT_SCHEMA__.intake_item_definitions(id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_message_attachments
+    ADD CONSTRAINT fk_patient_message_attachments_document FOREIGN KEY (document_id, patient_id) REFERENCES __TENANT_SCHEMA__.patient_documents(id, patient_id) ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_message_attachments
+    ADD CONSTRAINT fk_patient_message_attachments_message FOREIGN KEY (message_id, patient_id) REFERENCES __TENANT_SCHEMA__.patient_messages(id, patient_id) ON DELETE CASCADE;
 
 
 

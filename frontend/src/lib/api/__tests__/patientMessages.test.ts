@@ -71,6 +71,7 @@ describe("patientMessages client", () => {
     expect(JSON.parse(init.body as string)).toEqual({
       subject: "Scheduling",
       body: "Hello",
+      attachment_ids: [],
     })
   })
 
@@ -90,7 +91,21 @@ describe("patientMessages client", () => {
     const [url, init] = lastCall()
     expect(url).toBe("http://test/api/patient/messages/threads/t%201/messages")
     expect(init.method).toBe("POST")
-    expect(JSON.parse(init.body as string)).toEqual({ body: "Hello" })
+    expect(JSON.parse(init.body as string)).toEqual({
+      body: "Hello",
+      attachment_ids: [],
+    })
+  })
+
+  it("sends the attachment ids it was given", async () => {
+    fetchMock.mockResolvedValue(okResponse({ id: "m1" }))
+
+    await sendMessage(TOKEN, "t1", "Here it is", ["doc-1", "doc-2"])
+
+    expect(JSON.parse(lastCall()[1].body as string).attachment_ids).toEqual([
+      "doc-1",
+      "doc-2",
+    ])
   })
 
   it("lists, reads and marks read on the patient routes", async () => {

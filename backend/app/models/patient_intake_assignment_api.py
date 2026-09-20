@@ -118,6 +118,25 @@ class IntakeArtifactResponse(BaseModel):
     created_at: datetime
 
 
+class IntakeCorrectionResponse(BaseModel):
+    """What the practice has asked this patient to go back and redo.
+
+    Present only while a form is reopened. ``item_ids`` is every question
+    the request named, in the order the form asks them, and ``outstanding``
+    is the subset not answered again yet — computed from the rows, like
+    every other statement about progress on this surface, so a client never
+    works out for itself whether the form can go back.
+
+    ``note`` is the practice's own sentence, shown to the patient. It is
+    the only free text on this shape and it never carries an answer.
+    """
+
+    requested_at: datetime
+    note: str | None
+    item_ids: list[str]
+    outstanding: list[str]
+
+
 class IntakeAssignmentDetailResponse(IntakeAssignmentResponse):
     """One assignment, its questions, and the answers saved against them.
 
@@ -129,6 +148,10 @@ class IntakeAssignmentDetailResponse(IntakeAssignmentResponse):
 
     items: list[IntakeAssignmentItemResponse]
     artifacts: list[IntakeArtifactResponse] = Field(default_factory=list)
+    #: Absent unless the form is open for corrections, which is what makes
+    #: its presence the whole answer to "am I being asked to redo
+    #: something".
+    correction: IntakeCorrectionResponse | None = None
 
 
 class SubmittedMeasureResponse(BaseModel):
@@ -269,6 +292,7 @@ __all__ = [
     "IntakeAssignmentDetailResponse",
     "IntakeAssignmentItemResponse",
     "IntakeAssignmentResponse",
+    "IntakeCorrectionResponse",
     "IntakeProgressResponse",
     "IntakeSubmissionResponse",
     "SaveAnswerRequest",

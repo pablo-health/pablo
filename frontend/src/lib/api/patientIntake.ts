@@ -122,6 +122,26 @@ export interface IntakeArtifact {
   created_at: string
 }
 
+/**
+ * What the practice has asked this patient to go back and redo. Mirrors
+ * `IntakeCorrectionResponse`.
+ *
+ * Present only while a form is open for corrections, so its presence is the
+ * whole answer to "am I being asked to change something" — no client reads
+ * that off a status string.
+ *
+ * `item_ids` is every question the request named, in the order the form asks
+ * them. `outstanding` is the subset not answered again yet, computed by the
+ * server from the rows, like every other statement about progress here.
+ */
+export interface IntakeCorrection {
+  requested_at: string
+  /** The practice's own sentence about what to look at. Never an answer. */
+  note: string | null
+  item_ids: string[]
+  outstanding: string[]
+}
+
 /** One assignment, its questions, and the answers saved against them. */
 export interface IntakeAssignmentDetail extends IntakeAssignment {
   items: IntakeAssignmentItem[]
@@ -133,6 +153,7 @@ export interface IntakeAssignmentDetail extends IntakeAssignment {
    * which of them have arrived.
    */
   artifacts: IntakeArtifact[]
+  correction: IntakeCorrection | null
 }
 
 /** `PUT …/items/{item_id}` — one saved answer and what it did to the form. */
