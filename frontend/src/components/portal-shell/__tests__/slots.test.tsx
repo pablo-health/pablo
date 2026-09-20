@@ -58,19 +58,26 @@ describe("gating slots on what the deployment serves", () => {
   beforeEach(() => {
     registerPortalSlot({ id: "intake", module: "intake", Component: () => null })
     registerPortalSlot({ id: "messaging", module: "messaging", Component: () => null })
+    registerPortalSlot({ id: "appointments", module: "appointments", Component: () => null })
     registerPortalSlot({ id: "notice", Component: () => null })
   })
 
   it("keeps a slot whose module is on", () => {
-    const visible = visiblePortalSlots({ intake: true, messaging: false })
+    const visible = visiblePortalSlots({ intake: true, messaging: false, appointments: false })
 
     expect(visible.map((s) => s.id)).toEqual(["intake", "notice"])
   })
 
   it("drops a slot whose module is off", () => {
-    const visible = visiblePortalSlots({ intake: false, messaging: false })
+    const visible = visiblePortalSlots({ intake: false, messaging: false, appointments: false })
 
     expect(visible.map((s) => s.id)).toEqual(["notice"])
+  })
+
+  it("gates each module independently", () => {
+    const visible = visiblePortalSlots({ intake: false, messaging: true, appointments: true })
+
+    expect(visible.map((s) => s.id)).toEqual(["messaging", "appointments", "notice"])
   })
 
   it("drops a slot whose module the document does not mention", () => {
@@ -96,12 +103,22 @@ describe("gating slots on what the deployment serves", () => {
      */
     const visible = visiblePortalSlots(null)
 
-    expect(visible.map((s) => s.id)).toEqual(["intake", "messaging", "notice"])
+    expect(visible.map((s) => s.id)).toEqual([
+      "intake",
+      "messaging",
+      "appointments",
+      "notice",
+    ])
   })
 
   it("preserves registration order", () => {
-    const visible = visiblePortalSlots({ intake: true, messaging: true })
+    const visible = visiblePortalSlots({ intake: true, messaging: true, appointments: true })
 
-    expect(visible.map((s) => s.id)).toEqual(["intake", "messaging", "notice"])
+    expect(visible.map((s) => s.id)).toEqual([
+      "intake",
+      "messaging",
+      "appointments",
+      "notice",
+    ])
   })
 })

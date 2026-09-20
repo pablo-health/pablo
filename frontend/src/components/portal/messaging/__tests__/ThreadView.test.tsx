@@ -83,6 +83,33 @@ describe("ThreadView", () => {
     expect(screen.queryByRole("button", { name: /close/i })).toBeNull()
   })
 
+  it("offers the composer while the conversation is open", () => {
+    renderThread()
+
+    expect(screen.getByTestId("portal-messaging-composer")).toBeTruthy()
+    expect(screen.queryByTestId("portal-messaging-thread-closed")).toBeNull()
+  })
+
+  it("swaps the composer for a new conversation once it is closed", () => {
+    const onStartThread = vi.fn()
+    renderThread({ thread: { ...thread, status: "closed" }, onStartThread })
+
+    expect(screen.queryByTestId("portal-messaging-composer")).toBeNull()
+    expect(screen.getByTestId("portal-messaging-thread-closed").textContent).toContain(
+      "This conversation is closed.",
+    )
+
+    screen.getByTestId("portal-messaging-start-thread").click()
+    expect(onStartThread).toHaveBeenCalledTimes(1)
+  })
+
+  it("still shows a closed thread's messages", () => {
+    renderThread({ thread: { ...thread, status: "closed" } })
+
+    expect(screen.getByTestId("portal-messaging-message-m1")).toBeTruthy()
+    expect(screen.getByTestId("portal-messaging-thread-status").textContent).toBe("closed")
+  })
+
   it("marks the thread read once, not once per render", () => {
     const onMarkRead = vi.fn()
     const { rerender } = render(

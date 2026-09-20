@@ -1086,6 +1086,13 @@ PATIENT_READABLE_TABLES: dict[str, str] = {
     # back — the signing screen shows who has signed and when — and the
     # clinician side reaches the same rows through ``has_patient_access``.
     "patient_intake_signatures": "patient_id",
+    # Documents on the patient's own chart. The column is right and the
+    # meaning is nearly right: a patient owns the row, but the table also
+    # holds the clinician's working material and the psychotherapy-notes
+    # carve-out, which are on their chart and are emphatically not theirs to
+    # read from a portal. So it takes a bespoke predicate that adds the
+    # category test — see ``_patient_principal_predicate_for``.
+    "patient_documents": "patient_id",
     # A patient's own secure-message threads and the messages in them. Both
     # halves are the patient's: they start the thread, they write into it,
     # and they read what the practice wrote back. The clinician side reaches
@@ -1178,6 +1185,13 @@ PATIENT_WRITABLE_TABLES: dict[str, str] = {
     # is superseded by a later row rather than edited, which is the whole
     # reason the table carries ``superseded_at`` instead of a mutable flag.
     "patient_intake_signatures": "patient_id",
+    # Uploading is a patient INSERT, and finishing an upload is an UPDATE
+    # (the size and the finalize stamp are written once the object is there).
+    # The bespoke predicate carries into WITH CHECK as well as USING, so a
+    # patient cannot file a row against another chart and cannot file one in
+    # a category their own routes never offer. Which columns may change is
+    # the route layer's to decide, as everywhere else on this list.
+    "patient_documents": "patient_id",
     # Starting a thread and sending a message are both patient INSERTs, and
     # marking a message read is a patient UPDATE. The row-level grant is
     # therefore wider than the three routes that use it — a patient could,
@@ -1271,8 +1285,19 @@ def _patient_principal_predicate_for(
     """The patient row test for one table, bespoke where the shape demands it.
 
     Most tables are owned by a patient through a plain column and take
-    :func:`_patient_principal_predicate` unchanged. The two chat tables are
-    not, and each is a different kind of not.
+    :func:`_patient_principal_predicate` unchanged. Three tables are not,
+    and each is a different kind of not.
+
+    ``patient_documents`` carries the right column, and the rows it matches
+    are genuinely the patient's own — they are on that patient's chart. But
+    the chart is not the portal. The same table holds the clinician's working
+    material and the ``psychotherapy_notes`` carve-out that patient
+    right-of-access explicitly does not reach (§164.524(a)(1)(i)), so the
+    plain predicate would make the strictest category in the system readable
+    by the person it is withheld from, the moment a route forgot its filter.
+    The category test joins the predicate here so that forgetting is not
+    sufficient. The routes filter too, and the repository filters again:
+    none of the three is the reason to skip the others.
 
     ``chat_conversations`` carries the right column but the wrong meaning.
     Its ``patient_id`` names the conversation's *subject*, and a clinician's
@@ -1292,6 +1317,14 @@ def _patient_principal_predicate_for(
     ``user_id`` — so it is scoped through the parent conversation, and
     inherits both halves of the test above by construction.
     """
+    if table_name == "patient_documents":
+        from ..models import PATIENT_FACING_CATEGORIES
+
+        # Rendered from the enum rather than spelled out, so a category
+        # added to the patient's surface cannot reach the routes while the
+        # policy still refuses it.
+        allowed = ", ".join(f"'{c.value}'" for c in sorted(PATIENT_FACING_CATEGORIES))
+        return f"{_patient_principal_predicate(key_column)} AND {qualified}.category IN ({allowed})"
     if table_name == "chat_conversations":
         return f"{_patient_principal_predicate(key_column)} AND {qualified}.owner_user_id IS NULL"
     if table_name == "chat_messages":

@@ -26,6 +26,8 @@ import ast
 import sys
 from pathlib import Path
 
+from sqlalchemy import Uuid
+
 # ---------------------------------------------------------------------------
 # Path setup: add backend/ to sys.path so app.* imports resolve.
 # ---------------------------------------------------------------------------
@@ -58,25 +60,37 @@ EXEMPT_RLS_FORCED_TABLES: frozenset[str] = frozenset()
 # _FakeSession: mirrors the harness in test_enable_rls_policy_coverage.py
 # ---------------------------------------------------------------------------
 
+
 class _FakeResult:
-    def __init__(self, rows: list[tuple[str, str]]) -> None:
+    def __init__(self, rows: list[tuple[str, ...]]) -> None:
         self._rows = rows
 
-    def fetchall(self) -> list[tuple[str, str]]:
+    def fetchall(self) -> list[tuple[str, ...]]:
         return self._rows
 
 
 class _FakeSession:
-    """Records executed SQL; answers the column query from a fixture."""
+    """Records executed SQL; answers the column query from a fixture.
 
-    def __init__(self, columns_by_table: dict[str, set[str]]) -> None:
+    The column query returns ``(table_name, column_name, data_type)``:
+    the policy builder reads ``patient_id``'s type to decide whether
+    ``has_patient_access`` has an overload for it, so the fixture answers
+    with the type the ORM declares rather than a guess from the name.
+    """
+
+    def __init__(
+        self,
+        columns_by_table: dict[str, set[str]],
+        types_by_table: dict[str, dict[str, str]] | None = None,
+    ) -> None:
         self._columns_by_table = columns_by_table
+        self._types_by_table = types_by_table or {}
 
     def execute(self, statement: object, params: object = None) -> _FakeResult:  # noqa: ARG002
         sql = str(statement)
         if sql.strip().upper().startswith("SELECT TABLE_NAME"):
-            rows = [
-                (table, col)
+            rows: list[tuple[str, ...]] = [
+                (table, col, self._types_by_table.get(table, {}).get(col, "text"))
                 for table, cols in self._columns_by_table.items()
                 for col in cols
             ]
@@ -85,6 +99,16 @@ class _FakeSession:
 
     def commit(self) -> None:
         return None
+
+
+def _sql_type(column: object) -> str:
+    """``uuid`` for a UUID-typed ORM column, ``text`` for anything else.
+
+    ``Uuid`` is the base of every UUID type SQLAlchemy emits, including the
+    PostgreSQL dialect's; ``python_type`` is not a reliable tell because a
+    column declared ``Uuid(as_uuid=False)`` reports ``str``.
+    """
+    return "uuid" if isinstance(column.type, Uuid) else "text"  # type: ignore[attr-defined]
 
 
 def _columns_for_rls(table: object) -> set[str]:
@@ -111,6 +135,7 @@ def _columns_for_rls(table: object) -> set[str]:
 # Check 1: unclassified tenant tables
 # ---------------------------------------------------------------------------
 
+
 def _find_unclassified() -> list[str]:
     unclassified: list[str] = []
     for table_name, table in Base.metadata.tables.items():
@@ -118,8 +143,13 @@ def _find_unclassified() -> list[str]:
         if not cols:
             # No scoping columns at all — won't reach the policy loop.
             continue
+        types = {
+            c.name: _sql_type(c)
+            for c in table.columns  # type: ignore[union-attr]
+            if c.name in cols
+        }
         try:
-            session = _FakeSession({table_name: cols})
+            session = _FakeSession({table_name: cols}, {table_name: types})
             enable_rls_on_schema(session, "practice_test")  # type: ignore[arg-type]
         except RuntimeError:
             unclassified.append(table_name)
@@ -129,6 +159,7 @@ def _find_unclassified() -> list[str]:
 # ---------------------------------------------------------------------------
 # Check 2: patient-access tables not in invariant suite
 # ---------------------------------------------------------------------------
+
 
 def _parse_tenant_scoped_tables() -> set[str]:
     """Parse TENANT_SCOPED_TABLES from test_rls_invariants.py via AST."""
@@ -162,6 +193,7 @@ def _find_uncovered() -> list[str]:
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def main() -> int:
     findings: list[str] = []

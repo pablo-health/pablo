@@ -34,6 +34,7 @@ const pendingDocument: PatientDocumentResponse = {
   extracted_text: null,
   extraction_status: "pending",
   text_extraction_failed: false,
+  uploaded_by: "clinician",
 }
 
 describe("finalizePatientDocumentUpload", () => {

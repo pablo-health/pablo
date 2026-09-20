@@ -65,6 +65,7 @@ function makeDoc(
     extracted_text: null,
     extraction_status: "complete",
     text_extraction_failed: false,
+    uploaded_by: "clinician",
     ...overrides,
   }
 }

@@ -20,6 +20,14 @@ prove them: the composite foreign key that keeps ``patient_messages
 .patient_id`` in step with its thread's owner, and the ``sender`` CHECK that
 admits exactly three values.
 
+**Assignment gets its own section, because it is the one that looks like
+access and is not.** ``assigned_user_id`` names a clinician on the row, so
+the obvious mistake is a policy that consults it. Here a thread assigned to
+a clinician with no grant stays invisible to them, with the treating
+clinician's continued sight of it as the control. Deleting a patient is
+proved in the same place: their correspondence goes with the rest of the
+chart, which is a foreign key rather than a convention.
+
 The last section compares the two producers of these tables. A freshly
 provisioned tenant gets them from ``tenant_template.sql``; an existing one
 gets them from the alembic revision. Those are different code paths, and the
@@ -545,8 +553,166 @@ class TestClinicianAccess:
             conn.close()
 
 
+class TestAssignmentIsRoutingNotAccess:
+    """The lifecycle columns must not become a second access rule.
+
+    Assignment is the one that would be easy to get wrong — it names a
+    clinician on a row, which looks like a grant and is not. The policies
+    key on ``has_patient_access`` alone, so assigning a thread to somebody
+    shows them nothing, and assigning it away hides it from nobody.
+    """
+
+    def test_assigning_to_a_stranger_does_not_reveal_the_thread(
+        self,
+        engine: Engine,
+        tenant_schema: str,
+        threads: tuple[str, str],
+    ) -> None:
+        thread_a, _ = threads
+        conn = _as_clinician(engine, tenant_schema, _TREATING_CLINICIAN)
+        try:
+            conn.execute(
+                text(
+                    f"UPDATE {_THREADS} SET assigned_user_id = CAST(:u AS uuid) "  # noqa: S608
+                    "WHERE id = CAST(:id AS uuid)"
+                ),
+                {"u": _STRANGER_CLINICIAN, "id": thread_a},
+            )
+            conn.commit()
+
+            # Control: the clinician with the grant still sees it assigned away.
+            assert thread_a in _visible_threads(conn)
+        finally:
+            conn.close()
+
+        stranger = _as_clinician(engine, tenant_schema, _STRANGER_CLINICIAN)
+        try:
+            assert _visible_threads(stranger) == set()
+            assert _visible_messages(stranger) == set()
+        finally:
+            stranger.close()
+
+        unarmed = _unarmed(engine, tenant_schema)
+        try:
+            assert _visible_threads(unarmed) == set()
+        finally:
+            unarmed.close()
+
+        # Put it back: the fixtures are module-scoped.
+        cleanup = _as_clinician(engine, tenant_schema, _TREATING_CLINICIAN)
+        try:
+            cleanup.execute(
+                text(
+                    f"UPDATE {_THREADS} SET assigned_user_id = NULL "  # noqa: S608
+                    "WHERE id = CAST(:id AS uuid)"
+                ),
+                {"id": thread_a},
+            )
+            cleanup.commit()
+        finally:
+            cleanup.close()
+
+    def test_a_patient_cannot_assign_or_close_another_patients_thread(
+        self,
+        engine: Engine,
+        tenant_schema: str,
+        two_patients: tuple[str, str],
+        threads: tuple[str, str],
+    ) -> None:
+        """The new columns are inside the same row, so the same arm governs them."""
+        patient_a, _ = two_patients
+        thread_a, thread_b = threads
+        conn = _as_patient(engine, tenant_schema, patient_a)
+        try:
+            # Control: A's own row is reachable by an UPDATE.
+            own = conn.execute(
+                text(
+                    f"UPDATE {_THREADS} SET clinician_last_read_at = now() "  # noqa: S608
+                    "WHERE id = CAST(:id AS uuid)"
+                ),
+                {"id": thread_a},
+            ).rowcount
+            assert own == 1
+            foreign = conn.execute(
+                text(
+                    f"UPDATE {_THREADS} SET status = 'closed' "  # noqa: S608
+                    "WHERE id = CAST(:id AS uuid)"
+                ),
+                {"id": thread_b},
+            ).rowcount
+            assert foreign == 0
+            conn.rollback()
+        finally:
+            conn.close()
+
+
 class TestIntegrityConstraints:
     """What the database refuses regardless of who is asking."""
+
+    def test_deleting_a_patient_takes_their_correspondence(
+        self, engine: Engine, tenant_schema: str
+    ) -> None:
+        """Retention is the chart's retention, enforced by the foreign key.
+
+        A patient of its own so the module fixtures survive. The cascade runs
+        twice over: ``patients`` to ``patient_message_threads``, and the
+        thread to its messages.
+        """
+        patient_c = str(uuid.uuid4())
+        thread_id = str(uuid.uuid4())
+        conn = _as_clinician(engine, tenant_schema, _TREATING_CLINICIAN)
+        try:
+            conn.execute(
+                text(
+                    "INSERT INTO patients (id, first_name, last_name, "
+                    "first_name_lower, last_name_lower, status, "
+                    "session_count, created_at, updated_at) "
+                    "VALUES (CAST(:pid AS uuid), 'Katherine', 'Johnson', "
+                    "'katherine', 'johnson', 'active', 0, now(), now())"
+                ),
+                {"pid": patient_c},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO patient_clinicians (patient_id, user_id, granted_by) "
+                    "VALUES (CAST(:pid AS uuid), :u, :u)"
+                ),
+                {"pid": patient_c, "u": _TREATING_CLINICIAN},
+            )
+            _open_thread(conn, patient_c, thread_id)
+            message_id = _send(conn, patient_c, thread_id, sender="patient")
+
+            # Control: both rows are there before the delete.
+            assert thread_id in _visible_threads(conn)
+            assert message_id in _visible_messages(conn)
+
+            conn.execute(
+                text("DELETE FROM patients WHERE id = CAST(:pid AS uuid)"),
+                {"pid": patient_c},
+            )
+
+            assert thread_id not in _visible_threads(conn)
+            assert message_id not in _visible_messages(conn)
+            conn.rollback()
+        finally:
+            conn.close()
+
+    def test_the_thread_cascade_is_declared_on_the_patient(
+        self, engine: Engine, tenant_schema: str
+    ) -> None:
+        """Named so a future migration cannot quietly downgrade it to NO ACTION."""
+        with engine.connect() as conn:
+            rule = conn.execute(
+                text(
+                    "SELECT con.confdeltype FROM pg_constraint con "
+                    "JOIN pg_class c ON c.oid = con.conrelid "
+                    "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                    "WHERE n.nspname = :s AND c.relname = :t "
+                    "AND con.conname = 'patient_message_threads_patient_id_fkey'"
+                ),
+                {"s": tenant_schema, "t": _THREADS},
+            ).scalar()
+        assert rule == "c", "the foreign key to patients is not ON DELETE CASCADE"
 
     def test_a_message_cannot_claim_a_patient_its_thread_does_not_have(
         self,

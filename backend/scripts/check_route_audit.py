@@ -89,6 +89,11 @@ PHI_PATH_MARKERS: tuple[str, ...] = (
     # PHI so a route added here cannot be classified as ordinary metadata —
     # the only exemptions it admits are the reviewed ones below.
     "/patient/intake",
+    # The patient's own document surface. What somebody sends their practice
+    # is chart content whatever it turns out to be — an insurance card, a
+    # letter from a prior provider — and the routes hand back signed URLs to
+    # the files themselves. Marked for the same reason as the line above.
+    "/patient/documents",
 )
 
 FORBIDDEN_UNDERSCORE_PARAMS: frozenset[str] = frozenset({"_audit", "_http_request"})
@@ -158,6 +163,14 @@ AUDIT_EXEMPT_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # about the patient reading it. Publishing that text IS audited, on
         # the clinician surface that owns that write.
         ("get", "/api/patient/intake/documents/{document_id}"),
+        # patient_documents.py — the patient listing what they themselves
+        # sent in. Same principle as the patient-message and intake reads
+        # above: a person reading their own record is not a disclosure. The
+        # writes on this surface are recorded, and so is the route that
+        # mints a download URL — that one leaves the request and works
+        # without a credential, which is disclosure-shaped even when the
+        # person fetching it is the person it is about.
+        ("get", "/api/patient/documents"),
         # portal/routes.py — whether this patient has a portal invitation in
         # flight and how many live sessions they hold. Counters and booleans:
         # no name, no contact detail, nothing clinical, and deliberately not
@@ -276,6 +289,14 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # the caller is disclosed by it and there is no access to attribute.
         # Sign-out on the same surface IS audited.
         ("get", "/api/patient/capabilities"),  # deployment shape, identical for every caller
+        # patient_booking.py — the practice's own scheduling policy: whether it
+        # takes bookings online, which appointment types it opened, its notice
+        # and cutoff windows, and the phone number it publishes. Like the
+        # capability document above, the answer is identical for every patient
+        # of the practice, so it attributes no access to anyone and names no
+        # appointment, no id and no count. Every route beside it that reads or
+        # writes this patient's own diary IS audited.
+        ("get", "/api/patient/booking/options"),  # practice policy, identical for every caller
         # payment_webhooks.py — signature-verified processor callback. It moves
         # a ledger row's status from an event the processor signed; there is no
         # authenticated principal to attribute an access to, and it discloses

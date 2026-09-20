@@ -16,6 +16,14 @@ in one is caught by the other. The Postgres impl delegates the
 patient-access half to the SQL function; the in-memory impl mirrors
 it via a ``(patient_id, user_id)`` grant set populated through
 :meth:`grant_access`.
+
+The patient's own side of the table has its own methods, named for the
+principal asking — ``*_for_patient_principal`` — so neither surface can
+be called with the other's notion of who is calling. They are scoped by
+the patient id off the authenticated principal and narrowed to the
+categories :attr:`app.models.DocumentCategory.is_patient_facing` names;
+a clinician's working material is on the same chart and is not on that
+surface.
 """
 
 from __future__ import annotations
@@ -145,6 +153,50 @@ class PatientDocumentRepository(ABC):
         owner.
         """
 
+    # --- the patient's own side ---------------------------------------
+
+    @abstractmethod
+    def mark_finalized_for_patient_principal(
+        self,
+        document_id: str,
+        patient_id: str,
+        *,
+        size_bytes: int,
+        finalized_at: object,
+    ) -> PatientDocument | None:
+        """Stamp size and ``finalized_at`` on the calling patient's own upload.
+
+        Scoped to ``uploaded_by_patient_id`` rather than to ``patient_id``,
+        so finishing an upload reaches only a row this patient started —
+        not a clinician's row on the same chart.
+
+        Unlike the clinician path this leaves ``extraction_status`` at
+        ``complete``: see
+        :meth:`app.services.PatientDocumentsService.finalize_patient_upload`
+        for why no extraction job is queued. Returns the updated row, or
+        ``None`` if there is no such row to update.
+        """
+
+    @abstractmethod
+    def get_for_patient_principal(
+        self, document_id: str, patient_id: str
+    ) -> PatientDocument | None:
+        """One document off the calling patient's own chart.
+
+        ``None`` for a deleted row, a row belonging to another patient, and
+        a row in a category this surface does not carry — all three
+        indistinguishable, so nothing here says whether a document exists.
+        """
+
+    @abstractmethod
+    def list_for_patient_principal(self, patient_id: str) -> list[PatientDocument]:
+        """The calling patient's own documents, newest first.
+
+        Finalized rows only, so an abandoned upload never appears, and the
+        patient-facing categories only, for the reason
+        :meth:`get_for_patient_principal` gives.
+        """
+
 
 class InMemoryPatientDocumentRepository(PatientDocumentRepository):
     """In-memory repository for unit tests.
@@ -249,3 +301,45 @@ class InMemoryPatientDocumentRepository(PatientDocumentRepository):
         ]
         rows.sort(key=lambda d: d.created_at, reverse=True)
         return rows
+
+    # --- the patient's own side ---------------------------------------
+
+    def mark_finalized_for_patient_principal(
+        self,
+        document_id: str,
+        patient_id: str,
+        *,
+        size_bytes: int,
+        finalized_at: object,
+    ) -> PatientDocument | None:
+        doc = self._by_id.get(document_id)
+        if doc is None or doc.uploaded_by_patient_id != patient_id or doc.deleted_at is not None:
+            return None
+        doc.size_bytes = size_bytes
+        doc.finalized_at = finalized_at  # type: ignore[assignment]
+        return doc
+
+    def get_for_patient_principal(
+        self, document_id: str, patient_id: str
+    ) -> PatientDocument | None:
+        doc = self._by_id.get(document_id)
+        if doc is None or not self._patient_can_read(doc, patient_id):
+            return None
+        return doc
+
+    def list_for_patient_principal(self, patient_id: str) -> list[PatientDocument]:
+        rows = [
+            d
+            for d in self._by_id.values()
+            if d.finalized_at is not None and self._patient_can_read(d, patient_id)
+        ]
+        rows.sort(key=lambda d: d.created_at, reverse=True)
+        return rows
+
+    def _patient_can_read(self, doc: PatientDocument, patient_id: str) -> bool:
+        """Mirror of the ``rls_patient_self_read`` predicate: own chart, own surface."""
+        return (
+            doc.deleted_at is None
+            and doc.patient_id == patient_id
+            and doc.category.is_patient_facing
+        )

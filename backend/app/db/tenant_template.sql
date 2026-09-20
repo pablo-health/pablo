@@ -672,7 +672,7 @@ CREATE TABLE __TENANT_SCHEMA__.patient_coverage (
 CREATE TABLE __TENANT_SCHEMA__.patient_documents (
     id uuid NOT NULL,
     patient_id uuid NOT NULL,
-    user_id uuid NOT NULL,
+    user_id uuid,
     filename text NOT NULL,
     mime_type character varying(100) NOT NULL,
     gcs_path text NOT NULL,
@@ -685,9 +685,11 @@ CREATE TABLE __TENANT_SCHEMA__.patient_documents (
     extracted_via character varying(32),
     extraction_metadata jsonb,
     extraction_status character varying(16),
-    CONSTRAINT ck_patient_documents_category CHECK (((category)::text = ANY ((ARRAY['chart'::character varying, 'consent'::character varying, 'therapist_private'::character varying, 'psychotherapy_notes'::character varying])::text[]))),
+    uploaded_by_patient_id uuid,
+    CONSTRAINT ck_patient_documents_category CHECK (((category)::text = ANY ((ARRAY['chart'::character varying, 'consent'::character varying, 'intake_artifact'::character varying, 'message'::character varying, 'therapist_private'::character varying, 'psychotherapy_notes'::character varying])::text[]))),
     CONSTRAINT ck_patient_documents_extracted_via CHECK (((extracted_via IS NULL) OR ((extracted_via)::text = ANY ((ARRAY['pymupdf'::character varying, 'document_ai'::character varying, 'unavailable'::character varying])::text[])))),
-    CONSTRAINT ck_patient_documents_extraction_status CHECK (((extraction_status IS NULL) OR ((extraction_status)::text = ANY ((ARRAY['pending'::character varying, 'complete'::character varying, 'failed'::character varying])::text[]))))
+    CONSTRAINT ck_patient_documents_extraction_status CHECK (((extraction_status IS NULL) OR ((extraction_status)::text = ANY ((ARRAY['pending'::character varying, 'complete'::character varying, 'failed'::character varying])::text[])))),
+    CONSTRAINT ck_patient_documents_one_uploader CHECK (((user_id IS NOT NULL) <> (uploaded_by_patient_id IS NOT NULL)))
 );
 
 
@@ -800,6 +802,10 @@ CREATE TABLE __TENANT_SCHEMA__.patient_message_threads (
     status character varying(16) NOT NULL,
     created_at timestamp with time zone NOT NULL,
     last_message_at timestamp with time zone NOT NULL,
+    closed_at timestamp with time zone,
+    closed_by uuid,
+    assigned_user_id uuid,
+    clinician_last_read_at timestamp with time zone,
     CONSTRAINT ck_patient_message_threads_status CHECK (((status)::text = ANY ((ARRAY['open'::character varying, 'closed'::character varying])::text[])))
 );
 
@@ -2240,6 +2246,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_documents
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_medications
     ADD CONSTRAINT patient_medications_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_message_threads
+    ADD CONSTRAINT patient_message_threads_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
 
 
 

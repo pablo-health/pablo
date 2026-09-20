@@ -319,6 +319,12 @@ app.include_router(notes.internal_jobs_router)
 app.include_router(patient_documents.patient_documents_router)
 app.include_router(patient_documents.documents_router)
 app.include_router(patient_documents.internal_jobs_router)
+# The patient's own half of the same table. Unconditional rather than a
+# portal module: it is the seam the modules that DO gate — sending in what
+# an intake form asked for, attaching a file to a message — both upload
+# through, so gating it here would turn one module off from under another.
+# It answers nothing without a stepped-up patient principal.
+app.include_router(patient_documents.patient_router)
 # The practice's side of the same threads, and the clinician's chart view of
 # them. Unconditional: staff reading their own inbox is not a portal module.
 # The patient's half went up with the portal modules above.
