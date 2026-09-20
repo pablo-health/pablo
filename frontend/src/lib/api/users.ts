@@ -264,6 +264,11 @@ export async function acceptBAA(
 
 export interface UserPreferences {
   default_video_platform: string
+  /**
+   * Your own permanent video room, for a service that gives you one rather
+   * than a meeting per appointment. Null until you paste it in settings.
+   */
+  telehealth_room_url?: string | null
   default_session_type: string
   default_duration_minutes: number
   auto_transcribe: boolean

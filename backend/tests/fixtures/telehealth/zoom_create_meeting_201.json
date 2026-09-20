@@ -1,0 +1,32 @@
+{
+  "uuid": "AAAAAAAAAAAAAAAAAAAAAA==",
+  "id": "81234567890",
+  "host_id": "hhhhhhhhhhhhhhhhhhhhhh",
+  "topic": "Therapy Session",
+  "type": 2,
+  "start_time": "2026-10-01T15:00:00Z",
+  "duration": 50,
+  "timezone": "UTC",
+  "created_at": "2026-09-20T12:00:00Z",
+  "agenda": "",
+  "start_url": "https://example-zoom.test/s/81234567890?zak=SYNTHETIC_START_TOKEN",
+  "join_url": "https://example-zoom.test/j/81234567890?pwd=SYNTHETIC",
+  "password": "000000",
+  "h323_password": "000000",
+  "settings": {
+    "host_video": false,
+    "participant_video": false,
+    "cn_meeting": false,
+    "in_meeting": false,
+    "join_before_host": false,
+    "mute_upon_entry": false,
+    "watermark": false,
+    "use_pmi": false,
+    "approval_type": 2,
+    "audio": "both",
+    "auto_recording": "none",
+    "close_registration": false,
+    "waiting_room": true,
+    "meeting_authentication": false
+  }
+}

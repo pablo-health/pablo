@@ -34,6 +34,7 @@ import {
   CANCEL,
   CONFIRM_LATE_CHANGE,
   JOIN,
+  JOIN_LATER,
   KEEP_APPOINTMENT,
   NO_UPCOMING,
   PAST_HEADING,
@@ -44,28 +45,50 @@ import {
 import { formatWhen } from "./formatting"
 
 /**
- * How long before the start a join link is worth offering.
+ * How long before the start a join link is worth offering, when the practice
+ * has not been asked.
  *
  * A courtesy, and only that: the link is whatever the practice put on the
  * appointment, and nothing here can tell whether the room is open. Early
  * enough that a patient who arrives punctually finds the button waiting, and
  * late enough that it is not sitting there all week.
+ *
+ * The real number comes from the server with the rest of the practice's
+ * policy. This is the fallback for the render before that arrives, and it
+ * matches the server's own default so the two never disagree in practice.
  */
-const JOIN_WINDOW_MINUTES = 15
+export const DEFAULT_JOIN_WINDOW_MINUTES = 15
 
-function withinJoinWindow(appointment: PatientAppointment, now: Date): boolean {
+function withinJoinWindow(
+  appointment: PatientAppointment,
+  now: Date,
+  windowMinutes: number,
+): boolean {
   const start = new Date(appointment.start_at).getTime()
   const end = new Date(appointment.end_at).getTime()
   if (Number.isNaN(start) || Number.isNaN(end)) return false
-  return now.getTime() >= start - JOIN_WINDOW_MINUTES * 60_000 && now.getTime() <= end
+  return now.getTime() >= start - windowMinutes * 60_000 && now.getTime() <= end
 }
 
-/** Settled one way or another, so nothing about it can still be changed. */
+/** Held on a video service, whether or not the link has arrived yet. */
+function isVideoAppointment(appointment: PatientAppointment): boolean {
+  return Boolean(appointment.provider) || Boolean(appointment.video_link)
+}
+
+/**
+ * Settled one way or another, so nothing about it can still be changed.
+ *
+ * Keyed on the scheduled END rather than the start. An appointment that has
+ * begun has not finished, and for a video one the difference is the whole
+ * feature: a patient joining two minutes late needs the button that was
+ * there two minutes ago, and keying on the start takes it away at exactly
+ * the moment they reach for it.
+ */
 function isOver(appointment: PatientAppointment, now: Date): boolean {
   if (appointment.status === "cancelled") return true
   if (appointment.status === "completed" || appointment.status === "no_show") return true
-  const start = new Date(appointment.start_at).getTime()
-  return Number.isNaN(start) || start < now.getTime()
+  const end = new Date(appointment.end_at).getTime()
+  return Number.isNaN(end) || end < now.getTime()
 }
 
 export interface AppointmentsListProps {
@@ -74,6 +97,11 @@ export interface AppointmentsListProps {
   timeZone: string
   /** Whether the practice lets a patient change an appointment online. */
   canChange: boolean
+  /**
+   * How long before the start the practice offers a join link, in minutes.
+   * Falls back to {@link DEFAULT_JOIN_WINDOW_MINUTES} until the policy loads.
+   */
+  joinWindowMinutes?: number
   /** Fixed "now" for tests; defaults to the real clock. */
   now?: Date
   onReschedule: (appointment: PatientAppointment) => void
@@ -86,6 +114,7 @@ export function AppointmentsList({
   appointments,
   timeZone,
   canChange,
+  joinWindowMinutes = DEFAULT_JOIN_WINDOW_MINUTES,
   now,
   onReschedule,
   onCancelled,
@@ -131,7 +160,11 @@ export function AppointmentsList({
       actionable &&
       typeof appointment.video_link === "string" &&
       appointment.video_link !== "" &&
-      withinJoinWindow(appointment, clock)
+      withinJoinWindow(appointment, clock, joinWindowMinutes)
+    // A video appointment that is not joinable yet gets a sentence instead of
+    // a button. Without one the row is indistinguishable from an in-person
+    // visit, and a patient expecting to be seen online has nothing to read.
+    const awaitingLink = actionable && !joinable && isVideoAppointment(appointment)
 
     return (
       <li
@@ -151,6 +184,12 @@ export function AppointmentsList({
         ) : (
           <span data-testid="appointments-row-status" className="text-sm capitalize text-neutral-600">
             {appointment.status.replace("_", " ")}
+          </span>
+        )}
+
+        {awaitingLink && (
+          <span data-testid="appointments-row-join-later" className="text-sm text-neutral-600">
+            {JOIN_LATER}
           </span>
         )}
 

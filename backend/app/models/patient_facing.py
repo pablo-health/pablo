@@ -124,6 +124,14 @@ class PatientAppointmentResponse(BaseModel):
     session_type: str
     video_link: str | None = None
     video_platform: str | None = None
+    provider: str | None = Field(
+        default=None,
+        description=(
+            "Which video service this appointment is held on, when it is held "
+            "on one. Shown so the portal can say a link is coming before the "
+            "link is worth offering."
+        ),
+    )
     recurrence_rule: str | None = None
     recurring_appointment_id: str | None = None
     late_cancellation: bool | None = Field(
@@ -164,6 +172,7 @@ class PatientAppointmentResponse(BaseModel):
             session_type=appointment.session_type,
             video_link=appointment.video_link,
             video_platform=appointment.video_platform,
+            provider=appointment.provider,
             recurrence_rule=appointment.recurrence_rule,
             recurring_appointment_id=appointment.recurring_appointment_id,
             late_cancellation=appointment.late_cancellation,
@@ -236,6 +245,15 @@ APPOINTMENT_COLUMN_DECISIONS: Final[Mapping[str, str | None]] = {
     "session_type": SHOWN,
     "video_link": SHOWN,
     "video_platform": SHOWN,
+    "provider": SHOWN,
+    "meeting_external_id": "The service's own handle for the room; it opens nothing by itself.",
+    # What the vendor said about the call. Withheld for the same reason the
+    # reminder flags are: it is delivery bookkeeping about a system, and a
+    # patient reading "we recorded you as checked in at 14:58" would be
+    # reading an attendance claim nobody has reviewed.
+    "telehealth_checked_in_at": "Vendor call bookkeeping, unreviewed.",
+    "telehealth_started_at": "Vendor call bookkeeping, unreviewed.",
+    "telehealth_ended_at": "Vendor call bookkeeping, unreviewed.",
     "notes": "Written by the clinician, for the clinician.",
     "note_type": "An internal link to the clinical record this visit produces.",
     "recurrence_rule": SHOWN,

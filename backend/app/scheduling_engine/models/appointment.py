@@ -96,6 +96,23 @@ class Appointment:
     appointment_type_id: str | None = None
     video_link: str | None = None
     video_platform: str | None = None
+    #: Which meeting provider made the link, normalised — ``google_meet``,
+    #: ``zoom``, ``doxy_me`` or ``manual``.
+    #:
+    #: NOT the same as ``video_platform``, which is a free label a clinician
+    #: chose from a list and which nothing acts on. This is the registry key,
+    #: so it decides who cancels the meeting when the appointment is cancelled
+    #: and who is asked for a new one when it moves. None on an in-person
+    #: appointment and on every row booked before providers existed.
+    provider: str | None = None
+    #: The vendor's own handle for the meeting, where the vendor issues one.
+    #: Never a patient identifier.
+    meeting_external_id: str | None = None
+    #: What a verified vendor webhook said about the call. All None unless the
+    #: practice runs one, which most do not.
+    telehealth_checked_in_at: datetime | None = None
+    telehealth_started_at: datetime | None = None
+    telehealth_ended_at: datetime | None = None
     notes: str | None = None
     # Registry key for the note generated when a session is started from this
     # appointment. Defaults to SOAP, mirroring notes.note_type.
@@ -213,6 +230,11 @@ class Appointment:
             appointment_type_id=data.get("appointment_type_id"),
             video_link=data.get("video_link"),
             video_platform=data.get("video_platform"),
+            provider=data.get("provider"),
+            meeting_external_id=data.get("meeting_external_id"),
+            telehealth_checked_in_at=data.get("telehealth_checked_in_at"),
+            telehealth_started_at=data.get("telehealth_started_at"),
+            telehealth_ended_at=data.get("telehealth_ended_at"),
             notes=data.get("notes"),
             note_type=data.get("note_type") or "soap",
             recurrence_rule=data.get("recurrence_rule"),
@@ -261,6 +283,11 @@ class Appointment:
             "appointment_type_id": self.appointment_type_id,
             "video_link": self.video_link,
             "video_platform": self.video_platform,
+            "provider": self.provider,
+            "meeting_external_id": self.meeting_external_id,
+            "telehealth_checked_in_at": self.telehealth_checked_in_at,
+            "telehealth_started_at": self.telehealth_started_at,
+            "telehealth_ended_at": self.telehealth_ended_at,
             "notes": self.notes,
             "note_type": self.note_type,
             "recurrence_rule": self.recurrence_rule,

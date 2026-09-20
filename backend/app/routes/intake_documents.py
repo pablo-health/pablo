@@ -33,7 +33,6 @@ be read against.
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, Request, status
@@ -62,8 +61,6 @@ from ..services.intake_document_service import (
 
 if TYPE_CHECKING:
     from ..repositories.intake_document import IntakeDocumentRepository
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/intake/documents", tags=["intake-documents"])
 

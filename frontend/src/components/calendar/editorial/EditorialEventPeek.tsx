@@ -187,6 +187,24 @@ export function EditorialEventPeek({
           >
             Tip: double-click to edit
           </span>
+          {isWebLink && appointment.video_link && (
+            // Offered whenever there is a room, not only inside the patient's
+            // join window: a clinician opening the room early is how the room
+            // is ready when somebody arrives.
+            <a
+              href={appointment.video_link}
+              target="_blank"
+              rel="noreferrer"
+              data-testid="appointment-peek-start"
+              className="rounded-full px-4 py-2 text-[13px] font-bold"
+              style={{
+                border: "1px solid var(--ed-cta-bg)",
+                color: "var(--ed-cta-bg)",
+              }}
+            >
+              Start
+            </a>
+          )}
           <button
             type="button"
             onClick={() => onEdit(appointment)}
