@@ -31,13 +31,17 @@ from app.auth.patient_context import (
     get_patient_resolver_registry,
 )
 from app.main import app
-from app.models import PatientMessage
+from app.models import Patient, PatientMessage
 from app.models.audit import ACTOR_TYPE_CLINICIAN, ACTOR_TYPE_PATIENT, AuditAction
 from app.models.patient_message_api import MAX_MESSAGE_BODY
 from app.rate_limit import reset_patient_message_send_limiter
-from app.repositories import InMemoryPatientMessageRepository
-from app.routes.patient_messages import get_patient_message_repository
+from app.repositories import InMemoryPatientMessageRepository, InMemoryPatientRepository
+from app.routes.patient_messages import (
+    get_clinician_patient_repository,
+    get_patient_message_repository,
+)
 from app.services.patient_message_hooks import get_patient_message_hook_registry
+from app.utcnow import utc_now
 from fastapi import HTTPException, status
 
 if TYPE_CHECKING:
@@ -48,6 +52,11 @@ _PATIENT_A = "patient-a"
 _PATIENT_B = "patient-b"
 _TOKEN_A = "credential-of-patient-a"
 _TOKEN_B = "credential-of-patient-b"
+# The chart's own clinician — not the caller under test in any clinician-
+# surface test, so patient A exists without granting the caller anything by
+# default. Each test says out loud who holds a grant, mirroring how
+# ``message_repo`` is used below.
+_OTHER_CLINICIAN = "someone-elses-clinician"
 
 _SUBJECT = "question about my refill"
 _BODY = "I have been feeling worse since Tuesday."
@@ -76,6 +85,29 @@ def message_repo() -> InMemoryPatientMessageRepository:
     return InMemoryPatientMessageRepository()
 
 
+@pytest.fixture
+def patient_repo() -> InMemoryPatientRepository:
+    """The clinician-facing chart the message-list route checks against.
+
+    Patient A exists, created by a different clinician, so a grant on it is
+    never presumed — a test that wants the caller to hold one calls
+    ``grant_access`` explicitly, same as ``message_repo``.
+    """
+    repo = InMemoryPatientRepository()
+    now = utc_now()
+    repo.create(
+        Patient(
+            id=_PATIENT_A,
+            first_name="Ada",
+            last_name="Lovelace",
+            created_at=now,
+            updated_at=now,
+        ),
+        _OTHER_CLINICIAN,
+    )
+    return repo
+
+
 @pytest.fixture(autouse=True)
 def no_hooks():
     """No deployment callbacks unless a test registers one."""
@@ -89,6 +121,7 @@ def no_hooks():
 def patient_client(
     client: TestClient,
     message_repo: InMemoryPatientMessageRepository,
+    patient_repo: InMemoryPatientRepository,
     monkeypatch: pytest.MonkeyPatch,
 ) -> TestClient:
     """The shared app client, with a patient front door and no database arming.
@@ -102,6 +135,7 @@ def patient_client(
     registry.register(_TwoPatientResolver())
     app.dependency_overrides[get_patient_resolver_registry] = lambda: registry
     app.dependency_overrides[get_patient_message_repository] = lambda: message_repo
+    app.dependency_overrides[get_clinician_patient_repository] = lambda: patient_repo
     monkeypatch.setattr(patient_context_module, "get_db_session", object)
     monkeypatch.setattr(patient_context_module, "set_tenant_schema", lambda _s, _schema: None)
     monkeypatch.setattr(patient_context_module, "arm_current_patient_id", lambda _s, _p: None)
@@ -322,10 +356,12 @@ class TestClinicianSurface:
         self,
         patient_client: TestClient,
         message_repo: InMemoryPatientMessageRepository,
+        patient_repo: InMemoryPatientRepository,
         mock_user_id: str,
     ) -> None:
         thread_id = _start(patient_client, _TOKEN_A)["id"]
         message_repo.grant_access(_PATIENT_A, mock_user_id)
+        patient_repo.grant_access(_PATIENT_A, mock_user_id)
 
         listing = patient_client.get(f"/api/patients/{_PATIENT_A}/message-threads")
         assert listing.status_code == 200, listing.text
@@ -379,21 +415,32 @@ class TestClinicianSurface:
             == 404
         )
 
-    def test_a_stranger_clinicians_list_is_empty(self, patient_client: TestClient) -> None:
+    def test_a_stranger_clinicians_list_is_404(self, patient_client: TestClient) -> None:
+        """No existence oracle here either: a patient the caller has no
+        grant on reads the same as one that does not exist. The control is
+        :meth:`test_list_read_and_reply_with_a_grant` — with a grant the
+        same id gives a 200."""
         _start(patient_client, _TOKEN_A)
         listing = patient_client.get(f"/api/patients/{_PATIENT_A}/message-threads")
-        assert listing.status_code == 200
-        assert listing.json()["total"] == 0
+        assert listing.status_code == 404
+
+    def test_a_foreign_patient_id_is_404(self, patient_client: TestClient) -> None:
+        """An id naming no patient this chart knows about at all — the same
+        404 as one that exists but belongs to someone else's chart."""
+        resp = patient_client.get("/api/patients/patient-from-another-practice/message-threads")
+        assert resp.status_code == 404
 
     def test_the_clinician_list_does_not_carry_unread_counts(
         self,
         patient_client: TestClient,
         message_repo: InMemoryPatientMessageRepository,
+        patient_repo: InMemoryPatientRepository,
         mock_user_id: str,
     ) -> None:
         """Whether the patient has read something is not the clinician's row."""
         _start(patient_client, _TOKEN_A)
         message_repo.grant_access(_PATIENT_A, mock_user_id)
+        patient_repo.grant_access(_PATIENT_A, mock_user_id)
 
         rows = patient_client.get(f"/api/patients/{_PATIENT_A}/message-threads").json()["data"]
 
@@ -474,6 +521,43 @@ class TestAudit:
         assert viewed[0].actor_type == ACTOR_TYPE_CLINICIAN
         assert viewed[0].resource_id == thread_id
         assert viewed[0].patient_id == _PATIENT_A
+
+    def test_a_clinicians_list_read_is_audited_by_patient(
+        self,
+        patient_client: TestClient,
+        message_repo: InMemoryPatientMessageRepository,
+        patient_repo: InMemoryPatientRepository,
+        mock_audit_service: AuditService,
+        mock_user_id: str,
+    ) -> None:
+        _start(patient_client, _TOKEN_A)
+        message_repo.grant_access(_PATIENT_A, mock_user_id)
+        patient_repo.grant_access(_PATIENT_A, mock_user_id)
+
+        patient_client.get(f"/api/patients/{_PATIENT_A}/message-threads")
+
+        viewed = [
+            e
+            for e in _entries(mock_audit_service)
+            if e.action == AuditAction.PATIENT_MESSAGE_THREAD_VIEWED.value
+        ]
+        assert len(viewed) == 1
+        assert viewed[0].actor_type == ACTOR_TYPE_CLINICIAN
+        assert viewed[0].resource_id == _PATIENT_A
+        assert viewed[0].patient_id == _PATIENT_A
+        assert viewed[0].changes == {"thread_count": 1}
+
+    def test_a_refused_clinician_listing_writes_no_audit_row(
+        self, patient_client: TestClient, mock_audit_service: AuditService
+    ) -> None:
+        """The control above shows a granted read audits; this id has no
+        grant, so nothing about it should land on the log at all."""
+        before = len(_entries(mock_audit_service))
+
+        resp = patient_client.get(f"/api/patients/{_PATIENT_A}/message-threads")
+
+        assert resp.status_code == 404
+        assert len(_entries(mock_audit_service)) == before
 
     def test_a_clinician_reply_is_audited(
         self,

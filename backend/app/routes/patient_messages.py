@@ -76,8 +76,9 @@ from ..models.patient_message import (
     THREAD_STATUS_OPEN,
 )
 from ..rate_limit import get_patient_message_send_limiter
-from ..repositories import PatientMessageRepository
+from ..repositories import PatientMessageRepository, PatientRepository
 from ..repositories import get_patient_message_repository as _repo_factory
+from ..repositories import get_patient_repository as _patient_repo_factory
 from ..services import AuditService, get_audit_service
 from ..services.patient_message_hooks import PatientMessageEvent, dispatch_patient_message
 from ..utcnow import utc_now
@@ -106,6 +107,17 @@ def get_patient_message_repository() -> PatientMessageRepository:
     other, so the ``search_path`` is set either way by the time this runs.
     """
     return _repo_factory()
+
+
+def get_clinician_patient_repository(
+    _ctx: TenantContext = Depends(get_tenant_context),
+) -> PatientRepository:
+    """The patient repository on a tenant-scoped clinician session.
+
+    Deliberately not the patient routes' dependency of the same shape:
+    that one is armed for a patient principal, which a clinician is not.
+    """
+    return _patient_repo_factory()
 
 
 # ---------------------------------------------------------------------------
@@ -351,15 +363,27 @@ def list_threads_for_patient(
     patient_id: str,
     request: Request,
     user: User = Depends(require_baa_acceptance),
+    patients: PatientRepository = Depends(get_clinician_patient_repository),
     repo: PatientMessageRepository = Depends(get_patient_message_repository),
     audit: AuditService = Depends(get_audit_service),
 ) -> PatientMessageThreadListResponse:
-    """The threads for one patient. Empty when the caller has no grant.
+    """The threads for one patient.
 
-    Audited patient-scoped rather than per thread: the list discloses that
-    this patient has correspondence and when it last moved, not what any of
-    it says. Opening a thread is the content read, and it has its own row.
+    A patient id the caller has no grant on is a 404, matching every other
+    patient-scoped clinician route on this surface — the same
+    ``PatientRepository.get()`` join that already draws "no such row" and
+    "no grant" as one answer for the sibling list routes, so a foreign
+    practice's patient id gets no different a reply than one that never
+    existed.
+
+    Audited patient-scoped rather than per thread, and only once the read
+    actually happens: the list discloses that this patient has
+    correspondence and when it last moved, not what any of it says.
+    Opening a thread is the content read, and it has its own row.
     """
+    if patients.get(patient_id, user.id) is None:
+        raise NotFoundError("Patient not found", {"patient_id": patient_id})
+
     threads = repo.list_threads_for_patient(patient_id, user.id)
     audit.log_patient_message_action(
         action=AuditAction.PATIENT_MESSAGE_THREAD_VIEWED,
