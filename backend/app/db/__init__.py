@@ -1490,16 +1490,18 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
 
     scoping_columns = {"user_id", "patient_id", "id"}
     all_columns: dict[str, set[str]] = {}
-    # ``patient_id``'s SQL type per table. The clinician arm compiles to
-    # ``has_patient_access(patient_id, …)``, which is defined for ``uuid``
-    # — a table whose ``patient_id`` is text has no such overload, and the
-    # CREATE POLICY dies with ``function has_patient_access(character
-    # varying, text) does not exist``, taking the whole schema with it.
-    patient_id_types: dict[str, str] = {}
+    # The SQL type of each table's patient-scoping column. The clinician
+    # arm compiles to ``has_patient_access(patient_id, …)``, which is
+    # defined for ``uuid`` — a table whose column is text has no such
+    # overload, and the CREATE POLICY dies with ``function
+    # has_patient_access(character varying, text) does not exist``, taking
+    # the whole schema with it. A type name, never a value: nothing read
+    # out of a row goes near this dict or the warning it feeds.
+    scoping_column_types: dict[str, str] = {}
     for table_name, column_name, data_type in column_rows:
         all_columns.setdefault(table_name, set()).add(column_name)
         if column_name == "patient_id":
-            patient_id_types[table_name] = data_type
+            scoping_column_types[table_name] = data_type
     tables: dict[str, set[str]] = {
         table_name: columns
         for table_name, columns in all_columns.items()
@@ -1562,10 +1564,10 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
             logger.warning("rls reconcile: skipped unknown table %s", qualified)
             skipped.add(table_name)
             continue
-        patient_id_type = patient_id_types.get(table_name)
-        if patient_id_type is not None and patient_id_type != "uuid":
+        sql_type = scoping_column_types.get(table_name)
+        if sql_type is not None and sql_type != "uuid":
             message = (
-                f"{qualified}: patient_id is {patient_id_type}, not uuid — "
+                f"{qualified}: patient_id is {sql_type}, not uuid — "
                 f"has_patient_access has no overload for it, so the row policy "
                 f"cannot be created"
             )
