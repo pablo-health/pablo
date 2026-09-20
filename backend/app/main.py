@@ -59,6 +59,7 @@ from .routes import (
     ehr_routes,
     ext_auth,
     ical_sync,
+    intake_packets,
     internal_transcription,
     launch,
     note_types,
@@ -298,6 +299,10 @@ app.include_router(patient_intake.router)
 # already-collected clinical record should stay readable whatever else a
 # deployment has turned off.
 app.include_router(patient_intake.clinician_router)
+# Building the form, as opposed to answering it. Unconditional and behind
+# the ordinary clinician door: a practice editing its own paperwork touches
+# no patient data and needs no patient front door to be open.
+app.include_router(intake_packets.router)
 # Companion launch-intent handoff. Mounted only when the flag is on so
 # /api/launch/* returns 404 until the desktop companions ship the
 # verified-link redemption path. See docs/design/companion-thin-client.md.

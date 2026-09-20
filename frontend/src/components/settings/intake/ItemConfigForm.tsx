@@ -1,0 +1,329 @@
+// Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+
+"use client"
+
+import { Plus, X } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Textarea } from "@/components/ui/textarea"
+import type { ChoiceOption, ItemConfig, ItemType } from "@/types/intakePackets"
+import { SELF_REPORT_INSTRUMENTS } from "./intakeCopy"
+
+interface ItemConfigFormProps {
+  itemType: ItemType
+  config: ItemConfig
+  onChange: (next: ItemConfig) => void
+  /** Prefix for the generated field ids, so two open items do not collide. */
+  idPrefix: string
+}
+
+function text(config: ItemConfig, key: string): string {
+  const value = config[key]
+  return typeof value === "string" ? value : ""
+}
+
+function num(config: ItemConfig, key: string): string {
+  const value = config[key]
+  return typeof value === "number" ? String(value) : ""
+}
+
+function options(config: ItemConfig): ChoiceOption[] {
+  const value = config.options
+  return Array.isArray(value) ? (value as ChoiceOption[]) : []
+}
+
+/**
+ * Turn a label into a stable answer key.
+ *
+ * The key is what gets stored and what a rule compares against, so it is
+ * derived once when the answer is added and never re-derived on relabel — a
+ * therapist fixing a typo must not silently repoint anything.
+ */
+function keyFor(label: string, taken: string[]): string {
+  const base = label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40)
+  const stem = base || "answer"
+  if (!taken.includes(stem)) return stem
+  let n = 2
+  while (taken.includes(`${stem}_${n}`)) n += 1
+  return `${stem}_${n}`
+}
+
+function ChoiceOptions({ config, onChange, idPrefix }: Omit<ItemConfigFormProps, "itemType">) {
+  const current = options(config)
+
+  function update(index: number, label: string) {
+    const next = current.map((o, i) => (i === index ? { ...o, label } : o))
+    onChange({ ...config, options: next })
+  }
+
+  function add() {
+    const label = `Answer ${current.length + 1}`
+    onChange({
+      ...config,
+      options: [...current, { key: keyFor(label, current.map((o) => o.key)), label }],
+    })
+  }
+
+  function remove(index: number) {
+    onChange({ ...config, options: current.filter((_, i) => i !== index) })
+  }
+
+  return (
+    <div className="space-y-2">
+      <Label>Answers</Label>
+      {current.map((option, index) => (
+        <div key={option.key} className="flex items-center gap-2">
+          <Input
+            aria-label={`Answer ${index + 1}`}
+            value={option.label}
+            onChange={(e) => update(index, e.target.value)}
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            aria-label={`Remove answer ${index + 1}`}
+            onClick={() => remove(index)}
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </Button>
+        </div>
+      ))}
+      <Button type="button" variant="outline" size="sm" onClick={add} id={`${idPrefix}-add-option`}>
+        <Plus className="mr-1 h-4 w-4" aria-hidden="true" />
+        Add an answer
+      </Button>
+    </div>
+  )
+}
+
+/**
+ * The settings one question needs, chosen by its type.
+ *
+ * Every branch writes into the same open `config` record, which is what the
+ * API stores and the server validates at publish. Nothing here decides whether
+ * a configuration is valid — a half-filled draft is a normal thing to save.
+ */
+export function ItemConfigForm({ itemType, config, onChange, idPrefix }: ItemConfigFormProps) {
+  const set = (key: string, value: unknown) => onChange({ ...config, [key]: value })
+  const setNumber = (key: string, raw: string) =>
+    set(key, raw === "" ? undefined : Number(raw))
+
+  switch (itemType) {
+    case "section":
+      return (
+        <div>
+          <Label htmlFor={`${idPrefix}-title`}>Heading</Label>
+          <Input
+            id={`${idPrefix}-title`}
+            value={text(config, "title")}
+            onChange={(e) => set("title", e.target.value)}
+          />
+        </div>
+      )
+
+    case "instructions":
+      return (
+        <div>
+          <Label htmlFor={`${idPrefix}-body`}>What they read</Label>
+          <Textarea
+            id={`${idPrefix}-body`}
+            rows={4}
+            value={text(config, "body_markdown")}
+            onChange={(e) => set("body_markdown", e.target.value)}
+          />
+        </div>
+      )
+
+    case "free_text":
+      return (
+        <div>
+          <Label htmlFor={`${idPrefix}-max-len`}>Longest answer, in characters</Label>
+          <Input
+            id={`${idPrefix}-max-len`}
+            type="number"
+            value={num(config, "max_len")}
+            onChange={(e) => setNumber("max_len", e.target.value)}
+          />
+        </div>
+      )
+
+    case "single_choice":
+      return <ChoiceOptions config={config} onChange={onChange} idPrefix={idPrefix} />
+
+    case "multi_choice":
+      return (
+        <div className="space-y-3">
+          <ChoiceOptions config={config} onChange={onChange} idPrefix={idPrefix} />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label htmlFor={`${idPrefix}-min`}>Fewest they may pick</Label>
+              <Input
+                id={`${idPrefix}-min`}
+                type="number"
+                value={num(config, "min")}
+                onChange={(e) => setNumber("min", e.target.value)}
+              />
+            </div>
+            <div>
+              <Label htmlFor={`${idPrefix}-max`}>Most they may pick</Label>
+              <Input
+                id={`${idPrefix}-max`}
+                type="number"
+                value={num(config, "max")}
+                onChange={(e) => setNumber("max", e.target.value)}
+              />
+            </div>
+          </div>
+        </div>
+      )
+
+    case "yes_no":
+      return (
+        <div>
+          <Label htmlFor={`${idPrefix}-follow-up`}>If yes, also ask</Label>
+          <Input
+            id={`${idPrefix}-follow-up`}
+            value={text(config, "follow_up_label")}
+            placeholder="Leave empty to ask nothing more"
+            onChange={(e) => set("follow_up_label", e.target.value || undefined)}
+          />
+        </div>
+      )
+
+    case "scale":
+      return (
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label htmlFor={`${idPrefix}-min`}>Bottom of the scale</Label>
+            <Input
+              id={`${idPrefix}-min`}
+              type="number"
+              value={num(config, "min")}
+              onChange={(e) => setNumber("min", e.target.value)}
+            />
+          </div>
+          <div>
+            <Label htmlFor={`${idPrefix}-max`}>Top of the scale</Label>
+            <Input
+              id={`${idPrefix}-max`}
+              type="number"
+              value={num(config, "max")}
+              onChange={(e) => setNumber("max", e.target.value)}
+            />
+          </div>
+          <div>
+            <Label htmlFor={`${idPrefix}-min-label`}>Word at the bottom</Label>
+            <Input
+              id={`${idPrefix}-min-label`}
+              value={text(config, "min_label")}
+              onChange={(e) => set("min_label", e.target.value)}
+            />
+          </div>
+          <div>
+            <Label htmlFor={`${idPrefix}-max-label`}>Word at the top</Label>
+            <Input
+              id={`${idPrefix}-max-label`}
+              value={text(config, "max_label")}
+              onChange={(e) => set("max_label", e.target.value)}
+            />
+          </div>
+        </div>
+      )
+
+    case "number":
+      return (
+        <div className="grid grid-cols-3 gap-3">
+          <div>
+            <Label htmlFor={`${idPrefix}-min`}>Smallest</Label>
+            <Input
+              id={`${idPrefix}-min`}
+              type="number"
+              value={num(config, "min")}
+              onChange={(e) => setNumber("min", e.target.value)}
+            />
+          </div>
+          <div>
+            <Label htmlFor={`${idPrefix}-max`}>Largest</Label>
+            <Input
+              id={`${idPrefix}-max`}
+              type="number"
+              value={num(config, "max")}
+              onChange={(e) => setNumber("max", e.target.value)}
+            />
+          </div>
+          <div>
+            <Label htmlFor={`${idPrefix}-unit`}>Unit</Label>
+            <Input
+              id={`${idPrefix}-unit`}
+              value={text(config, "unit")}
+              onChange={(e) => set("unit", e.target.value || undefined)}
+            />
+          </div>
+        </div>
+      )
+
+    case "date":
+      return (
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label htmlFor={`${idPrefix}-min`}>Earliest</Label>
+            <Input
+              id={`${idPrefix}-min`}
+              type="date"
+              value={text(config, "min")}
+              onChange={(e) => set("min", e.target.value || undefined)}
+            />
+          </div>
+          <div>
+            <Label htmlFor={`${idPrefix}-max`}>Latest</Label>
+            <Input
+              id={`${idPrefix}-max`}
+              type="date"
+              value={text(config, "max")}
+              onChange={(e) => set("max", e.target.value || undefined)}
+            />
+          </div>
+        </div>
+      )
+
+    case "instrument":
+      return (
+        <div>
+          <Label htmlFor={`${idPrefix}-code`}>Which measure</Label>
+          <Select value={text(config, "code")} onValueChange={(value) => set("code", value)}>
+            <SelectTrigger id={`${idPrefix}-code`} aria-label="Which measure">
+              <SelectValue placeholder="Choose a measure" />
+            </SelectTrigger>
+            <SelectContent>
+              {SELF_REPORT_INSTRUMENTS.map((instrument) => (
+                <SelectItem key={instrument.code} value={instrument.code}>
+                  {instrument.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )
+
+    case "insurance_card":
+    case "document_request":
+      return (
+        <div>
+          <Label htmlFor={`${idPrefix}-label`}>What to ask for</Label>
+          <Input
+            id={`${idPrefix}-label`}
+            value={text(config, "label")}
+            onChange={(e) => set("label", e.target.value)}
+          />
+        </div>
+      )
+
+    default:
+      // demographics, reason, emergency_contact, guardian and consent_document
+      // have nothing for a practice to set: the engine fixes their shape.
+      return null
+  }
+}

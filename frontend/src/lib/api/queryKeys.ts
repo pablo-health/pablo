@@ -220,6 +220,14 @@ const baseQueryKeys = {
       ] as const,
   },
 
+  // The practice's own intake forms, as the builder reads them
+  intakeTemplates: {
+    all: ["intake-templates"] as const,
+    list: () => [...baseQueryKeys.intakeTemplates.all, "list"] as const,
+    version: (templateId: string, versionId: string) =>
+      [...baseQueryKeys.intakeTemplates.all, "version", templateId, versionId] as const,
+  },
+
   // Note-type catalog query keys
   noteTypes: {
     all: ["note-types"] as const,

@@ -60,6 +60,10 @@ from .identity import (
     IdentityRepository,
     InMemoryIdentityRepository,
 )
+from .intake_packet import (
+    InMemoryIntakePacketRepository,
+    IntakePacketRepository,
+)
 from .llm_usage import (
     InMemoryLlmUsageRepository,
     LlmUsageRepository,
@@ -292,6 +296,13 @@ def get_chat_repository() -> ChatRepository:
     return PostgresChatRepository(_get_pg_session())
 
 
+def get_intake_packet_repository() -> IntakePacketRepository:
+    """Get intake packet repository instance."""
+    from .postgres.intake_packet import PostgresIntakePacketRepository
+
+    return PostgresIntakePacketRepository(_get_pg_session())
+
+
 def get_llm_usage_repository() -> LlmUsageRepository:
     """Get LLM usage repository instance."""
     from .postgres.llm_usage import PostgresLlmUsageRepository
@@ -365,6 +376,7 @@ __all__ = [
     "InMemoryEhrPromptRepository",
     "InMemoryEhrRouteRepository",
     "InMemoryIdentityRepository",
+    "InMemoryIntakePacketRepository",
     "InMemoryLlmUsageRepository",
     "InMemoryMedicationRepository",
     "InMemoryNotesRepository",
@@ -374,6 +386,7 @@ __all__ = [
     "InMemoryPatientRepository",
     "InMemoryTherapySessionRepository",
     "InMemoryUserRepository",
+    "IntakePacketRepository",
     "LlmUsageRepository",
     "MedicationRepository",
     "NotesRepository",
@@ -403,6 +416,7 @@ __all__ = [
     "get_ical_client_mapping_repository",
     "get_ical_sync_config_repository",
     "get_identity_repository",
+    "get_intake_packet_repository",
     "get_llm_usage_repository",
     "get_medication_repository",
     "get_notes_repository",
