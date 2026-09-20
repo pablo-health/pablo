@@ -17,6 +17,12 @@ of question means. :mod:`app.intake.completion` puts the two together and
 says whether a form is finished, which is the one question no client is
 allowed to answer for itself.
 
+A question can be asked only when an earlier answer calls for it.
+:mod:`app.intake.rules` says what such a condition may look like and
+refuses one that cannot be published; :mod:`app.intake.visibility`
+evaluates it, and the browser runs a port of that function against the same
+fixtures so the two cannot drift.
+
 A consent item is answered by signing rather than by sending a value, and
 three small modules carry what that record is made of:
 :mod:`app.intake.documents` reduces the words to a digest,
@@ -26,7 +32,7 @@ evidence into one string that can be checked against the row later.
 """
 
 from .answers import SIGNED_ITEM_TYPES, AnswerError, is_answered, validate_answer
-from .completion import Completion, CompletionItem, assess, every_item_visible
+from .completion import Completion, CompletionItem, assess
 from .consent_statement import (
     CONSENT_STATEMENTS,
     CURRENT_CONSENT_STATEMENT_VERSION,
@@ -43,6 +49,7 @@ from .items import (
     validate_item_list,
 )
 from .signatures import EVIDENCE_FIELDS, evidence_digest
+from .visibility import VisibilityItem, evaluate
 
 __all__ = [
     "CONSENT_STATEMENTS",
@@ -57,10 +64,11 @@ __all__ = [
     "ItemConfig",
     "ItemConfigError",
     "ItemDraft",
+    "VisibilityItem",
     "VisibleWhen",
     "assess",
     "consent_statement",
-    "every_item_visible",
+    "evaluate",
     "evidence_digest",
     "is_answered",
     "validate_answer",

@@ -894,6 +894,12 @@ class TestGetTenantContext:
             # platform row to find, so skip the gate here. Integration
             # tests exercise the gate end-to-end.
             patch("app.auth.service._await_provisioning_ready"),
+            # Recording the practice's owner is a registry write against a
+            # real platform row, which this suite has none of. Its rules are
+            # proved in tests_integration/database/test_practice_owner_db.py;
+            # what belongs here is that the resolve path calls it at all,
+            # which the test below asserts.
+            patch("app.db.practice_owner.record_owner_on_sign_in"),
         ):
             pass
 
@@ -933,6 +939,67 @@ class TestGetTenantContext:
             practice_id="practice-abc",
             practice_schema="practice_abc",
         )
+
+    def test_records_the_practice_owner_while_resolving(self) -> None:
+        """Resolving an account to a practice is where the owner gets recorded.
+
+        A practice is registered under an email before anyone has signed in, so
+        this is the first moment both halves are in hand. Without the call the
+        column stays empty for the practice's whole life and every self-booking
+        route refuses — a failure with no symptom on this path at all, which is
+        why the wiring is asserted here rather than left to the integration
+        suite that proves the write itself.
+        """
+        decoded = {"uid": "user123", "email": "Dr@Example.com", "firebase": {}}
+
+        with (
+            patch("app.auth.service.get_settings"),
+            patch(
+                "app.auth.service._resolve_practice_from_email",
+                return_value=("practice-abc", "practice_abc"),
+            ),
+            patch("app.auth.service._await_provisioning_ready"),
+            patch("app.db.practice_owner.record_owner_on_sign_in") as record,
+        ):
+            token = _request_session.set(MagicMock())
+            user_id_token = _current_user_id.set(None)
+            try:
+                get_tenant_context(
+                    _mock_request(),
+                    decoded,
+                    InMemoryUserRepository(),
+                    _identity_repo_for("user123"),
+                )
+            finally:
+                _request_session.reset(token)
+                _current_user_id.reset(user_id_token)
+
+        # The normalized address, because that is what the registry is matched
+        # on, and the practice the account actually resolved to.
+        record.assert_called_once_with("practice-abc", "dr@example.com", "user123")
+
+    def test_does_not_record_an_owner_without_a_practice(self) -> None:
+        """No practice resolved, nothing to own."""
+        decoded = {"uid": "admin-uid", "email": "admin@pablo.health", "firebase": {}}
+        user_repo = InMemoryUserRepository()
+        user_repo.update(
+            User(
+                id="admin-uid",
+                email="admin@pablo.health",
+                name="Admin",
+                created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+                is_platform_admin=True,
+            )
+        )
+
+        with (
+            patch("app.auth.service.get_settings"),
+            patch("app.auth.service._resolve_practice_from_email", return_value=None),
+            patch("app.db.practice_owner.record_owner_on_sign_in") as record,
+        ):
+            get_tenant_context(_mock_request(), decoded, user_repo, _identity_repo_for("admin-uid"))
+
+        record.assert_not_called()
 
     def test_admin_without_practice_gets_default_context(self) -> None:
         """Platform admin with no practice mapping gets admin-only access."""

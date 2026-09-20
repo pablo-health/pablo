@@ -13,44 +13,48 @@ because the browser thought it was done. That matters here more than it
 usually does — a question the patient never saw and a question they skipped
 look the same from the front end, and only the server knows which is which.
 
-**Visibility is a seam, and today it is a stub.** A question may eventually
-be shown only when an earlier answer calls for it, which is how clinical
-guidance is shaped: a positive screener earns the longer instrument, a
-non-zero answer to the ninth PHQ-9 item earns a risk screen. A rule already
-has a stored shape and is already validated at publish
-(:mod:`app.intake.rules`), but nothing evaluates one yet, so
-:func:`every_item_visible` answers "shown" for every question and this
-module never consults a rule. Completion therefore asks for every required
-question on the form, which is the behaviour a form with no rules on it has
-anyway.
+**A question the patient was never shown is neither required nor missing.**
+A rule may say a question is asked only when an earlier answer calls for
+it, which is how clinical guidance is shaped: a positive screener earns the
+longer instrument, a non-zero answer to the ninth PHQ-9 item earns a risk
+screen. :mod:`app.intake.rules` says what a well-formed rule is,
+:mod:`app.intake.visibility` evaluates one, and this module is where the
+answer has consequences — a hidden question drops out of ``missing``
+entirely rather than being counted and forgiven.
 
-The seam is a parameter rather than a later refactor because of what
-changes when evaluation lands: a hidden question must be neither required
-nor missing, and that is a statement about *this* function. Passing the
-decision in means the rule engine arrives as one new argument and one set
-of fixtures, with the walk below untouched.
+Which questions were hidden is reported alongside, because the caller has
+one thing left to do with it: a value saved while a question was visible
+and hidden by the time the form is handed in is not part of the
+submission.
+
+Evaluation stays a parameter rather than a hard-coded call so a test can
+pin the walk against a visibility answer of its own choosing, and so the
+export can one day ask the same question through the same door.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from .answers import is_answered
-from .items import DISPLAY_ONLY_ITEM_TYPES
+from .items import DISPLAY_ONLY_ITEM_TYPES, instrument_item_count
+from .visibility import VisibilityItem, evaluate
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from datetime import date
 
     from .items import ItemConfig
-    from .rules import VisibleWhen
 
-#: Decides whether one question is shown, given the rule it carries and
-#: every answer given so far, keyed by item key. Pure: same inputs, same
-#: answer, no clock and no database.
-VisibilityRule = Callable[["VisibleWhen | None", "Mapping[str, object]"], bool]
+#: Decides which questions are shown, given each one's rule and every
+#: answer given so far, keyed by item key. Pure: same inputs, same answer,
+#: no clock and no database. :func:`app.intake.visibility.evaluate` is the
+#: one implementation that reads rules.
+VisibilityRule = Callable[
+    ["Sequence[VisibilityItem]", "Mapping[str, object]"], "Mapping[str, bool]"
+]
 
 
 @dataclass(frozen=True)
@@ -80,63 +84,74 @@ class Completion:
     ``missing`` holds item ids in the order the patient reads them, so the
     portal can send somebody to the first thing it names without sorting
     anything.
+
+    ``hidden`` holds the ids of the questions this patient is not shown, in
+    the same order. Not a client's business — the portal is told what is
+    outstanding, not what it is being spared — but submitting reads it, so
+    that an answer given before a rule stopped holding is not filed as part
+    of a form that never asked the question.
     """
 
     complete: bool
     missing: list[str]
-
-
-def every_item_visible(
-    rule: VisibleWhen | None,  # noqa: ARG001 — the seam's shape, not yet read
-    answers: Mapping[str, object],  # noqa: ARG001 — the seam's shape, not yet read
-) -> bool:
-    """Show every question, whatever rule it carries.
-
-    The v1 implementation of the visibility seam. Rules are stored and
-    validated but not evaluated yet, so a form behaves exactly as one with
-    no rules on it does: every question is asked of everybody.
-    """
-    return True
+    hidden: list[str] = field(default_factory=list)
 
 
 def assess(
     items: Sequence[CompletionItem],
     answers: Mapping[str, object],
     *,
-    visibility: VisibilityRule = every_item_visible,
+    visibility: VisibilityRule = evaluate,
     today: date | None = None,
 ) -> Completion:
     """Which of *items* are still unanswered, given *answers*.
 
     ``answers`` is keyed by item key rather than by id, because that is what
-    a rule points at and what the shared front-end port will be handed.
+    a rule points at and what the shared front-end port is handed.
 
     A question counts as missing when it is required, shown, and has no
     answer that its own validator accepts. Three kinds of question are
     therefore never missing: the headings and paragraphs that collect
-    nothing, the ones the practice marked optional, and — once rules are
-    evaluated — the ones this patient was never shown.
+    nothing, the ones the practice marked optional, and the ones this
+    patient was never shown.
     """
-    missing = [
-        item.item_id
-        for item in items
-        if item.required and not _is_settled(item, answers, visibility, today)
-    ]
-    return Completion(complete=not missing, missing=missing)
+    shown = visibility([_as_visibility_item(item) for item in items], answers)
+    missing: list[str] = []
+    hidden: list[str] = []
+
+    for item in items:
+        if not shown.get(item.key, True):
+            hidden.append(item.item_id)
+            continue
+        if item.required and not _is_settled(item, answers, today):
+            missing.append(item.item_id)
+
+    return Completion(complete=not missing, missing=missing, hidden=hidden)
+
+
+def _as_visibility_item(item: CompletionItem) -> VisibilityItem:
+    """One question as the rule evaluator needs to see it.
+
+    An item whose stored settings no longer parse carries no rule here, so
+    it is shown and counted — which is what makes it hold the form up
+    rather than quietly disappear from it.
+    """
+    return VisibilityItem(
+        key=item.key,
+        rule=item.config.visible_when if item.config is not None else None,
+        instrument_items=instrument_item_count(item.config),
+    )
 
 
 def _is_settled(
     item: CompletionItem,
     answers: Mapping[str, object],
-    visibility: VisibilityRule,
     today: date | None,
 ) -> bool:
     """True when this question is not holding the form up."""
     if item.config is None:
         return False
     if item.config.item_type in DISPLAY_ONLY_ITEM_TYPES:
-        return True
-    if not visibility(item.config.visible_when, answers):
         return True
     return is_answered(item.config, answers.get(item.key), today=today)
 
@@ -146,5 +161,4 @@ __all__ = [
     "CompletionItem",
     "VisibilityRule",
     "assess",
-    "every_item_visible",
 ]
