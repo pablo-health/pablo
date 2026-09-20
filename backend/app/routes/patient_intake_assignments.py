@@ -570,7 +570,7 @@ def submit_my_assignment(
     assignment = _own_assignment(service, assignment_id, patient.patient_id)
 
     try:
-        submitted, recorded = service.submit(assignment, patient.patient_id, measures)
+        submission = service.submit(assignment, patient.patient_id, measures)
     except IncompleteFormError as exc:
         raise UnprocessableEntityError(
             "Some questions still need an answer.", {"missing": exc.missing}
@@ -589,9 +589,10 @@ def submit_my_assignment(
         patient_id=patient.patient_id,
         resource_type=ResourceType.PATIENT_INTAKE_ASSIGNMENT,
         resource_id=assignment_id,
-        changes={"instruments": [m.instrument for m in recorded]},
+        changes={"instruments": [m.instrument for m in submission.measures]},
     )
 
+    submitted = submission.assignment
     return IntakeSubmissionResponse(
         assignment_id=assignment_id,
         version_id=str(submitted["version_id"]),
@@ -604,8 +605,9 @@ def submit_my_assignment(
                 total_score=m.total_score,
                 severity=m.severity,
             )
-            for m in recorded
+            for m in submission.measures
         ],
+        notes=submission.notes,
     )
 
 

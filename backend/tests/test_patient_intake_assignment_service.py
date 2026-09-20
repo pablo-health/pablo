@@ -356,9 +356,11 @@ class TestHandingItIn:
         version_id = _version(packet_service)
         assignment = _answered(service, version_id)
 
-        submitted, recorded = service.submit(assignment, _PATIENT, measures)
+        submission = service.submit(assignment, _PATIENT, measures)
+        submitted, recorded = submission.assignment, submission.measures
 
         assert submitted["status"] == "submitted"
+        assert submission.notes == []
         assert submitted["submitted_at"] is not None
         assert set(str(submitted["receipt_code"])) <= set(RECEIPT_ALPHABET)
         assert len(str(submitted["receipt_code"])) == RECEIPT_LENGTH
@@ -383,7 +385,7 @@ class TestHandingItIn:
         """Freezing an answer must not make it stop counting as one."""
         version_id = _version(packet_service)
         assignment = _answered(service, version_id)
-        submitted, _ = service.submit(assignment, _PATIENT, measures)
+        submitted = service.submit(assignment, _PATIENT, measures).assignment
         assert service.progress(submitted, _PATIENT).complete is True
 
     def test_handing_it_in_twice_is_refused(
@@ -396,7 +398,7 @@ class TestHandingItIn:
         """The second call must not mint a second receipt or a second score."""
         version_id = _version(packet_service)
         assignment = _answered(service, version_id)
-        submitted, _ = service.submit(assignment, _PATIENT, measures)
+        submitted = service.submit(assignment, _PATIENT, measures).assignment
 
         with pytest.raises(AssignmentClosedError):
             service.submit(submitted, _PATIENT, measures)
@@ -416,7 +418,7 @@ class TestHandingItIn:
         for _ in range(2):
             version_id = _version(packet_service)
             assignment = _answered(service, version_id)
-            submitted, _ = service.submit(assignment, _PATIENT, measures)
+            submitted = service.submit(assignment, _PATIENT, measures).assignment
             receipts.add(str(submitted["receipt_code"]))
         assert len(receipts) == 2
 
@@ -442,8 +444,144 @@ class TestHandingItIn:
         service.submit(first, _PATIENT, measures)
 
         second = _answered(service, _version(packet_service))
-        submitted, _ = service.submit(second, _PATIENT, measures)
+        submitted = service.submit(second, _PATIENT, measures).assignment
         assert submitted["receipt_code"] == "FREE2345"
+
+
+def _branching_version(service: IntakePacketService) -> str:
+    """A form whose second question is asked only of somebody who said yes."""
+    template = service.create_template("Substance use", _CLINICIAN)
+    version_id = str(service.list_versions(str(template["id"]))[0]["id"])
+    service.replace_items(
+        version_id,
+        [
+            ItemDraft(
+                key="substances",
+                item_type="yes_no",
+                label="Do you drink alcohol or use any other substances?",
+            ),
+            ItemDraft(
+                key="which",
+                item_type="free_text",
+                label="What, and roughly how often?",
+                config={
+                    "max_len": 500,
+                    "visible_when": {"item_key": "substances", "op": "eq", "value": True},
+                },
+            ),
+        ],
+    )
+    service.publish(version_id, _CLINICIAN)
+    return version_id
+
+
+class TestAnAnswerToAQuestionThatStoppedApplying:
+    """Said yes, answered what opened, went back and said no.
+
+    The follow-up is not asked any more, so what was typed into it is not
+    part of what the practice receives — and the patient is told on the way
+    out rather than finding it missing from the chart later.
+    """
+
+    def test_it_is_not_handed_in_and_the_receipt_says_so(
+        self,
+        service: IntakeAssignmentService,
+        assignments: InMemoryPatientIntakeAssignmentRepository,
+        measures: OutcomeMeasureService,
+        packet_service: IntakePacketService,
+    ) -> None:
+        version_id = _branching_version(packet_service)
+        assignment, _ = service.assign(_PATIENT, version_id, _CLINICIAN)
+        yes_no = _item(service, version_id, "substances")
+        follow_up = _item(service, version_id, "which")
+
+        service.save_answer(assignment, _PATIENT, yes_no, {"yes": True})
+        service.save_answer(assignment, _PATIENT, follow_up, {"text": "Wine, most nights."})
+        service.save_answer(assignment, _PATIENT, yes_no, {"yes": False})
+
+        submission = service.submit(assignment, _PATIENT, measures)
+
+        assert submission.assignment["status"] == "submitted"
+        assert submission.notes == [
+            "One question stopped applying as you answered, so your answer to it wasn't sent."
+        ]
+        handed_in = assignments.list_live_responses(str(assignment["id"]), _PATIENT)
+        assert [str(row["item_id"]) for row in handed_in] == [yes_no]
+
+    def test_the_row_is_retired_rather_than_deleted(
+        self,
+        service: IntakeAssignmentService,
+        assignments: InMemoryPatientIntakeAssignmentRepository,
+        measures: OutcomeMeasureService,
+        packet_service: IntakePacketService,
+    ) -> None:
+        """An answer somebody gave is never destroyed; it stops counting."""
+        version_id = _branching_version(packet_service)
+        assignment, _ = service.assign(_PATIENT, version_id, _CLINICIAN)
+        service.save_answer(
+            assignment, _PATIENT, _item(service, version_id, "substances"), {"yes": True}
+        )
+        service.save_answer(
+            assignment,
+            _PATIENT,
+            _item(service, version_id, "which"),
+            {"text": "Wine, most nights."},
+        )
+        service.save_answer(
+            assignment, _PATIENT, _item(service, version_id, "substances"), {"yes": False}
+        )
+        service.submit(assignment, _PATIENT, measures)
+
+        retired = [
+            row for row in assignments.responses.values() if row["superseded_by"] is not None
+        ]
+        assert len(retired) == 1
+        assert retired[0]["value"] == {"text": "Wine, most nights."}
+        assert retired[0]["draft"] is True
+
+    def test_an_answer_the_form_still_asks_for_is_handed_in_as_usual(
+        self,
+        service: IntakeAssignmentService,
+        assignments: InMemoryPatientIntakeAssignmentRepository,
+        measures: OutcomeMeasureService,
+        packet_service: IntakePacketService,
+    ) -> None:
+        """The control. Without it the retirement above could be blanket."""
+        version_id = _branching_version(packet_service)
+        assignment, _ = service.assign(_PATIENT, version_id, _CLINICIAN)
+        service.save_answer(
+            assignment, _PATIENT, _item(service, version_id, "substances"), {"yes": True}
+        )
+        service.save_answer(
+            assignment,
+            _PATIENT,
+            _item(service, version_id, "which"),
+            {"text": "Wine, most nights."},
+        )
+
+        submission = service.submit(assignment, _PATIENT, measures)
+
+        assert submission.notes == []
+        handed_in = assignments.list_live_responses(str(assignment["id"]), _PATIENT)
+        assert len(handed_in) == 2
+        assert all(row["draft"] is False for row in handed_in)
+
+    def test_a_hidden_question_does_not_hold_the_form_up(
+        self,
+        service: IntakeAssignmentService,
+        measures: OutcomeMeasureService,
+        packet_service: IntakePacketService,
+    ) -> None:
+        """Required, and never asked, so submitting does not need it."""
+        version_id = _branching_version(packet_service)
+        assignment, _ = service.assign(_PATIENT, version_id, _CLINICIAN)
+        service.save_answer(
+            assignment, _PATIENT, _item(service, version_id, "substances"), {"yes": False}
+        )
+
+        submission = service.submit(assignment, _PATIENT, measures)
+        assert submission.assignment["status"] == "submitted"
+        assert submission.notes == []
 
 
 class TestWhatWasHandedInIsNotEdited:
