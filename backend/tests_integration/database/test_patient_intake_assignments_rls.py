@@ -72,7 +72,7 @@ _STRANGER_CLINICIAN = "8d03f261-47b9-5a0c-92e1-3f6b8c05d417"
 
 # The revision this one follows. Rolling a schema back to it and forward
 # again replays exactly the revision under test.
-_PARENT_REVISION = "d3b71f0c85a4"
+_PARENT_REVISION = "b7e3f0c48d15"
 
 
 @pytest.fixture(scope="module")

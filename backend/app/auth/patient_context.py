@@ -62,8 +62,29 @@ __all__ = [
     "PatientResolverRegistry",
     "get_patient_context",
     "get_patient_resolver_registry",
+    "patient_not_authenticated_detail",
     "patient_resolver_registry",
 ]
+
+
+def patient_not_authenticated_detail() -> dict[str, object]:
+    """The body every failure to authenticate a patient answers with.
+
+    A function rather than a constant so the front door that MINTS sessions
+    can raise the identical one without sharing a mutable object with it.
+    Two literals that happened to match would drift, and the moment they
+    differ by a word the redeem endpoint becomes distinguishable from the
+    routes behind it — which is exactly the signal a uniform refusal exists
+    to withhold.
+    """
+    return {
+        "error": {
+            "code": "PATIENT_NOT_AUTHENTICATED",
+            "message": "Not authenticated",
+            "details": {},
+        }
+    }
+
 
 _EMPTY_PARAMETERS: Mapping[str, str] = MappingProxyType({})
 
@@ -291,13 +312,7 @@ def _unauthenticated() -> HTTPException:
     """
     return HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail={
-            "error": {
-                "code": "PATIENT_NOT_AUTHENTICATED",
-                "message": "Not authenticated",
-                "details": {},
-            }
-        },
+        detail=patient_not_authenticated_detail(),
     )
 
 

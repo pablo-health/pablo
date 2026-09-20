@@ -16,6 +16,7 @@ export const AUTH_EMULATOR_URL =
 export const CLEARINGHOUSE_URL =
   process.env.E2E_CLEARINGHOUSE_URL || `http://localhost:${port("E2E_CLEARINGHOUSE_PORT", "8080")}`
 export const MAIL_URL = process.env.E2E_MAIL_URL || `http://localhost:${port("E2E_MAIL_PORT", "8025")}`
+export const SMS_URL = process.env.E2E_SMS_URL || `http://localhost:${port("E2E_SMS_PORT", "8026")}`
 
 /** The emulator-only project the stack is configured with. */
 export const FIREBASE_PROJECT_ID = "demo-pablo-e2e"
