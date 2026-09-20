@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Toggle } from "@/components/settings/ui"
+import { ruleOf, type VisibleWhen } from "@/lib/intake/visibility"
 import {
   DISPLAY_ONLY_ITEM_TYPES,
   ITEM_TYPES,
@@ -33,6 +34,11 @@ import {
   PUBLISH_BUTTON,
 } from "./intakeCopy"
 import { ItemConfigForm, type PublishedDocument } from "./ItemConfigForm"
+import {
+  canBeBranchedOn,
+  VisibilityRuleForm,
+  type VisibilityTarget,
+} from "./VisibilityRuleForm"
 
 interface IntakeItemEditorProps {
   version: IntakeVersionDetail
@@ -77,6 +83,36 @@ function toInput(items: IntakeVersionDetail["items"]): IntakeItemInput[] {
 function itemHeading(item: { label: string | null; item_type: ItemType }): string {
   const label = item.label?.trim()
   return label ? label : (ITEM_TYPE_LABELS[item.item_type] ?? item.item_type)
+}
+
+/**
+ * The questions above *index* that this one can be shown because of.
+ *
+ * Above, because a rule may only look backwards — which the server enforces
+ * and this is what keeps a practice from writing one it cannot publish.
+ */
+function earlierThan(items: IntakeItemInput[], index: number): VisibilityTarget[] {
+  return items.slice(0, index).filter((item) => canBeBranchedOn(item.item_type))
+}
+
+/** The item's settings with its rule set, or with it taken off. */
+function withRule(config: IntakeItemInput["config"], rule: VisibleWhen | null) {
+  const next = { ...config }
+  if (rule === null) delete next.visible_when
+  else next.visible_when = rule
+  return next
+}
+
+/**
+ * The part of a publish refusal that belongs beside one question.
+ *
+ * The server names the question it refused, as `key: what to do about it`,
+ * so the message can be shown where the practice has to act rather than at
+ * the bottom of a form they then have to search.
+ */
+function refusalFor(key: string, publishError: string | null | undefined): string | null {
+  if (!publishError) return null
+  return publishError.startsWith(`${key}: `) ? publishError.slice(key.length + 2) : null
 }
 
 /**
@@ -269,6 +305,15 @@ export function IntakeItemEditor({
                 </Button>
               </div>
 
+              {/* Beside the question the server named, whether it is open or
+                  not — a refusal at the foot of a long form is a refusal a
+                  practice has to go looking for. */}
+              {refusalFor(item.key, publishError) !== null && (
+                <p role="alert" className="mt-2 text-[13px] text-destructive">
+                  {refusalFor(item.key, publishError)}
+                </p>
+              )}
+
               {open && (
                 <div className="mt-3 space-y-3 border-t border-border pt-3">
                   <p className="text-[12.5px] text-muted-foreground">
@@ -295,6 +340,12 @@ export function IntakeItemEditor({
                     onChange={(config) => patch(index, { config })}
                     idPrefix={`${editorId}-${index}`}
                     documents={documents}
+                  />
+                  <VisibilityRuleForm
+                    rule={ruleOf(item.config)}
+                    earlier={earlierThan(items, index)}
+                    onChange={(rule) => patch(index, { config: withRule(item.config, rule) })}
+                    idPrefix={`${editorId}-${index}`}
                   />
                   {!displayOnly && (
                     <div className="flex items-center justify-between">
@@ -332,7 +383,9 @@ export function IntakeItemEditor({
         </Button>
       </div>
 
-      {publishError && (
+      {/* Whatever the refusal was not about one question: an empty form, a
+          document nobody published. Shown here rather than nowhere. */}
+      {publishError && !items.some((item) => refusalFor(item.key, publishError) !== null) && (
         <p role="alert" className="text-[13px] text-destructive">
           {publishError}
         </p>

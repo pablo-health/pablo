@@ -33,6 +33,7 @@ from ..patient_intake_assignment import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from datetime import datetime
 
     from sqlalchemy.orm import Session
@@ -280,6 +281,34 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
         self._session.add(orm_row)
         self._session.flush()
         return _response_to_dict(orm_row)
+
+    def retire_draft_responses(
+        self,
+        assignment_id: str,
+        patient_id: str,
+        item_ids: Sequence[str],
+        now: datetime,
+    ) -> list[str]:
+        if not item_ids:
+            return []
+        rows = (
+            self._session.execute(
+                select(PatientIntakeResponseRow).where(
+                    PatientIntakeResponseRow.assignment_id == assignment_id,
+                    PatientIntakeResponseRow.patient_id == patient_id,
+                    PatientIntakeResponseRow.item_id.in_(tuple(item_ids)),
+                    PatientIntakeResponseRow.draft.is_(True),
+                    PatientIntakeResponseRow.superseded_by.is_(None),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for row in rows:
+            row.superseded_by = row.id
+            row.updated_at = now
+        self._session.flush()
+        return [row.item_id for row in rows]
 
     def freeze_draft_responses(self, assignment_id: str, patient_id: str, now: datetime) -> int:
         rows = (

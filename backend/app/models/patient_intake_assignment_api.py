@@ -129,6 +129,12 @@ class IntakeSubmissionResponse(BaseModel):
     ``receipt_code`` is the part a person writes down. The rest is what the
     portal needs to stop showing the form as outstanding without asking
     again.
+
+    ``notes`` is what the receipt screen has to say beyond the code, and is
+    empty on almost every submission. It carries sentences rather than
+    codes because there is one reader and the server is the only thing that
+    knows what happened — see
+    :func:`app.intake.receipts.withheld_answers_note`.
     """
 
     assignment_id: str
@@ -136,6 +142,7 @@ class IntakeSubmissionResponse(BaseModel):
     submitted_at: datetime
     receipt_code: str
     measures: list[SubmittedMeasureResponse]
+    notes: list[str] = Field(default_factory=list)
 
 
 class ClinicianIntakeAnswerResponse(BaseModel):

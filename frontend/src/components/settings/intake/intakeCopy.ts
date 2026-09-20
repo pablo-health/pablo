@@ -114,3 +114,23 @@ export const DOCUMENT_PUBLISHED_NOTICE =
 export const NO_PUBLISHED_DOCUMENTS = "Publish a document first, then you can ask for it here."
 
 export const DOCUMENT_PICKER_LABEL = "Which document"
+
+/**
+ * Asking a question only of the people it applies to.
+ *
+ * The picker says what it does and stops. It does not explain that a rule
+ * can only look backwards, or what happens to an answer somebody gives and
+ * then makes irrelevant — the first is enforced by which questions the
+ * picker offers, and the second is the patient's receipt to carry, not a
+ * paragraph for a therapist building a form.
+ */
+export const VISIBILITY_TITLE = "Show only when"
+export const VISIBILITY_ALWAYS = "Always ask this"
+export const VISIBILITY_QUESTION_LABEL = "Based on"
+export const VISIBILITY_CONDITION_LABEL = "When they"
+export const VISIBILITY_VALUE_LABEL = "Value"
+export const VISIBILITY_ITEM_NUMBER_LABEL = "Question number"
+
+/** Shown on the first question on a form, which has nothing to depend on. */
+export const VISIBILITY_NOTHING_EARLIER =
+  "This is the first question that can be answered, so there is nothing to base it on yet."
