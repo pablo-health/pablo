@@ -38,7 +38,7 @@ policy: ``enable_rls_on_schema`` skips the ``practice`` template schema by
 design and provisioning re-applies RLS when a tenant is cloned from it.
 
 Revision ID: d4a7b1e93c26
-Revises: e4c92a1d70b6
+Revises: c5f80a214d9e
 Create Date: 2026-09-20
 """
 
@@ -56,7 +56,7 @@ if TYPE_CHECKING:
 __all__ = ["branch_labels", "depends_on", "down_revision", "revision"]
 
 revision: str = "d4a7b1e93c26"
-down_revision: str | Sequence[str] | None = "e4c92a1d70b6"
+down_revision: str | Sequence[str] | None = "c5f80a214d9e"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
