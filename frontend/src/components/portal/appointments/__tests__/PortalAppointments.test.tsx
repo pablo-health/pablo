@@ -48,6 +48,7 @@ const OPTIONS: PatientBookingOptions = {
   cancel_cutoff_hours: 24,
   reschedule_cutoff_hours: 24,
   practice_timezone: "America/New_York",
+  join_window_before_minutes: 15,
   practice_phone: "(555) 010-2020",
 }
 

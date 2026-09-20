@@ -307,7 +307,9 @@ class TestThePracticeUploadsOne:
     ) -> None:
         """Never a hard delete: a published question may still name it."""
         form_id = _uploaded(client, forms_repo, storage)
-        assert client.delete(f"{FORMS}/{form_id}").status_code == 200
+        removed = client.delete(f"{FORMS}/{form_id}")
+
+        assert removed.status_code == 200
         assert client.get(FORMS).json() == []
         assert client.get(f"{FORMS}/{form_id}/file").status_code == 404
 
@@ -319,7 +321,9 @@ class TestThePracticeUploadsOne:
     ) -> None:
         form_id = _uploaded(client, forms_repo, storage)
         client.delete(f"{FORMS}/{form_id}")
-        assert client.delete(f"{FORMS}/{form_id}").status_code == 404
+        again = client.delete(f"{FORMS}/{form_id}")
+
+        assert again.status_code == 404
 
 
 class TestThePatientDownloadsOne:

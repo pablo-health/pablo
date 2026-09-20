@@ -64,7 +64,6 @@ signature is the thing that takes one.
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, Request, Response, status
@@ -161,8 +160,6 @@ if TYPE_CHECKING:
     from ..models.patient_document import PatientDocument
     from ..repositories.patient import PatientRepository
     from ..repositories.patient_document import PatientDocumentRepository
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/patient/intake", tags=["patient-intake"])
 

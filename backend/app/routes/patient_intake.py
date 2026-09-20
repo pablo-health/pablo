@@ -44,7 +44,6 @@ the room, and three things separate the two surfaces.
 
 from __future__ import annotations
 
-import logging
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated
@@ -83,8 +82,6 @@ if TYPE_CHECKING:
     from ..repositories.outcome_measure import OutcomeMeasureRepository
     from ..repositories.patient import PatientRepository
     from ..repositories.patient_intake_submission import PatientIntakeSubmissionRepository
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/patient/intake", tags=["patient-intake"])
 

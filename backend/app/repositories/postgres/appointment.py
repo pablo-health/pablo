@@ -38,6 +38,7 @@ PATIENT_FACING_COLUMNS = (
     AppointmentRow.session_type,
     AppointmentRow.video_link,
     AppointmentRow.video_platform,
+    AppointmentRow.provider,
     AppointmentRow.recurrence_rule,
     AppointmentRow.recurring_appointment_id,
     AppointmentRow.late_cancellation,
@@ -191,6 +192,7 @@ class PostgresAppointmentRepository(AppointmentRepository):
                 session_type=row.session_type,
                 video_link=row.video_link,
                 video_platform=row.video_platform,
+                provider=row.provider,
                 recurrence_rule=row.recurrence_rule,
                 recurring_appointment_id=row.recurring_appointment_id,
                 late_cancellation=row.late_cancellation,
@@ -396,6 +398,11 @@ def _row_to_appointment(row: AppointmentRow) -> Appointment:
         appointment_type_id=row.appointment_type_id,
         video_link=row.video_link,
         video_platform=row.video_platform,
+        provider=row.provider,
+        meeting_external_id=row.meeting_external_id,
+        telehealth_checked_in_at=row.telehealth_checked_in_at,
+        telehealth_started_at=row.telehealth_started_at,
+        telehealth_ended_at=row.telehealth_ended_at,
         notes=row.notes,
         note_type=row.note_type,
         recurrence_rule=row.recurrence_rule,
@@ -443,6 +450,11 @@ def _appointment_to_row(appt: Appointment, row: AppointmentRow) -> None:
     row.appointment_type_id = appt.appointment_type_id
     row.video_link = appt.video_link
     row.video_platform = appt.video_platform
+    row.provider = appt.provider
+    row.meeting_external_id = appt.meeting_external_id
+    row.telehealth_checked_in_at = appt.telehealth_checked_in_at
+    row.telehealth_started_at = appt.telehealth_started_at
+    row.telehealth_ended_at = appt.telehealth_ended_at
     row.notes = appt.notes
     row.note_type = appt.note_type
     row.recurrence_rule = appt.recurrence_rule

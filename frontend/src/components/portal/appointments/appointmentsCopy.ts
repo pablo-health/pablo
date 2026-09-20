@@ -76,6 +76,16 @@ export const ACTION_FAILED = "That didn't go through. Try again."
 
 export const JOIN = "Join"
 
+/**
+ * Shown on a video appointment that is not joinable yet.
+ *
+ * Says when the link turns up and stops there. It does not explain the
+ * window, name the video service, or promise the link will work — the
+ * practice put a room on the appointment and nothing here can tell whether
+ * anybody is in it.
+ */
+export const JOIN_LATER = "Your join link will appear here shortly before your appointment."
+
 export const RESCHEDULE = "Reschedule"
 
 export const CANCEL = "Cancel"

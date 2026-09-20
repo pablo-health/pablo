@@ -796,7 +796,9 @@ def test_revoke_is_idempotent(client: TestClient, audit: _RecordingAudit) -> Non
 
 
 def test_revoke_404s_for_unknown_patient(client: TestClient) -> None:
-    assert client.delete(_access_url(UNKNOWN_PATIENT_ID)).status_code == 404
+    response = client.delete(_access_url(UNKNOWN_PATIENT_ID))
+
+    assert response.status_code == 404
 
 
 # ---------------------------------------------------------------------------

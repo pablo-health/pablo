@@ -172,6 +172,12 @@ class TestTheDecisionsCoverWhatTheBeadWasFiledAbout:
         this file exists to prevent. ``id``, ``duration_minutes`` and the
         recurrence pair are what the portal needs to render and cancel an
         appointment; none is staff-authored.
+
+        ``provider`` is the second addition, and it is about the same screen as
+        ``video_link``: it says the appointment is held on a video service
+        before the link is worth offering, which is what lets the portal say a
+        link is coming instead of showing an empty row. It names a product,
+        not a person, and the practice chose it.
         """
         assert shown_columns(APPOINTMENT_COLUMN_DECISIONS) == {
             "id",
@@ -182,6 +188,7 @@ class TestTheDecisionsCoverWhatTheBeadWasFiledAbout:
             "session_type",
             "video_link",
             "video_platform",
+            "provider",
             "recurrence_rule",
             "recurring_appointment_id",
             "late_cancellation",
