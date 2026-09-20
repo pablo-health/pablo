@@ -577,8 +577,8 @@ class TestAttachmentAudit:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """People name files after what is in them. Guardrail #5 covers that."""
-        secret = "biopsy-result-2026.png"
-        _give_document(message_repo, document_repo, "doc-1", filename=secret)
+        telling_filename = "biopsy-result-2026.png"
+        _give_document(message_repo, document_repo, "doc-1", filename=telling_filename)
 
         with caplog.at_level(logging.DEBUG):
             thread_id = _start(patient_client, _TOKEN_A, attachment_ids=["doc-1"])["id"]
@@ -587,8 +587,8 @@ class TestAttachmentAudit:
 
         rendered = "\n".join(str(e.changes) for e in _entries(mock_audit_service))
         logged = "\n".join(record.getMessage() for record in caplog.records)
-        assert secret not in rendered
-        assert secret not in logged
+        assert telling_filename not in rendered
+        assert telling_filename not in logged
 
     def test_a_clinician_opening_a_thread_records_the_count(
         self,
@@ -625,13 +625,13 @@ def test_a_send_with_files_dispatches_the_same_event_shape(
     no_hooks,
 ) -> None:
     """Notifications carry a link. Attachments add nothing for them to leak."""
-    secret = "custody-order.png"
-    _give_document(message_repo, document_repo, "doc-1", filename=secret)
+    telling_filename = "custody-order.png"
+    _give_document(message_repo, document_repo, "doc-1", filename=telling_filename)
     seen: list = []
     no_hooks.register(seen.append)
 
     _start(patient_client, _TOKEN_A, attachment_ids=["doc-1"])
 
     assert len(seen) == 1
-    assert secret not in str(vars(seen[0]))
+    assert telling_filename not in str(vars(seen[0]))
     assert not hasattr(seen[0], "attachments")
