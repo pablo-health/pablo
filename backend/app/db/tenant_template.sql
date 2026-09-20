@@ -721,7 +721,23 @@ CREATE TABLE __TENANT_SCHEMA__.patient_intake_responses (
     draft boolean DEFAULT true NOT NULL,
     superseded_by uuid,
     created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL
+    updated_at timestamp with time zone NOT NULL,
+    provenance character varying(16) DEFAULT 'patient'::character varying NOT NULL,
+    CONSTRAINT ck_patient_intake_responses_provenance CHECK (((provenance)::text = ANY ((ARRAY['patient'::character varying, 'clinician'::character varying])::text[])))
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.patient_intake_review_events (
+    id uuid NOT NULL,
+    assignment_id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    kind character varying(24) NOT NULL,
+    item_ids jsonb DEFAULT '[]'::jsonb NOT NULL,
+    note_to_patient text,
+    created_by uuid,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_patient_intake_review_events_kind CHECK (((kind)::text = ANY ((ARRAY['correction_requested'::character varying, 'corrected'::character varying, 'accepted'::character varying, 'clinician_entered'::character varying])::text[])))
 );
 
 
@@ -1361,6 +1377,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_responses
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_review_events
+    ADD CONSTRAINT patient_intake_review_events_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_signatures
     ADD CONSTRAINT patient_intake_signatures_pkey PRIMARY KEY (id);
 
@@ -1795,6 +1816,14 @@ CREATE INDEX ix_patient_intake_responses_patient_id ON __TENANT_SCHEMA__.patient
 
 
 
+CREATE INDEX ix_patient_intake_review_events_assignment ON __TENANT_SCHEMA__.patient_intake_review_events USING btree (assignment_id, created_at);
+
+
+
+CREATE INDEX ix_patient_intake_review_events_patient_id ON __TENANT_SCHEMA__.patient_intake_review_events USING btree (patient_id);
+
+
+
 CREATE INDEX ix_patient_intake_signatures_patient_id ON __TENANT_SCHEMA__.patient_intake_signatures USING btree (patient_id);
 
 
@@ -2137,6 +2166,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_responses
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_responses
     ADD CONSTRAINT fk_patient_intake_responses_item FOREIGN KEY (item_id) REFERENCES __TENANT_SCHEMA__.intake_item_definitions(id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_review_events
+    ADD CONSTRAINT fk_patient_intake_review_events_assignment FOREIGN KEY (assignment_id, patient_id) REFERENCES __TENANT_SCHEMA__.patient_intake_assignments(id, patient_id) ON DELETE CASCADE;
 
 
 

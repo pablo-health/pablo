@@ -20,10 +20,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import String, Uuid, bindparam, select, text
+from sqlalchemy import String, Uuid, bindparam, func, select, text
 from sqlalchemy.exc import IntegrityError
 
-from ...db.models import PatientIntakeAssignmentRow, PatientIntakeResponseRow
+from ...db.models import (
+    PatientIntakeAssignmentRow,
+    PatientIntakeResponseRow,
+    PatientIntakeReviewEventRow,
+)
 from ..patient_intake_assignment import (
     ACTIVE_STATUSES,
     STATUS_TIMESTAMP_COLUMN,
@@ -69,9 +73,23 @@ def _response_to_dict(row: PatientIntakeResponseRow) -> dict[str, object]:
         "item_id": row.item_id,
         "value": row.value,
         "draft": row.draft,
+        "provenance": row.provenance,
         "superseded_by": row.superseded_by,
         "created_at": row.created_at,
         "updated_at": row.updated_at,
+    }
+
+
+def _review_event_to_dict(row: PatientIntakeReviewEventRow) -> dict[str, object]:
+    return {
+        "id": row.id,
+        "assignment_id": row.assignment_id,
+        "patient_id": row.patient_id,
+        "kind": row.kind,
+        "item_ids": list(row.item_ids or []),
+        "note_to_patient": row.note_to_patient,
+        "created_by": row.created_by,
+        "created_at": row.created_at,
     }
 
 
@@ -172,6 +190,51 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
             setattr(row, stamped, now)
         self._session.flush()
         return _assignment_to_dict(row)
+
+    def get_live_response_for_clinician(
+        self, assignment_id: str, user_id: str, item_id: str
+    ) -> dict[str, object] | None:
+        assignment = self._session.get(PatientIntakeAssignmentRow, assignment_id)
+        if assignment is None or not self._has_access(assignment.patient_id, user_id):
+            return None
+        return self.get_live_response(assignment_id, assignment.patient_id, item_id)
+
+    def add_clinician_response(
+        self, row: dict[str, object], user_id: str, *, supersedes: str | None
+    ) -> dict[str, object] | None:
+        if not self._has_access(str(row["patient_id"]), user_id):
+            return None
+        return self._write_successor(row, supersedes)
+
+    def add_review_event(self, row: dict[str, object], user_id: str) -> dict[str, object] | None:
+        if not self._has_access(str(row["patient_id"]), user_id):
+            return None
+        return self._write_review_event(row)
+
+    def list_review_events_for_clinician(
+        self, assignment_id: str, user_id: str
+    ) -> list[dict[str, object]]:
+        assignment = self._session.get(PatientIntakeAssignmentRow, assignment_id)
+        if assignment is None or not self._has_access(assignment.patient_id, user_id):
+            return []
+        return self._events(assignment_id, assignment.patient_id)
+
+    def count_superseded_responses_for_clinician(
+        self, assignment_id: str, user_id: str
+    ) -> dict[str, int]:
+        assignment = self._session.get(PatientIntakeAssignmentRow, assignment_id)
+        if assignment is None or not self._has_access(assignment.patient_id, user_id):
+            return {}
+        rows = self._session.execute(
+            select(PatientIntakeResponseRow.item_id, func.count())
+            .where(
+                PatientIntakeResponseRow.assignment_id == assignment_id,
+                PatientIntakeResponseRow.patient_id == assignment.patient_id,
+                PatientIntakeResponseRow.superseded_by.is_not(None),
+            )
+            .group_by(PatientIntakeResponseRow.item_id)
+        ).all()
+        return {str(item_id): int(count) for item_id, count in rows}
 
     # --- patient side ---
 
@@ -274,6 +337,7 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
             item_id=str(row["item_id"]),
             value=row["value"],  # type: ignore[arg-type]
             draft=True,
+            provenance=str(row.get("provenance") or "patient"),
             superseded_by=None,
             created_at=row["created_at"],  # type: ignore[arg-type]
             updated_at=row["updated_at"],  # type: ignore[arg-type]
@@ -281,6 +345,19 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
         self._session.add(orm_row)
         self._session.flush()
         return _response_to_dict(orm_row)
+
+    def add_successor_response(
+        self, row: dict[str, object], *, supersedes: str
+    ) -> dict[str, object]:
+        return self._write_successor(row, supersedes)
+
+    def add_patient_review_event(self, row: dict[str, object]) -> dict[str, object]:
+        return self._write_review_event(row)
+
+    def list_review_events_for_patient_principal(
+        self, assignment_id: str, patient_id: str
+    ) -> list[dict[str, object]]:
+        return self._events(assignment_id, patient_id)
 
     def retire_draft_responses(
         self,
@@ -360,6 +437,73 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
         return _assignment_to_dict(row)
 
     # --- helpers ---
+
+    def _write_successor(self, row: dict[str, object], supersedes: str | None) -> dict[str, object]:
+        """Insert the new answer, then point the one it replaces at it.
+
+        This order, not the other one: ``superseded_by`` names an id, so the
+        row it names has to exist first. The replaced row keeps its value
+        and its ``draft`` flag — the pointer is the only thing that changes
+        on it, which is what lets a handed-in form still read back as it was
+        handed in.
+
+        The partial unique index admits both rows: it is built on live
+        DRAFTS, and what is being superseded here is always a frozen answer.
+        """
+        orm_row = PatientIntakeResponseRow(
+            id=str(row["id"]),
+            assignment_id=str(row["assignment_id"]),
+            patient_id=str(row["patient_id"]),
+            item_id=str(row["item_id"]),
+            value=row["value"],  # type: ignore[arg-type]
+            draft=bool(row["draft"]),
+            provenance=str(row["provenance"]),
+            superseded_by=None,
+            created_at=row["created_at"],  # type: ignore[arg-type]
+            updated_at=row["updated_at"],  # type: ignore[arg-type]
+        )
+        self._session.add(orm_row)
+        self._session.flush()
+
+        if supersedes is not None:
+            previous = self._session.get(PatientIntakeResponseRow, supersedes)
+            if previous is not None:
+                previous.superseded_by = orm_row.id
+                self._session.flush()
+        return _response_to_dict(orm_row)
+
+    def _write_review_event(self, row: dict[str, object]) -> dict[str, object]:
+        orm_row = PatientIntakeReviewEventRow(
+            id=str(row["id"]),
+            assignment_id=str(row["assignment_id"]),
+            patient_id=str(row["patient_id"]),
+            kind=str(row["kind"]),
+            item_ids=list(row["item_ids"]),  # type: ignore[call-overload]
+            note_to_patient=row["note_to_patient"],  # type: ignore[arg-type]
+            created_by=str(row["created_by"]) if row.get("created_by") else None,
+            created_at=row["created_at"],  # type: ignore[arg-type]
+        )
+        self._session.add(orm_row)
+        self._session.flush()
+        return _review_event_to_dict(orm_row)
+
+    def _events(self, assignment_id: str, patient_id: str) -> list[dict[str, object]]:
+        rows = (
+            self._session.execute(
+                select(PatientIntakeReviewEventRow)
+                .where(
+                    PatientIntakeReviewEventRow.assignment_id == assignment_id,
+                    PatientIntakeReviewEventRow.patient_id == patient_id,
+                )
+                .order_by(
+                    PatientIntakeReviewEventRow.created_at,
+                    PatientIntakeReviewEventRow.id,
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [_review_event_to_dict(row) for row in rows]
 
     def _live_responses(
         self, assignment_id: str, patient_id: str, *, drafts_only: bool

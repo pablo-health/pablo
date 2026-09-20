@@ -99,6 +99,17 @@ beforeEach(() => {
 })
 
 describe("what the shell draws", () => {
+  /**
+   * Both of these wait for the absence rather than checking it once.
+   *
+   * The shell draws every slot until the capability document arrives —
+   * which is the behaviour two tests below pin deliberately — so there is a
+   * first paint where the section IS on screen. Intake is present on both
+   * sides of that, so waiting for it proves nothing about whether the
+   * document has landed, and a single `queryByText` can read the paint
+   * before the gate. It passed on a slow machine and failed on a fast one,
+   * which is the signature.
+   */
   it("renders only the slots whose module is enabled", async () => {
     registerTwoSlots()
     fetchCapabilities.mockResolvedValue(capabilities({ intake: true }))
@@ -106,7 +117,7 @@ describe("what the shell draws", () => {
     await renderSignedIn()
 
     await screen.findByText("Intake section")
-    expect(screen.queryByText("Messaging section")).toBeNull()
+    await waitFor(() => expect(screen.queryByText("Messaging section")).toBeNull())
   })
 
   it("shows a navigation entry only for the modules it drew", async () => {
@@ -116,7 +127,7 @@ describe("what the shell draws", () => {
     await renderSignedIn()
 
     await screen.findByTestId("portal-shell-nav-intake")
-    expect(screen.queryByTestId("portal-shell-nav-messaging")).toBeNull()
+    await waitFor(() => expect(screen.queryByTestId("portal-shell-nav-messaging")).toBeNull())
   })
 
   it("draws every enabled module, in registration order", async () => {
