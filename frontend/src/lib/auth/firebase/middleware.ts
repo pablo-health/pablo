@@ -13,6 +13,7 @@ import { isForcedLogoutArrival } from "@/lib/auth/forced-logout"
 import { builtInPublicPaths, extraPublicPaths } from "@/lib/auth/public-paths"
 import {
   browserApiOrigin,
+  browserStorageOrigin,
   generateNonce,
   NONCE_HEADER,
   requestHeadersWithNonce,
@@ -25,6 +26,12 @@ import { IS_DEV_MODE } from "@/lib/devMode"
 const PUBLIC_PATHS = ["/login", "/native-auth", "/baa-acceptance", "/mfa-enrollment", "/api/config", "/api/auth/native", "/api/auth/exchange-setup-token", ...builtInPublicPaths(), ...extraPublicPaths()]
 
 const API_ORIGIN = browserApiOrigin()
+
+// Where a document upload actually goes. Empty on Google-managed
+// deployments, whose signed URLs are already covered by the googleapis
+// wildcard below; set where the store is S3-compatible. See
+// ``browserStorageOrigin``.
+const STORAGE_ORIGIN = browserStorageOrigin()
 
 // The Firebase Auth emulator serves plain HTTP on a loopback host, so a
 // local end-to-end build must let the SDK reach it; unset (every deployed
@@ -40,7 +47,7 @@ function buildCsp(nonce: string): string {
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
     "img-src 'self' https: data:",
-    `connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.cloudfunctions.net https://*.pablo.health ${API_ORIGIN} ${AUTH_EMULATOR_ORIGIN} wss://*.firebaseio.com ${STRIPE_CONNECT_SRC}`.replace(/\s+/g, " ").trim(),
+    `connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.cloudfunctions.net https://*.pablo.health ${API_ORIGIN} ${AUTH_EMULATOR_ORIGIN} ${STORAGE_ORIGIN} wss://*.firebaseio.com ${STRIPE_CONNECT_SRC}`.replace(/\s+/g, " ").trim(),
     `frame-src 'self' https://*.firebaseapp.com https://accounts.google.com ${STRIPE_FRAME_SRC}`,
     "object-src 'none'",
     "base-uri 'self'",

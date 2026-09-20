@@ -321,6 +321,14 @@ services:
       # spec failing on a blank page while the API-only ones passed.
       - API_URL=http://localhost:8000
       - PUBLIC_API_URL=http://localhost:${E2E_BACKEND_PORT:-8000}
+      # A document upload goes browser→storage direct, so the object store
+      # is an origin the page dials and the Content-Security-Policy has to
+      # name it. A managed deployment leaves this unset — its signed URLs
+      # are on storage.googleapis.com, which the policy already allows —
+      # but this stack's store is MinIO, and without this the browser
+      # blocks the upload while the init call that created the row
+      # succeeds, so nothing server-side says anything went wrong.
+      - PUBLIC_FILE_STORAGE_URL=http://localhost:9000
       # The booking pages are reached with no session: the link is the
       # credential. A deployment that publishes them says so here, and the
       # auth middleware unions this into its own allowlist.
