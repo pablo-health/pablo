@@ -29,7 +29,7 @@ describe("MessageComposer", () => {
     await user.type(body, "  Could we move Thursday?  ")
     await user.click(screen.getByTestId("portal-messaging-composer-send"))
 
-    expect(onSend).toHaveBeenCalledWith("Could we move Thursday?")
+    expect(onSend).toHaveBeenCalledWith("Could we move Thursday?", [])
     await waitFor(() => expect((body as HTMLTextAreaElement).value).toBe(""))
   })
 

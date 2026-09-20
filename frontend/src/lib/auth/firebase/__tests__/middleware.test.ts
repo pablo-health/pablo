@@ -92,6 +92,46 @@ describe("firebase middleware CSP", () => {
     expect(scriptSrc).toMatch(/'nonce-[^']+'/)
   })
 
+  it("lets the browser reach the object store a document upload goes to", async () => {
+    // Silent when missing, and silent in the worst direction: the init call
+    // is allowed, so a patient_documents row is created and the upload it
+    // exists for is blocked by the browser, with nothing server-side to say
+    // anything went wrong. A managed deployment does not need it — those
+    // signed URLs are on storage.googleapis.com — which is exactly why it
+    // can be left out of an S3-backed one without anybody noticing.
+    vi.stubEnv("PUBLIC_FILE_STORAGE_URL", "https://s3.us-east-1.amazonaws.com")
+    vi.resetModules()
+
+    const { default: firebaseAuthMiddleware } = await import("../middleware")
+    const request = new NextRequest("https://app.example.com/")
+
+    const csp = (await firebaseAuthMiddleware(request)).headers.get(
+      "Content-Security-Policy"
+    )!
+
+    expect(namedDirective(csp, "connect-src")).toContain(
+      "https://s3.us-east-1.amazonaws.com"
+    )
+  })
+
+  it("names no store when the deployment does not configure one", async () => {
+    // The control: the directive is filled in from configuration, not
+    // widened by default.
+    vi.stubEnv("PUBLIC_FILE_STORAGE_URL", "")
+    vi.resetModules()
+
+    const { default: firebaseAuthMiddleware } = await import("../middleware")
+    const request = new NextRequest("https://app.example.com/")
+
+    const csp = (await firebaseAuthMiddleware(request)).headers.get(
+      "Content-Security-Policy"
+    )!
+
+    expect(namedDirective(csp, "connect-src")).not.toContain("amazonaws.com")
+    // Still reaches the managed store, through the wildcard it always had.
+    expect(namedDirective(csp, "connect-src")).toContain("https://*.googleapis.com")
+  })
+
   it("allows the hosts Stripe documents for Elements", async () => {
     // Each of these is silent when missing: the dialog still opens and the
     // card field simply never appears, or — worse for the wildcard and the

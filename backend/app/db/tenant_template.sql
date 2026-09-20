@@ -807,6 +807,16 @@ CREATE TABLE __TENANT_SCHEMA__.patient_medications (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.patient_message_attachments (
+    id uuid NOT NULL,
+    message_id uuid NOT NULL,
+    document_id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    created_at timestamp with time zone NOT NULL
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.patient_message_threads (
     id uuid NOT NULL,
     patient_id uuid NOT NULL,
@@ -1414,6 +1424,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_medications
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_message_attachments
+    ADD CONSTRAINT patient_message_attachments_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_message_threads
     ADD CONSTRAINT patient_message_threads_pkey PRIMARY KEY (id);
 
@@ -1524,13 +1539,28 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.intake_packet_versions
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_documents
+    ADD CONSTRAINT uq_patient_documents_id_patient UNIQUE (id, patient_id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_assignments
     ADD CONSTRAINT uq_patient_intake_assignments_id_patient UNIQUE (id, patient_id);
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_message_attachments
+    ADD CONSTRAINT uq_patient_message_attachments_document UNIQUE (document_id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_message_threads
     ADD CONSTRAINT uq_patient_message_threads_id_patient UNIQUE (id, patient_id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_messages
+    ADD CONSTRAINT uq_patient_messages_id_patient UNIQUE (id, patient_id);
 
 
 
@@ -1854,6 +1884,14 @@ CREATE INDEX ix_patient_medications_patient_id ON __TENANT_SCHEMA__.patient_medi
 
 
 CREATE INDEX ix_patient_medications_patient_status ON __TENANT_SCHEMA__.patient_medications USING btree (patient_id, status);
+
+
+
+CREATE INDEX ix_patient_message_attachments_message ON __TENANT_SCHEMA__.patient_message_attachments USING btree (message_id);
+
+
+
+CREATE INDEX ix_patient_message_attachments_patient_id ON __TENANT_SCHEMA__.patient_message_attachments USING btree (patient_id);
 
 
 
@@ -2207,6 +2245,16 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_signatures
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_signatures
     ADD CONSTRAINT fk_patient_intake_signatures_item FOREIGN KEY (item_id) REFERENCES __TENANT_SCHEMA__.intake_item_definitions(id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_message_attachments
+    ADD CONSTRAINT fk_patient_message_attachments_document FOREIGN KEY (document_id, patient_id) REFERENCES __TENANT_SCHEMA__.patient_documents(id, patient_id) ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_message_attachments
+    ADD CONSTRAINT fk_patient_message_attachments_message FOREIGN KEY (message_id, patient_id) REFERENCES __TENANT_SCHEMA__.patient_messages(id, patient_id) ON DELETE CASCADE;
 
 
 

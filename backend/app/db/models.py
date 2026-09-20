@@ -1174,6 +1174,67 @@ class PatientMessageRow(Base):
             "thread_id",
             "created_at",
         ),
+        # Not redundant with the primary key, for the same reason the thread
+        # table's is not: it is the target of the composite foreign key on
+        # :class:`PatientMessageAttachmentRow`, which is what stops an
+        # attachment's denormalized ``patient_id`` from disagreeing with the
+        # message it hangs on.
+        UniqueConstraint("id", "patient_id", name="uq_patient_messages_id_patient"),
+    )
+
+
+class PatientMessageAttachmentRow(Base):
+    """A file on a secure message: one link between a message and a document.
+
+    The bytes are not here. An attachment IS a chart document — a
+    :class:`PatientDocumentRow` of category ``message``, uploaded through the
+    same two-phase signed-URL path as every other document — and this table
+    only records that one of them was sent on one message. There is no second
+    blob store, no second bucket, and no copy of the file to keep in step.
+
+    ``patient_id`` is denormalized from the message for the reason
+    :class:`PatientMessageRow` gives: every per-patient policy in
+    :func:`app.db.enable_rls_on_schema` keys on a ``patient_id`` column, so
+    carrying it means this table needs no bespoke policy branch. Two
+    composite foreign keys keep the copy honest, and they are the two ways it
+    could drift — the link cannot name a message belonging to another
+    patient, and it cannot name a document on another patient's chart. Both
+    are database facts rather than route conventions, which matters because
+    the route that checks them is also the route a future edit could change.
+
+    ``document_id`` is unique across the table, which is the "not already
+    attached" rule the send routes enforce. Attaching the same file twice
+    would put one row of the chart in two conversations, so whichever send
+    got there first owns it and the second is refused. ON DELETE RESTRICT on
+    the document side, because a document that is somebody's correspondence
+    should not vanish out from under the message that carries it; deleting
+    the message takes its links (CASCADE) and leaves the documents on the
+    chart, which is where they belong.
+    """
+
+    __tablename__ = "patient_message_attachments"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    message_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    document_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["message_id", "patient_id"],
+            ["patient_messages.id", "patient_messages.patient_id"],
+            ondelete="CASCADE",
+            name="fk_patient_message_attachments_message",
+        ),
+        ForeignKeyConstraint(
+            ["document_id", "patient_id"],
+            ["patient_documents.id", "patient_documents.patient_id"],
+            ondelete="RESTRICT",
+            name="fk_patient_message_attachments_document",
+        ),
+        UniqueConstraint("document_id", name="uq_patient_message_attachments_document"),
+        Index("ix_patient_message_attachments_message", "message_id"),
     )
 
 
@@ -2208,6 +2269,12 @@ class PatientDocumentRow(Base):
             "extracted_via IS NULL OR extracted_via IN ('pymupdf', 'document_ai', 'unavailable')",
             name="ck_patient_documents_extracted_via",
         ),
+        # The target of the composite foreign key on
+        # :class:`PatientMessageAttachmentRow`. Looks redundant beside the
+        # primary key and is not: it is what lets a table that links to a
+        # document also pin the chart the document is on, so a link cannot
+        # name one patient's message and another patient's file.
+        UniqueConstraint("id", "patient_id", name="uq_patient_documents_id_patient"),
     )
 
 
