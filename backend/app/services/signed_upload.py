@@ -192,6 +192,25 @@ def download_blob_bytes(
     return data
 
 
+def download_blob_head(
+    *,
+    client: Any,
+    bucket: str,
+    object_name: str,
+    length: int,
+) -> bytes:
+    """Download the first *length* bytes of a GCS object.
+
+    A ranged read rather than a whole-object one because the caller wants a
+    file's first few bytes to see what kind of file it is, and pulling ten
+    megabytes of scanned PDF into the request thread to read eight of them
+    is the sort of thing that is fine until a practice uploads at scale.
+    """
+    blob = client.bucket(bucket).blob(object_name)
+    data: bytes = blob.download_as_bytes(start=0, end=length - 1)
+    return data
+
+
 def delete_blob(
     *,
     client: Any,

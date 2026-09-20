@@ -477,6 +477,21 @@ CREATE TABLE __TENANT_SCHEMA__.ical_sync_configs (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.intake_blank_forms (
+    id uuid NOT NULL,
+    title character varying(200) NOT NULL,
+    filename text NOT NULL,
+    mime_type character varying(100) NOT NULL,
+    gcs_path text NOT NULL,
+    size_bytes bigint DEFAULT 0 NOT NULL,
+    uploaded_by uuid NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    finalized_at timestamp with time zone,
+    deleted_at timestamp with time zone
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.intake_documents (
     id uuid NOT NULL,
     document_key uuid NOT NULL,
@@ -690,6 +705,19 @@ CREATE TABLE __TENANT_SCHEMA__.patient_documents (
     CONSTRAINT ck_patient_documents_extracted_via CHECK (((extracted_via IS NULL) OR ((extracted_via)::text = ANY ((ARRAY['pymupdf'::character varying, 'document_ai'::character varying, 'unavailable'::character varying])::text[])))),
     CONSTRAINT ck_patient_documents_extraction_status CHECK (((extraction_status IS NULL) OR ((extraction_status)::text = ANY ((ARRAY['pending'::character varying, 'complete'::character varying, 'failed'::character varying])::text[])))),
     CONSTRAINT ck_patient_documents_one_uploader CHECK (((user_id IS NOT NULL) <> (uploaded_by_patient_id IS NOT NULL)))
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.patient_intake_artifacts (
+    id uuid NOT NULL,
+    assignment_id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    item_id uuid NOT NULL,
+    document_id uuid NOT NULL,
+    side character varying(8),
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_patient_intake_artifacts_side CHECK (((side IS NULL) OR ((side)::text = ANY ((ARRAY['front'::character varying, 'back'::character varying])::text[]))))
 );
 
 
@@ -1327,6 +1355,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.ical_sync_configs
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.intake_blank_forms
+    ADD CONSTRAINT intake_blank_forms_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.intake_documents
     ADD CONSTRAINT intake_documents_pkey PRIMARY KEY (id);
 
@@ -1374,6 +1407,16 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_coverage
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_documents
     ADD CONSTRAINT patient_documents_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_artifacts
+    ADD CONSTRAINT patient_intake_artifacts_document_id_key UNIQUE (document_id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_artifacts
+    ADD CONSTRAINT patient_intake_artifacts_pkey PRIMARY KEY (id);
 
 
 
@@ -1762,6 +1805,10 @@ CREATE INDEX ix_ical_sync_configs_user_id ON __TENANT_SCHEMA__.ical_sync_configs
 
 
 
+CREATE INDEX ix_intake_blank_forms_deleted ON __TENANT_SCHEMA__.intake_blank_forms USING btree (deleted_at);
+
+
+
 CREATE INDEX ix_intake_documents_document_key ON __TENANT_SCHEMA__.intake_documents USING btree (document_key);
 
 
@@ -1831,6 +1878,14 @@ CREATE INDEX ix_patient_documents_patient_deleted ON __TENANT_SCHEMA__.patient_d
 
 
 CREATE INDEX ix_patient_documents_user_id ON __TENANT_SCHEMA__.patient_documents USING btree (user_id);
+
+
+
+CREATE INDEX ix_patient_intake_artifacts_assignment_item ON __TENANT_SCHEMA__.patient_intake_artifacts USING btree (assignment_id, item_id);
+
+
+
+CREATE INDEX ix_patient_intake_artifacts_patient_id ON __TENANT_SCHEMA__.patient_intake_artifacts USING btree (patient_id);
 
 
 
@@ -2003,6 +2058,10 @@ CREATE UNIQUE INDEX uq_appointments_user_start_active ON __TENANT_SCHEMA__.appoi
 
 
 CREATE UNIQUE INDEX uq_intake_documents_draft ON __TENANT_SCHEMA__.intake_documents USING btree (document_key) WHERE (published_at IS NULL);
+
+
+
+CREATE UNIQUE INDEX uq_patient_intake_artifacts_side ON __TENANT_SCHEMA__.patient_intake_artifacts USING btree (assignment_id, item_id, side) WHERE (side IS NOT NULL);
 
 
 
@@ -2189,6 +2248,21 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_coverage
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_coverage
     ADD CONSTRAINT fk_patient_coverage_payer_id_payers FOREIGN KEY (payer_id) REFERENCES __TENANT_SCHEMA__.payers(id) ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_artifacts
+    ADD CONSTRAINT fk_patient_intake_artifacts_assignment FOREIGN KEY (assignment_id, patient_id) REFERENCES __TENANT_SCHEMA__.patient_intake_assignments(id, patient_id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_artifacts
+    ADD CONSTRAINT fk_patient_intake_artifacts_document FOREIGN KEY (document_id) REFERENCES __TENANT_SCHEMA__.patient_documents(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_artifacts
+    ADD CONSTRAINT fk_patient_intake_artifacts_item FOREIGN KEY (item_id) REFERENCES __TENANT_SCHEMA__.intake_item_definitions(id);
 
 
 

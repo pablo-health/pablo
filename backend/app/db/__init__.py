@@ -962,6 +962,13 @@ _OVERLAY_NOT_ROW_SCOPED: set[str] = set()
 #     reason as the three above: the text is the same whoever it is sent
 #     to. What somebody SIGNED is a different table, per-patient and
 #     row-scoped.
+#   * intake_blank_forms — the practice's own empty paperwork, offered for
+#     download by a question that asks for a form back on paper. The same
+#     reasoning as intake_documents one line up: a blank form is the
+#     practice's stationery, identical whoever it is sent to, and holds
+#     nothing about anybody. What somebody SENDS BACK is a patient document
+#     linked by a per-patient artifact row, and both of those are
+#     row-scoped.
 #   * companion_auth_challenges / companion_sessions — the portal sign-in
 #     tables (``app.portal``). These need the registration for a sharper
 #     reason than the rest. Both carry ``patient_id``, so the column query
@@ -985,6 +992,7 @@ _CORE_NOT_ROW_SCOPED: frozenset[str] = frozenset(
         "intake_packet_versions",
         "intake_item_definitions",
         "intake_documents",
+        "intake_blank_forms",
         "companion_auth_challenges",
         "companion_sessions",
     }
@@ -1086,6 +1094,18 @@ PATIENT_READABLE_TABLES: dict[str, str] = {
     # back — the signing screen shows who has signed and when — and the
     # clinician side reaches the same rows through ``has_patient_access``.
     "patient_intake_signatures": "patient_id",
+    # What a patient attached to a question that asked for a file. Their own
+    # record about them, carrying its own ``patient_id`` for the same reason
+    # the responses beside it do. They read it back between sittings — a
+    # card photographed yesterday has to still look attached today — and the
+    # clinician side reaches the same rows through ``has_patient_access``.
+    "patient_intake_artifacts": "patient_id",
+    # The plan a client is on. Registered because a patient may now type
+    # their own insurance at intake, which is the same act the booking form
+    # already allowed before any chart existed — the difference being only
+    # that this one arrives from an authenticated principal, so it can be
+    # bounded to that patient's own rows instead of running as the practice.
+    "patient_coverage": "patient_id",
     # Documents on the patient's own chart. The column is right and the
     # meaning is nearly right: a patient owns the row, but the table also
     # holds the clinician's working material and the psychotherapy-notes
@@ -1193,6 +1213,23 @@ PATIENT_WRITABLE_TABLES: dict[str, str] = {
     # is superseded by a later row rather than edited, which is the whole
     # reason the table carries ``superseded_at`` instead of a mutable flag.
     "patient_intake_signatures": "patient_id",
+    # Attaching a file is a patient INSERT and removing one before the form
+    # is handed in is a patient DELETE, which is why this table is also in
+    # ``PATIENT_DELETABLE_TABLES``. The grant is wider than the routes, as
+    # everywhere else on this list: what may be removed and when — before
+    # submission, never after — is the route layer's rule, because RLS has
+    # no way to say "only while the form beside it is still open".
+    "patient_intake_artifacts": "patient_id",
+    # Typing the plan off an insurance card at intake is a patient INSERT,
+    # and correcting a digit before the form goes in is an UPDATE. The grant
+    # is wider than that — it does not distinguish the member id a patient
+    # is the source of from ``verified_at`` and ``last_271``, which the
+    # eligibility check writes and nothing else should. Which columns a
+    # patient may set is decided one layer up, in the request model the
+    # intake coverage route accepts: the fields that are on the card, and
+    # nothing the payer answered. Same posture as ``patients``, and for the
+    # same reason — RLS has no column granularity to express it with.
+    "patient_coverage": "patient_id",
     # Uploading is a patient INSERT, and finishing an upload is an UPDATE
     # (the size and the finalize stamp are written once the object is there).
     # The bespoke predicate carries into WITH CHECK as well as USING, so a
@@ -1233,7 +1270,17 @@ PATIENT_WRITABLE_TABLES: dict[str, str] = {
 # archived. ``outcome_measures`` stays out — a screener result is part of
 # the clinical record once submitted, and the write arm exists so the form
 # can save it, not so it can be withdrawn.
-PATIENT_DELETABLE_TABLES: frozenset[str] = frozenset({"chat_conversations", "chat_messages"})
+#
+# ``patient_intake_artifacts`` joins them for a narrower reason. A patient
+# who photographs the back of their card badly has to be able to take it
+# again, and "take it again" means the first one goes: an artifact left
+# behind would hold the one slot the card's back has. The document it
+# pointed at is tombstoned in the same breath by the route. Only before the
+# form is handed in — afterwards the route refuses, because what was
+# submitted has to stay what was submitted.
+PATIENT_DELETABLE_TABLES: frozenset[str] = frozenset(
+    {"chat_conversations", "chat_messages", "patient_intake_artifacts"}
+)
 
 # An extra condition ANDed onto the patient's WRITE arms only, for the
 # tables where "may read" and "may write" are not the same set of rows.

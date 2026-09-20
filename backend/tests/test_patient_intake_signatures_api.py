@@ -39,18 +39,26 @@ from app.models.audit import ACTOR_TYPE_PATIENT, AuditAction, ResourceType
 from app.repositories import (
     InMemoryIntakeDocumentRepository,
     InMemoryIntakePacketRepository,
+    InMemoryPatientDocumentRepository,
+    InMemoryPatientIntakeArtifactRepository,
     InMemoryPatientIntakeAssignmentRepository,
     InMemoryPatientIntakeSignatureRepository,
 )
 from app.repositories.audit import InMemoryAuditRepository
+from app.repositories.coverage import (
+    InMemoryPatientCoverageRepository,
+    InMemoryPayerRepository,
+)
 from app.routes import patient_intake_assignments
 from app.routes.patient_intake_assignments import (
+    get_patient_intake_artifact_service,
     get_patient_intake_assignment_service,
     get_patient_intake_signature_service,
 )
 from app.services.audit_service import AuditService, get_audit_service
 from app.services.intake_document_service import IntakeDocumentService
 from app.services.intake_packet_service import IntakePacketService
+from app.services.patient_intake_artifact_service import IntakeArtifactService
 from app.services.patient_intake_assignment_service import IntakeAssignmentService
 from app.services.patient_intake_signature_service import IntakeSignatureService
 from fastapi import FastAPI, Request
@@ -166,9 +174,31 @@ def audit_repo() -> InMemoryAuditRepository:
 
 
 @pytest.fixture
+def artifact_service(
+    assignments: InMemoryPatientIntakeAssignmentRepository,
+    packets: InMemoryIntakePacketRepository,
+) -> IntakeArtifactService:
+    """The artifact service on the same in-memory stores the rest uses.
+
+    Present because the assignment routes now depend on it, not because
+    anything here attaches a file: the form detail read carries what was
+    attached, so the dependency has to resolve.
+    """
+    return IntakeArtifactService(
+        InMemoryPatientIntakeArtifactRepository(),
+        assignments,
+        packets,
+        InMemoryPatientDocumentRepository(),
+        InMemoryPayerRepository(),
+        InMemoryPatientCoverageRepository(),
+    )
+
+
+@pytest.fixture
 def patient_app(
     assignment_service: IntakeAssignmentService,
     signature_service: IntakeSignatureService,
+    artifact_service: IntakeArtifactService,
     audit_repo: InMemoryAuditRepository,
     monkeypatch: pytest.MonkeyPatch,
 ) -> FastAPI:
@@ -188,6 +218,7 @@ def patient_app(
     app.dependency_overrides[get_patient_resolver_registry] = lambda: registry
     app.dependency_overrides[get_patient_intake_assignment_service] = lambda: assignment_service
     app.dependency_overrides[get_patient_intake_signature_service] = lambda: signature_service
+    app.dependency_overrides[get_patient_intake_artifact_service] = lambda: artifact_service
     app.dependency_overrides[get_audit_service] = lambda: AuditService(audit_repo)
 
     monkeypatch.setattr(patient_context_module, "get_db_session", object)

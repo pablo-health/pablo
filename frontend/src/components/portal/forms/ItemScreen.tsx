@@ -15,7 +15,7 @@
  */
 
 import { Button } from "@/components/ui/button"
-import type { IntakeAssignmentItem, IntakeForm } from "@/lib/api/patientIntake"
+import type { IntakeArtifact, IntakeAssignmentItem, IntakeForm } from "@/lib/api/patientIntake"
 import { CrisisFooter } from "./CrisisFooter"
 import { BACK, CONTINUE, SAVING, questionPosition } from "./formsCopy"
 import { rendererFor } from "./renderers/registry"
@@ -26,9 +26,11 @@ interface ItemScreenProps {
   value: AnswerValue | null
   onChange: (value: AnswerValue) => void
   form: IntakeForm | null
-  /** Handed to the renderer, for the one type that writes for itself. */
+  /** Handed to the renderer, for the types that write for themselves. */
   assignmentId: string
   sessionToken: string
+  /** What has already arrived for this question. Empty for most types. */
+  artifacts: IntakeArtifact[]
   onWrote: () => void
   onSessionLost: () => void
   /** Absent on the first question, so there is nothing to go back to. */
@@ -48,6 +50,7 @@ export function ItemScreen({
   form,
   assignmentId,
   sessionToken,
+  artifacts,
   onWrote,
   onSessionLost,
   onBack,
@@ -74,6 +77,7 @@ export function ItemScreen({
           form={form}
           assignmentId={assignmentId}
           sessionToken={sessionToken}
+          artifacts={artifacts}
           onWrote={onWrote}
           onSessionLost={onSessionLost}
         />

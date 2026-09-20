@@ -905,3 +905,50 @@ def get_eligibility_auto_check() -> EligibilityAutoCheck:
     )
 
     return EligibilityAutoCheck(enabled=eligibility_auto_check_enabled(get_db_session()))
+
+
+class IntakeEligibilityCheck:
+    """The same hook for a plan a client typed on their intake form.
+
+    Separate from :class:`EligibilityAutoCheck` because it answers a
+    different question. That one asks whether the practice WANTS a check
+    run on every save. This one asks whether the deployment CAN run one at
+    all, and nothing else — a self-hoster with no clearinghouse account
+    should see the card their client photographed and never a promise about
+    a payer nobody can reach. Reading the practice's own preference here
+    would be asking a question that is not about this surface; a practice
+    that has switched auto-check off has switched off a clinician workflow,
+    not a client's first appointment.
+
+    ``user_id`` is the clinician who asked for the form. The check runs as
+    the practice — a patient principal has no reach into a payer, and the
+    queued job re-resolves its tenant from that id, exactly as every other
+    queued check does.
+    """
+
+    def __init__(
+        self,
+        *,
+        available: bool,
+        schedule: Callable[[str, str, EligibilityTrigger], None] = schedule_eligibility_check,
+    ) -> None:
+        self.available = available
+        self._schedule = schedule
+
+    def __call__(self, coverage_id: str, user_id: str) -> bool:
+        """Queue the check if this deployment can ask; returns whether it did."""
+        if not self.available:
+            return False
+        self._schedule(coverage_id, user_id, "intake")
+        return True
+
+
+def get_intake_eligibility_check() -> IntakeEligibilityCheck:
+    from .enrollment import clearinghouse_client_for_practice  # noqa: PLC0415 — one direction only
+
+    # ``None`` rather than a practice id: a patient principal carries a
+    # tenant schema and no practice registry id, and the question being
+    # asked is whether this deployment answers eligibility at all. Which
+    # account the 270 is sent from is resolved by the queued job, from the
+    # clinician the job names.
+    return IntakeEligibilityCheck(available=clearinghouse_client_for_practice(None) is not None)
