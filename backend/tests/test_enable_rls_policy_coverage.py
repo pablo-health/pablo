@@ -43,25 +43,44 @@ from app.db.models import Base
 
 
 class _FakeResult:
-    def __init__(self, rows: list[tuple[str, str]]):
+    def __init__(self, rows: list[tuple[str, ...]]):
         self._rows = rows
 
-    def fetchall(self) -> list[tuple[str, str]]:
+    def fetchall(self) -> list[tuple[str, ...]]:
         return self._rows
+
+
+def _sql_type(column: str) -> str:
+    """The type the real schema gives this column.
+
+    Every id-shaped column in the ORM is a ``uuid``; the policy builder
+    reads ``patient_id``'s type to decide whether ``has_patient_access``
+    has an overload for it, so the fixture has to answer honestly.
+    """
+    return "uuid" if column == "id" or column.endswith("_id") else "text"
 
 
 class _FakeSession:
     """Records executed SQL; answers the column query from a fixture."""
 
-    def __init__(self, columns_by_table: dict[str, set[str]]):
+    def __init__(
+        self,
+        columns_by_table: dict[str, set[str]],
+        types_by_table: dict[str, dict[str, str]] | None = None,
+    ):
         self._columns_by_table = columns_by_table
+        self._types_by_table = types_by_table or {}
         self.executed: list[str] = []
 
     def execute(self, statement, params=None):
         sql = str(statement)
         self.executed.append(sql)
         if sql.strip().upper().startswith("SELECT TABLE_NAME"):
-            rows = [(table, col) for table, cols in self._columns_by_table.items() for col in cols]
+            rows = [
+                (table, col, self._types_by_table.get(table, {}).get(col, _sql_type(col)))
+                for table, cols in self._columns_by_table.items()
+                for col in cols
+            ]
             return _FakeResult(rows)
         return _FakeResult([])
 
@@ -69,9 +88,14 @@ class _FakeSession:
         return None
 
 
-def _run(columns_by_table: dict[str, set[str]]) -> _FakeSession:
-    session = _FakeSession(columns_by_table)
-    enable_rls_on_schema(session, "practice_test")  # type: ignore[arg-type]
+def _run(
+    columns_by_table: dict[str, set[str]],
+    types_by_table: dict[str, dict[str, str]] | None = None,
+    *,
+    strict: bool = True,
+) -> _FakeSession:
+    session = _FakeSession(columns_by_table, types_by_table)
+    enable_rls_on_schema(session, "practice_test", strict=strict)  # type: ignore[arg-type]
     return session
 
 
@@ -98,6 +122,63 @@ def test_unknown_id_only_table_raises_rather_than_deny_all() -> None:
     # instead of silently shipping a deny-all configuration.
     with pytest.raises(RuntimeError, match="no RLS policy defined"):
         _run({"some_new_widget": {"id"}})
+
+
+def test_non_strict_skips_a_table_the_engine_does_not_know() -> None:
+    """The fan-out's posture over a live schema.
+
+    A table absent from the ORM and from both registration seams was put
+    there by a layer above the engine, after provisioning. The engine has
+    no way to know what isolates it, so it leaves it untouched instead of
+    failing the practice — the failure mode that took all 157 practices
+    down on the first real fan-out.
+    """
+    session = _run({"some_other_layers_table": {"id"}}, strict=False)
+
+    ddl = " ".join(session.executed)
+    assert "some_other_layers_table" not in ddl, (
+        "an unknown table must be left exactly as it was — no ALTER, no policy"
+    )
+
+
+def test_non_strict_still_fails_loudly_on_an_engine_table() -> None:
+    """Relaxing for other layers must not relax for our own tables.
+
+    ``therapy_sessions`` is the engine's, so a column shape that matches
+    no policy branch is a bug in this file, not another layer's table —
+    and shipping it force-RLS'd with no policy is a silent deny-all.
+    """
+    with pytest.raises(RuntimeError, match="no RLS policy defined"):
+        _run({"therapy_sessions": {"id"}}, strict=False)
+
+
+def test_a_text_patient_id_is_skipped_rather_than_policied() -> None:
+    """``has_patient_access`` is defined for uuid and nothing else.
+
+    A table whose ``patient_id`` is text would compile to a call with no
+    overload, and the CREATE POLICY takes the whole schema down with it.
+    Registered, so the unknown-table rule above is not what catches it.
+    """
+    from app.db import register_overlay_patient_scoped  # noqa: PLC0415
+
+    register_overlay_patient_scoped("other_layer_events")
+    try:
+        session = _run(
+            {"other_layer_events": {"id", "patient_id"}},
+            {"other_layer_events": {"patient_id": "text"}},
+            strict=False,
+        )
+        ddl = " ".join(session.executed)
+        assert "CREATE POLICY" not in ddl
+        assert "other_layer_events" not in ddl
+
+        with pytest.raises(RuntimeError, match="not uuid"):
+            _run(
+                {"other_layer_events": {"id", "patient_id"}},
+                {"other_layer_events": {"patient_id": "text"}},
+            )
+    finally:
+        PATIENT_READABLE_TABLES.pop("other_layer_events", None)
 
 
 def test_user_id_table_still_gets_isolation_policy() -> None:
