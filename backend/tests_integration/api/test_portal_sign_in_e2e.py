@@ -258,7 +258,7 @@ def _issue_invitation(practice_schema: str, patient_id: str) -> None:
     # Minted for real against the platform table, the same call the invite
     # route makes — so the link this test follows is addressed the way a real
     # one is, rather than by a constant that could drift from the minter.
-    slug = ensure_practice_slug(_PRACTICE_ID)
+    slug = ensure_practice_slug(_PRACTICE_ID).slug
 
     session = create_standalone_session(practice_schema)
     try:
@@ -287,7 +287,7 @@ def _token_from_the_email() -> str:
     body = message.get_content()
     assert _PORTAL_ORIGIN in body
     link = next(word for word in body.split() if word.startswith(_PORTAL_ORIGIN))
-    return link.split("#invite=", 1)[1]
+    return link.split("#token=", 1)[1]
 
 
 def _code_from_the_log(caplog: pytest.LogCaptureFixture) -> str:

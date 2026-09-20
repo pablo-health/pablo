@@ -48,10 +48,10 @@ if TYPE_CHECKING:
 #: is not sent to a server, so the credential stays out of access logs, out of
 #: ``Referer`` headers on anything the page later loads, and out of every proxy
 #: in between; the page reads it off ``location.hash`` and posts it to the
-#: redeem endpoint. An ``?invite=`` link would be logged by every hop that
+#: redeem endpoint. A ``?token=`` link would be logged by every hop that
 #: handled it.
 PORTAL_PRACTICE_PATH = "/portal/{slug}"
-INVITE_FRAGMENT_KEY = "invite"
+INVITE_FRAGMENT_KEY = "token"
 
 _invite_delivery_factory: Callable[[], PortalInviteDelivery] | None = None
 _sms_gateway_factory: Callable[[], SmsGateway] | None = None

@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 # Not a credential: three dotted words in the shape of one, so the tests
 # can follow a link without a signing key anywhere near them.
 _STAND_IN_TOKEN = "abc.def.ghi"
-LINK = f"https://portal.example.test/portal/example-therapy#invite={_STAND_IN_TOKEN}"
+LINK = f"https://portal.example.test/portal/example-therapy#token={_STAND_IN_TOKEN}"
 
 
 @pytest.fixture(autouse=True)
@@ -280,7 +280,7 @@ def test_the_link_carries_the_token_in_the_fragment(monkeypatch: pytest.MonkeyPa
 
     link = factory.build_invite_link(slug="example-therapy", token=_STAND_IN_TOKEN)
 
-    assert link == ("https://portal.example.test/portal/example-therapy#invite=abc.def.ghi")
+    assert link == ("https://portal.example.test/portal/example-therapy#token=abc.def.ghi")
     assert "?token=" not in link
 
 
@@ -292,7 +292,7 @@ def test_a_token_with_url_meta_characters_is_escaped(monkeypatch: pytest.MonkeyP
 
     link = factory.build_invite_link(slug="a practice", token=_META_CHARACTER_TOKEN)
 
-    assert link.endswith("#invite=a%2Fb%26c%3Dd")
+    assert link.endswith("#token=a%2Fb%26c%3Dd")
     # The slug is escaped on the same terms, so a name with a slash in it
     # cannot climb out of its own path segment.
     assert "/portal/a%20practice#" in link

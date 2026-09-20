@@ -329,7 +329,7 @@ def test_a_minted_address_is_somewhere_a_magic_link_can_point(
 
     link = build_invite_link(slug=slug, token=_STAND_IN_TOKEN)
 
-    assert link == f"https://portal.example.test/portal/{slug}#invite={_STAND_IN_TOKEN}"
+    assert link == f"https://portal.example.test/portal/{slug}#token={_STAND_IN_TOKEN}"
     get_settings.cache_clear()
 
 
