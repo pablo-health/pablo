@@ -1,7 +1,12 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { assertHttpsOrigin, browserApiOrigin, generateNonce } from "@/lib/auth/csp"
+import {
+  assertHttpsOrigin,
+  browserApiOrigin,
+  browserStorageOrigin,
+  generateNonce,
+} from "@/lib/auth/csp"
 
 afterEach(() => {
   vi.unstubAllEnvs()
@@ -62,6 +67,30 @@ describe("browserApiOrigin", () => {
     vi.stubEnv("API_URL", "")
     vi.stubEnv("PUBLIC_API_URL", "")
     expect(browserApiOrigin()).toBe("")
+  })
+})
+
+describe("browserStorageOrigin", () => {
+  it("is empty on a deployment that does not name a store", () => {
+    // Google-managed: signed URLs are on storage.googleapis.com, which the
+    // Firebase policy already allows through its wildcard.
+    vi.stubEnv("PUBLIC_FILE_STORAGE_URL", "")
+    expect(browserStorageOrigin()).toBe("")
+  })
+
+  it("names an S3-compatible store, which no wildcard covers", () => {
+    vi.stubEnv("PUBLIC_FILE_STORAGE_URL", "https://s3.us-east-1.amazonaws.com")
+    expect(browserStorageOrigin()).toBe("https://s3.us-east-1.amazonaws.com")
+  })
+
+  it("allows a loopback store, for a local stack", () => {
+    vi.stubEnv("PUBLIC_FILE_STORAGE_URL", "http://localhost:9000")
+    expect(browserStorageOrigin()).toBe("http://localhost:9000")
+  })
+
+  it("still refuses a plaintext non-loopback store", () => {
+    vi.stubEnv("PUBLIC_FILE_STORAGE_URL", "http://storage.example.com")
+    expect(() => browserStorageOrigin()).toThrow(/must be an https origin/)
   })
 })
 

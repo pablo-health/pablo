@@ -96,6 +96,31 @@ export function browserApiOrigin(): string {
 }
 
 /**
+ * The object store the BROWSER uploads to, for `connect-src`.
+ *
+ * A document upload goes browser→storage direct against a signed URL — the
+ * whole reason the backend mints a recipe instead of proxying the bytes — so
+ * the store is an origin the page dials and `connect-src` has to name it.
+ *
+ * Empty on a Google-managed deployment, and correctly so: those signed URLs
+ * are on `storage.googleapis.com`, which the policy already allows through
+ * `https://*.googleapis.com`. It is a deployment pointing at S3, MinIO or any
+ * other S3-compatible store that needs this, and the failure without it is
+ * quiet in the worst way — the init call is allowed, so a row is created and
+ * the upload it was created for is blocked with nothing on the server to say
+ * so.
+ *
+ * Validated like every other interpolated origin: https, or a loopback host
+ * for a local stack, or middleware startup fails.
+ */
+export function browserStorageOrigin(): string {
+  return assertHttpsOrigin(
+    "PUBLIC_FILE_STORAGE_URL",
+    process.env.PUBLIC_FILE_STORAGE_URL || ""
+  )
+}
+
+/**
  * Per-request nonce for script-src / the theme bootstrap script, following
  * https://nextjs.org/docs/app/guides/content-security-policy.
  */

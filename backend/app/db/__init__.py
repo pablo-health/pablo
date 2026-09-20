@@ -1105,6 +1105,14 @@ PATIENT_READABLE_TABLES: dict[str, str] = {
     # denormalized and what keeps it honest.
     "patient_message_threads": "patient_id",
     "patient_messages": "patient_id",
+    # What a patient sent on a message, and what the practice sent back.
+    # The row is the patient's own in both directions — it names a message
+    # in their own thread and a document on their own chart — so it takes
+    # the plain predicate like the two tables above it, on the same
+    # denormalized column and for the same reason. The file itself is a
+    # ``patient_documents`` row and is policied there, where the category
+    # test that keeps the clinical record off the portal already lives.
+    "patient_message_attachments": "patient_id",
     # Read-only deliberately: booking and cancelling answer to the
     # practice's own rules — notice periods, which types are bookable,
     # whether a request needs confirming — so they belong to a route that
@@ -1203,6 +1211,13 @@ PATIENT_WRITABLE_TABLES: dict[str, str] = {
     # granularity to express it with.
     "patient_message_threads": "patient_id",
     "patient_messages": "patient_id",
+    # Attaching is a patient INSERT, and that is all a patient ever does
+    # here: no route updates a link and no route deletes one, because an
+    # attachment is part of a message that was already sent. The row-level
+    # grant is wider than that — RLS has no way to give INSERT and withhold
+    # UPDATE once a table is writable — so the narrowing is the route
+    # layer's, as on the two tables above.
+    "patient_message_attachments": "patient_id",
     # A patient starts their own conversations and archives or purges them,
     # so the conversation row is writable. The turn loop then writes the
     # message rows — the user's turn and the assistant's reply — which is
