@@ -102,10 +102,33 @@ class IntakeAssignmentItemResponse(BaseModel):
     value: dict[str, object] | None
 
 
+class IntakeArtifactResponse(BaseModel):
+    """One file attached to one question.
+
+    Carries the document's id rather than its contents or its name: the
+    portal already has a route that hands back a short-lived URL for a
+    document this patient owns, and the name is on that response.
+    """
+
+    id: str
+    assignment_id: str
+    item_id: str
+    document_id: str
+    side: str | None
+    created_at: datetime
+
+
 class IntakeAssignmentDetailResponse(IntakeAssignmentResponse):
-    """One assignment, its questions, and the answers saved against them."""
+    """One assignment, its questions, and the answers saved against them.
+
+    ``artifacts`` rides along rather than living on a route of its own, so
+    a form that asks for two photographs of a card comes back in one read
+    knowing which of them have arrived. The item's own ``value`` names the
+    same documents; these rows carry the side and the order they came in.
+    """
 
     items: list[IntakeAssignmentItemResponse]
+    artifacts: list[IntakeArtifactResponse] = Field(default_factory=list)
 
 
 class SubmittedMeasureResponse(BaseModel):
@@ -166,6 +189,10 @@ class ClinicianIntakeAssignmentDetailResponse(IntakeAssignmentResponse):
 
     patient_id: str
     items: list[ClinicianIntakeAnswerResponse]
+    #: What the patient sent in against the questions that asked for files.
+    #: Part of the same disclosure the answers are, and read through the
+    #: same grant.
+    artifacts: list[IntakeArtifactResponse] = Field(default_factory=list)
 
 
 class SavedAnswerResponse(BaseModel):
@@ -182,16 +209,63 @@ class SavedAnswerResponse(BaseModel):
     progress: IntakeProgressResponse
 
 
+class AttachArtifactRequest(BaseModel):
+    """``POST /api/patient/intake/assignments/{id}/artifacts``.
+
+    Which question the file answers, which file, and — on a card — which
+    side of it. No patient id and no filename: the first comes off the
+    principal, and the second is already on the document row.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    item_id: str = Field(min_length=1, max_length=64)
+    document_id: str = Field(min_length=1, max_length=64)
+    #: ``"front"`` or ``"back"`` on an insurance card, absent on anything
+    #: else. Checked against what the question actually asked for rather
+    #: than accepted as given.
+    side: str | None = Field(default=None, max_length=8)
+
+
+class ArtifactWriteResponse(BaseModel):
+    """An artifact that was attached or removed, and where the form now is.
+
+    The progress rides along for the same reason it rides on a save: no
+    client works out for itself whether a form can be handed in.
+    """
+
+    artifact: IntakeArtifactResponse
+    status: str
+    progress: IntakeProgressResponse
+
+
+class SaveIntakeCoverageResponse(BaseModel):
+    """What typing the plan off a card did.
+
+    ``eligibility_requested`` says whether a check was queued with the
+    payer. It is deliberately not a claim about the answer: the check runs
+    off this request, the verdict lands on the coverage record minutes
+    later or not at all, and nothing the patient sees waits for it.
+    """
+
+    coverage_id: str
+    eligibility_requested: bool
+
+
 __all__ = [
+    "ArtifactWriteResponse",
+    "AttachArtifactRequest",
     "ClinicianIntakeAnswerResponse",
     "ClinicianIntakeAssignmentDetailResponse",
     "CreateAssignmentRequest",
+    "IntakeArtifactResponse",
     "IntakeAssignmentDetailResponse",
     "IntakeAssignmentItemResponse",
     "IntakeAssignmentResponse",
     "IntakeProgressResponse",
     "IntakeSubmissionResponse",
     "SaveAnswerRequest",
+    "SaveIntakeCoverageResponse",
     "SavedAnswerResponse",
     "SubmittedMeasureResponse",
 ]

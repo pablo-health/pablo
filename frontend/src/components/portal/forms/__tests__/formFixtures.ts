@@ -163,7 +163,7 @@ export const ASSIGNMENT: IntakeAssignment = {
 export function assignmentDetail(
   overrides: Partial<IntakeAssignmentDetail> = {},
 ): IntakeAssignmentDetail {
-  return { ...ASSIGNMENT, items: SEEDED_ITEMS, ...overrides }
+  return { ...ASSIGNMENT, items: SEEDED_ITEMS, artifacts: [], ...overrides }
 }
 
 export const RECEIPT: IntakeReceipt = {

@@ -66,6 +66,23 @@ ALLOWED_MIME_TYPES: frozenset[str] = frozenset(
     }
 )
 
+# What each accepted type begins with, and the whole of the byte-level
+# check. A file's extension is a name and its content type is a header the
+# uploader chose; these are the file. The three are the same three
+# ALLOWED_MIME_TYPES names, and a type added there without a signature here
+# is refused rather than waved through — see _sniffed_mime_type.
+#
+# JPEG is matched on three bytes rather than the full four-byte JFIF/Exif
+# marker, because the fourth varies by encoder and the first three do not.
+_MAGIC_BYTES: tuple[tuple[bytes, str], ...] = (
+    (b"%PDF-", "application/pdf"),
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+)
+
+# Enough for the longest signature above, with room for one that is longer.
+_SNIFF_BYTES = 16
+
 # PyMuPDF threshold below which we treat the result as a scanned PDF.
 # 100 chars is well below any meaningful body of text and well above
 # the 1-2 char artifacts PyMuPDF sometimes returns for image-only
@@ -367,6 +384,35 @@ class PatientDocumentsService:
             raise UnsupportedMimeTypeError(content_type)
         return size_bytes
 
+    def _verify_uploaded_bytes(self, document: PatientDocument) -> None:
+        """Read the stored object's first bytes and refuse a file that lied.
+
+        Everything up to here has trusted something the uploader wrote. The
+        signed URL pinned a content type the browser declared; the blob
+        recheck asks the storage service, which is repeating that same
+        declaration back. A text file renamed ``.png`` and uploaded as
+        ``image/png`` passes both and is on the chart.
+
+        So this asks the file. It is the cheapest possible version of the
+        question — the first sixteen bytes against three fixed signatures —
+        and it is on the patient's half of the surface because that is the
+        half where the file comes from outside the practice. A clinician
+        uploading from their own machine is inside the trust boundary the
+        rest of the system already draws.
+
+        Deliberately not a scanner and no seam pretending to be one: what
+        this catches is a file that is not the kind of file it says it is,
+        which is a different question from whether its contents are safe.
+        """
+        head = self._storage().download_head(
+            bucket=self._bucket(),
+            object_name=document.gcs_path,
+            length=_SNIFF_BYTES,
+        )
+        actual = _sniffed_mime_type(head)
+        if actual != document.mime_type:
+            raise UnsupportedMimeTypeError(document.mime_type)
+
     def finalize_patient_upload(
         self,
         *,
@@ -375,8 +421,10 @@ class PatientDocumentsService:
     ) -> PatientDocument:
         """Verify the object a patient uploaded and stamp the row finalized.
 
-        The same blob validation the clinician path runs, and then the row
-        is done — where the clinician path enqueues a Cloud Tasks job to
+        The same blob validation the clinician path runs, plus one the
+        clinician path does not: the stored bytes have to begin the way the
+        declared type begins (see :meth:`_verify_uploaded_bytes`). Then the
+        row is done — where the clinician path enqueues a Cloud Tasks job to
         pull text out of the PDF, this one does not. Two reasons, and the
         second is the load-bearing one:
 
@@ -405,6 +453,7 @@ class PatientDocumentsService:
             return document
 
         size_bytes = self._verify_uploaded_object(document)
+        self._verify_uploaded_bytes(document)
         updated = self._repo.mark_finalized_for_patient_principal(
             document_id=document_id,
             patient_id=patient_id,
@@ -609,6 +658,20 @@ class PatientDocumentsService:
 
 def _raise_not_found() -> PatientDocument:
     raise PatientDocumentError("document not found")
+
+
+def _sniffed_mime_type(head: bytes) -> str | None:
+    """Which accepted type these opening bytes are, or ``None`` for no match.
+
+    ``None`` is the answer for an empty read and for anything outside the
+    three, and both mean the same thing to the caller: this is not a file
+    this surface takes. Pure, so the whole rule is testable without a
+    storage backend.
+    """
+    for signature, mime_type in _MAGIC_BYTES:
+        if head.startswith(signature):
+            return mime_type
+    return None
 
 
 def _extract_pdf_text(data: bytes) -> str | None:

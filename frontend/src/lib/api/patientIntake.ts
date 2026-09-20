@@ -29,6 +29,8 @@ import { buildApiUrl } from "@/lib/api/client"
 const FORM_PATH = "/api/patient/intake/form"
 const ASSIGNMENTS_PATH = "/api/patient/intake/assignments"
 const DOCUMENTS_PATH = "/api/patient/intake/documents"
+const BLANK_FORMS_PATH = "/api/patient/intake/blank-forms"
+const UPLOADS_PATH = "/api/patient/documents"
 
 /** One answer choice, and the value it scores. Mirrors `IntakeResponseOptionResponse`. */
 export interface IntakeResponseOption {
@@ -109,9 +111,28 @@ export interface IntakeAssignmentItem {
   value: Record<string, unknown> | null
 }
 
+/** One file attached to one question. Mirrors `IntakeArtifactResponse`. */
+export interface IntakeArtifact {
+  id: string
+  assignment_id: string
+  item_id: string
+  document_id: string
+  /** `"front"` or `"back"` on an insurance card, null on anything else. */
+  side: string | null
+  created_at: string
+}
+
 /** One assignment, its questions, and the answers saved against them. */
 export interface IntakeAssignmentDetail extends IntakeAssignment {
   items: IntakeAssignmentItem[]
+  /**
+   * What has been sent in against the questions that asked for files.
+   *
+   * Rides on the assignment rather than on a route of its own, so a form
+   * that asks for two photographs of a card comes back in one read knowing
+   * which of them have arrived.
+   */
+  artifacts: IntakeArtifact[]
 }
 
 /** `PUT …/items/{item_id}` — one saved answer and what it did to the form. */
@@ -455,5 +476,192 @@ export async function submitAssignment(
     sessionToken,
     `${ASSIGNMENTS_PATH}/${encodeURIComponent(assignmentId)}/submit`,
     { method: "POST" },
+  )
+}
+
+// ---------------------------------------------------------------------------
+// The files a form asked for
+// ---------------------------------------------------------------------------
+//
+// Three calls in a row, and the order is the whole design. The browser asks
+// for somewhere to put a file, puts it there, and only then tells the form
+// which question it answers. Nothing the browser sends becomes the question's
+// answer — the server writes that from the rows it has just checked.
+
+/** `POST /api/patient/documents/init` — where to put a file. */
+export interface PatientUploadTarget {
+  url: string
+  method: "PUT" | "POST"
+  headers: Record<string, string>
+  fields: Record<string, string>
+}
+
+export interface StartedUpload {
+  document_id: string
+  upload: PatientUploadTarget
+  /** For pre-flight only; the storage layer enforces the cap. */
+  max_bytes: number
+}
+
+/** What was attached, and where the form stands afterwards. */
+export interface ArtifactWrite {
+  artifact: IntakeArtifact
+  status: string
+  progress: IntakeProgress
+}
+
+/** Ask for somewhere to put a file this form asked for. */
+export async function startUpload(
+  sessionToken: string,
+  file: { name: string; type: string; size: number },
+): Promise<StartedUpload> {
+  return request<StartedUpload>(sessionToken, `${UPLOADS_PATH}/init`, {
+    method: "POST",
+    body: {
+      filename: file.name,
+      mime_type: file.type,
+      size_bytes: file.size,
+      category: "intake_artifact",
+    },
+  })
+}
+
+/**
+ * Send the bytes to storage directly, as the target's recipe describes.
+ *
+ * Not an API call, so it does not go through `request`: the URL is signed
+ * and carries its own authorization, and attaching a session token to it
+ * would be sending a credential to a third party.
+ */
+export async function sendToStorage(target: PatientUploadTarget, file: File): Promise<void> {
+  let response: Response
+  try {
+    if (target.method === "POST") {
+      const form = new FormData()
+      for (const [name, value] of Object.entries(target.fields)) form.append(name, value)
+      // The file part must come last — S3 ignores form entries after it.
+      form.append("file", file)
+      response = await fetch(target.url, { method: "POST", body: form })
+    } else {
+      response = await fetch(target.url, {
+        method: "PUT",
+        headers: target.headers,
+        body: file,
+      })
+    }
+  } catch {
+    throw unavailable()
+  }
+  if (!response.ok) {
+    throw new PatientIntakeError("unavailable", `Upload failed (${response.status})`)
+  }
+}
+
+/**
+ * Confirm the upload finished and put the file on the chart.
+ *
+ * The 422 this can raise is the type check: the server reads the stored
+ * file's first bytes, and a file that is not the kind of file it said it
+ * was is refused here rather than on the chart.
+ */
+export async function finishUpload(
+  sessionToken: string,
+  documentId: string,
+): Promise<{ id: string }> {
+  return request<{ id: string }>(
+    sessionToken,
+    `${UPLOADS_PATH}/${encodeURIComponent(documentId)}/finalize`,
+    { method: "POST" },
+  )
+}
+
+/** Say which question a finished upload answers. */
+export async function attachArtifact(
+  sessionToken: string,
+  assignmentId: string,
+  body: { item_id: string; document_id: string; side?: string },
+): Promise<ArtifactWrite> {
+  return request<ArtifactWrite>(
+    sessionToken,
+    `${ASSIGNMENTS_PATH}/${encodeURIComponent(assignmentId)}/artifacts`,
+    { method: "POST", body },
+  )
+}
+
+/** Take a file back off a form that has not been handed in. */
+export async function removeArtifact(
+  sessionToken: string,
+  assignmentId: string,
+  artifactId: string,
+): Promise<ArtifactWrite> {
+  return request<ArtifactWrite>(
+    sessionToken,
+    `${ASSIGNMENTS_PATH}/${encodeURIComponent(assignmentId)}/artifacts/` +
+      encodeURIComponent(artifactId),
+    { method: "DELETE" },
+  )
+}
+
+/** A short-lived URL for one of this patient's own uploads, to preview it. */
+export async function uploadPreviewUrl(
+  sessionToken: string,
+  documentId: string,
+): Promise<string> {
+  const { url } = await request<{ url: string }>(
+    sessionToken,
+    `${UPLOADS_PATH}/${encodeURIComponent(documentId)}/file?disposition=inline`,
+  )
+  return url
+}
+
+/** A short-lived URL for one of the practice's own blank forms. */
+export async function blankFormUrl(
+  sessionToken: string,
+  blankFormId: string,
+): Promise<string> {
+  const { url } = await request<{ url: string }>(
+    sessionToken,
+    `${BLANK_FORMS_PATH}/${encodeURIComponent(blankFormId)}/file`,
+  )
+  return url
+}
+
+/** The plan written on an insurance card, as the patient types it. */
+export interface IntakeCoverageFields {
+  payer_name: string
+  payer_id?: string | null
+  member_id: string
+  group_number?: string | null
+  plan_name?: string | null
+  subscriber_relationship?: string
+  subscriber_first_name?: string | null
+  subscriber_last_name?: string | null
+  subscriber_date_of_birth?: string | null
+}
+
+/**
+ * `PUT …/items/{item_id}/coverage` — what typing the plan did.
+ *
+ * `eligibility_requested` says whether a check was queued with the payer.
+ * It is deliberately not a claim about the answer: nothing on the screen
+ * waits for one.
+ */
+export interface SavedIntakeCoverage {
+  coverage_id: string
+  eligibility_requested: boolean
+}
+
+/** Put the plan written on the card on file. */
+export async function saveIntakeCoverage(
+  sessionToken: string,
+  assignmentId: string,
+  itemId: string,
+  fields: IntakeCoverageFields,
+): Promise<SavedIntakeCoverage> {
+  return request<SavedIntakeCoverage>(
+    sessionToken,
+    `${ASSIGNMENTS_PATH}/${encodeURIComponent(assignmentId)}/items/` +
+      `${encodeURIComponent(itemId)}/coverage`,
+    { method: "PUT", body: fields },
   )
 }

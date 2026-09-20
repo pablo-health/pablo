@@ -162,18 +162,110 @@ describe("ItemConfigForm", () => {
     expect(screen.queryByRole("option", { name: /DIRE/i })).not.toBeInTheDocument()
   })
 
-  it.each([
-    "demographics",
-    "reason",
-    "emergency_contact",
-    "guardian",
-    "insurance_card",
-    "document_request",
-  ] as ItemType[])("%s has nothing for a practice to set", (itemType) => {
-    // What to ask for on an upload is the item's own question, which lives
-    // beside the name rather than in here — see IntakeItemEditor.
-    const { container } = form(itemType)
-    expect(container).toBeEmptyDOMElement()
+  it.each(["demographics", "reason", "emergency_contact", "guardian"] as ItemType[])(
+    "%s has nothing for a practice to set",
+    (itemType) => {
+      // The engine fixes the shape of these four, so there is nothing here
+      // to configure. What to ASK for is the item's own question, which
+      // lives beside the name rather than in here — see IntakeItemEditor.
+      const { container } = form(itemType)
+      expect(container).toBeEmptyDOMElement()
+    },
+  )
+
+  it("an insurance card asks how many photos, and whether to type the plan", async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    render(
+      <ItemConfigForm
+        itemType="insurance_card"
+        config={{}}
+        onChange={onChange}
+        idPrefix="test"
+      />,
+    )
+
+    // Both sides is the default, because a plan is printed across the two.
+    expect(screen.getByRole("combobox", { name: "How many photos" })).toHaveTextContent(
+      "Front and back",
+    )
+
+    await user.click(screen.getByLabelText(/type the plan details/i))
+
+    expect(onChange).toHaveBeenCalledWith({ collect_fields: true })
+  })
+
+  it("and narrows to one photo when a practice only needs the front", async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    render(
+      <ItemConfigForm
+        itemType="insurance_card"
+        config={{}}
+        onChange={onChange}
+        idPrefix="test"
+      />,
+    )
+
+    await user.click(screen.getByRole("combobox", { name: "How many photos" }))
+    await user.click(screen.getByRole("option", { name: "Front only" }))
+
+    expect(onChange).toHaveBeenCalledWith({ sides: "front" })
+  })
+
+  it("a document request says to upload a blank form before it can offer one", () => {
+    render(
+      <ItemConfigForm
+        itemType="document_request"
+        config={{}}
+        onChange={vi.fn()}
+        idPrefix="test"
+      />,
+    )
+
+    expect(
+      screen.getByText("Upload a blank form first, then you can offer it here."),
+    ).toBeInTheDocument()
+  })
+
+  it("and offers the practice's own forms when it has some", async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    render(
+      <ItemConfigForm
+        itemType="document_request"
+        config={{}}
+        onChange={onChange}
+        idPrefix="test"
+        blankForms={[{ id: "form-1", title: "Release of records" }]}
+      />,
+    )
+
+    await user.click(screen.getByRole("combobox", { name: /Offer a form to download/i }))
+    await user.click(screen.getByRole("option", { name: "Release of records" }))
+
+    expect(onChange).toHaveBeenCalledWith({ blank_form_id: "form-1" })
+  })
+
+  it("and lets a practice take the offer back off", async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    render(
+      <ItemConfigForm
+        itemType="document_request"
+        config={{ blank_form_id: "form-1" }}
+        onChange={onChange}
+        idPrefix="test"
+        blankForms={[{ id: "form-1", title: "Release of records" }]}
+      />,
+    )
+
+    await user.click(screen.getByRole("combobox", { name: /Offer a form to download/i }))
+    await user.click(screen.getByRole("option", { name: "Don't offer one" }))
+
+    // Absent rather than empty: an empty string is not a form id, and the
+    // server's model would refuse it.
+    expect(onChange).toHaveBeenCalledWith({ blank_form_id: undefined })
   })
 })
 

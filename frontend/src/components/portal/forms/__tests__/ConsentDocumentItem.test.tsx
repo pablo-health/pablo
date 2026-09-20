@@ -122,6 +122,7 @@ function renderConsent(item: IntakeAssignmentItem = consentItem()) {
         form={null}
         assignmentId={ASSIGNMENT_ID}
         sessionToken={SESSION}
+        artifacts={[]}
         onWrote={onWrote}
         onSessionLost={onSessionLost}
       />

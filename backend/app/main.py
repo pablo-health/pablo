@@ -64,6 +64,7 @@ from .routes import (
     ehr_routes,
     ext_auth,
     ical_sync,
+    intake_blank_forms,
     intake_documents,
     intake_packets,
     internal_transcription,
@@ -369,6 +370,12 @@ app.include_router(intake_packets.router)
 # and the patient half answers 401 with no resolver registered.
 app.include_router(intake_documents.router)
 app.include_router(intake_documents.patient_router)
+# The practice's own empty paperwork, and the portal's download of one.
+# Same shape and same reasons as the pair above: practice-level rows on the
+# clinician side, and a patient half that answers 401 with no resolver
+# registered.
+app.include_router(intake_blank_forms.router)
+app.include_router(intake_blank_forms.patient_router)
 # Sending a form to a patient and them filling it in. Both routers are
 # unconditional for the reasons above: the patient half answers 401 with no
 # resolver registered, and the clinician half sits behind the ordinary

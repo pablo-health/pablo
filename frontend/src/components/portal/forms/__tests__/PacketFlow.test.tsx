@@ -186,6 +186,47 @@ describe("saving", () => {
         items: [
           {
             id: "55555555-5555-4555-8555-555555555555",
+            key: "contact",
+            position: 0,
+            item_type: "emergency_contact",
+            required: true,
+            label: "Who should we call?",
+            help_text: null,
+            config: {},
+            value: null,
+          },
+          SEEDED_ITEMS[1],
+        ],
+        progress: {
+          complete: false,
+          missing: ["55555555-5555-4555-8555-555555555555", ITEM_IDS.reason],
+        },
+      }),
+    )
+    const user = userEvent.setup()
+    renderFlow()
+
+    expect(await screen.findByTestId("forms-item-unavailable")).toHaveTextContent(
+      "This step will be available soon.",
+    )
+    // Not counted among the questions, because it cannot be answered here.
+    expect(screen.queryByTestId("forms-progress")).not.toBeInTheDocument()
+
+    await user.click(screen.getByTestId("forms-continue"))
+
+    expect(await screen.findByTestId("forms-reason")).toBeInTheDocument()
+    expect(api.saveAnswer).not.toHaveBeenCalled()
+  })
+
+  it("does not save a question whose renderer writes for itself", async () => {
+    // A card is counted and shown like any other question, and Continue
+    // moves past it: its answer names the documents that arrived, and only
+    // the route that records an arrival may write one.
+    vi.mocked(api.fetchAssignment).mockResolvedValue(
+      assignmentDetail({
+        items: [
+          {
+            id: "55555555-5555-4555-8555-555555555555",
             key: "insurance",
             position: 0,
             item_type: "insurance_card",
@@ -206,11 +247,9 @@ describe("saving", () => {
     const user = userEvent.setup()
     renderFlow()
 
-    expect(await screen.findByTestId("forms-item-unavailable")).toHaveTextContent(
-      "This step will be available soon.",
-    )
-    // Not counted among the questions, because it cannot be answered here.
-    expect(screen.queryByTestId("forms-progress")).not.toBeInTheDocument()
+    expect(await screen.findByTestId("forms-upload-front")).toBeInTheDocument()
+    // Counted, unlike the unaskable one above.
+    expect(screen.getByTestId("forms-progress")).toHaveTextContent("Question 1 of 2")
 
     await user.click(screen.getByTestId("forms-continue"))
 
