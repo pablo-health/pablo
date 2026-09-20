@@ -124,11 +124,18 @@ function everyItemScoredOne(items: number): Record<string, number> {
   return Object.fromEntries(Array.from({ length: items }, (_, i) => [`${i + 1}`, 1]))
 }
 
-/** Answer every item of the measure on screen with its first anchor. */
+/**
+ * Answer every item of the measure on screen with its first anchor.
+ *
+ * Waits for the first group before counting. `count()` is a snapshot rather
+ * than an assertion, so it does not wait for anything — calling it straight
+ * after a Continue reads the screen the patient is leaving, and on a fast
+ * runner that is a screen with no measure on it.
+ */
 async function answerMeasureOnScreen(page: Page): Promise<void> {
   const groups = page.locator("fieldset[data-testid^='forms-item-']")
+  await expect(groups.first(), "a measure renders one group per item").toBeVisible()
   const count = await groups.count()
-  expect(count, "a measure renders one group per item").toBeGreaterThan(0)
   for (let index = 0; index < count; index += 1) {
     await groups.nth(index).getByRole("radio").first().check()
   }
@@ -136,11 +143,14 @@ async function answerMeasureOnScreen(page: Page): Promise<void> {
 
 /** Walk the seeded form end to end and hand it in. */
 async function fillTheFormIn(page: Page): Promise<void> {
+  await expect(page.getByTestId("forms-list")).toBeVisible()
   await page.getByTestId("forms-list-open").click()
 
+  await expect(page.getByTestId("forms-identity-confirm")).toBeVisible()
   await page.getByTestId("forms-identity-confirm").click()
   await page.getByTestId("forms-continue").click()
 
+  await expect(page.getByTestId("forms-reason")).toBeVisible()
   await page.getByTestId("forms-reason").fill(FIRST_ANSWER)
   await page.getByTestId("forms-continue").click()
 
@@ -150,6 +160,7 @@ async function fillTheFormIn(page: Page): Promise<void> {
   await answerMeasureOnScreen(page)
   await page.getByTestId("forms-continue").click()
 
+  await expect(page.getByTestId("forms-submit")).toBeVisible()
   await page.getByTestId("forms-submit").click()
   await expect(page.getByTestId("forms-receipt-code")).toBeVisible()
   await page.getByTestId("forms-receipt-close").click()
@@ -191,7 +202,7 @@ test.describe("intake review", () => {
 
     // --- the patient sees what was asked, and only that --------------------
     await page.reload()
-    await expect(page.getByTestId("forms-list-state")).toContainText("Your clinician")
+    await expect(page.getByTestId("forms-list-state")).toContainText("Your practice")
     await page.getByTestId("forms-list-open").click()
 
     // The one question they asked about. The rest of the form is not on
