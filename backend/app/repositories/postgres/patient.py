@@ -25,6 +25,7 @@ from ...db.models import (
 )
 from ...models import Patient
 from ...models.enums import ClinicianRole
+from ...models.patient_facing import PatientFacingPatient
 from ...utcnow import utc_now
 from ..patient import PatientRepository
 
@@ -35,6 +36,16 @@ if TYPE_CHECKING:
 _HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindparams(
     bindparam("pid", type_=Uuid(as_uuid=False)),
     bindparam("uid", type_=String()),
+)
+
+#: What :meth:`PostgresPatientRepository.get_for_patient_principal` selects.
+#: Named columns rather than the mapped class, so a column added to
+#: ``patients`` later is not read by a patient-facing query by default — which
+#: is the whole control, since row-level security cannot express it.
+PATIENT_FACING_COLUMNS = (
+    PatientRow.first_name,
+    PatientRow.last_name,
+    PatientRow.date_of_birth,
 )
 
 
@@ -103,26 +114,36 @@ class PostgresPatientRepository(PatientRepository):
         )
         return _row_to_patient(row) if row else None
 
-    def get_for_patient_principal(self, patient_id: str) -> Patient | None:
+    def get_for_patient_principal(self, patient_id: str) -> PatientFacingPatient | None:
         """The calling patient's own live chart row, or ``None``.
 
         No grant join: the patient is the subject, not a clinician with
         access to them. The ``patient_id`` predicate is the isolation, and
         the ``rls_patient_self_read`` policy is the second layer.
+
+        Columns, not the row — ``rls_patient_self_read`` grants this principal
+        every column of it, including ``diagnosis``, ``rate_cents`` and
+        ``sliding_scale_note``, and no policy can be written that would not.
+        The list is :data:`PATIENT_FACING_COLUMNS`, which
+        ``test_patient_facing_columns.py`` pins to the decisions recorded in
+        ``app.models.patient_facing``.
         """
         if not _is_uuid(patient_id):
             return None
-        row = (
-            self._session.execute(
-                select(PatientRow).where(
-                    PatientRow.id == patient_id,
-                    PatientRow.deleted_at.is_(None),
-                )
+        row = self._session.execute(
+            select(*PATIENT_FACING_COLUMNS).where(
+                PatientRow.id == patient_id,
+                PatientRow.deleted_at.is_(None),
             )
-            .scalars()
-            .one_or_none()
+        ).one_or_none()
+        if row is None:
+            return None
+        return PatientFacingPatient(
+            first_name=row.first_name,
+            last_name=row.last_name,
+            # DB column is native DATE; the API model carries an ISO string.
+            date_of_birth=row.date_of_birth.isoformat() if row.date_of_birth else None,
         )
-        return _row_to_patient(row) if row else None
 
     def find_by_email(self, email: str, user_id: str) -> Patient | None:
         row = (

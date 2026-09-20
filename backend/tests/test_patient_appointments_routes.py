@@ -18,6 +18,11 @@ from typing import TYPE_CHECKING
 import pytest
 from app.auth.patient_context import AuthStrength, PatientContext, get_patient_context
 from app.main import app
+from app.models.patient_facing import (
+    APPOINTMENT_COLUMN_DECISIONS,
+    shown_columns,
+    withheld_columns,
+)
 from app.repositories import get_appointment_repository
 from app.repositories.audit import InMemoryAuditRepository
 from app.route_introspection import iter_api_routes
@@ -59,6 +64,16 @@ def _appointment(appt_id: str, patient_id: str, *, days: int) -> Appointment:
         notes="clinician's private note",
         recurrence_rule="weekly",
         recurring_appointment_id="series-1",
+        # Staff-authored coding, populated so the withholding assertions below
+        # have something to catch. A fixture with these left at None would pass
+        # against a response that leaked all of them.
+        service_code="90834",
+        modifiers=["95"],
+        unit_count=1,
+        place_of_service="02",
+        diagnosis_codes=["F41.1"],
+        session_id="44444444-4444-4444-8444-444444444444",
+        ehr_appointment_url="https://ehr.example.test/appointments/1",
     )
 
 
@@ -129,38 +144,17 @@ class TestOwnAppointmentsOnly:
 class TestTheResponseWithholdsStaffColumns:
     """The allow-list is the control, so it is asserted on the wire.
 
-    Row-level security cannot restrict columns, so a serializer that
-    widened by default would leak clinician notes and visit coding to the
-    patient with nothing else to catch it.
+    Row-level security cannot restrict columns, so a serializer that widened by
+    default would leak clinician notes and visit coding to the patient with
+    nothing else to catch it. Which columns those are is read from the
+    decisions in ``app.models.patient_facing`` rather than listed again here:
+    a list copied into a test agrees with the copy, not with the table.
     """
 
-    def test_clinician_and_billing_fields_never_appear(self, client) -> None:
+    def test_no_withheld_column_reaches_the_body(self, client) -> None:
         row = client.get("/api/patient/appointments").json()["data"][0]
 
-        for withheld in (
-            "user_id",
-            "patient_id",
-            "notes",
-            "note_type",
-            "session_id",
-            "appointment_type_id",
-            "service_code",
-            "modifiers",
-            "unit_count",
-            "place_of_service",
-            "diagnosis_codes",
-            "confirmation_token_hash",
-            "google_event_id",
-            "google_calendar_id",
-            "google_sync_status",
-            "ical_uid",
-            "ical_source",
-            "ical_sync_status",
-            "ehr_appointment_url",
-            "pending_expires_at",
-            "recurrence_index",
-            "is_exception",
-        ):
+        for withheld in withheld_columns(APPOINTMENT_COLUMN_DECISIONS):
             assert withheld not in row, f"{withheld} reached a patient-facing response"
 
     def test_the_note_text_is_not_in_the_body_anywhere(self, client) -> None:
@@ -169,25 +163,7 @@ class TestTheResponseWithholdsStaffColumns:
 
     def test_the_fields_a_patient_does_get(self, client) -> None:
         row = client.get("/api/patient/appointments").json()["data"][0]
-        assert set(row) == {
-            "id",
-            "start_at",
-            "end_at",
-            "duration_minutes",
-            "status",
-            "session_type",
-            "video_link",
-            "video_platform",
-            "recurrence_rule",
-            "recurring_appointment_id",
-            # Added deliberately, against the withholding rule above rather
-            # than as an exception to it: this one is about the patient's own
-            # conduct and its consequence for them. Being charged a
-            # late-cancellation fee without ever being told the cancellation
-            # counted as late is the surprise that rule exists to prevent.
-            # The fee AMOUNT stays out — see PatientAppointmentResponse.
-            "late_cancellation",
-        }
+        assert set(row) == shown_columns(APPOINTMENT_COLUMN_DECISIONS)
 
 
 class TestAudit:

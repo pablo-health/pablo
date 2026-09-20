@@ -70,7 +70,7 @@ _NOW = int(time.time())
 
 # The revision this one follows. Rolling a schema back to it and forward
 # again replays exactly the revision under test.
-_PARENT_REVISION = "a71c5e09d4b3"
+_PARENT_REVISION = "d3b71f0c85a4"
 
 
 @pytest.fixture(scope="module")

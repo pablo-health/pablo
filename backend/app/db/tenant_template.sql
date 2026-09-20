@@ -477,6 +477,41 @@ CREATE TABLE __TENANT_SCHEMA__.ical_sync_configs (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.intake_item_definitions (
+    id uuid NOT NULL,
+    version_id uuid NOT NULL,
+    key character varying(64) NOT NULL,
+    "position" integer NOT NULL,
+    item_type character varying(32) NOT NULL,
+    required boolean DEFAULT true NOT NULL,
+    config jsonb DEFAULT '{}'::jsonb NOT NULL,
+    resign_on_new_version boolean DEFAULT false NOT NULL,
+    CONSTRAINT ck_intake_item_definitions_type CHECK (((item_type)::text = ANY ((ARRAY['section'::character varying, 'instructions'::character varying, 'demographics'::character varying, 'reason'::character varying, 'free_text'::character varying, 'single_choice'::character varying, 'multi_choice'::character varying, 'yes_no'::character varying, 'scale'::character varying, 'number'::character varying, 'date'::character varying, 'instrument'::character varying, 'emergency_contact'::character varying, 'guardian'::character varying, 'consent_document'::character varying, 'insurance_card'::character varying, 'document_request'::character varying])::text[])))
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.intake_packet_templates (
+    id uuid NOT NULL,
+    name character varying(120) NOT NULL,
+    created_by uuid,
+    created_at timestamp with time zone NOT NULL,
+    archived_at timestamp with time zone
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.intake_packet_versions (
+    id uuid NOT NULL,
+    template_id uuid NOT NULL,
+    version integer NOT NULL,
+    published_at timestamp with time zone,
+    published_by uuid,
+    created_at timestamp with time zone NOT NULL
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.llm_usage (
     user_id uuid NOT NULL,
     feature_key character varying(64) NOT NULL,
@@ -1186,6 +1221,21 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.ical_sync_configs
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.intake_item_definitions
+    ADD CONSTRAINT intake_item_definitions_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.intake_packet_templates
+    ADD CONSTRAINT intake_packet_templates_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.intake_packet_versions
+    ADD CONSTRAINT intake_packet_versions_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.notes
     ADD CONSTRAINT notes_pkey PRIMARY KEY (id);
 
@@ -1313,6 +1363,21 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.therapy_sessions
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.appointment_types
     ADD CONSTRAINT uq_appointment_types_user_name UNIQUE (user_id, name);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.intake_item_definitions
+    ADD CONSTRAINT uq_intake_item_definitions_key UNIQUE (version_id, key);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.intake_item_definitions
+    ADD CONSTRAINT uq_intake_item_definitions_position UNIQUE (version_id, "position");
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.intake_packet_versions
+    ADD CONSTRAINT uq_intake_packet_versions_number UNIQUE (template_id, version);
 
 
 
@@ -1533,6 +1598,14 @@ CREATE INDEX ix_ical_client_mappings_user_id ON __TENANT_SCHEMA__.ical_client_ma
 
 
 CREATE INDEX ix_ical_sync_configs_user_id ON __TENANT_SCHEMA__.ical_sync_configs USING btree (user_id);
+
+
+
+CREATE INDEX ix_intake_item_definitions_version_id ON __TENANT_SCHEMA__.intake_item_definitions USING btree (version_id);
+
+
+
+CREATE INDEX ix_intake_packet_versions_template_id ON __TENANT_SCHEMA__.intake_packet_versions USING btree (template_id);
 
 
 
@@ -1870,6 +1943,16 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.claims
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.claims
     ADD CONSTRAINT fk_claims_payer_id_payers FOREIGN KEY (payer_id) REFERENCES __TENANT_SCHEMA__.payers(id) ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.intake_item_definitions
+    ADD CONSTRAINT fk_intake_item_definitions_version FOREIGN KEY (version_id) REFERENCES __TENANT_SCHEMA__.intake_packet_versions(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.intake_packet_versions
+    ADD CONSTRAINT fk_intake_packet_versions_template FOREIGN KEY (template_id) REFERENCES __TENANT_SCHEMA__.intake_packet_templates(id) ON DELETE CASCADE;
 
 
 

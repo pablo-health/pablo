@@ -8,6 +8,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
+from ..models.patient_facing import PatientFacingPatient
 from ..utcnow import utc_now
 from .session import InMemoryTherapySessionRepository, TherapySessionRepository
 
@@ -29,7 +30,7 @@ class PatientRepository(ABC):
         pass
 
     @abstractmethod
-    def get_for_patient_principal(self, patient_id: str) -> Patient | None:
+    def get_for_patient_principal(self, patient_id: str) -> PatientFacingPatient | None:
         """The patient's own chart row, read as the patient.
 
         No ``user_id``, because the reader is the subject: a patient holds
@@ -37,6 +38,15 @@ class PatientRepository(ABC):
         their own record. The id comes off the authenticated principal
         rather than the request, and the ``app.current_patient_id`` policy
         on ``patients`` backs that up underneath.
+
+        Narrower than :meth:`get`, and the type says so. That policy grants
+        this principal their whole row, and row-level security has no column
+        granularity — so ``diagnosis``, ``rate_cents`` and
+        ``sliding_scale_note`` are all readable here at the database layer.
+        Returning :class:`Patient` would leave them one attribute access from a
+        response; returning :class:`PatientFacingPatient` means they were never
+        read. What it does and does not carry is recorded column by column in
+        ``app.models.patient_facing``.
         """
 
     def get_last_name(self, patient_id: str, user_id: str) -> str | None:
@@ -241,11 +251,18 @@ class InMemoryPatientRepository(PatientRepository):
             and self._can_access(p.id, user_id)
         }
 
-    def get_for_patient_principal(self, patient_id: str) -> Patient | None:
+    def get_for_patient_principal(self, patient_id: str) -> PatientFacingPatient | None:
         patient = self._patients.get(patient_id)
         if patient is None or patient_id in self._deleted_at:
             return None
-        return patient
+        # Projected field by field, matching what the Postgres implementation
+        # selects, so a test written against this double is a test of what
+        # production returns.
+        return PatientFacingPatient(
+            first_name=patient.first_name,
+            last_name=patient.last_name,
+            date_of_birth=patient.date_of_birth,
+        )
 
     def find_by_email(self, email: str, user_id: str) -> Patient | None:
         matches = [
