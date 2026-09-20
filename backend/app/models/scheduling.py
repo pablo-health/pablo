@@ -83,6 +83,11 @@ class CreateAppointmentRequest(BaseModel):
     session_type: str = "individual"
     video_link: str | None = None
     video_platform: str | None = None
+    #: Which video service should make the room — ``google_meet``, ``zoom``,
+    #: ``doxy_me`` or ``manual``. Omit to use the clinician's own default.
+    #: Ignored when ``video_link`` is set: a link the clinician typed is the
+    #: room, whatever any preference says.
+    provider: str | None = None
     notes: str | None = None
     note_type: str | None = None
     #: The clinician has been shown the conflicting availability rules and
@@ -174,6 +179,12 @@ class AppointmentResponse(BaseModel):
     session_type: str
     video_link: str | None = None
     video_platform: str | None = None
+    #: Which video service made the room, when one did.
+    provider: str | None = None
+    #: The vendor's handle for the meeting. Shown to the clinician's own app
+    #: so a companion can pair a recording to the right appointment; it opens
+    #: nothing on its own.
+    meeting_external_id: str | None = None
     notes: str | None = None
     note_type: str = "soap"
     recurrence_rule: str | None = None
@@ -891,6 +902,14 @@ class PatientBookingOptionsResponse(BaseModel):
     #: computes free slots in this frame, so rendering in any other one shows a
     #: time the booking was not made for.
     practice_timezone: str
+    #: How long before the start a join link is offered, in minutes.
+    #:
+    #: Reported here rather than decided in the portal so one rule governs
+    #: every surface. A patient looking at their phone and a clinician looking
+    #: at their diary must agree about whether an appointment can be joined
+    #: yet; two clients each holding their own constant is how they stop
+    #: agreeing the first time somebody changes one.
+    join_window_before_minutes: int
     #: The practice's own phone number, or ``None`` when it has not given one.
     #: The number a practice publishes for its patients to ring, from the same
     #: directory row the portal's header name comes from — never a clinician's

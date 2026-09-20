@@ -87,10 +87,44 @@ describe("EditorialEventPeek", () => {
         onEdit={vi.fn()}
       />,
     )
-    expect(screen.getByRole("link")).toHaveAttribute(
-      "href",
-      "https://meet.example/abc",
+    expect(
+      screen.getByRole("link", { name: "https://meet.example/abc" }),
+    ).toHaveAttribute("href", "https://meet.example/abc")
+  })
+
+  it("offers Start on an appointment that has a room", () => {
+    // Offered whenever there is a room rather than inside the patient's join
+    // window: opening it early is how the room is ready when somebody arrives.
+    render(
+      <EditorialEventPeek
+        appointment={appointment({ video_link: "https://meet.example/abc" })}
+        patientName="Jane Doe"
+        anchorRect={RECT}
+        onClose={vi.fn()}
+        onEdit={vi.fn()}
+      />,
     )
+    const start = screen.getByTestId("appointment-peek-start")
+    expect(start).toHaveAttribute("href", "https://meet.example/abc")
+    expect(start).toHaveAttribute("target", "_blank")
+  })
+
+  it("offers no Start on an appointment held in person", () => {
+    renderPeek()
+    expect(screen.queryByTestId("appointment-peek-start")).not.toBeInTheDocument()
+  })
+
+  it("offers no Start for a stored value that is not a web address", () => {
+    render(
+      <EditorialEventPeek
+        appointment={appointment({ video_link: "javascript:alert(1)" })}
+        patientName="Jane Doe"
+        anchorRect={RECT}
+        onClose={vi.fn()}
+        onEdit={vi.fn()}
+      />,
+    )
+    expect(screen.queryByTestId("appointment-peek-start")).not.toBeInTheDocument()
   })
 
   it("renders a non-http video_link as plain text, not an anchor", () => {

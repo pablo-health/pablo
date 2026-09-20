@@ -143,6 +143,7 @@ export function PortalAppointments({ sessionToken, now }: PortalAppointmentsProp
         appointments={appointments.data.data}
         timeZone={timeZone}
         canChange={canChange}
+        joinWindowMinutes={policy?.join_window_before_minutes}
         now={now}
         onReschedule={(appointment) => setBooking({ rescheduling: appointment })}
         onCancelled={refetchAll}
