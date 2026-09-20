@@ -12,10 +12,10 @@
 #
 # Host ports default to the ones the browser-facing design fixes (frontend
 # 3000, backend 8000, auth emulator 9099). Override E2E_FRONTEND_PORT,
-# E2E_BACKEND_PORT, E2E_CLEARINGHOUSE_PORT, E2E_MAIL_PORT, E2E_SMS_PORT or
-# E2E_OBJECT_STORE_PORT when something already listens there. The emulator
-# port is baked into the frontend bundle at build time, so changing
-# E2E_AUTH_EMULATOR_PORT needs `make e2e-up` to rebuild.
+# E2E_BACKEND_PORT, E2E_CLEARINGHOUSE_PORT, E2E_MAIL_PORT or E2E_SMS_PORT when
+# something already listens there. The emulator port is baked into the
+# frontend bundle at build time, so changing E2E_AUTH_EMULATOR_PORT needs
+# `make e2e-up` to rebuild.
 name: pablo-e2e
 
 services:
@@ -133,26 +133,6 @@ services:
       - PORTAL_REFRESH_IP_RATE_PER_MIN=600
       - PORTAL_PRACTICE_RESOLVE_IP_RATE_PER_MIN=300
       - PORTAL_RECOVER_IP_RATE_PER_HOUR=200
-      # A document upload does not pass through the API: the browser sends
-      # the file straight to object storage against a URL the API signed,
-      # and the API reads the object back to check it. Without a store the
-      # first step of that is a 503, so the browser can only ever be shown
-      # the failure. The S3-compatible backend is what the store below
-      # speaks; credentials are read from the environment by the AWS SDK's
-      # own chain, never from settings, and these two are the store's.
-      - FILE_STORAGE_PROVIDER=s3
-      - AWS_REGION=us-east-1
-      - AWS_ACCESS_KEY_ID=e2eobjectstore
-      - AWS_SECRET_ACCESS_KEY=e2eobjectstoresecret
-      # Two addresses for one store, for the same reason the frontend has
-      # two for the backend. Server-side reads and writes dial the store on
-      # this network; the signed URL is executed by a browser on the host,
-      # which can only reach the published port. The signature covers the
-      # host, so a URL signed against the first address is not merely
-      # unreachable out there -- it would not verify either.
-      - AWS_S3_ENDPOINT_URL=http://object-store:9000
-      - AWS_S3_PUBLIC_ENDPOINT_URL=http://localhost:${E2E_OBJECT_STORE_PORT:-9000}
-      - PATIENT_DOCUMENTS_GCS_BUCKET=pablo-e2e-documents
     healthcheck:
       # curl isn't in the Chainguard base; probe with the stdlib. The image's
       # own check targets a path the app doesn't serve, so it is replaced.
@@ -188,13 +168,6 @@ services:
         condition: service_healthy
       fake-sms:
         condition: service_healthy
-      # Not for boot -- nothing at startup touches storage -- but so that no
-      # spec can reach an upload before the bucket behind it exists. A
-      # missing bucket surfaces as a signed URL that 404s at the store,
-      # which reads like a broken upload rather than a stack that was not
-      # finished being built.
-      object-store-init:
-        condition: service_completed_successfully
     networks:
       - e2e-net
 
@@ -447,56 +420,6 @@ services:
       timeout: 5s
       start_period: 5s
       retries: 20
-    networks:
-      - e2e-net
-
-  # Where uploaded files actually land. A patient photographs an insurance
-  # card, the browser sends it here against a URL the API signed, and the
-  # API reads it back to check its size and type before the document goes
-  # on the chart. None of that can be exercised without a store, so the
-  # stack runs one: MinIO, which speaks the same S3 API the engine's
-  # S3-compatible backend already talks to, so the lane proves the shipping
-  # code path rather than a stand-in written for the occasion.
-  #
-  # Pinned to a release rather than floating, and pulled from quay.io,
-  # which is where MinIO publishes.
-  #
-  # No volume: every spec creates the files it reads, so state surviving a
-  # restart would only hide a spec that depended on a previous run's.
-  object-store:
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
-    command: ["server", "/data", "--address", ":9000"]
-    environment:
-      # The store's own credentials, matching what the backend is given
-      # above. A four-container stack with no network route off this
-      # machine; the value is a fixture, like the clearinghouse key.
-      - MINIO_ROOT_USER=e2eobjectstore
-      - MINIO_ROOT_PASSWORD=e2eobjectstoresecret
-    ports:
-      # The browser uploads and downloads directly, and it is on the host.
-      - "${E2E_OBJECT_STORE_PORT:-9000}:9000"
-    networks:
-      - e2e-net
-
-  # Creates the bucket the API is configured to use, and by succeeding says
-  # the store is ready. Deliberately not a health probe on the service
-  # above: what the stack needs to know is that a bucket can be made, and
-  # asking that way costs nothing beyond the backend image this stack
-  # already builds.
-  object-store-init:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile.dev
-    command: ["python", "backend/scripts/e2e_create_object_store_bucket.py"]
-    environment:
-      - E2E_OBJECT_STORE_ENDPOINT=http://object-store:9000
-      - E2E_OBJECT_STORE_BUCKET=pablo-e2e-documents
-      - AWS_REGION=us-east-1
-      - AWS_ACCESS_KEY_ID=e2eobjectstore
-      - AWS_SECRET_ACCESS_KEY=e2eobjectstoresecret
-    restart: "no"
-    depends_on:
-      - object-store
     networks:
       - e2e-net
 

@@ -1,30 +1,28 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 /**
- * A file a patient sends in, over the whole real path: the API signs an
- * upload target, the bytes go to object storage directly, the API reads the
- * object back to check it, and the clinician gets the same bytes out again.
+ * A file a patient sends in that is not an attachment on a message: an
+ * insurance card, a letter, whatever the practice asked for before a first
+ * appointment. It goes up the same way an attachment does and then lands
+ * somewhere different — on the chart's own document list, where a clinician
+ * reads it.
  *
- * Every other layer of this already has coverage — the routes, the row
- * policies, the storage providers against fakes. What none of them can say
- * is whether the signed URL an API in one place hands to a browser in
- * another is one the browser can reach and the store will honour. That
- * claim needs a store, and this is the lane that has one.
+ * `portal-messaging-attachments.spec.ts` already follows the messaging half
+ * of this over a real store, so what is left here is the half it does not
+ * touch: the intake-artifact category, the chart list that says a document
+ * came from the patient rather than from a colleague, and the two refusals
+ * on the way in.
  *
- * So the round trip is compared by hash rather than by "a file appeared":
- * an upload that truncates, re-encodes or lands under the wrong key still
- * produces a document row, and only the bytes coming back identical rules
- * all three out.
- *
- * Isolation is asserted the way the messaging spec asserts it, and for the
- * same reason: a second patient with a real session, throwing a real
- * document id at the surface that would serve it to its owner.
+ * The round trip is compared by hash rather than by "a file appeared". An
+ * upload that truncates, re-encodes or lands under the wrong key still
+ * produces a document row, and only identical bytes coming back rule all
+ * three out.
  */
 
 import { expect, test } from "../fixtures/auth"
 import { givePortalContactDetails, givePortalSession } from "../fixtures/portal"
 import { givePatient } from "../fixtures/scenarios"
-import { BACKEND_URL, OBJECT_STORE_URL } from "../fixtures/stack"
+import { BACKEND_URL } from "../fixtures/stack"
 import {
   fixtureFile,
   sendToUploadTarget,
@@ -33,7 +31,7 @@ import {
   type UploadTarget,
 } from "../fixtures/upload"
 
-const PATIENT_INIT = "/api/patient/documents/init"
+const PATIENT_DOCUMENTS = "/api/patient/documents"
 
 interface DocumentResponse {
   id: string
@@ -49,18 +47,14 @@ interface DocumentListResponse {
   total: number
 }
 
-interface DownloadUrlResponse {
-  url: string
-}
-
 interface InitResponse {
   document_id: string
   upload: UploadTarget
 }
 
-// --- The round trip ------------------------------------------------------
+// --- The chart's own copy ------------------------------------------------
 
-test("a patient's upload reaches the chart byte for byte @portal", async ({ api, request }) => {
+test("an intake artifact reaches the chart byte for byte @portal", async ({ api, request }) => {
   const card = fixtureFile("insurance-card.png", "image/png")
   const { email, phone } = givePortalContactDetails()
   const patient = await givePatient(api, { email, phone })
@@ -68,21 +62,21 @@ test("a patient's upload reaches the chart byte for byte @portal", async ({ api,
 
   const uploaded = await uploadAsPatient(request, sessionToken, card, "intake_artifact")
 
-  // The chart says where it came from. A document nobody at the practice
-  // reviewed before it arrived is a different thing to read from one a
-  // colleague filed, so this is not decoration.
   const listed = await api.get<DocumentListResponse>(`/api/patients/${patient.id}/documents`)
   const document = listed.data.find((d) => d.id === uploaded.id)
   expect(document, "the clinician's chart lists the patient's upload").toBeDefined()
+  // A document nobody at the practice reviewed before it arrived is a
+  // different thing to read from one a colleague filed, so the chart says
+  // which rather than leaving it to be inferred from a missing field.
   expect(document?.uploaded_by).toBe("patient")
   expect(document?.filename).toBe(card.name)
   expect(document?.mime_type).toBe("image/png")
-  // The size on the row is the object's real size, read back from the
-  // store at finalize — not the number the client claimed at init.
+  // The size on the row is the object's real size, read back from storage
+  // at finalize, not the number the client claimed at init.
   expect(document?.size_bytes).toBe(card.body.length)
   expect(document?.finalized_at).not.toBeNull()
 
-  const link = await api.get<DownloadUrlResponse>(
+  const link = await api.get<{ url: string }>(
     `/api/documents/${uploaded.id}/file?disposition=inline`,
   )
   const fetched = await request.get(link.url)
@@ -90,39 +84,9 @@ test("a patient's upload reaches the chart byte for byte @portal", async ({ api,
   expect(sha256(await fetched.body()), "the bytes survive the round trip").toBe(uploaded.sha256)
 })
 
-// --- The URL the browser is given ---------------------------------------
+// --- Somebody else's intake artifact ------------------------------------
 
-test("the upload target names an address the browser can reach @portal", async ({
-  api,
-  request,
-}) => {
-  const { email, phone } = givePortalContactDetails()
-  const patient = await givePatient(api, { email, phone })
-  const sessionToken = await givePortalSession(api, request, patient.id, email, phone)
-
-  const started = await request.post(`${BACKEND_URL}${PATIENT_INIT}`, {
-    headers: { Authorization: `Bearer ${sessionToken}` },
-    data: {
-      filename: "insurance-card.png",
-      mime_type: "image/png",
-      size_bytes: 115,
-      category: "intake_artifact",
-    },
-  })
-  expect(started.status()).toBe(201)
-  const init = (await started.json()) as InitResponse
-
-  // The store answers on one address inside the stack and another outside
-  // it, and the signature covers whichever one was signed. A URL minted
-  // against the inside address fails out here twice over, so the address is
-  // worth asserting on its own: when it regresses, every upload in the
-  // suite fails at once and none of them says why.
-  expect(init.upload.url.startsWith(OBJECT_STORE_URL), init.upload.url).toBe(true)
-})
-
-// --- Somebody else's document -------------------------------------------
-
-test("a second patient cannot reach the first one's document @portal", async ({
+test("a second patient cannot reach the first one's intake artifact @portal", async ({
   api,
   request,
 }) => {
@@ -156,21 +120,26 @@ test("a second patient cannot reach the first one's document @portal", async ({
   )
   const strangerHeaders = { Authorization: `Bearer ${strangerSession}` }
 
-  const strangerList = await request.get(`${BACKEND_URL}/api/patient/documents`, {
-    headers: strangerHeaders,
+  // Control first, so the refusal below is about who is asking and not
+  // about a document that was never there.
+  const own = await request.get(`${BACKEND_URL}${PATIENT_DOCUMENTS}/${uploaded.id}/file`, {
+    headers: { Authorization: `Bearer ${ownerSession}` },
   })
-  expect(strangerList.status()).toBe(200)
-  const strangersOwn = (await strangerList.json()) as DocumentListResponse
-  expect(strangersOwn.data.map((d) => d.id)).not.toContain(uploaded.id)
+  expect(own.status(), "the owner can fetch their own artifact").toBe(200)
 
-  // 404, not 403: an id that belongs to somebody else and an id that never
-  // existed have to answer the same way, or the difference between them is
-  // readable from outside.
-  const reached = await request.get(
-    `${BACKEND_URL}/api/patient/documents/${uploaded.id}/file`,
-    { headers: strangerHeaders },
-  )
-  expect(reached.status(), "another patient's document is not there").toBe(404)
+  // 404, not 403: an id belonging to somebody else and an id that never
+  // existed have to answer alike, or the difference is readable from
+  // outside.
+  const reached = await request.get(`${BACKEND_URL}${PATIENT_DOCUMENTS}/${uploaded.id}/file`, {
+    headers: strangerHeaders,
+    failOnStatusCode: false,
+  })
+  expect(reached.status(), "another patient's artifact is not there").toBe(404)
+
+  const strangersOwn = (await (
+    await request.get(`${BACKEND_URL}${PATIENT_DOCUMENTS}`, { headers: strangerHeaders })
+  ).json()) as DocumentListResponse
+  expect(strangersOwn.data.map((d) => d.id)).not.toContain(uploaded.id)
 })
 
 // --- What will not be accepted ------------------------------------------
@@ -182,25 +151,29 @@ test("a file type the chart does not take is refused before anything is stored @
   const { email, phone } = givePortalContactDetails()
   const patient = await givePatient(api, { email, phone })
   const sessionToken = await givePortalSession(api, request, patient.id, email, phone)
+  const headers = { Authorization: `Bearer ${sessionToken}` }
 
-  const refused = await request.post(`${BACKEND_URL}${PATIENT_INIT}`, {
-    headers: { Authorization: `Bearer ${sessionToken}` },
+  const refused = await request.post(`${BACKEND_URL}${PATIENT_DOCUMENTS}/init`, {
+    headers,
+    // Named .png; it is text, and the type it declares is what it is. The
+    // engine does not sniff bytes against the declared type, so this is the
+    // refusal it actually makes — no upload target is ever minted.
     data: {
-      // Named .png; it is text, and the type it declares is what it is.
       filename: "insurance-card.png",
       mime_type: "text/plain",
       size_bytes: 12,
       category: "intake_artifact",
     },
+    failOnStatusCode: false,
   })
   expect(refused.status(), "an unsupported type never gets an upload target").toBe(422)
 
   // And the other half of the same rule, which only a real store can show:
-  // the accepted type is pinned in the signature, so a client that holds a
-  // target for one type and declares another is turned away by the store,
+  // the accepted type is pinned in the signature, so a client holding a
+  // target for one type and declaring another is turned away by storage,
   // without the API being asked at all.
-  const started = await request.post(`${BACKEND_URL}${PATIENT_INIT}`, {
-    headers: { Authorization: `Bearer ${sessionToken}` },
+  const started = await request.post(`${BACKEND_URL}${PATIENT_DOCUMENTS}/init`, {
+    headers,
     data: {
       filename: "insurance-card.png",
       mime_type: "image/png",
@@ -220,5 +193,5 @@ test("a file type the chart does not take is refused before anything is stored @
     mimeType: "text/plain",
     body: Buffer.from("not an image"),
   })
-  expect(mismatched, "the store holds the signed content type").toBeGreaterThanOrEqual(400)
+  expect(mismatched, "storage holds the signed content type").toBeGreaterThanOrEqual(400)
 })
