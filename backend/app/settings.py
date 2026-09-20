@@ -1527,12 +1527,21 @@ class Settings(BaseSettings):
     # Pablo hosts no video of its own. A practice brings the room it already
     # uses and already has an agreement with, and these settings say which of
     # those rooms this deployment is able to offer.
-    telehealth_providers_enabled: list[str] = Field(
-        default=["manual"],
+    #: Declared as a STRING, not a list, and read through
+    #: :attr:`telehealth_provider_names`.
+    #:
+    #: pydantic-settings JSON-decodes any field whose annotation is a complex
+    #: type before a validator can see it, so a list field set to
+    #: ``manual,doxy_me`` in the environment does not fall back to a
+    #: comma-split — it refuses to build Settings at all, and the process
+    #: never starts. A string field takes whatever the environment says and
+    #: the splitting happens where it can be read.
+    telehealth_providers_enabled: str = Field(
+        default="manual",
         description=(
-            "Which meeting providers this deployment offers, from "
-            "google_meet, zoom, doxy_me and manual. Listing one is not the "
-            "same as a clinician having connected it — a provider with no "
+            "Which meeting providers this deployment offers, comma-separated, "
+            "from google_meet, zoom, doxy_me and manual. Listing one is not "
+            "the same as a clinician having connected it — a provider with no "
             "connection behind it is not offered."
         ),
     )
@@ -1576,13 +1585,18 @@ class Settings(BaseSettings):
         description="Zoom OAuth client secret for the deployment's Zoom app",
     )
 
-    @field_validator("telehealth_providers_enabled", mode="before")
-    @classmethod
-    def _parse_telehealth_providers(cls, v: object) -> object:
-        """Accept the comma-separated form an environment variable carries."""
-        if isinstance(v, str):
-            return [name.strip() for name in v.split(",") if name.strip()]
-        return v
+    @property
+    def telehealth_provider_names(self) -> tuple[str, ...]:
+        """The configured provider names, as written. Never normalised here.
+
+        Reading what the deployment said is this property's whole job;
+        deciding which of those names the engine recognises belongs to
+        ``app.services.telehealth.enabled_provider_ids``, so a typo costs one
+        provider rather than the ability to start.
+        """
+        return tuple(
+            name.strip() for name in self.telehealth_providers_enabled.split(",") if name.strip()
+        )
 
     @property
     def redis_url(self) -> str:

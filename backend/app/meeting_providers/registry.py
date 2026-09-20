@@ -57,7 +57,7 @@ def build_registry(
     registered a Zoom app. Each of those is a deployment that simply does not
     offer that provider, which the surfaces above render correctly already.
     """
-    enabled = enabled_provider_ids(settings.telehealth_providers_enabled)
+    enabled = enabled_provider_ids(settings.telehealth_provider_names)
     providers: list[MeetingProvider] = []
 
     if MANUAL in enabled:
