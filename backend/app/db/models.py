@@ -798,6 +798,126 @@ class PatientIntakeResponseRow(Base):
     )
 
 
+class PatientIntakeSignatureRow(Base):
+    """One person typing their name against one consent document.
+
+    The evidence record for a signature, and the one table in this feature
+    that exists to be read years after it was written. Everything on it is
+    chosen so that "what did this person agree to, and how do we know it was
+    them" can be answered from the row alone.
+
+    **It records the version, not the document.** ``document_version_id``
+    points at the exact revision that was on the screen, and
+    ``document_digest`` is that revision's digest copied at signing. The
+    copy is not redundant with the foreign key: the digest travels with the
+    signature, so a signed record still names its text even when it is read
+    through an export that never joined to ``intake_documents``. The route
+    checks the two agree before it writes, so a copy that has drifted cannot
+    be created.
+
+    **The session is named by its handle, never by its token.**
+    ``session_id`` is the server-side id of the portal session the request
+    authenticated with, and ``auth_strength`` is how strongly that session
+    had proved who was holding it — ``stepped_up`` on every row the route
+    writes, because it refuses a single-factor caller. Storing the strength
+    rather than inferring it later is what makes the row self-describing:
+    the policy that required step-up can change, and this says what was
+    actually true at the time.
+
+    ``ip`` is a string rather than ``INET`` for the same reason
+    ``audit_logs.ip_address`` is. The value comes from the same request
+    extractor, which reads a proxy header; a column that refused a malformed
+    one would turn somebody else's misconfigured proxy into a failure to
+    record a signature, and the address is evidence about a request rather
+    than something this table ever queries as a network address.
+
+    ``evidence_digest`` is a sha256 over the fields above (see
+    :mod:`app.intake.signatures`). It is a consistency check on the row, not
+    a seal — anybody who can rewrite a column can rewrite it too. What it
+    catches is the realistic failure: a migration, a backfill or a bug
+    changing a column with nothing else looking wrong.
+
+    **A guardian signature is the same session with a different role.** The
+    portal has one principal, the patient's, and v1 does not mint a separate
+    guardian identity — so a guardian signature is recorded as an
+    attestation made from the patient's session, with the guardian's own
+    typed name. ``signer_role`` is what tells the two apart, and the screen
+    says plainly which one is being taken.
+
+    The partial unique index is the rule that one person signs one document
+    once per form. ``superseded_at`` is what takes a row out of it: a
+    signature invalidated by a newer version of the document is superseded
+    rather than deleted, because a signature that was taken is a fact
+    whatever happened afterwards. Nothing writes it yet — the re-sign rule
+    today refuses to take a stale signature at all, rather than taking one
+    and retiring the old — so it ships with the column it belongs to rather
+    than costing a migration later, exactly as ``superseded_by`` does on
+    :class:`PatientIntakeResponseRow`.
+
+    ``patient_id`` is denormalized from the assignment and held honest by
+    the composite foreign key, the same pattern and the same reason as
+    :class:`PatientIntakeResponseRow`.
+    """
+
+    __tablename__ = "patient_intake_signatures"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    assignment_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
+    item_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey(
+            "intake_item_definitions.id",
+            name="fk_patient_intake_signatures_item",
+        ),
+        nullable=False,
+    )
+    document_version_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey(
+            "intake_documents.id",
+            name="fk_patient_intake_signatures_document",
+        ),
+        nullable=False,
+    )
+    document_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    signer_role: Mapped[str] = mapped_column(String(16), nullable=False)
+    signer_typed_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    consent_statement_version: Mapped[str] = mapped_column(String(16), nullable=False)
+    signed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    auth_strength: Mapped[str] = mapped_column(String(16), nullable=False)
+    session_id: Mapped[str | None] = mapped_column(String(64))
+    ip: Mapped[str | None] = mapped_column(String(45))
+    user_agent: Mapped[str | None] = mapped_column(String(512))
+    evidence_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "signer_role IN ('patient','guardian')",
+            name="ck_patient_intake_signatures_role",
+        ),
+        ForeignKeyConstraint(
+            ["assignment_id", "patient_id"],
+            [
+                "patient_intake_assignments.id",
+                "patient_intake_assignments.patient_id",
+            ],
+            ondelete="CASCADE",
+            name="fk_patient_intake_signatures_assignment",
+        ),
+        Index(
+            "uq_patient_intake_signatures_live",
+            "assignment_id",
+            "item_id",
+            "signer_role",
+            unique=True,
+            postgresql_where=text("superseded_at IS NULL"),
+        ),
+    )
+
+
 class PatientMessageThreadRow(Base):
     """One secure-message conversation between a patient and their practice.
 

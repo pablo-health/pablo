@@ -50,7 +50,13 @@ export function ReviewScreen({
   submitting,
   error,
 }: ReviewScreenProps) {
-  const answerable = items.filter((item) => rendererFor(item.item_type).answerable)
+  // Every question that collects something, including the ones whose
+  // renderer wrote through a route of its own — a consent document belongs
+  // on this list as much as an answer does.
+  const answerable = items.filter((item) => {
+    const renderer = rendererFor(item.item_type)
+    return renderer.answerable || renderer.writesItself === true
+  })
 
   return (
     <div data-testid="forms-review" className="flex flex-col">

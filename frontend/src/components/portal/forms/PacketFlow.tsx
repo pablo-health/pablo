@@ -118,7 +118,25 @@ export function PacketFlow({
     [items, edits],
   )
 
-  const countable = items.filter((item) => rendererFor(item.item_type).answerable)
+  // The questions that collect something, whether the walk saves it or the
+  // renderer writes it for itself. A consent document is counted here and
+  // shown on the review screen; what it is NOT is saved on Continue.
+  const countable = items.filter((item) => {
+    const renderer = rendererFor(item.item_type)
+    return renderer.answerable || renderer.writesItself === true
+  })
+
+  /**
+   * A renderer wrote something through a route of its own.
+   *
+   * Re-read rather than patched in place: what comes back carries the
+   * server's answer about progress, and no client is allowed to work that
+   * out for itself.
+   */
+  const handleRendererWrite = useCallback(() => {
+    onChanged()
+    void queryClient.invalidateQueries({ queryKey: assignmentKey(sessionToken, assignmentId) })
+  }, [onChanged, queryClient, sessionToken, assignmentId])
 
   const save = useMutation({
     mutationFn: ({ item, value }: { item: IntakeAssignmentItem; value: AnswerValue }) =>
@@ -179,10 +197,11 @@ export function PacketFlow({
     const value = values[item.id] ?? null
     setError(null)
 
-    // A heading, a paragraph, or a question this portal cannot ask yet:
-    // there is nothing the save route would accept, so the press only moves.
-    // An optional question nobody touched is the same — sending `{}` would
-    // be answering it with nothing.
+    // A heading, a paragraph, a question this portal cannot ask yet, or one
+    // whose renderer already wrote through a route of its own: there is
+    // nothing the save route would accept, so the press only moves. An
+    // optional question nobody touched is the same — sending `{}` would be
+    // answering it with nothing.
     const skip = !rendererFor(item.item_type).answerable || (value === null && !item.required)
     if (!skip) {
       try {
@@ -245,6 +264,10 @@ export function PacketFlow({
       value={values[item.id] ?? null}
       onChange={(value) => setEdits((prev) => ({ ...prev, [item.id]: value }))}
       form={form}
+      assignmentId={assignmentId}
+      sessionToken={sessionToken}
+      onWrote={handleRendererWrite}
+      onSessionLost={onSessionLost}
       onBack={
         current.index === 0
           ? null

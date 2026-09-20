@@ -26,6 +26,11 @@ interface ItemScreenProps {
   value: AnswerValue | null
   onChange: (value: AnswerValue) => void
   form: IntakeForm | null
+  /** Handed to the renderer, for the one type that writes for itself. */
+  assignmentId: string
+  sessionToken: string
+  onWrote: () => void
+  onSessionLost: () => void
   /** Absent on the first question, so there is nothing to go back to. */
   onBack: (() => void) | null
   onContinue: () => void
@@ -41,6 +46,10 @@ export function ItemScreen({
   value,
   onChange,
   form,
+  assignmentId,
+  sessionToken,
+  onWrote,
+  onSessionLost,
   onBack,
   onContinue,
   saving,
@@ -58,7 +67,16 @@ export function ItemScreen({
       )}
 
       <div className="mt-3">
-        <renderer.Component item={item} value={value} onChange={onChange} form={form} />
+        <renderer.Component
+          item={item}
+          value={value}
+          onChange={onChange}
+          form={form}
+          assignmentId={assignmentId}
+          sessionToken={sessionToken}
+          onWrote={onWrote}
+          onSessionLost={onSessionLost}
+        />
       </div>
 
       {renderer.crisisFooter && <CrisisFooter />}

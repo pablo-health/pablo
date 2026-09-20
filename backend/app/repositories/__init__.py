@@ -92,6 +92,10 @@ from .patient_intake_assignment import (
     InMemoryPatientIntakeAssignmentRepository,
     PatientIntakeAssignmentRepository,
 )
+from .patient_intake_signature import (
+    InMemoryPatientIntakeSignatureRepository,
+    PatientIntakeSignatureRepository,
+)
 from .patient_intake_submission import (
     InMemoryPatientIntakeSubmissionRepository,
     PatientIntakeSubmissionRepository,
@@ -341,6 +345,15 @@ def get_patient_intake_assignment_repository() -> PatientIntakeAssignmentReposit
     return PostgresPatientIntakeAssignmentRepository(_get_pg_session())
 
 
+def get_patient_intake_signature_repository() -> PatientIntakeSignatureRepository:
+    """Get intake signature repository instance."""
+    from .postgres.patient_intake_signature import (
+        PostgresPatientIntakeSignatureRepository,
+    )
+
+    return PostgresPatientIntakeSignatureRepository(_get_pg_session())
+
+
 def get_patient_intake_submission_repository() -> PatientIntakeSubmissionRepository:
     """Get patient intake submission repository instance."""
     from .postgres.patient_intake_submission import (
@@ -407,6 +420,7 @@ __all__ = [
     "InMemoryNotesRepository",
     "InMemoryPatientDocumentRepository",
     "InMemoryPatientIntakeAssignmentRepository",
+    "InMemoryPatientIntakeSignatureRepository",
     "InMemoryPatientIntakeSubmissionRepository",
     "InMemoryPatientMessageRepository",
     "InMemoryPatientRepository",
@@ -419,6 +433,7 @@ __all__ = [
     "NotesRepository",
     "PatientDocumentRepository",
     "PatientIntakeAssignmentRepository",
+    "PatientIntakeSignatureRepository",
     "PatientIntakeSubmissionRepository",
     "PatientMessageAccessDeniedError",
     "PatientMessageRepository",
@@ -453,6 +468,7 @@ __all__ = [
     "get_patient_coverage_repository",
     "get_patient_document_repository",
     "get_patient_intake_assignment_repository",
+    "get_patient_intake_signature_repository",
     "get_patient_intake_submission_repository",
     "get_patient_message_repository",
     "get_patient_payment_repository",

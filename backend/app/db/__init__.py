@@ -1071,6 +1071,12 @@ PATIENT_READABLE_TABLES: dict[str, str] = {
     # why the column is denormalized and what keeps it honest.
     "patient_intake_assignments": "patient_id",
     "patient_intake_responses": "patient_id",
+    # What a patient signed. Their own record about them, carrying its own
+    # ``patient_id`` for the same reason the responses beside it do, so it
+    # needs no bespoke predicate either. A patient reads their signatures
+    # back — the signing screen shows who has signed and when — and the
+    # clinician side reaches the same rows through ``has_patient_access``.
+    "patient_intake_signatures": "patient_id",
     # A patient's own secure-message threads and the messages in them. Both
     # halves are the patient's: they start the thread, they write into it,
     # and they read what the practice wrote back. The clinician side reaches
@@ -1147,6 +1153,14 @@ PATIENT_WRITABLE_TABLES: dict[str, str] = {
     # before any write is attempted.
     "patient_intake_assignments": "patient_id",
     "patient_intake_responses": "patient_id",
+    # Signing is a patient INSERT. The grant is wider than that — the
+    # registration cannot express "INSERT but never UPDATE", because RLS has
+    # no way to grant one command and withhold the other once a table is
+    # writable. So the narrowing is the route layer's, and it is absolute:
+    # no route anywhere updates a signature. A signature that stops counting
+    # is superseded by a later row rather than edited, which is the whole
+    # reason the table carries ``superseded_at`` instead of a mutable flag.
+    "patient_intake_signatures": "patient_id",
     # Starting a thread and sending a message are both patient INSERTs, and
     # marking a message read is a patient UPDATE. The row-level grant is
     # therefore wider than the three routes that use it — a patient could,

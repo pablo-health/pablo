@@ -70,6 +70,12 @@ class PatientDocumentResponse(BaseModel):
 
     No ``body_markdown``: the rendered words are what was read, and handing
     back the source would give a signing screen two things it could show.
+
+    ``consent_statement`` is the sentence a signature would be taken under —
+    served rather than left to the screen to write, because the version of it
+    is recorded on the signature. A copy in the front end would be free to
+    drift from what a stored signature says was agreed, and nothing would
+    look wrong when it did.
     """
 
     id: str
@@ -80,6 +86,8 @@ class PatientDocumentResponse(BaseModel):
     digest: str
     requires_signature: bool
     signer_roles: list[str]
+    consent_statement: str
+    consent_statement_version: str
 
 
 __all__ = [

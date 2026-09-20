@@ -25,7 +25,10 @@ done. A stored flag would be a second copy of a fact the rows already carry.
 **A saved answer is checked against the question it answers.** The value
 goes through the same validator the eventual submit will use, so a draft
 cannot quietly hold something that will be refused later. What the route
-layer adds on top is which rows a patient may touch at all.
+layer adds on top is which rows a patient may touch at all. One kind of
+question is refused here outright: a consent document's answer names a
+signature row, so it is written by the signing route and by nothing else
+(:data:`~app.intake.answers.SIGNED_ITEM_TYPES`).
 
 **What was handed in is never edited.** Submitting freezes every answer,
 and no path here updates the value on a frozen row — a correction, when
@@ -42,7 +45,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from ..intake.answers import AnswerError, validate_answer
+from ..intake.answers import SIGNED_ITEM_TYPES, AnswerError, validate_answer
 from ..intake.completion import Completion, CompletionItem, assess
 from ..intake.items import (
     InstrumentConfig,
@@ -303,6 +306,13 @@ class IntakeAssignmentService:
         config = _parse(row)
         if config is None:
             raise AnswerError("This question cannot be answered as it is set up.")
+        if config.item_type in SIGNED_ITEM_TYPES:
+            # A consent item's answer says "signature <id> exists", so the
+            # only thing allowed to write one is the route that also writes
+            # the signature. Letting this path through would let a patient
+            # assert a signature nobody took — and completion, which reads
+            # the answer rather than the signature, would believe it.
+            raise AnswerError("This document is signed rather than answered here.")
         validate_answer(config, value)
 
         # The immutability invariant, checked against the row rather than

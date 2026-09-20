@@ -724,6 +724,29 @@ CREATE TABLE __TENANT_SCHEMA__.patient_intake_responses (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.patient_intake_signatures (
+    id uuid NOT NULL,
+    assignment_id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    item_id uuid NOT NULL,
+    document_version_id uuid NOT NULL,
+    document_digest character varying(64) NOT NULL,
+    signer_role character varying(16) NOT NULL,
+    signer_typed_name character varying(160) NOT NULL,
+    consent_statement_version character varying(16) NOT NULL,
+    signed_at timestamp with time zone NOT NULL,
+    auth_strength character varying(16) NOT NULL,
+    session_id character varying(64),
+    ip character varying(45),
+    user_agent character varying(512),
+    evidence_digest character varying(64) NOT NULL,
+    superseded_at timestamp with time zone,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_patient_intake_signatures_role CHECK (((signer_role)::text = ANY ((ARRAY['patient'::character varying, 'guardian'::character varying])::text[])))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.patient_intake_submissions (
     id character varying(128) NOT NULL,
     patient_id uuid NOT NULL,
@@ -1332,6 +1355,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_responses
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_signatures
+    ADD CONSTRAINT patient_intake_signatures_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_submissions
     ADD CONSTRAINT patient_intake_submissions_pkey PRIMARY KEY (id);
 
@@ -1761,6 +1789,10 @@ CREATE INDEX ix_patient_intake_responses_patient_id ON __TENANT_SCHEMA__.patient
 
 
 
+CREATE INDEX ix_patient_intake_signatures_patient_id ON __TENANT_SCHEMA__.patient_intake_signatures USING btree (patient_id);
+
+
+
 CREATE INDEX ix_patient_intake_submissions_patient_id ON __TENANT_SCHEMA__.patient_intake_submissions USING btree (patient_id);
 
 
@@ -1914,6 +1946,10 @@ CREATE UNIQUE INDEX uq_patient_intake_assignments_receipt ON __TENANT_SCHEMA__.p
 
 
 CREATE UNIQUE INDEX uq_patient_intake_responses_live_draft ON __TENANT_SCHEMA__.patient_intake_responses USING btree (assignment_id, item_id) WHERE ((superseded_by IS NULL) AND draft);
+
+
+
+CREATE UNIQUE INDEX uq_patient_intake_signatures_live ON __TENANT_SCHEMA__.patient_intake_signatures USING btree (assignment_id, item_id, signer_role) WHERE (superseded_at IS NULL);
 
 
 
@@ -2095,6 +2131,21 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_responses
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_responses
     ADD CONSTRAINT fk_patient_intake_responses_item FOREIGN KEY (item_id) REFERENCES __TENANT_SCHEMA__.intake_item_definitions(id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_signatures
+    ADD CONSTRAINT fk_patient_intake_signatures_assignment FOREIGN KEY (assignment_id, patient_id) REFERENCES __TENANT_SCHEMA__.patient_intake_assignments(id, patient_id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_signatures
+    ADD CONSTRAINT fk_patient_intake_signatures_document FOREIGN KEY (document_version_id) REFERENCES __TENANT_SCHEMA__.intake_documents(id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_signatures
+    ADD CONSTRAINT fk_patient_intake_signatures_item FOREIGN KEY (item_id) REFERENCES __TENANT_SCHEMA__.intake_item_definitions(id);
 
 
 

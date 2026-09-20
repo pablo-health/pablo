@@ -42,6 +42,7 @@ from ..api_errors import ConflictError, ForbiddenError, NotFoundError, Unprocess
 from ..auth.patient_context import AuthStrength, PatientContext, get_patient_context
 from ..auth.route_access import subscription_exempt
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
+from ..intake.consent_statement import CURRENT_CONSENT_STATEMENT_VERSION, consent_statement
 from ..intake.documents import render_html
 from ..models import User  # noqa: TC001 — fastapi resolves the annotation at runtime
 from ..models.audit import AuditAction, ResourceType
@@ -318,6 +319,11 @@ def read_document(
         digest=str(row["digest"]),
         requires_signature=bool(row["requires_signature"]),
         signer_roles=_signer_roles(row["signer_roles"]),
+        # Today's wording, because a signature taken from this screen will
+        # record today's version. A signature already taken reads back its
+        # own version from its own row.
+        consent_statement=consent_statement(),
+        consent_statement_version=CURRENT_CONSENT_STATEMENT_VERSION,
     )
 
 

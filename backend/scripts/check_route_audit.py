@@ -137,6 +137,14 @@ AUDIT_EXEMPT_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # clinician-side action on the same rows.
         ("get", "/api/patient/intake/assignments"),
         ("get", "/api/patient/intake/assignments/{assignment_id}"),
+        # patient_intake_assignments.py — the patient reading back which
+        # consent documents they have already signed on their own form. Same
+        # principle again, and the signing itself is on the record: every
+        # signature writes a PATIENT_CONSENT_SIGNED entry on this surface,
+        # and the clinician-side read of the same rows is audited where it
+        # lands. Reading it back is what makes a signed form still look
+        # signed after the browser that signed it has gone.
+        ("get", "/api/patient/intake/assignments/{assignment_id}/signatures"),
         # patient_intake_assignments.py — which forms a patient was asked
         # for and how many questions are still outstanding. It carries no
         # answer and no word the patient wrote: the disclosure is reading

@@ -12,6 +12,7 @@ surfaces, two routers:
     GET  /assignments                              -> the forms I was asked for
     GET  /assignments/{id}                         -> one form, with what I saved
     PUT  /assignments/{id}/items/{item_id}         -> save one answer
+    POST /assignments/{id}/signatures              -> sign a consent document
     POST /assignments/{id}/submit                  -> hand it in, get a receipt
 
   Clinician — ``/api/patients``
@@ -48,6 +49,13 @@ longer this patient's to fill in, because it was handed in or withdrawn. A
 ``422`` on a save means the answer does not fit the question, and on a
 submit it means the form is not finished and names what is outstanding.
 Both messages say what to do about it in the words the patient is reading.
+
+**A consent document is signed, not saved.** It has a route of its own
+because its answer is a record rather than a value: the signature row says
+which revision of which text was read, by whom, in what role, from which
+session and how strongly that session had proved who was holding it. The
+save route refuses the type outright, so the only thing that can assert a
+signature is the thing that takes one.
 """
 
 from __future__ import annotations
@@ -62,6 +70,7 @@ from ..auth.patient_context import AuthStrength, PatientContext, get_patient_con
 from ..auth.route_access import subscription_exempt
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
 from ..intake.answers import AnswerError
+from ..intake.consent_statement import consent_statement
 from ..intake.items import stored_config
 from ..models import User  # noqa: TC001 — fastapi resolves the annotation at runtime
 from ..models.audit import AuditAction, ResourceType
@@ -78,14 +87,21 @@ from ..models.patient_intake_assignment_api import (
     SavedAnswerResponse,
     SubmittedMeasureResponse,
 )
+from ..models.patient_intake_signature_api import (
+    IntakeSignatureResponse,
+    SignDocumentRequest,
+)
 from ..outcome_measures.service import (  # noqa: TC001 — fastapi resolves the annotation
     OutcomeMeasureService,
 )
 from ..repositories import (
+    get_intake_document_repository,
     get_intake_packet_repository,
     get_patient_intake_assignment_repository,
+    get_patient_intake_signature_repository,
     get_patient_repository,
 )
+from ..request_context import extract_request_context
 from ..services.audit_service import AuditService, get_audit_service
 from ..services.patient_intake_assignment_service import (
     AssignmentClosedError,
@@ -93,6 +109,17 @@ from ..services.patient_intake_assignment_service import (
     IncompleteFormError,
     IntakeAssignmentService,
     UnpublishedVersionError,
+)
+from ..services.patient_intake_signature_service import (
+    AlreadySignedError,
+    IntakeSignatureService,
+    NotAffirmedError,
+    NotASignableItemError,
+    SignerRoleNotAskedError,
+    SigningRequest,
+    StaleDocumentVersionError,
+    TypedNameError,
+    UnsignableDocumentError,
 )
 from ..utcnow import utc_now
 from .patient_intake import get_intake_outcome_measure_service
@@ -147,9 +174,28 @@ def get_clinician_patient_repository(
     return get_patient_repository()
 
 
+def get_patient_intake_signature_service() -> IntakeSignatureService:
+    """The signature service on whichever principal armed the session.
+
+    Four repositories because taking a signature is a statement about four
+    things at once: the form the question is on, the document it points at,
+    the signatures already given, and the answer the signature settles. No
+    principal dependency of its own, for the same reason the assignment
+    service above has none — every route that reaches this has already been
+    through one, so the ``search_path`` is set by the time it runs.
+    """
+    return IntakeSignatureService(
+        get_patient_intake_signature_repository(),
+        get_intake_packet_repository(),
+        get_intake_document_repository(),
+        get_patient_intake_assignment_repository(),
+    )
+
+
 PatientAssignments = Annotated[
     IntakeAssignmentService, Depends(get_patient_intake_assignment_service)
 ]
+PatientSignatures = Annotated[IntakeSignatureService, Depends(get_patient_intake_signature_service)]
 ClinicianAssignments = Annotated[
     IntakeAssignmentService, Depends(get_clinician_intake_assignment_service)
 ]
@@ -333,6 +379,166 @@ def save_my_answer(
         saved_at=utc_now(),
         status=str(current["status"]),
         progress=_progress(service.progress(current, patient.patient_id)),
+    )
+
+
+@router.get(
+    "/assignments/{assignment_id}/signatures",
+    response_model=list[IntakeSignatureResponse],
+)
+def list_my_signatures(
+    assignment_id: str,
+    patient: CurrentPatient,
+    service: PatientAssignments,
+    signatures: PatientSignatures,
+    _: None = Depends(subscription_exempt),
+) -> list[IntakeSignatureResponse]:
+    """What this patient has already signed on this form, oldest first.
+
+    What the signing screen reads to know it is done. Without it the answer
+    would survive only as long as the browser that took the signature, and
+    somebody coming back to a finished form would be shown an empty one.
+
+    Not audited. A patient reading their own record is not a disclosure —
+    the settled principle behind the patient-principal audit model — and the
+    signing event itself is already on the record.
+    """
+    _require_stepped_up(patient)
+    _own_assignment(service, assignment_id, patient.patient_id)
+    return [
+        _signature_response(row)
+        for row in signatures.live_for_assignment(assignment_id, patient.patient_id)
+    ]
+
+
+@router.post(
+    "/assignments/{assignment_id}/signatures",
+    response_model=IntakeSignatureResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def sign_my_consent_document(
+    assignment_id: str,
+    body: SignDocumentRequest,
+    request: Request,
+    patient: CurrentPatient,
+    service: PatientAssignments,
+    signatures: PatientSignatures,
+    audit: AuditService = Depends(get_audit_service),
+    _: None = Depends(subscription_exempt),
+) -> IntakeSignatureResponse:
+    """Type a name against one of the consent documents on this form.
+
+    Every refusal is a status code with a sentence the person signing can
+    act on:
+
+    * ``403`` — this session proved one factor. Signing is the one write on
+      this surface that is meant to be read back years later, so it is held
+      to the same bar as reading the chart rather than a lower one.
+    * ``404`` — an item that is not on this form, or is not a document to
+      sign. The two are indistinguishable on purpose, like every other id
+      on this surface.
+    * ``409`` — already signed by this role, or a newer version of the
+      document has been published and this item asks for a fresh signature,
+      or the form has been handed in. All three mean "not now, and not
+      because of anything you typed".
+    * ``422`` — nothing typed, the box not ticked, or a role this document
+      does not ask for.
+
+    What is recorded, and what is not: the audit entry names the document
+    version and the role, never the typed name. The name is the signature —
+    it lives on the signature row, and a second copy in the compliance log
+    would be a person's name in a place no question needs it.
+    """
+    _require_stepped_up(patient)
+    assignment = _own_assignment(service, assignment_id, patient.patient_id)
+    ip_address, user_agent = extract_request_context(request)
+
+    try:
+        signature = signatures.sign(
+            SigningRequest(
+                assignment=assignment,
+                patient_id=patient.patient_id,
+                item_id=body.item_id,
+                signer_role=body.signer_role,
+                typed_name=body.typed_name,
+                affirmed=body.affirm,
+                auth_strength=patient.auth_strength.value,
+                session_id=patient.session_id,
+                ip=ip_address,
+                user_agent=user_agent,
+            )
+        )
+    except NotASignableItemError as exc:
+        raise NotFoundError("Document not found", {"item_id": body.item_id}) from exc
+    except NotAffirmedError as exc:
+        raise UnprocessableEntityError(
+            "Tick the box to confirm this is your signature.", {"item_id": body.item_id}
+        ) from exc
+    except TypedNameError as exc:
+        raise UnprocessableEntityError(
+            "Type your name to sign this.", {"item_id": body.item_id}
+        ) from exc
+    except SignerRoleNotAskedError as exc:
+        raise UnprocessableEntityError(
+            "This document does not ask for that signature.", {"item_id": body.item_id}
+        ) from exc
+    except AlreadySignedError as exc:
+        raise ConflictError("This has already been signed.", {"item_id": body.item_id}) from exc
+    except StaleDocumentVersionError as exc:
+        raise ConflictError(
+            "There is a newer version of this document to read and sign.",
+            {"item_id": body.item_id},
+        ) from exc
+    except UnsignableDocumentError as exc:
+        # A form published pointing at a draft, a missing version, or text
+        # whose digest no longer matches. Nothing the patient did, and
+        # nothing they can fix — so it says who can.
+        raise ConflictError(
+            "This document isn't ready to sign. Your practice can sort this out.",
+            {"item_id": body.item_id},
+        ) from exc
+    except AssignmentClosedError as exc:
+        raise ConflictError(
+            "This form is no longer open for changes.", {"assignment_id": assignment_id}
+        ) from exc
+
+    # Which text was signed and in what role. Never the name that was typed.
+    audit.log_patient_principal_action(
+        action=AuditAction.PATIENT_CONSENT_SIGNED,
+        request=request,
+        patient_id=patient.patient_id,
+        resource_type=ResourceType.PATIENT_INTAKE_ASSIGNMENT,
+        resource_id=assignment_id,
+        changes={
+            "document_version_id": str(signature["document_version_id"]),
+            "signer_role": str(signature["signer_role"]),
+        },
+    )
+    return _signature_response(signature)
+
+
+def _signature_response(signature: dict[str, object]) -> IntakeSignatureResponse:
+    """The stored row as the person who signed it is shown it.
+
+    The address and the browser are left behind: they are evidence about the
+    request rather than about the agreement, and nothing on this screen has
+    a use for them.
+    """
+    version = str(signature["consent_statement_version"])
+    return IntakeSignatureResponse(
+        id=str(signature["id"]),
+        assignment_id=str(signature["assignment_id"]),
+        item_id=str(signature["item_id"]),
+        document_version_id=str(signature["document_version_id"]),
+        document_digest=str(signature["document_digest"]),
+        signer_role=str(signature["signer_role"]),
+        signer_typed_name=str(signature["signer_typed_name"]),
+        consent_statement_version=version,
+        consent_statement=consent_statement(version),
+        signed_at=signature["signed_at"],  # type: ignore[arg-type]
+        auth_strength=str(signature["auth_strength"]),
+        session_id=_optional_str(signature.get("session_id")),
+        evidence_digest=str(signature["evidence_digest"]),
     )
 
 
@@ -607,5 +813,6 @@ __all__ = [
     "get_clinician_intake_assignment_service",
     "get_clinician_patient_repository",
     "get_patient_intake_assignment_service",
+    "get_patient_intake_signature_service",
     "router",
 ]
