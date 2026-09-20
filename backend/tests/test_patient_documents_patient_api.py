@@ -90,8 +90,17 @@ class _FakeBlob:
         self.size = len(data)
         self.content_type = content_type
 
-    def download_as_bytes(self) -> bytes:
-        return self._data
+    def download_as_bytes(self, start: int | None = None, end: int | None = None) -> bytes:
+        """The object's bytes, or the inclusive range the caller asked for.
+
+        The range arms match the real client's signature, because finalize
+        on the patient path now reads an object's first bytes to see what
+        kind of file it is. A fake that only answered whole-object reads
+        would make that check untestable here.
+        """
+        if start is None and end is None:
+            return self._data
+        return self._data[(start or 0) : (end + 1 if end is not None else None)]
 
     def generate_signed_url(self, **kwargs: Any) -> str:
         self.last_signed_kwargs = kwargs
@@ -533,6 +542,83 @@ class TestFinalize:
         response = portal.post(f"{DOCUMENTS}/{document_id}/finalize", headers=_auth(_TOKEN_A))
         assert response.status_code == 422, response.text
         assert response.json()["error"]["code"] == "UNSUPPORTED_MIME_TYPE"
+
+    def test_a_renamed_text_file_is_415(
+        self,
+        portal: TestClient,
+        fake_gcs: _FakeStorageClient,
+        doc_repo: InMemoryPatientDocumentRepository,
+    ) -> None:
+        """The byte-level check, and the case only it catches.
+
+        Everything before this trusted something the uploader wrote: the
+        signed URL pinned the content type the browser declared, and the
+        blob recheck asks the storage service, which repeats that same
+        declaration back. A text file renamed ``.png`` and uploaded as
+        ``image/png`` passes both. So finalize reads the file's first
+        bytes, and they are not a PNG's.
+        """
+        document_id = str(
+            _init(portal, filename="card.png", mime_type="image/png").json()["document_id"]
+        )
+        _put_blob(
+            fake_gcs,
+            doc_repo,
+            document_id,
+            data=b"this is a text file wearing a png's name\n",
+            content_type="image/png",
+        )
+
+        response = portal.post(f"{DOCUMENTS}/{document_id}/finalize", headers=_auth(_TOKEN_A))
+
+        assert response.status_code == 422, response.text
+        assert response.json()["error"]["code"] == "UNSUPPORTED_MIME_TYPE"
+        # And it is on nobody's chart: finalize is what puts it there.
+        assert portal.get(DOCUMENTS, headers=_auth(_TOKEN_A)).json()["total"] == 0
+
+    def test_a_real_png_passes_the_same_check(
+        self,
+        portal: TestClient,
+        fake_gcs: _FakeStorageClient,
+        doc_repo: InMemoryPatientDocumentRepository,
+    ) -> None:
+        """The control. Without it the refusal above proves nothing."""
+        document_id = str(
+            _init(portal, filename="card.png", mime_type="image/png").json()["document_id"]
+        )
+        _put_blob(
+            fake_gcs,
+            doc_repo,
+            document_id,
+            data=b"\x89PNG\r\n\x1a\n" + b"\x00" * 64,
+            content_type="image/png",
+        )
+
+        response = portal.post(f"{DOCUMENTS}/{document_id}/finalize", headers=_auth(_TOKEN_A))
+
+        assert response.status_code == 200, response.text
+        assert response.json()["finalized_at"] is not None
+
+    def test_a_pdf_renamed_as_an_image_is_refused(
+        self,
+        portal: TestClient,
+        fake_gcs: _FakeStorageClient,
+        doc_repo: InMemoryPatientDocumentRepository,
+    ) -> None:
+        """Both sides of the comparison matter, not just "is it known".
+
+        A PDF is an accepted type, so a check that only asked whether the
+        bytes were recognisable would let it through under an image's
+        content type — and the chart would render it as one.
+        """
+        document_id = str(
+            _init(portal, filename="card.png", mime_type="image/png").json()["document_id"]
+        )
+        _put_blob(fake_gcs, doc_repo, document_id, data=_PDF, content_type="image/png")
+
+        response = portal.post(f"{DOCUMENTS}/{document_id}/finalize", headers=_auth(_TOKEN_A))
+
+        assert response.status_code == 422, response.text
 
     def test_another_patients_document_is_404(
         self,

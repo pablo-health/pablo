@@ -62,19 +62,22 @@ function renderItem(item: IntakeAssignmentItem, value: AnswerValue | null = null
 const ROUTE_PROPS = {
   assignmentId: "00000000-0000-4000-8000-00000000000a",
   sessionToken: "session-token",
+  artifacts: [],
   onWrote: () => {},
   onSessionLost: () => {},
 }
 
 describe("the registry", () => {
-  it("draws every question but the ones that need a file or a screen of their own", () => {
+  it("draws every question but the two standard blocks still to be built", () => {
     expect(RENDERED_ITEM_TYPES.sort()).toEqual([
       "consent_document",
       "date",
       "demographics",
+      "document_request",
       "free_text",
       "instructions",
       "instrument",
+      "insurance_card",
       "multi_choice",
       "number",
       "reason",
@@ -86,18 +89,29 @@ describe("the registry", () => {
   })
 
   it("says a question it cannot ask is a step still to come", () => {
-    renderItem(itemOf("insurance_card", { sides: "both" }, "A photo of your card"))
+    renderItem(itemOf("emergency_contact", {}, "Who should we call?"))
 
     expect(screen.getByTestId("forms-item-unavailable")).toHaveTextContent(
       "This step will be available soon.",
     )
   })
 
-  it("keeps an unaskable question off the review screen", () => {
-    expect(rendererFor("document_request").answerable).toBe(false)
-    expect(rendererFor("insurance_card").answerable).toBe(false)
-    expect(rendererFor("document_request").writesItself).toBeUndefined()
-    expect(rendererFor("insurance_card").writesItself).toBeUndefined()
+  it("keeps a question it cannot ask off the review screen", () => {
+    // Nothing collects an answer for it and nothing writes one elsewhere,
+    // so the walk passes over it entirely — which is what the server does
+    // with it too.
+    expect(rendererFor("emergency_contact").answerable).toBe(false)
+    expect(rendererFor("emergency_contact").writesItself).toBeUndefined()
+  })
+
+  it("counts the two file-backed questions even though the walk cannot save them", () => {
+    // Their answers name the documents that arrived, so the save route
+    // refuses the type outright — but both are questions, so both are
+    // counted and reviewed.
+    for (const itemType of ["insurance_card", "document_request"]) {
+      expect(rendererFor(itemType).answerable).toBe(false)
+      expect(rendererFor(itemType).writesItself).toBe(true)
+    }
   })
 
   it("counts a consent document as a question even though the walk cannot save it", () => {

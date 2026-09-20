@@ -311,6 +311,22 @@ class PostgresPatientDocumentRepository(PatientDocumentRepository):
         )
         return [_row_to_document(row) for row in rows]
 
+    def soft_delete_for_patient_principal(
+        self, document_id: str, patient_id: str, deleted_at: object
+    ) -> bool:
+        row = self._session.execute(
+            select(PatientDocumentRow).where(
+                PatientDocumentRow.id == document_id,
+                PatientDocumentRow.uploaded_by_patient_id == patient_id,
+                PatientDocumentRow.deleted_at.is_(None),
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            return False
+        row.deleted_at = deleted_at  # type: ignore[assignment]
+        self._session.flush()
+        return True
+
 
 def _row_to_document(row: PatientDocumentRow) -> PatientDocument:
     finalized_at: datetime | None = row.finalized_at

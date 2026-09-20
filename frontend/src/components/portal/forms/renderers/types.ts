@@ -16,7 +16,7 @@
  */
 
 import type { ComponentType } from "react"
-import type { IntakeAssignmentItem, IntakeForm } from "@/lib/api/patientIntake"
+import type { IntakeArtifact, IntakeAssignmentItem, IntakeForm } from "@/lib/api/patientIntake"
 
 /** An answer in flight, in the shape the save route stores. */
 export type AnswerValue = Record<string, unknown>
@@ -36,6 +36,15 @@ export interface ItemRendererProps {
   assignmentId: string
   /** The portal session, for a renderer that calls a route. */
   sessionToken: string
+  /**
+   * What has already arrived for THIS question, oldest first.
+   *
+   * Only the file-backed types read it, and they read it rather than
+   * remembering what they uploaded: a card photographed yesterday on
+   * another device has to still look sent today. Empty for every other
+   * type, which ignores it.
+   */
+  artifacts: IntakeArtifact[]
   /**
    * Raised by a renderer that wrote something itself, so the walk re-reads
    * the assignment. What comes back carries the server's answer about

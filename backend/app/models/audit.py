@@ -346,6 +346,19 @@ class AuditAction(StrEnum):
     # person's name in a second place for no question it helps answer.
     PATIENT_CONSENT_SIGNED = "patient_consent_signed"
 
+    # A patient attached a file to a question that asked for one — a photo
+    # of an insurance card, a form the practice asked them to send back.
+    # The actor is the patient, so this is a write by the subject rather
+    # than a disclosure.
+    #
+    # The payload carries the document's id and, for a card, which side it
+    # is. Never the filename: people name files after what is in them, and
+    # this is the six-year record. Removing one before the form is handed
+    # in is recorded too — a file that arrived and then did not is a fact
+    # somebody may later need to see.
+    PATIENT_INTAKE_ARTIFACT_UPLOADED = "patient_intake_artifact_uploaded"
+    PATIENT_INTAKE_ARTIFACT_REMOVED = "patient_intake_artifact_removed"
+
     # The review cycle: what a clinician did with a form after reading it.
     # None of these is a disclosure — they are writes ABOUT a patient — and
     # every payload carries item ids and nothing else. Never the note the
@@ -599,6 +612,7 @@ class ResourceType(StrEnum):
     INTAKE_PACKET_VERSION = "intake_packet_version"
     INTAKE_DOCUMENT = "intake_document"
     PATIENT_INTAKE_ASSIGNMENT = "patient_intake_assignment"
+    PATIENT_COVERAGE = "patient_coverage"
     PATIENT_MESSAGE_THREAD = "patient_message_thread"
     INVITATION = "invitation"
     CLAIM = "claim"

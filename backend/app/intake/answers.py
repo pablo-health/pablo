@@ -25,17 +25,16 @@ on.
   question rather than which field of which model failed, and it never
   repeats the value back, because the value is the patient's own words.
 
-The two upload-backed types — a photo of an insurance card, any other
-requested file — have nowhere to put a file yet, so they are refused here
-rather than accepted and left pointing at nothing.
-
-**A consent document is answered by signing it, not by sending a value.**
-Its answer is real (see :func:`validate_consent_document`) and completion
-counts it, but the only thing that writes one is the signature route: the
-value names a signature row, and a value the patient composed themselves
-would name nothing. :data:`SIGNED_ITEM_TYPES` is how the save path tells
-the two apart — it refuses these types outright, so the shape below is
-never something a patient can put on the wire.
+**Three types are answered by a route of their own, not by sending a
+value.** A consent document is answered by signing it; a card photo and a
+requested file are answered by uploading them. In all three cases the value
+is a *reference* — to a signature row, or to the documents that arrived —
+and a value the patient composed themselves would name rows that are not
+theirs or do not exist. The shapes below are real (completion reads them),
+but only the route that writes the row behind a reference writes the
+reference. :data:`ROUTE_WRITTEN_ITEM_TYPES` is how the save path tells them
+apart — it refuses those types outright, so none of these shapes is
+something a patient can put on the wire.
 """
 
 from __future__ import annotations
@@ -50,8 +49,10 @@ from ..outcome_measures.instruments import (
 )
 from .items import (
     DateConfig,
+    DocumentRequestConfig,
     FreeTextConfig,
     InstrumentConfig,
+    InsuranceCardConfig,
     MultiChoiceConfig,
     NumberConfig,
     ScaleConfig,
@@ -76,9 +77,6 @@ CONTACT_MAX_LEN = 200
 #: Questions that display text and collect nothing.
 _DISPLAY_ONLY = frozenset({"section", "instructions"})
 
-#: Questions whose answer is a file. Nothing stores one yet.
-_NOT_YET_ANSWERABLE = frozenset({"insurance_card", "document_request"})
-
 #: Questions whose answer is written by a route of its own rather than by
 #: the save path.
 #:
@@ -89,6 +87,24 @@ _NOT_YET_ANSWERABLE = frozenset({"insurance_card", "document_request"})
 #: type named here, so the only writer is the route that also writes the row
 #: the value points at. See ``IntakeAssignmentService.save_answer``.
 SIGNED_ITEM_TYPES: frozenset[str] = frozenset({"consent_document"})
+
+#: Questions answered by sending a file, whose value names the documents
+#: that arrived.
+#:
+#: The same reasoning as :data:`SIGNED_ITEM_TYPES` and a sharper version of
+#: it: a document id is another patient's if they happen to know it, so a
+#: value the patient composed could attach somebody else's file to their own
+#: form. Only the artifact route writes one, and it takes the ids off rows
+#: it has just checked are this patient's.
+UPLOAD_ITEM_TYPES: frozenset[str] = frozenset({"insurance_card", "document_request"})
+
+#: Everything the ordinary save route refuses. The save path asks this one
+#: question rather than two, so a type added to either set above is refused
+#: without a second edit.
+ROUTE_WRITTEN_ITEM_TYPES: frozenset[str] = SIGNED_ITEM_TYPES | UPLOAD_ITEM_TYPES
+
+#: The sides of an insurance card, in the order they are asked for.
+CARD_SIDES: tuple[str, ...] = ("front", "back")
 
 
 class AnswerError(ValueError):
@@ -284,6 +300,82 @@ def validate_consent_document(value: Mapping[str, object]) -> None:
         raise AnswerError("This document still needs to be signed.")
 
 
+def _attached(value: Mapping[str, object], message: str) -> list[Mapping[str, object]]:
+    """The documents an upload answer names, or raise with *message*.
+
+    One shape for both file-backed questions: a list of entries, each
+    naming a document and — on a card — which side of it. A list of bare
+    ids would have made the card's sides a second parallel structure to
+    keep in step with it, and the first thing to go out of step would be
+    which photograph is the back.
+    """
+    attached = value.get("documents")
+    if not isinstance(attached, list) or not attached:
+        raise AnswerError(message)
+    entries: list[Mapping[str, object]] = []
+    for entry in attached:
+        if not isinstance(entry, dict):
+            raise AnswerError(message)
+        document_id = entry.get("document_id")
+        if not isinstance(document_id, str) or not document_id.strip():
+            raise AnswerError(message)
+        entries.append(entry)
+    return entries
+
+
+def validate_insurance_card(value: Mapping[str, object], config: InsuranceCardConfig) -> None:
+    """A photograph of each side the question asked for.
+
+    ``sides: "both"`` wants a front and a back; ``"front"`` wants a front.
+    Either way each side is present once: two photographs of the front and
+    none of the back is a card nobody can read the plan off, and reporting
+    that as answered would put it in front of a clinician as complete.
+
+    What is deliberately not checked here is whether the documents exist or
+    whose they are. This function is pure — see the module docstring — and
+    the artifact route is what puts an id in this value, having just
+    checked the row is the calling patient's.
+    """
+    wanted = CARD_SIDES if config.sides == "both" else CARD_SIDES[:1]
+    entries = _attached(value, "Add a photo of your card.")
+    seen = [entry.get("side") for entry in entries]
+    for side in wanted:
+        if seen.count(side) != 1:
+            label = "front" if side == "front" else "back"
+            raise AnswerError(f"Add one photo of the {label} of your card.")
+    if any(side not in wanted for side in seen):
+        raise AnswerError("Remove the photos this question did not ask for.")
+
+
+def validate_document_request(
+    value: Mapping[str, object],
+    config: DocumentRequestConfig,  # noqa: ARG001 — the accepted types are the upload's to enforce
+) -> None:
+    """At least one file, whatever the practice asked for.
+
+    ``accept`` is not re-checked here. What kind of file arrived is a fact
+    about the stored object, and it was settled when the upload was
+    finished — by the signed URL, by the recheck of the blob, and by the
+    byte-level sniff. A second opinion from a value the patient never
+    composed would only ever be a copy of that one.
+    """
+    _attached(value, "Add the file this question asks for.")
+
+
+def validate_upload(value: Mapping[str, object], config: ItemConfig) -> None:
+    """Either kind of file-backed question.
+
+    One entry point because the two share a value shape and differ only in
+    what counts as enough of it. The dispatch is here rather than as a
+    second branch in :func:`validate_answer` so the chain there stays one
+    line per kind of question rather than one per config class.
+    """
+    if isinstance(config, InsuranceCardConfig):
+        validate_insurance_card(value, config)
+    else:
+        validate_document_request(value, config)  # type: ignore[arg-type]
+
+
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
@@ -298,8 +390,6 @@ def validate_answer(config: ItemConfig, value: object, *, today: date | None = N
     """
     if config.item_type in _DISPLAY_ONLY:
         raise AnswerError("This part of the form is not a question.")
-    if config.item_type in _NOT_YET_ANSWERABLE:
-        raise AnswerError("This question cannot be answered here yet.")
     if not isinstance(value, dict):
         raise AnswerError("This answer is not in a shape the form can store.")
 
@@ -319,6 +409,8 @@ def validate_answer(config: ItemConfig, value: object, *, today: date | None = N
         validate_date(value, config, today=today or date.today())
     elif isinstance(config, InstrumentConfig):
         validate_instrument(value, config)
+    elif isinstance(config, InsuranceCardConfig | DocumentRequestConfig):
+        validate_upload(value, config)
     else:
         # Everything whose shape the practice does not configure. These are
         # told apart by their item type rather than by their config class:
@@ -353,23 +445,29 @@ def is_answered(config: ItemConfig, value: object, *, today: date | None = None)
 
 
 __all__ = [
+    "CARD_SIDES",
     "CONTACT_MAX_LEN",
     "REASON_MAX_LEN",
+    "ROUTE_WRITTEN_ITEM_TYPES",
     "SIGNED_ITEM_TYPES",
+    "UPLOAD_ITEM_TYPES",
     "AnswerError",
     "is_answered",
     "validate_answer",
     "validate_consent_document",
     "validate_date",
     "validate_demographics",
+    "validate_document_request",
     "validate_emergency_contact",
     "validate_free_text",
     "validate_guardian",
     "validate_instrument",
+    "validate_insurance_card",
     "validate_multi_choice",
     "validate_number",
     "validate_reason",
     "validate_scale",
     "validate_single_choice",
+    "validate_upload",
     "validate_yes_no",
 ]

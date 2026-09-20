@@ -33,7 +33,11 @@ import {
   PUBLISHED_NOTICE,
   PUBLISH_BUTTON,
 } from "./intakeCopy"
-import { ItemConfigForm, type PublishedDocument } from "./ItemConfigForm"
+import {
+  ItemConfigForm,
+  type OfferableBlankForm,
+  type PublishedDocument,
+} from "./ItemConfigForm"
 import {
   canBeBranchedOn,
   VisibilityRuleForm,
@@ -50,6 +54,8 @@ interface IntakeItemEditorProps {
   publishError?: string | null
   /** The practice's published documents, for a consent item to point at. */
   documents?: PublishedDocument[]
+  /** The practice's blank forms, for a document question to offer. */
+  blankForms?: OfferableBlankForm[]
 }
 
 function nextKey(label: string, taken: string[]): string {
@@ -178,6 +184,7 @@ export function IntakeItemEditor({
   publishing,
   publishError,
   documents,
+  blankForms,
 }: IntakeItemEditorProps) {
   const [items, setItems] = useState<IntakeItemInput[]>(() => toInput(version.items))
   const [openIndex, setOpenIndex] = useState<number | null>(null)
@@ -340,6 +347,7 @@ export function IntakeItemEditor({
                     onChange={(config) => patch(index, { config })}
                     idPrefix={`${editorId}-${index}`}
                     documents={documents}
+                    blankForms={blankForms}
                   />
                   <VisibilityRuleForm
                     rule={ruleOf(item.config)}

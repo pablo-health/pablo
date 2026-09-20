@@ -35,6 +35,7 @@ import { INTAKE_FORM, authoredItem } from "./formFixtures"
 const ROUTE_PROPS = {
   assignmentId: "00000000-0000-4000-8000-00000000000a",
   sessionToken: "session-token",
+  artifacts: [],
   onWrote: () => {},
   onSessionLost: () => {},
 }
