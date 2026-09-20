@@ -10,7 +10,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea"
 import type { ChoiceOption, ItemConfig, ItemType } from "@/types/intakePackets"
 import {
+  BLANK_FORM_PICKER_LABEL,
+  CARD_COLLECT_FIELDS_HELP,
+  CARD_COLLECT_FIELDS_LABEL,
+  CARD_SIDES_BOTH,
+  CARD_SIDES_FRONT,
+  CARD_SIDES_LABEL,
   DOCUMENT_PICKER_LABEL,
+  NO_BLANK_FORM_CHOICE,
+  NO_BLANK_FORMS,
   NO_PUBLISHED_DOCUMENTS,
   SELF_REPORT_INSTRUMENTS,
 } from "./intakeCopy"
@@ -28,6 +36,12 @@ interface ItemConfigFormProps {
    * already holds the list.
    */
   documents?: PublishedDocument[]
+  /**
+   * The practice's own blank forms, for a document question to offer. Same
+   * arrangement as `documents` above: the card that owns the form holds the
+   * list, and this component renders what it is given.
+   */
+  blankForms?: OfferableBlankForm[]
 }
 
 /** One document a consent item can point at. */
@@ -35,6 +49,15 @@ export interface PublishedDocument {
   document_key: string
   title: string
 }
+
+/** One blank form a document question can offer for download. */
+export interface OfferableBlankForm {
+  id: string
+  title: string
+}
+
+/** The value a "no blank form" choice stores, since a Select needs one. */
+const NO_BLANK_FORM = "none"
 
 function text(config: ItemConfig, key: string): string {
   const value = config[key]
@@ -129,6 +152,7 @@ export function ItemConfigForm({
   onChange,
   idPrefix,
   documents = [],
+  blankForms = [],
 }: ItemConfigFormProps) {
   const set = (key: string, value: unknown) => onChange({ ...config, [key]: value })
   const setNumber = (key: string, raw: string) =>
@@ -360,10 +384,83 @@ export function ItemConfigForm({
         </div>
       )
 
+    case "insurance_card":
+      // What to ask for is the item's own question. What is settable is how
+      // many photographs to ask for, and whether to ask for the plan in
+      // words as well as in a photograph.
+      return (
+        <div className="space-y-3">
+          <div>
+            <Label htmlFor={`${idPrefix}-sides`}>{CARD_SIDES_LABEL}</Label>
+            <Select
+              value={text(config, "sides") || "both"}
+              onValueChange={(value) => set("sides", value)}
+            >
+              <SelectTrigger id={`${idPrefix}-sides`} aria-label={CARD_SIDES_LABEL}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="both">{CARD_SIDES_BOTH}</SelectItem>
+                <SelectItem value="front">{CARD_SIDES_FRONT}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <label
+            htmlFor={`${idPrefix}-collect-fields`}
+            className="flex items-start gap-2 text-[13px] text-foreground"
+          >
+            <input
+              type="checkbox"
+              id={`${idPrefix}-collect-fields`}
+              className="mt-0.5 h-4 w-4"
+              checked={config.collect_fields === true}
+              onChange={(e) => set("collect_fields", e.target.checked || undefined)}
+            />
+            <span>
+              {CARD_COLLECT_FIELDS_LABEL}
+              <span className="block text-[12.5px] text-muted-foreground">
+                {CARD_COLLECT_FIELDS_HELP}
+              </span>
+            </span>
+          </label>
+        </div>
+      )
+
+    case "document_request":
+      // What to ask for is the item's own question. What is settable is the
+      // paper fallback: a practice that still works from paper can offer
+      // its own form to download before asking for the filled-in copy back.
+      return (
+        <div>
+          <Label htmlFor={`${idPrefix}-blank-form`}>{BLANK_FORM_PICKER_LABEL}</Label>
+          {blankForms.length === 0 ? (
+            <p className="text-[12.5px] text-muted-foreground">{NO_BLANK_FORMS}</p>
+          ) : (
+            <Select
+              value={text(config, "blank_form_id") || NO_BLANK_FORM}
+              onValueChange={(value) =>
+                set("blank_form_id", value === NO_BLANK_FORM ? undefined : value)
+              }
+            >
+              <SelectTrigger id={`${idPrefix}-blank-form`} aria-label={BLANK_FORM_PICKER_LABEL}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_BLANK_FORM}>{NO_BLANK_FORM_CHOICE}</SelectItem>
+                {blankForms.map((form) => (
+                  <SelectItem key={form.id} value={form.id}>
+                    {form.title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        </div>
+      )
+
     default:
-      // What to ask for on a file upload is the item's own question, and the
-      // rest — demographics, reason, emergency_contact, guardian — have
-      // nothing for a practice to set: the engine fixes their shape.
+      // demographics, reason, emergency_contact and guardian have nothing
+      // for a practice to set: the engine fixes their shape.
       return null
   }
 }

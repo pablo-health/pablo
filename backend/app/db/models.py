@@ -743,8 +743,14 @@ class PatientIntakeResponseRow(Base):
     may change — which is what makes "what was submitted" a stable record
     once it stops being one. ``superseded_by`` points at the row that
     replaced this one, so a corrected answer leaves the original readable
-    rather than overwriting it. Nothing writes either transition yet; both
-    ship with the columns they belong to rather than costing a migration.
+    rather than overwriting it: the successor is written first and the
+    original is then pointed at it, with its ``value`` untouched.
+
+    ``provenance`` says who put the value there — the patient in the portal,
+    or a clinician with the patient in the room. A reader who cannot tell
+    the two apart is reading a form that looks like the patient attested to
+    every word on it. Every row written before the column existed was the
+    patient's, which is why ``patient`` is the default.
 
     The partial unique index is what makes saving an answer an upsert: at
     most one live draft per question per assignment, so a patient who
@@ -774,11 +780,18 @@ class PatientIntakeResponseRow(Base):
     )
     value: Mapped[dict] = mapped_column(JSONB, nullable=False)
     draft: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    provenance: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'patient'")
+    )
     superseded_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
+        CheckConstraint(
+            "provenance IN ('patient','clinician')",
+            name="ck_patient_intake_responses_provenance",
+        ),
         ForeignKeyConstraint(
             ["assignment_id", "patient_id"],
             [
@@ -794,6 +807,76 @@ class PatientIntakeResponseRow(Base):
             "item_id",
             unique=True,
             postgresql_where=text("superseded_by IS NULL AND draft"),
+        ),
+    )
+
+
+class PatientIntakeReviewEventRow(Base):
+    """One thing the practice did with a form after it arrived.
+
+    A form handed in is not the end of it. A clinician reads what the patient
+    wrote and may ask for one question to be redone, may type a value in for
+    somebody sitting in the room with them, and eventually accepts the form.
+    Each of those is a row here, in the order it happened.
+
+    **An event log rather than more columns on the assignment.** The
+    assignment already carries where the form has got to; what it cannot
+    carry is that corrections were asked for twice, on different questions,
+    with different notes. Those are separate facts about the same form, and
+    the question a chart asks — "why is this open again, and what did we
+    ask for" — is answered by the sequence rather than by the latest value
+    of anything.
+
+    ``item_ids`` names the questions the act is about: the ones a correction
+    reopens, or the one a clinician-entered value settles. It is the scope
+    of the act, and it is what the save route consults to decide which
+    questions a patient may touch while the form is reopened — so it is a
+    rule the row carries, not a description of one.
+
+    ``note_to_patient`` is the sentence the patient reads in the portal when
+    corrections are asked for. The practice's own words about the form; it
+    never holds an answer, and nothing else on this row does either.
+
+    Patient-readable and NOT patient-writable. Every kind here is something
+    the practice did, and the one a patient causes — handing a corrected
+    form back in — is written by the route that also moves the status, so
+    the two cannot disagree. ``patient_id`` is denormalized from the
+    assignment for the same reason :class:`PatientIntakeResponseRow`
+    denormalizes it, and kept honest the same way: a composite foreign key
+    to ``(id, patient_id)``.
+    """
+
+    __tablename__ = "patient_intake_review_events"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    assignment_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(24), nullable=False)
+    item_ids: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    note_to_patient: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('correction_requested','corrected','accepted','clinician_entered')",
+            name="ck_patient_intake_review_events_kind",
+        ),
+        ForeignKeyConstraint(
+            ["assignment_id", "patient_id"],
+            [
+                "patient_intake_assignments.id",
+                "patient_intake_assignments.patient_id",
+            ],
+            ondelete="CASCADE",
+            name="fk_patient_intake_review_events_assignment",
+        ),
+        Index(
+            "ix_patient_intake_review_events_assignment",
+            "assignment_id",
+            "created_at",
         ),
     )
 
@@ -916,6 +999,132 @@ class PatientIntakeSignatureRow(Base):
             postgresql_where=text("superseded_at IS NULL"),
         ),
     )
+
+
+class PatientIntakeArtifactRow(Base):
+    """One file a patient attached to a question that asked for one.
+
+    A photograph of an insurance card, the referral letter a practice asked
+    them to bring. The file itself is a :class:`PatientDocumentRow` in the
+    ``intake_artifact`` category — this row is the link between it and the
+    question, which is what lets the form ask "has the back of the card
+    arrived" without the document table knowing anything about forms.
+
+    Three columns carry the whole rule.
+
+    ``document_id`` is unique, so one file answers one question: attaching
+    the same photograph as both the front and the back of a card is refused
+    by the database rather than by whichever caller remembered to look.
+
+    ``side`` is set on a card and NULL on anything else, and the partial
+    unique index on ``(assignment_id, item_id, side)`` makes "one front, one
+    back" a fact about the table. It is partial because a plain unique index
+    would also mean one file per document-request question, and a practice
+    asking for prior records may well be sent three.
+
+    ``patient_id`` is denormalized from the assignment and held honest by
+    the composite foreign key, the same pattern and the same reason as
+    :class:`PatientIntakeResponseRow` — it is what lets this table be
+    policied by a plain column comparison rather than a join.
+
+    There is no soft delete. A file removed before the form is handed in was
+    never sent: the row goes, and the document it points at is tombstoned
+    with it. After the form is in, nothing here is removable at all — that
+    is the route's rule, because "what was submitted" has to stay a stable
+    record.
+    """
+
+    __tablename__ = "patient_intake_artifacts"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    assignment_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
+    item_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("intake_item_definitions.id", name="fk_patient_intake_artifacts_item"),
+        nullable=False,
+    )
+    document_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey(
+            "patient_documents.id",
+            ondelete="CASCADE",
+            name="fk_patient_intake_artifacts_document",
+        ),
+        nullable=False,
+        unique=True,
+    )
+    side: Mapped[str | None] = mapped_column(String(8))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "side IS NULL OR side IN ('front','back')",
+            name="ck_patient_intake_artifacts_side",
+        ),
+        ForeignKeyConstraint(
+            ["assignment_id", "patient_id"],
+            [
+                "patient_intake_assignments.id",
+                "patient_intake_assignments.patient_id",
+            ],
+            ondelete="CASCADE",
+            name="fk_patient_intake_artifacts_assignment",
+        ),
+        Index(
+            "uq_patient_intake_artifacts_side",
+            "assignment_id",
+            "item_id",
+            "side",
+            unique=True,
+            postgresql_where=text("side IS NOT NULL"),
+        ),
+        Index(
+            "ix_patient_intake_artifacts_assignment_item",
+            "assignment_id",
+            "item_id",
+        ),
+    )
+
+
+class IntakeBlankFormRow(Base):
+    """One of the practice's own empty forms, for a patient to print.
+
+    The fallback for a practice that still works from paper: a
+    ``document_request`` item can name one of these, and the question then
+    offers it for download before asking for the filled-in copy back.
+
+    **On nobody's chart, and that is why it is here rather than on
+    ``patient_documents``.** A blank form holds no patient's information —
+    it is the practice's stationery — so filing it against a chart would
+    mean either an arbitrary patient or a nullable ``patient_id`` on a table
+    whose every row policy keys on that column. It is practice-level
+    instead, registered not-row-scoped like ``compliance_items``: its
+    isolation boundary is the tenant schema, which is the same boundary the
+    form it belongs to already lives inside.
+
+    Uploaded by a clinician through the same two-phase signed-URL flow every
+    other file in the system uses; ``finalized_at`` is NULL between the two
+    halves, so an upload that was started and abandoned never appears
+    anywhere. ``deleted_at`` tombstones a form a practice has stopped using,
+    which leaves an item that still names it showing no download rather than
+    a broken one.
+    """
+
+    __tablename__ = "intake_blank_forms"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    filename: Mapped[str] = mapped_column(Text, nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    gcs_path: Mapped[str] = mapped_column(Text, nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    uploaded_by: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (Index("ix_intake_blank_forms_deleted", "deleted_at"),)
 
 
 class PatientMessageThreadRow(Base):
@@ -1041,6 +1250,67 @@ class PatientMessageRow(Base):
             "thread_id",
             "created_at",
         ),
+        # Not redundant with the primary key, for the same reason the thread
+        # table's is not: it is the target of the composite foreign key on
+        # :class:`PatientMessageAttachmentRow`, which is what stops an
+        # attachment's denormalized ``patient_id`` from disagreeing with the
+        # message it hangs on.
+        UniqueConstraint("id", "patient_id", name="uq_patient_messages_id_patient"),
+    )
+
+
+class PatientMessageAttachmentRow(Base):
+    """A file on a secure message: one link between a message and a document.
+
+    The bytes are not here. An attachment IS a chart document — a
+    :class:`PatientDocumentRow` of category ``message``, uploaded through the
+    same two-phase signed-URL path as every other document — and this table
+    only records that one of them was sent on one message. There is no second
+    blob store, no second bucket, and no copy of the file to keep in step.
+
+    ``patient_id`` is denormalized from the message for the reason
+    :class:`PatientMessageRow` gives: every per-patient policy in
+    :func:`app.db.enable_rls_on_schema` keys on a ``patient_id`` column, so
+    carrying it means this table needs no bespoke policy branch. Two
+    composite foreign keys keep the copy honest, and they are the two ways it
+    could drift — the link cannot name a message belonging to another
+    patient, and it cannot name a document on another patient's chart. Both
+    are database facts rather than route conventions, which matters because
+    the route that checks them is also the route a future edit could change.
+
+    ``document_id`` is unique across the table, which is the "not already
+    attached" rule the send routes enforce. Attaching the same file twice
+    would put one row of the chart in two conversations, so whichever send
+    got there first owns it and the second is refused. ON DELETE RESTRICT on
+    the document side, because a document that is somebody's correspondence
+    should not vanish out from under the message that carries it; deleting
+    the message takes its links (CASCADE) and leaves the documents on the
+    chart, which is where they belong.
+    """
+
+    __tablename__ = "patient_message_attachments"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    message_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    document_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["message_id", "patient_id"],
+            ["patient_messages.id", "patient_messages.patient_id"],
+            ondelete="CASCADE",
+            name="fk_patient_message_attachments_message",
+        ),
+        ForeignKeyConstraint(
+            ["document_id", "patient_id"],
+            ["patient_documents.id", "patient_documents.patient_id"],
+            ondelete="RESTRICT",
+            name="fk_patient_message_attachments_document",
+        ),
+        UniqueConstraint("document_id", name="uq_patient_message_attachments_document"),
+        Index("ix_patient_message_attachments_message", "message_id"),
     )
 
 
@@ -2075,6 +2345,12 @@ class PatientDocumentRow(Base):
             "extracted_via IS NULL OR extracted_via IN ('pymupdf', 'document_ai', 'unavailable')",
             name="ck_patient_documents_extracted_via",
         ),
+        # The target of the composite foreign key on
+        # :class:`PatientMessageAttachmentRow`. Looks redundant beside the
+        # primary key and is not: it is what lets a table that links to a
+        # document also pin the chart the document is on, so a link cannot
+        # name one patient's message and another patient's file.
+        UniqueConstraint("id", "patient_id", name="uq_patient_documents_id_patient"),
     )
 
 

@@ -22,6 +22,13 @@
  * from the review screen whatever the answers look like; the server refuses
  * an unfinished form and names what is outstanding. A question somebody was
  * never shown and a question they skipped look the same from a browser.
+ *
+ * **A form sent back shows only what was asked about.** When the assignment
+ * carries a `correction`, the walk is the questions it names and nothing
+ * else — the rest have been read and kept, and putting them back on screen
+ * would invite changes the server refuses with a 409. Which questions those
+ * are is the server's answer too, carried on the row rather than worked out
+ * here.
  */
 
 "use client"
@@ -134,6 +141,12 @@ export function PacketFlow({
    * and that arrives with the form rather than with the item — an item
    * carries the measure's code, and the wording and the item count come
    * from the server so the form and the scorer cannot drift.
+   *
+   * A form sent back for corrections narrows it once more, to the questions
+   * the practice named. Narrowing rather than disabling the other screens: a
+   * question that cannot be changed is not a question being asked. It runs
+   * after the rules rather than instead of them, so a reopened question a
+   * rule has since hidden stays hidden.
    */
   const items = useMemo(() => {
     const shown = visibility(
@@ -144,8 +157,11 @@ export function PacketFlow({
       })),
       answers,
     )
-    return ordered.filter((item) => shown[item.key])
-  }, [ordered, answers, form, visibility])
+    const visible = ordered.filter((item) => shown[item.key])
+    const asked = detail?.correction ?? null
+    if (asked === null) return visible
+    return visible.filter((item) => asked.item_ids.includes(item.id))
+  }, [ordered, answers, detail, form, visibility])
 
   /** What is on screen: this sitting's edits over what is already saved. */
   const values = useMemo(
@@ -239,8 +255,12 @@ export function PacketFlow({
   if (assignment.isPending) return <FormsLoading />
 
   // Where the patient navigated to, or — before they have — the first
-  // question the server called outstanding.
-  const current = screen ?? resumeAt(items, assignment.data.progress.missing)
+  // question the server called outstanding. On a form sent back, that is
+  // the first correction still to do rather than the first unanswered
+  // question: the rest of the form was finished when it went in.
+  const correction = assignment.data.correction
+  const current =
+    screen ?? resumeAt(items, correction?.outstanding ?? assignment.data.progress.missing)
 
   async function advanceFrom(index: number) {
     const item = items[index]
@@ -289,6 +309,7 @@ export function PacketFlow({
         items={items}
         values={values}
         form={form}
+        correction={correction}
         onEdit={(itemId) => {
           const index = items.findIndex((item) => item.id === itemId)
           if (index >= 0) setScreen({ kind: "item", index })
@@ -316,6 +337,7 @@ export function PacketFlow({
       form={form}
       assignmentId={assignmentId}
       sessionToken={sessionToken}
+      artifacts={assignment.data.artifacts.filter((row) => row.item_id === item.id)}
       onWrote={() => pinAndReread(current.index)}
       onSessionLost={onSessionLost}
       onBack={

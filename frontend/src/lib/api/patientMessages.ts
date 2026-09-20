@@ -29,6 +29,18 @@ const BASE = "/api/patient/messages"
  */
 export type PatientMessageSender = "patient" | "clinician" | "practice"
 
+/**
+ * A file sent on a message. `filename` is what the chip reads, which is
+ * why it is here and not in a notification — people name files after what
+ * is in them.
+ */
+export interface PatientMessageAttachment {
+  document_id: string
+  filename: string
+  mime_type: string
+  size_bytes: number
+}
+
 export interface PatientMessage {
   id: string
   thread_id: string
@@ -36,6 +48,7 @@ export interface PatientMessage {
   body: string
   created_at: string
   read_at?: string | null
+  attachments?: PatientMessageAttachment[]
 }
 
 export interface PatientMessageThread {
@@ -99,16 +112,23 @@ async function request<T>(
   return (await response.json()) as T
 }
 
-/** Start a thread with its first message. */
+/**
+ * Start a thread with its first message.
+ *
+ * `attachmentIds` name documents the patient has already uploaded and
+ * finalized with category `message` — see `patientPortalDocuments.ts`.
+ * Nothing is uploaded here.
+ */
 export async function startThread(
   sessionToken: string,
-  input: { subject?: string | null; body: string },
+  input: { subject?: string | null; body: string; attachmentIds?: string[] },
 ): Promise<PatientMessageThreadDetail> {
   return request<PatientMessageThreadDetail>(sessionToken, "/threads", {
     method: "POST",
     body: JSON.stringify({
       subject: input.subject?.trim() ? input.subject.trim() : null,
       body: input.body,
+      attachment_ids: input.attachmentIds ?? [],
     }),
   })
 }
@@ -118,11 +138,15 @@ export async function sendMessage(
   sessionToken: string,
   threadId: string,
   body: string,
+  attachmentIds: string[] = [],
 ): Promise<PatientMessage> {
   return request<PatientMessage>(
     sessionToken,
     `/threads/${encodeURIComponent(threadId)}/messages`,
-    { method: "POST", body: JSON.stringify({ body }) },
+    {
+      method: "POST",
+      body: JSON.stringify({ body, attachment_ids: attachmentIds }),
+    },
   )
 }
 

@@ -346,6 +346,60 @@ class AuditAction(StrEnum):
     # person's name in a second place for no question it helps answer.
     PATIENT_CONSENT_SIGNED = "patient_consent_signed"
 
+    # A patient attached a file to a question that asked for one — a photo
+    # of an insurance card, a form the practice asked them to send back.
+    # The actor is the patient, so this is a write by the subject rather
+    # than a disclosure.
+    #
+    # The payload carries the document's id and, for a card, which side it
+    # is. Never the filename: people name files after what is in them, and
+    # this is the six-year record. Removing one before the form is handed
+    # in is recorded too — a file that arrived and then did not is a fact
+    # somebody may later need to see.
+    PATIENT_INTAKE_ARTIFACT_UPLOADED = "patient_intake_artifact_uploaded"
+    PATIENT_INTAKE_ARTIFACT_REMOVED = "patient_intake_artifact_removed"
+
+    # The review cycle: what a clinician did with a form after reading it.
+    # None of these is a disclosure — they are writes ABOUT a patient — and
+    # every payload carries item ids and nothing else. Never the note the
+    # clinician typed, and never the value they entered: the note is the
+    # practice's own words on a row the patient reads, the value is a
+    # clinical answer, and the compliance log is not a second copy of
+    # either.
+    #
+    # ``INTAKE_CLINICIAN_ENTRY`` is the one worth reading twice. It records
+    # that an answer on a patient's form was not the patient's — which is
+    # the fact a later reader of that chart most needs and least expects.
+    INTAKE_CORRECTION_REQUESTED = "intake_correction_requested"
+    INTAKE_ACCEPTED = "intake_accepted"
+    INTAKE_CLINICIAN_ENTRY = "intake_clinician_entry"
+
+    # A clinician opened the review of a form: every answer on it, the
+    # earlier answers each one replaced, and what was asked for and by
+    # whom. Wider than the submission read beside it, which is why it is
+    # its own action rather than a reuse of
+    # ``PATIENT_INTAKE_SUBMISSION_VIEWED``. A disclosure, and audited like
+    # one; the payload carries how many answers came back and not one of
+    # them.
+    INTAKE_REVIEW_VIEWED = "intake_review_viewed"
+
+    # A clinician took a form out of the product as a file: every answer,
+    # the answers each one replaced, the evidence behind every signature,
+    # and the log. Wider than the review read and, unlike it, the content
+    # leaves — so it is recorded as its own disclosure rather than folded
+    # into ``INTAKE_REVIEW_VIEWED``, and a later question about where a
+    # form went has a row to answer from. The payload carries which version
+    # was exported and nothing that was on it.
+    INTAKE_PACKET_EXPORTED = "intake_packet_exported"
+
+    # A patient handed a reopened form back in. The actor is the patient,
+    # so this is a write by the subject; it sits beside the ordinary
+    # ``PATIENT_INTAKE_SUBMITTED`` rather than replacing it, because the two
+    # say different things — one that a form arrived, the other that what
+    # the practice asked for was done. The payload carries the ids of the
+    # questions that were redone.
+    PATIENT_INTAKE_CORRECTED = "patient_intake_corrected"
+
     # Secure patient messaging. Both principals write these: a patient
     # starting a thread or sending into one, and a clinician replying. The
     # actor is what ``actor_type`` separates, so the action names say what
@@ -558,6 +612,7 @@ class ResourceType(StrEnum):
     INTAKE_PACKET_VERSION = "intake_packet_version"
     INTAKE_DOCUMENT = "intake_document"
     PATIENT_INTAKE_ASSIGNMENT = "patient_intake_assignment"
+    PATIENT_COVERAGE = "patient_coverage"
     PATIENT_MESSAGE_THREAD = "patient_message_thread"
     INVITATION = "invitation"
     CLAIM = "claim"

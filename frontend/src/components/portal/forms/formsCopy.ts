@@ -29,6 +29,7 @@ export const LIST_START = "Start"
 export const LIST_SENT = "Sent"
 export const LIST_PROGRESS_DONE = "Ready to send"
 export const LIST_WITHDRAWN = "No longer needed"
+export const LIST_CORRECTION = "Your practice has a question"
 
 /** How much of a form is outstanding, from the count the server sent. */
 export function questionsLeft(outstanding: number): string {
@@ -63,6 +64,26 @@ export const REVIEW_BODY = "Have a look before you send this to your clinician."
 export const REVIEW_UNANSWERED = "Not answered yet"
 export const SUBMIT = "Send to my clinician"
 export const SUBMITTING = "Sending…"
+
+/**
+ * A form the practice has sent back with a question about one answer.
+ *
+ * The heading says who is asking and the note under it is the practice's
+ * own words, served with the form. Nothing here paraphrases the note or
+ * explains why they might be asking — the clinician wrote the reason, and a
+ * screen guessing at it would be guessing about somebody's care.
+ *
+ * It also does not recite what stays as it was. The rest of the form is not
+ * on screen, which says that already; a sentence promising the other
+ * answers are safe would introduce a worry nobody had.
+ */
+export const CORRECTION_HEADING = "Your clinician has asked about one thing"
+export const CORRECTION_HEADING_MANY = "Your clinician has asked about a few things"
+export const CORRECTION_SUBMIT = "Send this back"
+
+export function correctionHeading(count: number): string {
+  return count === 1 ? CORRECTION_HEADING : CORRECTION_HEADING_MANY
+}
 
 /**
  * The receipt. No totals and no bands: a PHQ-9 total is a number with a
@@ -149,6 +170,58 @@ export function consentSignedBy(name: string, signedAt: string): string {
  * inventing a heading the practice never wrote.
  */
 export const CONSENT_REVIEW_LABEL = "Consent document"
+
+/**
+ * Sending in a file a form asked for.
+ *
+ * Says what to do and stops. It does not recite what happens to a photo
+ * afterwards, or promise anything about how it will be checked — the file
+ * goes to the practice, and describing the machinery between here and there
+ * would introduce questions nobody had.
+ *
+ * The one refusal worth its own sentence is a file that is not the kind of
+ * file it claims to be, because the fix is to send a different one.
+ */
+export const UPLOAD_CHOOSE = "Choose a file"
+export const UPLOAD_TAKE_PHOTO = "Take a photo"
+export const UPLOAD_SENDING = "Sending…"
+export const UPLOAD_REMOVE = "Remove"
+export const UPLOAD_SENT = "Sent"
+export const UPLOAD_FAILED = "We couldn't send that. Try again in a moment."
+export const UPLOAD_WRONG_TYPE = "Send a PDF or a photo."
+export const UPLOAD_TOO_LARGE = "That file is too big. Try a smaller one."
+
+/** The two sides of an insurance card. */
+export const CARD_FRONT = "Front of card"
+export const CARD_BACK = "Back of card"
+
+/** A practice that works from paper offers the form to print. */
+export const BLANK_FORM_DOWNLOAD = "Download the form"
+export const BLANK_FORM_NOTE =
+  "Download it, fill it in, then take a photo or scan it and send it back here."
+
+/** The review screen's one-liner for a question that asked for files. */
+export function filesSent(count: number): string {
+  return count === 1 ? "1 file sent" : `${count} files sent`
+}
+
+/**
+ * The plan details a card question may also ask for.
+ *
+ * Optional on the screen and optional to the practice: a client who cannot
+ * read a worn card still answers the question by photographing it. Nothing
+ * here says what the practice will do with the plan, because at this point
+ * nobody has checked anything with a payer.
+ */
+export const COVERAGE_HEADING = "What's on the card"
+export const COVERAGE_NOTE = "If you can read these off the card, they help your practice."
+export const COVERAGE_PAYER_LABEL = "Insurance company"
+export const COVERAGE_MEMBER_LABEL = "Member ID"
+export const COVERAGE_GROUP_LABEL = "Group number (optional)"
+export const COVERAGE_SAVE = "Save these details"
+export const COVERAGE_SAVING = "Saving…"
+export const COVERAGE_SAVED = "Saved"
+export const COVERAGE_FAILED = "We couldn't save those. Try again in a moment."
 
 /** The demographics question. */
 export const IDENTITY_HEADING = "Is this you?"

@@ -15,11 +15,17 @@ for a schema migrated without its policies.
 
 from __future__ import annotations
 
+import uuid
 from typing import TYPE_CHECKING
 
 from sqlalchemy import String, Uuid, bindparam, func, select, text
 
-from ...db.models import PatientMessageRow, PatientMessageThreadRow
+from ...db.models import (
+    PatientDocumentRow,
+    PatientMessageAttachmentRow,
+    PatientMessageRow,
+    PatientMessageThreadRow,
+)
 from ...models.patient_message import (
     SENDER_PATIENT,
     THREAD_STATUS_CLOSED,
@@ -28,11 +34,13 @@ from ...models.patient_message import (
 from ..patient_message import PatientMessageAccessDeniedError, PatientMessageRepository
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from datetime import datetime
 
+    from sqlalchemy import Row
     from sqlalchemy.orm import Session
 
-    from ...models import PatientMessage, PatientMessageThread
+    from ...models import MessageAttachment, PatientMessage, PatientMessageThread
     from ...models.patient_message import ThreadAssignmentFilter
 
 
@@ -57,6 +65,26 @@ def _thread(row: PatientMessageThreadRow) -> PatientMessageThread:
         assigned_user_id=row.assigned_user_id,
         clinician_last_read_at=row.clinician_last_read_at,
     )
+
+
+def _group_attachments(
+    rows: Sequence[Row[tuple[str, str, str, str, int]]],
+) -> dict[str, list[MessageAttachment]]:
+    """Fold the join's flat rows into one list per message."""
+    from ...models import MessageAttachment  # noqa: PLC0415 — avoids a cycle at import time
+
+    found: dict[str, list[MessageAttachment]] = {}
+    for message_id, document_id, filename, mime_type, size_bytes in rows:
+        found.setdefault(message_id, []).append(
+            MessageAttachment(
+                message_id=message_id,
+                document_id=document_id,
+                filename=filename,
+                mime_type=mime_type,
+                size_bytes=size_bytes,
+            )
+        )
+    return found
 
 
 def _message(row: PatientMessageRow) -> PatientMessage:
@@ -310,3 +338,84 @@ class PostgresPatientMessageRepository(PatientMessageRepository):
             row.read_at = read_at
         self._session.flush()
         return len(rows)
+
+    # --- attachments ---
+
+    def link_attachments(
+        self,
+        *,
+        message_id: str,
+        patient_id: str,
+        document_ids: list[str],
+        created_at: datetime,
+    ) -> None:
+        for document_id in document_ids:
+            self._session.add(
+                PatientMessageAttachmentRow(
+                    id=str(uuid.uuid4()),
+                    message_id=message_id,
+                    document_id=document_id,
+                    patient_id=patient_id,
+                    created_at=created_at,
+                )
+            )
+        self._session.flush()
+
+    def already_attached(self, document_ids: list[str], patient_id: str) -> set[str]:
+        if not document_ids:
+            return set()
+        rows = (
+            self._session.execute(
+                select(PatientMessageAttachmentRow.document_id).where(
+                    PatientMessageAttachmentRow.document_id.in_(document_ids),
+                    PatientMessageAttachmentRow.patient_id == patient_id,
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return set(rows)
+
+    def list_attachments(
+        self, message_ids: list[str], patient_id: str
+    ) -> dict[str, list[MessageAttachment]]:
+        if not message_ids:
+            return {}
+        rows = self._session.execute(
+            select(
+                PatientMessageAttachmentRow.message_id,
+                PatientMessageAttachmentRow.document_id,
+                PatientDocumentRow.filename,
+                PatientDocumentRow.mime_type,
+                PatientDocumentRow.size_bytes,
+            )
+            .join(
+                PatientDocumentRow,
+                PatientDocumentRow.id == PatientMessageAttachmentRow.document_id,
+            )
+            .where(
+                PatientMessageAttachmentRow.message_id.in_(message_ids),
+                PatientMessageAttachmentRow.patient_id == patient_id,
+            )
+            .order_by(PatientMessageAttachmentRow.created_at.asc())
+        ).all()
+        return _group_attachments(rows)
+
+    def thread_ids_for_documents(self, document_ids: list[str], patient_id: str) -> dict[str, str]:
+        if not document_ids:
+            return {}
+        rows = self._session.execute(
+            select(
+                PatientMessageAttachmentRow.document_id,
+                PatientMessageRow.thread_id,
+            )
+            .join(
+                PatientMessageRow,
+                PatientMessageRow.id == PatientMessageAttachmentRow.message_id,
+            )
+            .where(
+                PatientMessageAttachmentRow.document_id.in_(document_ids),
+                PatientMessageAttachmentRow.patient_id == patient_id,
+            )
+        ).all()
+        return {row[0]: row[1] for row in rows}

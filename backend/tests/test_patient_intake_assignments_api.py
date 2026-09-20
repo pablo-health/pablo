@@ -42,21 +42,30 @@ from app.models.audit import ACTOR_TYPE_PATIENT, AuditAction, ResourceType
 from app.outcome_measures.service import OutcomeMeasureService
 from app.repositories import (
     InMemoryIntakePacketRepository,
+    InMemoryPatientDocumentRepository,
+    InMemoryPatientIntakeArtifactRepository,
     InMemoryPatientIntakeAssignmentRepository,
     InMemoryPatientRepository,
     get_patient_repository,
 )
 from app.repositories.audit import InMemoryAuditRepository
+from app.repositories.coverage import (
+    InMemoryPatientCoverageRepository,
+    InMemoryPayerRepository,
+)
 from app.repositories.outcome_measure import InMemoryOutcomeMeasureRepository
 from app.routes import patient_intake_assignments
 from app.routes.patient_intake import get_intake_outcome_measure_service
 from app.routes.patient_intake_assignments import (
+    get_clinician_intake_artifact_service,
     get_clinician_intake_assignment_service,
     get_clinician_patient_repository,
+    get_patient_intake_artifact_service,
     get_patient_intake_assignment_service,
 )
 from app.services.audit_service import AuditService, get_audit_service
 from app.services.intake_packet_service import IntakePacketService
+from app.services.patient_intake_artifact_service import IntakeArtifactService
 from app.services.patient_intake_assignment_service import (
     AUDIT_COALESCE_SECONDS,
     IntakeAssignmentService,
@@ -201,6 +210,28 @@ def service(
 
 
 @pytest.fixture
+def artifact_service(
+    assignments: InMemoryPatientIntakeAssignmentRepository,
+    packets: InMemoryIntakePacketRepository,
+) -> IntakeArtifactService:
+    """The artifact service on the same in-memory stores the rest uses.
+
+    Present in this file because the assignment routes now depend on it —
+    the detail read carries what was attached — rather than because
+    anything here exercises an upload. Its own behaviour is tested in
+    ``test_patient_intake_artifacts_api.py``.
+    """
+    return IntakeArtifactService(
+        InMemoryPatientIntakeArtifactRepository(),
+        assignments,
+        packets,
+        InMemoryPatientDocumentRepository(),
+        InMemoryPayerRepository(),
+        InMemoryPatientCoverageRepository(),
+    )
+
+
+@pytest.fixture
 def measure_repo() -> InMemoryOutcomeMeasureRepository:
     repo = InMemoryOutcomeMeasureRepository()
     repo.grant_all_access()
@@ -221,6 +252,7 @@ def measures(measure_repo: InMemoryOutcomeMeasureRepository) -> OutcomeMeasureSe
 @pytest.fixture
 def patient_app(
     service: IntakeAssignmentService,
+    artifact_service: IntakeArtifactService,
     audit_repo: InMemoryAuditRepository,
     measures: OutcomeMeasureService,
     monkeypatch: pytest.MonkeyPatch,
@@ -242,6 +274,7 @@ def patient_app(
     registry.register(_TwoPatientResolver())
     app.dependency_overrides[get_patient_resolver_registry] = lambda: registry
     app.dependency_overrides[get_patient_intake_assignment_service] = lambda: service
+    app.dependency_overrides[get_patient_intake_artifact_service] = lambda: artifact_service
     app.dependency_overrides[get_intake_outcome_measure_service] = lambda: measures
     app.dependency_overrides[get_audit_service] = lambda: AuditService(audit_repo)
 
@@ -261,10 +294,12 @@ def portal(patient_app: FastAPI) -> Iterator[TestClient]:
 def chart(
     client: TestClient,
     service: IntakeAssignmentService,
+    artifact_service: IntakeArtifactService,
     patients: InMemoryPatientRepository,
 ) -> TestClient:
     """The shared clinician client, with the intake stores in memory."""
     real_app.dependency_overrides[get_clinician_intake_assignment_service] = lambda: service
+    real_app.dependency_overrides[get_clinician_intake_artifact_service] = lambda: artifact_service
     real_app.dependency_overrides[get_clinician_patient_repository] = lambda: patients
     real_app.dependency_overrides[get_patient_repository] = lambda: patients
     return client
@@ -946,4 +981,6 @@ class TestTheClinicianReadsWhatWasAnswered:
         logged = [call.args[0] for call in mock_audit_service._repo.append.call_args_list]
         assert logged[-1].action == AuditAction.PATIENT_INTAKE_SUBMISSION_VIEWED.value
         assert logged[-1].resource_id == assignment["id"]
-        assert logged[-1].changes == {"count": 4}
+        # How many answers were disclosed and how many files came with
+        # them, and not a word of any of them.
+        assert logged[-1].changes == {"count": 4, "artifacts": 0}

@@ -59,7 +59,21 @@ const CATEGORY_OPTIONS: { value: DocumentCategory; label: string; hint: string }
 function categoryBadge(category: DocumentCategory): string | null {
   if (category === "therapist_private") return "therapist private"
   if (category === "psychotherapy_notes") return "psychotherapy notes"
+  if (category === "message") return "sent in a message"
   return null
+}
+
+/**
+ * The two categories only their uploader can see.
+ *
+ * The padlock used to go on anything that was not `chart`, which was the
+ * same set until the chart grew categories that co-treaters DO see —
+ * consent forms, what a patient sends in before a first visit, and a file
+ * sent on a message. Those would have carried a lock labelled "only you
+ * can see this", which is the opposite of true.
+ */
+function isUploaderOnly(category: DocumentCategory): boolean {
+  return category === "therapist_private" || category === "psychotherapy_notes"
 }
 
 /**
@@ -309,7 +323,7 @@ export function PatientDocuments({ patientId }: PatientDocumentsProps) {
                 <div className="min-w-0">
                   <p className="font-medium text-neutral-900 truncate inline-flex items-center gap-1.5">
                     {doc.filename}
-                    {doc.category !== "chart" && (
+                    {isUploaderOnly(doc.category) && (
                       <Lock
                         className="w-3.5 h-3.5 text-neutral-500"
                         aria-label={
@@ -325,6 +339,21 @@ export function PatientDocuments({ patientId }: PatientDocumentsProps) {
                     {formatDate(doc.created_at)}
                     {categoryBadge(doc.category) && ` · ${categoryBadge(doc.category)}`}
                   </p>
+                  {/*
+                    Marked, not linked. The response carries the thread id
+                    (``message_thread_id``) and this is where the link
+                    belongs — but the clinician's own thread view is not
+                    built yet, and an anchor to a route that does not exist
+                    is worse than the badge above, which is at least true.
+                  */}
+                  {doc.message_thread_id && (
+                    <span
+                      data-testid={`patient-document-thread-${doc.id}`}
+                      className="sr-only"
+                    >
+                      Sent on a message thread
+                    </span>
+                  )}
                   {doc.extraction_status === "pending" && (
                     <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600">
                       <Loader2 className="w-3 h-3 animate-spin" />

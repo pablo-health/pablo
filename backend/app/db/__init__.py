@@ -962,6 +962,13 @@ _OVERLAY_NOT_ROW_SCOPED: set[str] = set()
 #     reason as the three above: the text is the same whoever it is sent
 #     to. What somebody SIGNED is a different table, per-patient and
 #     row-scoped.
+#   * intake_blank_forms — the practice's own empty paperwork, offered for
+#     download by a question that asks for a form back on paper. The same
+#     reasoning as intake_documents one line up: a blank form is the
+#     practice's stationery, identical whoever it is sent to, and holds
+#     nothing about anybody. What somebody SENDS BACK is a patient document
+#     linked by a per-patient artifact row, and both of those are
+#     row-scoped.
 #   * companion_auth_challenges / companion_sessions — the portal sign-in
 #     tables (``app.portal``). These need the registration for a sharper
 #     reason than the rest. Both carry ``patient_id``, so the column query
@@ -985,6 +992,7 @@ _CORE_NOT_ROW_SCOPED: frozenset[str] = frozenset(
         "intake_packet_versions",
         "intake_item_definitions",
         "intake_documents",
+        "intake_blank_forms",
         "companion_auth_challenges",
         "companion_sessions",
     }
@@ -1071,12 +1079,33 @@ PATIENT_READABLE_TABLES: dict[str, str] = {
     # why the column is denormalized and what keeps it honest.
     "patient_intake_assignments": "patient_id",
     "patient_intake_responses": "patient_id",
+    # What the practice did with a form after it arrived: asked for
+    # corrections on named questions, entered a value for the patient,
+    # accepted it. Readable and NOT writable, which is the one asymmetry on
+    # this feature's tables: the patient reads the note asking them to redo
+    # a question, and every row is something the practice did. The one a
+    # patient causes — handing a corrected form back in — is written by the
+    # submit route on the way through, so the event and the status cannot
+    # disagree about whether it happened.
+    "patient_intake_review_events": "patient_id",
     # What a patient signed. Their own record about them, carrying its own
     # ``patient_id`` for the same reason the responses beside it do, so it
     # needs no bespoke predicate either. A patient reads their signatures
     # back — the signing screen shows who has signed and when — and the
     # clinician side reaches the same rows through ``has_patient_access``.
     "patient_intake_signatures": "patient_id",
+    # What a patient attached to a question that asked for a file. Their own
+    # record about them, carrying its own ``patient_id`` for the same reason
+    # the responses beside it do. They read it back between sittings — a
+    # card photographed yesterday has to still look attached today — and the
+    # clinician side reaches the same rows through ``has_patient_access``.
+    "patient_intake_artifacts": "patient_id",
+    # The plan a client is on. Registered because a patient may now type
+    # their own insurance at intake, which is the same act the booking form
+    # already allowed before any chart existed — the difference being only
+    # that this one arrives from an authenticated principal, so it can be
+    # bounded to that patient's own rows instead of running as the practice.
+    "patient_coverage": "patient_id",
     # Documents on the patient's own chart. The column is right and the
     # meaning is nearly right: a patient owns the row, but the table also
     # holds the clinician's working material and the psychotherapy-notes
@@ -1096,6 +1125,14 @@ PATIENT_READABLE_TABLES: dict[str, str] = {
     # denormalized and what keeps it honest.
     "patient_message_threads": "patient_id",
     "patient_messages": "patient_id",
+    # What a patient sent on a message, and what the practice sent back.
+    # The row is the patient's own in both directions — it names a message
+    # in their own thread and a document on their own chart — so it takes
+    # the plain predicate like the two tables above it, on the same
+    # denormalized column and for the same reason. The file itself is a
+    # ``patient_documents`` row and is policied there, where the category
+    # test that keeps the clinical record off the portal already lives.
+    "patient_message_attachments": "patient_id",
     # Read-only deliberately: booking and cancelling answer to the
     # practice's own rules — notice periods, which types are bookable,
     # whether a request needs confirming — so they belong to a route that
@@ -1160,6 +1197,14 @@ PATIENT_WRITABLE_TABLES: dict[str, str] = {
     # before any write is attempted.
     "patient_intake_assignments": "patient_id",
     "patient_intake_responses": "patient_id",
+    # Handing a reopened form back in writes a 'corrected' event beside the
+    # status change, so the patient needs the write arm on
+    # ``patient_intake_review_events`` too. This is the one table where the
+    # write arm is deliberately NARROWER than the read arm: every other
+    # kind on it is something the practice did, and a policy that let a
+    # patient write any row they can read would let them mint their own
+    # acceptance. See ``PATIENT_WRITE_NARROWING``.
+    "patient_intake_review_events": "patient_id",
     # Signing is a patient INSERT. The grant is wider than that — the
     # registration cannot express "INSERT but never UPDATE", because RLS has
     # no way to grant one command and withhold the other once a table is
@@ -1168,6 +1213,23 @@ PATIENT_WRITABLE_TABLES: dict[str, str] = {
     # is superseded by a later row rather than edited, which is the whole
     # reason the table carries ``superseded_at`` instead of a mutable flag.
     "patient_intake_signatures": "patient_id",
+    # Attaching a file is a patient INSERT and removing one before the form
+    # is handed in is a patient DELETE, which is why this table is also in
+    # ``PATIENT_DELETABLE_TABLES``. The grant is wider than the routes, as
+    # everywhere else on this list: what may be removed and when — before
+    # submission, never after — is the route layer's rule, because RLS has
+    # no way to say "only while the form beside it is still open".
+    "patient_intake_artifacts": "patient_id",
+    # Typing the plan off an insurance card at intake is a patient INSERT,
+    # and correcting a digit before the form goes in is an UPDATE. The grant
+    # is wider than that — it does not distinguish the member id a patient
+    # is the source of from ``verified_at`` and ``last_271``, which the
+    # eligibility check writes and nothing else should. Which columns a
+    # patient may set is decided one layer up, in the request model the
+    # intake coverage route accepts: the fields that are on the card, and
+    # nothing the payer answered. Same posture as ``patients``, and for the
+    # same reason — RLS has no column granularity to express it with.
+    "patient_coverage": "patient_id",
     # Uploading is a patient INSERT, and finishing an upload is an UPDATE
     # (the size and the finalize stamp are written once the object is there).
     # The bespoke predicate carries into WITH CHECK as well as USING, so a
@@ -1186,6 +1248,13 @@ PATIENT_WRITABLE_TABLES: dict[str, str] = {
     # granularity to express it with.
     "patient_message_threads": "patient_id",
     "patient_messages": "patient_id",
+    # Attaching is a patient INSERT, and that is all a patient ever does
+    # here: no route updates a link and no route deletes one, because an
+    # attachment is part of a message that was already sent. The row-level
+    # grant is wider than that — RLS has no way to give INSERT and withhold
+    # UPDATE once a table is writable — so the narrowing is the route
+    # layer's, as on the two tables above.
+    "patient_message_attachments": "patient_id",
     # A patient starts their own conversations and archives or purges them,
     # so the conversation row is writable. The turn loop then writes the
     # message rows — the user's turn and the assistant's reply — which is
@@ -1201,7 +1270,35 @@ PATIENT_WRITABLE_TABLES: dict[str, str] = {
 # archived. ``outcome_measures`` stays out — a screener result is part of
 # the clinical record once submitted, and the write arm exists so the form
 # can save it, not so it can be withdrawn.
-PATIENT_DELETABLE_TABLES: frozenset[str] = frozenset({"chat_conversations", "chat_messages"})
+#
+# ``patient_intake_artifacts`` joins them for a narrower reason. A patient
+# who photographs the back of their card badly has to be able to take it
+# again, and "take it again" means the first one goes: an artifact left
+# behind would hold the one slot the card's back has. The document it
+# pointed at is tombstoned in the same breath by the route. Only before the
+# form is handed in — afterwards the route refuses, because what was
+# submitted has to stay what was submitted.
+PATIENT_DELETABLE_TABLES: frozenset[str] = frozenset(
+    {"chat_conversations", "chat_messages", "patient_intake_artifacts"}
+)
+
+# An extra condition ANDed onto the patient's WRITE arms only, for the
+# tables where "may read" and "may write" are not the same set of rows.
+#
+# Row-level security has no column granularity, so a write grant is
+# ordinarily as wide as the row — which is why every other narrowing in
+# this feature is the route layer's. This registry exists for the one case
+# the route layer cannot make safe on its own: a table whose rows are
+# mostly the practice's acts, carrying one kind the patient causes. A
+# patient may write that kind and no other, and saying so in the policy
+# means a route that forgot cannot mint an acceptance under a patient
+# principal.
+#
+# Read stays wide on purpose: the patient is shown the correction the
+# practice asked for, which is a row they may not write.
+PATIENT_WRITE_NARROWING: dict[str, str] = {
+    "patient_intake_review_events": "kind = 'corrected'",
+}
 
 
 def register_overlay_patient_scoped(
@@ -1356,10 +1453,15 @@ def _apply_patient_principal_policies(
     logger.info("RLS (patient self-read on %s) enabled on %s", key_column, qualified)
 
     if table_name in PATIENT_WRITABLE_TABLES:
+        # The write arm, which is the read predicate unless the table asked
+        # for less (see ``PATIENT_WRITE_NARROWING``). The extra condition is
+        # a fixed string from this module, never a caller's.
+        narrowing = PATIENT_WRITE_NARROWING.get(table_name)
+        writable = predicate if narrowing is None else f"({predicate}) AND ({narrowing})"
         session.execute(
             text(
                 f"CREATE POLICY rls_patient_self_write ON {qualified} "
-                f"FOR UPDATE USING ({predicate}) WITH CHECK ({predicate})"
+                f"FOR UPDATE USING ({writable}) WITH CHECK ({writable})"
             )
         )
         # INSERT needs a policy of its own: an UPDATE policy does not cover
@@ -1373,7 +1475,7 @@ def _apply_patient_principal_policies(
         session.execute(
             text(
                 f"CREATE POLICY rls_patient_self_insert ON {qualified} "
-                f"FOR INSERT WITH CHECK ({predicate})"
+                f"FOR INSERT WITH CHECK ({writable})"
             )
         )
         logger.info("RLS (patient self-write on %s) enabled on %s", key_column, qualified)

@@ -197,6 +197,24 @@ class PatientDocumentRepository(ABC):
         :meth:`get_for_patient_principal` gives.
         """
 
+    @abstractmethod
+    def soft_delete_for_patient_principal(
+        self, document_id: str, patient_id: str, deleted_at: object
+    ) -> bool:
+        """Tombstone one of the calling patient's OWN uploads.
+
+        Narrower than it looks, and deliberately the only delete on this
+        surface. Scoped to ``uploaded_by_patient_id``, so it can reach a
+        file the patient sent and never one a clinician filed on the same
+        chart. The general patient document surface offers no route to it
+        at all — a file sent to a practice is the practice's record of what
+        arrived. What calls this is the artifact route, where the file has
+        not been sent yet: it is attached to a form still being filled in,
+        and taking a photograph again means the first one goes.
+
+        Returns whether a row was tombstoned.
+        """
+
 
 class InMemoryPatientDocumentRepository(PatientDocumentRepository):
     """In-memory repository for unit tests.
@@ -335,6 +353,15 @@ class InMemoryPatientDocumentRepository(PatientDocumentRepository):
         ]
         rows.sort(key=lambda d: d.created_at, reverse=True)
         return rows
+
+    def soft_delete_for_patient_principal(
+        self, document_id: str, patient_id: str, deleted_at: object
+    ) -> bool:
+        doc = self._by_id.get(document_id)
+        if doc is None or doc.uploaded_by_patient_id != patient_id or doc.deleted_at is not None:
+            return False
+        doc.deleted_at = deleted_at  # type: ignore[assignment]
+        return True
 
     def _patient_can_read(self, doc: PatientDocument, patient_id: str) -> bool:
         """Mirror of the ``rls_patient_self_read`` predicate: own chart, own surface."""
