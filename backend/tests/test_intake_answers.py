@@ -172,7 +172,7 @@ class TestTheShapeOfAnAnswer:
     @pytest.mark.parametrize("item_type", ["insurance_card", "document_request"])
     def test_the_file_backed_types_are_refused_for_now(self, item_type: str) -> None:
         """Nothing stores a file yet, so they are refused rather than dangled."""
-        config = _config(item_type, label="A photo of your card")
+        config = _config(item_type)
         with pytest.raises(AnswerError):
             validate_answer(config, {"uploaded": True})
 

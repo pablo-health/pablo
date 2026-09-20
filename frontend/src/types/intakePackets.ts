@@ -36,6 +36,34 @@ export type ItemType = (typeof ITEM_TYPES)[number]
 /** Items that show text and collect nothing. Never required. */
 export const DISPLAY_ONLY_ITEM_TYPES: readonly ItemType[] = ["section", "instructions"]
 
+/**
+ * Items a practice writes the question for, and so cannot publish without
+ * one. Mirrors `LABEL_REQUIRED_ITEM_TYPES` in `backend/app/intake/items.py`;
+ * the server is what refuses the publish, and this is what marks the field
+ * before the practice gets that far.
+ */
+export const LABEL_REQUIRED_ITEM_TYPES: readonly ItemType[] = [
+  "free_text",
+  "single_choice",
+  "multi_choice",
+  "yes_no",
+  "scale",
+  "number",
+  "date",
+  "emergency_contact",
+  "guardian",
+  "consent_document",
+  "insurance_card",
+  "document_request",
+]
+
+/**
+ * Items whose wording is not the practice's to write: a heading and a
+ * paragraph carry their text in `config`, so a second box for the same
+ * sentence would be two places to change it.
+ */
+export const NO_LABEL_ITEM_TYPES: readonly ItemType[] = ["section", "instructions"]
+
 export type ItemConfig = Record<string, unknown>
 
 export interface ChoiceOption {
@@ -50,6 +78,10 @@ export interface IntakeItem {
   item_type: ItemType
   required: boolean
   resign_on_new_version: boolean
+  /** The question the patient reads. Null on the ones the engine words. */
+  label: string | null
+  /** The line under the question, when there is one. */
+  help_text: string | null
   config: ItemConfig
 }
 
@@ -58,6 +90,8 @@ export interface IntakeItemInput {
   item_type: ItemType
   required: boolean
   resign_on_new_version: boolean
+  label: string | null
+  help_text: string | null
   config: ItemConfig
 }
 

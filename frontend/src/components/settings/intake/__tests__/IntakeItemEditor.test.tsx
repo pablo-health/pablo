@@ -11,11 +11,18 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 
 import { IntakeItemEditor } from "../IntakeItemEditor"
-import { NO_QUESTIONS, PUBLISHED_NOTICE } from "../intakeCopy"
+import {
+  HELP_TEXT_FIELD,
+  LABEL_FIELD,
+  LABEL_FIELD_OVERRIDE,
+  LABEL_PLACEHOLDER,
+  NO_QUESTIONS,
+  PUBLISHED_NOTICE,
+} from "../intakeCopy"
 import type { IntakeVersionDetail } from "@/types/intakePackets"
 
 const onSave = vi.fn()
@@ -33,7 +40,7 @@ function version(overrides: Partial<IntakeVersionDetail> = {}): IntakeVersionDet
   }
 }
 
-function item(key: string, item_type: string, config = {}) {
+function item(key: string, item_type: string, config = {}, label: string | null = null) {
   return {
     id: `item-${key}`,
     key,
@@ -41,6 +48,8 @@ function item(key: string, item_type: string, config = {}) {
     item_type: item_type as IntakeVersionDetail["items"][number]["item_type"],
     required: true,
     resign_on_new_version: false,
+    label,
+    help_text: null,
     config,
   }
 }
@@ -168,6 +177,82 @@ describe("IntakeItemEditor", () => {
     expect(screen.getByText(PUBLISHED_NOTICE)).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Add question" })).not.toBeInTheDocument()
+  })
+
+  it("saves the question and the help text a practice writes", async () => {
+    const user = userEvent.setup()
+    editor(version({ items: [item("mood", "free_text")] }))
+
+    await user.click(screen.getByRole("button", { name: /Written answer/ }))
+    await user.type(screen.getByLabelText(LABEL_FIELD), "H")
+    await user.type(screen.getByLabelText(HELP_TEXT_FIELD), "A")
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(onSave).toHaveBeenCalledWith([
+      expect.objectContaining({ key: "mood", label: "H", help_text: "A" }),
+    ])
+  })
+
+  it("says what goes in the box rather than that it is required", async () => {
+    const user = userEvent.setup()
+    editor(version({ items: [item("mood", "free_text")] }))
+
+    await user.click(screen.getByRole("button", { name: /Written answer/ }))
+
+    expect(screen.getByLabelText(LABEL_FIELD)).toHaveAttribute("placeholder", LABEL_PLACEHOLDER)
+  })
+
+  it("offers a heading override on a question Pablo already words", async () => {
+    const user = userEvent.setup()
+    editor(version({ items: [item("reason", "reason")] }))
+
+    await user.click(screen.getByRole("button", { name: /What brings you in/ }))
+
+    expect(screen.getByLabelText(LABEL_FIELD_OVERRIDE)).toBeInTheDocument()
+    expect(screen.queryByLabelText(LABEL_FIELD)).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ["section", "Section heading"],
+    ["instructions", "Instructions"],
+  ])("leaves %s alone, because its text is already its own setting", async (itemType, heading) => {
+    const user = userEvent.setup()
+    editor(version({ items: [item("about", itemType)] }))
+
+    await user.click(screen.getByRole("button", { name: new RegExp(heading) }))
+
+    expect(screen.queryByLabelText(LABEL_FIELD)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(LABEL_FIELD_OVERRIDE)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(HELP_TEXT_FIELD)).not.toBeInTheDocument()
+  })
+
+  it("lists a question by its own words once they are written", () => {
+    editor(
+      version({
+        items: [item("mood", "free_text", {}, "How have you been sleeping?")],
+      }),
+    )
+
+    const list = screen.getByRole("list")
+    expect(within(list).getByText("How have you been sleeping?")).toBeInTheDocument()
+    expect(within(list).queryByText("Written answer")).not.toBeInTheDocument()
+  })
+
+  it("falls back to the kind of question until they are", () => {
+    editor(version({ items: [item("mood", "free_text")] }))
+
+    expect(within(screen.getByRole("list")).getByText("Written answer")).toBeInTheDocument()
+  })
+
+  it("lists a published version's questions by their own words too", () => {
+    editor(
+      version({
+        published_at: "2026-09-02T09:00:00Z",
+        items: [item("mood", "free_text", {}, "How have you been sleeping?")],
+      }),
+    )
+
+    expect(screen.getByText("How have you been sleeping?")).toBeInTheDocument()
   })
 
   it("offers every kind of question, consent documents included", async () => {

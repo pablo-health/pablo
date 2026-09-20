@@ -84,6 +84,11 @@ class IntakeAssignmentItemResponse(BaseModel):
     ``value`` is whatever they have saved so far, absent when they have not
     answered yet. ``position`` rides along so a client can render the form
     in order without trusting the order of a JSON array.
+
+    ``label`` is the question itself and ``help_text`` the line under it,
+    both as the practice wrote them. Unset on the questions the engine words
+    for itself, which is why the portal asks the form route for those rather
+    than inventing wording of its own.
     """
 
     id: str
@@ -91,6 +96,8 @@ class IntakeAssignmentItemResponse(BaseModel):
     position: int
     item_type: str
     required: bool
+    label: str | None
+    help_text: str | None
     config: dict[str, object]
     value: dict[str, object] | None
 
@@ -132,13 +139,19 @@ class IntakeSubmissionResponse(BaseModel):
 
 
 class ClinicianIntakeAnswerResponse(BaseModel):
-    """One question and what this patient answered, read from the chart."""
+    """One question and what this patient answered, read from the chart.
+
+    The question comes back with the answer for the same reason the patient
+    saw it: a value beside a key is a row nobody can read.
+    """
 
     id: str
     key: str
     position: int
     item_type: str
     required: bool
+    label: str | None
+    help_text: str | None
     config: dict[str, object]
     value: dict[str, object] | None
 

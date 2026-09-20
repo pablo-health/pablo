@@ -522,6 +522,17 @@ class IntakeItemDefinitionRow(Base):
     forward — a consent that has to be given again when the form it is part
     of changes. Nothing reads it yet; it ships with the column it belongs to
     rather than costing a migration later.
+
+    ``label`` is the question the patient reads, and ``help_text`` the line
+    under it. A column rather than a member of ``config`` because every type
+    has one and nothing about it varies by type: putting it in the blob would
+    mean seventeen members carrying the same field and a renderer that has to
+    know which one it is reading. Both are nullable — the questions the
+    engine words itself (who you are, what brings you in, a published
+    measure) have no wording for a practice to write, and a heading and a
+    paragraph carry their text in ``config``. Publishing is where a question
+    the practice wrote itself has to have one; see
+    :func:`app.intake.items.validate_item_list`.
     """
 
     __tablename__ = "intake_item_definitions"
@@ -537,6 +548,8 @@ class IntakeItemDefinitionRow(Base):
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     item_type: Mapped[str] = mapped_column(String(32), nullable=False)
     required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    label: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    help_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     config: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     resign_on_new_version: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 

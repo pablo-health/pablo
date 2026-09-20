@@ -21,6 +21,7 @@ from app.db.models import IntakeItemDefinitionRow
 from app.intake.items import (
     DISPLAY_ONLY_ITEM_TYPES,
     ITEM_TYPES,
+    LABEL_REQUIRED_ITEM_TYPES,
     ItemConfigError,
     ItemDraft,
     stored_config,
@@ -31,7 +32,16 @@ from app.intake.rules import DISPLAY_ONLY_TARGETS
 
 
 def _draft(key: str, item_type: str, **config: object) -> ItemDraft:
-    return ItemDraft(key=key, item_type=item_type, config=config)
+    """One item as the editor sends it, with a question where one is needed.
+
+    The label is filled in here rather than by every caller because almost
+    none of these tests is about the wording — they are about settings and
+    rules, and a form that cannot be published for a missing question would
+    hide what they are checking. The tests that ARE about it build their own
+    drafts; see :class:`TestEveryQuestionCarriesItsWording`.
+    """
+    label = "How have you been?" if item_type in LABEL_REQUIRED_ITEM_TYPES else None
+    return ItemDraft(key=key, item_type=item_type, label=label, config=config)
 
 
 class TestTheVocabularyMatchesTheColumn:
@@ -352,6 +362,64 @@ class TestBranching:
                     _draft("why", "free_text", visible_when={"item_key": "mood", "op": "eq"}),
                 ]
             )
+
+
+class TestEveryQuestionCarriesItsWording:
+    """Publishing is where a question a practice wrote has to have one.
+
+    Nullable in the column and unset on a draft, because a practice writes a
+    form over several sittings and the editor has to be able to save what it
+    has. The refusal names the item, because the editor shows it beside that
+    item and "which question" is the only thing a therapist needs from it.
+    """
+
+    @pytest.mark.parametrize("item_type", sorted(LABEL_REQUIRED_ITEM_TYPES))
+    def test_a_question_the_practice_wrote_needs_one(self, item_type: str) -> None:
+        with pytest.raises(ItemConfigError, match="mood: write the question"):
+            validate_item_list([_unlabelled("mood", item_type)])
+
+    @pytest.mark.parametrize("item_type", ["section", "instructions", "demographics", "reason"])
+    def test_the_engine_words_its_own_questions(self, item_type: str) -> None:
+        validate_item_list([_unlabelled("q", item_type)])
+
+    def test_a_measure_is_asked_the_way_the_measure_asks_it(self) -> None:
+        validate_item_list([_unlabelled("phq9", "instrument", code="phq9")])
+
+    def test_a_consent_is_named_by_the_document_it_points_at(self) -> None:
+        """Which already has a title, so a second one would be two to change."""
+        validate_item_list([_unlabelled("consent", "consent_document", document_key="doc-1")])
+
+    def test_a_label_on_one_of_those_is_an_override_rather_than_a_refusal(self) -> None:
+        validate_item_list(
+            [ItemDraft(key="reason", item_type="reason", label="Why now?", config={})]
+        )
+
+    def test_whitespace_is_not_a_question(self) -> None:
+        item = _unlabelled("mood", "free_text")
+        item.label = "   "
+        with pytest.raises(ItemConfigError, match="write the question"):
+            validate_item_list([item])
+
+    def test_help_text_is_never_required(self) -> None:
+        parsed = validate_item_list([_draft("mood", "free_text")])
+        assert len(parsed) == 1
+
+
+def _unlabelled(key: str, item_type: str, **config: object) -> ItemDraft:
+    """One item with no wording on it at all."""
+    return ItemDraft(key=key, item_type=item_type, label=None, config=_settings(item_type, config))
+
+
+def _settings(item_type: str, given: dict[str, object]) -> dict[str, object]:
+    """Whatever the type needs beyond its wording, so the label is what fails."""
+    defaults: dict[str, dict[str, object]] = {
+        "section": {"title": "About you"},
+        "instructions": {"body_markdown": "Take your time."},
+        "single_choice": {"options": [{"key": "a", "label": "A"}, {"key": "b", "label": "B"}]},
+        "multi_choice": {"options": [{"key": "a", "label": "A"}, {"key": "b", "label": "B"}]},
+        "scale": {"min": 0, "max": 10, "min_label": "low", "max_label": "high"},
+    }
+    return {**defaults.get(item_type, {}), **given}
 
 
 class TestStoredConfig:

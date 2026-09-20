@@ -23,9 +23,18 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..intake.items import HELP_TEXT_MAX_LEN, LABEL_MAX_LEN
+
 
 class IntakeItemRequest(BaseModel):
-    """One item as the editor sends it."""
+    """One item as the editor sends it.
+
+    ``label`` is the question the patient will read and ``help_text`` the
+    line under it. Both are optional here and neither is checked for
+    emptiness: a practice writing a form saves it half-written, and which
+    types have to have a question by the time it is published is
+    :mod:`app.intake.items`'s to say.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -33,6 +42,8 @@ class IntakeItemRequest(BaseModel):
     item_type: str = Field(min_length=1, max_length=32)
     required: bool = True
     resign_on_new_version: bool = False
+    label: str | None = Field(default=None, max_length=LABEL_MAX_LEN)
+    help_text: str | None = Field(default=None, max_length=HELP_TEXT_MAX_LEN)
     config: dict[str, object] = Field(default_factory=dict)
 
 
@@ -76,6 +87,8 @@ class IntakeItemResponse(BaseModel):
     item_type: str
     required: bool
     resign_on_new_version: bool
+    label: str | None
+    help_text: str | None
     config: dict[str, object]
 
 

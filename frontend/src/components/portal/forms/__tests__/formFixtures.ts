@@ -98,8 +98,46 @@ function item(
   position: number,
   itemType: string,
   config: Record<string, unknown> = {},
+  label: string | null = null,
+  helpText: string | null = null,
 ): IntakeAssignmentItem {
-  return { id, key, position, item_type: itemType, required: true, config, value: null }
+  return {
+    id,
+    key,
+    position,
+    item_type: itemType,
+    required: true,
+    label,
+    help_text: helpText,
+    config,
+    value: null,
+  }
+}
+
+/**
+ * One question the practice wrote itself, in the shape the route serves it.
+ *
+ * Every seeded item is one the engine words, so the fixture above cannot
+ * stand in for an authored one: the whole difference is that the wording
+ * rides on the row rather than arriving in the form response.
+ */
+export function authoredItem(
+  itemType: string,
+  {
+    id = "77777777-7777-4777-8777-777777777777",
+    key = "authored",
+    label = "How have you been sleeping?",
+    helpText = null,
+    config = {},
+  }: {
+    id?: string
+    key?: string
+    label?: string | null
+    helpText?: string | null
+    config?: Record<string, unknown>
+  } = {},
+): IntakeAssignmentItem {
+  return item(id, key, 0, itemType, config, label, helpText)
 }
 
 export const SEEDED_ITEMS: IntakeAssignmentItem[] = [

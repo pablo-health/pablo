@@ -22,6 +22,13 @@ Two properties are worth stating because they are easy to lose.
   work in progress and may hold a half-filled item; a published version may
   not. That is why :func:`validate_item_list` is a function the service
   calls at one moment rather than a model the API always parses through.
+
+The question's own wording is not in here either. ``label`` and
+``help_text`` are columns on the item, because every type has them and
+nothing about them varies by type — a union member per type would carry the
+same field seventeen times and give a renderer something to look up. What
+this module says about them is which types may not be published without
+one; see :data:`LABEL_REQUIRED_ITEM_TYPES`.
 """
 
 from __future__ import annotations
@@ -62,6 +69,37 @@ ITEM_TYPES: tuple[str, ...] = (
 #: Items that show text and collect nothing. They are never required, are
 #: excluded from completion, and nothing may branch on them.
 DISPLAY_ONLY_ITEM_TYPES = DISPLAY_ONLY_TARGETS
+
+#: Items a practice writes the question for, and so may not publish without
+#: one.
+#:
+#: The rest already have their wording somewhere else. ``section`` and
+#: ``instructions`` carry their text in ``config``; ``demographics``,
+#: ``reason`` and ``instrument`` are asked in wording the engine serves; and
+#: a ``consent_document`` is named by the document it points at, which has a
+#: title of its own. A label on any of those overrides the heading and is
+#: never required.
+LABEL_REQUIRED_ITEM_TYPES: frozenset[str] = frozenset(
+    {
+        "free_text",
+        "single_choice",
+        "multi_choice",
+        "yes_no",
+        "scale",
+        "number",
+        "date",
+        "emergency_contact",
+        "guardian",
+        "insurance_card",
+        "document_request",
+    }
+)
+
+#: The longest a question and the line under it may be. The label matches the
+#: column; the help text's column is unbounded, so this is the only bound on
+#: it and it is set where the editor sends one.
+LABEL_MAX_LEN = 300
+HELP_TEXT_MAX_LEN = 2000
 
 #: Measures a patient can be asked to complete themselves. An instrument in
 #: the registry with no patient-facing item text is a clinician-rated one:
@@ -281,10 +319,13 @@ class ConsentDocumentConfig(_BaseConfig):
 
 
 class InsuranceCardConfig(_BaseConfig):
-    """A photo of an insurance card, front and usually back."""
+    """A photo of an insurance card, front and usually back.
+
+    What to ask for is the item's ``label``, the same column every other
+    question's wording lives in, rather than a second copy in here.
+    """
 
     item_type: Literal["insurance_card"]
-    label: str = Field(min_length=1, max_length=120)
     sides: Literal["front", "both"] = "both"
 
 
@@ -292,7 +333,6 @@ class DocumentRequestConfig(_BaseConfig):
     """Any other file the practice asks for."""
 
     item_type: Literal["document_request"]
-    label: str = Field(min_length=1, max_length=120)
 
 
 ItemConfig = Annotated[
@@ -322,6 +362,8 @@ class ItemDraft(BaseModel):
     ``config`` stays a plain mapping here on purpose: a draft may hold an
     item the practice is still filling in, and rejecting that at the API
     boundary would make the editor unable to save its own work in progress.
+    ``label`` and ``help_text`` are unset for the same reason: a question
+    being written has not been written yet.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -330,6 +372,8 @@ class ItemDraft(BaseModel):
     item_type: str
     required: bool = True
     resign_on_new_version: bool = False
+    label: str | None = None
+    help_text: str | None = None
     config: dict[str, object] = Field(default_factory=dict)
 
 
@@ -371,7 +415,8 @@ def validate_item_list(
     """Check a whole version's items the way publishing does.
 
     Everything that cannot be judged one item at a time happens here: keys
-    are unique, a rule points backwards at a question that can answer it,
+    are unique, a question the practice wrote has the wording it will be
+    asked in, a rule points backwards at a question that can answer it,
     and a consent item names a document somebody can actually sign.
 
     ``published_document`` answers the published version id for a document
@@ -415,6 +460,8 @@ def validate_item_list(
                 f"{item.key}: publish this document before you ask anybody to sign it."
             )
 
+        _check_label(item)
+
         if config.visible_when is not None:
             _check_visibility(item.key, config.visible_when, seen)
 
@@ -422,6 +469,19 @@ def validate_item_list(
         parsed.append(config)
 
     return parsed
+
+
+def _check_label(item: ItemDraft) -> None:
+    """Refuse a question the practice wrote with nothing to ask.
+
+    Only the types a practice writes the wording for. The engine's own
+    questions are asked in wording it serves, so a label there is an
+    override of the heading and a blank one means "as it comes".
+    """
+    if item.item_type not in LABEL_REQUIRED_ITEM_TYPES:
+        return
+    if item.label is None or not item.label.strip():
+        raise ItemConfigError(f"{item.key}: write the question the patient will see.")
 
 
 def _check_visibility(key: str, rule: VisibleWhen, earlier: dict[str, ReferencedItem]) -> None:
@@ -456,8 +516,11 @@ def _as_reference(key: str, item_type: str, config: ItemConfig) -> ReferencedIte
 
 __all__ = [
     "DISPLAY_ONLY_ITEM_TYPES",
+    "HELP_TEXT_MAX_LEN",
     "ITEM_KEY_PATTERN",
     "ITEM_TYPES",
+    "LABEL_MAX_LEN",
+    "LABEL_REQUIRED_ITEM_TYPES",
     "SELF_REPORT_INSTRUMENTS",
     "ChoiceOption",
     "ConsentDocumentConfig",
