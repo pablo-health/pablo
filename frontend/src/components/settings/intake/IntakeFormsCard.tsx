@@ -7,6 +7,7 @@ import { useState } from "react"
 import { SettingsBadge, SettingsCard } from "@/components/settings/ui"
 import { Button } from "@/components/ui/button"
 import { useInstruments } from "@/hooks/useInstruments"
+import { useIntakeBlankForms } from "@/hooks/useIntakeBlankForms"
 import { usePublishedIntakeDocuments } from "@/hooks/useIntakeDocuments"
 import {
   useCreateIntakeTemplate,
@@ -51,6 +52,7 @@ export function IntakeFormsCard() {
   const { data: templates } = useIntakeTemplates()
   const { data: documents } = usePublishedIntakeDocuments()
   const { data: instruments } = useInstruments()
+  const { data: blankForms } = useIntakeBlankForms()
   const createTemplate = useCreateIntakeTemplate()
   const createVersion = useCreateIntakeVersion()
   const saveItems = useSaveIntakeItems()
@@ -67,6 +69,13 @@ export function IntakeFormsCard() {
   const publishedDocuments = (documents ?? []).map((document) => ({
     document_key: document.document_key,
     title: document.title,
+  }))
+  // What a document question can offer for download. Narrowed to the two
+  // fields the picker shows, for the same reason the documents above are:
+  // the editor renders what it is given and knows nothing about storage.
+  const offerableBlankForms = (blankForms ?? []).map((form) => ({
+    id: form.id,
+    title: form.title,
   }))
   const openTemplate = list.find((t) => t.id === openTemplateId) ?? null
   const versionId =
@@ -157,6 +166,7 @@ export function IntakeFormsCard() {
                     publishError={messageOf(publish.error) ?? messageOf(saveItems.error)}
                     documents={publishedDocuments}
                     instruments={instruments ?? []}
+                    blankForms={offerableBlankForms}
                   />
                 </div>
               )}

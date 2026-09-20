@@ -38,6 +38,14 @@ vi.mock("@/hooks/useInstruments", () => ({
   useInstruments: () => ({ data: [] }),
 }))
 
+// And which blank forms a document question could offer. Same arrangement
+// and same reason as the documents above.
+const mockUseBlankForms = vi.fn()
+
+vi.mock("@/hooks/useIntakeBlankForms", () => ({
+  useIntakeBlankForms: () => mockUseBlankForms(),
+}))
+
 vi.mock("@/hooks/useIntakePackets", () => ({
   useIntakeTemplates: () => mockUseTemplates(),
   useIntakeVersion: (...args: unknown[]) => mockUseVersion(...args),
@@ -90,6 +98,7 @@ describe("IntakeFormsCard", () => {
     mockUseTemplates.mockReturnValue({ data: [TEMPLATE] })
     mockUseVersion.mockReturnValue({ data: DRAFT })
     mockUsePublishedDocuments.mockReturnValue({ data: [] })
+    mockUseBlankForms.mockReturnValue({ data: [] })
   })
 
   it("says so when the practice has no forms", () => {

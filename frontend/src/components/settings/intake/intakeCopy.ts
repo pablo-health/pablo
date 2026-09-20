@@ -146,6 +146,29 @@ export const NO_PUBLISHED_DOCUMENTS = "Publish a document first, then you can as
 export const DOCUMENT_PICKER_LABEL = "Which document"
 
 /**
+ * The settings on a question that asks for a photo of an insurance card.
+ *
+ * "Both sides" is the default because a plan's details are printed across
+ * the two, and a practice that only needs the front will say so.
+ */
+export const CARD_SIDES_LABEL = "How many photos"
+export const CARD_SIDES_BOTH = "Front and back"
+export const CARD_SIDES_FRONT = "Front only"
+export const CARD_COLLECT_FIELDS_LABEL = "Also ask them to type the plan details"
+export const CARD_COLLECT_FIELDS_HELP =
+  "Payer, member ID and group number. These go on the client's coverage record."
+
+/**
+ * The paper fallback on a question that asks for a document back.
+ *
+ * Optional, and described as what it is: the question works without one,
+ * and most of what it asks for is something the client already has.
+ */
+export const BLANK_FORM_PICKER_LABEL = "Offer a form to download (optional)"
+export const NO_BLANK_FORM_CHOICE = "Don't offer one"
+export const NO_BLANK_FORMS = "Upload a blank form first, then you can offer it here."
+
+/**
  * Asking a question only of the people it applies to.
  *
  * The picker says what it does and stops. It does not explain that a rule

@@ -64,6 +64,10 @@ from .instrument_license import (
     InMemoryInstrumentLicenseRepository,
     InstrumentLicenseRepository,
 )
+from .intake_blank_form import (
+    InMemoryIntakeBlankFormRepository,
+    IntakeBlankFormRepository,
+)
 from .intake_document import (
     InMemoryIntakeDocumentRepository,
     IntakeDocumentRepository,
@@ -91,6 +95,12 @@ from .patient import (
 from .patient_document import (
     InMemoryPatientDocumentRepository,
     PatientDocumentRepository,
+)
+from .patient_intake_artifact import (
+    ArtifactSlotTakenError,
+    DocumentAlreadyAttachedError,
+    InMemoryPatientIntakeArtifactRepository,
+    PatientIntakeArtifactRepository,
 )
 from .patient_intake_assignment import (
     InMemoryPatientIntakeAssignmentRepository,
@@ -319,6 +329,13 @@ def get_instrument_license_repository() -> InstrumentLicenseRepository:
     return PostgresInstrumentLicenseRepository(_get_pg_session())
 
 
+def get_intake_blank_form_repository() -> IntakeBlankFormRepository:
+    """Get intake blank-form repository instance."""
+    from .postgres.intake_blank_form import PostgresIntakeBlankFormRepository
+
+    return PostgresIntakeBlankFormRepository(_get_pg_session())
+
+
 def get_intake_document_repository() -> IntakeDocumentRepository:
     """Get intake consent-document repository instance."""
     from .postgres.intake_document import PostgresIntakeDocumentRepository
@@ -354,6 +371,15 @@ def get_patient_intake_assignment_repository() -> PatientIntakeAssignmentReposit
     )
 
     return PostgresPatientIntakeAssignmentRepository(_get_pg_session())
+
+
+def get_patient_intake_artifact_repository() -> PatientIntakeArtifactRepository:
+    """Get intake artifact repository instance."""
+    from .postgres.patient_intake_artifact import (
+        PostgresPatientIntakeArtifactRepository,
+    )
+
+    return PostgresPatientIntakeArtifactRepository(_get_pg_session())
 
 
 def get_patient_intake_signature_repository() -> PatientIntakeSignatureRepository:
@@ -410,10 +436,12 @@ def get_supervision_repository() -> PostgresSupervisionRepository:
 
 __all__ = [
     "AllowlistRepository",
+    "ArtifactSlotTakenError",
     "BookingLinkRepository",
     "ChatRepository",
     "ClinicianProfile",
     "ClinicianProfileRepository",
+    "DocumentAlreadyAttachedError",
     "EhrPromptRepository",
     "EhrRouteRepository",
     "IdentityRepository",
@@ -425,12 +453,14 @@ __all__ = [
     "InMemoryEhrRouteRepository",
     "InMemoryIdentityRepository",
     "InMemoryInstrumentLicenseRepository",
+    "InMemoryIntakeBlankFormRepository",
     "InMemoryIntakeDocumentRepository",
     "InMemoryIntakePacketRepository",
     "InMemoryLlmUsageRepository",
     "InMemoryMedicationRepository",
     "InMemoryNotesRepository",
     "InMemoryPatientDocumentRepository",
+    "InMemoryPatientIntakeArtifactRepository",
     "InMemoryPatientIntakeAssignmentRepository",
     "InMemoryPatientIntakeSignatureRepository",
     "InMemoryPatientIntakeSubmissionRepository",
@@ -439,12 +469,14 @@ __all__ = [
     "InMemoryTherapySessionRepository",
     "InMemoryUserRepository",
     "InstrumentLicenseRepository",
+    "IntakeBlankFormRepository",
     "IntakeDocumentRepository",
     "IntakePacketRepository",
     "LlmUsageRepository",
     "MedicationRepository",
     "NotesRepository",
     "PatientDocumentRepository",
+    "PatientIntakeArtifactRepository",
     "PatientIntakeAssignmentRepository",
     "PatientIntakeSignatureRepository",
     "PatientIntakeSubmissionRepository",
@@ -473,6 +505,7 @@ __all__ = [
     "get_ical_sync_config_repository",
     "get_identity_repository",
     "get_instrument_license_repository",
+    "get_intake_blank_form_repository",
     "get_intake_document_repository",
     "get_intake_packet_repository",
     "get_llm_usage_repository",
@@ -481,6 +514,7 @@ __all__ = [
     "get_outcome_measure_repository",
     "get_patient_coverage_repository",
     "get_patient_document_repository",
+    "get_patient_intake_artifact_repository",
     "get_patient_intake_assignment_repository",
     "get_patient_intake_signature_repository",
     "get_patient_intake_submission_repository",

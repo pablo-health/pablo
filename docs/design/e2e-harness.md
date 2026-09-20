@@ -78,6 +78,10 @@ frontend/e2e/
                               control number, list what it received
     mail.ts                   read the fake mail server, and the link out of
                               a message the product expects a person to click
+    upload.ts                 send a file the way a browser does: ask for an
+                              upload target, execute whichever recipe the API
+                              returns, finalize; plus the fixture files and
+                              the hash a round trip has to reproduce
   specs/
     patients.spec.ts          the existing spec, rewritten onto the fixtures
     claims.spec.ts            coverage → file claim → tracker submitted →

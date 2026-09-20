@@ -243,6 +243,13 @@ const baseQueryKeys = {
     list: () => [...baseQueryKeys.instruments.all, "list"] as const,
   },
 
+  // The practice's own empty paperwork, for a question that asks for a form
+  // back on paper.
+  intakeBlankForms: {
+    all: ["intake-blank-forms"] as const,
+    list: () => [...baseQueryKeys.intakeBlankForms.all, "list"] as const,
+  },
+
   // Note-type catalog query keys
   noteTypes: {
     all: ["note-types"] as const,

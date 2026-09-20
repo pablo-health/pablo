@@ -219,6 +219,29 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
             return []
         return self._events(assignment_id, assignment.patient_id)
 
+    def list_all_responses_for_clinician(
+        self, assignment_id: str, user_id: str
+    ) -> list[dict[str, object]]:
+        assignment = self._session.get(PatientIntakeAssignmentRow, assignment_id)
+        if assignment is None or not self._has_access(assignment.patient_id, user_id):
+            return []
+        rows = (
+            self._session.execute(
+                select(PatientIntakeResponseRow)
+                .where(
+                    PatientIntakeResponseRow.assignment_id == assignment_id,
+                    PatientIntakeResponseRow.patient_id == assignment.patient_id,
+                )
+                .order_by(
+                    PatientIntakeResponseRow.created_at,
+                    PatientIntakeResponseRow.id,
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [_response_to_dict(row) for row in rows]
+
     def count_superseded_responses_for_clinician(
         self, assignment_id: str, user_id: str
     ) -> dict[str, int]:

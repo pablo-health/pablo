@@ -340,21 +340,61 @@ class ConsentDocumentConfig(_BaseConfig):
     document_version_id: str | None = None
 
 
+#: What a file-backed question will accept, and the only types anything on
+#: this surface stores. The same three the document service allows; named
+#: here so a practice narrowing an item to "PDF only" is choosing from a set
+#: the storage layer already agrees with rather than inventing one.
+UPLOAD_MIME_TYPES: tuple[str, ...] = ("application/pdf", "image/jpeg", "image/png")
+
+
 class InsuranceCardConfig(_BaseConfig):
     """A photo of an insurance card, front and usually back.
 
     What to ask for is the item's ``label``, the same column every other
     question's wording lives in, rather than a second copy in here.
+
+    ``collect_fields`` adds the typed plan details beside the photograph —
+    payer, member id, group, who the subscriber is. It is a flag rather than
+    a second item type because it asks for the same thing twice over: the
+    card, and what is written on it. What gets typed goes onto the client's
+    coverage record, which is where the chart, a claim and an eligibility
+    check all already read it from; nothing about insurance is stored twice.
     """
 
     item_type: Literal["insurance_card"]
     sides: Literal["front", "both"] = "both"
+    collect_fields: bool = False
 
 
 class DocumentRequestConfig(_BaseConfig):
-    """Any other file the practice asks for."""
+    """Any other file the practice asks for.
+
+    ``accept`` narrows what the question will take — a practice asking for a
+    referral letter may want a PDF and nothing else. Left unset it is the
+    three types the storage layer accepts anyway, so the common case
+    configures nothing.
+
+    ``blank_form_id`` names one of the practice's own empty forms, for the
+    case a practice still works from paper: the question then offers the
+    form to download before it asks for the filled-in copy back. Optional,
+    and the fallback rather than the path — most of what this item asks for
+    (a referral letter, a prior record) is a document the patient already
+    has.
+    """
 
     item_type: Literal["document_request"]
+    accept: list[str] = Field(default_factory=lambda: list(UPLOAD_MIME_TYPES), min_length=1)
+    blank_form_id: str | None = None
+
+    @model_validator(mode="after")
+    def _check(self) -> DocumentRequestConfig:
+        unknown = [kind for kind in self.accept if kind not in UPLOAD_MIME_TYPES]
+        if unknown:
+            offered = ", ".join(UPLOAD_MIME_TYPES)
+            raise ValueError(f"{unknown[0]!r} is not a kind of file this form can take ({offered})")
+        if len(set(self.accept)) != len(self.accept):
+            raise ValueError("the same kind of file is listed twice")
+        return self
 
 
 ItemConfig = Annotated[
@@ -586,9 +626,12 @@ __all__ = [
     "LABEL_REQUIRED_ITEM_TYPES",
     "RESTRICTED_INSTRUMENTS",
     "SELF_REPORT_INSTRUMENTS",
+    "UPLOAD_MIME_TYPES",
     "ChoiceOption",
     "ConsentDocumentConfig",
+    "DocumentRequestConfig",
     "InstrumentAttested",
+    "InsuranceCardConfig",
     "ItemConfig",
     "ItemConfigError",
     "ItemDraft",

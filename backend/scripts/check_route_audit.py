@@ -258,6 +258,19 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("get", "/api/intake/documents/{document_id}"),  # one version and its rendering
         ("put", "/api/intake/documents/{document_id}"),  # edits an unpublished draft
         ("post", "/api/intake/documents/{document_id}/new-version"),  # starts the next draft
+        # intake_blank_forms.py — the practice's own empty paperwork, offered
+        # for download by a question that asks for a form back on paper. The
+        # same reasoning as the two blocks above: it is the practice's
+        # stationery, identical whoever it is sent to, and no row this surface
+        # touches belongs to anybody. The PORTAL's download of the same file is
+        # audited and is not on this list — a minted signed URL leaves the
+        # request and works without a bearer token, which is disclosure-shaped
+        # wherever it happens.
+        ("post", "/api/intake/blank-forms/init"),  # mints an upload URL, no patient data
+        ("post", "/api/intake/blank-forms/{form_id}/finalize"),  # checks the stored object
+        ("get", "/api/intake/blank-forms"),  # lists the practice's own blank forms
+        ("get", "/api/intake/blank-forms/{form_id}/file"),  # the practice reads its own file
+        ("delete", "/api/intake/blank-forms/{form_id}"),  # stops offering one, no patient data
         # launch.py — issues a single-use intent for an appointment the caller
         # already holds; discloses no patient data (the redeem step, which does
         # disclose the patient name, IS audited as launch_intent_redeemed)
