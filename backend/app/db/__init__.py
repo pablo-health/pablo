@@ -956,6 +956,11 @@ _OVERLAY_NOT_ROW_SCOPED: set[str] = set()
 #     ``patient_id`` to key a policy on, and they are considered only
 #     because they carry an ``id``. What a patient ANSWERS is a different
 #     table entirely, and that one is per-patient and row-scoped.
+#   * intake_documents — the consent documents a practice asks people to
+#     read and sign, one row per version. Practice-level for the same
+#     reason as the three above: the text is the same whoever it is sent
+#     to. What somebody SIGNED is a different table, per-patient and
+#     row-scoped.
 #   * companion_auth_challenges / companion_sessions — the portal sign-in
 #     tables (``app.portal``). These need the registration for a sharper
 #     reason than the rest. Both carry ``patient_id``, so the column query
@@ -978,6 +983,7 @@ _CORE_NOT_ROW_SCOPED: frozenset[str] = frozenset(
         "intake_packet_templates",
         "intake_packet_versions",
         "intake_item_definitions",
+        "intake_documents",
         "companion_auth_challenges",
         "companion_sessions",
     }

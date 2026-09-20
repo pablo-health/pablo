@@ -143,6 +143,13 @@ AUDIT_EXEMPT_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # what they answered, and that route audits. Sending a form and
         # withdrawing one are both recorded on this same surface.
         ("get", "/api/patients/{patient_id}/intake-assignments"),
+        # intake_documents.py — the person about to sign reading the document
+        # they are being asked to sign. It matches the "/patient/intake"
+        # marker on path text alone: the row it returns is the practice's own
+        # consent text, identical for everybody, and it discloses nothing
+        # about the patient reading it. Publishing that text IS audited, on
+        # the clinician surface that owns that write.
+        ("get", "/api/patient/intake/documents/{document_id}"),
         # portal/routes.py — whether this patient has a portal invitation in
         # flight and how many live sessions they hold. Counters and booleans:
         # no name, no contact detail, nothing clinical, and deliberately not
@@ -214,6 +221,17 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
             "put",
             "/api/intake/templates/{template_id}/versions/{version_id}/items",
         ),  # saves the question list on an unpublished draft
+        # intake_documents.py — the practice writing the documents it asks
+        # people to sign. Same shape as the form builder above: the text is
+        # the practice's own, no patient id reaches these routes, and no row
+        # they touch belongs to anybody. Publishing IS audited
+        # (INTAKE_DOCUMENT_PUBLISHED), because that is the exact text a
+        # signature will later be read against.
+        ("get", "/api/intake/documents"),  # lists the practice's own documents
+        ("post", "/api/intake/documents"),  # starts a document, no patient data
+        ("get", "/api/intake/documents/{document_id}"),  # one version and its rendering
+        ("put", "/api/intake/documents/{document_id}"),  # edits an unpublished draft
+        ("post", "/api/intake/documents/{document_id}/new-version"),  # starts the next draft
         # launch.py — issues a single-use intent for an appointment the caller
         # already holds; discloses no patient data (the redeem step, which does
         # disclose the patient name, IS audited as launch_intent_redeemed)

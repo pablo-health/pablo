@@ -170,13 +170,13 @@ describe("IntakeItemEditor", () => {
     expect(screen.queryByRole("button", { name: "Add question" })).not.toBeInTheDocument()
   })
 
-  it("does not offer a consent document, which cannot be stored yet", async () => {
+  it("offers every kind of question, consent documents included", async () => {
     const user = userEvent.setup()
     editor(version())
 
     await user.click(screen.getByRole("combobox", { name: "Kind of question" }))
 
-    expect(screen.queryByRole("option", { name: "Consent to sign" })).not.toBeInTheDocument()
+    expect(screen.getByRole("option", { name: "Consent to sign" })).toBeInTheDocument()
     expect(screen.getByRole("option", { name: "Measure" })).toBeInTheDocument()
   })
 })

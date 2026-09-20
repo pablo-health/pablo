@@ -9,7 +9,11 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import type { ChoiceOption, ItemConfig, ItemType } from "@/types/intakePackets"
-import { SELF_REPORT_INSTRUMENTS } from "./intakeCopy"
+import {
+  DOCUMENT_PICKER_LABEL,
+  NO_PUBLISHED_DOCUMENTS,
+  SELF_REPORT_INSTRUMENTS,
+} from "./intakeCopy"
 
 interface ItemConfigFormProps {
   itemType: ItemType
@@ -17,6 +21,19 @@ interface ItemConfigFormProps {
   onChange: (next: ItemConfig) => void
   /** Prefix for the generated field ids, so two open items do not collide. */
   idPrefix: string
+  /**
+   * The documents this form may ask somebody to sign — the practice's
+   * published ones. Passed in rather than fetched here so this stays a
+   * component that renders what it is given; the card that owns the form
+   * already holds the list.
+   */
+  documents?: PublishedDocument[]
+}
+
+/** One document a consent item can point at. */
+export interface PublishedDocument {
+  document_key: string
+  title: string
 }
 
 function text(config: ItemConfig, key: string): string {
@@ -106,7 +123,13 @@ function ChoiceOptions({ config, onChange, idPrefix }: Omit<ItemConfigFormProps,
  * API stores and the server validates at publish. Nothing here decides whether
  * a configuration is valid — a half-filled draft is a normal thing to save.
  */
-export function ItemConfigForm({ itemType, config, onChange, idPrefix }: ItemConfigFormProps) {
+export function ItemConfigForm({
+  itemType,
+  config,
+  onChange,
+  idPrefix,
+  documents = [],
+}: ItemConfigFormProps) {
   const set = (key: string, value: unknown) => onChange({ ...config, [key]: value })
   const setNumber = (key: string, raw: string) =>
     set(key, raw === "" ? undefined : Number(raw))
@@ -308,6 +331,35 @@ export function ItemConfigForm({ itemType, config, onChange, idPrefix }: ItemCon
         </div>
       )
 
+    case "consent_document":
+      // A document, not a version of one. Which wording a patient actually
+      // signs is decided when the form is published, so a practice that
+      // revises a document afterwards does not have to touch the form.
+      return (
+        <div>
+          <Label htmlFor={`${idPrefix}-document`}>{DOCUMENT_PICKER_LABEL}</Label>
+          {documents.length === 0 ? (
+            <p className="text-[12.5px] text-muted-foreground">{NO_PUBLISHED_DOCUMENTS}</p>
+          ) : (
+            <Select
+              value={text(config, "document_key")}
+              onValueChange={(value) => set("document_key", value)}
+            >
+              <SelectTrigger id={`${idPrefix}-document`} aria-label={DOCUMENT_PICKER_LABEL}>
+                <SelectValue placeholder="Choose a document" />
+              </SelectTrigger>
+              <SelectContent>
+                {documents.map((document) => (
+                  <SelectItem key={document.document_key} value={document.document_key}>
+                    {document.title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        </div>
+      )
+
     case "insurance_card":
     case "document_request":
       return (
@@ -322,8 +374,8 @@ export function ItemConfigForm({ itemType, config, onChange, idPrefix }: ItemCon
       )
 
     default:
-      // demographics, reason, emergency_contact, guardian and consent_document
-      // have nothing for a practice to set: the engine fixes their shape.
+      // demographics, reason, emergency_contact and guardian have nothing for
+      // a practice to set: the engine fixes their shape.
       return null
   }
 }
