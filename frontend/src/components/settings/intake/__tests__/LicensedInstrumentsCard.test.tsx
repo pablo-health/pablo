@@ -97,7 +97,9 @@ describe("LicensedInstrumentsCard", () => {
 
     expect(screen.getByText("C-SSRS")).toBeInTheDocument()
     expect(screen.getByText(/Free for clinical and community use/)).toBeInTheDocument()
-    expect(screen.getByRole("link", { name: /cssrs.columbia.edu/ })).toHaveAttribute(
+    // An exact name rather than a pattern: the link's text is the URL with
+    // its scheme stripped, so there is nothing to match loosely.
+    expect(screen.getByRole("link", { name: "cssrs.columbia.edu" })).toHaveAttribute(
       "href",
       "https://cssrs.columbia.edu"
     )
