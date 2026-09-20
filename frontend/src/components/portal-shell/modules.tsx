@@ -2,7 +2,7 @@
 
 /**
  * What the engine mounts in the portal, in the order a patient meets it:
- * intake first, then messaging.
+ * the forms they were asked for first, then messaging.
  *
  * Imported for its side effect by the shell, which is a client component.
  * That is the whole reason this file exists rather than the registrations
@@ -19,12 +19,12 @@
 
 "use client"
 
-import { PortalIntakeFlow } from "@/components/portal/intake"
+import { PortalForms } from "@/components/portal/forms"
 import { PortalMessaging } from "@/components/portal/messaging/PortalMessaging"
 import { registerPortalSlot, type PortalSlotProps } from "./slots"
 
-function IntakeSlot({ sessionToken }: PortalSlotProps) {
-  return <PortalIntakeFlow sessionToken={sessionToken} />
+function FormsSlot({ sessionToken }: PortalSlotProps) {
+  return <PortalForms sessionToken={sessionToken} />
 }
 
 function MessagingSlot({ sessionToken }: PortalSlotProps) {
@@ -36,7 +36,13 @@ function MessagingSlot({ sessionToken }: PortalSlotProps) {
 // are presentation: the routes behind an unnamed module are not mounted, so
 // what this decides is whether a patient is shown a section their practice
 // does not have — not whether they could reach one.
-registerPortalSlot({ id: "intake", Component: IntakeSlot, module: "intake", label: "Forms" })
+//
+// The slot is called ``forms`` and its module is ``intake``, which is not a
+// slip. The module is the deployment-facing name — it is what
+// ``PORTAL_MODULES`` is configured with and what the engine mounts under
+// ``/api/patient/intake`` — while the slot id and the label are what the
+// patient meets. A person filling in a form has not heard the word intake.
+registerPortalSlot({ id: "forms", Component: FormsSlot, module: "intake", label: "Forms" })
 registerPortalSlot({
   id: "messaging",
   Component: MessagingSlot,
