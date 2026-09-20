@@ -38,6 +38,7 @@ from .outcome_measures.router import (
     outcome_measures_router,
     patient_outcome_measures_router,
 )
+from .portal import practice_routes as portal_practice_routes
 from .portal import routes as portal_routes
 from .portal.resolver import register_portal_resolver
 from .routes import (
@@ -319,6 +320,7 @@ if settings.public_booking_enabled:
 # happens once, here, rather than per request.
 if settings.enable_patient_portal:
     app.include_router(portal_routes.router)
+    app.include_router(portal_practice_routes.router)
     register_portal_resolver()
 
 

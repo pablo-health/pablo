@@ -80,6 +80,14 @@ CREATE TABLE platform.companion_devices (
     revoked_at timestamp with time zone
 );
 
+CREATE TABLE platform.companion_practice_slugs (
+    slug character varying(63) NOT NULL,
+    practice_id character varying(128) NOT NULL,
+    display_name character varying(255) NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone NOT NULL
+);
+
 CREATE TABLE platform.contracted_rates (
     id uuid NOT NULL,
     participation_id uuid NOT NULL,
@@ -576,6 +584,12 @@ ALTER TABLE ONLY platform.claim_routes
 
 ALTER TABLE ONLY platform.companion_devices
     ADD CONSTRAINT companion_devices_pkey PRIMARY KEY (install_id);
+
+ALTER TABLE ONLY platform.companion_practice_slugs
+    ADD CONSTRAINT companion_practice_slugs_pkey PRIMARY KEY (slug);
+
+ALTER TABLE ONLY platform.companion_practice_slugs
+    ADD CONSTRAINT companion_practice_slugs_practice_id_key UNIQUE (practice_id);
 
 ALTER TABLE ONLY platform.contracted_rates
     ADD CONSTRAINT contracted_rates_pkey PRIMARY KEY (id);

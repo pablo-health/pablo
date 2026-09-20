@@ -127,6 +127,9 @@ DPOP_UNCOVERABLE: dict[str, str] = {
     # plus a texted code — and neither is reached by a companion device. ---
     "POST /api/patient/auth/redeem": "pre-auth: exchanges a magic link + code for a session",
     "POST /api/patient/auth/refresh": "pre-auth: rotates a patient session, no user JWT",
+    # --- The portal shell's first call, made before any session exists: a
+    # slug in, a practice's own display name out. ---
+    "GET /api/portal/practices/{slug}": "public: resolves a practice slug to its display name",
     # --- Public BAA document fetch (the legal text shown pre-acceptance);
     # no authenticated user. ---
     "GET /api/users/baa": "public: serves the current BAA document text, no user",

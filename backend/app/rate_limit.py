@@ -561,6 +561,7 @@ def get_intake_submit_limiter() -> RateLimiter:
 _portal_redeem_ip_limiter: RateLimiter | None = None
 _portal_redeem_invite_limiter: RateLimiter | None = None
 _portal_refresh_ip_limiter: RateLimiter | None = None
+_portal_practice_resolve_ip_limiter: RateLimiter | None = None
 
 
 def _get_portal_redeem_ip_limiter() -> RateLimiter:
@@ -604,6 +605,29 @@ def _get_portal_refresh_ip_limiter() -> RateLimiter:
     return _portal_refresh_ip_limiter
 
 
+def _get_portal_practice_resolve_ip_limiter() -> RateLimiter:
+    """30/min per address. The slug directory carries no credential, but it is
+    still a lookup surface anyone can sweep to enumerate live practices — this
+    bounds that the way the public-booking browse limiter bounds slug-guessing
+    on booking links."""
+    global _portal_practice_resolve_ip_limiter  # noqa: PLW0603
+    if _portal_practice_resolve_ip_limiter is None:
+        _portal_practice_resolve_ip_limiter = NamespacedLimiter(
+            _create_limiter(max_requests=30, window_seconds=60), "portal-practice-resolve-ip:"
+        )
+        logger.info(
+            "Portal practice-resolve IP rate limiter: %s",
+            type(_portal_practice_resolve_ip_limiter).__name__,
+        )
+    return _portal_practice_resolve_ip_limiter
+
+
+def require_portal_practice_resolve_rate_limit(request: Request) -> None:
+    """Per-address window on the public slug directory. A route dependency, so
+    it runs before the slug ever reaches a query."""
+    _get_portal_practice_resolve_ip_limiter().check(get_client_ip(request))
+
+
 def require_portal_redeem_rate_limit(request: Request) -> None:
     """Per-address window on redemption. A route dependency, so it runs first."""
     _get_portal_redeem_ip_limiter().check(get_client_ip(request))
@@ -626,6 +650,7 @@ def reset_portal_limiters() -> None:
         _portal_redeem_ip_limiter,
         _portal_redeem_invite_limiter,
         _portal_refresh_ip_limiter,
+        _portal_practice_resolve_ip_limiter,
     ):
         if limiter is not None:
             limiter.reset()
