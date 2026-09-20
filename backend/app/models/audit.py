@@ -370,6 +370,15 @@ class AuditAction(StrEnum):
     # them.
     INTAKE_REVIEW_VIEWED = "intake_review_viewed"
 
+    # A clinician took a form out of the product as a file: every answer,
+    # the answers each one replaced, the evidence behind every signature,
+    # and the log. Wider than the review read and, unlike it, the content
+    # leaves — so it is recorded as its own disclosure rather than folded
+    # into ``INTAKE_REVIEW_VIEWED``, and a later question about where a
+    # form went has a row to answer from. The payload carries which version
+    # was exported and nothing that was on it.
+    INTAKE_PACKET_EXPORTED = "intake_packet_exported"
+
     # A patient handed a reopened form back in. The actor is the patient,
     # so this is a write by the subject; it sits beside the ordinary
     # ``PATIENT_INTAKE_SUBMITTED`` rather than replacing it, because the two

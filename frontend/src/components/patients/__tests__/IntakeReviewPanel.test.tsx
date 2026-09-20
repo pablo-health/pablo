@@ -29,6 +29,7 @@ const mockGet = vi.fn()
 const mockRequest = vi.fn()
 const mockAccept = vi.fn()
 const mockEnter = vi.fn()
+const mockExport = vi.fn()
 
 vi.mock("@/lib/api/intakeReview", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api/intakeReview")>()
@@ -38,8 +39,17 @@ vi.mock("@/lib/api/intakeReview", async (importOriginal) => {
     requestIntakeCorrection: (...args: unknown[]) => mockRequest(...args),
     acceptIntakeAssignment: (...args: unknown[]) => mockAccept(...args),
     enterIntakeAnswerForPatient: (...args: unknown[]) => mockEnter(...args),
+    downloadIntakeExport: (...args: unknown[]) => mockExport(...args),
   }
 })
+
+/**
+ * What the browser was asked to save, captured at the anchor.
+ *
+ * jsdom has no download, so the click is watched rather than followed: the
+ * filename is the part the panel decides, and it is the part worth pinning.
+ */
+const saved: string[] = []
 
 const SIGNED_AT = "2026-03-14T12:00:00Z"
 
@@ -118,6 +128,14 @@ describe("IntakeReviewPanel", () => {
     mockRequest.mockResolvedValue(assignment())
     mockAccept.mockResolvedValue(assignment())
     mockEnter.mockResolvedValue(assignment())
+    saved.length = 0
+    URL.createObjectURL = vi.fn(() => "blob:intake")
+    URL.revokeObjectURL = vi.fn()
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      saved.push(this.download)
+    })
   })
 
   it("says where each answer came from, and says nothing for an unanswered one", async () => {
@@ -306,6 +324,40 @@ describe("IntakeReviewPanel", () => {
     expect(await screen.findByTestId("intake-review-signature-sig-1")).toHaveTextContent(
       "Ada Lovelace signed as patient",
     )
+  })
+
+  it("downloads the form as a file named after its receipt", async () => {
+    mockGet.mockResolvedValue(review())
+    mockExport.mockResolvedValue(new Blob(["<!DOCTYPE html>"], { type: "text/html" }))
+
+    renderPanel()
+    await userEvent.click(await screen.findByTestId("intake-review-export"))
+
+    expect(mockExport).toHaveBeenCalledWith("patient-a", "assign-1")
+    expect(saved).toEqual(["intake-ABC123.html"])
+  })
+
+  it("names the file after the request when no form has been handed in", async () => {
+    mockGet.mockResolvedValue(review({ status: "assigned", receipt_code: null }))
+    mockExport.mockResolvedValue(new Blob(["<!DOCTYPE html>"], { type: "text/html" }))
+
+    renderPanel()
+    await userEvent.click(await screen.findByTestId("intake-review-export"))
+
+    expect(saved).toEqual(["intake-assign-1.html"])
+  })
+
+  it("says so when the file could not be fetched, and saves nothing", async () => {
+    mockGet.mockResolvedValue(review())
+    mockExport.mockRejectedValue(new Error("network"))
+
+    renderPanel()
+    await userEvent.click(await screen.findByTestId("intake-review-export"))
+
+    expect(await screen.findByTestId("intake-review-error")).toHaveTextContent(
+      "That didn't go through.",
+    )
+    expect(saved).toEqual([])
   })
 
   it("says a form is finished only from the progress the server sent", async () => {
