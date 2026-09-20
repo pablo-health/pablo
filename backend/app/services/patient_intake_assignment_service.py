@@ -61,7 +61,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from ..intake.answers import SIGNED_ITEM_TYPES, AnswerError, validate_answer
+from ..intake.answers import (
+    ROUTE_WRITTEN_ITEM_TYPES,
+    SIGNED_ITEM_TYPES,
+    AnswerError,
+    validate_answer,
+)
 from ..intake.completion import Completion, CompletionItem, assess
 from ..intake.items import (
     InstrumentConfig,
@@ -291,6 +296,17 @@ class IntakeAssignmentService:
             for row in self._repo.list_responses_for_clinician(assignment_id, user_id)
         }
 
+    def all_responses_for_clinician(
+        self, assignment_id: str, user_id: str
+    ) -> list[dict[str, object]]:
+        """Every answer ever written on one form, oldest first.
+
+        Replaced and retired rows as well as live ones. What the export
+        reads, because a chart copy carries the corrections rather than a
+        count of them.
+        """
+        return self._repo.list_all_responses_for_clinician(assignment_id, user_id)
+
     def get_for_clinician(self, assignment_id: str, user_id: str) -> dict[str, object] | None:
         return self._repo.get_assignment_for_clinician(assignment_id, user_id)
 
@@ -384,13 +400,17 @@ class IntakeAssignmentService:
         config = _parse(row)
         if config is None:
             raise AnswerError("This question cannot be answered as it is set up.")
-        if config.item_type in SIGNED_ITEM_TYPES:
-            # A consent item's answer says "signature <id> exists", so the
-            # only thing allowed to write one is the route that also writes
-            # the signature. Letting this path through would let a patient
-            # assert a signature nobody took — and completion, which reads
-            # the answer rather than the signature, would believe it.
-            raise AnswerError("This document is signed rather than answered here.")
+        if config.item_type in ROUTE_WRITTEN_ITEM_TYPES:
+            # These answers are references to rows: a signature that was
+            # taken, the documents that arrived. The only thing allowed to
+            # write one is the route that also writes the row it points at.
+            # Letting this path through would let a patient assert a
+            # signature nobody took, or attach a document id that is not
+            # theirs — and completion, which reads the answer rather than
+            # the rows, would believe either.
+            if config.item_type in SIGNED_ITEM_TYPES:
+                raise AnswerError("This document is signed rather than answered here.")
+            raise AnswerError("This question is answered by sending a file.")
         validate_answer(config, value)
 
         # The immutability invariant, checked against the row rather than

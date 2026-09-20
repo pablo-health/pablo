@@ -64,6 +64,7 @@ from .routes import (
     ehr_routes,
     ext_auth,
     ical_sync,
+    intake_blank_forms,
     intake_documents,
     intake_packets,
     internal_transcription,
@@ -77,6 +78,7 @@ from .routes import (
     patient_documents,
     patient_intake,
     patient_intake_assignments,
+    patient_intake_export,
     patient_intake_review,
     patient_messages,
     patient_payments,
@@ -374,6 +376,12 @@ app.include_router(intake_packets.router)
 # and the patient half answers 401 with no resolver registered.
 app.include_router(intake_documents.router)
 app.include_router(intake_documents.patient_router)
+# The practice's own empty paperwork, and the portal's download of one.
+# Same shape and same reasons as the pair above: practice-level rows on the
+# clinician side, and a patient half that answers 401 with no resolver
+# registered.
+app.include_router(intake_blank_forms.router)
+app.include_router(intake_blank_forms.patient_router)
 # Sending a form to a patient and them filling it in. Both routers are
 # unconditional for the reasons above: the patient half answers 401 with no
 # resolver registered, and the clinician half sits behind the ordinary
@@ -384,6 +392,9 @@ app.include_router(patient_intake_assignments.clinician_router)
 # and a value entered for somebody in the room. Clinician-only, so it is
 # unconditional for the same reason the read beside it is.
 app.include_router(patient_intake_review.clinician_router)
+# The same form as one file to keep, print or hand over. Clinician-only,
+# and mounted beside the review it is reached from.
+app.include_router(patient_intake_export.clinician_router)
 # Companion launch-intent handoff. Mounted only when the flag is on so
 # /api/launch/* returns 404 until the desktop companions ship the
 # verified-link redemption path. See docs/design/companion-thin-client.md.

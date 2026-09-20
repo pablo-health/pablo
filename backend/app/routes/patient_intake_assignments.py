@@ -13,6 +13,9 @@ surfaces, two routers:
     GET  /assignments/{id}                         -> one form, with what I saved
     PUT  /assignments/{id}/items/{item_id}         -> save one answer
     POST /assignments/{id}/signatures              -> sign a consent document
+    POST /assignments/{id}/artifacts               -> attach a file I uploaded
+    DELETE /assignments/{id}/artifacts/{id}        -> take one back off
+    PUT  /assignments/{id}/items/{item_id}/coverage -> the plan on my card
     POST /assignments/{id}/submit                  -> hand it in, get a receipt
 
   Clinician — ``/api/patients``
@@ -69,15 +72,23 @@ from ..api_errors import ConflictError, ForbiddenError, NotFoundError, Unprocess
 from ..auth.patient_context import AuthStrength, PatientContext, get_patient_context
 from ..auth.route_access import subscription_exempt
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
+from ..claims.eligibility import (
+    IntakeEligibilityCheck,
+    get_intake_eligibility_check,
+)
 from ..intake.answers import AnswerError
 from ..intake.consent_statement import consent_statement
 from ..intake.items import stored_config
 from ..models import User  # noqa: TC001 — fastapi resolves the annotation at runtime
 from ..models.audit import AuditAction, ResourceType
+from ..models.coverage import IntakeCoverage  # noqa: TC001 — fastapi resolves the annotation
 from ..models.patient_intake_assignment_api import (
+    ArtifactWriteResponse,
+    AttachArtifactRequest,
     ClinicianIntakeAnswerResponse,
     ClinicianIntakeAssignmentDetailResponse,
     CreateAssignmentRequest,
+    IntakeArtifactResponse,
     IntakeAssignmentDetailResponse,
     IntakeAssignmentItemResponse,
     IntakeAssignmentResponse,
@@ -86,6 +97,7 @@ from ..models.patient_intake_assignment_api import (
     IntakeSubmissionResponse,
     SaveAnswerRequest,
     SavedAnswerResponse,
+    SaveIntakeCoverageResponse,
     SubmittedMeasureResponse,
 )
 from ..models.patient_intake_signature_api import (
@@ -96,14 +108,27 @@ from ..outcome_measures.service import (  # noqa: TC001 — fastapi resolves the
     OutcomeMeasureService,
 )
 from ..repositories import (
+    ArtifactSlotTakenError,
+    DocumentAlreadyAttachedError,
     get_intake_document_repository,
     get_intake_packet_repository,
+    get_patient_coverage_repository,
+    get_patient_document_repository,
+    get_patient_intake_artifact_repository,
     get_patient_intake_assignment_repository,
     get_patient_intake_signature_repository,
     get_patient_repository,
+    get_payer_repository,
 )
 from ..request_context import extract_request_context
 from ..services.audit_service import AuditService, get_audit_service
+from ..services.patient_intake_artifact_service import (
+    DocumentNotUsableError,
+    IntakeArtifactService,
+    NotACardItemError,
+    NotAnUploadItemError,
+    WrongSideError,
+)
 from ..services.patient_intake_assignment_service import (
     AssignmentClosedError,
     CorrectionOutstandingError,
@@ -178,6 +203,35 @@ def get_clinician_patient_repository(
     return get_patient_repository()
 
 
+def get_patient_intake_artifact_service() -> IntakeArtifactService:
+    """The artifact service on whichever principal armed the session.
+
+    Six repositories because attaching a file is a statement about six
+    tables at once: the artifacts, the form the question is on, the
+    assignment whose answer it settles, the document it points at, and —
+    when a card question also collects the plan — the payer and the
+    coverage it lands on. No principal dependency of its own, for the same
+    reason the two services above have none: every route that reaches this
+    has already been through one, so the ``search_path`` is set by the time
+    it runs.
+    """
+    return IntakeArtifactService(
+        get_patient_intake_artifact_repository(),
+        get_patient_intake_assignment_repository(),
+        get_intake_packet_repository(),
+        get_patient_document_repository(),
+        get_payer_repository(),
+        get_patient_coverage_repository(),
+    )
+
+
+def get_clinician_intake_artifact_service(
+    _ctx: TenantContext = Depends(get_tenant_context),
+) -> IntakeArtifactService:
+    """The same service on a tenant-scoped clinician session."""
+    return get_patient_intake_artifact_service()
+
+
 def get_patient_intake_signature_service() -> IntakeSignatureService:
     """The signature service on whichever principal armed the session.
 
@@ -200,8 +254,12 @@ PatientAssignments = Annotated[
     IntakeAssignmentService, Depends(get_patient_intake_assignment_service)
 ]
 PatientSignatures = Annotated[IntakeSignatureService, Depends(get_patient_intake_signature_service)]
+PatientArtifacts = Annotated[IntakeArtifactService, Depends(get_patient_intake_artifact_service)]
 ClinicianAssignments = Annotated[
     IntakeAssignmentService, Depends(get_clinician_intake_assignment_service)
+]
+ClinicianArtifacts = Annotated[
+    IntakeArtifactService, Depends(get_clinician_intake_artifact_service)
 ]
 
 
@@ -292,6 +350,7 @@ def get_my_assignment(
     assignment_id: str,
     patient: CurrentPatient,
     service: PatientAssignments,
+    artifacts: PatientArtifacts,
     _: None = Depends(subscription_exempt),
 ) -> IntakeAssignmentDetailResponse:
     """One form, its questions in order, and whatever has been saved so far.
@@ -326,6 +385,10 @@ def get_my_assignment(
                 value=saved.get(str(row["id"])),
             )
             for row in service.items(str(assignment["version_id"]))
+        ],
+        artifacts=[
+            _artifact_response(row)
+            for row in artifacts.list_for_patient(assignment_id, patient.patient_id)
         ],
     )
 
@@ -686,6 +749,264 @@ def _own_assignment(
     return assignment
 
 
+def _artifact_response(row: dict[str, object]) -> IntakeArtifactResponse:
+    side = row.get("side")
+    return IntakeArtifactResponse(
+        id=str(row["id"]),
+        assignment_id=str(row["assignment_id"]),
+        item_id=str(row["item_id"]),
+        document_id=str(row["document_id"]),
+        side=str(side) if side is not None else None,
+        created_at=row["created_at"],  # type: ignore[arg-type]
+    )
+
+
+# ---------------------------------------------------------------------------
+# The files a form asked for
+# ---------------------------------------------------------------------------
+#
+# A patient uploads through the document surface they already have, and then
+# says which question the file answers. Two routes, and the shape of both is
+# the same point: the request names a document, and the server decides what
+# that means. Nothing a caller sends becomes the question's answer — that is
+# written from the rows afterwards, by the service.
+
+
+@router.post(
+    "/assignments/{assignment_id}/artifacts",
+    response_model=ArtifactWriteResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def attach_my_artifact(
+    assignment_id: str,
+    body: AttachArtifactRequest,
+    request: Request,
+    patient: CurrentPatient,
+    service: PatientAssignments,
+    artifacts: PatientArtifacts,
+    audit: AuditService = Depends(get_audit_service),
+    _: None = Depends(subscription_exempt),
+) -> ArtifactWriteResponse:
+    """Say that a file already uploaded answers one of this form's questions.
+
+    Every refusal is a status code with a sentence the person filling the
+    form in can act on:
+
+    * ``403`` — this session proved one factor, like every route here.
+    * ``404`` — a form, a question or a document that is not this patient's
+      to reach. All three answer the same way, so no id on this surface can
+      be used to find out what exists.
+    * ``409`` — that side of the card already has a photo, or this file
+      already answers something, or the form has been handed in. All three
+      mean "not now, and not because of anything you sent".
+    * ``422`` — a question that does not ask for a file, or a side of a card
+      this question did not ask for.
+
+    What is recorded: which document arrived and which side of a card it is.
+    Never the filename — people name files after what is in them.
+    """
+    _require_stepped_up(patient)
+    assignment = _own_assignment(service, assignment_id, patient.patient_id)
+
+    try:
+        artifact = artifacts.attach(
+            assignment,
+            patient.patient_id,
+            body.item_id,
+            body.document_id,
+            body.side,
+        )
+    except AssignmentClosedError as exc:
+        raise ConflictError(
+            "This form is no longer open for changes.", {"assignment_id": assignment_id}
+        ) from exc
+    except LookupError as exc:
+        raise NotFoundError("Question not found", {"item_id": body.item_id}) from exc
+    except NotAnUploadItemError as exc:
+        raise UnprocessableEntityError(
+            "This question does not ask for a file.", {"item_id": body.item_id}
+        ) from exc
+    except WrongSideError as exc:
+        raise UnprocessableEntityError(
+            "Say which side of the card this photo is.", {"item_id": body.item_id}
+        ) from exc
+    except DocumentNotUsableError as exc:
+        # An id that was never uploaded, one that belongs to somebody else,
+        # and one whose upload never finished all land here and all answer
+        # the same way.
+        raise NotFoundError("File not found", {"document_id": body.document_id}) from exc
+    except ArtifactSlotTakenError as exc:
+        raise ConflictError(
+            "There is already a photo of that side.", {"item_id": body.item_id}
+        ) from exc
+    except DocumentAlreadyAttachedError as exc:
+        raise ConflictError(
+            "That file is already on this form.", {"document_id": body.document_id}
+        ) from exc
+
+    audit.log_patient_principal_action(
+        action=AuditAction.PATIENT_INTAKE_ARTIFACT_UPLOADED,
+        request=request,
+        patient_id=patient.patient_id,
+        resource_type=ResourceType.PATIENT_INTAKE_ASSIGNMENT,
+        resource_id=assignment_id,
+        session_id=patient.session_id,
+        changes={
+            "item_id": body.item_id,
+            "document_id": body.document_id,
+            "side": body.side,
+        },
+    )
+    return _artifact_write_response(service, artifacts, assignment_id, patient, artifact)
+
+
+@router.delete(
+    "/assignments/{assignment_id}/artifacts/{artifact_id}",
+    response_model=ArtifactWriteResponse,
+)
+def remove_my_artifact(
+    assignment_id: str,
+    artifact_id: str,
+    request: Request,
+    patient: CurrentPatient,
+    service: PatientAssignments,
+    artifacts: PatientArtifacts,
+    audit: AuditService = Depends(get_audit_service),
+    _: None = Depends(subscription_exempt),
+) -> ArtifactWriteResponse:
+    """Take a photo back off a form that has not been handed in.
+
+    A ``409`` once the form is in: what was submitted stays submitted, and
+    the way to correct it afterwards is to talk to the practice rather than
+    to edit the record. A ``404`` for an artifact that is not this
+    patient's, indistinguishable from one that never existed.
+
+    The file itself goes with the row. It was attached to a form still
+    being filled in, so it was never sent to the practice, and the
+    practice's record of what arrived has nothing to keep.
+    """
+    _require_stepped_up(patient)
+    assignment = _own_assignment(service, assignment_id, patient.patient_id)
+
+    try:
+        artifact = artifacts.remove(assignment, patient.patient_id, artifact_id)
+    except AssignmentClosedError as exc:
+        raise ConflictError(
+            "This form has already been handed in.", {"assignment_id": assignment_id}
+        ) from exc
+    except LookupError as exc:
+        raise NotFoundError("File not found", {"artifact_id": artifact_id}) from exc
+
+    audit.log_patient_principal_action(
+        action=AuditAction.PATIENT_INTAKE_ARTIFACT_REMOVED,
+        request=request,
+        patient_id=patient.patient_id,
+        resource_type=ResourceType.PATIENT_INTAKE_ASSIGNMENT,
+        resource_id=assignment_id,
+        session_id=patient.session_id,
+        changes={
+            "item_id": str(artifact["item_id"]),
+            "document_id": str(artifact["document_id"]),
+        },
+    )
+    return _artifact_write_response(service, artifacts, assignment_id, patient, artifact)
+
+
+def _artifact_write_response(
+    service: IntakeAssignmentService,
+    artifacts: IntakeArtifactService,
+    assignment_id: str,
+    patient: PatientContext,
+    artifact: dict[str, object],
+) -> ArtifactWriteResponse:
+    """The artifact that changed, and where the form stands now.
+
+    Re-reads the assignment rather than reusing the one the route already
+    held: attaching a file is what moves a form from "sent" to "in
+    progress", and the status on the response has to be what the write left
+    behind rather than what was there before it.
+    """
+    _ = artifacts  # the rows are read back through the assignment's progress
+    current = _own_assignment(service, assignment_id, patient.patient_id)
+    return ArtifactWriteResponse(
+        artifact=_artifact_response(artifact),
+        status=str(current["status"]),
+        progress=_progress(service.progress(current, patient.patient_id)),
+    )
+
+
+@router.put(
+    "/assignments/{assignment_id}/items/{item_id}/coverage",
+    response_model=SaveIntakeCoverageResponse,
+)
+def save_my_intake_coverage(
+    assignment_id: str,
+    item_id: str,
+    body: IntakeCoverage,
+    request: Request,
+    patient: CurrentPatient,
+    service: PatientAssignments,
+    artifacts: PatientArtifacts,
+    eligibility: IntakeEligibilityCheck = Depends(get_intake_eligibility_check),
+    audit: AuditService = Depends(get_audit_service),
+    _: None = Depends(subscription_exempt),
+) -> SaveIntakeCoverageResponse:
+    """Put the plan written on the card on file.
+
+    Not the question's answer — the photograph is. These are the details
+    printed on the card, and they go where the chart, a claim and an
+    eligibility check already read a plan from. There is no second copy on
+    the form to disagree with the first.
+
+    When the deployment can ask a payer, a check is queued and this request
+    returns without waiting for it: a payer that takes thirty seconds must
+    never be the reason somebody's first appointment is late. The verdict
+    lands on the coverage record, which is where the chart reads it.
+
+    A ``422`` when the question does not ask for these details, a ``404``
+    for a question that is not on this form, a ``409`` once the form is in.
+
+    What is recorded is which coverage row and which payer. Never the
+    member id, the group or the subscriber — those are the card, and the
+    card is not something a compliance log needs a copy of.
+    """
+    _require_stepped_up(patient)
+    assignment = _own_assignment(service, assignment_id, patient.patient_id)
+
+    try:
+        coverage = artifacts.save_coverage(assignment, patient.patient_id, item_id, body)
+    except AssignmentClosedError as exc:
+        raise ConflictError(
+            "This form is no longer open for changes.", {"assignment_id": assignment_id}
+        ) from exc
+    except LookupError as exc:
+        raise NotFoundError("Question not found", {"item_id": item_id}) from exc
+    except (NotAnUploadItemError, NotACardItemError) as exc:
+        raise UnprocessableEntityError(
+            "This question does not ask for insurance details.", {"item_id": item_id}
+        ) from exc
+
+    # The clinician who asked for the form is who the check runs as: a
+    # patient principal has no reach into a payer, and the queued job
+    # resolves its tenant from that id.
+    requested = eligibility(coverage.id, str(assignment["assigned_by"]))
+
+    audit.log_patient_principal_action(
+        action=AuditAction.PATIENT_COVERAGE_CREATED,
+        request=request,
+        patient_id=patient.patient_id,
+        resource_type=ResourceType.PATIENT_COVERAGE,
+        resource_id=coverage.id,
+        session_id=patient.session_id,
+        changes={
+            "source": "intake",
+            "payer_id": coverage.payer_id,
+            "eligibility_requested": requested,
+        },
+    )
+    return SaveIntakeCoverageResponse(coverage_id=coverage.id, eligibility_requested=requested)
+
+
 # ---------------------------------------------------------------------------
 # Clinician surface
 # ---------------------------------------------------------------------------
@@ -780,6 +1101,7 @@ def get_patient_intake_assignment(
     assignment_id: str,
     request: Request,
     service: ClinicianAssignments,
+    artifacts: ClinicianArtifacts,
     user: User = Depends(require_baa_acceptance),
     patients: PatientRepository = Depends(get_clinician_patient_repository),
     audit: AuditService = Depends(get_audit_service),
@@ -804,6 +1126,7 @@ def get_patient_intake_assignment(
         raise NotFoundError("Form not found", {"assignment_id": assignment_id})
 
     saved = service.answers_for_clinician(assignment_id, user.id)
+    attached = artifacts.list_for_clinician(assignment_id, user.id)
     base = _assignment_response(service, assignment, patient_id)
 
     audit.log(
@@ -813,7 +1136,7 @@ def get_patient_intake_assignment(
         resource_type=ResourceType.PATIENT_INTAKE_ASSIGNMENT,
         resource_id=assignment_id,
         patient=patient,
-        changes={"count": len(saved)},
+        changes={"count": len(saved), "artifacts": len(attached)},
     )
 
     return ClinicianIntakeAssignmentDetailResponse(
@@ -833,6 +1156,7 @@ def get_patient_intake_assignment(
             )
             for row in service.items(str(assignment["version_id"]))
         ],
+        artifacts=[_artifact_response(row) for row in attached],
     )
 
 
@@ -886,8 +1210,10 @@ optional_str = _optional_str
 __all__ = [
     "assignment_response",
     "clinician_router",
+    "get_clinician_intake_artifact_service",
     "get_clinician_intake_assignment_service",
     "get_clinician_patient_repository",
+    "get_patient_intake_artifact_service",
     "get_patient_intake_assignment_service",
     "get_patient_intake_signature_service",
     "optional_str",

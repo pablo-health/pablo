@@ -1001,6 +1001,132 @@ class PatientIntakeSignatureRow(Base):
     )
 
 
+class PatientIntakeArtifactRow(Base):
+    """One file a patient attached to a question that asked for one.
+
+    A photograph of an insurance card, the referral letter a practice asked
+    them to bring. The file itself is a :class:`PatientDocumentRow` in the
+    ``intake_artifact`` category — this row is the link between it and the
+    question, which is what lets the form ask "has the back of the card
+    arrived" without the document table knowing anything about forms.
+
+    Three columns carry the whole rule.
+
+    ``document_id`` is unique, so one file answers one question: attaching
+    the same photograph as both the front and the back of a card is refused
+    by the database rather than by whichever caller remembered to look.
+
+    ``side`` is set on a card and NULL on anything else, and the partial
+    unique index on ``(assignment_id, item_id, side)`` makes "one front, one
+    back" a fact about the table. It is partial because a plain unique index
+    would also mean one file per document-request question, and a practice
+    asking for prior records may well be sent three.
+
+    ``patient_id`` is denormalized from the assignment and held honest by
+    the composite foreign key, the same pattern and the same reason as
+    :class:`PatientIntakeResponseRow` — it is what lets this table be
+    policied by a plain column comparison rather than a join.
+
+    There is no soft delete. A file removed before the form is handed in was
+    never sent: the row goes, and the document it points at is tombstoned
+    with it. After the form is in, nothing here is removable at all — that
+    is the route's rule, because "what was submitted" has to stay a stable
+    record.
+    """
+
+    __tablename__ = "patient_intake_artifacts"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    assignment_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
+    item_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("intake_item_definitions.id", name="fk_patient_intake_artifacts_item"),
+        nullable=False,
+    )
+    document_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey(
+            "patient_documents.id",
+            ondelete="CASCADE",
+            name="fk_patient_intake_artifacts_document",
+        ),
+        nullable=False,
+        unique=True,
+    )
+    side: Mapped[str | None] = mapped_column(String(8))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "side IS NULL OR side IN ('front','back')",
+            name="ck_patient_intake_artifacts_side",
+        ),
+        ForeignKeyConstraint(
+            ["assignment_id", "patient_id"],
+            [
+                "patient_intake_assignments.id",
+                "patient_intake_assignments.patient_id",
+            ],
+            ondelete="CASCADE",
+            name="fk_patient_intake_artifacts_assignment",
+        ),
+        Index(
+            "uq_patient_intake_artifacts_side",
+            "assignment_id",
+            "item_id",
+            "side",
+            unique=True,
+            postgresql_where=text("side IS NOT NULL"),
+        ),
+        Index(
+            "ix_patient_intake_artifacts_assignment_item",
+            "assignment_id",
+            "item_id",
+        ),
+    )
+
+
+class IntakeBlankFormRow(Base):
+    """One of the practice's own empty forms, for a patient to print.
+
+    The fallback for a practice that still works from paper: a
+    ``document_request`` item can name one of these, and the question then
+    offers it for download before asking for the filled-in copy back.
+
+    **On nobody's chart, and that is why it is here rather than on
+    ``patient_documents``.** A blank form holds no patient's information —
+    it is the practice's stationery — so filing it against a chart would
+    mean either an arbitrary patient or a nullable ``patient_id`` on a table
+    whose every row policy keys on that column. It is practice-level
+    instead, registered not-row-scoped like ``compliance_items``: its
+    isolation boundary is the tenant schema, which is the same boundary the
+    form it belongs to already lives inside.
+
+    Uploaded by a clinician through the same two-phase signed-URL flow every
+    other file in the system uses; ``finalized_at`` is NULL between the two
+    halves, so an upload that was started and abandoned never appears
+    anywhere. ``deleted_at`` tombstones a form a practice has stopped using,
+    which leaves an item that still names it showing no download rather than
+    a broken one.
+    """
+
+    __tablename__ = "intake_blank_forms"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    filename: Mapped[str] = mapped_column(Text, nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    gcs_path: Mapped[str] = mapped_column(Text, nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    uploaded_by: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (Index("ix_intake_blank_forms_deleted", "deleted_at"),)
+
+
 class PatientMessageThreadRow(Base):
     """One secure-message conversation between a patient and their practice.
 

@@ -5,7 +5,11 @@
 import { useState } from "react"
 
 import { ApiError } from "@/lib/api/client"
-import { MAX_CORRECTION_NOTE_LENGTH } from "@/lib/api/intakeReview"
+import {
+  downloadIntakeExport,
+  intakeExportFilename,
+  MAX_CORRECTION_NOTE_LENGTH,
+} from "@/lib/api/intakeReview"
 import type { IntakeAssignmentStatus, IntakeReviewEvent, IntakeReviewItem, IntakeReviewSignature } from "@/lib/api/intakeReview"
 import { useAcceptIntakeAssignment, useEnterIntakeAnswer, useIntakeReview, useRequestIntakeCorrection } from "@/hooks/useIntakeReview"
 
@@ -43,6 +47,8 @@ const COPY = {
   noteLabel: "What should the patient redo?",
   send: "Send back",
   accept: "Accept",
+  exportLabel: "Export",
+  exporting: "Preparing…",
   eventsHeading: "History",
   eventKind: {
     correction_requested: "Corrections requested",
@@ -84,6 +90,24 @@ function formatValue(value: Record<string, unknown> | null): string | null {
 function errorMessage(error: Error | null): string | null {
   if (!error) return null
   return error instanceof ApiError && error.message ? error.message : COPY.actionError
+}
+
+/**
+ * Hand a downloaded file to the browser to save.
+ *
+ * The route answers with the document itself rather than a link to one, so
+ * there is nothing to open in a tab — the blob is turned into a URL that
+ * lives exactly as long as the click.
+ */
+function saveFile(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement("a")
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
 }
 
 interface ReviewItemRowProps {
@@ -217,6 +241,8 @@ export function IntakeReviewPanel(props: { patientId: string; assignmentId: stri
   const entry = useEnterIntakeAnswer(patientId, assignmentId)
   const [selected, setSelected] = useState<string[]>([])
   const [note, setNote] = useState("")
+  const [exporting, setExporting] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
 
   if (isLoading) return <p data-testid="intake-review-loading">{COPY.loading}</p>
   if (error || !data) return <p data-testid="intake-review-load-error">{COPY.loadError}</p>
@@ -224,8 +250,22 @@ export function IntakeReviewPanel(props: { patientId: string; assignmentId: stri
   const isSubmitted = data.status === "submitted"
   const canEnter = ENTRY_STATUSES.includes(data.status)
   const items = [...data.items].sort((a, b) => a.position - b.position)
-  const actionError = errorMessage(correction.error ?? accept.error ?? entry.error)
+  const actionError =
+    errorMessage(correction.error ?? accept.error ?? entry.error) ?? exportError
   const pending = correction.isPending || accept.isPending || entry.isPending
+
+  const exportForm = async () => {
+    setExporting(true)
+    setExportError(null)
+    try {
+      const file = await downloadIntakeExport(patientId, assignmentId)
+      saveFile(file, intakeExportFilename(assignmentId, data.receipt_code))
+    } catch {
+      setExportError(COPY.actionError)
+    } finally {
+      setExporting(false)
+    }
+  }
 
   const onSelect = (itemId: string, checked: boolean) =>
     setSelected((ids) => (checked ? [...ids, itemId] : ids.filter((i) => i !== itemId)))
@@ -242,9 +282,15 @@ export function IntakeReviewPanel(props: { patientId: string; assignmentId: stri
     <div className="card" data-testid="intake-review-panel">
       <div className="mb-3 flex items-baseline justify-between gap-4">
         <h2 className="text-lg font-semibold text-neutral-900">{COPY.heading}</h2>
-        <p className="text-sm text-neutral-500">
-          {data.packet_name} v{data.version}
-        </p>
+        <div className="flex items-baseline gap-3">
+          <p className="text-sm text-neutral-500">
+            {data.packet_name} v{data.version}
+          </p>
+          <button type="button" className={LINK} disabled={exporting}
+            onClick={() => void exportForm()} data-testid="intake-review-export">
+            {exporting ? COPY.exporting : COPY.exportLabel}
+          </button>
+        </div>
       </div>
 
       <p className="text-sm text-neutral-700" data-testid="intake-review-status">

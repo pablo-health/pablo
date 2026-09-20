@@ -156,6 +156,17 @@ class FileStorageProvider(ABC):
     def download_bytes(self, *, bucket: str, object_name: str) -> bytes:
         """Download an object's bytes for in-process work (e.g. text extraction)."""
 
+    def download_head(self, *, bucket: str, object_name: str, length: int) -> bytes:
+        """The first *length* bytes of an object, for reading its file type.
+
+        Concrete rather than abstract, and the one method here that is: the
+        fallback below is correct for every backend, so a provider that
+        cannot do a ranged read is not a provider that cannot answer. What
+        the overrides buy is not reading a whole scanned PDF to look at its
+        first eight bytes. A shorter object simply returns what it has.
+        """
+        return self.download_bytes(bucket=bucket, object_name=object_name)[:length]
+
     @abstractmethod
     def upload_bytes(
         self,
@@ -281,6 +292,16 @@ class GcsFileStorage(FileStorageProvider):
             client=self._client(),
             bucket=bucket,
             object_name=object_name,
+        )
+
+    def download_head(self, *, bucket: str, object_name: str, length: int) -> bytes:
+        from .signed_upload import download_blob_head
+
+        return download_blob_head(
+            client=self._client(),
+            bucket=bucket,
+            object_name=object_name,
+            length=length,
         )
 
     def upload_bytes(
@@ -423,6 +444,15 @@ class S3FileStorage(FileStorageProvider):
 
     def download_bytes(self, *, bucket: str, object_name: str) -> bytes:
         body = self._client().get_object(Bucket=bucket, Key=object_name)["Body"]
+        data: bytes = body.read()
+        return data
+
+    def download_head(self, *, bucket: str, object_name: str, length: int) -> bytes:
+        body = self._client().get_object(
+            Bucket=bucket,
+            Key=object_name,
+            Range=f"bytes=0-{length - 1}",
+        )["Body"]
         data: bytes = body.read()
         return data
 

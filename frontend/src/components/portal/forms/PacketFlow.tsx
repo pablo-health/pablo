@@ -337,6 +337,7 @@ export function PacketFlow({
       form={form}
       assignmentId={assignmentId}
       sessionToken={sessionToken}
+      artifacts={assignment.data.artifacts.filter((row) => row.item_id === item.id)}
       onWrote={() => pinAndReread(current.index)}
       onSessionLost={onSessionLost}
       onBack={

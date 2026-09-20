@@ -20,7 +20,6 @@
  * credential meant for another.
  */
 
-import { createHash } from "node:crypto"
 import { expect, test } from "../fixtures/auth"
 import {
   givePortalContactDetails,
@@ -30,6 +29,13 @@ import {
 } from "../fixtures/portal"
 import { givePatient } from "../fixtures/scenarios"
 import { BACKEND_URL } from "../fixtures/stack"
+import {
+  sendToUploadTarget,
+  sha256,
+  uploadAsPatient,
+  type UploadFile,
+  type UploadTarget,
+} from "../fixtures/upload"
 import type { APIRequestContext } from "@playwright/test"
 
 const PATIENT_THREADS = "/api/patient/messages/threads"
@@ -45,15 +51,9 @@ const PNG_BYTES = Buffer.from(
   "base64",
 )
 
-function sha256(bytes: Buffer): string {
-  return createHash("sha256").update(bytes).digest("hex")
-}
-
-interface UploadTarget {
-  url: string
-  method: "PUT" | "POST"
-  headers: Record<string, string>
-  fields: Record<string, string>
+/** The same bytes, in the shape the shared uploader takes. */
+function pngNamed(filename: string): UploadFile {
+  return { name: filename, mimeType: "image/png", body: PNG_BYTES }
 }
 
 interface InitResponse {
@@ -85,50 +85,18 @@ interface ThreadDetailResponse {
  * The patient's whole upload: init, the browser's own PUT or POST to
  * storage, finalize. Returns the finalized document id, which is the only
  * state a message may attach.
+ *
+ * The three steps live in `fixtures/upload.ts` so that every spec sending a
+ * file sends it the same way; what stays here is the one decision this file
+ * makes, which is that these documents are filed as messages.
  */
 async function givePatientDocument(
   request: APIRequestContext,
   sessionToken: string,
   filename: string,
 ): Promise<string> {
-  const headers = { Authorization: `Bearer ${sessionToken}` }
-
-  const started = await request.post(`${BACKEND_URL}${PATIENT_DOCUMENTS}/init`, {
-    headers,
-    data: {
-      filename,
-      mime_type: "image/png",
-      size_bytes: PNG_BYTES.length,
-      category: "message",
-    },
-  })
-  expect(started.status(), await started.text()).toBe(201)
-  const init = (await started.json()) as InitResponse
-
-  // Executed exactly as the browser client executes it, recipe and all —
-  // the signature covers the method, the headers and the object name, so a
-  // shortcut here would not be testing the same request.
-  const stored =
-    init.upload.method === "POST"
-      ? await request.post(init.upload.url, {
-          multipart: { ...init.upload.fields, file: {
-            name: filename,
-            mimeType: "image/png",
-            buffer: PNG_BYTES,
-          } },
-        })
-      : await request.put(init.upload.url, {
-          headers: init.upload.headers,
-          data: PNG_BYTES,
-        })
-  expect(stored.ok(), `storage accepted the upload: ${await stored.text()}`).toBeTruthy()
-
-  const finalized = await request.post(
-    `${BACKEND_URL}${PATIENT_DOCUMENTS}/${init.document_id}/finalize`,
-    { headers },
-  )
-  expect(finalized.status(), await finalized.text()).toBe(200)
-  return init.document_id
+  const uploaded = await uploadAsPatient(request, sessionToken, pngNamed(filename), "message")
+  return uploaded.id
 }
 
 // --- Test 1: the round trip, byte for byte -------------------------------
@@ -207,20 +175,11 @@ test("a clinician's own file comes back down the same thread @portal", async ({
       category: "message",
     },
   )
-  const stored =
-    init.upload.method === "POST"
-      ? await request.post(init.upload.url, {
-          multipart: { ...init.upload.fields, file: {
-            name: "summary.png",
-            mimeType: "image/png",
-            buffer: PNG_BYTES,
-          } },
-        })
-      : await request.put(init.upload.url, {
-          headers: init.upload.headers,
-          data: PNG_BYTES,
-        })
-  expect(stored.ok()).toBeTruthy()
+  // The same send the patient's half makes, through the same helper: the
+  // signature covers the method, the headers and the object name, so a
+  // shortcut here would not be testing the same request.
+  const stored = await sendToUploadTarget(request, init.upload, pngNamed("summary.png"))
+  expect(stored, "storage accepted the clinician's upload").toBeLessThan(300)
   await api.post(`/api/documents/${init.document_id}/finalize`)
 
   const reply = await api.post<MessageResponse>(
