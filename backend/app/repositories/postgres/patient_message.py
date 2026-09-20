@@ -20,7 +20,11 @@ from typing import TYPE_CHECKING
 from sqlalchemy import String, Uuid, bindparam, func, select, text
 
 from ...db.models import PatientMessageRow, PatientMessageThreadRow
-from ...models.patient_message import SENDER_PATIENT
+from ...models.patient_message import (
+    SENDER_PATIENT,
+    THREAD_STATUS_CLOSED,
+    THREAD_STATUS_OPEN,
+)
 from ..patient_message import PatientMessageAccessDeniedError, PatientMessageRepository
 
 if TYPE_CHECKING:
@@ -29,6 +33,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from ...models import PatientMessage, PatientMessageThread
+    from ...models.patient_message import ThreadAssignmentFilter
 
 
 _HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindparams(
@@ -47,6 +52,10 @@ def _thread(row: PatientMessageThreadRow) -> PatientMessageThread:
         status=row.status,
         created_at=row.created_at,
         last_message_at=row.last_message_at,
+        closed_at=row.closed_at,
+        closed_by=row.closed_by,
+        assigned_user_id=row.assigned_user_id,
+        clinician_last_read_at=row.clinician_last_read_at,
     )
 
 
@@ -117,19 +126,47 @@ class PostgresPatientMessageRepository(PatientMessageRepository):
 
     # --- clinician arm ---
 
-    def list_threads_for_patient(self, patient_id: str, user_id: str) -> list[PatientMessageThread]:
+    def list_threads_for_patient(
+        self,
+        patient_id: str,
+        user_id: str,
+        assigned: ThreadAssignmentFilter = "all",
+    ) -> list[tuple[PatientMessageThread, int]]:
         if not self._has_access(patient_id, user_id):
             return []
+        statement = select(PatientMessageThreadRow).where(
+            PatientMessageThreadRow.patient_id == patient_id
+        )
+        if assigned == "me":
+            statement = statement.where(PatientMessageThreadRow.assigned_user_id == user_id)
+        elif assigned == "unassigned":
+            statement = statement.where(PatientMessageThreadRow.assigned_user_id.is_(None))
         rows = (
             self._session.execute(
-                select(PatientMessageThreadRow)
-                .where(PatientMessageThreadRow.patient_id == patient_id)
-                .order_by(PatientMessageThreadRow.last_message_at.desc())
+                statement.order_by(PatientMessageThreadRow.last_message_at.desc())
             )
             .scalars()
             .all()
         )
-        return [_thread(r) for r in rows]
+        return [(_thread(r), self._clinician_unread_count(r)) for r in rows]
+
+    def _clinician_unread_count(self, row: PatientMessageThreadRow) -> int:
+        """How many patient messages have arrived since the practice looked.
+
+        A per-thread count rather than one grouped query: the list is one
+        patient's threads, which is a handful of rows, and the grouped form
+        would still need an outer join to keep threads with nothing unread.
+        """
+        conditions = [
+            PatientMessageRow.thread_id == row.id,
+            PatientMessageRow.sender == SENDER_PATIENT,
+        ]
+        if row.clinician_last_read_at is not None:
+            conditions.append(PatientMessageRow.created_at > row.clinician_last_read_at)
+        count = self._session.execute(
+            select(func.count()).select_from(PatientMessageRow).where(*conditions)
+        ).scalar()
+        return int(count or 0)
 
     def get_thread(self, thread_id: str, user_id: str) -> PatientMessageThread | None:
         row = self._thread_row(thread_id)
@@ -142,11 +179,56 @@ class PostgresPatientMessageRepository(PatientMessageRepository):
             return []
         return self._messages_in(thread_id)
 
-    def add_reply(self, message: PatientMessage, user_id: str) -> PatientMessage:
-        row = self._thread_row(message.thread_id)
+    def _writable_thread_row(self, thread_id: str, user_id: str) -> PatientMessageThreadRow:
+        row = self._thread_row(thread_id)
         if row is None or not self._has_access(row.patient_id, user_id):
-            raise PatientMessageAccessDeniedError(message.thread_id, user_id)
-        return self._insert_message(message)
+            raise PatientMessageAccessDeniedError(thread_id, user_id)
+        return row
+
+    def add_reply(self, message: PatientMessage, user_id: str) -> PatientMessage:
+        row = self._writable_thread_row(message.thread_id, user_id)
+        stored = self._insert_message(message)
+        if row.status == THREAD_STATUS_CLOSED:
+            row.status = THREAD_STATUS_OPEN
+            row.closed_at = None
+            row.closed_by = None
+            self._session.flush()
+        return stored
+
+    def close_thread(
+        self, thread_id: str, user_id: str, closed_at: datetime
+    ) -> PatientMessageThread:
+        row = self._writable_thread_row(thread_id, user_id)
+        if row.status != THREAD_STATUS_CLOSED:
+            row.status = THREAD_STATUS_CLOSED
+            row.closed_at = closed_at
+            row.closed_by = user_id
+            self._session.flush()
+        return _thread(row)
+
+    def reopen_thread(self, thread_id: str, user_id: str) -> PatientMessageThread:
+        row = self._writable_thread_row(thread_id, user_id)
+        row.status = THREAD_STATUS_OPEN
+        row.closed_at = None
+        row.closed_by = None
+        self._session.flush()
+        return _thread(row)
+
+    def assign_thread(
+        self, thread_id: str, user_id: str, assignee_id: str | None
+    ) -> PatientMessageThread:
+        row = self._writable_thread_row(thread_id, user_id)
+        row.assigned_user_id = assignee_id
+        self._session.flush()
+        return _thread(row)
+
+    def mark_thread_read_by_clinician(
+        self, thread_id: str, user_id: str, read_at: datetime
+    ) -> PatientMessageThread:
+        row = self._writable_thread_row(thread_id, user_id)
+        row.clinician_last_read_at = read_at
+        self._session.flush()
+        return _thread(row)
 
     # --- patient arm ---
 

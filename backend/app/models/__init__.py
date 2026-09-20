@@ -70,6 +70,7 @@ from .patient_chat_api import (
 from .patient_document import DocumentCategory, ExtractionStatus, PatientDocument
 from .patient_message import PatientMessage, PatientMessageThread
 from .patient_message_api import (
+    AssignThreadRequest,
     MarkThreadReadResponse,
     PatientMessageResponse,
     PatientMessageThreadDetailResponse,
@@ -77,6 +78,7 @@ from .patient_message_api import (
     PatientMessageThreadResponse,
     SendMessageRequest,
     StartThreadRequest,
+    ThreadExportResponse,
 )
 from .scheduling import (
     AppointmentListResponse,
@@ -150,6 +152,7 @@ __all__ = [
     "AppointmentListResponse",
     "AppointmentResponse",
     "AssessmentNote",
+    "AssignThreadRequest",
     "AudioRetentionResponse",
     "AuditAction",
     "AuditLogEntry",
@@ -238,6 +241,7 @@ __all__ = [
     "StructuredSOAPNoteModel",
     "SubjectiveNote",
     "TherapySession",
+    "ThreadExportResponse",
     "TimeSlotResponse",
     "TodaySessionListResponse",
     "TodaySessionResponse",

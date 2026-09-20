@@ -29,12 +29,17 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
-from ..models.patient_message import SENDER_PATIENT
+from ..models.patient_message import (
+    SENDER_PATIENT,
+    THREAD_STATUS_CLOSED,
+    THREAD_STATUS_OPEN,
+)
 
 if TYPE_CHECKING:
     from datetime import datetime
 
     from ..models import PatientMessage, PatientMessageThread
+    from ..models.patient_message import ThreadAssignmentFilter
 
 
 class PatientMessageAccessDeniedError(Exception):
@@ -54,8 +59,23 @@ class PatientMessageRepository(ABC):
     # ------------------------------------------------------------------
 
     @abstractmethod
-    def list_threads_for_patient(self, patient_id: str, user_id: str) -> list[PatientMessageThread]:
-        """Threads for one patient, newest activity first. ``[]`` when denied."""
+    def list_threads_for_patient(
+        self,
+        patient_id: str,
+        user_id: str,
+        assigned: ThreadAssignmentFilter = "all",
+    ) -> list[tuple[PatientMessageThread, int]]:
+        """Threads for one patient with the practice's unread count.
+
+        Newest activity first, ``[]`` when denied. ``assigned`` narrows the
+        list to the caller's own threads or to the unclaimed ones; it never
+        narrows what may be read, so a clinician who filters to ``me`` and
+        then opens somebody else's thread by id still gets it.
+
+        Unread here means a message the *patient* sent after
+        ``clinician_last_read_at``. A thread nobody at the practice has
+        opened counts all of them.
+        """
 
     @abstractmethod
     def get_thread(self, thread_id: str, user_id: str) -> PatientMessageThread | None:
@@ -69,8 +89,61 @@ class PatientMessageRepository(ABC):
     def add_reply(self, message: PatientMessage, user_id: str) -> PatientMessage:
         """Append a clinician reply and bump the thread's ``last_message_at``.
 
+        A reply into a closed thread reopens it in the same transaction —
+        answering somebody is reopening the conversation, and making the
+        caller do both would leave a window where the patient has an answer
+        they cannot reply to.
+
         Raises :class:`PatientMessageAccessDeniedError` when the caller has
         no grant on the thread's patient.
+        """
+
+    @abstractmethod
+    def close_thread(
+        self, thread_id: str, user_id: str, closed_at: datetime
+    ) -> PatientMessageThread:
+        """Close a thread, recording who closed it and when.
+
+        Closing a closed thread leaves the original ``closed_by`` and
+        ``closed_at`` alone: the fact worth keeping is who ended the
+        conversation, not who pressed the button last.
+
+        Raises :class:`PatientMessageAccessDeniedError` without a grant.
+        """
+
+    @abstractmethod
+    def reopen_thread(self, thread_id: str, user_id: str) -> PatientMessageThread:
+        """Reopen a thread and clear its closure. Idempotent on an open one.
+
+        Raises :class:`PatientMessageAccessDeniedError` without a grant.
+        """
+
+    @abstractmethod
+    def assign_thread(
+        self, thread_id: str, user_id: str, assignee_id: str | None
+    ) -> PatientMessageThread:
+        """Point a thread at a clinician, or at nobody when ``assignee_id`` is None.
+
+        The assignee is not checked for a grant on the patient. Assignment is
+        how a practice says who should answer, and a practice that assigns to
+        somebody without access has a staffing problem the store should
+        report rather than a write to reject — the assignee still cannot read
+        the thread, because the policies never consult this column.
+
+        Raises :class:`PatientMessageAccessDeniedError` without a grant.
+        """
+
+    @abstractmethod
+    def mark_thread_read_by_clinician(
+        self, thread_id: str, user_id: str, read_at: datetime
+    ) -> PatientMessageThread:
+        """Stamp the practice's "we have seen this" mark on the thread.
+
+        One mark for the practice, not one per clinician — see
+        :class:`app.models.patient_message.PatientMessageThread`. Never
+        touches the per-message ``read_at``, which is the patient's.
+
+        Raises :class:`PatientMessageAccessDeniedError` without a grant.
         """
 
     # ------------------------------------------------------------------
@@ -161,12 +234,35 @@ class InMemoryPatientMessageRepository(PatientMessageRepository):
 
     # --- clinician arm ---
 
-    def list_threads_for_patient(self, patient_id: str, user_id: str) -> list[PatientMessageThread]:
+    def list_threads_for_patient(
+        self,
+        patient_id: str,
+        user_id: str,
+        assigned: ThreadAssignmentFilter = "all",
+    ) -> list[tuple[PatientMessageThread, int]]:
         if not self._can_access(patient_id, user_id):
             return []
         rows = [t for t in self._threads.values() if t.patient_id == patient_id]
+        if assigned == "me":
+            rows = [t for t in rows if t.assigned_user_id == user_id]
+        elif assigned == "unassigned":
+            rows = [t for t in rows if t.assigned_user_id is None]
         rows.sort(key=lambda t: t.last_message_at, reverse=True)
-        return rows
+        return [(t, self._clinician_unread_count(t)) for t in rows]
+
+    def _clinician_unread_count(self, thread: PatientMessageThread) -> int:
+        since = thread.clinician_last_read_at
+        return sum(
+            1
+            for m in self._messages.get(thread.id, [])
+            if m.sender == SENDER_PATIENT and (since is None or m.created_at > since)
+        )
+
+    def _writable_thread(self, thread_id: str, user_id: str) -> PatientMessageThread:
+        thread = self._threads.get(thread_id)
+        if thread is None or not self._can_access(thread.patient_id, user_id):
+            raise PatientMessageAccessDeniedError(thread_id, user_id)
+        return thread
 
     def get_thread(self, thread_id: str, user_id: str) -> PatientMessageThread | None:
         thread = self._threads.get(thread_id)
@@ -180,10 +276,44 @@ class InMemoryPatientMessageRepository(PatientMessageRepository):
         return self._sorted_messages(thread_id)
 
     def add_reply(self, message: PatientMessage, user_id: str) -> PatientMessage:
-        thread = self._threads.get(message.thread_id)
-        if thread is None or not self._can_access(thread.patient_id, user_id):
-            raise PatientMessageAccessDeniedError(message.thread_id, user_id)
-        return self._append(message)
+        thread = self._writable_thread(message.thread_id, user_id)
+        stored = self._append(message)
+        if thread.status == THREAD_STATUS_CLOSED:
+            thread.status = THREAD_STATUS_OPEN
+            thread.closed_at = None
+            thread.closed_by = None
+        return stored
+
+    def close_thread(
+        self, thread_id: str, user_id: str, closed_at: datetime
+    ) -> PatientMessageThread:
+        thread = self._writable_thread(thread_id, user_id)
+        if thread.status != THREAD_STATUS_CLOSED:
+            thread.status = THREAD_STATUS_CLOSED
+            thread.closed_at = closed_at
+            thread.closed_by = user_id
+        return thread
+
+    def reopen_thread(self, thread_id: str, user_id: str) -> PatientMessageThread:
+        thread = self._writable_thread(thread_id, user_id)
+        thread.status = THREAD_STATUS_OPEN
+        thread.closed_at = None
+        thread.closed_by = None
+        return thread
+
+    def assign_thread(
+        self, thread_id: str, user_id: str, assignee_id: str | None
+    ) -> PatientMessageThread:
+        thread = self._writable_thread(thread_id, user_id)
+        thread.assigned_user_id = assignee_id
+        return thread
+
+    def mark_thread_read_by_clinician(
+        self, thread_id: str, user_id: str, read_at: datetime
+    ) -> PatientMessageThread:
+        thread = self._writable_thread(thread_id, user_id)
+        thread.clinician_last_read_at = read_at
+        return thread
 
     # --- patient arm ---
 

@@ -14,6 +14,11 @@
  *
  * The thread's status is shown, but there is nothing here to close a
  * thread with. That lifecycle belongs to the practice side.
+ *
+ * A closed thread swaps the composer for a way to start a new one. The
+ * route would refuse a send into it anyway, so offering the box would be
+ * offering something that cannot work; the practice ended this
+ * conversation, and the next question is a new one.
  */
 
 "use client"
@@ -34,7 +39,10 @@ export interface ThreadViewProps {
   slaText?: string | null
   sendError?: string | null
   onBack?: () => void
+  onStartThread?: () => void
 }
+
+const CLOSED_NOTICE = "This conversation is closed."
 
 function senderLabel(sender: PatientMessage["sender"]): string {
   return sender === "patient" ? "You" : "Your practice"
@@ -58,8 +66,10 @@ export function ThreadView({
   slaText,
   sendError,
   onBack,
+  onStartThread,
 }: ThreadViewProps) {
   const markedThreadId = useRef<string | null>(null)
+  const closed = thread.status === "closed"
 
   useEffect(() => {
     if (markedThreadId.current === thread.id) return
@@ -111,12 +121,26 @@ export function ThreadView({
         })}
       </ul>
 
-      <MessageComposer
-        onSend={onSend}
-        sending={sending}
-        slaText={slaText}
-        error={sendError}
-      />
+      {closed ? (
+        <div className="flex flex-col gap-3" data-testid="portal-messaging-thread-closed">
+          <p className="text-sm text-neutral-600">{CLOSED_NOTICE}</p>
+          {onStartThread && (
+            <Button
+              data-testid="portal-messaging-start-thread"
+              onClick={onStartThread}
+            >
+              New conversation
+            </Button>
+          )}
+        </div>
+      ) : (
+        <MessageComposer
+          onSend={onSend}
+          sending={sending}
+          slaText={slaText}
+          error={sendError}
+        />
+      )}
     </div>
   )
 }
