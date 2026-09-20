@@ -139,9 +139,7 @@ def assignments() -> InMemoryPatientIntakeAssignmentRepository:
 
 @pytest.fixture
 def signature_repo() -> InMemoryPatientIntakeSignatureRepository:
-    repo = InMemoryPatientIntakeSignatureRepository()
-    repo.grant_all_access()
-    return repo
+    return InMemoryPatientIntakeSignatureRepository()
 
 
 @pytest.fixture

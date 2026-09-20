@@ -3,12 +3,10 @@
 """PostgreSQL PatientIntakeSignatureRepository implementation.
 
 Tenant scope is the session's ``search_path``, set before the request
-reaches here. Within a tenant the two principals are separated as the
-abstract base describes: the clinician-side read asks the schema-local
-``has_patient_access`` function the rest of the chart asks, and the
-patient-principal methods filter on the id their caller took off the
-authenticated principal, backed by the ``app.current_patient_id`` policy
-underneath.
+reaches here. Within a tenant, the patient-principal methods filter on the
+id their caller took off the authenticated principal, backed by the
+``app.current_patient_id`` policy underneath — the separation the abstract
+base describes.
 
 Row security is the floor, not the ceiling. Every query below also carries
 its own predicate, so a missing GUC is a wrong answer from the database
@@ -23,10 +21,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import String, Uuid, bindparam, select, text
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from ...db.models import PatientIntakeAssignmentRow, PatientIntakeSignatureRow
+from ...db.models import PatientIntakeSignatureRow
 from ..patient_intake_signature import (
     PatientIntakeSignatureRepository,
     SignatureExistsError,
@@ -34,11 +32,6 @@ from ..patient_intake_signature import (
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
-
-_HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindparams(
-    bindparam("pid", type_=Uuid(as_uuid=False)),
-    bindparam("uid", type_=String()),
-)
 
 #: The partial unique index that carries "one role signs one item once".
 _LIVE_INDEX = "uq_patient_intake_signatures_live"
@@ -153,47 +146,6 @@ class PostgresPatientIntakeSignatureRepository(PatientIntakeSignatureRepository)
             .first()
         )
         return _to_dict(row) if row else None
-
-    # --- clinician side ---
-
-    def list_live_for_clinician(self, assignment_id: str, user_id: str) -> list[dict[str, object]]:
-        """The signatures on one assignment, if this clinician may read it.
-
-        The grant is checked against the assignment's own patient rather
-        than against a patient id the caller supplied, so there is no id to
-        get wrong: the assignment says whose form it is.
-        """
-        patient_id = self._session.execute(
-            select(PatientIntakeAssignmentRow.patient_id).where(
-                PatientIntakeAssignmentRow.id == assignment_id
-            )
-        ).scalar()
-        if patient_id is None or not self._has_access(str(patient_id), user_id):
-            return []
-        rows = (
-            self._session.execute(
-                select(PatientIntakeSignatureRow)
-                .where(
-                    PatientIntakeSignatureRow.assignment_id == assignment_id,
-                    PatientIntakeSignatureRow.superseded_at.is_(None),
-                )
-                .order_by(
-                    PatientIntakeSignatureRow.signed_at,
-                    PatientIntakeSignatureRow.id,
-                )
-            )
-            .scalars()
-            .all()
-        )
-        return [_to_dict(row) for row in rows]
-
-    # --- helpers ---
-
-    def _has_access(self, patient_id: str, user_id: str) -> bool:
-        result = self._session.execute(
-            _HAS_PATIENT_ACCESS_SQL, {"pid": patient_id, "uid": user_id}
-        ).scalar()
-        return bool(result)
 
 
 def _optional(value: object) -> str | None:

@@ -10,12 +10,13 @@ already agreed to. The route layer never asks for such a method because
 there is none to ask for.
 
 Like the assignment repository beside it, every method names which principal
-is asking. A patient reaches their own rows through the
-``app.current_patient_id`` policy with the id taken off the authenticated
-principal; a clinician reaches the same rows through the
-``has_patient_access`` grant that scopes the rest of the chart. The two are
-never the same method, so neither can be called with the other's notion of
-who is asking.
+is asking, so neither can be called with the other's notion of who is
+asking. Today every method here is the patient's: they reach their own rows
+through the ``app.current_patient_id`` policy, with the id taken off the
+authenticated principal. A clinician read of the same rows lands with the
+screen that needs one and brings its own method, named for that principal
+and scoped by the ``has_patient_access`` grant the rest of the chart uses —
+the row policy for it is already in place.
 
 "Live" throughout means ``superseded_at IS NULL`` — the same predicate the
 partial unique index is built on, which is what makes at most one live row
@@ -70,24 +71,9 @@ class PatientIntakeSignatureRepository(ABC):
         rather than a database error the caller has to interpret.
         """
 
-    # --- clinician side ---
-
-    @abstractmethod
-    def list_live_for_clinician(self, assignment_id: str, user_id: str) -> list[dict[str, object]]:
-        """The signatures on one assignment, read through a clinician's grant.
-
-        An empty list when *user_id* holds no grant on the patient — the same
-        answer a form with nothing signed against it gives, so the shape of
-        the response tells a caller without access nothing.
-        """
-
 
 class InMemoryPatientIntakeSignatureRepository(PatientIntakeSignatureRepository):
     """In-memory repository for unit tests.
-
-    Clinician access is governed by a ``(patient_id, user_id)`` set populated
-    via :meth:`grant_access`, mirroring the assignment repository. Call
-    :meth:`grant_all_access` in tests that do not exercise access control.
 
     The partial unique index has a counterpart here: :meth:`add` raises
     :class:`SignatureExistsError` on a second live row for the same
@@ -97,19 +83,6 @@ class InMemoryPatientIntakeSignatureRepository(PatientIntakeSignatureRepository)
 
     def __init__(self) -> None:
         self.rows: dict[str, dict[str, object]] = {}
-        self._access: set[tuple[str, str]] = set()
-        self._allow_all = False
-
-    # --- test setup helpers ---
-
-    def grant_access(self, patient_id: str, user_id: str) -> None:
-        self._access.add((patient_id, user_id))
-
-    def grant_all_access(self) -> None:
-        self._allow_all = True
-
-    def _can_access(self, patient_id: str, user_id: str) -> bool:
-        return self._allow_all or (patient_id, user_id) in self._access
 
     # --- patient side ---
 
@@ -146,16 +119,6 @@ class InMemoryPatientIntakeSignatureRepository(PatientIntakeSignatureRepository)
             )
         )
         return found[0] if found else None
-
-    # --- clinician side ---
-
-    def list_live_for_clinician(self, assignment_id: str, user_id: str) -> list[dict[str, object]]:
-        return self._live(
-            lambda row: (
-                str(row["assignment_id"]) == assignment_id
-                and self._can_access(str(row["patient_id"]), user_id)
-            )
-        )
 
     # --- helpers ---
 
