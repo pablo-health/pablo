@@ -41,7 +41,10 @@ from app.settings import get_settings
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-LINK = "https://portal.example.test/portal/redeem#token=abc.def.ghi"
+# Not a credential: three dotted words in the shape of one, so the tests
+# can follow a link without a signing key anywhere near them.
+_STAND_IN_TOKEN = "abc.def.ghi"
+LINK = f"https://portal.example.test/portal/example-therapy#invite={_STAND_IN_TOKEN}"
 
 
 @pytest.fixture(autouse=True)
@@ -275,25 +278,31 @@ def test_the_link_carries_the_token_in_the_fragment(monkeypatch: pytest.MonkeyPa
     access logs, ``Referer`` headers and every proxy in between."""
     _configured(monkeypatch, {"PORTAL_WEB_BASE_URL": "https://portal.example.test/"})
 
-    link = factory.build_invite_link("abc.def.ghi")
+    link = factory.build_invite_link(slug="example-therapy", token=_STAND_IN_TOKEN)
 
-    assert link == "https://portal.example.test/portal/redeem#token=abc.def.ghi"
+    assert link == ("https://portal.example.test/portal/example-therapy#invite=abc.def.ghi")
     assert "?token=" not in link
+
+
+_META_CHARACTER_TOKEN = "a/b&c=d"
 
 
 def test_a_token_with_url_meta_characters_is_escaped(monkeypatch: pytest.MonkeyPatch) -> None:
     _configured(monkeypatch, {"PORTAL_WEB_BASE_URL": "https://portal.example.test"})
 
-    link = factory.build_invite_link("a/b&c=d")
+    link = factory.build_invite_link(slug="a practice", token=_META_CHARACTER_TOKEN)
 
-    assert link.endswith("#token=a%2Fb%26c%3Dd")
+    assert link.endswith("#invite=a%2Fb%26c%3Dd")
+    # The slug is escaped on the same terms, so a name with a slash in it
+    # cannot climb out of its own path segment.
+    assert "/portal/a%20practice#" in link
 
 
 def test_no_origin_means_no_link_to_mint(monkeypatch: pytest.MonkeyPatch) -> None:
     _configured(monkeypatch, {"PORTAL_WEB_BASE_URL": ""})
 
     with pytest.raises(DeliveryNotConfiguredError):
-        factory.build_invite_link("abc.def.ghi")
+        factory.build_invite_link(slug="example-therapy", token=_STAND_IN_TOKEN)
 
 
 def test_the_service_factory_threads_settings_into_the_config(

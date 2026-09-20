@@ -188,7 +188,22 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile.dev
-    command: ["python", "backend/bin/migrate.py"]
+    # Two entrypoints, in this order, because they do different halves of the
+    # job. ``migrate.py`` brings the platform schema and the ``practice``
+    # TEMPLATE to head; it does not touch the per-practice schemas at all, and
+    # ``migrate_tenants.py`` is what fans the tenant chain out across those.
+    # A deployment runs both as separate jobs; a stack that ran only the first
+    # would be correct on a fresh volume — where every practice is provisioned
+    # from the freshly-regenerated template — and would silently leave an
+    # EXISTING practice a revision behind on a reused one. That reads as
+    # ``relation "..." does not exist`` from whatever spec touches the new
+    # table first, which is a long way from the cause.
+    command:
+      [
+        "sh",
+        "-c",
+        "python backend/bin/migrate.py && python backend/bin/migrate_tenants.py",
+      ]
     environment:
       - DATABASE_BACKEND=postgres
       - DATABASE_URL=postgresql://pablo:pablo_dev@postgres:5432/pablo

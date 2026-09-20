@@ -45,11 +45,16 @@ from typing import TYPE_CHECKING, Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
-from ..api_errors import NotFoundError, ServiceUnavailableError, UnprocessableEntityError
+from ..api_errors import (
+    ConflictError,
+    NotFoundError,
+    ServiceUnavailableError,
+    UnprocessableEntityError,
+)
 from ..auth.patient_context import patient_not_authenticated_detail
 from ..auth.route_access import subscription_exempt
 from ..auth.route_security import truly_public
-from ..auth.service import require_active_subscription
+from ..auth.service import _resolve_practice_from_email, require_active_subscription
 from ..db import DEFAULT_PRACTICE_SCHEMA
 from ..models import User
 from ..models.audit import AuditAction, ResourceType
@@ -77,6 +82,7 @@ from .factory import (
     get_invite_delivery,
     get_sms_gateway,
 )
+from .practice_routes import ensure_practice_slug
 from .tenant_gateway import (
     PortalStores,
     PortalTenantGateway,
@@ -151,6 +157,20 @@ def _signing_key() -> str:
     return get_settings().portal_token_signing_key.get_secret_value()
 
 
+def _practice_slug_for(user: User) -> str:
+    """The caller's practice's portal address, minted if it has none yet.
+
+    Resolved from the caller rather than taken as a parameter: a clinician
+    cannot invite a patient into somebody else's practice, and there is no
+    request field here that could be made to say otherwise.
+    """
+    practice = _resolve_practice_from_email(user.email)
+    if practice is None:
+        raise ConflictError("No practice is associated with this account yet.")
+    practice_id, _schema_name = practice
+    return ensure_practice_slug(practice_id)
+
+
 def _patient_or_404(patients: PatientRepository, patient_id: str, user_id: str) -> Patient:
     """The patient this clinician may act on, or a 404.
 
@@ -220,6 +240,10 @@ def issue_portal_invite(  # noqa: PLR0913 — FastAPI Depends-injected params ar
     503 when either channel is not configured, checked BEFORE anything is
     minted or sent, so an unconfigured deployment never leaves a patient
     holding a code for a link that will not arrive.
+
+    The link opens the practice's own portal page, so the practice's address
+    is resolved here — minted on the first invitation rather than made into a
+    step a clinician has to go and do first.
     """
     patient = _patient_or_404(patients, patient_id, user.id)
     if not patient.email or not patient.phone:
@@ -227,6 +251,7 @@ def issue_portal_invite(  # noqa: PLR0913 — FastAPI Depends-injected params ar
             "Add an email address and a mobile number to this chart first.",
             code="PATIENT_CONTACT_INCOMPLETE",
         )
+    slug = _practice_slug_for(user)
 
     try:
         # Both channels, and somewhere for the link to point, before the
@@ -239,7 +264,10 @@ def issue_portal_invite(  # noqa: PLR0913 — FastAPI Depends-injected params ar
         issued = service.issue_invite(
             patient_id=patient_id, tenant=stores.tenant, phone=patient.phone
         )
-        delivery.send_invite(to_email=patient.email, link=build_invite_link(issued.token))
+        delivery.send_invite(
+            to_email=patient.email,
+            link=build_invite_link(slug=slug, token=issued.token),
+        )
     except DeliveryNotConfiguredError:
         raise _delivery_unavailable() from None
 

@@ -59,6 +59,8 @@ if TYPE_CHECKING:
 TENANT = "practice_abc123"
 SIGNING_KEY = "route-test-signing-key-not-a-real-secret"
 PORTAL_ORIGIN = "https://portal.example.test"
+PRACTICE_ID = "practice-1"
+PRACTICE_SLUG = "example-therapy"
 
 PATIENT_ID = "11111111-1111-4111-8111-111111111111"
 NO_PHONE_PATIENT_ID = "22222222-2222-4222-8222-222222222222"
@@ -167,6 +169,26 @@ def _clean_rate_limits() -> Iterator[None]:
     reset_portal_limiters()
 
 
+@pytest.fixture(autouse=True)
+def _practice_address(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give the caller's practice a portal address, without a platform table.
+
+    Both halves are patched rather than the helper that composes them, so the
+    route still has to resolve the practice from the CALLER and then ask for
+    that practice's address — which is the part worth keeping honest here.
+    The directory's own behaviour is covered in
+    ``test_portal_practice_routes.py``.
+    """
+    monkeypatch.setattr(
+        "app.portal.routes._resolve_practice_from_email",
+        lambda _email: (PRACTICE_ID, TENANT),
+    )
+    monkeypatch.setattr(
+        "app.portal.routes.ensure_practice_slug",
+        lambda practice_id: PRACTICE_SLUG if practice_id == PRACTICE_ID else "wrong-practice",
+    )
+
+
 @pytest.fixture
 def stores() -> PortalStores:
     return PortalStores(
@@ -240,7 +262,7 @@ def _otp_from(sms: FakeSmsGateway) -> str:
 def _link_token(delivery: CapturingInviteDelivery) -> str:
     """The token as the patient would extract it from the magic link."""
     link = delivery.sent[-1].link
-    return link.split("#token=", 1)[1]
+    return link.split("#invite=", 1)[1]
 
 
 def _issue(client: TestClient, patient_id: str = PATIENT_ID) -> Any:
@@ -277,10 +299,10 @@ def test_invite_emails_only_the_link(client: TestClient, delivery: CapturingInvi
     assert len(delivery.sent) == 1
     sent = delivery.sent[0]
     assert sent.to_email == "patient@example.test"
-    assert sent.link.startswith(f"{PORTAL_ORIGIN}/portal/redeem#token=")
-    # The token rides in the FRAGMENT, which is never sent to a server — a
-    # "?token=" link would be logged by every hop that handled it.
-    assert "?token=" not in sent.link
+    assert sent.link.startswith(f"{PORTAL_ORIGIN}/portal/{PRACTICE_SLUG}#invite=")
+    # The token rides in the FRAGMENT, which is never sent to a server — an
+    # "?invite=" link would be logged by every hop that handled it.
+    assert "?invite=" not in sent.link
 
 
 def test_invite_texts_only_the_code(client: TestClient, sms: FakeSmsGateway) -> None:
