@@ -597,7 +597,7 @@ def submit_my_assignment(
     correcting = service.open_correction(assignment, patient.patient_id) is not None
 
     try:
-        submitted, recorded = service.submit(assignment, patient.patient_id, measures)
+        submission = service.submit(assignment, patient.patient_id, measures)
     except CorrectionOutstandingError as exc:
         raise UnprocessableEntityError(
             "Your practice is still waiting on one of these.",
@@ -621,7 +621,7 @@ def submit_my_assignment(
         patient_id=patient.patient_id,
         resource_type=ResourceType.PATIENT_INTAKE_ASSIGNMENT,
         resource_id=assignment_id,
-        changes={"instruments": [m.instrument for m in recorded]},
+        changes={"instruments": [m.instrument for m in submission.measures]},
     )
     if correcting:
         # Beside the submission rather than instead of it: one says a form
@@ -635,6 +635,7 @@ def submit_my_assignment(
             resource_id=assignment_id,
         )
 
+    submitted = submission.assignment
     return IntakeSubmissionResponse(
         assignment_id=assignment_id,
         version_id=str(submitted["version_id"]),
@@ -647,8 +648,9 @@ def submit_my_assignment(
                 total_score=m.total_score,
                 severity=m.severity,
             )
-            for m in recorded
+            for m in submission.measures
         ],
+        notes=submission.notes,
     )
 
 

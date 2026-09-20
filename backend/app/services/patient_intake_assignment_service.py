@@ -44,11 +44,20 @@ for corrections names the questions, and while the form sits in
 other question is refused, because the practice has already read and kept
 the rest. The scope lives on the review event rather than in this service's
 memory, which is what makes it survive the patient closing the tab.
+
+**A form only hands in the questions it ended up asking.** On a form that
+branches, a patient can answer a question and then take back the answer
+that opened it — said yes, answered what appeared, went back and said no.
+Submitting retires what they put into the questions they are no longer
+shown instead of filing it, so the chart never holds an answer to a
+question this patient was not asked. The receipt says how many, which is
+the only place anybody is told.
 """
 
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -60,7 +69,7 @@ from ..intake.items import (
     stored_config,
     validate_item_config,
 )
-from ..intake.receipts import new_receipt_code
+from ..intake.receipts import new_receipt_code, withheld_answers_note
 from ..repositories.patient_intake_assignment import (
     PATIENT_REVIEW_EVENT_KIND,
     WRITABLE_STATUSES,
@@ -131,6 +140,22 @@ class IncompleteFormError(RuntimeError):
     def __init__(self, missing: list[str]) -> None:
         super().__init__(f"{len(missing)} question(s) outstanding")
         self.missing = missing
+
+
+@dataclass(frozen=True)
+class Submission:
+    """What handing a form in produced.
+
+    A shape rather than a tuple because the third member is the reason it
+    exists: ``notes`` is what the receipt tells the patient beyond their
+    code, and a caller unpacking two values would have dropped it silently.
+    """
+
+    assignment: dict[str, object]
+    measures: list[OutcomeMeasureResponse]
+    #: Sentences for the receipt screen, in the order they should be read.
+    #: Empty on the ordinary submission, which has nothing to add.
+    notes: list[str]
 
 
 class ReceiptUnavailableError(RuntimeError):
@@ -455,30 +480,37 @@ class IntakeAssignmentService:
         assignment: dict[str, object],
         patient_id: str,
         measures: OutcomeMeasureService,
-    ) -> tuple[dict[str, object], list[OutcomeMeasureResponse]]:
+    ) -> Submission:
         """Hand a form in. Returns the submitted assignment and what it scored.
 
-        Four things happen, in an order chosen so that nothing is written
+        Five things happen, in an order chosen so that nothing is written
         until everything that could refuse the submission has.
 
         1. **Re-check every required question**, against the same
            validators the saves went through. A draft can go stale — the
            practice may have published nothing, but a date question with a
            past-only bound judges a different day today than it did
-           yesterday — so the answer to "is this finished" is computed here
+           yesterday, and a rule can stop holding because an earlier answer
+           changed — so the answer to "is this finished" is computed here
            rather than trusted from the last save's response. An
            unfinished form raises :class:`IncompleteFormError` and nothing
            has been touched.
-        2. **Freeze the answers.** Every live draft stops being one, which
+        2. **Retire the answers to questions this patient is no longer
+           shown.** Before the freeze, so a value the form stopped asking
+           for is never part of what was handed in. See the module
+           docstring for why that is a retirement rather than a deletion.
+        3. **Freeze the answers.** Every live draft stops being one, which
            is what makes "what was submitted" a stable record.
-        3. **Record the submission and its receipt**, on a row that is
+        4. **Record the submission and its receipt**, on a row that is
            still the patient's to submit — so a second submit finds nothing
            to move and raises :class:`AssignmentClosedError` rather than
            overwriting the first receipt.
-        4. **Score every measure on the form** through the same
+        5. **Score every measure on the form** through the same
            ``create_self_report`` the fixed intake form uses. Reused rather
            than reimplemented: a second scorer is a second set of bands to
-           drift, and the chart reads these rows from one place.
+           drift, and the chart reads these rows from one place. A measure
+           whose question is hidden has been retired by then, so a branch
+           that was opened and closed again scores nothing.
 
         A form that was reopened for corrections is checked first, before
         any of that: every question the practice named has to have been
@@ -505,6 +537,9 @@ class IntakeAssignmentService:
             raise IncompleteFormError(completion.missing)
 
         now = utc_now()
+        withheld = self._repo.retire_draft_responses(
+            assignment_id, patient_id, completion.hidden, now
+        )
         self._repo.freeze_draft_responses(assignment_id, patient_id, now)
         submitted = self._submit_with_receipt(assignment_id, patient_id, now)
         if submitted is None:
@@ -537,7 +572,12 @@ class IntakeAssignmentService:
             )
             for code, scores in self._instrument_answers(assignment, patient_id)
         ]
-        return submitted, recorded
+        note = withheld_answers_note(len(withheld))
+        return Submission(
+            assignment=submitted,
+            measures=recorded,
+            notes=[] if note is None else [note],
+        )
 
     def _submit_with_receipt(
         self, assignment_id: str, patient_id: str, now: datetime
@@ -637,6 +677,7 @@ __all__ = [
     "IncompleteFormError",
     "IntakeAssignmentService",
     "ReceiptUnavailableError",
+    "Submission",
     "UnpublishedVersionError",
     "event_item_ids",
 ]

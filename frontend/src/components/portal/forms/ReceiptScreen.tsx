@@ -13,6 +13,13 @@
  * and the person qualified to attach it is the clinician reading the chart —
  * not a page a patient meets alone, minutes after answering nine questions
  * about how bad the last fortnight has been.
+ *
+ * What it does show is any note the server sent, as the server wrote it.
+ * There is one today and it appears on almost no submission: a form that
+ * branches can be answered in an order that leaves an answer behind the
+ * patient's own later change, and that answer is not handed in. Wording it
+ * here would put a second copy of that sentence a step away from the code
+ * that decides when it is true.
  */
 
 import { Button } from "@/components/ui/button"
@@ -32,6 +39,7 @@ interface ReceiptScreenProps {
 }
 
 export function ReceiptScreen({ receipt, onClose }: ReceiptScreenProps) {
+  const notes = receipt.notes ?? []
   return (
     <section data-testid="forms-receipt" aria-labelledby="forms-receipt-heading">
       <h2 id="forms-receipt-heading" className="text-lg font-semibold text-neutral-900">
@@ -49,6 +57,16 @@ export function ReceiptScreen({ receipt, onClose }: ReceiptScreenProps) {
         </p>
         <p className="mt-2 text-xs text-neutral-500">{RECEIPT_CODE_NOTE}</p>
       </div>
+
+      {notes.length > 0 && (
+        <ul data-testid="forms-receipt-notes" className="mt-4 space-y-2">
+          {notes.map((note) => (
+            <li key={note} className="text-sm text-neutral-700">
+              {note}
+            </li>
+          ))}
+        </ul>
+      )}
 
       <CrisisFooter />
 

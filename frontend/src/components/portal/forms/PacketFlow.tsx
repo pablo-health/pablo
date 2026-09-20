@@ -44,7 +44,7 @@ import {
   type IntakeForm,
   type IntakeReceipt,
 } from "@/lib/api/patientIntake"
-import { everyItemVisible, ruleOf, type VisibilityRule } from "@/lib/intake/visibility"
+import { evaluate, ruleOf, type VisibilityMap } from "@/lib/intake/visibility"
 import { RATE_LIMITED, SAVE_FAILED, SUBMIT_FAILED } from "./formsCopy"
 import { FormsAlreadySent, FormsLoadFailed, FormsLoading } from "./FormsNotice"
 import { ItemScreen } from "./ItemScreen"
@@ -71,8 +71,8 @@ export interface PacketFlowProps {
   /** Called after any write, so the list behind this can refetch. */
   onChanged: () => void
   onClose: () => void
-  /** The visibility seam, so a test can pin the walk against a real rule. */
-  visibility?: VisibilityRule
+  /** The visibility seam, so a test can pin the walk against an answer. */
+  visibility?: VisibilityMap
 }
 
 export function PacketFlow({
@@ -82,7 +82,7 @@ export function PacketFlow({
   onSessionLost,
   onChanged,
   onClose,
-  visibility = everyItemVisible,
+  visibility = evaluate,
 }: PacketFlowProps) {
   const queryClient = useQueryClient()
   // Null until the patient navigates. Where the walk STARTS is derived from
@@ -107,20 +107,61 @@ export function PacketFlow({
 
   const detail = assignment.data ?? null
 
-  /** The questions this patient is shown, in the order the form asks them. */
-  const items = useMemo(() => {
+  /**
+   * Every question on the form, in the order the patient reads them.
+   *
+   * Sorted before anything reads a rule: a rule may only look backwards,
+   * so "earlier on the form" has to mean this order rather than the order
+   * the array happened to arrive in.
+   */
+  const ordered = useMemo(() => {
     if (detail === null) return []
-    const answers = Object.fromEntries(detail.items.map((item) => [item.key, item.value]))
-    const shown = [...detail.items]
-      .sort((a, b) => a.position - b.position)
-      .filter((item) => visibility(ruleOf(item.config), answers))
-    // A form sent back is open only where the practice said. Filtering the
-    // walk rather than disabling the other screens: a question that cannot
-    // be changed is not a question being asked.
-    const asked = detail.correction
-    if (asked === null) return shown
-    return shown.filter((item) => asked.item_ids.includes(item.id))
-  }, [detail, visibility])
+    return [...detail.items].sort((a, b) => a.position - b.position)
+  }, [detail])
+
+  /**
+   * What every question has been answered, keyed the way a rule points.
+   *
+   * **This sitting's edits over what is saved, not the saved copy alone.**
+   * A rule takes effect the moment the answer it depends on is given —
+   * somebody picking "yes" should be asked the follow-up on the next press,
+   * not after a round trip that this walk does not make. Reading only the
+   * server's copy would leave the question hidden until a refetch, which is
+   * a branch that never fires inside one sitting.
+   */
+  const answers = useMemo(
+    () => Object.fromEntries(ordered.map((item) => [item.key, edits[item.id] ?? item.value])),
+    [ordered, edits],
+  )
+
+  /**
+   * The questions this patient is shown.
+   *
+   * What a rule needs beyond the answers is how many items a measure has,
+   * and that arrives with the form rather than with the item — an item
+   * carries the measure's code, and the wording and the item count come
+   * from the server so the form and the scorer cannot drift.
+   *
+   * A form sent back for corrections narrows it once more, to the questions
+   * the practice named. Narrowing rather than disabling the other screens: a
+   * question that cannot be changed is not a question being asked. It runs
+   * after the rules rather than instead of them, so a reopened question a
+   * rule has since hidden stays hidden.
+   */
+  const items = useMemo(() => {
+    const shown = visibility(
+      ordered.map((item) => ({
+        key: item.key,
+        rule: ruleOf(item.config),
+        instrumentItems: measureSize(item, form),
+      })),
+      answers,
+    )
+    const visible = ordered.filter((item) => shown[item.key])
+    const asked = detail?.correction ?? null
+    if (asked === null) return visible
+    return visible.filter((item) => asked.item_ids.includes(item.id))
+  }, [ordered, answers, detail, form, visibility])
 
   /** What is on screen: this sitting's edits over what is already saved. */
   const values = useMemo(
@@ -317,12 +358,30 @@ export function PacketFlow({
 }
 
 /**
+ * How many items the measure this question asks has, or null.
+ *
+ * Null for every question that is not a measure, and for a measure this
+ * deployment did not send the wording for — which is the same answer,
+ * because a rule about a score cannot be settled without knowing when the
+ * score is finished, and a measure nobody can be shown will never finish.
+ */
+function measureSize(item: IntakeAssignmentItem, form: IntakeForm | null): number | null {
+  if (item.item_type !== "instrument" || form === null) return null
+  const code = item.config.code
+  if (typeof code !== "string") return null
+  const instrument = form.instruments.find((candidate) => candidate.code === code)
+  return instrument === undefined ? null : Object.keys(instrument.items).length
+}
+
+/**
  * Where to land when a form is opened.
  *
  * The first id the server called outstanding, or the review screen when it
- * called nothing outstanding. An id naming a question this patient is not
- * shown cannot happen today — the seam shows every question — and is treated
- * as "start at the beginning" rather than as an error if it ever does.
+ * called nothing outstanding. The server does not call a hidden question
+ * outstanding, so an id naming one is a browser and a server that disagree
+ * about the rules — which is treated as "start at the beginning" rather
+ * than as an error, because the walk is for display and the server is what
+ * refuses an unfinished form.
  */
 function resumeAt(items: IntakeAssignmentItem[], missing: string[]): Screen {
   if (missing.length === 0 || items.length === 0) return { kind: "review" }
