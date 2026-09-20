@@ -19,10 +19,51 @@ import { renderWithProviders } from "@/test/renderWithProviders"
 import type { PatientIntakeSubmission } from "@/types/patientIntakeSubmissions"
 
 const mockList = vi.fn()
+const mockAssignments = vi.fn()
+const mockArtifacts = vi.fn()
+const mockCoverage = vi.fn()
 
 vi.mock("@/lib/api/patientIntakeSubmissions", () => ({
   listPatientIntakeSubmissions: (...args: unknown[]) => mockList(...args),
 }))
+
+vi.mock("@/lib/api/intakeReview", () => ({
+  listIntakeAssignments: (...args: unknown[]) => mockAssignments(...args),
+  listIntakeArtifacts: (...args: unknown[]) => mockArtifacts(...args),
+}))
+
+vi.mock("@/lib/api/coverage", () => ({
+  fetchCoverage: (...args: unknown[]) => mockCoverage(...args),
+}))
+
+vi.mock("@/lib/api/patientDocuments", () => ({
+  getPatientDocumentDownloadUrl: vi.fn().mockResolvedValue("https://storage.example/signed"),
+}))
+
+const ASSIGNMENT = {
+  id: "assignment-1",
+  version_id: "version-1",
+  packet_name: "Before we meet",
+  version: 1,
+  status: "submitted",
+  assigned_at: "2026-03-01T12:00:00Z",
+  submitted_at: "2026-03-14T12:00:00Z",
+  receipt_code: "K7M2QP4T",
+  progress: { complete: true, missing: [] },
+}
+
+const ARTIFACT = {
+  id: "artifact-1",
+  item_id: "item-records",
+  item_label: "Any records from a previous provider",
+  side: null,
+  document_id: "doc-1",
+  filename: "referral.pdf",
+  content_type: "application/pdf",
+  size_bytes: 2048,
+  scan_status: null,
+  created_at: "2026-03-14T12:00:00Z",
+}
 
 const NEWEST = "2026-03-14T12:00:00Z"
 const OLDEST = "2026-01-09T12:00:00Z"
@@ -48,6 +89,11 @@ function renderCard() {
 describe("IntakeCard", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // The ordinary chart: forms were sent and nothing was attached to
+    // them. Tests about files say so themselves.
+    mockAssignments.mockResolvedValue([])
+    mockArtifacts.mockResolvedValue([])
+    mockCoverage.mockResolvedValue(null)
   })
 
   it("shows the reason and the submitted date of the latest submission", async () => {
@@ -192,5 +238,42 @@ describe("IntakeCard", () => {
     expect(
       screen.queryByRole("button", { name: /earlier submissions/i }),
     ).not.toBeInTheDocument()
+  })
+
+  it("shows the files a form collected under what the patient wrote", async () => {
+    mockList.mockResolvedValue([submission()])
+    mockAssignments.mockResolvedValue([ASSIGNMENT])
+    mockArtifacts.mockResolvedValue([ARTIFACT])
+
+    renderCard()
+
+    expect(await screen.findByTestId("intake-artifacts")).toBeInTheDocument()
+    expect(screen.getByText("Any records from a previous provider")).toBeInTheDocument()
+    expect(mockArtifacts).toHaveBeenCalledWith("patient-a", "assignment-1", undefined)
+  })
+
+  it("appears for a form that collected only files", async () => {
+    // A practice whose first form asks for a photograph of a card and
+    // nothing else still put something on this chart.
+    mockList.mockResolvedValue([])
+    mockAssignments.mockResolvedValue([ASSIGNMENT])
+    mockArtifacts.mockResolvedValue([ARTIFACT])
+
+    renderCard()
+
+    expect(await screen.findByTestId("intake-card")).toBeInTheDocument()
+    expect(screen.getByTestId("intake-artifacts")).toBeInTheDocument()
+    expect(screen.queryByText(/^Submitted /)).not.toBeInTheDocument()
+  })
+
+  it("stays away when a form collected nothing", async () => {
+    mockList.mockResolvedValue([])
+    mockAssignments.mockResolvedValue([ASSIGNMENT])
+    mockArtifacts.mockResolvedValue([])
+
+    const { container } = renderCard()
+
+    await waitFor(() => expect(mockArtifacts).toHaveBeenCalled())
+    expect(container).toBeEmptyDOMElement()
   })
 })

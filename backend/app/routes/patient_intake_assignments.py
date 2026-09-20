@@ -23,6 +23,7 @@ surfaces, two routers:
     POST /{patient_id}/intake-assignments          -> ask for a form
     GET  /{patient_id}/intake-assignments          -> what was asked, and how far
     GET  /{patient_id}/intake-assignments/{id}     -> what they answered
+    GET  /{patient_id}/intake-assignments/{id}/artifacts -> the files it collected
     POST /{patient_id}/intake-assignments/{id}/withdraw
 
 Five things shape all of it.
@@ -78,6 +79,7 @@ from ..claims.eligibility import (
 )
 from ..intake.answers import AnswerError
 from ..intake.consent_statement import consent_statement
+from ..intake.export import item_heading
 from ..intake.items import stored_config
 from ..models import User  # noqa: TC001 — fastapi resolves the annotation at runtime
 from ..models.audit import AuditAction, ResourceType
@@ -86,6 +88,7 @@ from ..models.patient_intake_assignment_api import (
     ArtifactWriteResponse,
     AttachArtifactRequest,
     ClinicianIntakeAnswerResponse,
+    ClinicianIntakeArtifactResponse,
     ClinicianIntakeAssignmentDetailResponse,
     CreateAssignmentRequest,
     IntakeArtifactResponse,
@@ -155,7 +158,9 @@ from .patient_intake import get_intake_outcome_measure_service
 
 if TYPE_CHECKING:
     from ..intake.completion import Completion
+    from ..models.patient_document import PatientDocument
     from ..repositories.patient import PatientRepository
+    from ..repositories.patient_document import PatientDocumentRepository
 
 logger = logging.getLogger(__name__)
 
@@ -201,6 +206,19 @@ def get_clinician_patient_repository(
 ) -> PatientRepository:
     """The patient repository on a tenant-scoped session."""
     return get_patient_repository()
+
+
+def get_clinician_patient_document_repository(
+    _ctx: TenantContext = Depends(get_tenant_context),
+) -> PatientDocumentRepository:
+    """The document repository on a tenant-scoped clinician session.
+
+    Read-only here, and only for what a file is called and how big it is.
+    The same repository the chart's own document list uses, so an artifact
+    the clinician cannot reach through that list cannot be reached through
+    this one either.
+    """
+    return get_patient_document_repository()
 
 
 def get_patient_intake_artifact_service() -> IntakeArtifactService:
@@ -761,6 +779,50 @@ def _artifact_response(row: dict[str, object]) -> IntakeArtifactResponse:
     )
 
 
+def _item_labels(service: IntakeAssignmentService, version_id: str) -> dict[str, str]:
+    """What each question on a version is called, keyed by item id.
+
+    Through the same naming the printed document uses, so a question is
+    called one thing wherever somebody reads it — and is never nameless:
+    the practice's own wording when it wrote any, the engine's heading for
+    the questions it asks itself, and the item's key as the last resort.
+    """
+    return {
+        str(row["id"]): item_heading(
+            service.config_for(row),
+            _optional_str(row.get("label")),
+            str(row["key"]),
+            str(row["item_type"]),
+        )
+        for row in service.items(version_id)
+    }
+
+
+def _clinician_artifact_response(
+    row: dict[str, object], document: PatientDocument, labels: dict[str, str]
+) -> ClinicianIntakeArtifactResponse:
+    """One artifact as the chart lists it, with its file's own facts.
+
+    ``scan_status`` is ``None`` because no deployment scans yet. It is
+    filled from the document row when one does; until then the chart shows
+    nothing rather than an all-clear nobody checked.
+    """
+    side = row.get("side")
+    item_id = str(row["item_id"])
+    return ClinicianIntakeArtifactResponse(
+        id=str(row["id"]),
+        item_id=item_id,
+        item_label=labels.get(item_id, item_id),
+        side=str(side) if side is not None else None,
+        document_id=document.id,
+        filename=document.filename,
+        content_type=document.mime_type,
+        size_bytes=document.size_bytes,
+        scan_status=None,
+        created_at=row["created_at"],  # type: ignore[arg-type]
+    )
+
+
 # ---------------------------------------------------------------------------
 # The files a form asked for
 # ---------------------------------------------------------------------------
@@ -1158,6 +1220,73 @@ def get_patient_intake_assignment(
         ],
         artifacts=[_artifact_response(row) for row in attached],
     )
+
+
+@clinician_router.get(
+    "/{patient_id}/intake-assignments/{assignment_id}/artifacts",
+    response_model=list[ClinicianIntakeArtifactResponse],
+)
+def list_patient_intake_artifacts(
+    patient_id: str,
+    assignment_id: str,
+    request: Request,
+    service: ClinicianAssignments,
+    artifacts: ClinicianArtifacts,
+    user: User = Depends(require_baa_acceptance),
+    patients: PatientRepository = Depends(get_clinician_patient_repository),
+    documents: PatientDocumentRepository = Depends(get_clinician_patient_document_repository),
+    audit: AuditService = Depends(get_audit_service),
+) -> list[ClinicianIntakeArtifactResponse]:
+    """The files this form collected, with enough about each one to open it.
+
+    A read of its own rather than a field on the detail route because the
+    two are read at different times: the chart shows the files whenever it
+    is open, and the answers only when somebody asks for them. Folding the
+    files into the submission read would make every glance at a thumbnail
+    a disclosure of the patient's own words.
+
+    The bytes never come through here. Each row names a document, and the
+    clinician document route is what hands back a short-lived URL for it —
+    one download path for the whole chart, and one place that records a
+    download.
+
+    A file whose document the caller cannot reach is left out rather than
+    reported as unreadable, which is the same answer an id that never
+    existed gets. An assignment id on somebody else's chart is a 404.
+    """
+    patient = patients.get(patient_id, user.id)
+    if patient is None:
+        raise NotFoundError("Patient not found", {"patient_id": patient_id})
+
+    assignment = service.get_for_clinician(assignment_id, user.id)
+    if assignment is None or str(assignment["patient_id"]) != patient_id:
+        raise NotFoundError("Form not found", {"assignment_id": assignment_id})
+
+    rows = artifacts.list_for_clinician(assignment_id, user.id)
+    files = {
+        document.id: document
+        for document in documents.get_many([str(row["document_id"]) for row in rows], user.id)
+    }
+    labels = _item_labels(service, str(assignment["version_id"]))
+    listed = [
+        _clinician_artifact_response(row, files[str(row["document_id"])], labels)
+        for row in rows
+        if str(row["document_id"]) in files
+    ]
+
+    # How many files were disclosed, and nothing about any of them. A
+    # filename is what somebody called the photograph of their card, and
+    # the six-year record has no question it helps answer.
+    audit.log(
+        action=AuditAction.PATIENT_INTAKE_ARTIFACTS_VIEWED,
+        user=user,
+        request=request,
+        resource_type=ResourceType.PATIENT_INTAKE_ASSIGNMENT,
+        resource_id=assignment_id,
+        patient=patient,
+        changes={"count": len(listed)},
+    )
+    return listed
 
 
 @clinician_router.post(
