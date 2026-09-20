@@ -76,36 +76,25 @@ describe("redeemAndStore", () => {
       session_token: "minted-token",
       token_type: "bearer",
       expires_at: 999,
-      practice_slug: SLUG,
-      practice_display_name: "Example Therapy",
     })
   }
 
-  it("returns the practice the response names, with the token", async () => {
+  it("returns the minted token", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(minted()))
 
-    const result = await redeemAndStore("invite-token", "123456")
+    const result = await redeemAndStore(SLUG, "invite-token", "123456")
 
-    expect(result).toEqual({
-      ok: true,
-      session: {
-        sessionToken: "minted-token",
-        practiceSlug: SLUG,
-        practiceDisplayName: "Example Therapy",
-      },
-    })
+    expect(result).toEqual({ ok: true, sessionToken: "minted-token" })
   })
 
   /**
-   * The link that carried the invitation need not name the practice, so the
-   * response is the only thing that knows which key this session belongs
-   * under. Storing it anywhere else would leave the shell unable to find it
-   * on the next visit.
+   * Under the practice whose page the link opened, which is the key the
+   * shell will look under on the next visit.
    */
-  it("persists under the slug the response names", async () => {
+  it("persists the minted token under the practice's slug", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(minted()))
 
-    await redeemAndStore("invite-token", "123456")
+    await redeemAndStore(SLUG, "invite-token", "123456")
 
     expect(getStoredSession(SLUG)).toEqual({ sessionToken: "minted-token", expiresAt: 999 })
   })
@@ -113,7 +102,7 @@ describe("redeemAndStore", () => {
   it("stores nothing on a failed redeem", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({}, { status: 401 })))
 
-    const result = await redeemAndStore("invite-token", "000000")
+    const result = await redeemAndStore(SLUG, "invite-token", "000000")
 
     expect(result).toEqual({ ok: false })
     expect(getStoredSession(SLUG)).toBeNull()
@@ -168,14 +157,12 @@ describe("bootstrapSession", () => {
           session_token: "rotated-token",
           token_type: "bearer",
           expires_at: 200,
-          practice_slug: SLUG,
-          practice_display_name: "Example Therapy",
         }),
       ),
     )
 
     await bootstrapSession(SLUG)
-    await redeemAndStore("invite-token", "123456")
+    await redeemAndStore(SLUG, "invite-token", "123456")
 
     expect(clinicianGet).not.toHaveBeenCalled()
     expect(clinicianPost).not.toHaveBeenCalled()

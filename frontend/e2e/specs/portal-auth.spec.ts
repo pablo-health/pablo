@@ -64,7 +64,7 @@ async function givePortalInvitation(api: ApiClient): Promise<Invitation> {
   await api.post(`/api/patients/${patient.id}/portal-invite`)
 
   const link = firstLink(await mail.waitFor(email))
-  const token = new URLSearchParams(new URL(link).hash.slice(1)).get("token")
+  const token = new URLSearchParams(new URL(link).hash.slice(1)).get("invite")
   expect(token, `the invitation email carries a token: ${link}`).toBeTruthy()
 
   return {
@@ -193,8 +193,8 @@ test("a patient signs in from the link in their email @portal", async ({ api, pa
   await expect(page.getByTestId("portal-shell-active")).toBeVisible()
   await expect(page.getByTestId("portal-shell-practice-name")).toBeVisible()
 
-  // The address bar no longer holds a credential, and it names the practice
-  // the patient is now signed in to.
-  expect(page.url()).not.toContain("token")
+  // The address bar still names the practice and no longer holds the
+  // invitation: a reloaded tab or a shared screen is not a credential.
+  expect(page.url()).not.toContain("invite")
   await expect(page).toHaveURL(/\/portal\/[^/#?]+$/)
 })

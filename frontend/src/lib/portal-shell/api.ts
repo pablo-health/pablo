@@ -42,20 +42,11 @@ export async function resolvePortalPractice(slug: string): Promise<ResolvePracti
   }
 }
 
-/**
- * Mirrors the backend's `PatientSessionResponse`.
- *
- * The practice comes back with the credential because the page that redeems
- * an invitation may not know it yet: an invitation link carries its token in
- * the URL fragment, and the response is what names the practice the session
- * belongs to.
- */
+/** Mirrors the backend's `PatientSessionResponse`. */
 export interface PortalSessionPayload {
   session_token: string
   token_type: string
   expires_at: number
-  practice_slug: string
-  practice_display_name: string
 }
 
 export type PortalAuthResult = { ok: true; data: PortalSessionPayload } | { ok: false }
