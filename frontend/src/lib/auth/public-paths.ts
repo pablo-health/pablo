@@ -1,6 +1,21 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 /**
+ * Public (unauthenticated) routes the engine itself serves.
+ *
+ * The patient portal is one: the person on `/portal/*` holds a portal
+ * session token, never a clinician sign-in, so sending them to `/login`
+ * offers them a door they have no key to. It is listed here rather than
+ * left to `EXTRA_PUBLIC_PATHS` because every deployment that serves the
+ * portal needs it, so no deployment should have to remember it.
+ *
+ * Prefix-matched, exactly like the deployment-contributed entries below.
+ */
+export function builtInPublicPaths(): string[] {
+  return ["/portal"]
+}
+
+/**
  * Deployment-contributed public (unauthenticated) routes.
  *
  * A deployment can serve routes this repo has no knowledge of, and some of

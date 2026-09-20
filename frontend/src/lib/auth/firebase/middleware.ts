@@ -10,7 +10,7 @@ import { type NextRequest, NextResponse } from "next/server"
 import { authMiddleware, redirectToLogin, redirectToHome } from "next-firebase-auth-edge"
 import { authConfig, loginPath, logoutPath } from "@/lib/auth-config"
 import { isForcedLogoutArrival } from "@/lib/auth/forced-logout"
-import { extraPublicPaths } from "@/lib/auth/public-paths"
+import { builtInPublicPaths, extraPublicPaths } from "@/lib/auth/public-paths"
 import {
   browserApiOrigin,
   generateNonce,
@@ -22,7 +22,7 @@ import {
 } from "@/lib/auth/csp"
 import { IS_DEV_MODE } from "@/lib/devMode"
 
-const PUBLIC_PATHS = ["/login", "/native-auth", "/baa-acceptance", "/mfa-enrollment", "/api/config", "/api/auth/native", "/api/auth/exchange-setup-token", ...extraPublicPaths()]
+const PUBLIC_PATHS = ["/login", "/native-auth", "/baa-acceptance", "/mfa-enrollment", "/api/config", "/api/auth/native", "/api/auth/exchange-setup-token", ...builtInPublicPaths(), ...extraPublicPaths()]
 
 const API_ORIGIN = browserApiOrigin()
 

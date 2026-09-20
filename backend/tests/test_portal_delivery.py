@@ -281,7 +281,7 @@ def test_the_link_carries_the_token_in_the_fragment(monkeypatch: pytest.MonkeyPa
     link = factory.build_invite_link(slug="example-therapy", token=_STAND_IN_TOKEN)
 
     assert link == ("https://portal.example.test/portal/example-therapy#invite=abc.def.ghi")
-    assert "?token=" not in link
+    assert "?invite=" not in link
 
 
 _META_CHARACTER_TOKEN = "a/b&c=d"
