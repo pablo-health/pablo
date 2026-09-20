@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
-from ..models.patient_facing import PatientFacingPatient
+from ..models.patient_facing import PATIENT_SELF_WRITABLE_COLUMNS, PatientFacingPatient
 from ..utcnow import utc_now
 from .session import InMemoryTherapySessionRepository, TherapySessionRepository
 
@@ -47,6 +47,29 @@ class PatientRepository(ABC):
         response; returning :class:`PatientFacingPatient` means they were never
         read. What it does and does not carry is recorded column by column in
         ``app.models.patient_facing``.
+        """
+
+    @abstractmethod
+    def update_contact_for_patient_principal(
+        self, patient_id: str, changes: dict[str, str | None]
+    ) -> PatientFacingPatient | None:
+        """Change the caller's own contact fields; return the row as it now is.
+
+        No ``user_id``, for the same reason as
+        :meth:`get_for_patient_principal`: the writer is the subject. The id
+        comes off the authenticated principal rather than the request, and
+        ``rls_patient_self_write`` on ``patients`` backs that up underneath.
+
+        ``changes`` is filtered to the columns in
+        ``PATIENT_SELF_WRITABLE_COLUMNS`` — contact details and
+        ``preferred_name``. Anything else in the dictionary is ignored rather
+        than written, so a caller cannot widen the allow-list by passing a
+        wider dictionary. Row-level security cannot express that bound; this
+        is where it is expressed.
+
+        Returns ``None`` when there is no live row to write, which for a
+        principal resolved off a live session means the chart was deleted
+        underneath them.
         """
 
     def get_last_name(self, patient_id: str, user_id: str) -> str | None:
@@ -222,6 +245,12 @@ class InMemoryPatientRepository(PatientRepository):
         # tombstone-then-purge lifecycle as PostgresPatientRepository
         # without adding a deleted_at field to the Patient dataclass.
         self._deleted_at: dict[str, datetime] = {}
+        # Same parallel-map trick as ``_deleted_at``, and for the same
+        # reason: ``preferred_name`` is a column on ``patients`` that the
+        # patient-facing surface reads and writes, but the clinician-facing
+        # ``Patient`` dataclass does not carry it, so there is nowhere on
+        # the domain model to keep it.
+        self._preferred_name: dict[str, str | None] = {}
         self._session_repo = session_repo
 
     # --- access helpers (mirror has_patient_access semantics) ---
@@ -261,8 +290,34 @@ class InMemoryPatientRepository(PatientRepository):
         return PatientFacingPatient(
             first_name=patient.first_name,
             last_name=patient.last_name,
+            preferred_name=self._preferred_name.get(patient_id),
             date_of_birth=patient.date_of_birth,
+            email=patient.email,
+            phone=patient.phone,
+            address_line1=patient.address_line1,
+            address_line2=patient.address_line2,
+            city=patient.city,
+            state=patient.state,
+            postal_code=patient.postal_code,
         )
+
+    def update_contact_for_patient_principal(
+        self, patient_id: str, changes: dict[str, str | None]
+    ) -> PatientFacingPatient | None:
+        patient = self._patients.get(patient_id)
+        if patient is None or patient_id in self._deleted_at:
+            return None
+        # Filtered here too, matching the Postgres implementation, so a test
+        # that hands this double a disallowed column fails the same way.
+        for column, value in changes.items():
+            if column not in PATIENT_SELF_WRITABLE_COLUMNS:
+                continue
+            if column == "preferred_name":
+                self._preferred_name[patient_id] = value
+            else:
+                setattr(patient, column, value)
+        patient.updated_at = utc_now()
+        return self.get_for_patient_principal(patient_id)
 
     def find_by_email(self, email: str, user_id: str) -> Patient | None:
         matches = [

@@ -145,6 +145,20 @@ class DbPortalAuthStore:
         ).first()
         return jti is not None
 
+    def has_unconsumed_challenge(self, patient_id: str) -> bool:
+        """Is any invitation for this patient still unspent, expired or not?
+
+        No expiry predicate, unlike :meth:`has_outstanding` — see the
+        protocol for why the two questions differ.
+        """
+        jti = self._session.execute(
+            select(PortalInviteChallengeRow.jti).where(
+                PortalInviteChallengeRow.patient_id == patient_id,
+                PortalInviteChallengeRow.consumed.is_(False),
+            )
+        ).first()
+        return jti is not None
+
 
 class DbPortalSessionStore:
     """The server-side revocation list over the session table.
@@ -232,3 +246,17 @@ class DbPortalSessionStore:
             )
         ).all()
         return len(rows)
+
+    def has_unrevoked_session(self, patient_id: str) -> bool:
+        """Does any session row for this patient stand unrevoked?
+
+        No expiry predicate, deliberately — see the protocol for why an
+        expired session and a revoked one answer differently here.
+        """
+        jti = self._session.execute(
+            select(PortalSessionRow.jti).where(
+                PortalSessionRow.patient_id == patient_id,
+                PortalSessionRow.revoked_at.is_(None),
+            )
+        ).first()
+        return jti is not None

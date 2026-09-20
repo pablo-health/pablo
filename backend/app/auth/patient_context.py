@@ -139,6 +139,16 @@ class PatientContext:
     practice_schema: str
     credential_kind: str
     auth_strength: AuthStrength
+    #: The server-side handle of the session this request authenticated
+    #: with, when the front door keeps one. Set from the RESOLVER's own
+    #: record, never from a claim the caller could have written, so a route
+    #: that acts on it — signing this one device out — acts on the row the
+    #: principal was proved against.
+    #:
+    #: ``None`` for a front door with no server-side session to name. A
+    #: route that needs one says so rather than assuming; there is no
+    #: meaningful default for "retire the session" when there is no session.
+    session_id: str | None = None
 
 
 @dataclass(frozen=True)

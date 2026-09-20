@@ -336,12 +336,21 @@ def test_patient_writable_tables_are_a_subset_of_readable() -> None:
     )
 
 
-def test_patients_is_registered_read_only() -> None:
-    """Core's single seed, pinned.
+def test_patients_is_registered_on_its_own_id_both_ways() -> None:
+    """Core's single seed, pinned — and pinned on the KEY COLUMN.
 
-    A patient reads their own demographics; nothing in core lets them
-    write that record. If this changes it should be a deliberate edit to
-    this assertion, not a side effect.
+    ``patients`` is the one registered table where the patient IS the row,
+    so both arms key on ``id`` rather than on ``patient_id``. A registration
+    that drifted to ``patient_id`` would name a column the table does not
+    have, and ``enable_rls_on_schema`` would refuse to provision rather than
+    ship a policy matching nothing — loud, but a long way from here.
+
+    The write arm arrived with the portal profile screen (revision
+    ``d4a7b1e93c26``). It is bounded by the ROW and says nothing about
+    columns; which columns a patient may change is
+    ``PATIENT_SELF_WRITABLE_COLUMNS`` and the request model in
+    ``app.routes.patient_profile``, and is asserted there. If this changes
+    it should be a deliberate edit to this assertion, not a side effect.
     """
     assert PATIENT_READABLE_TABLES.get("patients") == "id"
-    assert "patients" not in PATIENT_WRITABLE_TABLES
+    assert PATIENT_WRITABLE_TABLES.get("patients") == "id"

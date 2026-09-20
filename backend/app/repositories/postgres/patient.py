@@ -25,7 +25,7 @@ from ...db.models import (
 )
 from ...models import Patient
 from ...models.enums import ClinicianRole
-from ...models.patient_facing import PatientFacingPatient
+from ...models.patient_facing import PATIENT_SELF_WRITABLE_COLUMNS, PatientFacingPatient
 from ...utcnow import utc_now
 from ..patient import PatientRepository
 
@@ -45,7 +45,15 @@ _HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindpara
 PATIENT_FACING_COLUMNS = (
     PatientRow.first_name,
     PatientRow.last_name,
+    PatientRow.preferred_name,
     PatientRow.date_of_birth,
+    PatientRow.email,
+    PatientRow.phone,
+    PatientRow.address_line1,
+    PatientRow.address_line2,
+    PatientRow.city,
+    PatientRow.state,
+    PatientRow.postal_code,
 )
 
 
@@ -141,9 +149,50 @@ class PostgresPatientRepository(PatientRepository):
         return PatientFacingPatient(
             first_name=row.first_name,
             last_name=row.last_name,
+            preferred_name=row.preferred_name,
             # DB column is native DATE; the API model carries an ISO string.
             date_of_birth=row.date_of_birth.isoformat() if row.date_of_birth else None,
+            email=row.email,
+            phone=row.phone,
+            address_line1=row.address_line1,
+            address_line2=row.address_line2,
+            city=row.city,
+            state=row.state,
+            postal_code=row.postal_code,
         )
+
+    def update_contact_for_patient_principal(
+        self, patient_id: str, changes: dict[str, str | None]
+    ) -> PatientFacingPatient | None:
+        """Write the caller's own contact fields; return the row as it now is.
+
+        The counterpart of :meth:`get_for_patient_principal`, and narrow in
+        the same two ways. The id comes off the authenticated principal
+        rather than the request, so there is no other patient's row to name;
+        and ``changes`` is filtered to :data:`PATIENT_SELF_WRITABLE_COLUMNS`
+        here as well as by the route's request model, because a repository
+        that took whatever dictionary it was handed would put the whole
+        allow-list decision in the caller — including callers written later.
+
+        ``rls_patient_self_write`` is the layer underneath: it bounds the
+        write to the calling patient's ROW. It has nothing to say about
+        columns, which is what this filter is for.
+        """
+        if not _is_uuid(patient_id):
+            return None
+        allowed = {
+            column: value
+            for column, value in changes.items()
+            if column in PATIENT_SELF_WRITABLE_COLUMNS
+        }
+        if allowed:
+            self._session.execute(
+                update(PatientRow)
+                .where(PatientRow.id == patient_id, PatientRow.deleted_at.is_(None))
+                .values(**allowed, updated_at=utc_now())
+            )
+            self._session.flush()
+        return self.get_for_patient_principal(patient_id)
 
     def find_by_email(self, email: str, user_id: str) -> Patient | None:
         row = (

@@ -130,6 +130,14 @@ DPOP_UNCOVERABLE: dict[str, str] = {
     # --- The portal shell's first call, made before any session exists: a
     # slug in, a practice's own display name out. ---
     "GET /api/portal/practices/{slug}": "public: resolves a practice slug to its display name",
+    # --- Account recovery, reached by someone who has lost the only
+    # credential they had. Binding a device proof would require the
+    # enrolment this route exists to restore. It answers 202 to everyone,
+    # sends only to the address already on the chart, and is bounded by a
+    # per-address and a per-practice window plus the deployment's CAPTCHA. ---
+    "POST /api/portal/practices/{slug}/recover": (
+        "pre-auth: mails a fresh sign-in link to an address already on the chart"
+    ),
     # --- Public BAA document fetch (the legal text shown pre-acceptance);
     # no authenticated user. ---
     "GET /api/users/baa": "public: serves the current BAA document text, no user",

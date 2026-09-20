@@ -38,6 +38,10 @@ from ..db import create_standalone_session
 from ..db.platform_models import PortalPracticeSlugRow, PracticeRow
 from ..models import User
 from ..rate_limit import require_portal_practice_resolve_rate_limit
+
+# Runtime import: FastAPI resolves this annotation when it builds the route,
+# so it cannot live in a TYPE_CHECKING block.
+from ..services.captcha import CaptchaVerifier, get_captcha_verifier
 from ..utcnow import utc_now
 
 if TYPE_CHECKING:
@@ -84,6 +88,16 @@ class PortalPracticeResolution(BaseModel):
 
     slug: str
     display_name: str
+    #: The deployment's CAPTCHA site key, or ``None`` when no provider is
+    #: configured. Public by definition — it is rendered into the widget and
+    #: the script tag — and returned here for the same reason the public
+    #: booking card carries it: the recovery page has to know whether to
+    #: render a widget before it can ask anybody for an email address, and
+    #: this is the only unauthenticated call it makes first.
+    #:
+    #: Not a fact about the practice, so it does not narrow the 404 above:
+    #: it is the same value for every slug this deployment serves.
+    captcha_site_key: str | None = None
 
 
 class PortalPracticeSlugResponse(BaseModel):
@@ -110,6 +124,7 @@ def _practice_not_found() -> HTTPException:
 )
 def resolve_portal_practice(
     slug: str,
+    verifier: Annotated[CaptchaVerifier, Depends(get_captcha_verifier)],
     _public: None = Depends(truly_public),
 ) -> PortalPracticeResolution:
     """Resolve a slug to the display name the shell should show.
@@ -131,7 +146,11 @@ def resolve_portal_practice(
 
     if row is None or not row.enabled:
         raise _practice_not_found()
-    return PortalPracticeResolution(slug=row.slug, display_name=row.display_name)
+    return PortalPracticeResolution(
+        slug=row.slug,
+        display_name=row.display_name,
+        captcha_site_key=verifier.site_key,
+    )
 
 
 @router.post(
@@ -191,6 +210,38 @@ def practice_address_for_schema(schema: str) -> PracticeAddress | None:
         if row is None:
             return None
         return PracticeAddress(slug=row.slug, display_name=row.display_name, enabled=row.enabled)
+    finally:
+        session.close()
+
+
+def practice_schema_for_slug(slug: str) -> str | None:
+    """The schema a practice's patients live in, from its public address.
+
+    The mirror of :func:`practice_address_for_schema`, for the one route
+    that arrives with a slug out of a URL and no principal at all: account
+    recovery has to resolve the practice before any tenant session can be
+    opened. Exactly the inversion
+    :class:`~app.db.platform_models.PortalPracticeSlugRow` exists for.
+
+    ``None`` when the slug names nothing, names a practice whose portal is
+    off, or names one that is inactive or deleted — one answer for all of
+    them, and the caller must not tell them apart either. The filters are
+    the ones that decide whether a tenant session is opened at all: a
+    deleted practice's schema may not exist, and an inactive practice is one
+    the deployment has already stopped serving.
+    """
+    session = create_standalone_session()
+    try:
+        return session.execute(
+            select(PracticeRow.schema_name)
+            .join(PortalPracticeSlugRow, PortalPracticeSlugRow.practice_id == PracticeRow.id)
+            .where(
+                PortalPracticeSlugRow.slug == slug,
+                PortalPracticeSlugRow.enabled.is_(True),
+                PracticeRow.is_active.is_(True),
+                PracticeRow.deleted_at.is_(None),
+            )
+        ).scalar_one_or_none()
     finally:
         session.close()
 
