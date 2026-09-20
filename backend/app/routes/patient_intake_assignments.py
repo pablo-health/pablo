@@ -12,11 +12,13 @@ surfaces, two routers:
     GET  /assignments                              -> the forms I was asked for
     GET  /assignments/{id}                         -> one form, with what I saved
     PUT  /assignments/{id}/items/{item_id}         -> save one answer
+    POST /assignments/{id}/submit                  -> hand it in, get a receipt
 
   Clinician — ``/api/patients``
 
     POST /{patient_id}/intake-assignments          -> ask for a form
     GET  /{patient_id}/intake-assignments          -> what was asked, and how far
+    GET  /{patient_id}/intake-assignments/{id}     -> what they answered
     POST /{patient_id}/intake-assignments/{id}/withdraw
 
 Five things shape all of it.
@@ -43,8 +45,9 @@ one form.
 
 **A status code is the whole answer.** A ``409`` means the form is no
 longer this patient's to fill in, because it was handed in or withdrawn. A
-``422`` on a save means the answer does not fit the question, and the
-message says what to do about it in the words the patient is reading.
+``422`` on a save means the answer does not fit the question, and on a
+submit it means the form is not finished and names what is outstanding.
+Both messages say what to do about it in the words the patient is reading.
 """
 
 from __future__ import annotations
@@ -63,13 +66,20 @@ from ..intake.items import stored_config
 from ..models import User  # noqa: TC001 — fastapi resolves the annotation at runtime
 from ..models.audit import AuditAction, ResourceType
 from ..models.patient_intake_assignment_api import (
+    ClinicianIntakeAnswerResponse,
+    ClinicianIntakeAssignmentDetailResponse,
     CreateAssignmentRequest,
     IntakeAssignmentDetailResponse,
     IntakeAssignmentItemResponse,
     IntakeAssignmentResponse,
     IntakeProgressResponse,
+    IntakeSubmissionResponse,
     SaveAnswerRequest,
     SavedAnswerResponse,
+    SubmittedMeasureResponse,
+)
+from ..outcome_measures.service import (  # noqa: TC001 — fastapi resolves the annotation
+    OutcomeMeasureService,
 )
 from ..repositories import (
     get_intake_packet_repository,
@@ -79,10 +89,13 @@ from ..repositories import (
 from ..services.audit_service import AuditService, get_audit_service
 from ..services.patient_intake_assignment_service import (
     AssignmentClosedError,
+    FrozenResponseError,
+    IncompleteFormError,
     IntakeAssignmentService,
     UnpublishedVersionError,
 )
 from ..utcnow import utc_now
+from .patient_intake import get_intake_outcome_measure_service
 
 if TYPE_CHECKING:
     from ..intake.completion import Completion
@@ -171,8 +184,13 @@ def _assignment_response(
         status=str(assignment["status"]),
         assigned_at=assignment["assigned_at"],  # type: ignore[arg-type]
         submitted_at=assignment["submitted_at"],  # type: ignore[arg-type]
+        receipt_code=_optional_str(assignment.get("receipt_code")),
         progress=_progress(service.progress(assignment, patient_id)),
     )
+
+
+def _optional_str(value: object) -> str | None:
+    return str(value) if value is not None else None
 
 
 def _version_label(service: IntakeAssignmentService, version_id: str) -> tuple[str, int]:
@@ -281,7 +299,7 @@ def save_my_answer(
         _saved, worth_auditing = service.save_answer(
             assignment, patient.patient_id, item_id, body.value
         )
-    except AssignmentClosedError as exc:
+    except (AssignmentClosedError, FrozenResponseError) as exc:
         raise ConflictError(
             "This form is no longer open for changes.", {"assignment_id": assignment_id}
         ) from exc
@@ -313,6 +331,73 @@ def save_my_answer(
         saved_at=utc_now(),
         status=str(current["status"]),
         progress=_progress(service.progress(current, patient.patient_id)),
+    )
+
+
+@router.post(
+    "/assignments/{assignment_id}/submit",
+    response_model=IntakeSubmissionResponse,
+)
+def submit_my_assignment(
+    assignment_id: str,
+    request: Request,
+    patient: CurrentPatient,
+    service: PatientAssignments,
+    measures: OutcomeMeasureService = Depends(get_intake_outcome_measure_service),
+    audit: AuditService = Depends(get_audit_service),
+    _: None = Depends(subscription_exempt),
+) -> IntakeSubmissionResponse:
+    """Hand the form in.
+
+    A 422 listing the questions still outstanding when it is not finished,
+    and nothing about the form changes. A 409 when it has already been
+    handed in or withdrawn — submitting twice must not mint a second
+    receipt for one set of answers, and the second caller is told the form
+    is closed rather than quietly given the first receipt back.
+
+    On success the answers stop being drafts, every measure on the form is
+    scored onto the chart, and the response carries the receipt.
+    """
+    _require_stepped_up(patient)
+    assignment = _own_assignment(service, assignment_id, patient.patient_id)
+
+    try:
+        submitted, recorded = service.submit(assignment, patient.patient_id, measures)
+    except IncompleteFormError as exc:
+        raise UnprocessableEntityError(
+            "Some questions still need an answer.", {"missing": exc.missing}
+        ) from exc
+    except AssignmentClosedError as exc:
+        raise ConflictError(
+            "This form has already been handed in.", {"assignment_id": assignment_id}
+        ) from exc
+
+    # Which measures were on the form, and not a word of what was answered.
+    # The same action the fixed intake form writes, because it is the same
+    # event: this patient handed their intake in.
+    audit.log_patient_principal_action(
+        action=AuditAction.PATIENT_INTAKE_SUBMITTED,
+        request=request,
+        patient_id=patient.patient_id,
+        resource_type=ResourceType.PATIENT_INTAKE_ASSIGNMENT,
+        resource_id=assignment_id,
+        changes={"instruments": [m.instrument for m in recorded]},
+    )
+
+    return IntakeSubmissionResponse(
+        assignment_id=assignment_id,
+        version_id=str(submitted["version_id"]),
+        submitted_at=submitted["submitted_at"],  # type: ignore[arg-type]
+        receipt_code=str(submitted["receipt_code"]),
+        measures=[
+            SubmittedMeasureResponse(
+                id=m.id,
+                instrument=m.instrument,
+                total_score=m.total_score,
+                severity=m.severity,
+            )
+            for m in recorded
+        ],
     )
 
 
@@ -409,6 +494,69 @@ def list_patient_intake_assignments(
         _assignment_response(service, row, patient_id)
         for row in service.list_for_clinician(patient_id, user.id)
     ]
+
+
+@clinician_router.get(
+    "/{patient_id}/intake-assignments/{assignment_id}",
+    response_model=ClinicianIntakeAssignmentDetailResponse,
+)
+def get_patient_intake_assignment(
+    patient_id: str,
+    assignment_id: str,
+    request: Request,
+    service: ClinicianAssignments,
+    user: User = Depends(require_baa_acceptance),
+    patients: PatientRepository = Depends(get_clinician_patient_repository),
+    audit: AuditService = Depends(get_audit_service),
+) -> ClinicianIntakeAssignmentDetailResponse:
+    """What this patient answered, question by question.
+
+    This is the disclosure the list route deliberately is not. What comes
+    back is the patient's own words — why they came, anything they said the
+    chart has wrong about them, every answer they gave — so reading it goes
+    on the record the way opening a conversation does. The entry carries how
+    many answers were disclosed and not one of them.
+
+    An assignment id belonging to another patient's chart is a 404, so the
+    path cannot be used to find out whose form an id names.
+    """
+    patient = patients.get(patient_id, user.id)
+    if patient is None:
+        raise NotFoundError("Patient not found", {"patient_id": patient_id})
+
+    assignment = service.get_for_clinician(assignment_id, user.id)
+    if assignment is None or str(assignment["patient_id"]) != patient_id:
+        raise NotFoundError("Form not found", {"assignment_id": assignment_id})
+
+    saved = service.answers_for_clinician(assignment_id, user.id)
+    base = _assignment_response(service, assignment, patient_id)
+
+    audit.log(
+        action=AuditAction.PATIENT_INTAKE_SUBMISSION_VIEWED,
+        user=user,
+        request=request,
+        resource_type=ResourceType.PATIENT_INTAKE_ASSIGNMENT,
+        resource_id=assignment_id,
+        patient=patient,
+        changes={"count": len(saved)},
+    )
+
+    return ClinicianIntakeAssignmentDetailResponse(
+        **base.model_dump(),
+        patient_id=patient_id,
+        items=[
+            ClinicianIntakeAnswerResponse(
+                id=str(row["id"]),
+                key=str(row["key"]),
+                position=int(row["position"]),  # type: ignore[call-overload]
+                item_type=str(row["item_type"]),
+                required=bool(row["required"]),
+                config=stored_config(row["config"]),
+                value=saved.get(str(row["id"])),
+            )
+            for row in service.items(str(assignment["version_id"]))
+        ],
+    )
 
 
 @clinician_router.post(
