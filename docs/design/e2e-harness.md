@@ -28,6 +28,8 @@ Extends the existing `docker-compose.yml` (`backend`, `postgres`) with:
 | `firebase-auth` | `ghcr.io/…/firebase-tools` emulator, `auth` only | the backend already honours `FIREBASE_AUTH_EMULATOR_HOST` (`backend/app/auth/firebase_init.py`); the frontend gains `connectAuthEmulator` behind `NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST` |
 | `fake-clearinghouse` | `scripts/fake_clearinghouse.py` (FastAPI) | serves the recorded responses in `backend/tests/fixtures/clearinghouse/` for payer search, eligibility, claim submission, enrollment, polling and reports, and posts `transaction processed` webhooks back to the backend on a scripted delay |
 | `fake-mail` | `scripts/fake_mail.py` (aiosmtpd + FastAPI) | the mail the product sends, catchable. A booking link is born requiring the booker to confirm by email and the booking is refused outright when nothing can deliver that mail, so a silent drain is not enough |
+| `object-store` | `quay.io/minio/minio`, pinned | where uploaded files land. A document upload never passes through the API — the browser sends the bytes to storage directly, against a URL the API signed — so without a store the first step of it is a 503 and the browser can only ever be shown the failure |
+| `object-store-init` | `backend/scripts/e2e_create_object_store_bucket.py` | creates the bucket the API is configured with, and by succeeding says the store is ready |
 
 The fake clearinghouse is deterministic: a claim whose control number
 starts `REJ` gets the recorded edit rejection; anything else gets the
@@ -41,6 +43,19 @@ refused at the handshake. `fake-mail` mints a self-signed certificate for
 its own service name at startup, shares it on a volume the backend mounts,
 and the backend trusts it by pointing `SSL_CERT_FILE` at the file —
 affordable precisely because nothing else in this stack speaks TLS.
+
+**Two addresses for one object store.** MinIO speaks the S3 API the
+engine's S3-compatible storage backend already talks to, so the lane
+exercises shipping code rather than a stand-in written for the occasion.
+It needs two addresses, for the same reason the frontend has two for the
+backend: the backend reads objects back over the stack's own network
+(`AWS_S3_ENDPOINT_URL`), while the signed URL is executed by a browser on
+the host, which can only reach the published port
+(`AWS_S3_PUBLIC_ENDPOINT_URL`). The signature covers the host, so a URL
+minted against the inside address is not merely unreachable out there — it
+would not verify either. That second setting is ordinary configuration, not
+a harness affordance: any deployment whose store answers on a private
+address and is reached by browsers on a public one needs it.
 
 **Where the clearinghouse calls go.** `CLEARINGHOUSE_BASE_URL` is what
 points the adapter (`app.claims.stedi`) at `fake-clearinghouse`. It is read
@@ -78,6 +93,10 @@ frontend/e2e/
                               control number, list what it received
     mail.ts                   read the fake mail server, and the link out of
                               a message the product expects a person to click
+    upload.ts                 send a file the way a browser does: ask for an
+                              upload target, execute whichever recipe the API
+                              returns, finalize; plus the fixture files and
+                              the hash a round trip has to reproduce
   specs/
     patients.spec.ts          the existing spec, rewritten onto the fixtures
     claims.spec.ts            coverage → file claim → tracker submitted →

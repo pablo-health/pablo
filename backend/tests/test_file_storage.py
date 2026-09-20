@@ -358,3 +358,75 @@ class TestFileStorageFromSettings:
         assert isinstance(storage, S3FileStorage)
         assert storage._region == "us-west-2"
         assert storage._endpoint_url == "http://localhost:9000"
+
+    def test_s3_provider_plumbs_the_public_endpoint(self) -> None:
+        storage = file_storage_from_settings(
+            _settings(
+                file_storage_provider="s3",
+                aws_s3_endpoint_url="http://object-store:9000",
+                aws_s3_public_endpoint_url="http://localhost:9000",
+            )
+        )
+        assert isinstance(storage, S3FileStorage)
+        assert storage._public_endpoint_url == "http://localhost:9000"
+
+
+# ---- S3 behind a second address -----------------------------------------
+
+
+class TestS3PublicEndpoint:
+    """A store the server and the browser reach at different addresses.
+
+    Presigning is pure local computation, so both halves are provable
+    offline: what matters is which address each client was built against,
+    and the address a presigned URL names.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _dummy_credentials(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
+
+    @pytest.fixture
+    def split_storage(self) -> S3FileStorage:
+        return S3FileStorage(
+            region="us-east-1",
+            endpoint_url="http://object-store:9000",
+            public_endpoint_url="http://localhost:9000",
+        )
+
+    def test_upload_target_names_the_public_address(self, split_storage: S3FileStorage) -> None:
+        target = split_storage.make_upload_target(
+            bucket="pablo-docs",
+            object_name="tenant-A/chart/doc-1",
+            content_type="image/png",
+            max_bytes=100,
+            ttl_seconds=300,
+        )
+        assert target.url.startswith("http://localhost:9000")
+
+    def test_download_url_names_the_public_address(self, split_storage: S3FileStorage) -> None:
+        url = split_storage.make_download_url(
+            bucket="pablo-docs",
+            object_name="tenant-A/chart/doc-1",
+            ttl_seconds=300,
+        )
+        assert urlparse(url).netloc == "localhost:9000"
+
+    def test_server_side_operations_keep_the_internal_address(
+        self, split_storage: S3FileStorage
+    ) -> None:
+        # Reading an object back at finalize happens from inside the
+        # deployment, where the public address may not resolve at all.
+        assert split_storage._client().meta.endpoint_url == "http://object-store:9000"
+
+    def test_one_address_serves_both_when_no_public_endpoint_is_set(self) -> None:
+        storage = S3FileStorage(region="us-east-1", endpoint_url="http://minio:9000")
+        target = storage.make_upload_target(
+            bucket="pablo-docs",
+            object_name="tenant-A/chart/doc-1",
+            content_type="image/png",
+            max_bytes=100,
+            ttl_seconds=300,
+        )
+        assert target.url.startswith("http://minio:9000")

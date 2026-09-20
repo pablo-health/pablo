@@ -804,6 +804,17 @@ class Settings(BaseSettings):
             "LocalStack). Leave unset for AWS S3."
         ),
     )
+    aws_s3_public_endpoint_url: str | None = Field(
+        default=None,
+        description=(
+            "Address a browser reaches the S3-compatible store at, when it "
+            "differs from aws_s3_endpoint_url — a store on an internal "
+            "network, or behind a gateway. Upload and download URLs are "
+            "signed against this address; server-side reads and writes keep "
+            "using aws_s3_endpoint_url. Leave unset when one address serves "
+            "both."
+        ),
+    )
     # Compliance document storage (license copies, insurance declarations,
     # etc.). Accepts ``gs://<bucket>[/prefix]`` (GCS), ``s3://<bucket>[/prefix]``
     # (AWS S3 / S3-compatible), or an absolute local directory path (self-hosted

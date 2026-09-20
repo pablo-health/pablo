@@ -331,6 +331,16 @@ class S3FileStorage(FileStorageProvider):
     role, ``~/.aws``) — never from Pablo settings. ``endpoint_url``
     supports S3-compatible stores (MinIO, LocalStack) for self-hosters.
     ``client_factory`` is a test seam, same shape as :class:`GcsFileStorage`.
+
+    ``public_endpoint_url`` exists because a presigned URL is executed by
+    somebody else's browser. A store the server reaches on a private
+    address — a container on an internal network, a service behind a
+    gateway — is reached by the browser at a different one, and SigV4
+    signs the host, so a URL minted against the private address is both
+    unreachable and unverifiable out there. Set it to the address the
+    browser uses and the two presign methods sign against that, while
+    every server-side byte operation keeps using ``endpoint_url``. Leave
+    it unset when one address serves both, which is the usual case.
     """
 
     def __init__(
@@ -338,13 +348,15 @@ class S3FileStorage(FileStorageProvider):
         *,
         region: str | None = None,
         endpoint_url: str | None = None,
+        public_endpoint_url: str | None = None,
         client_factory: Callable[[], Any] | None = None,
     ) -> None:
         self._region = region
         self._endpoint_url = endpoint_url
+        self._public_endpoint_url = public_endpoint_url
         self._client_factory = client_factory
 
-    def _client(self) -> Any:
+    def _build_client(self, endpoint_url: str | None) -> Any:
         if self._client_factory is not None:
             return self._client_factory()
         try:
@@ -358,9 +370,17 @@ class S3FileStorage(FileStorageProvider):
         return boto3.client(
             "s3",
             region_name=self._region,
-            endpoint_url=self._endpoint_url,
+            endpoint_url=endpoint_url,
             config=Config(signature_version="s3v4"),
         )
+
+    def _client(self) -> Any:
+        """Client for server-side byte operations, on the internal address."""
+        return self._build_client(self._endpoint_url)
+
+    def _signing_client(self) -> Any:
+        """Client for presigning, on the address the browser can reach."""
+        return self._build_client(self._public_endpoint_url or self._endpoint_url)
 
     def make_upload_target(
         self,
@@ -374,7 +394,7 @@ class S3FileStorage(FileStorageProvider):
         # Presigned POST rather than PUT: only POST policies can carry a
         # content-length-range condition, which is what enforces
         # max_bytes at S3 (parity with GCS's signed size-range header).
-        post = self._client().generate_presigned_post(
+        post = self._signing_client().generate_presigned_post(
             Bucket=bucket,
             Key=object_name,
             Fields={"Content-Type": content_type},
@@ -397,7 +417,7 @@ class S3FileStorage(FileStorageProvider):
         params: dict[str, str] = {"Bucket": bucket, "Key": object_name}
         if response_disposition is not None:
             params["ResponseContentDisposition"] = response_disposition
-        url: str = self._client().generate_presigned_url(
+        url: str = self._signing_client().generate_presigned_url(
             "get_object",
             Params=params,
             ExpiresIn=ttl_seconds,
@@ -582,5 +602,6 @@ def file_storage_from_settings(settings: Settings) -> FileStorageProvider:
         return S3FileStorage(
             region=settings.aws_region,
             endpoint_url=settings.aws_s3_endpoint_url,
+            public_endpoint_url=settings.aws_s3_public_endpoint_url,
         )
     return GcsFileStorage()
