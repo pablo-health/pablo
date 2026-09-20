@@ -1,28 +1,29 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 /**
- * A file the patient sent in with a form, followed to the clinician's chart.
+ * What the practice sees of the files a form collected.
  *
- * `intake-artifacts.spec.ts` proves the patient's half: what a form that
- * asks for files renders, and that it cannot be handed in until they
- * arrive. This is the other end of the same journey, and it needs a real
- * store to exist at all — the bytes go browser to storage directly, so
- * until this stack ran one the only thing a browser could be shown was a
- * 503.
+ * `intake-artifacts.spec.ts` drives the patient's half through the
+ * browser: three real file pickers, three uploads, and a form that goes
+ * from outstanding to ready. This is the surface the clinician reads those
+ * files back through, which is a different route with a different shape —
+ * so the pickers are not driven again here. The files are put in the way
+ * the portal puts them, through the shared upload fixture, and what is
+ * under test starts at the chart.
  *
- * Two things a browser is uniquely positioned to prove, and neither is
- * reachable from a route test:
+ * Two things, and neither is reachable from a route test:
  *
- * * the chart lists what arrived, named by the question that asked for it
- *   and by which side of the card it is — not by an id;
+ * * the chart lists what arrived with enough about each file to decide
+ *   whether to open it — the question's own wording, which side of the
+ *   card, the name, the kind, the size the store reports — and never an id
+ *   standing in for any of that;
  * * the file a clinician downloads is the file the patient sent, compared
  *   by SHA-256 rather than by "a file appeared". An upload that truncates,
  *   re-encodes or lands under the wrong key still produces a document row,
  *   and only identical bytes rule all three out.
  *
- * Both factors of the patient's sign-in come from the stand-in their
- * channel is wired to: the link out of the mail server, the step-up code
- * out of the text-message gateway.
+ * The three fixtures are deliberately different files, so a listing that
+ * paired a name with the wrong row fails here instead of passing a count.
  */
 
 import { expect, test } from "../fixtures/auth"
@@ -116,8 +117,8 @@ test("a file a patient attaches to a form reaches the chart byte for byte @porta
   const { email, phone } = givePortalContactDetails()
   const patient = await givePatient(api, { email, phone, date_of_birth: "1988-11-02" })
   const version = await publishFileForm(api)
-  const card = version.items.find((item) => item.item_type === "insurance_card")!
-  const records = version.items.find((item) => item.item_type === "document_request")!
+  const cardQuestion = version.items.find((item) => item.item_type === "insurance_card")!
+  const recordsQuestion = version.items.find((item) => item.item_type === "document_request")!
 
   const assignment = await api.post<Assignment>(
     `/api/patients/${patient.id}/intake-assignments`,
@@ -128,24 +129,17 @@ test("a file a patient attaches to a form reaches the chart byte for byte @porta
 
   // --- the patient sends two photographs and a document ------------------
   const front = fixtureFile("insurance-card.png", "image/png")
+  const back = fixtureFile("insurance-card-back.png", "image/png")
+  const records = fixtureFile("records.pdf", "application/pdf")
+
   const uploadedFront = await uploadAsPatient(request, sessionToken, front, "intake_artifact")
-  const uploadedBack = await uploadAsPatient(
-    request,
-    sessionToken,
-    { ...front, name: "card-back.png" },
-    "intake_artifact",
-  )
-  const uploadedRecords = await uploadAsPatient(
-    request,
-    sessionToken,
-    { ...front, name: "referral.png" },
-    "intake_artifact",
-  )
+  const uploadedBack = await uploadAsPatient(request, sessionToken, back, "intake_artifact")
+  const uploadedRecords = await uploadAsPatient(request, sessionToken, records, "intake_artifact")
 
   for (const attachment of [
-    { item_id: card.id, document_id: uploadedFront.id, side: "front" },
-    { item_id: card.id, document_id: uploadedBack.id, side: "back" },
-    { item_id: records.id, document_id: uploadedRecords.id },
+    { item_id: cardQuestion.id, document_id: uploadedFront.id, side: "front" },
+    { item_id: cardQuestion.id, document_id: uploadedBack.id, side: "back" },
+    { item_id: recordsQuestion.id, document_id: uploadedRecords.id },
   ]) {
     const attached = await request.post(
       `${BACKEND_URL}/api/patient/intake/assignments/${assignment.id}/artifacts`,
@@ -169,23 +163,39 @@ test("a file a patient attaches to a form reaches the chart byte for byte @porta
     CARD_QUESTION,
     RECORDS_QUESTION,
   ])
-  expect(listed[0].filename).toBe("insurance-card.png")
-  expect(listed[0].content_type).toBe("image/png")
+  expect(listed.map((row) => row.filename)).toEqual([front.name, back.name, records.name])
+  expect(listed.map((row) => row.content_type)).toEqual([
+    "image/png",
+    "image/png",
+    "application/pdf",
+  ])
   // The size is the object's own, read back from storage at finalize,
   // rather than the number the client claimed on the way in.
-  expect(listed[0].size_bytes).toBe(front.body.length)
+  expect(listed.map((row) => row.size_bytes)).toEqual([
+    front.body.length,
+    back.body.length,
+    records.body.length,
+  ])
   // Nothing scans on this deployment, and absent is not "found clean".
   expect(listed.every((row) => row.scan_status === null)).toBe(true)
 
   // --- and what the clinician downloads is what the patient sent ---------
-  const link = await api.get<{ url: string }>(
-    `/api/documents/${uploadedFront.id}/file?disposition=inline`,
-  )
-  const fetched = await request.get(link.url)
-  expect(fetched.status(), "the signed download URL serves the object").toBe(200)
-  expect(sha256(await fetched.body()), "the bytes survive the round trip").toBe(
-    uploadedFront.sha256,
-  )
+  // Every file, not just one: the three are different bytes, so a row
+  // paired with the wrong object passes a count and fails a hash.
+  for (const [row, sent] of [
+    [listed[0], uploadedFront],
+    [listed[1], uploadedBack],
+    [listed[2], uploadedRecords],
+  ] as const) {
+    const link = await api.get<{ url: string }>(
+      `/api/documents/${row.document_id}/file?disposition=inline`,
+    )
+    const fetched = await request.get(link.url)
+    expect(fetched.status(), `the signed URL serves ${row.filename}`).toBe(200)
+    expect(sha256(await fetched.body()), `${row.filename} survived the round trip`).toBe(
+      sent.sha256,
+    )
+  }
 })
 
 test("a form on another patient's chart hands back nothing @portal", async ({ api }) => {
