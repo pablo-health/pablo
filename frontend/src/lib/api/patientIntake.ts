@@ -142,6 +142,13 @@ export interface IntakeReceipt {
   submitted_at: string
   receipt_code: string
   measures: SubmittedMeasure[]
+  /**
+   * What the receipt has to say beyond the code, written by the server and
+   * shown as it was written. Empty on almost every submission. Optional
+   * because a deployment whose backend predates the field sends none, and a
+   * receipt screen is not the place to fail over a missing array.
+   */
+  notes?: string[]
 }
 
 /**

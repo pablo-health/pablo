@@ -9,23 +9,19 @@ missing; an optional one never is; a heading collects nothing and so never
 is either. ``missing`` comes back in the order the form asks, because a
 client sends somebody to the first thing it names.
 
-**The visibility seam, and the fact that it is a stub.** Rules have a
-stored shape and are validated at publish, but nothing evaluates one yet,
-so :func:`every_item_visible` answers "shown" for every question. That is
-the behaviour under test, not an accident to be discovered later: a test
-asserts the stub directly, and another proves the seam is really consulted
-by passing a rule that hides everything and watching completion change.
-When the real evaluator lands, the first test is the one that has to be
-rewritten, which is where the change belongs.
+**What a rule does to that arithmetic.** A question this patient is not
+shown is neither required nor missing, and is named in ``hidden`` instead
+so that submitting knows not to file what was typed into it. The rules
+themselves are exercised against their own table in
+``test_intake_visibility.py``; what is here is the consequence.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from app.intake.completion import CompletionItem, assess, every_item_visible
+from app.intake.completion import CompletionItem, assess
 from app.intake.items import validate_item_config
-from app.intake.rules import VisibleWhen
 
 _PHQ9_COMPLETE = {str(i): 1 for i in range(1, 10)}
 
@@ -63,29 +59,64 @@ def _default_packet() -> list[CompletionItem]:
     ]
 
 
-class TestTheVisibilityStub:
-    """v1: every question is shown, whatever rule it carries."""
+def _branching_packet() -> list[CompletionItem]:
+    """A yes-or-no that opens a required follow-up, and nothing else."""
+    return [
+        _item("i1", "substances", "yes_no"),
+        _item(
+            "i2",
+            "which",
+            "free_text",
+            visible_when={"item_key": "substances", "op": "eq", "value": True},
+        ),
+    ]
 
-    def test_it_shows_an_item_with_no_rule(self) -> None:
-        assert every_item_visible(None, {}) is True
 
-    def test_it_shows_an_item_whose_rule_plainly_does_not_hold(self) -> None:
-        """Rules are stored and validated; nothing evaluates one yet."""
-        rule = VisibleWhen(item_key="drinks", op="eq", value="yes")
-        assert every_item_visible(rule, {"drinks": {"key": "no"}}) is True
-
-
-class TestTheSeamIsReallyConsulted:
-    """Swap the stub and completion changes — so it is a seam, not decoration."""
-
-    def test_hiding_everything_completes_an_empty_form(self) -> None:
-        result = assess(_default_packet(), {}, visibility=lambda _rule, _answers: False)
+class TestAQuestionNobodyWasShown:
+    def test_it_does_not_hold_the_form_up(self) -> None:
+        result = assess(_branching_packet(), {"substances": {"yes": False}})
         assert result.complete is True
         assert result.missing == []
 
-    def test_showing_everything_is_what_the_default_does(self) -> None:
-        hidden = assess(_default_packet(), {}, visibility=lambda _rule, _answers: True)
-        assert hidden.missing == assess(_default_packet(), {}).missing
+    def test_it_is_named_as_hidden_instead(self) -> None:
+        result = assess(_branching_packet(), {"substances": {"yes": False}})
+        assert result.hidden == ["i2"]
+
+    def test_the_same_question_is_required_once_it_is_shown(self) -> None:
+        result = assess(_branching_packet(), {"substances": {"yes": True}})
+        assert result.complete is False
+        assert result.missing == ["i2"]
+        assert result.hidden == []
+
+    def test_an_unanswered_trigger_leaves_only_itself_outstanding(self) -> None:
+        result = assess(_branching_packet(), {})
+        assert result.missing == ["i1"]
+        assert result.hidden == ["i2"]
+
+    def test_an_answer_given_before_it_was_hidden_does_not_finish_it(self) -> None:
+        """The form is complete because nobody is asked, not because it is answered."""
+        answers = {"substances": {"yes": False}, "which": {"text": "Wine, most nights."}}
+        result = assess(_branching_packet(), answers)
+        assert result.complete is True
+        assert result.hidden == ["i2"]
+
+
+class TestTheSeamIsReallyConsulted:
+    """Swap the evaluator and completion changes — so it is a seam."""
+
+    def test_hiding_everything_completes_an_empty_form(self) -> None:
+        result = assess(
+            _default_packet(), {}, visibility=lambda items, _answers: {i.key: False for i in items}
+        )
+        assert result.complete is True
+        assert result.missing == []
+        assert result.hidden == ["i1", "i2", "i3", "i4"]
+
+    def test_showing_everything_is_what_a_packet_with_no_rules_does(self) -> None:
+        shown = assess(
+            _default_packet(), {}, visibility=lambda items, _answers: {i.key: True for i in items}
+        )
+        assert shown.missing == assess(_default_packet(), {}).missing
 
 
 class TestProgressOnTheDefaultPacket:

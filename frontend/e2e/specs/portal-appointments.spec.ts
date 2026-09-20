@@ -71,6 +71,19 @@ async function diaryFor(api: ApiClient, patientId: string): Promise<ClinicianApp
 }
 
 test.describe("portal appointments", () => {
+  /**
+   * This one also proves something none of its assertions mention: that the
+   * practice knows which account owns it.
+   *
+   * `owner_session` in `backend/app/routes/patient_booking.py` resolves the
+   * clinician whose diary is in question from
+   * `platform.practices.owner_user_id`, so every route walked below refuses
+   * with `NO_CLINICIAN` until that column is filled. Nothing filled it when
+   * this spec was first written, and the integration suite did not notice
+   * because its fixture set the column by hand. The clinician here signs in
+   * through the product's own login, into a practice registered before they
+   * existed — which is precisely the path that has to record it.
+   */
   test("a patient books a time, moves it, and cancels it", async ({ api, page }) => {
     // --- the practice opens its diary ---------------------------------------
     await giveWorkingHoursAllWeek(api)
@@ -160,7 +173,10 @@ test.describe("portal appointments", () => {
     api,
     page,
   }) => {
-    await giveWorkingHoursAllWeek(api)
+    // No working hours here on purpose. This practice never opens its diary
+    // to patients, so seeding availability would only constrain the
+    // appointment the clinician makes below — which is what the practice
+    // doing the booking looks like.
     await giveSelfBookableType(api, `Therapy session ${Date.now().toString(36)}`)
     // The switch stays off, which is where every practice starts.
     await letExistingClientsSelfBook(api, false)
@@ -169,7 +185,9 @@ test.describe("portal appointments", () => {
 
     // An appointment the practice made, so the read-only list has something
     // in it — the state a patient of a phone-booking practice is actually in.
-    const startAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+    const startAt = new Date()
+    startAt.setUTCDate(startAt.getUTCDate() + 7)
+    startAt.setUTCHours(14, 0, 0, 0)
     await api.post("/api/appointments", {
       patient_id: patient.id,
       title: "Session",

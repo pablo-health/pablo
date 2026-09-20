@@ -228,11 +228,28 @@ def practice(engine: Engine) -> Iterator[dict[str, Any]]:
                 name="Booking Test Practice",
                 schema_name=_SCHEMA,
                 owner_email=f"{_PRACTICE_ID}@example.test",
-                owner_user_id=_CLINICIAN,
+                # Left empty on purpose. Setting it here by hand was what let
+                # every route below pass while the column was never written on
+                # any real practice: the suite supplied the one thing the
+                # engine did not, and the whole self-booking surface was
+                # unreachable in production with nothing failing. The owner is
+                # recorded the way a practice actually acquires one, below.
+                owner_user_id=None,
                 created_at=now,
             )
         )
         s.commit()
+
+    # As the authenticated path does, with the same call — so a change that
+    # stops recording the owner takes these tests down rather than leaving them
+    # green over a fixture that had already decided the answer.
+    from app.db.practice_owner import record_owner_on_sign_in  # noqa: PLC0415
+
+    assert record_owner_on_sign_in(_PRACTICE_ID, f"{_PRACTICE_ID}@example.test", _CLINICIAN)
+    with OrmSession(bind=engine) as s:
+        recorded = s.get(PracticeRow, _PRACTICE_ID)
+        assert recorded is not None
+        assert recorded.owner_user_id == _CLINICIAN
 
     patient_a, patient_b = str(uuid.uuid4()), str(uuid.uuid4())
     type_id = str(uuid.uuid4())
