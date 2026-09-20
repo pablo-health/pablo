@@ -291,6 +291,17 @@ class IntakeAssignmentService:
             for row in self._repo.list_responses_for_clinician(assignment_id, user_id)
         }
 
+    def all_responses_for_clinician(
+        self, assignment_id: str, user_id: str
+    ) -> list[dict[str, object]]:
+        """Every answer ever written on one form, oldest first.
+
+        Replaced and retired rows as well as live ones. What the export
+        reads, because a chart copy carries the corrections rather than a
+        count of them.
+        """
+        return self._repo.list_all_responses_for_clinician(assignment_id, user_id)
+
     def get_for_clinician(self, assignment_id: str, user_id: str) -> dict[str, object] | None:
         return self._repo.get_assignment_for_clinician(assignment_id, user_id)
 

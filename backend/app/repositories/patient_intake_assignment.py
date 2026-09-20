@@ -187,6 +187,23 @@ class PatientIntakeAssignmentRepository(ABC):
         """
 
     @abstractmethod
+    def list_all_responses_for_clinician(
+        self, assignment_id: str, user_id: str
+    ) -> list[dict[str, object]]:
+        """Every answer ever written on one form, oldest first.
+
+        The replaced ones and the retired ones as well as the live ones,
+        which is what separates this from
+        :meth:`list_responses_for_clinician` beside it. The review screen
+        wants the count and reads that one; a document that leaves the
+        product carries the answers themselves, because "this was corrected
+        afterwards" is exactly the fact a chart copy has to be able to show.
+
+        An empty list when *user_id* holds no grant on the patient — the
+        same answer an assignment with nothing saved against it gives.
+        """
+
+    @abstractmethod
     def count_superseded_responses_for_clinician(
         self, assignment_id: str, user_id: str
     ) -> dict[str, int]:
@@ -452,6 +469,21 @@ class InMemoryPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
         if row is None or not self._can_access(str(row["patient_id"]), user_id):
             return []
         return self._events(assignment_id, str(row["patient_id"]))
+
+    def list_all_responses_for_clinician(
+        self, assignment_id: str, user_id: str
+    ) -> list[dict[str, object]]:
+        row = self.assignments.get(assignment_id)
+        if row is None or not self._can_access(str(row["patient_id"]), user_id):
+            return []
+        rows = [
+            dict(r)
+            for r in self.responses.values()
+            if str(r["assignment_id"]) == assignment_id
+            and str(r["patient_id"]) == str(row["patient_id"])
+        ]
+        rows.sort(key=lambda r: (r["created_at"], str(r["id"])))  # type: ignore[index]
+        return rows
 
     def count_superseded_responses_for_clinician(
         self, assignment_id: str, user_id: str

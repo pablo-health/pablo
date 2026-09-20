@@ -17,7 +17,7 @@
  * caller appears.
  */
 
-import { get, post } from "./client"
+import { get, getBlob, post } from "./client"
 
 /** What a form can be doing, as the server reports it. */
 export type IntakeAssignmentStatus =
@@ -161,6 +161,32 @@ export async function acceptIntakeAssignment(
     {},
     token,
   )
+}
+
+/**
+ * The whole form as one file to keep, print or hand over.
+ *
+ * A blob rather than parsed content: the route sends a document, and the
+ * only thing this side does with it is hand it to the browser to save.
+ * Reading it is an audited disclosure, like the review beside it.
+ */
+export async function downloadIntakeExport(
+  patientId: string,
+  assignmentId: string,
+  token?: string,
+): Promise<Blob> {
+  return getBlob(`${assignmentPath(patientId, assignmentId)}/export`, token)
+}
+
+/**
+ * What the file is saved as, matching the name the route sends.
+ *
+ * The receipt is what a practice and a patient can both quote. A form that
+ * has not been handed in has no receipt, so it is named after the request
+ * it answers instead — the same fallback the route makes.
+ */
+export function intakeExportFilename(assignmentId: string, receiptCode: string | null): string {
+  return `intake-${receiptCode || assignmentId}.html`
 }
 
 /** Write an answer down for somebody sitting in the room. */

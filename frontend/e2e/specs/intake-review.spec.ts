@@ -22,21 +22,15 @@
 import { expect, test } from "../fixtures/auth"
 import type { Page } from "@playwright/test"
 import type { ApiClient } from "../fixtures/api"
+import {
+  answerMeasureOnScreen,
+  defaultIntakeVersion,
+  everyItemScoredOne,
+  fillTheFormIn,
+} from "../fixtures/intake"
 import { firstLink, mail } from "../fixtures/mail"
 import { givePatient } from "../fixtures/scenarios"
 import { sms, stepUpCode } from "../fixtures/sms"
-
-interface IntakeVersion {
-  id: string
-  published_at: string | null
-}
-
-interface IntakeTemplate {
-  id: string
-  name: string
-  archived_at: string | null
-  versions: IntakeVersion[]
-}
 
 interface Assignment {
   id: string
@@ -66,18 +60,6 @@ interface Review extends Assignment {
 const NOTE = "Could you say a bit more about when this started?"
 const FIRST_ANSWER = "Panic before every shift."
 const REDONE_ANSWER = "Panic before every shift, since about March."
-
-/** The published version of the form a fresh practice is seeded with. */
-async function defaultIntakeVersion(api: ApiClient): Promise<string> {
-  const templates = await api.get<IntakeTemplate[]>("/api/intake/templates")
-  const intake = templates.find((t) => t.name === "Intake" && t.archived_at === null)
-  if (intake === undefined) {
-    throw new Error("no Intake form on this practice; every schema is seeded with one")
-  }
-  const published = intake.versions.filter((v) => v.published_at !== null)
-  expect(published.length, "the seeded version ships published").toBeGreaterThan(0)
-  return published[0].id
-}
 
 /**
  * Invite a patient and sign them in through the shell, as the patient does:
@@ -118,61 +100,6 @@ async function portalSessionToken(page: Page): Promise<string> {
   return (JSON.parse(raw as string) as { sessionToken: string }).sessionToken
 }
 
-/** A complete measure answer: every item scored at the first anchor above zero. */
-function everyItemScoredOne(items: number): Record<string, number> {
-  return Object.fromEntries(Array.from({ length: items }, (_, i) => [`${i + 1}`, 1]))
-}
-
-/** The seeded form's four questions, as the progress line numbers them. */
-async function atQuestion(page: Page, index: number): Promise<void> {
-  await expect(page.getByTestId("forms-progress")).toContainText(`Question ${index} of 4`)
-}
-
-/**
- * Answer every item of the measure on screen with its first anchor.
- *
- * The caller has to have pinned which screen this is first. `count()` is a
- * snapshot rather than an assertion, so calling it straight after a
- * Continue reads the screen the patient is leaving — and the two measures
- * are different lengths, so a count taken on the PHQ-9 walks off the end of
- * the GAD-7.
- */
-async function answerMeasureOnScreen(page: Page): Promise<void> {
-  const groups = page.locator("fieldset[data-testid^='forms-item-']")
-  await expect(groups.first(), "a measure renders one group per item").toBeVisible()
-  const count = await groups.count()
-  for (let index = 0; index < count; index += 1) {
-    await groups.nth(index).getByRole("radio").first().check()
-  }
-}
-
-/** Walk the seeded form end to end and hand it in. */
-async function fillTheFormIn(page: Page): Promise<void> {
-  await expect(page.getByTestId("forms-list")).toBeVisible()
-  await page.getByTestId("forms-list-open").click()
-
-  await atQuestion(page, 1)
-  await page.getByTestId("forms-identity-confirm").click()
-  await page.getByTestId("forms-continue").click()
-
-  await atQuestion(page, 2)
-  await page.getByTestId("forms-reason").fill(FIRST_ANSWER)
-  await page.getByTestId("forms-continue").click()
-
-  await atQuestion(page, 3)
-  await answerMeasureOnScreen(page)
-  await page.getByTestId("forms-continue").click()
-
-  await atQuestion(page, 4)
-  await answerMeasureOnScreen(page)
-  await page.getByTestId("forms-continue").click()
-
-  await expect(page.getByTestId("forms-review")).toBeVisible()
-  await page.getByTestId("forms-submit").click()
-  await expect(page.getByTestId("forms-receipt-code")).toBeVisible()
-  await page.getByTestId("forms-receipt-close").click()
-}
-
 test.describe("intake review", () => {
   test("a clinician sends one question back and the patient answers it", async ({ api, page }) => {
     const suffix = Date.now().toString(36)
@@ -190,7 +117,7 @@ test.describe("intake review", () => {
     // --- the patient fills it in ------------------------------------------
     await signIn(api, page, patient.id, email, phone)
     await expect(page.getByTestId("forms-list")).toBeVisible()
-    await fillTheFormIn(page)
+    await fillTheFormIn(page, FIRST_ANSWER)
 
     const submitted = await api.get<Review>(`${chart}/review`)
     expect(submitted.status).toBe("submitted")

@@ -405,6 +405,21 @@ def _answer(  # noqa: PLR0913 — one keyword per column the caller varies
     return response_id
 
 
+def _every_answer(conn: Connection, assignment_id: str) -> set[str]:
+    """Every answer on one form, replaced ones included — the export's read."""
+    return set(
+        conn.execute(
+            text(
+                f"SELECT id::text FROM {_RESPONSES} "  # noqa: S608 — module constant
+                "WHERE assignment_id = CAST(:a AS uuid)"
+            ),
+            {"a": assignment_id},
+        )
+        .scalars()
+        .all()
+    )
+
+
 def _visible(conn: Connection) -> set[str]:
     return set(conn.execute(text(f"SELECT id::text FROM {_EVENTS}")).scalars().all())  # noqa: S608
 
@@ -784,6 +799,48 @@ class TestSuccessorAnswers:
             assert by_id[second]["superseded_by"] is None
         finally:
             conn.close()
+
+    def test_a_replaced_answer_is_invisible_to_a_clinician_with_no_grant(
+        self,
+        engine: Engine,
+        tenant_schema: str,
+        two_patients: tuple[str, str],
+        published_form: tuple[str, str],
+    ) -> None:
+        """The export reads the replaced rows too, and the policy covers them.
+
+        Every other clinician read of this table stops at the live answers.
+        A document that carries the corrections reads past that predicate,
+        so "a stranger sees nothing" has to hold for the whole table rather
+        than for the part a narrower query happened to select.
+        """
+        patient_a, _ = two_patients
+        version_id, item_id = published_form
+        conn = _as_clinician(engine, tenant_schema, _TREATING_CLINICIAN)
+        assignment_id = str(uuid.uuid4())
+        try:
+            _assign(conn, patient_a, _another_published_version(conn, version_id), assignment_id)
+            first = _answer(conn, patient_a, assignment_id, item_id, text_value="First try")
+            second = _answer(conn, patient_a, assignment_id, item_id, text_value="Second try")
+            conn.execute(
+                text(
+                    f"UPDATE {_RESPONSES} SET superseded_by = CAST(:new AS uuid) "  # noqa: S608
+                    "WHERE id = CAST(:old AS uuid)"
+                ),
+                {"new": second, "old": first},
+            )
+            conn.commit()
+
+            # Control: the clinician who holds the grant sees both rows.
+            assert _every_answer(conn, assignment_id) == {first, second}
+        finally:
+            conn.close()
+
+        stranger = _as_clinician(engine, tenant_schema, _STRANGER_CLINICIAN)
+        try:
+            assert _every_answer(stranger, assignment_id) == set()
+        finally:
+            stranger.close()
 
     def test_an_unknown_provenance_is_refused(
         self,
