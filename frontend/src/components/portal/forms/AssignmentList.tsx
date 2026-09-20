@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button"
 import type { IntakeAssignment } from "@/lib/api/patientIntake"
 import {
   LIST_CONTINUE,
+  LIST_CORRECTION,
   LIST_EMPTY,
   LIST_HEADING,
   LIST_PROGRESS_DONE,
@@ -100,6 +101,11 @@ function AssignmentRow({
  */
 function stateLine(assignment: IntakeAssignment): string {
   if (assignment.status === "withdrawn") return LIST_WITHDRAWN
+  // A form the practice sent back is not "2 questions left": the rest of it
+  // was finished when it went in, and what the row should say is that
+  // somebody is waiting on an answer. What they asked about is on the form,
+  // not on a list that carries no words the practice wrote.
+  if (assignment.status === "needs_correction") return LIST_CORRECTION
   if (!OPEN_STATUSES.has(assignment.status)) return LIST_SENT
   if (assignment.progress.complete) return LIST_PROGRESS_DONE
   return questionsLeft(assignment.progress.missing.length)

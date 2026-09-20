@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""The two channels an invitation travels on, as ports.
+"""The channels the portal talks on, as ports.
 
 Redemption needs two factors on two channels: the link arrives by email
 (possession of the inbox), the code by text message (possession of the
@@ -20,6 +20,22 @@ side, and the patient is the one who finds out.
 Neither channel's payload carries anything clinical: the email is a link,
 the text is a code. Both are credentials, so neither is ever written to a
 log or returned in a response — they go to the patient and nowhere else.
+
+**A notice is the third port, and it is deliberately the smallest.** Some
+things a practice does leave something waiting in the portal — a form
+reopened for corrections is the first. :class:`PortalNoticeDelivery` is how
+a deployment says "tell them there is something there": a name from
+:data:`PORTAL_NOTICES` and a link to the practice's own portal page. No
+subject, no body, no substitutions a caller chooses. The reason is the
+point rather than an omission — an email that said which form, or why, would
+put a clinical fact in an inbox nobody proved anything about, and the whole
+design of this portal is that the content lives behind two factors.
+
+Unlike the invitation channels, an unconfigured notice channel is not a
+refusal. :meth:`PortalNoticeDelivery.can_deliver` is what a caller asks, and
+a deployment that has wired nothing simply sends nothing: asking a patient
+to correct an answer is a thing the practice did, and it has to be recorded
+whether or not there is a mail server to mention it to.
 """
 
 from __future__ import annotations
@@ -66,6 +82,43 @@ class SmsGateway(Protocol):
         """
 
 
+#: Every notice this engine knows how to ask for, by name.
+#:
+#: An allow-list rather than a free string, so the set of things a patient
+#: can be emailed about is enumerable from one place and a caller cannot
+#: invent a notice with a sentence of its own in the name.
+PORTAL_NOTICES: frozenset[str] = frozenset({"intake_correction_requested"})
+
+
+class PortalNoticeDelivery(Protocol):
+    """Tells a patient there is something waiting in the portal."""
+
+    def send_notice(self, *, to_email: str, notice: str, link: str) -> None:
+        """Send one notice. Raises on delivery failure.
+
+        ``notice`` is a name from :data:`PORTAL_NOTICES` and ``link`` points
+        at the practice's own portal page. Nothing else: an adapter wording
+        the message is the deployment's business, and it has nothing
+        clinical to word it from.
+        """
+        ...
+
+    def can_deliver(self) -> bool:
+        """Whether a send would reach anybody.
+
+        Asked before every send, because an unconfigured notice channel is
+        a silence rather than a failure — see this module's docstring.
+        """
+        ...
+
+
+@dataclass
+class SentNotice:
+    to_email: str
+    notice: str
+    link: str
+
+
 @dataclass
 class SentInviteEmail:
     to_email: str
@@ -94,6 +147,41 @@ class CapturingInviteDelivery:
 
     def check_ready(self) -> None:
         return None
+
+
+class CapturingNoticeDelivery:
+    """Records notices instead of sending them. For tests.
+
+    ``sent`` is the ordered log. Unlike :class:`CapturingInviteDelivery`
+    nothing here is a credential — a notice carries a link to a page that
+    asks for two factors — but it is still a test double and belongs to
+    test code.
+    """
+
+    def __init__(self) -> None:
+        self.sent: list[SentNotice] = []
+
+    def send_notice(self, *, to_email: str, notice: str, link: str) -> None:
+        self.sent.append(SentNotice(to_email=to_email, notice=notice, link=link))
+
+    def can_deliver(self) -> bool:
+        return True
+
+
+class NoticesNotConfigured:
+    """The default: a deployment that mentions nothing to anybody.
+
+    ``can_deliver`` is False, so a caller skips the send rather than
+    handling a refusal. :meth:`send_notice` still raises, for the caller
+    that asks anyway — a silent no-op there would make a broken caller look
+    like a working one.
+    """
+
+    def can_deliver(self) -> bool:
+        return False
+
+    def send_notice(self, *, to_email: str, notice: str, link: str) -> None:
+        raise DeliveryNotConfiguredError("No portal notice delivery is configured.")
 
 
 class FakeSmsGateway:
