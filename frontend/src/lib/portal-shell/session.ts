@@ -76,19 +76,36 @@ export async function bootstrapSession(slug: string): Promise<BootstrapResult> {
   return { status: "active", sessionToken: result.data.session_token }
 }
 
-export type RedeemAndStoreResult = { ok: true; sessionToken: string } | { ok: false }
+export interface RedeemedSession {
+  sessionToken: string
+  practiceSlug: string
+  practiceDisplayName: string
+}
 
-/** Redeem an invite and, on success, persist the minted session under `slug`. */
+export type RedeemAndStoreResult = { ok: true; session: RedeemedSession } | { ok: false }
+
+/**
+ * Redeem an invitation and, on success, persist the minted session.
+ *
+ * The practice comes from the RESPONSE, not from the caller. An invitation
+ * link need not name the practice in its path, so the redemption is what
+ * settles which practice this session belongs to — and therefore which key
+ * it is stored under.
+ */
 export async function redeemAndStore(
-  slug: string,
   token: string,
   otp: string,
 ): Promise<RedeemAndStoreResult> {
   const result = await redeemInvite(token, otp)
   if (!result.ok) return { ok: false }
-  storeSession(slug, {
-    sessionToken: result.data.session_token,
-    expiresAt: result.data.expires_at,
-  })
-  return { ok: true, sessionToken: result.data.session_token }
+  const { session_token, expires_at, practice_slug, practice_display_name } = result.data
+  storeSession(practice_slug, { sessionToken: session_token, expiresAt: expires_at })
+  return {
+    ok: true,
+    session: {
+      sessionToken: session_token,
+      practiceSlug: practice_slug,
+      practiceDisplayName: practice_display_name,
+    },
+  }
 }

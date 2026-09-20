@@ -5,10 +5,10 @@
  *
  * Pins the state machine driven entirely off the mocked
  * `@/lib/portal-shell/{api,session}` fetchers: resolving, unknown practice,
- * no-session, code entry (when `?invite=` is present), the active shell's
- * zero-slot empty card, and the expired/revoked note. A mounted slot is
- * handed the slug and the LIVE session token, including the one a redeem
- * just minted.
+ * no-session, code entry (when the URL carries an invitation), the active
+ * shell's zero-slot empty card, and the expired/revoked note. A mounted
+ * slot is handed the slug and the LIVE session token, including the one a
+ * redeem just minted.
  *
  * Also pins that every redeem failure — whatever the cause — renders the
  * same generic error, since the backend's uniform 401 is the whole point of
@@ -34,14 +34,23 @@ vi.mock("@/lib/portal-shell/session", () => ({
   redeemAndStore: (...args: unknown[]) => redeemAndStore(...args),
 }))
 
-let searchParams = new URLSearchParams()
-vi.mock("next/navigation", () => ({
-  useSearchParams: () => searchParams,
-}))
+/** Open the page the way an invitation link does. */
+function arriveWithInvitation(token: string, path = "/portal/example-therapy"): void {
+  window.history.replaceState(null, "", `${path}#token=${token}`)
+}
+
+const REDEEMED = {
+  ok: true,
+  session: {
+    sessionToken: "session-1",
+    practiceSlug: "example-therapy",
+    practiceDisplayName: "Example Therapy",
+  },
+}
 
 beforeEach(() => {
   vi.clearAllMocks()
-  searchParams = new URLSearchParams()
+  window.history.replaceState(null, "", "/portal/example-therapy")
   // The shell registers the engine's own modules when it is imported. A
   // spec about the shell's states drives its own slots instead.
   resetPortalSlotsForTests()
@@ -89,8 +98,8 @@ describe("PortalShell", () => {
     expect(screen.queryByTestId("portal-shell-expired-note")).toBeNull()
   })
 
-  it("renders the code form when ?invite= is present and there is no session", async () => {
-    searchParams = new URLSearchParams({ invite: "tok-1" })
+  it("renders the code form when the URL carries an invitation and there is no session", async () => {
+    arriveWithInvitation("tok-1")
     resolvePortalPractice.mockResolvedValue({
       ok: true,
       data: { slug: "example-therapy", display_name: "Example Therapy" },
@@ -159,13 +168,20 @@ describe("PortalShell", () => {
         return <div>Fake slot content</div>
       },
     })
-    searchParams = new URLSearchParams({ invite: "tok-1" })
+    arriveWithInvitation("tok-1")
     resolvePortalPractice.mockResolvedValue({
       ok: true,
       data: { slug: "example-therapy", display_name: "Example Therapy" },
     })
     bootstrapSession.mockResolvedValue({ status: "none" })
-    redeemAndStore.mockResolvedValue({ ok: true, sessionToken: "minted-token" })
+    redeemAndStore.mockResolvedValue({
+      ok: true,
+      session: {
+        sessionToken: "minted-token",
+        practiceSlug: "example-therapy",
+        practiceDisplayName: "Example Therapy",
+      },
+    })
     const user = userEvent.setup()
 
     render(<PortalShell slug="example-therapy" />)
@@ -196,7 +212,7 @@ describe("PortalShell", () => {
     ["attempt-capped", { ok: false }],
     ["already redeemed", { ok: false }],
   ])("every redeem failure (%s) renders the same generic error", async (_label, failure) => {
-    searchParams = new URLSearchParams({ invite: "tok-1" })
+    arriveWithInvitation("tok-1")
     resolvePortalPractice.mockResolvedValue({
       ok: true,
       data: { slug: "example-therapy", display_name: "Example Therapy" },
@@ -219,13 +235,13 @@ describe("PortalShell", () => {
   })
 
   it("a successful redeem moves the shell to the active state", async () => {
-    searchParams = new URLSearchParams({ invite: "tok-1" })
+    arriveWithInvitation("tok-1")
     resolvePortalPractice.mockResolvedValue({
       ok: true,
       data: { slug: "example-therapy", display_name: "Example Therapy" },
     })
     bootstrapSession.mockResolvedValue({ status: "none" })
-    redeemAndStore.mockResolvedValue({ ok: true, sessionToken: "session-1" })
+    redeemAndStore.mockResolvedValue(REDEEMED)
     const user = userEvent.setup()
 
     render(<PortalShell slug="example-therapy" />)
@@ -235,6 +251,107 @@ describe("PortalShell", () => {
     await user.click(screen.getByTestId("portal-shell-otp-submit"))
 
     expect(await screen.findByTestId("portal-shell-active")).toBeTruthy()
-    expect(redeemAndStore).toHaveBeenCalledWith("example-therapy", "tok-1", "123456")
+    expect(redeemAndStore).toHaveBeenCalledWith("tok-1", "123456")
+  })
+})
+
+/**
+ * Arriving on an invitation link.
+ *
+ * The token rides in the URL fragment, which the server never sees, so
+ * everything about picking it up and putting it back down is the shell's
+ * job: spend it, take it out of the address bar, and end up on the
+ * practice's own address either way — including from the older link that
+ * names no practice at all and learns which one from the response.
+ */
+describe("arriving with an invitation", () => {
+  const user = () => userEvent.setup()
+
+  async function enterTheCode() {
+    const typing = user()
+    await screen.findByTestId("portal-shell-otp")
+    await typing.type(screen.getByTestId("portal-shell-otp-input"), "123456")
+    await typing.click(screen.getByTestId("portal-shell-otp-submit"))
+  }
+
+  it("takes the invitation out of the URL once it is spent", async () => {
+    arriveWithInvitation("tok-1")
+    resolvePortalPractice.mockResolvedValue({
+      ok: true,
+      data: { slug: "example-therapy", display_name: "Example Therapy" },
+    })
+    bootstrapSession.mockResolvedValue({ status: "none" })
+    redeemAndStore.mockResolvedValue(REDEEMED)
+
+    render(<PortalShell slug="example-therapy" />)
+    await enterTheCode()
+
+    await screen.findByTestId("portal-shell-active")
+    expect(window.location.hash).toBe("")
+    expect(window.location.pathname).toBe("/portal/example-therapy")
+  })
+
+  it("lands on the practice the response names when the path names none", async () => {
+    arriveWithInvitation("tok-1", "/portal/redeem")
+    redeemAndStore.mockResolvedValue(REDEEMED)
+
+    render(<PortalShell slug="redeem" />)
+    await enterTheCode()
+
+    expect(await screen.findByTestId("portal-shell-active")).toBeTruthy()
+    expect(screen.getByTestId("portal-shell-practice-name").textContent).toBe("Example Therapy")
+    expect(window.location.pathname).toBe("/portal/example-therapy")
+    expect(window.location.hash).toBe("")
+    // Nothing to resolve: that path names no practice.
+    expect(resolvePortalPractice).not.toHaveBeenCalled()
+  })
+
+  it("hands a slot the practice from the response, not the one in the path", async () => {
+    const seen: PortalSlotProps[] = []
+    registerPortalSlot({
+      id: "fake-slot",
+      Component: (props: PortalSlotProps) => {
+        seen.push(props)
+        return <div>Fake slot content</div>
+      },
+    })
+    arriveWithInvitation("tok-1", "/portal/redeem")
+    redeemAndStore.mockResolvedValue(REDEEMED)
+
+    render(<PortalShell slug="redeem" />)
+    await enterTheCode()
+    await screen.findByText("Fake slot content")
+
+    expect(seen[0]).toEqual({ slug: "example-therapy", sessionToken: "session-1" })
+  })
+
+  it("shows the generic state on that path with no invitation at all", async () => {
+    render(<PortalShell slug="redeem" />)
+
+    expect(await screen.findByTestId("portal-shell-unknown")).toBeTruthy()
+  })
+
+  it("does not let an invitation rescue a slug that resolves to nothing", async () => {
+    arriveWithInvitation("tok-1", "/portal/never-existed")
+    resolvePortalPractice.mockResolvedValue({ ok: false })
+
+    render(<PortalShell slug="never-existed" />)
+
+    expect(await screen.findByTestId("portal-shell-unknown")).toBeTruthy()
+    expect(screen.queryByTestId("portal-shell-otp")).toBeNull()
+    expect(redeemAndStore).not.toHaveBeenCalled()
+  })
+
+  it("ignores a fragment that carries something other than an invitation", async () => {
+    window.history.replaceState(null, "", "/portal/example-therapy#section=billing")
+    resolvePortalPractice.mockResolvedValue({
+      ok: true,
+      data: { slug: "example-therapy", display_name: "Example Therapy" },
+    })
+    bootstrapSession.mockResolvedValue({ status: "none" })
+
+    render(<PortalShell slug="example-therapy" />)
+
+    expect(await screen.findByTestId("portal-shell-no-session")).toBeTruthy()
   })
 })

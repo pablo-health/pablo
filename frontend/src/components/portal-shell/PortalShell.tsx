@@ -4,17 +4,24 @@
  * The patient portal shell — standalone, patient-facing chrome with no
  * clinician nav and no dashboard chrome. Served at `/portal/{slug}`.
  *
+ * **The invitation arrives in the URL fragment.** A fragment is never sent
+ * to a server, so a link that carries a live credential stays out of access
+ * logs, out of `Referer` headers and out of every proxy in between. The
+ * shell reads it off `location.hash`, spends it, and takes it back out of
+ * the address bar with `history.replaceState` so a shared screen or a
+ * reloaded tab is not holding one.
+ *
  * State machine, driven entirely off `@/lib/portal-shell/{api,session}`:
  *
  *   resolving   -> skeleton while the slug resolves
  *   unknown     -> the slug doesn't resolve to a practice this deployment
  *                  serves a portal for
- *   no-session  -> no stored session, no `?invite=`
- *   otp         -> no stored session, `?invite=` present: enter the code
+ *   no-session  -> no stored session and no invitation
+ *   otp         -> no stored session, invitation present: enter the code
  *   active      -> a live (or freshly redeemed) session; renders slots
  *   expired     -> a stored session's `/refresh` came back 401
  *
- * `?invite=` is only consulted when there is NO stored session to
+ * The invitation is only consulted when there is NO stored session to
  * bootstrap: an expired or revoked session always lands on `expired`, never
  * back on the code form, even if the URL happens to carry a fresh
  * invitation — a stale tab re-using an old link should not silently
@@ -29,7 +36,6 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useSearchParams } from "next/navigation"
 import { Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -43,13 +49,34 @@ import "./modules"
 
 type Phase = "resolving" | "unknown" | "no-session" | "otp" | "active" | "expired"
 
-export function PortalShell({ slug }: { slug: string }) {
-  const searchParams = useSearchParams()
-  const inviteToken = searchParams.get("invite")
+/**
+ * The segment an invitation link used to land on, kept working because
+ * links already in inboxes point at it. It names no practice — the redeem
+ * response does — so the shell skips straight to the code form and learns
+ * whose portal this is from what comes back.
+ */
+const SLUGLESS_LANDING = "redeem"
 
+/** The invitation in the URL fragment, if this page was opened with one. */
+function invitationInUrl(): string | null {
+  if (typeof window === "undefined") return null
+  const fragment = window.location.hash
+  if (!fragment.startsWith("#")) return null
+  return new URLSearchParams(fragment.slice(1)).get("token")
+}
+
+/** Put the practice's own address in the bar, with no credential on it. */
+function forgetInvitationInUrl(practiceSlug: string): void {
+  if (typeof window === "undefined") return
+  window.history.replaceState(null, "", `/portal/${encodeURIComponent(practiceSlug)}`)
+}
+
+export function PortalShell({ slug }: { slug: string }) {
   const [phase, setPhase] = useState<Phase>("resolving")
   const [displayName, setDisplayName] = useState<string | null>(null)
   const [sessionToken, setSessionToken] = useState<string | null>(null)
+  const [practiceSlug, setPracticeSlug] = useState(slug)
+  const [invitation, setInvitation] = useState<string | null>(null)
   const [otp, setOtp] = useState("")
   const [otpError, setOtpError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -58,8 +85,20 @@ export function PortalShell({ slug }: { slug: string }) {
     let cancelled = false
 
     async function load() {
+      const token = invitationInUrl()
+      setInvitation(token)
+
+      // Nothing to resolve: this path names no practice. With an invitation
+      // the code form is the whole page; without one there is nothing here.
+      if (slug === SLUGLESS_LANDING) {
+        setPhase(token ? "otp" : "unknown")
+        return
+      }
+
       const resolved = await resolvePortalPractice(slug)
       if (cancelled) return
+      // An invitation does not rescue a slug that resolves to nothing: the
+      // generic dead end is the same one every unresolvable address gets.
       if (!resolved.ok) {
         setPhase("unknown")
         return
@@ -73,7 +112,7 @@ export function PortalShell({ slug }: { slug: string }) {
         setPhase("active")
       } else if (bootstrap.status === "expired") {
         setPhase("expired")
-      } else if (inviteToken) {
+      } else if (token) {
         setPhase("otp")
       } else {
         setPhase("no-session")
@@ -84,16 +123,19 @@ export function PortalShell({ slug }: { slug: string }) {
     return () => {
       cancelled = true
     }
-  }, [slug, inviteToken])
+  }, [slug])
 
   async function handleRedeem() {
-    if (!inviteToken || !otp.trim() || submitting) return
+    if (!invitation || !otp.trim() || submitting) return
     setSubmitting(true)
     setOtpError(null)
-    const result = await redeemAndStore(slug, inviteToken, otp.trim())
+    const result = await redeemAndStore(invitation, otp.trim())
     setSubmitting(false)
     if (result.ok) {
-      setSessionToken(result.sessionToken)
+      setSessionToken(result.session.sessionToken)
+      setPracticeSlug(result.session.practiceSlug)
+      setDisplayName(result.session.practiceDisplayName)
+      forgetInvitationInUrl(result.session.practiceSlug)
       setPhase("active")
     } else {
       setOtpError(
@@ -121,7 +163,7 @@ export function PortalShell({ slug }: { slug: string }) {
             />
           )}
           {phase === "active" && sessionToken !== null && (
-            <ActiveShellBody slug={slug} sessionToken={sessionToken} />
+            <ActiveShellBody slug={practiceSlug} sessionToken={sessionToken} />
           )}
         </div>
       </main>

@@ -62,19 +62,21 @@ describe("resolvePortalPractice", () => {
 
 describe("redeemInvite", () => {
   it("posts both factors to the engine's redeem route", async () => {
-    const fetchSpy = vi
-      .fn()
-      .mockResolvedValue(
-        jsonResponse({ session_token: "minted", token_type: "bearer", expires_at: 1 }),
-      )
+    const minted = {
+      session_token: "minted",
+      token_type: "bearer",
+      expires_at: 1,
+      practice_slug: "example-therapy",
+      practice_display_name: "Example Therapy",
+    }
+    const fetchSpy = vi.fn().mockResolvedValue(jsonResponse(minted))
     vi.stubGlobal("fetch", fetchSpy)
 
     const result = await redeemInvite("invite-token", "123456")
 
-    expect(result).toEqual({
-      ok: true,
-      data: { session_token: "minted", token_type: "bearer", expires_at: 1 },
-    })
+    // The practice comes back with the credential: the page that redeems may
+    // have arrived on a link that named no practice at all.
+    expect(result).toEqual({ ok: true, data: minted })
     const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit]
     expect(url).toContain("/api/patient/auth/redeem")
     expect(JSON.parse(init.body as string)).toEqual({ token: "invite-token", otp: "123456" })

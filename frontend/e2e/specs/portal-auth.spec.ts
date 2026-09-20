@@ -45,6 +45,8 @@ function contactDetails(): { email: string; phone: string } {
 
 interface Invitation {
   patientId: string
+  /** The whole link, exactly as the email carried it. */
+  link: string
   token: string
   otp: string
 }
@@ -67,6 +69,7 @@ async function givePortalInvitation(api: ApiClient): Promise<Invitation> {
 
   return {
     patientId: patient.id,
+    link,
     token: token as string,
     otp: stepUpCode(await sms.waitFor(phone)),
   }
@@ -169,4 +172,29 @@ test("the invite route never returns a credential @portal", async ({ api }) => {
     `/api/patients/${patient.id}/portal-access`,
   )
   expect(access.invite_outstanding).toBe(true)
+})
+
+/**
+ * The whole sign-in, as the patient performs it: open the link the email
+ * carried, type the code the text carried, and arrive in the portal.
+ *
+ * The other tests in this file post to the redeem route directly, which
+ * proves the credential rules but not that the link goes anywhere. This one
+ * opens the captured link in a browser and never types a URL of its own.
+ */
+test("a patient signs in from the link in their email @portal", async ({ api, page }) => {
+  const invitation = await givePortalInvitation(api)
+
+  await page.goto(invitation.link)
+
+  await page.getByTestId("portal-shell-otp-input").fill(invitation.otp)
+  await page.getByTestId("portal-shell-otp-submit").click()
+
+  await expect(page.getByTestId("portal-shell-active")).toBeVisible()
+  await expect(page.getByTestId("portal-shell-practice-name")).toBeVisible()
+
+  // The address bar no longer holds a credential, and it names the practice
+  // the patient is now signed in to.
+  expect(page.url()).not.toContain("token")
+  await expect(page).toHaveURL(/\/portal\/[^/#?]+$/)
 })

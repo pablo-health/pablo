@@ -8,8 +8,9 @@
  * component (needed to `await params`) without fetching slug-derived data
  * itself.
  *
- * `useSearchParams` (for `?invite=`) inside `PortalShell` requires a
- * `Suspense` boundary, per the Next app-router rule.
+ * An invitation reaches the shell in the URL fragment, which the server
+ * never sees — the client component reads it off `location.hash` on mount.
+ * That is also why nothing here needs a `Suspense` boundary.
  *
  * Reachability: `/portal` is a built-in public path
  * (`src/lib/auth/public-paths.ts`), so the auth middleware lets an
@@ -17,7 +18,6 @@
  * person on this page holds a portal session, never a clinician one.
  */
 
-import { Suspense } from "react"
 import { PortalShell } from "@/components/portal-shell/PortalShell"
 
 interface PageProps {
@@ -26,9 +26,5 @@ interface PageProps {
 
 export default async function PortalShellRoute({ params }: PageProps) {
   const { practice } = await params
-  return (
-    <Suspense fallback={null}>
-      <PortalShell slug={practice} />
-    </Suspense>
-  )
+  return <PortalShell slug={practice} />
 }
