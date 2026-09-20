@@ -23,7 +23,7 @@ practice schema, and a deployment may already carry these tables from a
 prior extension that created them with this DDL.
 
 Revision ID: b7e3f0c48d15
-Revises: a71c5e09d4b3
+Revises: d3b71f0c85a4
 Create Date: 2026-09-19
 """
 
@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 revision: str = "b7e3f0c48d15"
-down_revision: str | Sequence[str] | None = "a71c5e09d4b3"
+down_revision: str | Sequence[str] | None = "d3b71f0c85a4"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

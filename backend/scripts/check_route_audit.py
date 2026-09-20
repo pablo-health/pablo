@@ -180,6 +180,21 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("post", "/api/auth/passkey/recovery-code/redeem"),  # spends a backup code, mints token
         # chat.py — context-preview manifest is ids/dates/counts only, PHI-free by design
         ("post", "/api/chat/conversations/preview"),  # context-preview manifest, no PHI
+        # intake_packets.py — the practice building its OWN intake form. A
+        # template holds the questions it asks, never anybody's answers: no
+        # patient id reaches these routes and no row they touch belongs to a
+        # patient. Publishing IS audited (INTAKE_TEMPLATE_PUBLISHED), because
+        # that is the version every later submission gets read back against.
+        ("get", "/api/intake/templates"),  # lists the practice's own forms
+        ("post", "/api/intake/templates"),  # creates a form, no patient data
+        ("get", "/api/intake/templates/{template_id}"),  # one form and its versions
+        ("patch", "/api/intake/templates/{template_id}"),  # renames or archives a form
+        ("post", "/api/intake/templates/{template_id}/versions"),  # starts a draft version
+        ("get", "/api/intake/templates/{template_id}/versions/{version_id}"),  # draft questions
+        (
+            "put",
+            "/api/intake/templates/{template_id}/versions/{version_id}/items",
+        ),  # saves the question list on an unpublished draft
         # launch.py — issues a single-use intent for an appointment the caller
         # already holds; discloses no patient data (the redeem step, which does
         # disclose the patient name, IS audited as launch_intent_redeemed)

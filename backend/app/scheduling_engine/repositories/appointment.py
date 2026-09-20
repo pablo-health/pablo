@@ -8,6 +8,11 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+# The patient-facing projection of an appointment, which
+# :meth:`AppointmentRepository.list_for_patient_principal` returns instead of
+# the domain model. Imported at runtime because the in-memory implementation
+# below constructs it; it is a plain Pydantic model and pulls nothing else in.
+from ...models.patient_facing import PatientAppointmentResponse
 from ...utcnow import utc_now
 from ..models.appointment import AppointmentStatus
 
@@ -40,7 +45,7 @@ class AppointmentRepository(ABC):
         """List appointments for a specific patient."""
 
     @abstractmethod
-    def list_for_patient_principal(self, patient_id: str) -> list[Appointment]:
+    def list_for_patient_principal(self, patient_id: str) -> list[PatientAppointmentResponse]:
         """List a patient's own appointments, for the patient themselves.
 
         Deliberately separate from :meth:`list_by_patient` rather than a
@@ -55,6 +60,13 @@ class AppointmentRepository(ABC):
         method accepts is the one the patient principal already
         established, so there is no second id for a caller to confuse it
         with.
+
+        And it returns the patient-facing projection rather than
+        :class:`Appointment`, which every other method here returns. Row-level
+        security is row-level: it cannot keep the clinician's notes or the
+        visit coding out of a row this principal is entitled to. Returning the
+        domain model would put every one of those columns one attribute access
+        away from a response, so the narrowing happens here, at the read.
         """
 
     @abstractmethod
@@ -253,15 +265,20 @@ class InMemoryAppointmentRepository(AppointmentRepository):
             key=lambda a: a.start_at,
         )
 
-    def list_for_patient_principal(self, patient_id: str) -> list[Appointment]:
+    def list_for_patient_principal(self, patient_id: str) -> list[PatientAppointmentResponse]:
         # No access check: the patient principal IS the authorization. The
         # clinician grant this class models does not apply — a patient has
         # no entry in it, and requiring one would deny every patient their
         # own calendar.
-        return sorted(
+        #
+        # Projected through the same model the Postgres implementation selects
+        # its columns into, so a test written against this double is a test of
+        # what production returns.
+        own = sorted(
             [a for a in self._appointments.values() if a.patient_id == patient_id],
             key=lambda a: a.start_at,
         )
+        return [PatientAppointmentResponse.from_appointment(a) for a in own]
 
     def get_by_session_ids(self, session_ids: list[str], user_id: str) -> dict[str, Appointment]:
         wanted = set(session_ids)
