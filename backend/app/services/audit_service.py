@@ -435,6 +435,52 @@ class AuditService:
         self._persist(entry)
         return entry
 
+    def log_patient_message_action(
+        self,
+        action: AuditAction | str,
+        user: User,
+        request: Request,
+        resource_id: str,
+        patient_id: str,
+        resource_type: ResourceType = ResourceType.PATIENT_MESSAGE_THREAD,
+        changes: dict[str, Any] | None = None,
+    ) -> AuditLogEntry:
+        """Record a CLINICIAN acting on secure messaging.
+
+        The patient's own side of the same table goes through
+        :meth:`log_patient_principal_action`, which scopes the row to them
+        as the actor. This one is the clinician, and the patient the
+        correspondence belongs to is the subject.
+
+        ``resource_type`` is a parameter because the two things a clinician
+        can open are disclosures of different size. A thread is the content
+        read, so it is recorded against the thread. The per-patient index is
+        not — it says that correspondence exists and when it last moved — so
+        it is recorded against the patient, one row per patient rather than
+        one per thread. Same axis the chat surface splits on.
+
+        Takes ids rather than a ``Patient`` because nothing on this surface
+        loads one — a thread carries the patient's id and the routes have no
+        reason to fetch the record behind it just to write a log line.
+
+        ``changes`` is counts and handles. A subject or a body in here would
+        put the words in the compliance record as well as the store.
+        """
+        ip_address, user_agent = extract_request_context(request)
+        entry = AuditLogEntry(
+            user_id=user.id,
+            actor_type=ACTOR_TYPE_CLINICIAN,
+            action=_action_value(action),
+            resource_type=resource_type.value,
+            resource_id=resource_id,
+            patient_id=patient_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            changes=changes,
+        )
+        self._persist(entry)
+        return entry
+
     def log_appointment_action(
         self,
         action: AuditAction | str,

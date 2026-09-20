@@ -243,6 +243,30 @@ class AuditAction(StrEnum):
     # never any of their words.
     PATIENT_INTAKE_SUBMISSION_VIEWED = "patient_intake_submission_viewed"
 
+    # Secure patient messaging. Both principals write these: a patient
+    # starting a thread or sending into one, and a clinician replying. The
+    # actor is what ``actor_type`` separates, so the action names say what
+    # happened rather than who did it.
+    #
+    # Payloads carry the thread id, the message id and counts — never the
+    # subject a patient typed and never a word of a body. The whole point of
+    # the store is that the words live in one place; copying them into the
+    # compliance record would put them in two.
+    #
+    # There is no VIEWED event on the patient's own side, and that is
+    # settled rather than missing: a patient reading their own record is not
+    # a disclosure to audit. THREAD_VIEWED below is the clinician opening a
+    # thread, which is — the same reason ``CHAT_CONVERSATION_VIEWED`` exists.
+    PATIENT_MESSAGE_THREAD_CREATED = "patient_message_thread_created"
+    PATIENT_MESSAGE_SENT = "patient_message_sent"
+    # The patient marking what the practice sent them as read. Audited for
+    # non-repudiation: "this was delivered and opened" is the fact a later
+    # dispute turns on, and nothing else in the system records it.
+    PATIENT_MESSAGE_THREAD_READ = "patient_message_thread_read"
+    # A clinician opening a thread — a PHI disclosure, at the granularity of
+    # which thread was opened.
+    PATIENT_MESSAGE_THREAD_VIEWED = "patient_message_thread_viewed"
+
     # Companion audio signed-URL upload (additive to the existing
     # multipart /upload-audio surface — companion app migrates at its
     # own pace). INIT fires when channel signed URLs are minted;
@@ -414,6 +438,7 @@ class ResourceType(StrEnum):
     CHAT_CONVERSATION = "chat_conversation"
     PATIENT_DOCUMENT = "patient_document"
     PATIENT_INTAKE_SUBMISSION = "patient_intake_submission"
+    PATIENT_MESSAGE_THREAD = "patient_message_thread"
     INVITATION = "invitation"
     CLAIM = "claim"
     CLAIM_EXPORT = "claim_export"
