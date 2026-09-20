@@ -4,6 +4,11 @@
  * Read the fake mail server (scripts/fake_mail.py): what the stack has sent,
  * and the first link in a message — which is how a spec follows a mail the
  * product expects a person to click.
+ *
+ * A portal invitation is one of those mails, and it is half of a two-factor
+ * sign-in: this side carries the magic link, and the step-up code arrives on
+ * the other channel. `sms.ts` reads that one, and its header walks the whole
+ * sign-in from a spec.
  */
 
 import { MAIL_URL } from "./stack"

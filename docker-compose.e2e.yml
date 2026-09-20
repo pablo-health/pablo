@@ -12,10 +12,10 @@
 #
 # Host ports default to the ones the browser-facing design fixes (frontend
 # 3000, backend 8000, auth emulator 9099). Override E2E_FRONTEND_PORT,
-# E2E_BACKEND_PORT, E2E_CLEARINGHOUSE_PORT or E2E_MAIL_PORT when something
-# already listens there. The emulator port is baked into the frontend bundle
-# at build time, so changing E2E_AUTH_EMULATOR_PORT needs `make e2e-up` to
-# rebuild.
+# E2E_BACKEND_PORT, E2E_CLEARINGHOUSE_PORT, E2E_MAIL_PORT or E2E_SMS_PORT when
+# something already listens there. The emulator port is baked into the
+# frontend bundle at build time, so changing E2E_AUTH_EMULATOR_PORT needs
+# `make e2e-up` to rebuild.
 name: pablo-e2e
 
 services:
@@ -114,6 +114,17 @@ services:
       # reading the ledger never calls the processor, and nothing in this
       # stack charges a card. Same rule as the clearinghouse key above.
       - STRIPE_SECRET_KEY=sk_test_e2e_not_a_real_key
+      # The patient portal's front door. Both factors have to be readable by
+      # a spec or no test can walk a sign-in: the magic link arrives at the
+      # mail server above, and the step-up code goes to the fake gateway
+      # below. Both gateways that make the code readable are refused outside
+      # a development environment, which this stack is.
+      - ENABLE_PATIENT_PORTAL=true
+      - PORTAL_TOKEN_SIGNING_KEY=e2e-portal-signing-key-not-a-real-secret
+      - PORTAL_WEB_BASE_URL=http://localhost:${E2E_FRONTEND_PORT:-3000}
+      - PORTAL_INVITE_DELIVERY=smtp
+      - PORTAL_SMS_GATEWAY=capture
+      - PORTAL_SMS_CAPTURE_URL=http://fake-sms:8026
     healthcheck:
       # curl isn't in the Chainguard base; probe with the stdlib. The image's
       # own check targets a path the app doesn't serve, so it is replaced.
@@ -147,6 +158,8 @@ services:
         condition: service_healthy
       fake-mail:
         condition: service_healthy
+      fake-sms:
+        condition: service_healthy
     networks:
       - e2e-net
 
@@ -175,7 +188,22 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile.dev
-    command: ["python", "backend/bin/migrate.py"]
+    # Two entrypoints, in this order, because they do different halves of the
+    # job. ``migrate.py`` brings the platform schema and the ``practice``
+    # TEMPLATE to head; it does not touch the per-practice schemas at all, and
+    # ``migrate_tenants.py`` is what fans the tenant chain out across those.
+    # A deployment runs both as separate jobs; a stack that ran only the first
+    # would be correct on a fresh volume — where every practice is provisioned
+    # from the freshly-regenerated template — and would silently leave an
+    # EXISTING practice a revision behind on a reused one. That reads as
+    # ``relation "..." does not exist`` from whatever spec touches the new
+    # table first, which is a long way from the cause.
+    command:
+      [
+        "sh",
+        "-c",
+        "python backend/bin/migrate.py && python backend/bin/migrate_tenants.py",
+      ]
     environment:
       - DATABASE_BACKEND=postgres
       - DATABASE_URL=postgresql://pablo:pablo_dev@postgres:5432/pablo
@@ -355,6 +383,30 @@ services:
           "python",
           "-c",
           "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://localhost:8025/_fake/messages').getcode() == 200 else 1)",
+        ]
+      interval: 3s
+      timeout: 5s
+      start_period: 5s
+      retries: 20
+    networks:
+      - e2e-net
+
+  # Where the portal's step-up codes go instead of a phone. The backend's
+  # capture gateway posts each one here and a spec reads it back; see
+  # scripts/fake_sms.py and frontend/e2e/fixtures/sms.ts.
+  fake-sms:
+    build:
+      context: .
+      dockerfile: scripts/e2e/fake-sms.Dockerfile
+    ports:
+      - "${E2E_SMS_PORT:-8026}:8026"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://localhost:8026/_fake/messages').getcode() == 200 else 1)",
         ]
       interval: 3s
       timeout: 5s

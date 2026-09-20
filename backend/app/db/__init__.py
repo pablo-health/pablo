@@ -956,6 +956,18 @@ _OVERLAY_NOT_ROW_SCOPED: set[str] = set()
 #     ``patient_id`` to key a policy on, and they are considered only
 #     because they carry an ``id``. What a patient ANSWERS is a different
 #     table entirely, and that one is per-patient and row-scoped.
+#   * companion_auth_challenges / companion_sessions — the portal sign-in
+#     tables (``app.portal``). These need the registration for a sharper
+#     reason than the rest. Both carry ``patient_id``, so the column query
+#     reaches them and the generic branch would hand them the clinician
+#     ``has_patient_access`` policy — which the redemption path can never
+#     satisfy, because it runs BEFORE any principal exists: redeeming the
+#     invitation is what creates one. Their isolation boundary is the tenant
+#     schema, entered from the signature-verified token's tenant claim. The
+#     alternative — arming ``app.current_patient_id`` from the invitation's
+#     claims before the code is checked — was considered and rejected as an
+#     auth-strength inversion: it would scope database access to a patient
+#     who has not completed step-up.
 _CORE_NOT_ROW_SCOPED: frozenset[str] = frozenset(
     {
         "ehr_routes",
@@ -966,6 +978,8 @@ _CORE_NOT_ROW_SCOPED: frozenset[str] = frozenset(
         "intake_packet_templates",
         "intake_packet_versions",
         "intake_item_definitions",
+        "companion_auth_challenges",
+        "companion_sessions",
     }
 )
 

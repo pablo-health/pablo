@@ -17,6 +17,11 @@ os.environ["PABLO_EDITION"] = "solo"
 # manual smoke step at deploy time, not by a unit test (the app builds
 # its router list once at import).
 os.environ["ENABLE_PATIENT_CHAT"] = "true"
+# Mount the patient portal sign-in router for tests. Off by default in
+# production; flipping it here is what puts those routes in front of the
+# guardrail suites that walk the live route table (MFA posture, subscription
+# gate), which would otherwise pass by never seeing them.
+os.environ["ENABLE_PATIENT_PORTAL"] = "true"
 # Disable the audit Cloud Logging dual-write for the whole suite. The
 # dual-write builds a google-cloud-logging client, which does GCP
 # credential/metadata discovery on first use. Test runners (CI and local)

@@ -1099,6 +1099,78 @@ class Settings(BaseSettings):
         description="Mount the unauthenticated /api/public/booking-links/* endpoints.",
     )
 
+    # ── Patient portal sign-in (app.portal) ──────────────────────────────
+    # Off by default: turning it on publishes a surface that mints
+    # credentials for people who had none, and that is a decision a
+    # deployment makes rather than inherits. When off the whole router is
+    # unmounted, so every portal path answers 404.
+    enable_patient_portal: bool = Field(
+        default=False,
+        description=(
+            "Mount the patient portal sign-in routes (invitations, "
+            "redemption, session rotation). Off by default."
+        ),
+    )
+    # Signs invite and patient-session tokens AND peppers the hash of the
+    # one-time code. Empty fails closed: the service refuses to start
+    # rather than sign forgeable tokens.
+    portal_token_signing_key: SecretStr = Field(
+        default=SecretStr(""),
+        description=(
+            "HS256 key for portal invite and patient-session tokens, also "
+            "the HMAC pepper for the one-time-code hash. Empty fails closed."
+        ),
+    )
+    portal_web_base_url: str = Field(
+        default="",
+        description=(
+            "Origin the magic link points at, e.g. https://app.example.org. "
+            "Empty fails closed: with nowhere to send the patient there is "
+            "no link to mint, and the invite route answers 503 rather than "
+            "emailing a dead one."
+        ),
+    )
+    portal_session_max_lifetime_seconds: int = Field(
+        default=2_592_000,
+        ge=60,
+        description=(
+            "Ceiling on sliding renewal of a patient session, measured from "
+            "the ORIGINAL redemption rather than the current token. Refresh "
+            "rotates the token id, so without a ceiling one two-factor proof "
+            "would authorize access indefinitely. Default 30 days."
+        ),
+    )
+    portal_invite_delivery: Literal["none", "smtp"] = Field(
+        default="none",
+        description=(
+            "How the magic link is emailed. 'none' (the default) is the "
+            "refusing stub: the invite route answers 503 rather than "
+            "pretending. 'smtp' sends through the smtp_* settings below. A "
+            "deployment with a different provider registers its own adapter "
+            "through app.portal.factory instead of setting this."
+        ),
+    )
+    portal_sms_gateway: Literal["none", "console", "capture"] = Field(
+        default="none",
+        description=(
+            "How the one-time code is texted. 'none' (the default) is the "
+            "refusing stub. 'console' writes the code to the log and "
+            "'capture' posts it to portal_sms_capture_url; both hand the "
+            "second factor to whoever can read a log or that service, so "
+            "both are refused outside a development environment. A "
+            "deployment that really texts registers its own gateway through "
+            "app.portal.factory."
+        ),
+    )
+    portal_sms_capture_url: str = Field(
+        default="",
+        description=(
+            "Where the 'capture' gateway posts each message, e.g. "
+            "http://fake-sms:8026. Development only; see "
+            "portal_sms_gateway."
+        ),
+    )
+
     # Companion device-binding proof enforcement (DPoP, RFC 9449-style).
     # When false the DPoP middleware is a hard no-op pass-through, so the
     # validation layer can ship dark while native companions add signing
