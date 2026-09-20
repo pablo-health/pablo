@@ -27,12 +27,13 @@ from unittest.mock import patch
 import pytest
 from app.auth.service import require_active_subscription
 from app.db.platform_models import PortalPracticeSlugRow, PracticeRow
-from app.portal.factory import PORTAL_REDEEM_PATH
-from app.portal.practice_routes import _RESERVED_SLUGS, router
+from app.portal.factory import build_invite_link
+from app.portal.practice_routes import _RESERVED_SLUGS, _slugify, router
 from app.rate_limit import (
     require_portal_practice_resolve_rate_limit,
     reset_portal_limiters,
 )
+from app.settings import get_settings
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
@@ -47,6 +48,8 @@ RESOLVE_URL = "/api/portal/practices/{slug}"
 MINT_URL = "/api/portal/practice-slug"
 
 PRACTICE_ID = "practice-1"
+# Not a credential: three dotted words in the shape of one.
+_STAND_IN_TOKEN = "abc.def.ghi"
 
 
 class _FakeOrigError(Exception):
@@ -310,13 +313,29 @@ def test_mint_never_hands_out_a_reserved_word_bare(fake_db: _FakeSession, mock_u
     assert response.json()["slug"] == "redeem-2"
 
 
-def test_the_magic_links_landing_segment_is_reserved() -> None:
+def test_a_minted_address_is_somewhere_a_magic_link_can_point(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The two halves have to agree, and nothing else makes them.
 
-    ``app.portal.factory`` mints every invitation at ``/portal/redeem``, and
-    the shell's practice pages sit beside it at ``/portal/{slug}``. A practice
-    that could take ``redeem`` as its address would shadow the one path a
-    patient has to arrive on.
+    A magic link is built as ``/portal/{slug}`` from whatever this directory
+    minted, so an address that did not fit that shape would produce links
+    nothing serves. Asserted against the real builder rather than a copy of
+    its format string.
     """
-    landing_segment = PORTAL_REDEEM_PATH.rsplit("/", 1)[-1]
-    assert landing_segment in _RESERVED_SLUGS
+    monkeypatch.setenv("PORTAL_WEB_BASE_URL", "https://portal.example.test")
+    get_settings.cache_clear()
+    slug = _slugify("Example Therapy")
+
+    link = build_invite_link(slug=slug, token=_STAND_IN_TOKEN)
+
+    assert link == f"https://portal.example.test/portal/{slug}#invite={_STAND_IN_TOKEN}"
+    get_settings.cache_clear()
+
+
+def test_no_reserved_word_can_become_an_address() -> None:
+    """The minter skips them, and this is the list it skips. Kept as its own
+    assertion because the shell's routing gives some of these meaning, and a
+    practice holding one would shadow it."""
+    assert "redeem" in _RESERVED_SLUGS
+    assert "api" in _RESERVED_SLUGS

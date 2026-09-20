@@ -154,14 +154,28 @@ def get_or_create_portal_practice_slug(
             detail="No practice is associated with this account yet.",
         )
     practice_id, _schema_name = practice
+    return PortalPracticeSlugResponse(slug=ensure_practice_slug(practice_id))
 
+
+def ensure_practice_slug(practice_id: str) -> str:
+    """The practice's portal address, minting one on first ask.
+
+    Shared with the invite route, which needs the address to build a magic
+    link and should not make a clinician go and create one first. Idempotent:
+    ``practice_id`` is UNIQUE, so a practice that already has an address gets
+    it back rather than a second one.
+
+    Raises ``HTTPException`` when there is no such practice, or when every
+    candidate in the budget is taken — which is practically unreachable, but
+    failing loudly beats handing back an address that is not this practice's.
+    """
     session = create_standalone_session()
     try:
         existing = session.execute(
             select(PortalPracticeSlugRow).where(PortalPracticeSlugRow.practice_id == practice_id)
         ).scalar_one_or_none()
         if existing is not None:
-            return PortalPracticeSlugResponse(slug=existing.slug)
+            return existing.slug
 
         practice_row = session.get(PracticeRow, practice_id)
         if practice_row is None:
@@ -189,7 +203,7 @@ def get_or_create_portal_practice_slug(
                     raise
                 continue
             session.commit()
-            return PortalPracticeSlugResponse(slug=candidate)
+            return candidate
 
         # Every candidate in the budget collided — practically unreachable (it
         # means every numeric suffix of the same base is already taken), but
