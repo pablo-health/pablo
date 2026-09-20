@@ -27,6 +27,13 @@ export interface AppointmentResponse {
   session_type: string
   video_link: string | null
   video_platform: string | null
+  /**
+   * Which video service made the room. Optional so a cached payload from
+   * before providers existed still typechecks.
+   */
+  provider?: string | null
+  /** The service's own handle for the meeting. Opens nothing by itself. */
+  meeting_external_id?: string | null
   notes: string | null
   note_type: string
   recurrence_rule: string | null
@@ -54,6 +61,11 @@ export interface CreateAppointmentRequest {
   session_type?: string
   video_link?: string | null
   video_platform?: string | null
+  /**
+   * Which video service should make the room. Omit to use your own default.
+   * Ignored when `video_link` is set: a link you typed is the room.
+   */
+  provider?: string | null
   notes?: string | null
   note_type?: string
   /**

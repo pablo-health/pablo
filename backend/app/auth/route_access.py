@@ -161,6 +161,10 @@ _INTENT_OVERRIDES: dict[tuple[str, str], AccessIntent] = {
     # stores the tokens it was issued.
     ("GET", "/api/google-calendar/authorize"): AccessIntent.WRITE,
     ("GET", "/api/google-calendar/callback"): AccessIntent.WRITE,
+    # The Zoom handshake is the same shape for the same reason: a browser
+    # redirect flow whose callback stores the grant it was issued.
+    ("GET", "/api/telehealth/zoom/authorize"): AccessIntent.WRITE,
+    ("GET", "/api/telehealth/zoom/callback"): AccessIntent.WRITE,
 }
 
 

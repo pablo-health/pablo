@@ -39,7 +39,6 @@ records that corrections were asked for and on which questions.
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, Request
@@ -88,8 +87,6 @@ from .patient_intake_assignments import (
 if TYPE_CHECKING:
     from ..repositories.patient import PatientRepository
     from ..repositories.patient_intake_signature import PatientIntakeSignatureRepository
-
-logger = logging.getLogger(__name__)
 
 #: The notice a reopened form sends. A name and a link; see
 #: :mod:`app.portal.notices` for why it can be nothing more.

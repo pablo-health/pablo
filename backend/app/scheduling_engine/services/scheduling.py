@@ -318,6 +318,8 @@ class SchedulingService:
             "session_type",
             "video_link",
             "video_platform",
+            "provider",
+            "meeting_external_id",
             "notes",
             "note_type",
             "status",
@@ -545,8 +547,16 @@ class SchedulingService:
             status=original.status,
             session_type=original.session_type,
             appointment_type_id=original.appointment_type_id,
-            video_link=original.video_link,
+            # A link with a vendor handle beside it was issued FOR the old
+            # time and is about to be released, so it must not follow the
+            # booking to the new one. A link with no handle is a standing room
+            # — a permanent waiting room, a URL somebody pasted — and that
+            # does follow, because it is where the practice meets people.
+            video_link=None if original.meeting_external_id else original.video_link,
             video_platform=original.video_platform,
+            # Which service, but not which meeting. The caller asks the
+            # provider for a room at the new time.
+            provider=original.provider,
             notes=original.notes,
             note_type=original.note_type,
             # Series membership travels, and a moved occurrence is by
@@ -560,6 +570,10 @@ class SchedulingService:
             updated_at=now,
         )
         # Deliberately NOT carried across:
+        #   meeting_external_id — the vendor's handle for the meeting at the
+        #     OLD time, which the cancellation releases. Carrying it would
+        #     point the new row at a meeting that is being deleted, and the
+        #     patient at a room that refuses them.
         #   google_event_id / google_calendar_id / google_sync_status, ical_*,
         #     ehr_appointment_url — those identify the external event for the
         #     OLD time. Copying them would point two rows at one event and

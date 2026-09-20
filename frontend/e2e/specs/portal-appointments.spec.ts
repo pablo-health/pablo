@@ -122,7 +122,7 @@ test.describe("portal appointments", () => {
   test("a patient books a time, moves it, and cancels it", async ({ api, page }) => {
     // --- the practice opens its diary ---------------------------------------
     await giveWorkingHoursAllWeek(api)
-    const type = await giveSelfBookableType(api, `Therapy session ${Date.now().toString(36)}`)
+    await giveSelfBookableType(api, `Therapy session ${Date.now().toString(36)}`)
     await letExistingClientsSelfBook(api)
 
     const { patient, email, phone } = await givePortalPatient(api)

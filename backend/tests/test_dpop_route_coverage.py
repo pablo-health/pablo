@@ -148,6 +148,7 @@ DPOP_UNCOVERABLE: dict[str, str] = {
     # by a constant-time HMAC over the raw body instead. ---
     "POST /api/webhooks/payments/stripe": "processor callback: signature-authenticated, no user",
     "POST /api/webhooks/clearinghouse": "clearinghouse callback: signature-authenticated, no user",
+    "POST /api/webhooks/telehealth/room": "waiting-room callback: secret-authenticated, no user",
 }
 
 

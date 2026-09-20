@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from .postgres.compliance_document import PostgresComplianceDocumentRepository
     from .postgres.compliance_item import PostgresComplianceItemRepository
     from .postgres.supervision import PostgresSupervisionRepository
+    from .postgres.telehealth_connection import PostgresZoomConnectionStore
     from .remittance_hold import RemittanceHoldRepository
 
 from .allowlist import (
@@ -278,6 +279,13 @@ def get_google_calendar_token_repository() -> GoogleCalendarTokenRepository:
     return PostgresGoogleCalendarTokenRepository(_get_pg_session())
 
 
+def get_zoom_connection_store() -> PostgresZoomConnectionStore:
+    """Get the Zoom half of the telehealth connection store."""
+    from .postgres.telehealth_connection import PostgresZoomConnectionStore
+
+    return PostgresZoomConnectionStore(_get_pg_session())
+
+
 def get_ical_client_mapping_repository() -> ICalClientMappingRepository:
     """Get iCal client mapping repository instance."""
     from .postgres.ical_client_mapping import (
@@ -525,4 +533,5 @@ __all__ = [
     "get_session_repository",
     "get_supervision_repository",
     "get_user_repository",
+    "get_zoom_connection_store",
 ]

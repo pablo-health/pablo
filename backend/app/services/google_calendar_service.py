@@ -17,6 +17,7 @@ HIPAA Compliance:
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
@@ -45,16 +46,18 @@ from ..calendar_providers.practice_import import (
 )
 from ..calendar_providers.provider import BusyWindow, ConsentSurface, ImportCandidate
 from ..calendar_providers.registry import ProviderRegistration
+from ..meeting_providers.meet import CONFERENCE_SOLUTION_TYPE
 from ..reliability import HTTP_REQUEST, Idempotency, call_with_retry
 from ..repositories.google_calendar_token import (
     GoogleCalendarTokenDoc,
     GoogleCalendarTokenRepository,
 )
 from ..utcnow import utc_now, utc_now_iso
+from .telehealth import GOOGLE_MEET
 from .token_encryption import decrypt_tokens, derive_subkey, encrypt_tokens
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Collection, Mapping, Sequence
+    from collections.abc import Callable, Collection
 
     from google.oauth2.credentials import Credentials
 
@@ -68,6 +71,55 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 GOOGLE_PROVIDER_ID = "google"
+
+
+class PushedEvent(NamedTuple):
+    """What a write to Google left us with.
+
+    ``conference_url`` is None on every ordinary appointment and on one whose
+    conference Google is still making — ``createRequest.status`` comes back
+    ``pending`` sometimes, and a link that is not there yet is not a failure.
+    The next push reads it.
+    """
+
+    event_id: str
+    conference_url: str | None
+
+
+def _conference_request_id(appointment: Appointment) -> str:
+    """A stable idempotency key for the conference this appointment asks for.
+
+    Derived from the appointment id so re-writing the same event re-uses the
+    conference instead of making a second one. It goes to Google and nowhere
+    near a patient, so the appointment id itself is the right value — unlike
+    the handle in a room URL, which a patient is sent.
+    """
+    return f"pablo-{appointment.id}"
+
+
+def conference_url(event: Mapping[str, Any]) -> str | None:
+    """The video link on an event Google just handed back, if there is one.
+
+    Two places carry it and they are not interchangeable. ``hangoutLink`` is
+    the convenience field and is only ever a Meet URL; ``conferenceData``'s
+    video entry point is the general one, and is what an event carries when
+    the conference is not Google's own. Read the entry points first so the
+    answer is right for both, and fall back to ``hangoutLink`` for an event
+    old enough to carry only that.
+    https://developers.google.com/workspace/calendar/api/v3/reference/events
+    """
+    data = event.get("conferenceData")
+    if isinstance(data, Mapping):
+        entry_points = data.get("entryPoints")
+        if isinstance(entry_points, Sequence) and not isinstance(entry_points, str | bytes):
+            for entry in entry_points:
+                if isinstance(entry, Mapping) and entry.get("entryPointType") == "video":
+                    uri = entry.get("uri")
+                    if uri:
+                        return str(uri)
+    hangout = event.get("hangoutLink")
+    return str(hangout) if hangout else None
+
 
 # Writing to a calendar Google let Pablo create is reachable with a grant
 # that cannot touch anything else on the account, so the narrowing is
@@ -599,6 +651,23 @@ class GoogleCalendarService:
 
         Returns the Google event ID, or None if the user is not connected.
         """
+        pushed = self.push_appointment_event(user_id, appointment)
+        return pushed.event_id if pushed else None
+
+    def push_appointment_event(self, user_id: str, appointment: Appointment) -> PushedEvent | None:
+        """Push the appointment, and say what came back about its conference.
+
+        Same call as :meth:`push_appointment` — this is the whole return value
+        rather than one field of it. Separate because the conference link only
+        exists on the way back from Google: the event body ASKS for a Meet
+        conference and Google answers with the link, so an appointment on
+        ``google_meet`` learns its own room here and nowhere else.
+
+        ``conferenceDataVersion=1`` is what makes that ask mean anything. Sent
+        on every write rather than only when a conference is requested,
+        because the flag is also what stops an update dropping the conference
+        from an event that already has one.
+        """
         credentials = self._get_credentials(user_id)
         if not credentials:
             return None
@@ -620,17 +689,27 @@ class GoogleCalendarService:
                     calendarId=token_doc.calendar_id,
                     eventId=appointment.google_event_id,
                     body=event_body,
+                    conferenceDataVersion=1,
                 )
                 .execute()
             )
             logger.info("Updated Google Calendar event")
         else:
             event = (
-                service.events().insert(calendarId=token_doc.calendar_id, body=event_body).execute()
+                service.events()
+                .insert(
+                    calendarId=token_doc.calendar_id,
+                    body=event_body,
+                    conferenceDataVersion=1,
+                )
+                .execute()
             )
             logger.info("Created Google Calendar event")
 
-        return event.get("id")  # type: ignore[no-any-return]
+        event_id = event.get("id")
+        if not event_id:
+            return None
+        return PushedEvent(event_id=str(event_id), conference_url=conference_url(event))
 
     def delete_event(self, user_id: str, event_id: str) -> bool:
         """Delete a Google Calendar event."""
@@ -1246,6 +1325,21 @@ class GoogleCalendarService:
         ``summary`` is what the therapist chose this to read as. Without
         one it is the generic wording — a caller that hasn't worked out a
         title never accidentally sends a name.
+
+        ``conferenceData`` carries one of two opposite things, and which one
+        depends on whether there is already a link:
+
+        * a link the appointment has — written out as an entry point so the
+          therapist's calendar shows the room they are joining;
+        * a ``createRequest`` — asking Google to MAKE a Meet conference,
+          which it does when the event is written with
+          ``conferenceDataVersion=1``, and whose link is read back onto the
+          appointment afterwards.
+
+        The request id is derived from the appointment so a retry of the same
+        write re-uses the same conference instead of making a second one.
+        Google documents it as the caller's idempotency key for exactly this.
+        https://developers.google.com/workspace/calendar/api/v3/reference/events
         """
         event: dict[str, Any] = {
             "summary": summary or _DEFAULT_EVENT_SUMMARY,
@@ -1272,6 +1366,13 @@ class GoogleCalendarService:
                         "uri": appointment.video_link,
                     }
                 ],
+            }
+        elif appointment.provider == GOOGLE_MEET:
+            event["conferenceData"] = {
+                "createRequest": {
+                    "requestId": _conference_request_id(appointment),
+                    "conferenceSolutionKey": {"type": CONFERENCE_SOLUTION_TYPE},
+                }
             }
         return event
 

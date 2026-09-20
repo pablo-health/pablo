@@ -20,7 +20,6 @@ patients' browsers would be refused.
 
 from __future__ import annotations
 
-import logging
 import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
@@ -32,8 +31,6 @@ if TYPE_CHECKING:
     from ..repositories.intake_blank_form import IntakeBlankFormRepository
     from ..settings import Settings
     from .file_storage import FileStorageProvider, UploadTarget
-
-logger = logging.getLogger(__name__)
 
 
 class IntakeBlankFormError(Exception):

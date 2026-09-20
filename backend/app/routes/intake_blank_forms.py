@@ -31,7 +31,6 @@ download until finalize has checked the stored object.
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Literal
 
@@ -65,8 +64,6 @@ from ..settings import Settings, get_settings
 
 if TYPE_CHECKING:
     from ..repositories.intake_blank_form import IntakeBlankFormRepository
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/intake/blank-forms", tags=["intake-blank-forms"])
 

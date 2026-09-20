@@ -95,6 +95,8 @@ from .routes import (
     sessions,
     superbills,
     supervision,
+    telehealth,
+    telehealth_webhooks,
     users,
 )
 from .settings import get_settings, log_startup_posture
@@ -336,6 +338,8 @@ app.include_router(patient_messages.message_threads_router)
 app.include_router(patient_payments.router)
 app.include_router(patient_write_offs.router)
 app.include_router(payment_webhooks.router)
+app.include_router(telehealth.router)
+app.include_router(telehealth_webhooks.router)
 app.include_router(ehr_routes.route_router)
 app.include_router(ehr_routes.navigate_router)
 app.include_router(ical_sync.router)

@@ -29,7 +29,6 @@ question that depends on an answer nobody has given yet.
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, Request, status
@@ -64,8 +63,6 @@ from ..services.intake_packet_service import (
 
 if TYPE_CHECKING:
     from ..repositories.intake_packet import IntakePacketRepository
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/intake", tags=["intake-packets"])
 

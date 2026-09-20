@@ -1659,6 +1659,27 @@ class AppointmentRow(Base):
     session_type: Mapped[str] = mapped_column(String(30), nullable=False)
     video_link: Mapped[str | None] = mapped_column(Text)
     video_platform: Mapped[str | None] = mapped_column(String(30))
+    # --- Telehealth ------------------------------------------------------
+    #
+    # ``video_platform`` is a free label a clinician picked from a list and
+    # has always been display-only. ``provider`` is the normalised key the
+    # meeting providers are registered under, and it is the one the engine
+    # acts on: which adapter made the link, and which one cancels it. Kept
+    # separate rather than tightened in place so a practice's existing labels
+    # ("teams", "other", whatever was typed) keep meaning what they meant.
+    provider: Mapped[str | None] = mapped_column(String(16))
+    # The vendor's own id for the meeting, when the vendor issues one — a
+    # Zoom meeting id, or the opaque per-appointment handle a doxy.me room
+    # URL carries. Never a patient identifier: see app.meeting_providers.pid.
+    meeting_external_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    # When the vendor said the patient arrived, and when the call ran. Written
+    # only by a verified vendor webhook, and each one only once — the first
+    # write wins, which is what makes a redelivery harmless. NULL means the
+    # vendor never said, which is the ordinary state: most practices run no
+    # webhook at all.
+    telehealth_checked_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    telehealth_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    telehealth_ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     notes: Mapped[str | None] = mapped_column(Text)
     # Registry key for the note generated when a session is started from this
     # appointment. Mirrors NoteRow.note_type.
@@ -1989,6 +2010,35 @@ class GoogleCalendarTokenRow(Base):
     connected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_sync_error: Mapped[str | None] = mapped_column(Text)
     consecutive_error_count: Mapped[int] = mapped_column(default=0)
+
+
+class TelehealthConnectionRow(Base):
+    """One clinician's connection to one video service.
+
+    Separate from ``google_calendar_tokens`` even though the shape rhymes:
+    that table is keyed by user alone because a clinician has one calendar
+    connection, and a clinician may hold a video connection per service. The
+    primary key is therefore the pair, and adding a second service is a row
+    rather than a column.
+
+    ``encrypted_tokens`` holds the OAuth grant at rest, AES-256-GCM encrypted
+    through ``app.services.token_encryption`` — the same treatment calendar
+    tokens get, for the same reason: the grant can create meetings in the
+    clinician's own account.
+
+    ``account_handle`` is what the service calls the connected account, kept
+    in the clear so a settings page can say which account is connected
+    without decrypting a grant to find out. Never a patient's anything.
+    """
+
+    __tablename__ = "telehealth_connections"
+
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    provider: Mapped[str] = mapped_column(String(16), primary_key=True)
+    encrypted_tokens: Mapped[str] = mapped_column(Text, nullable=False)
+    account_handle: Mapped[str | None] = mapped_column(String(255))
+    connected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
 
 
 class ICalClientMappingRow(Base):
