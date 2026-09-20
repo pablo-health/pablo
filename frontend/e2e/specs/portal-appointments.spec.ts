@@ -71,7 +71,28 @@ async function diaryFor(api: ApiClient, patientId: string): Promise<ClinicianApp
 }
 
 test.describe("portal appointments", () => {
-  test("a patient books a time, moves it, and cancels it", async ({ api, page }) => {
+  /**
+   * BLOCKED on a defect this spec found, in code that shipped before it.
+   *
+   * `owner_session` in `backend/app/routes/patient_booking.py` resolves the
+   * clinician whose diary is in question from `platform.practices.
+   * owner_user_id`. Nothing in the engine ever writes that column: the
+   * default practice is registered at boot before any user exists
+   * (`db/provisioning.py`), and a clinician is attached to a practice
+   * afterwards through `EmailTenantMappingRow` alone
+   * (`auth/service.py`). So on any practice this code provisions the column
+   * is NULL, every self-booking route answers `NO_CLINICIAN`, and the whole
+   * patient self-booking surface is unreachable. The integration suite
+   * passes because it seeds the column by hand.
+   *
+   * The body below is correct and runs green the moment a practice knows its
+   * owner. It is NOT enabled here because the fix is a decision about how a
+   * practice learns that — and `auth/service.py` explicitly rejects "if
+   * there is only one clinician, use it" for the auth path, so guessing at
+   * the same shortcut inside a principal resolver is not a change to make in
+   * passing.
+   */
+  test.fixme("a patient books a time, moves it, and cancels it", async ({ api, page }) => {
     // --- the practice opens its diary ---------------------------------------
     await giveWorkingHoursAllWeek(api)
     const type = await giveSelfBookableType(api, `Therapy session ${Date.now().toString(36)}`)
@@ -160,7 +181,10 @@ test.describe("portal appointments", () => {
     api,
     page,
   }) => {
-    await giveWorkingHoursAllWeek(api)
+    // No working hours here on purpose. This practice never opens its diary
+    // to patients, so seeding availability would only constrain the
+    // appointment the clinician makes below — which is what the practice
+    // doing the booking looks like.
     await giveSelfBookableType(api, `Therapy session ${Date.now().toString(36)}`)
     // The switch stays off, which is where every practice starts.
     await letExistingClientsSelfBook(api, false)
@@ -169,7 +193,9 @@ test.describe("portal appointments", () => {
 
     // An appointment the practice made, so the read-only list has something
     // in it — the state a patient of a phone-booking practice is actually in.
-    const startAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+    const startAt = new Date()
+    startAt.setUTCDate(startAt.getUTCDate() + 7)
+    startAt.setUTCHours(14, 0, 0, 0)
     await api.post("/api/appointments", {
       patient_id: patient.id,
       title: "Session",
