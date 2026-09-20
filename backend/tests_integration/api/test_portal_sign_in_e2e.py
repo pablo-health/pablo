@@ -258,7 +258,7 @@ def _issue_invitation(practice_schema: str, patient_id: str) -> None:
     # Minted for real against the platform table, the same call the invite
     # route makes — so the link this test follows is addressed the way a real
     # one is, rather than by a constant that could drift from the minter.
-    slug = ensure_practice_slug(_PRACTICE_ID)
+    slug = ensure_practice_slug(_PRACTICE_ID).slug
 
     session = create_standalone_session(practice_schema)
     try:
