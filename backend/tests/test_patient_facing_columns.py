@@ -29,6 +29,8 @@ from app.db.models import AppointmentRow, PatientRow
 from app.models.patient_facing import (
     APPOINTMENT_COLUMN_DECISIONS,
     PATIENT_COLUMN_DECISIONS,
+    PATIENT_CONTACT_CHANNEL_COLUMNS,
+    PATIENT_SELF_WRITABLE_COLUMNS,
     PatientAppointmentResponse,
     PatientFacingPatient,
     shown_columns,
@@ -185,9 +187,73 @@ class TestTheDecisionsCoverWhatTheBeadWasFiledAbout:
             "late_cancellation",
         }
 
-    def test_the_chart_allow_list_is_identity_and_nothing_else(self) -> None:
+    def test_the_chart_allow_list_is_identity_and_the_patients_own_contact_details(
+        self,
+    ) -> None:
+        """Who the chart says they are, and how to reach them. Nothing else.
+
+        The contact and address columns joined the identity three when the
+        portal profile screen landed: a screen that asks somebody to check
+        their address has to show them the address, and the person is the
+        one who knows when it changed.
+
+        What stayed withheld is the whole point of the list and is asserted
+        column by column above — the working diagnosis, the note about what
+        they can afford, the rate, the chart-closure reason, the consent
+        bookkeeping. Every one of those is staff-authored and none of it is
+        news a portal should break.
+
+        ``sex`` stays out too, which is easy to mistake for an oversight: it
+        is the X12 administrative code an insurance claim carries, not a
+        fact about the person, and a patient editing it would be editing a
+        billing field.
+        """
         assert shown_columns(PATIENT_COLUMN_DECISIONS) == {
             "first_name",
             "last_name",
+            "preferred_name",
             "date_of_birth",
+            "email",
+            "phone",
+            "address_line1",
+            "address_line2",
+            "city",
+            "state",
+            "postal_code",
         }
+
+    def test_only_contact_details_and_a_preferred_name_are_writable(self) -> None:
+        """The write allow-list is narrower than the read one, and stays so.
+
+        Identity is shown and not writable: a patient whose legal name or
+        date of birth is wrong is telling the practice something a person
+        has to look at, and the intake form already collects exactly that
+        correction. If this set grows, it should be a deliberate edit here.
+        """
+        assert {
+            "preferred_name",
+            "email",
+            "phone",
+            "address_line1",
+            "address_line2",
+            "city",
+            "state",
+            "postal_code",
+        } == PATIENT_SELF_WRITABLE_COLUMNS
+
+    def test_every_writable_column_is_also_shown(self) -> None:
+        """A field a patient may change is a field they must be able to see.
+
+        A form that writes a value it never displayed is one the person
+        cannot check before submitting it.
+        """
+        assert shown_columns(PATIENT_COLUMN_DECISIONS) >= PATIENT_SELF_WRITABLE_COLUMNS
+
+    def test_the_delivery_channels_are_a_subset_of_what_is_writable(self) -> None:
+        """The two audited-separately fields are two of the writable ones.
+
+        ``PATIENT_CONTACT_CHANNEL_COLUMNS`` exists to mark which writes move
+        where a future credential is sent. A name in it that nobody can
+        write would be a rule with nothing to apply to.
+        """
+        assert PATIENT_CONTACT_CHANNEL_COLUMNS <= PATIENT_SELF_WRITABLE_COLUMNS

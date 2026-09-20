@@ -147,7 +147,7 @@ def build_invite_link(*, slug: str, token: str) -> str:
 
 def build_portal_auth_service(
     *,
-    store: PortalAuthStore,
+    store: PortalAuthStore | None = None,
     sessions: PortalSessionStore | None = None,
     sms: SmsGateway | None = None,
 ) -> PortalAuthService:

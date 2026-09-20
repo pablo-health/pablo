@@ -152,6 +152,11 @@ class PortalSessionResolver:
             # redemption — link possession plus the texted code — and
             # refresh rotates that proof forward rather than weakening it.
             auth_strength=AuthStrength.STEPPED_UP,
+            # From the ROW, not from the token's ``jti`` claim. The two
+            # agree here — the row was found by that claim — but taking it
+            # off the record means the sign-out route can never be handed a
+            # handle the caller chose.
+            session_id=record.jti,
         )
 
 

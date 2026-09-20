@@ -55,6 +55,19 @@ class PortalAuthStore(Protocol):
         """Is there a live, unconsumed, unexpired invite for this patient?"""
         ...
 
+    def has_unconsumed_challenge(self, patient_id: str) -> bool:
+        """Is any invitation for this patient still unspent, expired or not?
+
+        Deliberately not :meth:`has_outstanding`, which also requires the
+        invitation to be unexpired. This one asks a different question —
+        whether access was ever granted and never withdrawn — and an
+        invitation that timed out unredeemed is the most ordinary reason a
+        patient asks for a new link. Withdrawal consumes every outstanding
+        challenge (see :meth:`consume_outstanding`), so a revoked patient
+        answers ``False`` here.
+        """
+        ...
+
 
 class InMemoryPortalAuthStore:
     """Dict-backed challenge store for unit tests and local runs."""
@@ -92,6 +105,9 @@ class InMemoryPortalAuthStore:
             c.patient_id == patient_id and not c.consumed and c.expires_at > now
             for c in self._by_jti.values()
         )
+
+    def has_unconsumed_challenge(self, patient_id: str) -> bool:
+        return any(c.patient_id == patient_id and not c.consumed for c in self._by_jti.values())
 
 
 @dataclass(frozen=True)
@@ -140,6 +156,18 @@ class PortalSessionStore(Protocol):
         """How many of this patient's sessions would authenticate right now."""
         ...
 
+    def has_unrevoked_session(self, patient_id: str) -> bool:
+        """Does any session row for this patient stand unrevoked?
+
+        Expiry is deliberately not part of it. A session that simply ran out
+        is the normal end of a month of use and says nothing about whether
+        the practice still wants this person to have access; a session that
+        was REVOKED says exactly that. So this reads the revocation column
+        and ignores the clock, which is what lets "has the practice withdrawn
+        access?" be answered without a column that records it directly.
+        """
+        ...
+
 
 class InMemoryPortalSessionStore:
     """Dict-backed session list for unit tests and local runs."""
@@ -173,4 +201,9 @@ class InMemoryPortalSessionStore:
     def live_count_for_patient(self, patient_id: str, *, now: int) -> int:
         return sum(
             1 for s in self._by_jti.values() if s.patient_id == patient_id and s.is_live(now=now)
+        )
+
+    def has_unrevoked_session(self, patient_id: str) -> bool:
+        return any(
+            s.patient_id == patient_id and s.revoked_at is None for s in self._by_jti.values()
         )

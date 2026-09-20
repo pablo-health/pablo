@@ -234,6 +234,22 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # is named, so there is no access to attribute to anybody.
         ("get", "/api/portal/practices/{slug}"),  # slug to display name, no PHI
         ("post", "/api/portal/practice-slug"),  # mints the practice's own address
+        # portal/recovery.py — account recovery. It answers 202 to everybody
+        # and discloses nothing: no name, no chart, no hint that the address
+        # matched. The MATCHING path IS audited, as
+        # patient_access_recovery_requested, written inside the tenant
+        # transaction with the patient's GUC armed — the same place and for
+        # the same reason as redemption above. Attempts that match nothing
+        # are deliberately NOT audited: a row scoped to a patient id says
+        # that patient exists, so auditing every attempt would move the
+        # enumeration oracle out of the response and into the audit log.
+        ("post", "/api/portal/practices/{slug}/recover"),  # audited on the matching path only
+        # portal/account_routes.py — what this DEPLOYMENT serves: a practice's
+        # own display name and a map of module names to booleans. The answer
+        # is identical for every patient of the practice, so nothing about
+        # the caller is disclosed by it and there is no access to attribute.
+        # Sign-out on the same surface IS audited.
+        ("get", "/api/patient/capabilities"),  # deployment shape, identical for every caller
         # payment_webhooks.py — signature-verified processor callback. It moves
         # a ledger row's status from an event the processor signed; there is no
         # authenticated principal to attribute an access to, and it discloses

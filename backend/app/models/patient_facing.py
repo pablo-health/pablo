@@ -70,15 +70,31 @@ class PatientFacingPatient(BaseModel):
     a staff note about a person's ability to pay, and would otherwise be
     surfaced to that person without anyone deciding to.
 
-    Three fields, because three fields are what a patient-facing route has
-    needed so far: the intake form shows a patient the name and date of birth
-    the chart holds and asks whether they are right. A fourth field belongs here
-    the day a route needs it, added on purpose.
+    One model for the table rather than one per route, which is why the
+    profile screen widened THIS rather than adding a second shape beside it.
+    Two routes read it now and they read different parts: the intake form
+    shows a patient the name and date of birth the chart holds and asks
+    whether they are right, and the portal profile shows them everything the
+    chart has that is theirs to keep current. A field belongs here the day a
+    route needs it, added on purpose.
+
+    Identity and contact are both here, and the difference between them is
+    enforced a layer up rather than by two models: ``app.routes.patient_profile``
+    accepts writes to the contact fields and to ``preferred_name`` only, and
+    refuses a name or a date of birth outright.
     """
 
     first_name: str
     last_name: str
+    preferred_name: str | None = None
     date_of_birth: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    address_line1: str | None = None
+    address_line2: str | None = None
+    city: str | None = None
+    state: str | None = None
+    postal_code: str | None = None
 
 
 class PatientAppointmentResponse(BaseModel):
@@ -161,8 +177,12 @@ PATIENT_COLUMN_DECISIONS: Final[Mapping[str, str | None]] = {
     "last_name": SHOWN,
     "first_name_lower": "A search-index copy of the name above.",
     "last_name_lower": "A search-index copy of the name above.",
-    "email": "Contact details as staff recorded them; no patient-facing screen reads them yet.",
-    "phone": "Contact details as staff recorded them; no patient-facing screen reads them yet.",
+    "preferred_name": SHOWN,
+    # Contact details are the patient's own and the portal profile is where
+    # they keep them current. Shown because a screen that asks someone to
+    # check their address has to show them the address.
+    "email": SHOWN,
+    "phone": SHOWN,
     "status": "Chart workflow state, an operational label rather than a fact about the person.",
     "date_of_birth": SHOWN,
     "diagnosis": "The clinician's working impression, written for the record and not as news.",
@@ -181,11 +201,14 @@ PATIENT_COLUMN_DECISIONS: Final[Mapping[str, str | None]] = {
     "rate_cents": "What this person is charged is a billing conversation, not a chart field.",
     "sliding_scale_note": "A staff note about this person's ability to pay.",
     "origin": "Flags a row created through an unverified intake surface, for a human to review.",
-    "address_line1": "The mailing address as staff recorded it for claims.",
-    "address_line2": "The mailing address as staff recorded it for claims.",
-    "city": "The mailing address as staff recorded it for claims.",
-    "state": "The mailing address as staff recorded it for claims.",
-    "postal_code": "The mailing address as staff recorded it for claims.",
+    # The mailing address a claim carries. Shown for the same reason as the
+    # contact fields above: it is the patient's own address, and they are the
+    # one who knows when it changed.
+    "address_line1": SHOWN,
+    "address_line2": SHOWN,
+    "city": SHOWN,
+    "state": SHOWN,
+    "postal_code": SHOWN,
     "sex": "The administrative sex code a claim's demographic segment expects.",
 }
 
@@ -239,9 +262,42 @@ APPOINTMENT_COLUMN_DECISIONS: Final[Mapping[str, str | None]] = {
 }
 
 
+#: Of the shown columns, the ones a patient may also CHANGE about themselves.
+#:
+#: A separate frozenset rather than a third decision value, so widening what a
+#: patient can SEE never silently widens what they can WRITE. Everything here
+#: is contact information or what they would like to be called: facts the
+#: person is the authority on, and that a practice currently learns by being
+#: told. The identity fields — ``first_name``, ``last_name``,
+#: ``date_of_birth`` — are shown and not writable on purpose: a patient saying
+#: the chart has their name or their birthday wrong is the start of a
+#: conversation with the practice, not a form submission, and the intake form
+#: already collects exactly that correction for a clinician to act on.
+PATIENT_SELF_WRITABLE_COLUMNS: Final[frozenset[str]] = frozenset(
+    {
+        "preferred_name",
+        "email",
+        "phone",
+        "address_line1",
+        "address_line2",
+        "city",
+        "state",
+        "postal_code",
+    }
+)
+
+#: Of those, the two that are also DELIVERY CHANNELS — the address an invite
+#: link is emailed to and the number a step-up code is texted to. Changing one
+#: changes where a future credential goes, so the route audits them
+#: separately, with hashes rather than values.
+PATIENT_CONTACT_CHANNEL_COLUMNS: Final[frozenset[str]] = frozenset({"email", "phone"})
+
+
 __all__ = [
     "APPOINTMENT_COLUMN_DECISIONS",
     "PATIENT_COLUMN_DECISIONS",
+    "PATIENT_CONTACT_CHANNEL_COLUMNS",
+    "PATIENT_SELF_WRITABLE_COLUMNS",
     "SHOWN",
     "PatientAppointmentResponse",
     "PatientFacingPatient",

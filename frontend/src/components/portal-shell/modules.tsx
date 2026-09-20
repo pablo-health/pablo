@@ -31,5 +31,21 @@ function MessagingSlot({ sessionToken }: PortalSlotProps) {
   return <PortalMessaging sessionToken={sessionToken} />
 }
 
-registerPortalSlot({ id: "forms", Component: FormsSlot })
-registerPortalSlot({ id: "messaging", Component: MessagingSlot })
+// ``module`` names the capability the deployment has to have turned on for
+// this slot to render, and ``label`` is what the navigation calls it. Both
+// are presentation: the routes behind an unnamed module are not mounted, so
+// what this decides is whether a patient is shown a section their practice
+// does not have — not whether they could reach one.
+//
+// The slot is called ``forms`` and its module is ``intake``, which is not a
+// slip. The module is the deployment-facing name — it is what
+// ``PORTAL_MODULES`` is configured with and what the engine mounts under
+// ``/api/patient/intake`` — while the slot id and the label are what the
+// patient meets. A person filling in a form has not heard the word intake.
+registerPortalSlot({ id: "forms", Component: FormsSlot, module: "intake", label: "Forms" })
+registerPortalSlot({
+  id: "messaging",
+  Component: MessagingSlot,
+  module: "messaging",
+  label: "Messages",
+})

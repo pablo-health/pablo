@@ -811,6 +811,7 @@ CREATE TABLE __TENANT_SCHEMA__.patients (
     state character varying(2),
     postal_code character varying(10),
     sex character varying(1),
+    preferred_name character varying(255),
     CONSTRAINT ck_patients_sex CHECK (((sex)::text = ANY ((ARRAY['M'::character varying, 'F'::character varying, 'U'::character varying])::text[])))
 );
 

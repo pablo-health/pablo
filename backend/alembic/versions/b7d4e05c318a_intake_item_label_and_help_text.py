@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 revision: str = "b7d4e05c318a"
-down_revision: str | Sequence[str] | None = "c5f80a214d9e"
+down_revision: str | Sequence[str] | None = "d4a7b1e93c26"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

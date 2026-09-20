@@ -35,14 +35,15 @@
 
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
+import Link from "next/link"
 import { Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { resolvePortalPractice } from "@/lib/portal-shell/api"
-import { bootstrapSession, redeemAndStore } from "@/lib/portal-shell/session"
-import { getPortalSlots, type PortalSlotProps } from "./slots"
+import { fetchCapabilities, resolvePortalPractice } from "@/lib/portal-shell/api"
+import { bootstrapSession, redeemAndStore, signOutAndForget } from "@/lib/portal-shell/session"
+import { visiblePortalSlots, type PortalSlot, type PortalSlotProps } from "./slots"
 // Side-effect import: fills the slot registry in the BROWSER's module graph.
 // It has to happen from a client component — see modules.tsx.
 import "./modules"
@@ -71,6 +72,10 @@ export function PortalShell({ slug }: { slug: string }) {
   const [otp, setOtp] = useState("")
   const [otpError, setOtpError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  // `null` until the capability document arrives, and `null` again if it
+  // never does — which keeps every slot rendered. See `visiblePortalSlots`.
+  const [modules, setModules] = useState<Record<string, boolean> | null>(null)
+  const [signingOut, setSigningOut] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -109,6 +114,29 @@ export function PortalShell({ slug }: { slug: string }) {
     }
   }, [slug])
 
+  // The capability document is fetched once a session is live, and only
+  // then: it is a patient-authenticated call, and nothing before the active
+  // phase renders a slot or a navigation to gate.
+  useEffect(() => {
+    if (phase !== "active" || sessionToken === null) return
+    let cancelled = false
+
+    void fetchCapabilities(sessionToken).then((result) => {
+      if (cancelled || !result.ok) return
+      setModules(result.data.modules)
+      // The practice name from the signed-in side, which is the same
+      // directory entry the slug resolved through — so the header does not
+      // change under the patient when it arrives.
+      if (result.data.practice.display_name) {
+        setDisplayName(result.data.practice.display_name)
+      }
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [phase, sessionToken])
+
   async function handleRedeem() {
     if (!invitation || !otp.trim() || submitting) return
     setSubmitting(true)
@@ -126,15 +154,36 @@ export function PortalShell({ slug }: { slug: string }) {
     }
   }
 
+  const handleSignOut = useCallback(async () => {
+    if (sessionToken === null || signingOut) return
+    setSigningOut(true)
+    await signOutAndForget(slug, sessionToken)
+    setSigningOut(false)
+    // Whatever the server said, this browser is no longer holding a
+    // session — so the shell shows the signed-out state rather than a
+    // screen the patient can no longer act on.
+    setSessionToken(null)
+    setModules(null)
+    setPhase("no-session")
+  }, [slug, sessionToken, signingOut])
+
+  const signedIn = phase === "active" && sessionToken !== null
+  const slots = signedIn ? visiblePortalSlots(modules) : []
+
   return (
     <div className="flex min-h-screen flex-col bg-neutral-50">
-      <ShellHeader displayName={displayName} />
+      <ShellHeader
+        displayName={displayName}
+        slots={slots}
+        onSignOut={signedIn ? handleSignOut : undefined}
+        signingOut={signingOut}
+      />
       <main className="flex flex-1 items-start justify-center px-4 py-8 sm:py-12">
         <div className="w-full max-w-md">
           {phase === "resolving" && <ResolvingCard />}
           {phase === "unknown" && <UnknownPracticeCard />}
-          {phase === "no-session" && <NoSessionCard />}
-          {phase === "expired" && <NoSessionCard revoked />}
+          {phase === "no-session" && <NoSessionCard slug={slug} />}
+          {phase === "expired" && <NoSessionCard slug={slug} revoked />}
           {phase === "otp" && (
             <OtpCard
               otp={otp}
@@ -144,8 +193,8 @@ export function PortalShell({ slug }: { slug: string }) {
               error={otpError}
             />
           )}
-          {phase === "active" && sessionToken !== null && (
-            <ActiveShellBody slug={slug} sessionToken={sessionToken} />
+          {signedIn && sessionToken !== null && (
+            <ActiveShellBody slug={slug} sessionToken={sessionToken} slots={slots} />
           )}
         </div>
       </main>
@@ -171,16 +220,65 @@ function CardShell({
   )
 }
 
-function ShellHeader({ displayName }: { displayName: string | null }) {
+function ShellHeader({
+  displayName,
+  slots,
+  onSignOut,
+  signingOut,
+}: {
+  displayName: string | null
+  slots: PortalSlot[]
+  onSignOut?: () => void
+  signingOut: boolean
+}) {
+  // Only slots that asked for a label appear in the navigation; a slot
+  // without one still renders in the body.
+  const navSlots = slots.filter((slot) => slot.label !== undefined)
   return (
     <header className="border-b border-neutral-200 bg-white px-4 py-4">
-      <div className="mx-auto max-w-md">
+      <div className="mx-auto flex max-w-md flex-wrap items-center justify-between gap-x-4 gap-y-2">
         {displayName ? (
           <h1 data-testid="portal-shell-practice-name" className="text-base font-semibold">
             {displayName}
           </h1>
         ) : (
           <div className="h-5 w-40 animate-pulse rounded bg-neutral-200" aria-hidden="true" />
+        )}
+        {onSignOut && (
+          <Button
+            data-testid="portal-shell-sign-out"
+            onClick={onSignOut}
+            disabled={signingOut}
+            variant="ghost"
+            size="sm"
+          >
+            {signingOut ? "Signing out…" : "Sign out"}
+          </Button>
+        )}
+        {navSlots.length > 0 && (
+          <nav
+            data-testid="portal-shell-nav"
+            aria-label="Portal sections"
+            className="w-full border-t border-neutral-100 pt-2"
+          >
+            <ul className="flex flex-wrap gap-x-4 gap-y-1">
+              {navSlots.map((slot) => (
+                <li key={slot.id}>
+                  {/* An in-page anchor rather than a route: v1 renders every
+                      section on one page, so the navigation moves the
+                      viewport instead of fetching. Keeping it a real link
+                      means it is reachable by keyboard and shareable. */}
+                  <a
+                    href={`#portal-section-${slot.id}`}
+                    data-testid={`portal-shell-nav-${slot.id}`}
+                    className="text-sm text-neutral-600 underline-offset-4 hover:underline focus-visible:underline"
+                  >
+                    {slot.label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </nav>
         )}
       </div>
     </header>
@@ -219,7 +317,7 @@ function UnknownPracticeCard() {
   )
 }
 
-function NoSessionCard({ revoked = false }: { revoked?: boolean }) {
+function NoSessionCard({ slug, revoked = false }: { slug: string; revoked?: boolean }) {
   return (
     <CardShell testId="portal-shell-no-session">
       <div className="flex flex-col items-center gap-2 py-4 text-center">
@@ -233,6 +331,16 @@ function NoSessionCard({ revoked = false }: { revoked?: boolean }) {
             ready to continue.
           </p>
         )}
+        {/* Offered on both, because the shell cannot tell a lapsed session
+            from a withdrawn one and neither can the recovery page — it
+            answers the same way either way. */}
+        <Link
+          href={`/portal/${encodeURIComponent(slug)}/recover`}
+          data-testid="portal-shell-recover-link"
+          className="mt-2 text-sm text-neutral-600 underline underline-offset-4"
+        >
+          Send me a new link
+        </Link>
       </div>
     </CardShell>
   )
@@ -289,13 +397,22 @@ function OtpCard({
 }
 
 /**
- * The signed-in body: whatever slots are registered, in registration order.
+ * The signed-in body: the slots this deployment serves, in registration
+ * order.
  *
  * Hands each slot the slug and the live session token, so a slot can call a
  * patient-authenticated route without going looking for the session itself.
+ *
+ * The empty state covers two cases that look the same to the patient and
+ * should: nothing is registered, and nothing this practice has turned on is
+ * registered. Neither is an error, and saying which would be describing the
+ * deployment to somebody who cannot act on it.
  */
-function ActiveShellBody({ slug, sessionToken }: PortalSlotProps) {
-  const slots = getPortalSlots()
+function ActiveShellBody({
+  slug,
+  sessionToken,
+  slots,
+}: PortalSlotProps & { slots: PortalSlot[] }) {
   return (
     <div data-testid="portal-shell-active" className="flex flex-col gap-4">
       {slots.length === 0 ? (
@@ -306,7 +423,9 @@ function ActiveShellBody({ slug, sessionToken }: PortalSlotProps) {
         </CardShell>
       ) : (
         slots.map(({ id, Component }) => (
-          <Component key={id} slug={slug} sessionToken={sessionToken} />
+          <section key={id} id={`portal-section-${id}`}>
+            <Component slug={slug} sessionToken={sessionToken} />
+          </section>
         ))
       )}
     </div>

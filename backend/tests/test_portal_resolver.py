@@ -103,7 +103,25 @@ def test_a_live_session_resolves_to_its_patient() -> None:
         practice_schema=TENANT,
         credential_kind=PORTAL_SESSION_KIND,
         auth_strength=AuthStrength.STEPPED_UP,
+        session_id="s1",
     )
+
+
+def test_the_session_handle_comes_from_the_row_not_the_token() -> None:
+    """The handle a sign-out acts on must be the one the ROW carried.
+
+    Both halves name a session and they agree here, because the row was
+    found by the token's claim. Taking it off the record anyway is what
+    means a route that retires ``session_id`` can never be handed a handle
+    the caller chose — and it is the reason this is worth asserting rather
+    than reading off the same claim twice.
+    """
+    resolver = _StubbedResolver(_live_record(jti="row-handle"))
+
+    context = resolver.resolve(_credential(_session_token(jti="row-handle")))
+
+    assert context is not None
+    assert context.session_id == "row-handle"
 
 
 def test_the_principal_records_that_two_factors_were_cleared() -> None:
