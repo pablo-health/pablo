@@ -69,6 +69,7 @@ from .routes import (
     patient_chat,
     patient_documents,
     patient_intake,
+    patient_messages,
     patient_payments,
     patient_statements,
     patient_write_offs,
@@ -265,6 +266,9 @@ app.include_router(notes.internal_jobs_router)
 app.include_router(patient_documents.patient_documents_router)
 app.include_router(patient_documents.documents_router)
 app.include_router(patient_documents.internal_jobs_router)
+app.include_router(patient_messages.patient_messages_router)
+app.include_router(patient_messages.patient_threads_router)
+app.include_router(patient_messages.message_threads_router)
 app.include_router(patient_payments.router)
 app.include_router(patient_write_offs.router)
 app.include_router(payment_webhooks.router)
