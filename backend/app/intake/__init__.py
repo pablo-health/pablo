@@ -11,8 +11,15 @@ read back against the exact list of questions they were asked.
 each one's configuration has to look like, and which of them a rule may refer
 to. Everything else in the feature reads that module rather than re-deciding
 what a valid item is.
+
+:mod:`app.intake.answers` is the other half of it: what answering each kind
+of question means. :mod:`app.intake.completion` puts the two together and
+says whether a form is finished, which is the one question no client is
+allowed to answer for itself.
 """
 
+from .answers import AnswerError, is_answered, validate_answer
+from .completion import Completion, CompletionItem, assess, every_item_visible
 from .items import (
     DISPLAY_ONLY_ITEM_TYPES,
     ITEM_TYPES,
@@ -27,10 +34,17 @@ from .items import (
 __all__ = [
     "DISPLAY_ONLY_ITEM_TYPES",
     "ITEM_TYPES",
+    "AnswerError",
+    "Completion",
+    "CompletionItem",
     "ItemConfig",
     "ItemConfigError",
     "ItemDraft",
     "VisibleWhen",
+    "assess",
+    "every_item_visible",
+    "is_answered",
+    "validate_answer",
     "validate_item_config",
     "validate_item_list",
 ]

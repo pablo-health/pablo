@@ -70,6 +70,7 @@ from .routes import (
     patient_chat,
     patient_documents,
     patient_intake,
+    patient_intake_assignments,
     patient_messages,
     patient_payments,
     patient_statements,
@@ -303,6 +304,12 @@ app.include_router(patient_intake.clinician_router)
 # the ordinary clinician door: a practice editing its own paperwork touches
 # no patient data and needs no patient front door to be open.
 app.include_router(intake_packets.router)
+# Sending a form to a patient and them filling it in. Both routers are
+# unconditional for the reasons above: the patient half answers 401 with no
+# resolver registered, and the clinician half sits behind the ordinary
+# clinician door.
+app.include_router(patient_intake_assignments.router)
+app.include_router(patient_intake_assignments.clinician_router)
 # Companion launch-intent handoff. Mounted only when the flag is on so
 # /api/launch/* returns 404 until the desktop companions ship the
 # verified-link redemption path. See docs/design/companion-thin-client.md.
