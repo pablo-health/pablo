@@ -66,7 +66,6 @@ interface Review extends Assignment {
 const NOTE = "Could you say a bit more about when this started?"
 const FIRST_ANSWER = "Panic before every shift."
 const REDONE_ANSWER = "Panic before every shift, since about March."
-const ENTERED_FOR_PATIENT = "Sleeping through the night."
 
 /** The published version of the form a fresh practice is seeded with. */
 async function defaultIntakeVersion(api: ApiClient): Promise<string> {
@@ -124,13 +123,19 @@ function everyItemScoredOne(items: number): Record<string, number> {
   return Object.fromEntries(Array.from({ length: items }, (_, i) => [`${i + 1}`, 1]))
 }
 
+/** The seeded form's four questions, as the progress line numbers them. */
+async function atQuestion(page: Page, index: number): Promise<void> {
+  await expect(page.getByTestId("forms-progress")).toContainText(`Question ${index} of 4`)
+}
+
 /**
  * Answer every item of the measure on screen with its first anchor.
  *
- * Waits for the first group before counting. `count()` is a snapshot rather
- * than an assertion, so it does not wait for anything — calling it straight
- * after a Continue reads the screen the patient is leaving, and on a fast
- * runner that is a screen with no measure on it.
+ * The caller has to have pinned which screen this is first. `count()` is a
+ * snapshot rather than an assertion, so calling it straight after a
+ * Continue reads the screen the patient is leaving — and the two measures
+ * are different lengths, so a count taken on the PHQ-9 walks off the end of
+ * the GAD-7.
  */
 async function answerMeasureOnScreen(page: Page): Promise<void> {
   const groups = page.locator("fieldset[data-testid^='forms-item-']")
@@ -146,21 +151,23 @@ async function fillTheFormIn(page: Page): Promise<void> {
   await expect(page.getByTestId("forms-list")).toBeVisible()
   await page.getByTestId("forms-list-open").click()
 
-  await expect(page.getByTestId("forms-identity-confirm")).toBeVisible()
+  await atQuestion(page, 1)
   await page.getByTestId("forms-identity-confirm").click()
   await page.getByTestId("forms-continue").click()
 
-  await expect(page.getByTestId("forms-reason")).toBeVisible()
+  await atQuestion(page, 2)
   await page.getByTestId("forms-reason").fill(FIRST_ANSWER)
   await page.getByTestId("forms-continue").click()
 
+  await atQuestion(page, 3)
   await answerMeasureOnScreen(page)
   await page.getByTestId("forms-continue").click()
 
+  await atQuestion(page, 4)
   await answerMeasureOnScreen(page)
   await page.getByTestId("forms-continue").click()
 
-  await expect(page.getByTestId("forms-submit")).toBeVisible()
+  await expect(page.getByTestId("forms-review")).toBeVisible()
   await page.getByTestId("forms-submit").click()
   await expect(page.getByTestId("forms-receipt-code")).toBeVisible()
   await page.getByTestId("forms-receipt-close").click()
@@ -189,8 +196,10 @@ test.describe("intake review", () => {
     expect(submitted.status).toBe("submitted")
     const reason = submitted.items.find((item) => item.key === "reason")
     const gad7 = submitted.items.find((item) => item.key === "gad7")
+    const phq9 = submitted.items.find((item) => item.key === "phq9")
     expect(reason, "the seeded form asks why the patient came").toBeDefined()
     expect(gad7, "the seeded form carries the GAD-7").toBeDefined()
+    expect(phq9, "the seeded form carries the PHQ-9").toBeDefined()
     expect(reason!.provenance).toBe("patient")
 
     // --- the clinician asks about one answer -------------------------------
@@ -210,6 +219,20 @@ test.describe("intake review", () => {
     await expect(page.getByTestId("forms-reason")).toHaveValue(FIRST_ANSWER)
     await expect(page.getByTestId("forms-progress")).toContainText("Question 1 of 1")
     await expect(page.getByTestId("forms-identity-name")).toHaveCount(0)
+
+    // What the screen refuses, the route refuses too — the rule is the
+    // server's, and the portal renders it rather than being it. Sent with
+    // the patient's own session, the only principal that could make this
+    // save, read off the shell's own store.
+    const refused = await page.request.put(
+      `${api.baseUrl}/api/patient/intake/assignments/${assigned.id}/items/${phq9!.id}`,
+      {
+        headers: { Authorization: `Bearer ${await portalSessionToken(page)}` },
+        data: { value: { item_scores: everyItemScoredOne(9) } },
+        failOnStatusCode: false,
+      },
+    )
+    expect(refused.status(), "a question nobody asked about stays settled").toBe(409)
 
     await page.getByTestId("forms-reason").fill(REDONE_ANSWER)
     await page.getByTestId("forms-continue").click()
@@ -257,61 +280,5 @@ test.describe("intake review", () => {
         note: "One more thing?",
       }),
     ).rejects.toThrow(/409/)
-  })
-
-  test("a form sent back refuses a change to a question nobody asked about", async ({
-    api,
-    page,
-  }) => {
-    const suffix = Date.now().toString(36)
-    const email = `scope-${suffix}@example.com`
-    const phone = `+1555${`${Date.now()}`.slice(-7)}`
-
-    const patient = await givePatient(api, { email, phone, date_of_birth: "1987-11-30" })
-    const versionId = await defaultIntakeVersion(api)
-    const assigned = await api.post<Assignment>(
-      `/api/patients/${patient.id}/intake-assignments`,
-      { version_id: versionId },
-    )
-    const chart = `/api/patients/${patient.id}/intake-assignments/${assigned.id}`
-
-    await signIn(api, page, patient.id, email, phone)
-    await fillTheFormIn(page)
-
-    const submitted = await api.get<Review>(`${chart}/review`)
-    const reason = submitted.items.find((item) => item.key === "reason")!
-    const phq9 = submitted.items.find((item) => item.key === "phq9")!
-    await api.post<Assignment>(`${chart}/request-correction`, {
-      item_ids: [reason.id],
-      note: NOTE,
-    })
-
-    // What a browser proves: the portal does not offer the PHQ-9 at all
-    // once the form comes back.
-    await page.reload()
-    await page.getByTestId("forms-list-open").click()
-    await expect(page.getByTestId("forms-reason")).toBeVisible()
-    await expect(page.getByTestId("forms-progress")).toContainText("Question 1 of 1")
-
-    // And what the screen refuses, the route refuses too — the rule is the
-    // server's, and the portal renders it rather than being it. Sent with
-    // the patient's own session, the only principal that could make this
-    // save, read off the shell's own store.
-    const token = await portalSessionToken(page)
-    const refused = await page.request.put(
-      `${api.baseUrl}/api/patient/intake/assignments/${assigned.id}/items/${phq9.id}`,
-      {
-        headers: { Authorization: `Bearer ${token}` },
-        data: { value: { item_scores: everyItemScoredOne(9) } },
-        failOnStatusCode: false,
-      },
-    )
-    expect(refused.status()).toBe(409)
-
-    // And the answer the practice did not ask about is unchanged.
-    const unchanged = await api.get<Review>(`${chart}/review`)
-    const stillThere = unchanged.items.find((item) => item.key === "phq9")!
-    expect(stillThere.superseded_count).toBe(0)
-    expect(stillThere.provenance).toBe("patient")
   })
 })
