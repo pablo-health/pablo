@@ -25,7 +25,13 @@ Two shapes, both observed on the dev deployment:
   500 the dev intake run hit, reproduced here before the fan-out and gone
   after it.
 
-Then the general form of both: a schema stripped of every policy and healed
+A live schema also holds tables the engine never created — a layer above it
+adds its own after provisioning, so they carry no policy and no
+registration. The fan-out leaves those alone with one warning apiece
+instead of failing the practice, while the strict provisioning path keeps
+its guard for the engine's own tables.
+
+Then the general form of the first two: a schema stripped of every policy and healed
 by the fan-out must end up with the same policies, on the same tables, as a
 freshly provisioned one. That is what fails if a future revision adds a
 patient-scoped table and nothing teaches the reconcile about it.
@@ -37,6 +43,7 @@ against no policy at all. Run: ``make test-integration``.
 
 from __future__ import annotations
 
+import logging
 import os
 import uuid
 from datetime import UTC, datetime
@@ -49,6 +56,7 @@ from alembic.config import Config
 from app.db.migrate_tenants import fan_out
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import ProgrammingError
+from sqlalchemy.orm import Session as OrmSession
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -386,3 +394,74 @@ def test_a_migrated_schema_ends_up_matching_a_freshly_provisioned_one(
     assert all(r.ok for r in results), [(r.schema, r.status, r.detail) for r in results]
     assert _policy_map(engine, schema) == _policy_map(engine, reference)
     assert _rls_flag_map(engine, schema) == _rls_flag_map(engine, reference)
+
+
+def _add_foreign_table(engine: Engine, schema: str, table: str, extra_column: str) -> None:
+    """Create a table the engine never modelled, as a layer above it does.
+
+    After provisioning, so the RLS pass has already been and gone — which
+    is why these tables reach the fan-out carrying no policy and no
+    registration.
+    """
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                f'CREATE TABLE "{schema}"."{table}" '
+                f"(id uuid PRIMARY KEY, created_at timestamptz DEFAULT now(), {extra_column})"
+            )
+        )
+
+
+def test_tables_another_layer_added_do_not_fail_the_practice(
+    engine: Engine, aged: tuple[str, str, str], reference: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The first real fan-out failed every practice on exactly this.
+
+    One shape has only an ``id``, so no policy branch matches it and the
+    strict guard raised. The other carries a text ``patient_id``, so the
+    generic clinician arm compiled to a ``has_patient_access`` overload
+    that does not exist. Neither table is the engine's, and neither is
+    grounds for reporting a practice FAILED.
+    """
+    schema, _, _ = aged
+    _add_foreign_table(engine, schema, "other_layer_dispatches", "payload jsonb")
+    _add_foreign_table(engine, schema, "other_layer_events", "patient_id varchar(64)")
+    _age_table(engine, schema, _THREADS)
+
+    with caplog.at_level(logging.WARNING, logger="app.db"):
+        results = fan_out(engine, [schema])
+
+    assert all(r.ok for r in results), [(r.schema, r.status, r.detail) for r in results]
+
+    messages = [record.getMessage() for record in caplog.records]
+    for table in ("other_layer_dispatches", "other_layer_events"):
+        assert _rls_flags(engine, schema, table) == (False, False), (
+            f"{table} is not the engine's to police — it must be left as it was"
+        )
+        assert _policy_names(engine, schema, table) == set()
+        warnings = [m for m in messages if "skipped unknown table" in m and table in m]
+        assert len(warnings) == 1, f"expected exactly one warning for {table}, got {warnings}"
+
+    # And the engine's own table, aged alongside them, still got its policies.
+    assert _rls_flags(engine, schema, _THREADS) == (True, True)
+    assert _policy_names(engine, schema, _THREADS) == _policy_names(engine, reference, _THREADS)
+
+
+def test_provisioning_still_raises_on_a_table_it_cannot_policy(
+    engine: Engine, aged: tuple[str, str, str]
+) -> None:
+    """The strict path keeps its guard: a table with no policy shape is deny-all.
+
+    Provisioning sees the engine's tables and nothing else, so anything
+    unrecognised there is a new engine table whose author forgot a policy
+    branch. That must still stop the schema rather than ship it.
+    """
+    from app.db import enable_rls_on_schema  # noqa: PLC0415
+
+    schema, _, _ = aged
+    _add_foreign_table(engine, schema, "other_layer_dispatches", "payload jsonb")
+
+    with OrmSession(engine) as session:
+        session.execute(text(f"SET search_path = {schema}, platform, public"))
+        with pytest.raises(RuntimeError, match="no RLS policy defined"):
+            enable_rls_on_schema(session, schema)

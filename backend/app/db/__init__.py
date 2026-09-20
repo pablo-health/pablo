@@ -27,6 +27,7 @@ import re
 import urllib.parse
 from contextvars import ContextVar, Token
 from functools import lru_cache
+from typing import NamedTuple
 
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
@@ -1345,9 +1346,44 @@ def _apply_patient_principal_policies(
         logger.info("RLS (patient self-delete on %s) enabled on %s", key_column, qualified)
 
 
+class RlsReconcileCounts(NamedTuple):
+    """What one ``enable_rls_on_schema`` pass did to a schema.
+
+    ``applied`` is the tables whose row-level security state it set;
+    ``skipped`` the ones it deliberately passed over (see the ``strict``
+    argument). Both are reported per schema so an operator reading a
+    fan-out log can tell "nothing to do here" from "we left tables
+    alone".
+    """
+
+    applied: int
+    skipped: int
+
+
+def engine_known_tenant_tables() -> set[str]:
+    """Every tenant table this engine knows about, by name.
+
+    The ORM's own tables, plus whatever a deployment declared through the
+    registration seams (``register_overlay_patient_scoped`` /
+    ``register_overlay_not_row_scoped``). A table in a practice schema
+    that appears in none of them was put there by a layer above the
+    engine, after provisioning, and the engine has no way to know what
+    its isolation boundary is supposed to be — so it is not the engine's
+    to police. See ``enable_rls_on_schema``'s ``strict`` argument.
+    """
+    from .models import Base  # lazy import — avoid circular import
+
+    return (
+        {name.split(".")[-1] for name in Base.metadata.tables}
+        | set(PATIENT_READABLE_TABLES)
+        | set(PATIENT_WRITABLE_TABLES)
+        | not_row_scoped_tenant_tables()
+    )
+
+
 def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant-table shape
-    session: Session, schema_name: str
-) -> int:
+    session: Session, schema_name: str, *, strict: bool = True
+) -> RlsReconcileCounts:
     """Enable Row-Level Security on every patient-scoped table in the schema.
 
     Two policy shapes, picked by what columns the table has:
@@ -1417,9 +1453,25 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
     is how a table added by a revision — or a registration that changed
     shape — reaches practices that already existed.
 
-    Returns the number of tables whose row-level security state it set:
-    the schema's tenant tables carrying one of the scoping columns. Zero
-    for the template schema and for a schema with no such table.
+    ``strict`` decides what happens to a table the engine does not know
+    (absent from the ORM and from both registration seams — see
+    ``engine_known_tenant_tables``):
+
+    * ``True`` — provisioning. Every table carrying a scoping column is
+      policied or the call raises. A practice schema at provisioning time
+      holds the engine's tables and nothing else, so an unrecognised one
+      there is a new engine table whose author forgot a policy branch,
+      and failing loudly is the point.
+    * ``False`` — the migrate fan-out over live schemas. A table the
+      engine does not know was put there by a layer above it, after
+      provisioning; its isolation boundary is not the engine's to
+      decide. It is skipped with one warning line and counted, and it
+      never fails the practice. The engine's own tables keep the strict
+      treatment either way: a new one with no policy branch still raises.
+
+    Returns the tables whose row-level security state it set and the ones
+    it passed over. Both zero for the template schema and for a schema
+    with no scoping-column table.
     """
     import logging
 
@@ -1428,7 +1480,7 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
     _validate_schema_name(schema_name)
     if schema_name == DEFAULT_PRACTICE_SCHEMA:
         logger.info("Skipping RLS on template schema '%s'", schema_name)
-        return 0
+        return RlsReconcileCounts(applied=0, skipped=0)
 
     # One query per schema; gives us {table_name: {columns...}} and lets
     # us pick the right policy shape per table.
@@ -1446,7 +1498,7 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
     # say what the table actually has.
     column_rows = session.execute(
         text(
-            "SELECT table_name, column_name FROM information_schema.columns "
+            "SELECT table_name, column_name, data_type FROM information_schema.columns "
             "WHERE table_schema = :schema AND table_name != 'alembic_version'"
         ),
         {"schema": schema_name},
@@ -1454,8 +1506,18 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
 
     scoping_columns = {"user_id", "patient_id", "id"}
     all_columns: dict[str, set[str]] = {}
-    for table_name, column_name in column_rows:
+    # The SQL type of each table's patient-scoping column. The clinician
+    # arm compiles to ``has_patient_access(patient_id, …)``, which is
+    # defined for ``uuid`` — a table whose column is text has no such
+    # overload, and the CREATE POLICY dies with ``function
+    # has_patient_access(character varying, text) does not exist``, taking
+    # the whole schema with it. A type name, never a value: nothing read
+    # out of a row goes near this dict or the warning it feeds.
+    scoping_column_types: dict[str, str] = {}
+    for table_name, column_name, data_type in column_rows:
         all_columns.setdefault(table_name, set()).add(column_name)
+        if column_name == "patient_id":
+            scoping_column_types[table_name] = data_type
     tables: dict[str, set[str]] = {
         table_name: columns
         for table_name, columns in all_columns.items()
@@ -1467,7 +1529,7 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
             "No tables with user_id or patient_id in schema '%s' — nothing to do",
             schema_name,
         )
-        return 0
+        return RlsReconcileCounts(applied=0, skipped=0)
 
     # `patient_clinicians` is the access table itself — applying the
     # access-function policy to its own backing table would cause an
@@ -1498,11 +1560,37 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
     # noticing it was supposed to be there.
     patient_scoped_applied: set[str] = set()
 
+    # Tables this pass deliberately left alone. Kept so the post-loop
+    # registration check below doesn't read a skip as a missing grant,
+    # and so the caller can log how many there were.
+    skipped: set[str] = set()
+    engine_known = engine_known_tenant_tables()
+
     for table_name, columns in tables.items():
         qualified = f"{schema_name}.{table_name}"
         if table_name in not_row_scoped:
             session.execute(text(f"ALTER TABLE {qualified} DISABLE ROW LEVEL SECURITY"))
             logger.info("RLS intentionally not applied to %s (not row-scoped)", qualified)
+            continue
+        if not strict and table_name not in engine_known:
+            # Another layer's table, created after provisioning. The
+            # engine cannot tell whether it is row-scoped, so it says so
+            # once and moves on rather than guessing a policy or failing
+            # the practice over a table that is not its own.
+            logger.warning("rls reconcile: skipped unknown table %s", qualified)
+            skipped.add(table_name)
+            continue
+        sql_type = scoping_column_types.get(table_name)
+        if sql_type is not None and sql_type != "uuid":
+            message = (
+                f"{qualified}: patient_id is {sql_type}, not uuid — "
+                f"has_patient_access has no overload for it, so the row policy "
+                f"cannot be created"
+            )
+            if strict:
+                raise RuntimeError(f"enable_rls_on_schema: {message}")
+            logger.warning("rls reconcile: skipped %s", message)
+            skipped.add(table_name)
             continue
         session.execute(text(f"ALTER TABLE {qualified} ENABLE ROW LEVEL SECURITY"))
         session.execute(text(f"ALTER TABLE {qualified} FORCE ROW LEVEL SECURITY"))
@@ -1848,7 +1936,13 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
     registered_here = {
         table_name
         for table_name in PATIENT_READABLE_TABLES
-        if table_name in tables and table_name not in not_row_scoped
+        if table_name in tables
+        and table_name not in not_row_scoped
+        # A registered table skipped above was skipped for a reason this
+        # run already warned about, and the warning is the report. Re-
+        # raising here would turn a table the engine chose to leave alone
+        # back into a failed practice.
+        and table_name not in skipped
     }
     skipped = registered_here - patient_scoped_applied
     unreachable = {
@@ -1865,7 +1959,7 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
         )
 
     session.commit()
-    return len(tables)
+    return RlsReconcileCounts(applied=len(tables) - len(skipped), skipped=len(skipped))
 
 
 def rls_forced_tenant_tables() -> set[str]:

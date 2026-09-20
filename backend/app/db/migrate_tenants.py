@@ -53,6 +53,7 @@ from sqlalchemy.orm import Session
 from . import (
     DEFAULT_PRACTICE_SCHEMA,
     PLATFORM_SCHEMA,
+    RlsReconcileCounts,
     _validate_schema_name,
     enable_rls_on_schema,
 )
@@ -103,21 +104,30 @@ class _AlembicRunner(Protocol):
 
 
 class _RlsReconciler(Protocol):
-    """Callable that re-applies row policies to one schema, returning a count.
+    """Callable that re-applies row policies to one schema, returning counts.
 
     Extracted for the same reason as :class:`_AlembicRunner`: the fan-out's
     own logic can then be tested without a database.
     """
 
-    def __call__(self, engine: Engine, schema: str) -> int: ...
+    def __call__(self, engine: Engine, schema: str) -> RlsReconcileCounts: ...
 
 
-def reconcile_tenant_rls(engine: Engine, schema: str) -> int:
-    """Re-apply row-level security to one tenant schema; return tables touched.
+def reconcile_tenant_rls(engine: Engine, schema: str) -> RlsReconcileCounts:
+    """Re-apply row-level security to one live tenant schema.
 
     Runs ``enable_rls_on_schema`` on its own session, with the tenant
     schema on the search path so the policy bodies referencing
     ``has_patient_access`` resolve — the same posture provisioning uses.
+
+    ``strict=False``, which is the whole difference between this path and
+    provisioning. A live practice schema holds tables the engine never
+    created: a deployment layered on top adds its own after provisioning,
+    and they are absent from the ORM and from both registration seams. The
+    engine cannot know what isolates them, so it leaves them alone and says
+    so, rather than guessing a policy or failing the practice over a table
+    that is not its own. Its own tables are still policed strictly.
+
     Raises whatever the reconcile raises; the fan-out turns that into a
     FAILED tenant.
     """
@@ -126,7 +136,7 @@ def reconcile_tenant_rls(engine: Engine, schema: str) -> int:
         # Operator job: schema validated by _validate_schema_name(); not web-reachable.
         # nosemgrep
         session.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
-        return enable_rls_on_schema(session, schema)
+        return enable_rls_on_schema(session, schema, strict=False)
 
 
 def list_active_tenant_schemas(engine: Engine) -> list[str]:
@@ -278,21 +288,27 @@ def _reconcile_one(
     engine: Engine,
     schema: str,
     result: TenantResult,
-    reconciler: Callable[[Engine, str], int],
+    reconciler: Callable[[Engine, str], RlsReconcileCounts],
 ) -> TenantResult:
     """Reconcile one schema's row policies; fold the outcome into ``result``.
 
     A successful reconcile leaves the upgrade's own result alone and logs
-    what it touched. A failure replaces it, because the alternative is a
-    fan-out that exits 0 over a tenant carrying an unprotected table.
+    what it touched and what it passed over. A failure replaces it,
+    because the alternative is a fan-out that exits 0 over a tenant
+    carrying an unprotected table.
     """
     try:
-        tables = reconciler(engine, schema)
+        counts = reconciler(engine, schema)
     except Exception as exc:
         logger.exception("tenant %s RLS reconcile failed", schema)
         return TenantResult(schema, TenantStatus.FAILED, f"RLS reconcile failed: {exc}")
 
-    logger.info("tenant=%s rls_reconciled tables=%d", schema, tables)
+    logger.info(
+        "tenant=%s rls_reconciled tables=%d skipped=%d",
+        schema,
+        counts.applied,
+        counts.skipped,
+    )
     return result
 
 
@@ -336,7 +352,9 @@ def fan_out(
     else:
         effective_runner = runner
 
-    effective_reconciler: Callable[[Engine, str], int] = reconciler or reconcile_tenant_rls
+    effective_reconciler: Callable[[Engine, str], RlsReconcileCounts] = (
+        reconciler or reconcile_tenant_rls
+    )
 
     def _run_one(schema: str) -> TenantResult:
         result = effective_runner(engine, schema)
