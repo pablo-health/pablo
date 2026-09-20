@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, cast
 from sqlalchemy import String, Uuid, bindparam, func, or_, select, text, update
 
 from ...db.models import AppointmentRow, PatientClinicianRow
+from ...models.patient_facing import PatientAppointmentResponse
 from ...scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from ...scheduling_engine.repositories.appointment import AppointmentRepository
 from ...utcnow import utc_now
@@ -22,6 +23,24 @@ if TYPE_CHECKING:
 _HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindparams(
     bindparam("pid", type_=Uuid(as_uuid=False)),
     bindparam("uid", type_=String()),
+)
+
+#: What :meth:`PostgresAppointmentRepository.list_for_patient_principal`
+#: selects. Named columns rather than the mapped class, so a column added to
+#: ``appointments`` later is not read by a patient-facing query by default —
+#: which is the whole control, since row-level security cannot express it.
+PATIENT_FACING_COLUMNS = (
+    AppointmentRow.id,
+    AppointmentRow.start_at,
+    AppointmentRow.end_at,
+    AppointmentRow.duration_minutes,
+    AppointmentRow.status,
+    AppointmentRow.session_type,
+    AppointmentRow.video_link,
+    AppointmentRow.video_platform,
+    AppointmentRow.recurrence_rule,
+    AppointmentRow.recurring_appointment_id,
+    AppointmentRow.late_cancellation,
 )
 
 
@@ -140,7 +159,7 @@ class PostgresAppointmentRepository(AppointmentRepository):
         )
         return [_row_to_appointment(r) for r in rows]
 
-    def list_for_patient_principal(self, patient_id: str) -> list[Appointment]:
+    def list_for_patient_principal(self, patient_id: str) -> list[PatientAppointmentResponse]:
         """A patient's own appointments, read as the patient.
 
         The ``patient_id`` predicate here is the primary isolation, not a
@@ -149,17 +168,35 @@ class PostgresAppointmentRepository(AppointmentRepository):
         row policies at all, so a route that leaned on RLS alone would be
         unscoped there. The caller passes an id that came from the
         authenticated principal, never from the request.
+
+        Columns, not the row. RLS is row-level and cannot withhold the visit
+        coding, the clinician's note or the sync internals from a principal
+        entitled to the row, so this is the only place they are kept back. The
+        list is :data:`PATIENT_FACING_COLUMNS`, which
+        ``test_patient_facing_columns.py`` pins to the decisions recorded in
+        ``app.models.patient_facing``.
         """
-        rows = (
-            self._session.execute(
-                select(AppointmentRow)
-                .where(AppointmentRow.patient_id == patient_id)
-                .order_by(AppointmentRow.start_at)
+        rows = self._session.execute(
+            select(*PATIENT_FACING_COLUMNS)
+            .where(AppointmentRow.patient_id == patient_id)
+            .order_by(AppointmentRow.start_at)
+        ).all()
+        return [
+            PatientAppointmentResponse(
+                id=row.id,
+                start_at=row.start_at,
+                end_at=row.end_at,
+                duration_minutes=row.duration_minutes,
+                status=row.status,
+                session_type=row.session_type,
+                video_link=row.video_link,
+                video_platform=row.video_platform,
+                recurrence_rule=row.recurrence_rule,
+                recurring_appointment_id=row.recurring_appointment_id,
+                late_cancellation=row.late_cancellation,
             )
-            .scalars()
-            .all()
-        )
-        return [_row_to_appointment(r) for r in rows]
+            for row in rows
+        ]
 
     def get_by_session_ids(self, session_ids: list[str], user_id: str) -> dict[str, Appointment]:
         if not session_ids:
