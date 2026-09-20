@@ -61,6 +61,22 @@ export function sha256(body: Buffer): string {
 }
 
 /**
+ * The same file in the shape `page.setInputFiles` takes, for a spec that
+ * drives a real file picker rather than calling the routes.
+ *
+ * The declared type travels with it: the browser reads `file.type` when it
+ * asks for an upload target, so a spec proving what happens to a file that
+ * is not the kind of file it claims sets that here.
+ */
+export function toInputFile(file: UploadFile): {
+  name: string
+  mimeType: string
+  buffer: Buffer
+} {
+  return { name: file.name, mimeType: file.mimeType, buffer: file.body }
+}
+
+/**
  * Execute an upload recipe against the store and return its response status.
  *
  * `PUT` sends the raw body with the signed headers attached. `POST` sends

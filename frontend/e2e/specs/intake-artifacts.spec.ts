@@ -18,17 +18,19 @@
  * never calls save for these types — so it is driven directly at the route,
  * which is where the refusal lives.
  *
- * **What this spec does NOT cover, and why.** The upload round-trip itself
- * — choose a file, it lands in storage, the question goes green — needs an
- * object store, and this compose stack has none: no bucket is configured,
- * and `LocalFileStorage` cannot mint the browser-direct URLs the upload
- * path is built on. So the first press of "Take a photo" answers 503 here.
- * Everything up to that press is proved below; the round trip is proved at
- * the route layer (`backend/tests/test_patient_intake_artifacts_api.py`),
- * at the database layer
- * (`backend/tests_integration/database/test_patient_intake_artifacts_rls.py`)
- * and in the renderers' own tests. Adding an object store to this stack is
- * the next task, and it unlocks the other half of this file.
+ * **And the round trip, now that the stack has an object store.** A patient
+ * chooses three files at three real pickers, each one goes to storage
+ * directly against a signed URL, the form goes from two questions
+ * outstanding to ready, and the practice reads back the same bytes. That
+ * chain crosses a browser, an API, and a store, and no other layer's tests
+ * can see all three at once: the route layer
+ * (`backend/tests/test_patient_intake_artifacts_api.py`) and the database
+ * layer (`backend/tests_integration/database/test_patient_intake_artifacts_rls.py`)
+ * each see their own end of it.
+ *
+ * So the comparison is a SHA-256 rather than "a file appeared". An upload
+ * that truncated, re-encoded, or attached the back of the card where the
+ * front belonged would still produce three rows.
  *
  * Both factors come from the stand-in their channel is wired to: the link
  * out of the mail server, the step-up code out of the text-message gateway.
@@ -40,6 +42,7 @@ import type { ApiClient } from "../fixtures/api"
 import { firstLink, mail } from "../fixtures/mail"
 import { givePatient } from "../fixtures/scenarios"
 import { sms, stepUpCode } from "../fixtures/sms"
+import { fixtureFile, sha256, toInputFile } from "../fixtures/upload"
 
 interface IntakeVersion {
   id: string
@@ -67,7 +70,7 @@ interface Assignment {
   id: string
   status: string
   progress: { complete: boolean; missing: string[] }
-  artifacts?: { id: string; item_id: string; side: string | null }[]
+  artifacts?: { id: string; item_id: string; side: string | null; document_id: string }[]
 }
 
 const CARD_QUESTION = "A photo of your insurance card"
@@ -258,5 +261,130 @@ test.describe("intake artifacts", () => {
       `/api/patients/${patient.id}/intake-assignments/${assigned.id}`,
     )
     expect(stillOpen.progress.missing).toContain(cardItem.id)
+  })
+
+  test("the files a patient chooses reach the practice unchanged", async ({ api, page }) => {
+    const suffix = Date.now().toString(36)
+    const email = `round-trip-${suffix}@example.com`
+    const phone = `+1555${`${Date.now()}`.slice(-7)}`
+
+    const front = fixtureFile("insurance-card.png", "image/png")
+    const back = fixtureFile("insurance-card-back.png", "image/png")
+    const records = fixtureFile("records.pdf", "application/pdf")
+
+    const patient = await givePatient(api, { email, phone, date_of_birth: "1990-06-21" })
+    const version = await publishFileForm(api)
+    const cardItem = version.items.find((item) => item.item_type === "insurance_card")!
+    const recordsItem = version.items.find((item) => item.item_type === "document_request")!
+
+    const assigned = await api.post<Assignment>(
+      `/api/patients/${patient.id}/intake-assignments`,
+      { version_id: version.id },
+    )
+    await signIn(api, page, patient.id, email, phone)
+
+    await expect(page.getByTestId("forms-list-state")).toContainText("2 questions left")
+    await page.getByTestId("forms-list-open").click()
+
+    // --- the card, one side at a time -------------------------------------
+    // The input is the real one behind the button, so the three calls the
+    // slot makes are the three a person's press makes: ask where to put it,
+    // put it there, say which question it answers.
+    await page.getByTestId("forms-upload-front-input").setInputFiles(toInputFile(front))
+    await expect(page.getByTestId("forms-upload-front-sent")).toBeVisible()
+
+    await page.getByTestId("forms-upload-back-input").setInputFiles(toInputFile(back))
+    await expect(page.getByTestId("forms-upload-back-sent")).toBeVisible()
+
+    await page.getByTestId("forms-continue").click()
+
+    // --- the document request ---------------------------------------------
+    await expect(page.getByRole("heading", { name: RECORDS_QUESTION })).toBeVisible()
+    await page.getByTestId("forms-upload-input").setInputFiles(toInputFile(records))
+    await expect(page.getByTestId("forms-upload-sent")).toBeVisible()
+
+    await page.getByTestId("forms-continue").click()
+    await expect(page.getByTestId("forms-review")).toBeVisible()
+
+    // Completion flips, and the server is what says so — the same read that
+    // named both questions as outstanding before anything was sent.
+    const ready = await api.get<Assignment>(
+      `/api/patients/${patient.id}/intake-assignments/${assigned.id}`,
+    )
+    expect(ready.progress.complete).toBe(true)
+    expect(ready.progress.missing).toEqual([])
+
+    await page.getByTestId("forms-submit").click()
+    await expect(page.getByTestId("forms-receipt-code")).toHaveText(/^[2-9A-HJ-NP-TV-Z]{8}$/)
+
+    // --- what the practice has ---------------------------------------------
+    const submitted = await api.get<Assignment>(
+      `/api/patients/${patient.id}/intake-assignments/${assigned.id}`,
+    )
+    expect(submitted.status).toBe("submitted")
+    const artifacts = submitted.artifacts ?? []
+    expect(artifacts).toHaveLength(3)
+
+    const cardFront = artifacts.find((a) => a.item_id === cardItem.id && a.side === "front")!
+    const cardBack = artifacts.find((a) => a.item_id === cardItem.id && a.side === "back")!
+    const record = artifacts.find((a) => a.item_id === recordsItem.id)!
+    expect(cardFront, "the front of the card is on the chart").toBeDefined()
+    expect(cardBack, "and the back, separately").toBeDefined()
+    expect(record.side, "a document request has no sides").toBeNull()
+
+    // Both faces are compared, not just one: they are different bytes, so a
+    // pair attached the wrong way round passes a count and fails a hash.
+    for (const [artifact, sent] of [
+      [cardFront, front],
+      [cardBack, back],
+      [record, records],
+    ] as const) {
+      const link = await api.get<{ url: string }>(`/api/documents/${artifact.document_id}/file`)
+      const fetched = await page.request.get(link.url)
+      expect(fetched.status(), `the practice can fetch ${sent.name}`).toBe(200)
+      expect(sha256(await fetched.body()), `${sent.name} survived the round trip`).toBe(
+        sha256(sent.body),
+      )
+    }
+  })
+
+  test("a file that is not the kind of file it claims is refused", async ({ api, page }) => {
+    const suffix = Date.now().toString(36)
+    const email = `wrong-type-${suffix}@example.com`
+    const phone = `+1555${`${Date.now()}`.slice(-7)}`
+
+    const patient = await givePatient(api, { email, phone, date_of_birth: "1983-02-17" })
+    const version = await publishFileForm(api)
+    const cardItem = version.items.find((item) => item.item_type === "insurance_card")!
+
+    const assigned = await api.post<Assignment>(
+      `/api/patients/${patient.id}/intake-assignments`,
+      { version_id: version.id },
+    )
+    await signIn(api, page, patient.id, email, phone)
+    await page.getByTestId("forms-list-open").click()
+
+    // Named .png and declared image/png, so the picker's filter, the signed
+    // URL and the storage service all wave it through. What catches it is
+    // the server reading the stored file's opening bytes.
+    await page.getByTestId("forms-upload-front-input").setInputFiles({
+      name: "card.png",
+      mimeType: "image/png",
+      buffer: Buffer.from("this is not a picture of anything"),
+    })
+
+    await expect(page.getByTestId("forms-upload-front-error")).toBeVisible()
+    await expect(page.getByTestId("forms-upload-front-error")).not.toBeEmpty()
+    // The slot goes back to asking, rather than showing a file as sent.
+    await expect(page.getByTestId("forms-upload-front-choose")).toBeVisible()
+    await expect(page.getByTestId("forms-upload-front-sent")).toHaveCount(0)
+
+    // And nothing reached the chart: the question is as outstanding as it
+    // was, and no file is attached to the form.
+    const stillOpen = await api.get<Assignment>(
+      `/api/patients/${patient.id}/intake-assignments/${assigned.id}`,
+    )
+    expect(stillOpen.progress.missing).toContain(cardItem.id)
+    expect(stillOpen.artifacts).toEqual([])
   })
 })
