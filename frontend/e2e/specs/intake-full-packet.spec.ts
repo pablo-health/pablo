@@ -545,8 +545,12 @@ test.describe("intake, assignment through accepted export", () => {
     await questionBox().fill(HEARD_QUESTION)
     await forms.getByRole("button", { name: "Add an answer" }).click()
     await forms.getByRole("button", { name: "Add an answer" }).click()
-    await forms.getByLabel("Answer 1").fill("My doctor")
-    await forms.getByLabel("Answer 2").fill("I searched for one")
+    // By role, not by label: each answer's box and the button that removes
+    // it are both labelled for the same answer, so a label alone matches two.
+    await forms.getByRole("textbox", { name: "Answer 1", exact: true }).fill("My doctor")
+    await forms
+      .getByRole("textbox", { name: "Answer 2", exact: true })
+      .fill("I searched for one")
 
     // One the portal has no screen for, marked optional so the form can
     // still be handed in. The practice writes this one down in the room.
@@ -1175,10 +1179,12 @@ test.describe("intake, assignment through accepted export", () => {
    * revising its consent cannot end up holding a signature against words
    * nobody was shown.
    *
-   * Two copies of one form on one chart, so the control and the refusal are
-   * the same question asked twice — once before the revision and once
-   * after — rather than two different forms that might differ in some other
-   * way.
+   * Two forms rather than two copies of one, because there is no such thing
+   * as two copies of one: asking for the same version twice hands back the
+   * assignment that is already live, so nobody is left holding two of the
+   * same form. Both are published before the revision, so both pin the same
+   * wording, and the only difference between them is which one was signed
+   * while that wording was current.
    */
   test("a document revised after it was pinned asks for a fresh signature @portal", async ({
     api,
@@ -1187,17 +1193,19 @@ test.describe("intake, assignment through accepted export", () => {
     const { email, phone } = givePortalContactDetails()
     const patient = await givePatient(api, { email, phone, date_of_birth: "1987-02-09" })
     const document = await publishDocument(api)
-    const version = await publishConsentForm(api, document.document_key, true)
-    const consent = itemOf(version, "consent")
+    // Both published now, so both pin the wording that is current now.
+    const signedForm = await publishConsentForm(api, document.document_key, true)
+    const staleForm = await publishConsentForm(api, document.document_key, true)
 
     const first = await api.post<Assignment>(
       `/api/patients/${patient.id}/intake-assignments`,
-      { version_id: version.id },
+      { version_id: signedForm.id },
     )
     const second = await api.post<Assignment>(
       `/api/patients/${patient.id}/intake-assignments`,
-      { version_id: version.id },
+      { version_id: staleForm.id },
     )
+    expect(second.id, "two forms, so two forms to fill in").not.toBe(first.id)
 
     await page.setViewportSize(PHONE)
     await signInToPortal(page, await nextInvitation(api, patient.id, email, phone))
