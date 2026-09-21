@@ -6,8 +6,9 @@
  * `onboardedUser` (once per worker): create-or-reuse this worker slot's
  * clinician on the Firebase Auth emulator (see `workerClinician` for why the
  * address is fixed rather than generated), sign in through the product's real
- * /login page so the login flow itself is under test once per run, and save
- * the browser state —
+ * /login page so the login flow itself is under test once per run, clear the
+ * diary that account is carrying (see `clearDiary`), and save the browser
+ * state —
  * cookies for the server-rendered pages, IndexedDB for the Firebase SDK's
  * persisted session.
  *
@@ -99,6 +100,42 @@ function workerClinician(parallelIndex: number): { email: string; password: stri
   }
 }
 
+/**
+ * Hand the worker the empty diary a brand-new account used to arrive with.
+ *
+ * Reusing the slot's clinician is what keeps the practice's owner stable, and
+ * it would otherwise hand each worker whatever the last one left behind. That
+ * matters because specs were written against a fresh account: one books a
+ * session minutes from now and needs no working hours standing in the way,
+ * another seeds a day's hours and counts the openings it gets back — a second
+ * rule for the same day offers every opening twice.
+ *
+ * Availability rules and the diary are what a restart used to clear and what
+ * these specs actually read, so they are what is cleared here. Everything
+ * else already accumulates across a run, because every test in a worker
+ * shares this account whether or not anything restarted.
+ *
+ * Deleting an appointment cancels it, which is enough: a cancelled hour
+ * conflicts with nothing and belongs to a patient no later test shares.
+ * On the first start of a run the account is new and this finds nothing.
+ */
+async function clearDiary(api: ApiClient): Promise<void> {
+  const rules = await api.get<{ data: { id: string }[] }>("/api/availability/rules")
+  for (const rule of rules.data) {
+    await api.delete(`/api/availability/rules/${rule.id}`)
+  }
+
+  const year = 365 * 24 * 60 * 60 * 1000
+  const from = new Date(Date.now() - year).toISOString()
+  const until = new Date(Date.now() + year).toISOString()
+  const diary = await api.get<{ data: { id: string; status: string }[] }>(
+    `/api/appointments?start=${encodeURIComponent(from)}&end=${encodeURIComponent(until)}`,
+  )
+  for (const appointment of diary.data) {
+    if (appointment.status !== "cancelled") await api.delete(`/api/appointments/${appointment.id}`)
+  }
+}
+
 export const test = base.extend<TestFixtures, WorkerFixtures>({
   onboardedUser: [
     async ({ browser }, provide, workerInfo) => {
@@ -117,6 +154,8 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       const storageStatePath = path.join(AUTH_STATE_DIR, `user-${workerInfo.parallelIndex}.json`)
       await context.storageState({ path: storageStatePath, indexedDB: true })
       await context.close()
+
+      await clearDiary(await ApiClient.forUser(email, password))
 
       await provide({ email, password, uid, storageStatePath })
     },
