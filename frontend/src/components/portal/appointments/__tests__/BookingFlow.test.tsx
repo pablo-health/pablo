@@ -25,6 +25,8 @@ import {
 
 vi.mock("@/lib/api/patientAppointments")
 
+type SlotsResult = Awaited<ReturnType<typeof api.getPatientSlots>>
+
 const TOKEN = "session-token"
 const NOW = new Date("2026-09-20T12:00:00Z")
 const ZONE = "America/New_York"
@@ -197,5 +199,32 @@ describe("BookingFlow", () => {
     // And one day out is the edge the server enforces too.
     expect(screen.getByTestId("appointments-slots-next")).toBeDisabled()
     expect(screen.getByTestId("appointments-slots-prev")).not.toBeDisabled()
+  })
+
+  it("stops offering a day the moment the picker leaves it", async () => {
+    const user = userEvent.setup()
+    // The first day answers; the second is held in flight, which is when a
+    // grid left on screen would be offering times from the day just left.
+    let answerSecondDay: (result: SlotsResult) => void = () => {}
+    vi.mocked(api.getPatientSlots)
+      .mockResolvedValueOnce({ ok: true, data: [slot] })
+      .mockImplementationOnce(
+        () =>
+          new Promise<SlotsResult>((resolve) => {
+            answerSecondDay = resolve
+          }),
+      )
+    renderFlow()
+
+    await screen.findByTestId("appointments-slot")
+    await user.click(screen.getByTestId("appointments-slots-next"))
+
+    // The heading has moved, so nothing under it still belongs to the day left.
+    expect(screen.getByTestId("appointments-slots-day")).toHaveTextContent("September 21")
+    expect(screen.queryByTestId("appointments-slot")).not.toBeInTheDocument()
+    expect(screen.getByTestId("appointments-slots-loading")).toBeInTheDocument()
+
+    answerSecondDay({ ok: true, data: [] })
+    expect(await screen.findByTestId("appointments-slots-empty")).toBeInTheDocument()
   })
 })
