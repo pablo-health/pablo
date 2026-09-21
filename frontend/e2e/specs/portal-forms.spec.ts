@@ -118,6 +118,45 @@ const SLEEP_QUESTION = "How have you been sleeping lately?"
 const SLEEP_HELP = "A sentence or two is plenty."
 const MORNINGS_QUESTION = "How do you get going in the mornings?"
 
+const CONTACT_QUESTION = "Who should we call in an emergency?"
+const CONTACT_HELP = "Someone we can reach if we can't reach you."
+const CONTACT = { name: "Ada Lovelace", relationship: "Sister", phone: "555 0123" }
+
+/**
+ * Publish a form whose only question is the standard contact block.
+ *
+ * On its own rather than added to the authored form above, so the counts
+ * and the review assertions there keep saying what they were written to
+ * say. The practice writes the question, which is why one is passed: the
+ * block is three fixed fields under a sentence they chose.
+ */
+async function publishContactForm(api: ApiClient): Promise<string> {
+  const template = await api.post<IntakeTemplate>("/api/intake/templates", {
+    name: `Emergency contact ${Date.now().toString(36)}`,
+  })
+  const draftId = template.versions[0].id
+
+  await api.put<IntakeVersionDetail>(
+    `/api/intake/templates/${template.id}/versions/${draftId}/items`,
+    {
+      items: [
+        {
+          key: "contact",
+          item_type: "emergency_contact",
+          label: CONTACT_QUESTION,
+          help_text: CONTACT_HELP,
+        },
+      ],
+    },
+  )
+
+  const published = await api.post<IntakeVersionDetail>(
+    `/api/intake/templates/${template.id}/versions/${draftId}/publish`,
+  )
+  expect(published.published_at).not.toBeNull()
+  return published.id
+}
+
 /**
  * Invite a patient and sign them in through the shell, as the patient does:
  * open the link the email carried, type the code the text carried.
@@ -276,5 +315,56 @@ test.describe("portal forms", () => {
     )
     expect(onChart.status).toBe("submitted")
     expect(onChart.items.map((item) => item.label)).toEqual([SLEEP_QUESTION, MORNINGS_QUESTION])
+  })
+
+  test("a patient gives the practice someone to call", async ({ api, page }) => {
+    const suffix = Date.now().toString(36)
+    const email = `contact-${suffix}@example.com`
+    const phone = `+1555${`${Date.now()}`.slice(-7)}`
+
+    const patient = await givePatient(api, { email, phone, date_of_birth: "1979-11-05" })
+    const versionId = await publishContactForm(api)
+
+    const assigned = await api.post<Assignment>(
+      `/api/patients/${patient.id}/intake-assignments`,
+      { version_id: versionId },
+    )
+
+    await signIn(api, page, patient.id, email, phone)
+    await expect(page.getByTestId("forms-list-state")).toContainText("1 question left")
+    await page.getByTestId("forms-list-open").click()
+
+    // The practice's own sentence above three fixed fields.
+    await expect(page.getByRole("heading", { name: CONTACT_QUESTION })).toBeVisible()
+    await expect(page.getByTestId("forms-question-help")).toHaveText(CONTACT_HELP)
+
+    // A name and no number is a question still to finish, and which field
+    // is missing is the server's answer rather than this browser's.
+    await page.getByTestId("forms-contact-name").fill(CONTACT.name)
+    await page.getByTestId("forms-continue").click()
+    await expect(page.getByTestId("forms-item-error")).toContainText(
+      "Their phone number is still blank.",
+    )
+
+    await page.getByTestId("forms-contact-relationship").fill(CONTACT.relationship)
+    await page.getByTestId("forms-contact-phone").fill(CONTACT.phone)
+    await page.getByTestId("forms-continue").click()
+
+    // The review screen reads the contact back, so it can be checked.
+    await expect(page.getByTestId("forms-review")).toContainText(CONTACT_QUESTION)
+    await expect(page.getByTestId("forms-review")).toContainText(
+      `${CONTACT.name} · ${CONTACT.relationship} · ${CONTACT.phone}`,
+    )
+    await page.getByTestId("forms-submit").click()
+    await expect(page.getByTestId("forms-receipt-code")).toHaveText(/^[2-9A-HJ-NP-TV-Z]{8}$/)
+
+    // What the chart holds is the block, under the three keys the save
+    // route stores it by.
+    const onChart = await api.get<{
+      status: string
+      items: { key: string; value: Record<string, unknown> | null }[]
+    }>(`/api/patients/${patient.id}/intake-assignments/${assigned.id}`)
+    expect(onChart.status).toBe("submitted")
+    expect(onChart.items[0].value).toEqual(CONTACT)
   })
 })
