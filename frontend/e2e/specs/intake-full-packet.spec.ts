@@ -531,10 +531,14 @@ test.describe("intake, assignment through accepted export", () => {
     await questionBox().fill(CONSENT_QUESTION)
     await pick("Which document", document.title)
 
-    // A card, both sides, and the plan in words as well as in a photograph.
+    // A card, and the plan in words as well as in a photograph.
+    //
+    // One photograph rather than two, because two is what the picker already
+    // shows: choosing the value a control is resting on changes nothing and
+    // writes nothing, so it would prove nothing about the picker either.
     await addQuestion("Insurance card")
     await questionBox().fill(CARD_QUESTION)
-    await pick("How many photos", "Front and back")
+    await pick("How many photos", "Front only")
     await forms.getByLabel("Also ask them to type the plan details").check()
 
     // Anything else the practice needs back.
@@ -620,7 +624,7 @@ test.describe("intake, assignment through accepted export", () => {
 
     const card = published.items[4]
     expect(card.label).toBe(CARD_QUESTION)
-    expect(card.config.sides).toBe("both")
+    expect(card.config.sides, "the practice narrowed it to one photograph").toBe("front")
     expect(card.config.collect_fields).toBe(true)
 
     const heard = published.items[6]
