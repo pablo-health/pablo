@@ -96,6 +96,46 @@ async function diaryOnceItHolds(
   return diaryFor(api, patientId)
 }
 
+/** How far past the day the picker opens on the walk below will look. */
+const WALK_LIMIT_DAYS = 10
+
+/**
+ * Walk the picker forward until a day offers an opening, and answer how many
+ * days that took.
+ *
+ * Counting days to the practice's notice period instead would make the
+ * journey depend on two things it is not about: a policy the practice is free
+ * to change, and what time of day the run happens to start. Both have to be
+ * right for a fixed number of clicks to land somewhere bookable, and when
+ * they are not the failure arrives as an empty grid several steps later.
+ *
+ * Asking the picker keeps the assertion about the patient taking an opening
+ * the engine really offered. `skipDays` walks past days the caller already
+ * knows it does not want — the move below wants a day other than the one it
+ * is giving up.
+ */
+async function walkToAnOpening(page: Page, skipDays = 0): Promise<number> {
+  for (let day = 0; day < skipDays; day += 1) {
+    await page.getByTestId("appointments-slots-next").click()
+  }
+
+  for (let day = skipDays; day <= skipDays + WALK_LIMIT_DAYS; day += 1) {
+    const openings = page.getByTestId("appointments-slot")
+    // The day has answered when it says it is empty or draws a grid; until
+    // then it is still loading and counting openings would count nothing.
+    await expect(openings.first().or(page.getByTestId("appointments-slots-empty"))).toBeVisible()
+    if ((await openings.count()) > 0) return day
+    await page.getByTestId("appointments-slots-next").click()
+  }
+
+  throw new Error(
+    `No opening on any day from ${skipDays} to ${skipDays + WALK_LIMIT_DAYS} out. ` +
+      "The practice has hours on every day of the week and self-booking on, so " +
+      "either the notice period now reaches further than this walk, or the " +
+      "openings are being computed for a clinician other than the one seeded.",
+  )
+}
+
 async function diaryFor(api: ApiClient, patientId: string): Promise<ClinicianAppointment[]> {
   const start = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
   const end = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString()
@@ -139,12 +179,7 @@ test.describe("portal appointments", () => {
     await page.getByTestId("portal-appointments-book").click()
     await expect(page.getByTestId("appointments-slot-picker")).toBeVisible()
 
-    // Walk forward past the practice's notice period, which is 24 hours by
-    // default — today and tomorrow are inside it, so the first day that can
-    // offer anything is two out.
-    await page.getByTestId("appointments-slots-next").click()
-    await page.getByTestId("appointments-slots-next").click()
-    await expect(page.getByTestId("appointments-slot").first()).toBeVisible()
+    const bookedDay = await walkToAnOpening(page)
 
     const firstSlot = await page.getByTestId("appointments-slot").first().innerText()
     await page.getByTestId("appointments-slot").first().click()
@@ -176,17 +211,11 @@ test.describe("portal appointments", () => {
     await page.getByTestId("appointments-row-reschedule").click()
     await expect(page.getByTestId("appointments-slot-picker")).toBeVisible()
 
-    // Days further out again, so the new time is a different one. The opening
-    // is taken without reading it first, which is not carelessness: above, the
-    // first two days are inside the notice period and offer nothing, so "wait
-    // until an opening is on screen" genuinely waits for the day walked to.
-    // Here the picker opens on a day that already has openings, the same wait
-    // is satisfied by the grid already there, and text read back can belong to
-    // a day since walked past. Whichever opening is taken, it is not the one
-    // being given up, and that is what the assertions below are about.
-    await page.getByTestId("appointments-slots-next").click()
-    await page.getByTestId("appointments-slots-next").click()
-    await page.getByTestId("appointments-slots-next").click()
+    // A day past the one being given up, so the new time is a different one
+    // whichever opening on it the patient takes. The picker reopens on the day
+    // it first opened on, so the walk starts from there and skips everything
+    // up to and including the booked day.
+    await walkToAnOpening(page, bookedDay + 1)
     await page.getByTestId("appointments-slot").first().click()
 
     await expect(page.getByTestId("appointments-confirm")).toBeVisible()

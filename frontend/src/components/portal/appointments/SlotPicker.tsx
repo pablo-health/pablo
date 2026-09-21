@@ -91,6 +91,19 @@ export function SlotPicker({
   const canGoBack = offset > 0
   const canGoForward = offset < maxHorizonDays
 
+  /**
+   * Move the picker, and stop showing the day being left in the same render.
+   *
+   * The heading changes the moment the day does, while the fetch that
+   * replaces the grid is an effect. Without this the picker spends a frame
+   * offering one day's openings under another day's name — a patient could
+   * click a time that is not on the day they are looking at.
+   */
+  function step(days: number) {
+    setPhase("loading")
+    setDay((current) => addDays(current, days))
+  }
+
   return (
     <div data-testid="appointments-slot-picker" className="space-y-4">
       <div className="flex items-center justify-between gap-2">
@@ -101,7 +114,7 @@ export function SlotPicker({
           disabled={!canGoBack}
           aria-label="Previous day"
           data-testid="appointments-slots-prev"
-          onClick={() => setDay((current) => addDays(current, -1))}
+          onClick={() => step(-1)}
         >
           <ChevronLeft className="size-4" aria-hidden="true" />
         </Button>
@@ -115,7 +128,7 @@ export function SlotPicker({
           disabled={!canGoForward}
           aria-label="Next day"
           data-testid="appointments-slots-next"
-          onClick={() => setDay((current) => addDays(current, 1))}
+          onClick={() => step(1)}
         >
           <ChevronRight className="size-4" aria-hidden="true" />
         </Button>
