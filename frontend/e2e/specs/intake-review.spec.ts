@@ -255,10 +255,10 @@ test.describe("intake review", () => {
     // An accepted form offers neither action, because neither is open to it.
     await expect(settled.getByTestId("intake-review-corrections")).toHaveCount(0)
 
-    const accepted = await api.get<Assignment>(`${chart}/review`)
-    expect(accepted.status).toBe("accepted")
+    await chartPage.close()
 
     const closed = await api.get<Review>(`${chart}/review`)
+    expect(closed.status).toBe("accepted")
     const entered = closed.items.find((item) => item.key === "gad7")
     expect(entered!.provenance).toBe("clinician")
     expect(entered!.superseded_count).toBe(1)
