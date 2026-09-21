@@ -14,6 +14,23 @@ import type { IntakeAssignmentStatus, IntakeReviewEvent, IntakeReviewItem, Intak
 import { useAcceptIntakeAssignment, useEnterIntakeAnswer, useIntakeReview, useRequestIntakeCorrection } from "@/hooks/useIntakeReview"
 
 /**
+ * What each status the server sends means, in a sentence.
+ *
+ * Exported because the chart lists forms beside the one it has open, and a
+ * row and the panel it opens must not describe the same status in two
+ * different ways. Every sentence is about the status the server sent; none
+ * of them is computed here.
+ */
+export const INTAKE_STATUS_TEXT = {
+  assigned: "Sent to the patient.",
+  in_progress: "The patient has started this.",
+  submitted: "Handed in.",
+  needs_correction: "Sent back for corrections.",
+  accepted: "Accepted.",
+  withdrawn: "Withdrawn.",
+} satisfies Record<IntakeAssignmentStatus, string>
+
+/**
  * Every sentence this panel shows, in one block. The status sentences describe
  * the status the server sent, and the two progress sentences come from
  * `progress.complete` — reaching this screen says nothing about whether a form
@@ -24,14 +41,7 @@ const COPY = {
   loading: "Loading this form…",
   loadError: "We couldn't load this form. Try again in a moment.",
   actionError: "That didn't go through. Try again.",
-  status: {
-    assigned: "Sent to the patient.",
-    in_progress: "The patient has started this.",
-    submitted: "Handed in.",
-    needs_correction: "Sent back for corrections.",
-    accepted: "Accepted.",
-    withdrawn: "Withdrawn.",
-  } satisfies Record<IntakeAssignmentStatus, string>,
+  status: INTAKE_STATUS_TEXT,
   progressComplete: "Every question has an answer.",
   outstanding: (n: number) => (n === 1 ? "1 question has no answer." : `${n} questions have no answer.`),
   provenance: { patient: "Patient", clinician: "Entered by practice" },
