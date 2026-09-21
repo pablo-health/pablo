@@ -10,7 +10,7 @@
  * is true of a form with two or three questions on it. What none of them can
  * say is that the whole thing holds together on a real packet — nine
  * questions of eight kinds, two of which are answered by photographing
- * something, one by signing it, one the portal cannot ask at all — and that
+ * something, one by signing it, one nobody has to answer at all — and that
  * a person meeting it on a phone can put it down, come back and finish it.
  *
  * So this is one journey rather than a set of assertions, and the order is
@@ -168,11 +168,12 @@ const NEXT_OF_KIN = {
 /**
  * How many questions on this packet collect something.
  *
- * Eight of the nine. The emergency contact is the ninth and the portal has
- * no screen for it yet, so the walk numbers around it — which is also why
- * the practice ends up writing that one down itself further below.
+ * All nine. Eight of them are required, which is a different count and the
+ * one the list of outstanding questions reports: the emergency contact is
+ * optional here, so nobody is held up by it and the practice writes it down
+ * itself further below.
  */
-const COUNTED = 8
+const COUNTED = 9
 
 /** A phone, because that is where most people meet a form like this. */
 const PHONE = { width: 390, height: 844 }
@@ -203,10 +204,10 @@ async function publishDocument(api: ApiClient): Promise<IntakeDocument> {
  * needs the item ids the publish hands back, which a browser would then have
  * to go looking for.
  *
- * Nine questions of eight kinds. The emergency contact is optional because
- * the portal has no screen for it — a required question nobody can answer is
- * a form nobody can hand in, which is a true thing about this engine and a
- * useless thing to assert forty screens into a journey.
+ * Nine questions of eight kinds. The emergency contact is the one marked
+ * optional, so the walk can leave it for the practice to write down in the
+ * room — which is what gives the clinician-entry route something to answer
+ * that nobody has answered before it.
  */
 async function publishPacket(api: ApiClient, documentKey: string): Promise<IntakeVersionDetail> {
   const template = await api.post<IntakeTemplate>("/api/intake/templates", {
@@ -552,8 +553,8 @@ test.describe("intake, assignment through accepted export", () => {
       .getByRole("textbox", { name: "Answer 2", exact: true })
       .fill("I searched for one")
 
-    // One the portal has no screen for, marked optional so the form can
-    // still be handed in. The practice writes this one down in the room.
+    // The one marked optional, so a form can still be handed in without it.
+    // The practice writes this one down in the room.
     await addQuestion("Emergency contact")
     await questionBox().fill(KIN_QUESTION)
     const mustAnswer = forms.getByRole("switch", { name: "emergency_contact has to be answered" })
@@ -778,11 +779,14 @@ test.describe("intake, assignment through accepted export", () => {
     await page.getByTestId("forms-single-choice").getByRole("radio", { name: "My doctor" }).check()
     await page.getByTestId("forms-continue").click()
 
-    // The one this portal has no screen for. It says so rather than showing
-    // a blank, it is not numbered among the questions, and it does not stop
-    // the form: the practice marked it optional and writes it down later.
-    await expect(page.getByTestId("forms-item-unavailable")).toBeVisible()
-    await expect(page.getByTestId("forms-progress")).toHaveCount(0)
+    // The last one, and the only optional one. It is asked properly, and
+    // leaving it blank does not hold the form up — which is what lets the
+    // practice write this one down in the room further below.
+    await expect(page.getByRole("heading", { name: KIN_QUESTION })).toBeVisible()
+    await expect(page.getByTestId("forms-progress")).toContainText(`Question 9 of ${COUNTED}`)
+    await expect(page.getByTestId("forms-contact-name")).toBeEmpty()
+    await expect(page.getByTestId("forms-contact-relationship")).toBeVisible()
+    await expect(page.getByTestId("forms-contact-phone")).toBeVisible()
     await page.getByTestId("forms-continue").click()
 
     // --- handed in early, and refused ---------------------------------------
@@ -899,7 +903,7 @@ test.describe("intake, assignment through accepted export", () => {
     await page.getByTestId("forms-submit").click()
     await expect(page.getByTestId("forms-receipt-code")).toBeVisible()
 
-    // --- the practice writes down the one the portal cannot ask --------------
+    // --- the practice writes down the one nobody answered -------------------
     await api.post<Assignment>(`${chart}/items/${kin.id}/clinician-entry`, {
       value: NEXT_OF_KIN,
     })
