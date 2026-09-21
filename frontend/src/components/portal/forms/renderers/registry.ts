@@ -8,10 +8,9 @@
  * a practice that puts a question on a form this portal cannot ask yet gets
  * a patient who is told so rather than a blank screen.
  *
- * **Which types are missing is not an oversight.** An emergency contact and
- * a guardian are standard blocks of fields whose screens have not been
- * built, and a form carrying one tells the patient so rather than showing
- * a blank screen.
+ * **Which types are missing is not an oversight.** A guardian is a standard
+ * block of fields whose screen has not been built, and a form carrying one
+ * tells the patient so rather than showing a blank screen.
  *
  * What is here divides into four, and the difference is where the question
  * comes from and who writes its answer. Demographics, reason and a measure
@@ -38,6 +37,7 @@ import { dateRenderer } from "./DateItem"
 import { demographicsRenderer } from "./DemographicsItem"
 import { instructionsRenderer, sectionRenderer, unavailableRenderer } from "./DisplayItem"
 import { documentRequestRenderer } from "./DocumentRequestItem"
+import { emergencyContactRenderer } from "./EmergencyContactItem"
 import { freeTextRenderer } from "./FreeTextItem"
 import { instrumentRenderer } from "./InstrumentItem"
 import { insuranceCardRenderer } from "./InsuranceCardItem"
@@ -60,6 +60,7 @@ const RENDERERS: Record<string, ItemRenderer> = {
   scale: scaleRenderer,
   number: numberRenderer,
   date: dateRenderer,
+  emergency_contact: emergencyContactRenderer,
   consent_document: consentDocumentRenderer,
   insurance_card: insuranceCardRenderer,
   document_request: documentRequestRenderer,

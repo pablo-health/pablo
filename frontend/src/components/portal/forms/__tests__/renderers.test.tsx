@@ -68,12 +68,13 @@ const ROUTE_PROPS = {
 }
 
 describe("the registry", () => {
-  it("draws every question but the two standard blocks still to be built", () => {
+  it("draws every question but the standard block still to be built", () => {
     expect(RENDERED_ITEM_TYPES.sort()).toEqual([
       "consent_document",
       "date",
       "demographics",
       "document_request",
+      "emergency_contact",
       "free_text",
       "instructions",
       "instrument",
@@ -89,7 +90,7 @@ describe("the registry", () => {
   })
 
   it("says a question it cannot ask is a step still to come", () => {
-    renderItem(itemOf("emergency_contact", {}, "Who should we call?"))
+    renderItem(itemOf("guardian", {}, "Who is responsible for them?"))
 
     expect(screen.getByTestId("forms-item-unavailable")).toHaveTextContent(
       "This step will be available soon.",
@@ -100,8 +101,8 @@ describe("the registry", () => {
     // Nothing collects an answer for it and nothing writes one elsewhere,
     // so the walk passes over it entirely — which is what the server does
     // with it too.
-    expect(rendererFor("emergency_contact").answerable).toBe(false)
-    expect(rendererFor("emergency_contact").writesItself).toBeUndefined()
+    expect(rendererFor("guardian").answerable).toBe(false)
+    expect(rendererFor("guardian").writesItself).toBeUndefined()
   })
 
   it("counts the two file-backed questions even though the walk cannot save them", () => {
@@ -215,6 +216,74 @@ describe("instrument", () => {
 
   it("says the step is to come when this deployment sent no wording for it", () => {
     renderItem(itemOf("instrument", { code: "audit" }))
+
+    expect(screen.getByTestId("forms-item-unavailable")).toBeInTheDocument()
+  })
+})
+
+describe("emergency contact", () => {
+  const CONTACT = itemOf("emergency_contact", {}, "Who should we call?", "Someone we can reach.")
+
+  it("asks the practice's own question above the three fields", () => {
+    renderItem(CONTACT)
+
+    expect(screen.getByRole("heading", { name: "Who should we call?" })).toBeInTheDocument()
+    expect(screen.getByTestId("forms-question-help")).toHaveTextContent("Someone we can reach.")
+    expect(screen.getByLabelText("Their name")).toBeInTheDocument()
+    expect(screen.getByLabelText("How you know them")).toBeInTheDocument()
+    expect(screen.getByLabelText("Their phone number")).toBeInTheDocument()
+  })
+
+  it("stores the block under the three keys the save route reads", async () => {
+    const user = userEvent.setup()
+    const { onChange } = renderItem(CONTACT, {
+      name: "Ada Lovelace",
+      relationship: "Sister",
+      phone: "",
+    })
+
+    await user.type(screen.getByTestId("forms-contact-phone"), "5")
+
+    expect(onChange).toHaveBeenCalledWith({
+      name: "Ada Lovelace",
+      relationship: "Sister",
+      phone: "5",
+    })
+  })
+
+  it("sends every field while one is still blank, and judges none of them", async () => {
+    // A half-filled block is a question still to finish. The save route is
+    // what says so, in the same words as the label above the empty box, so
+    // the value goes as it stands rather than being held back here.
+    const user = userEvent.setup()
+    const { onChange } = renderItem(CONTACT)
+
+    await user.type(screen.getByTestId("forms-contact-name"), "A")
+
+    expect(onChange).toHaveBeenCalledWith({ name: "A", relationship: "", phone: "" })
+  })
+
+  it("stops each field at the length the route accepts", () => {
+    renderItem(CONTACT)
+
+    for (const testId of ["forms-contact-name", "forms-contact-relationship", "forms-contact-phone"]) {
+      expect(screen.getByTestId(testId)).toHaveAttribute("maxlength", "200")
+    }
+  })
+
+  it("reads the contact back on the review screen", () => {
+    const renderer = rendererFor("emergency_contact")
+    const answered = { name: "Ada Lovelace", relationship: "Sister", phone: "555 0123" }
+
+    expect(renderer.summary(answered, CONTACT, INTAKE_FORM)).toBe(
+      "Ada Lovelace · Sister · 555 0123",
+    )
+    expect(renderer.summary({ name: "", relationship: "", phone: "" }, CONTACT, INTAKE_FORM)).toBeNull()
+    expect(renderer.summary(null, CONTACT, INTAKE_FORM)).toBeNull()
+  })
+
+  it("is a step still to come when the practice stored no question", () => {
+    renderItem(itemOf("emergency_contact"))
 
     expect(screen.getByTestId("forms-item-unavailable")).toBeInTheDocument()
   })

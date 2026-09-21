@@ -18,6 +18,19 @@ import { TelehealthSettings } from "../TelehealthSettings"
 
 vi.mock("@/lib/api/telehealth")
 
+// The card carries the return leg of the Zoom connect flow, which reads the
+// query string and clears it afterwards. None of the cases below arrive with
+// a code on the URL, so this is here to let the card mount rather than to be
+// exercised — the round trip itself is covered in ZoomConnectReturn.test.tsx.
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+}))
+
+vi.mock("@/lib/auth-context", () => ({
+  useAuth: () => ({ user: { uid: "u1" }, loading: false, getIdToken: async () => "token" }),
+}))
+
 function renderCard() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(

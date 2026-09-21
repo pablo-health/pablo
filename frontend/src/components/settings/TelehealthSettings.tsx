@@ -15,7 +15,7 @@
 
 "use client"
 
-import { useState } from "react"
+import { Suspense, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { AlertCircle, Check } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -27,8 +27,21 @@ import {
   listTelehealthProviders,
   setTelehealthRoomUrl,
 } from "@/lib/api/telehealth"
+import { ZoomConnectReturn } from "./ZoomConnectReturn"
 
 const PROVIDERS_QUERY_KEY = ["telehealth", "providers"]
+
+/**
+ * Where Zoom sends the clinician back to, as a path.
+ *
+ * This settings section rather than `/dashboard/settings`, which has no page
+ * of its own and server-redirects to the first item — dropping the query
+ * string, and with it the authorization code, before anything could read it.
+ *
+ * Sent to the deployment when the authorization URL is built and again when
+ * the code is spent, and the two have to be the same string.
+ */
+const ZOOM_RETURN_PATH = "/dashboard/settings/sessions"
 
 const DOXY_ME = "doxy_me"
 const ZOOM = "zoom"
@@ -75,7 +88,7 @@ export function TelehealthSettings() {
   async function connectZoom() {
     setError(null)
     try {
-      const { auth_url } = await getZoomAuthUrl(`${window.location.origin}/dashboard/settings`)
+      const { auth_url } = await getZoomAuthUrl(`${window.location.origin}${ZOOM_RETURN_PATH}`)
       window.location.assign(auth_url)
     } catch {
       setError(ZOOM_CONNECT_FAILED)
@@ -97,6 +110,18 @@ export function TelehealthSettings() {
 
   return (
     <div data-testid="telehealth-settings" className="space-y-4">
+      {/* Reading the query string is what suspends, and the card should not
+          wait on it. Renders nothing unless the clinician is coming back
+          from Zoom, or the exchange failed. */}
+      <Suspense fallback={null}>
+        <ZoomConnectReturn
+          providersQueryKey={PROVIDERS_QUERY_KEY}
+          redirectUri={
+            typeof window === "undefined" ? "" : `${window.location.origin}${ZOOM_RETURN_PATH}`
+          }
+        />
+      </Suspense>
+
       <ul className="space-y-2">
         {providers.map((provider) => (
           <li

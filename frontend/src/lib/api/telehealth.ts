@@ -57,6 +57,27 @@ export async function getZoomAuthUrl(redirectUri: string): Promise<{ auth_url: s
   return get<{ auth_url: string }>(`/api/telehealth/zoom/authorize?${query.toString()}`)
 }
 
+/**
+ * Spend the authorization code Zoom sent the browser back with.
+ *
+ * The other half of {@link getZoomAuthUrl}, and the reason the connect flow
+ * finishes rather than dropping the clinician back on settings still
+ * disconnected. `redirectUri` has to be the one the authorization URL was
+ * built with: the deployment checks it again here, and Zoom checks that the
+ * two agree.
+ *
+ * The code is single use. Calling this twice with the same one gets the
+ * second attempt refused, so the caller is responsible for spending it once.
+ */
+export async function completeZoomConnect(
+  code: string,
+  state: string,
+  redirectUri: string,
+): Promise<ZoomStatus> {
+  const query = new URLSearchParams({ code, state, redirect_uri: redirectUri })
+  return get<ZoomStatus>(`/api/telehealth/zoom/callback?${query.toString()}`)
+}
+
 export async function disconnectZoom(): Promise<ZoomStatus> {
   return del<ZoomStatus>("/api/telehealth/zoom/disconnect")
 }
