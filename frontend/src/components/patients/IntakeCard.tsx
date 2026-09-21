@@ -6,8 +6,10 @@ import { useState } from "react"
 import { AlertTriangle } from "lucide-react"
 
 import { IntakeArtifacts } from "@/components/patients/IntakeArtifacts"
-import { useIntakeArtifacts } from "@/hooks/useIntakeArtifacts"
+import { INTAKE_STATUS_TEXT, IntakeReviewPanel } from "@/components/patients/IntakeReviewPanel"
+import { useIntakeArtifacts, useIntakeAssignments } from "@/hooks/useIntakeArtifacts"
 import { usePatientIntakeSubmissions } from "@/hooks/usePatientIntakeSubmissions"
+import type { IntakeAssignment } from "@/lib/api/intakeReview"
 import type { PatientIntakeSubmission } from "@/types/patientIntakeSubmissions"
 
 interface IntakeCardProps {
@@ -90,6 +92,55 @@ function SubmissionBody({
 }
 
 /**
+ * One form on the list, and the review it opens.
+ *
+ * Collapsed until asked. The row carries the form's name and the server's
+ * own sentence about where it has got to; opening it reads the form back
+ * question by question, which is a second audited read and so waits for
+ * somebody to want it.
+ *
+ * Every status opens, not only a handed-in one. The panel is what decides
+ * which actions a status offers — corrections and acceptance appear on a
+ * form that has been handed in and on no other — and a row that refused to
+ * open would be a second place deciding the same thing, in a screen that
+ * could only ever disagree with the server.
+ */
+function AssignmentRow({
+  patientId,
+  assignment,
+}: {
+  patientId: string
+  assignment: IntakeAssignment
+}) {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <div data-testid={`intake-assignment-${assignment.id}`}>
+      <button
+        type="button"
+        onClick={() => setOpen((shown) => !shown)}
+        aria-expanded={open}
+        data-testid={`intake-assignment-open-${assignment.id}`}
+        className="flex w-full items-baseline justify-between gap-4 rounded-lg border border-border px-3 py-2 text-left hover:border-neutral-300"
+      >
+        <span className="text-sm font-medium text-neutral-900">
+          {assignment.packet_name} v{assignment.version}
+        </span>
+        <span className="text-sm text-neutral-500">
+          {INTAKE_STATUS_TEXT[assignment.status] ?? assignment.status}
+        </span>
+      </button>
+
+      {open && (
+        <div className="mt-2">
+          <IntakeReviewPanel patientId={patientId} assignmentId={assignment.id} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
  * The intake form on the chart: what the patient wrote, and nothing they scored.
  *
  * PHQ-9 and GAD-7 answers arrive as outcome measures and the chart already
@@ -101,17 +152,23 @@ function SubmissionBody({
  * The card removes itself when there is nothing to show, including on an
  * error: a chart with no intake form is the ordinary case for a patient who
  * came in before there was one, and an empty box explaining its own absence
- * would be on most charts in the practice. Files count as something to
- * show — a form that asked for a photograph of an insurance card and
- * nothing else still put a file on the chart.
+ * would be on most charts in the practice. A form counts as something to
+ * show whether or not it has been handed in or collected a file — one that
+ * asked for a photograph of an insurance card and nothing else still put a
+ * file on the chart, and one still out with the patient is the thing
+ * somebody opening this chart before a first session is looking for.
  */
 export function IntakeCard({ patientId }: IntakeCardProps) {
   const { data, error } = usePatientIntakeSubmissions(patientId)
   const { groups } = useIntakeArtifacts(patientId)
+  const { data: assignmentRows } = useIntakeAssignments(patientId)
   const [showEarlier, setShowEarlier] = useState(false)
 
   const submissions = error ? [] : (data ?? [])
-  if (submissions.length === 0 && groups.length === 0) return null
+  const assignments = assignmentRows ?? []
+  if (submissions.length === 0 && groups.length === 0 && assignments.length === 0) {
+    return null
+  }
 
   const [latest, ...earlier] = submissions
 
@@ -155,6 +212,22 @@ export function IntakeCard({ patientId }: IntakeCardProps) {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {assignments.length > 0 && (
+        <div
+          className="mt-4 space-y-2 border-t border-border pt-4"
+          data-testid="intake-assignments"
+        >
+          <h3 className="text-sm font-semibold text-neutral-900">Forms</h3>
+          {assignments.map((assignment) => (
+            <AssignmentRow
+              key={assignment.id}
+              patientId={patientId}
+              assignment={assignment}
+            />
+          ))}
         </div>
       )}
 
