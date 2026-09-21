@@ -22,15 +22,23 @@ const mockList = vi.fn()
 const mockAssignments = vi.fn()
 const mockArtifacts = vi.fn()
 const mockCoverage = vi.fn()
+const mockReview = vi.fn()
 
 vi.mock("@/lib/api/patientIntakeSubmissions", () => ({
   listPatientIntakeSubmissions: (...args: unknown[]) => mockList(...args),
 }))
 
-vi.mock("@/lib/api/intakeReview", () => ({
-  listIntakeAssignments: (...args: unknown[]) => mockAssignments(...args),
-  listIntakeArtifacts: (...args: unknown[]) => mockArtifacts(...args),
-}))
+// Spread the real module so the panel the card opens keeps the constants it
+// reads off it, and only the calls that would reach the network are stubbed.
+vi.mock("@/lib/api/intakeReview", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api/intakeReview")>()
+  return {
+    ...actual,
+    listIntakeAssignments: (...args: unknown[]) => mockAssignments(...args),
+    listIntakeArtifacts: (...args: unknown[]) => mockArtifacts(...args),
+    getIntakeReview: (...args: unknown[]) => mockReview(...args),
+  }
+})
 
 vi.mock("@/lib/api/coverage", () => ({
   fetchCoverage: (...args: unknown[]) => mockCoverage(...args),
@@ -50,6 +58,29 @@ const ASSIGNMENT = {
   submitted_at: "2026-03-14T12:00:00Z",
   receipt_code: "K7M2QP4T",
   progress: { complete: true, missing: [] },
+}
+
+/** The same form, read back question by question. */
+const REVIEW = {
+  ...ASSIGNMENT,
+  patient_id: "patient-a",
+  items: [
+    {
+      id: "item-reason",
+      key: "reason",
+      position: 1,
+      item_type: "reason",
+      required: true,
+      label: "What brings you in?",
+      help_text: null,
+      config: {},
+      value: { text: "Panic before every shift." },
+      provenance: "patient",
+      superseded_count: 0,
+    },
+  ],
+  signatures: [],
+  events: [],
 }
 
 const ARTIFACT = {
@@ -94,6 +125,7 @@ describe("IntakeCard", () => {
     mockAssignments.mockResolvedValue([])
     mockArtifacts.mockResolvedValue([])
     mockCoverage.mockResolvedValue(null)
+    mockReview.mockResolvedValue(REVIEW)
   })
 
   it("shows the reason and the submitted date of the latest submission", async () => {
@@ -266,14 +298,56 @@ describe("IntakeCard", () => {
     expect(screen.queryByText(/^Submitted /)).not.toBeInTheDocument()
   })
 
-  it("stays away when a form collected nothing", async () => {
+  it("appears for a form that collected nothing, so it can still be read back", async () => {
     mockList.mockResolvedValue([])
     mockAssignments.mockResolvedValue([ASSIGNMENT])
     mockArtifacts.mockResolvedValue([])
 
-    const { container } = renderCard()
+    renderCard()
 
-    await waitFor(() => expect(mockArtifacts).toHaveBeenCalled())
-    expect(container).toBeEmptyDOMElement()
+    expect(await screen.findByTestId("intake-card")).toBeInTheDocument()
+    expect(screen.getByTestId("intake-assignments")).toBeInTheDocument()
+    expect(screen.queryByTestId("intake-artifacts")).not.toBeInTheDocument()
+  })
+
+  it("lists a form by name and by what the server says about it", async () => {
+    mockList.mockResolvedValue([])
+    mockAssignments.mockResolvedValue([ASSIGNMENT])
+
+    renderCard()
+
+    expect(await screen.findByText("Before we meet v1")).toBeInTheDocument()
+    expect(screen.getByText("Handed in.")).toBeInTheDocument()
+  })
+
+  it("leaves the review closed, and reads nothing, until asked", async () => {
+    mockList.mockResolvedValue([])
+    mockAssignments.mockResolvedValue([ASSIGNMENT])
+
+    renderCard()
+
+    await screen.findByTestId("intake-assignment-open-assignment-1")
+    expect(screen.queryByTestId("intake-review-panel")).not.toBeInTheDocument()
+    expect(mockReview).not.toHaveBeenCalled()
+  })
+
+  it("opens the review of a submitted form on the chart", async () => {
+    mockList.mockResolvedValue([])
+    mockAssignments.mockResolvedValue([ASSIGNMENT])
+
+    renderCard()
+
+    await userEvent.click(
+      await screen.findByTestId("intake-assignment-open-assignment-1"),
+    )
+
+    expect(await screen.findByTestId("intake-review-panel")).toBeInTheDocument()
+    expect(mockReview).toHaveBeenCalledWith("patient-a", "assignment-1", undefined)
+    // The clinician's three actions have a screen: reading each answer back,
+    // sending named questions back, and accepting the form.
+    expect(screen.getByText("Panic before every shift.")).toBeInTheDocument()
+    expect(screen.getByTestId("intake-review-corrections")).toBeInTheDocument()
+    expect(screen.getByTestId("intake-review-accept")).toBeInTheDocument()
+    expect(screen.getByTestId("intake-review-export")).toBeInTheDocument()
   })
 })

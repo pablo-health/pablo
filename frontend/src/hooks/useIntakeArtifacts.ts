@@ -33,6 +33,26 @@ export interface IntakeArtifactGroup {
 }
 
 /**
+ * Every form this patient has been given.
+ *
+ * Read by the card that lists them and by the grouping below, which needs
+ * the same rows to ask each form what it collected. One query key, so the
+ * two surfaces share a single audited read rather than making it twice.
+ *
+ * `retry: false` for the reason the grouping has it: every attempt is an
+ * audited read, and a chart that hides the section on an error gains
+ * nothing by asking three times first.
+ */
+export function useIntakeAssignments(patientId: string | undefined, token?: string) {
+  return useAuthQuery<IntakeAssignment[]>({
+    queryKey: intakeArtifactKeys.assignments(patientId ?? ""),
+    queryFn: () => listIntakeAssignments(patientId!, token),
+    enabled: !!patientId,
+    retry: false,
+  })
+}
+
+/**
  * Every file on this patient's forms, grouped by the form that asked.
  *
  * Two rounds rather than one: the assignments list says which forms exist,
@@ -45,12 +65,7 @@ export interface IntakeArtifactGroup {
  * nothing by asking three times first.
  */
 export function useIntakeArtifacts(patientId: string | undefined, token?: string) {
-  const assignments = useAuthQuery<IntakeAssignment[]>({
-    queryKey: intakeArtifactKeys.assignments(patientId ?? ""),
-    queryFn: () => listIntakeAssignments(patientId!, token),
-    enabled: !!patientId,
-    retry: false,
-  })
+  const assignments = useIntakeAssignments(patientId, token)
 
   const rows = assignments.data ?? []
   const files = useQueries({
