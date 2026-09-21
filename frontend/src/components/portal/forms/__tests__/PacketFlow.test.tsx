@@ -187,11 +187,11 @@ describe("saving", () => {
         items: [
           {
             id: "55555555-5555-4555-8555-555555555555",
-            key: "contact",
+            key: "guardian",
             position: 0,
-            item_type: "emergency_contact",
+            item_type: "guardian",
             required: true,
-            label: "Who should we call?",
+            label: "Who is responsible for them?",
             help_text: null,
             config: {},
             value: null,

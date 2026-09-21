@@ -116,6 +116,18 @@ export const ALREADY_SENT_BODY =
 export const ITEM_UNAVAILABLE = "This step will be available soon."
 
 /**
+ * The standard contact block: who to call, and how.
+ *
+ * Labelled in the same words the save route uses when it refuses one of
+ * them, so "Their name is still blank." points at the box it came from
+ * rather than at a field name nobody saw. The question above the three is
+ * the practice's own wording, so there is no heading here.
+ */
+export const CONTACT_NAME_LABEL = "Their name"
+export const CONTACT_RELATIONSHIP_LABEL = "How you know them"
+export const CONTACT_PHONE_LABEL = "Their phone number"
+
+/**
  * Signing a consent document.
  *
  * The screen says what typing a name does and stops. It does not say what
