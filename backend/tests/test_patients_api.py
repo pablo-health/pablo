@@ -11,6 +11,7 @@ from app.main import app
 from app.models import TherapySession, User
 from app.models.audit import AuditAction
 from app.models.transcript import Transcript
+from app.models.validators import validate_phone
 from app.services import AuditService
 from app.utcnow import utc_now
 from fastapi import status
@@ -640,7 +641,10 @@ def test_create_patient_with_email_and_phone(
     assert response.status_code == status.HTTP_201_CREATED
     data = response.json()
     assert data["email"] == sample_patient_data["email"]
-    assert data["phone"] == sample_patient_data["phone"]
+    # Stored in E.164, not as typed: the number leaves through a carrier that
+    # accepts one shape, so the repair happens once at the field.
+    assert data["phone"] == validate_phone(sample_patient_data["phone"])
+    assert data["phone"].startswith("+")
     assert data["status"] == sample_patient_data["status"]
 
 
@@ -716,7 +720,7 @@ def test_update_patient_email_and_phone(
     assert response.status_code == status.HTTP_200_OK
     data = response.json()
     assert data["email"] == update_data["email"]
-    assert data["phone"] == update_data["phone"]
+    assert data["phone"] == "+15559876543"
 
 
 def test_create_patient_with_address_and_sex(

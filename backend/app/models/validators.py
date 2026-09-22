@@ -65,16 +65,27 @@ def validate_email(value: str | None) -> str | None:
 
 def validate_phone(value: str | None) -> str | None:
     """
-    Validate phone format if provided.
+    Validate a phone number and return it in E.164 form.
+
+    Normalizing here rather than at each call site is deliberate. A phone
+    number leaves this system through carriers that accept exactly one shape:
+    a leading ``+``, a country code, and digits. Storing what somebody typed
+    and repairing it at the point of use means every future sender has to
+    remember to repair it, and the one that forgets fails at send time — after
+    a clinician has already clicked, and far from the field that accepted it.
+
+    US-default, because the product is US-only today. A value that already
+    carries a ``+`` is taken as fully qualified and kept, so an international
+    number entered deliberately is not re-interpreted as American.
 
     Args:
         value: The phone string to validate
 
     Returns:
-        The validated phone string (stripped) or None
+        The number in E.164 (e.g. ``+14045551234``), or None
 
     Raises:
-        ValueError: If the phone number is too short
+        ValueError: If the number is too short, or cannot be put in E.164
     """
     if value is None or value.strip() == "":
         return None
@@ -85,7 +96,20 @@ def validate_phone(value: str | None) -> str | None:
     if len(digits) < MIN_PHONE_DIGITS:
         raise ValueError(f"Phone number must contain at least {MIN_PHONE_DIGITS} digits")
 
-    return phone
+    # Already fully qualified: trust the caller's country code, drop only the
+    # punctuation people type inside one.
+    if phone.startswith("+"):
+        return f"+{digits}"
+
+    # Bare NANP number, with or without the long-distance 1.
+    if len(digits) == MIN_PHONE_DIGITS:
+        return f"+1{digits}"
+    if len(digits) == MIN_PHONE_DIGITS + 1 and digits.startswith("1"):
+        return f"+{digits}"
+
+    raise ValueError(
+        "Phone number must be a 10-digit US number or carry a country code with a leading '+'"
+    )
 
 
 def validate_status(value: str) -> str:
