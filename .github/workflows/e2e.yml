@@ -41,6 +41,15 @@ on:
       - "scripts/fake_mail.py"
       - "scripts/e2e/**"
       - ".github/workflows/e2e.yml"
+      # The models, added for the same reason ``backend/app/db/**`` was: this
+      # job is a REQUIRED check, so a change it does not match is not merely
+      # untested — it is unmergeable, because the check never reports and
+      # branch protection waits for a run that will never start. Field
+      # validation and model shape decide what the API accepts and what the
+      # browser is handed, which is squarely what this suite exercises.
+      # Found on 2026-09-21 by a change to ``models/validators.py`` that sat
+      # green on every check that ran and blocked anyway.
+      - "backend/app/models/**"
 
 permissions:
   contents: read
