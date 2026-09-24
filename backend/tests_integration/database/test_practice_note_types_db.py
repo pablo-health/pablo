@@ -151,9 +151,7 @@ class TestVersions:
         author = str(uuid.uuid4())
         try:
             first = repo.add_version("custom.versions", SPEC, author, NOW)
-            second = repo.add_version(
-                "custom.versions", {**SPEC, "label": "v2"}, author, NOW
-            )
+            second = repo.add_version("custom.versions", {**SPEC, "label": "v2"}, author, NOW)
             assert (first.version, second.version) == (1, 2)
             assert repo.get("custom.versions").definition["label"] == "v2"
             assert repo.get("custom.versions", 1).definition["label"] == "Interview Coach"
