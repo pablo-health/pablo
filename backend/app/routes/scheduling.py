@@ -81,7 +81,8 @@ from ..models.scheduling import (
     UpdateAvailabilityRuleRequest,
     UpdateSchedulingPolicyRequest,
 )
-from ..notes import NoteTypeAuthorizer, get_note_type_authorizer
+from ..notes import NoteTypeAuthorizer, get_default_registry, get_note_type_authorizer
+from ..notes.practice_types import validate_note_inputs
 from ..rate_limit import get_availability_parse_limiter
 from ..repositories import (
     NotesRepository,
@@ -489,6 +490,21 @@ def _patient_name_map(
     return {pid: f"{p.first_name} {p.last_name}" for pid, p in patients.items()}
 
 
+def _checked_note_inputs(
+    note_type: str | None, inputs: dict[str, str] | None
+) -> dict[str, str] | None:
+    """Validate inputs against the note type they are for; ``None`` when empty."""
+    if inputs is None:
+        return None
+    key = note_type or "soap"
+    try:
+        return validate_note_inputs(get_default_registry().get(key), inputs) or None
+    except (KeyError, ValueError) as e:
+        raise BadRequestError(
+            str(e).strip("'\""), {"note_type": key}, code="INVALID_NOTE_INPUTS"
+        ) from e
+
+
 def _to_response(
     appt: Appointment,
     *,
@@ -512,6 +528,7 @@ def _to_response(
         meeting_external_id=appt.meeting_external_id,
         notes=appt.notes,
         note_type=appt.note_type,
+        note_inputs=appt.note_inputs,
         recurrence_rule=appt.recurrence_rule,
         recurring_appointment_id=appt.recurring_appointment_id,
         recurrence_index=appt.recurrence_index,
@@ -556,6 +573,7 @@ def create_appointment(
     """Create a new appointment."""
     data = request.model_dump()
     rule_override = bool(data.pop("rule_override", False))
+    data["note_inputs"] = _checked_note_inputs(data.get("note_type"), data.get("note_inputs"))
     # Which video service to ask is a request, not a column: the row records
     # who actually made the room, which is decided below.
     requested_provider = data.pop("provider", None)
@@ -691,6 +709,16 @@ def update_appointment(
     payload = request.model_dump()
     rule_override = bool(payload.pop("rule_override", False))
     updates = {k: v for k, v in payload.items() if v is not None}
+    if request.note_inputs is not None:
+        # Checked against the note type the appointment will have after this
+        # update, which may be the one already on it.
+        note_type = request.note_type
+        if note_type is None:
+            try:
+                note_type = service.get_appointment(appointment_id, user.id).note_type
+            except AppointmentNotFoundError as e:
+                raise NotFoundError(str(e)) from e
+        updates["note_inputs"] = _checked_note_inputs(note_type, request.note_inputs)
     try:
         appt = service.update_appointment(
             appointment_id, user.id, tz=tz, rule_override=rule_override, **updates
@@ -847,6 +875,9 @@ def start_session_from_appointment(
         source=SessionSource.COMPANION,
         notes=appt.notes,
         note_type=requested_note_type,
+        # Inputs belong to the appointment's own note type; an override to a
+        # different type starts without them.
+        note_inputs=appt.note_inputs if requested_note_type == appt.note_type else None,
     )
 
     try:

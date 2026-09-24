@@ -15,7 +15,12 @@ from app.main import app
 from app.models import Note, Patient, Transcript, TranscriptModel, User
 from app.models.audit import AuditAction
 from app.models.enums import TranscriptFormat
-from app.notes import NoteTypeAuthorizer, get_note_type_authorizer
+from app.notes import (
+    NoteTypeAuthorizer,
+    NoteTypeDefinition,
+    get_default_registry,
+    get_note_type_authorizer,
+)
 from app.repositories import (
     InMemoryNotesRepository,
     InMemoryPatientRepository,
@@ -46,6 +51,8 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient  # noqa: TC002 — runtime fixture type
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from app.services import AuditService
 
 _SOAP: dict[str, Any] = {
@@ -182,12 +189,15 @@ class _StubGenerator(NoteGenerationService):
         transcript: Transcript,
         patient: Patient,
         session_date: datetime,
+        inputs: Mapping[str, str] | None = None,
+        definition: NoteTypeDefinition | None = None,
     ) -> GeneratedNote:
         self.last_call = {
             "note_type": note_type,
             "transcript": transcript,
             "patient": patient,
             "session_date": session_date,
+            "inputs": inputs,
         }
         return GeneratedNote(note_type=note_type, content=self.content)
 
@@ -417,6 +427,7 @@ class TestGenerateStandaloneNoteJob:
             note_generation_service=stub,
             user_repo=mock_user_repo,
             audit=audit,
+            registry=get_default_registry(),
         )
 
         assert result == {"status": "ok"}
@@ -448,7 +459,7 @@ class TestGenerateStandaloneNoteJob:
         )
 
         class _FailingGenerator(NoteGenerationService):
-            def generate_note(self, note_type, transcript, patient, session_date):  # type: ignore[no-untyped-def]
+            def generate_note(self, note_type, transcript, patient, session_date, **_kwargs):  # type: ignore[no-untyped-def]
                 raise ValueError("bad output")
 
         result = generate_standalone_note_job(
@@ -464,6 +475,7 @@ class TestGenerateStandaloneNoteJob:
             note_generation_service=_FailingGenerator(),
             user_repo=mock_user_repo,
             audit=MagicMock(),
+            registry=get_default_registry(),
         )
 
         assert result == {"status": "failed"}
@@ -490,7 +502,7 @@ class TestGenerateStandaloneNoteJob:
         )
 
         class _TransientGenerator(NoteGenerationService):
-            def generate_note(self, note_type, transcript, patient, session_date):  # type: ignore[no-untyped-def]
+            def generate_note(self, note_type, transcript, patient, session_date, **_kwargs):  # type: ignore[no-untyped-def]
                 raise TransientNoteGenerationError("rate limited")
 
         job = GenerateStandaloneNoteJob(
@@ -509,6 +521,7 @@ class TestGenerateStandaloneNoteJob:
                 note_generation_service=_TransientGenerator(),
                 user_repo=mock_user_repo,
                 audit=MagicMock(),
+                registry=get_default_registry(),
             )
         assert exc.value.status_code == 503
         assert note_service.get_note(note.id, mock_user_id).status == "processing"
@@ -521,6 +534,7 @@ class TestGenerateStandaloneNoteJob:
             note_generation_service=_TransientGenerator(),
             user_repo=mock_user_repo,
             audit=MagicMock(),
+            registry=get_default_registry(),
         )
         assert final_result == {"status": "failed"}
         assert note_service.get_note(note.id, mock_user_id).status == "failed"
@@ -543,6 +557,7 @@ class TestGenerateStandaloneNoteJob:
             note_generation_service=_StubGenerator({}),
             user_repo=MagicMock(),
             audit=MagicMock(),
+            registry=get_default_registry(),
         )
 
         assert result == {"status": "unknown_tenant"}

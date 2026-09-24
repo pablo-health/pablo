@@ -108,7 +108,9 @@ def _transcription_settings(*, enabled: bool = True) -> Settings:
 class _FailingNoteGenerationService(NoteGenerationService):
     """Stand-in for a model/pipeline failure during completion."""
 
-    def generate_note(self, note_type, transcript, patient, session_date) -> GeneratedNote:  # type: ignore[no-untyped-def]
+    def generate_note(
+        self, note_type, transcript, patient, session_date, **_kwargs
+    ) -> GeneratedNote:  # type: ignore[no-untyped-def]
         raise RuntimeError("note generation blew up")
 
 

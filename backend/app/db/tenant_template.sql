@@ -149,7 +149,8 @@ CREATE TABLE __TENANT_SCHEMA__.appointments (
     meeting_external_id character varying(128),
     telehealth_checked_in_at timestamp with time zone,
     telehealth_started_at timestamp with time zone,
-    telehealth_ended_at timestamp with time zone
+    telehealth_ended_at timestamp with time zone,
+    note_inputs jsonb
 );
 
 
@@ -600,7 +601,9 @@ CREATE TABLE __TENANT_SCHEMA__.notes (
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
     deleted_at timestamp with time zone,
-    status character varying(20) DEFAULT 'complete'::character varying NOT NULL
+    status character varying(20) DEFAULT 'complete'::character varying NOT NULL,
+    note_type_version integer,
+    note_inputs jsonb
 );
 
 
@@ -1011,6 +1014,18 @@ CREATE SEQUENCE __TENANT_SCHEMA__.practice_billing_profile_id_seq
 
 
 ALTER SEQUENCE __TENANT_SCHEMA__.practice_billing_profile_id_seq OWNED BY __TENANT_SCHEMA__.practice_billing_profile.id;
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.practice_note_types (
+    id uuid NOT NULL,
+    key character varying(30) NOT NULL,
+    version integer NOT NULL,
+    definition jsonb NOT NULL,
+    created_by uuid NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    retired_at timestamp with time zone
+);
 
 
 
@@ -1528,6 +1543,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.practice_billing_profile
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.practice_note_types
+    ADD CONSTRAINT practice_note_types_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.prescribing_checklist_items
     ADD CONSTRAINT prescribing_checklist_items_pkey PRIMARY KEY (id);
 
@@ -1625,6 +1645,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_message_threads
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_messages
     ADD CONSTRAINT uq_patient_messages_id_patient UNIQUE (id, patient_id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.practice_note_types
+    ADD CONSTRAINT uq_practice_note_types_key_version UNIQUE (key, version);
 
 
 

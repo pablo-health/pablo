@@ -101,6 +101,10 @@ class ScheduleSessionRequest(BaseModel):
         default=None,
         description="Note-type registry key (e.g. 'soap', 'narrative'). Defaults to 'soap'.",
     )
+    note_inputs: dict[str, str] | None = Field(
+        default=None,
+        description="Values for the note type's declared inputs.",
+    )
 
 
 class UpdateSessionStatusRequest(BaseModel):

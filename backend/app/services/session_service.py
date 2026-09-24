@@ -31,7 +31,8 @@ from ..models import (
     UploadSessionRequest,
     UploadTranscriptToSessionRequest,
 )
-from ..notes import get_default_registry
+from ..notes import NoteTypeDefinition, get_default_registry
+from ..notes.practice_types import validate_note_inputs
 from ..repositories import PatientRepository, TherapySessionRepository
 from ..utcnow import utc_now
 from .note_generation_service import (
@@ -233,9 +234,16 @@ class SessionService:
         patient: Patient,
         note_type: str,
         user_id: str,
+        note_inputs: dict[str, str] | None = None,
+        definition: NoteTypeDefinition | None = None,
     ) -> Note:
         result = self.note_generation_service.generate_note(
-            note_type, session.transcript, patient, session.session_date
+            note_type,
+            session.transcript,
+            patient,
+            session.session_date,
+            inputs=note_inputs,
+            definition=definition,
         )
         return self.note_service.create_or_update_for_session(
             session_id=session.id,
@@ -243,6 +251,7 @@ class SessionService:
             note_type=result.note_type,
             content=result.content,
             user_id=user_id,
+            note_type_version=result.note_type_version,
         )
 
     def create_session_for_generation(
@@ -340,6 +349,13 @@ class SessionService:
         # Fall back to the default for a freshly-created upload session.
         existing_note = self.note_service.get_note_by_session_id(session.id, user_id)
         note_type = existing_note.note_type if existing_note is not None else DEFAULT_NOTE_TYPE
+        # Resolved while the connection is still held: a practice-defined type
+        # is read from the database. An unknown key is left for generation to
+        # raise, inside the handler below that marks the session failed.
+        try:
+            definition: NoteTypeDefinition | None = get_default_registry().get(note_type)
+        except KeyError:
+            definition = None
 
         # Release the pooled connection before the multi-second model call. The
         # SELECTs above (session, patient, existing note) opened a read
@@ -356,7 +372,14 @@ class SessionService:
 
         try:
             logger.info("Starting note generation for session %s", session.id)
-            note = self._generate_and_persist_note(session, patient, note_type, user_id)
+            note = self._generate_and_persist_note(
+                session,
+                patient,
+                note_type,
+                user_id,
+                note_inputs=existing_note.note_inputs if existing_note is not None else None,
+                definition=definition,
+            )
             logger.info("Note generation completed for session %s", session.id)
 
             session.status = SessionStatus.PENDING_REVIEW
@@ -624,8 +647,14 @@ class SessionService:
             raise PatientNotFoundError(f"Patient {request.patient_id} not found")
 
         note_type = request.note_type or DEFAULT_NOTE_TYPE
-        if not get_default_registry().has(note_type):
+        registry = get_default_registry()
+        if not registry.has(note_type):
             raise InvalidNoteTypeError(f"Unknown note_type: {note_type!r}")
+        definition = registry.get(note_type)
+        try:
+            note_inputs = validate_note_inputs(definition, request.note_inputs)
+        except ValueError as e:
+            raise InvalidNoteTypeError(str(e)) from e
 
         now = _now()
         session_number = self.session_repo.get_session_number_for_patient(request.patient_id)
@@ -660,6 +689,8 @@ class SessionService:
             note_type=note_type,
             content=None,
             user_id=user_id,
+            note_type_version=definition.version,
+            note_inputs=note_inputs or None,
         )
 
         self._update_next_session_date(patient, user_id)

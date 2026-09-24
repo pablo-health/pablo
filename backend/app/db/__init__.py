@@ -961,6 +961,11 @@ _OVERLAY_NOT_ROW_SCOPED: set[str] = set()
 #     permission to use a use-restricted instrument. Practice-level for the
 #     same reason as the intake tables: a licence is held by the practice,
 #     and ``attested_by`` names who recorded it rather than who owns it.
+#   * practice_note_types — the note formats a practice defined itself, one
+#     row per saved version. Practice-level for the same reason as the
+#     intake tables: a note format is the same whichever client a note is
+#     about. What a note SAYS lives in ``notes``, which is per-patient and
+#     row-scoped.
 #   * intake_documents — the consent documents a practice asks people to
 #     read and sign, one row per version. Practice-level for the same
 #     reason as the three above: the text is the same whoever it is sent
@@ -997,6 +1002,7 @@ _CORE_NOT_ROW_SCOPED: frozenset[str] = frozenset(
         "intake_item_definitions",
         "intake_documents",
         "instrument_license_attestations",
+        "practice_note_types",
         "intake_blank_forms",
         "companion_auth_challenges",
         "companion_sessions",
