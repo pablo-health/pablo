@@ -157,6 +157,8 @@ function buildNote(opts: {
     patient_id: opts.patient_id,
     session_id: opts.session_id,
     note_type: opts.note_type ?? "soap",
+    note_type_version: null,
+    note_inputs: null,
     content: opts.content as Record<string, unknown> | null,
     content_edited: null,
     finalized_at: opts.finalized_at ?? null,

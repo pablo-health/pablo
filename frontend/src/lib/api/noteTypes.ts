@@ -13,9 +13,16 @@ export async function listNoteTypes(token?: string): Promise<NoteTypeListRespons
   return get<NoteTypeListResponse>("/api/note-types", token)
 }
 
+/**
+ * One note-type definition. Pass the `version` a note records for a
+ * practice-defined type so it renders against the definition it was written
+ * with; omit it for the latest (built-in types have no version).
+ */
 export async function getNoteType(
   key: string,
+  version?: number | null,
   token?: string,
 ): Promise<NoteTypeSchema> {
-  return get<NoteTypeSchema>(`/api/note-types/${encodeURIComponent(key)}`, token)
+  const query = version != null ? `?version=${version}` : ""
+  return get<NoteTypeSchema>(`/api/note-types/${encodeURIComponent(key)}${query}`, token)
 }
