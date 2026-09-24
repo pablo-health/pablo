@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Protocol
 
 if TYPE_CHECKING:
     from ..models import Patient, Transcript
@@ -62,6 +62,26 @@ class NoteFieldDef:
     label: str
     kind: NoteFieldKind
     ai_hint: str = ""
+
+
+NoteInputKind = Literal["text", "choice"]
+"""Shape of a generate-time input: free text, or one of a fixed set of options."""
+
+
+@dataclass(frozen=True)
+class NoteInputDef:
+    """A value the clinician supplies when a note is generated.
+
+    Inputs carry context the transcript cannot: which hypothesis a call is
+    testing, which program a client is enrolled in. They are stored on the
+    note, so a regenerate reuses them.
+    """
+
+    key: str
+    label: str
+    kind: NoteInputKind = "text"
+    options: tuple[str, ...] = ()
+    required: bool = False
 
 
 @dataclass(frozen=True)
@@ -113,20 +133,61 @@ class NoteTypeDefinition:
     say) can override it here instead of fighting that framing from
     inside the user prompt.
     """
+    inputs: tuple[NoteInputDef, ...] = ()
+    user_template: str | None = field(default=None, compare=False)
+    """If set, rendered as the user prompt (see :mod:`app.notes.practice_types`).
+
+    Practice-defined types carry a template rather than a ``prompt_builder``
+    because a stored definition cannot carry code.
+    """
+    version: int | None = None
+    """Definition version. ``None`` for built-in types, which change only by deploy."""
 
     def section_keys(self) -> list[str]:
         return [s.key for s in self.sections]
 
 
-class NoteTypeRegistry:
-    """In-memory map of note-type key to definition.
+class PracticeNoteTypeSource(Protocol):
+    """Where the current practice's own note types come from.
 
-    Not thread-safe — mutations are expected at import/startup time only;
-    reads after that point are safe for concurrent use.
+    Reads are scoped by the caller's tenant session, so one practice's
+    types are never visible to another.
+    """
+
+    def get(self, key: str, version: int | None = None) -> NoteTypeDefinition | None:
+        """Return the definition (latest version when ``version`` is None), or None."""
+
+    def is_active(self, key: str) -> bool:
+        """Whether ``key`` exists and has not been retired."""
+
+    def all_active(self) -> list[NoteTypeDefinition]:
+        """Latest version of every type the practice has not retired."""
+
+
+PRACTICE_KEY_PREFIX = "custom."
+"""Every practice-defined key starts with this, so it can never shadow a built-in."""
+
+
+def is_practice_key(key: str) -> bool:
+    return key.startswith(PRACTICE_KEY_PREFIX)
+
+
+class NoteTypeRegistry:
+    """Built-in note types, plus the current practice's own when a source is set.
+
+    Built-in definitions live in memory and are registered at startup.
+    Keys under :data:`PRACTICE_KEY_PREFIX` are looked up in the practice
+    source instead, which reads the caller's tenant schema — so every
+    consumer that asks the registry sees the same set a practice does,
+    without knowing which kind of type it holds.
+
+    Not thread-safe for mutation — registration and the source are set at
+    startup only; reads after that point are safe for concurrent use.
     """
 
     def __init__(self) -> None:
         self._types: dict[str, NoteTypeDefinition] = {}
+        self._practice_source: PracticeNoteTypeSource | None = None
 
     def register(
         self,
@@ -134,36 +195,60 @@ class NoteTypeRegistry:
         *,
         replace: bool = False,
     ) -> None:
-        """Register a note type.
+        """Register a built-in note type.
 
         Raises :class:`ValueError` if a type with the same key is already
-        registered, unless ``replace=True``.
+        registered (unless ``replace=True``), or if the key is in the
+        practice namespace.
         """
+        if is_practice_key(definition.key):
+            raise ValueError(f"{PRACTICE_KEY_PREFIX!r} keys belong to practices, not built-ins")
         existing = self._types.get(definition.key)
         if existing is not None and not replace:
             raise ValueError(f"Note type {definition.key!r} is already registered")
         self._types[definition.key] = definition
 
-    def get(self, key: str) -> NoteTypeDefinition:
-        """Return the definition for ``key`` or raise :class:`KeyError`."""
+    def set_practice_source(self, source: PracticeNoteTypeSource | None) -> None:
+        """Resolve practice-namespace keys through ``source`` (``None`` turns it off)."""
+        self._practice_source = source
+
+    def get(self, key: str, version: int | None = None) -> NoteTypeDefinition:
+        """Return the definition for ``key`` or raise :class:`KeyError`.
+
+        A practice type resolves to its latest version, retired or not, so a
+        note written against it still renders; ``version`` picks an earlier
+        one. Built-in types have one version and ignore it.
+        """
+        if is_practice_key(key):
+            found = self._practice_source.get(key, version) if self._practice_source else None
+            if found is None:
+                raise KeyError(f"Note type {key!r} is not registered")
+            return found
         try:
             return self._types[key]
         except KeyError as exc:
             raise KeyError(f"Note type {key!r} is not registered") from exc
 
     def has(self, key: str) -> bool:
+        """Whether a new note may be created with ``key`` — retired types may not."""
+        if is_practice_key(key):
+            return self._practice_source is not None and self._practice_source.is_active(key)
         return key in self._types
 
     def all(self) -> list[NoteTypeDefinition]:
-        """All registered definitions, sorted by key for stable ordering."""
-        return [self._types[k] for k in sorted(self._types)]
+        """Built-ins plus the practice's active types, sorted by key."""
+        definitions = list(self._types.values())
+        if self._practice_source is not None:
+            definitions.extend(self._practice_source.all_active())
+        return sorted(definitions, key=lambda d: d.key)
 
     def keys(self) -> list[str]:
-        return sorted(self._types)
+        return [d.key for d in self.all()]
 
     def clear(self) -> None:
-        """Drop all registrations. Intended for tests only."""
+        """Drop all registrations and the practice source. Intended for tests only."""
         self._types.clear()
+        self._practice_source = None
 
 
 _DEFAULT_REGISTRY: NoteTypeRegistry = NoteTypeRegistry()
