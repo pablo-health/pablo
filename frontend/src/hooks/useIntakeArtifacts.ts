@@ -6,12 +6,13 @@ import { useMemo } from "react"
 import { useQueries } from "@tanstack/react-query"
 
 import {
+  assignIntakePacket,
   listIntakeArtifacts,
   listIntakeAssignments,
   type IntakeAssignment,
   type IntakeChartArtifact,
 } from "@/lib/api/intakeReview"
-import { useAuthQuery } from "./useAuthQuery"
+import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
 
 /**
  * Cache keys for the chart's read of what a form collected.
@@ -99,4 +100,18 @@ export function useIntakeArtifacts(patientId: string | undefined, token?: string
     isLoading: assignments.isLoading || files.some((query) => query.isLoading),
     error: assignments.error,
   }
+}
+
+/**
+ * Send a published version of a form to this patient.
+ *
+ * Invalidates the assignments list, which is what the chart reads to show
+ * the form it just sent — and what the files grouping reads in turn, so one
+ * key covers both.
+ */
+export function useAssignIntakePacket(patientId: string, token?: string) {
+  return useAuthMutation<IntakeAssignment, string>({
+    mutationFn: (versionId: string) => assignIntakePacket(patientId, versionId, token),
+    invalidateKeys: [intakeArtifactKeys.assignments(patientId)],
+  })
 }

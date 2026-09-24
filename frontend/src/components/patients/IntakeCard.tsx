@@ -7,7 +7,9 @@ import { AlertTriangle } from "lucide-react"
 
 import { IntakeArtifacts } from "@/components/patients/IntakeArtifacts"
 import { INTAKE_STATUS_TEXT, IntakeReviewPanel } from "@/components/patients/IntakeReviewPanel"
+import { SendIntakeForm, sendableForms } from "@/components/patients/SendIntakeForm"
 import { useIntakeArtifacts, useIntakeAssignments } from "@/hooks/useIntakeArtifacts"
+import { useIntakeTemplates } from "@/hooks/useIntakePackets"
 import { usePatientIntakeSubmissions } from "@/hooks/usePatientIntakeSubmissions"
 import type { IntakeAssignment } from "@/lib/api/intakeReview"
 import type { PatientIntakeSubmission } from "@/types/patientIntakeSubmissions"
@@ -149,24 +151,35 @@ function AssignmentRow({
  * the reason for the visit, anything the patient said is wrong about their
  * own record, and the files they sent in.
  *
- * The card removes itself when there is nothing to show, including on an
- * error: a chart with no intake form is the ordinary case for a patient who
- * came in before there was one, and an empty box explaining its own absence
- * would be on most charts in the practice. A form counts as something to
- * show whether or not it has been handed in or collected a file — one that
- * asked for a photograph of an insurance card and nothing else still put a
- * file on the chart, and one still out with the patient is the thing
- * somebody opening this chart before a first session is looking for.
+ * The card removes itself when there is nothing to show AND nothing to send,
+ * including on an error. The second half of that is new: this is where an
+ * intake is started, so a chart with no form on it is no longer an empty box
+ * explaining its own absence — it is the one screen where somebody can ask
+ * for one. A practice with no published form is still the old case and still
+ * renders nothing, because there is no ask to make.
+ *
+ * A form counts as something to show whether or not it has been handed in or
+ * collected a file — one that asked for a photograph of an insurance card and
+ * nothing else still put a file on the chart, and one still out with the
+ * patient is the thing somebody opening this chart before a first session is
+ * looking for.
  */
 export function IntakeCard({ patientId }: IntakeCardProps) {
   const { data, error } = usePatientIntakeSubmissions(patientId)
   const { groups } = useIntakeArtifacts(patientId)
   const { data: assignmentRows } = useIntakeAssignments(patientId)
+  const { data: templates } = useIntakeTemplates()
   const [showEarlier, setShowEarlier] = useState(false)
 
   const submissions = error ? [] : (data ?? [])
   const assignments = assignmentRows ?? []
-  if (submissions.length === 0 && groups.length === 0 && assignments.length === 0) {
+  const canSend = sendableForms(templates ?? []).length > 0
+  if (
+    submissions.length === 0 &&
+    groups.length === 0 &&
+    assignments.length === 0 &&
+    !canSend
+  ) {
     return null
   }
 
@@ -215,9 +228,9 @@ export function IntakeCard({ patientId }: IntakeCardProps) {
         </div>
       )}
 
-      {assignments.length > 0 && (
+      {(assignments.length > 0 || canSend) && (
         <div
-          className="mt-4 space-y-2 border-t border-border pt-4"
+          className="mt-4 space-y-3 border-t border-border pt-4"
           data-testid="intake-assignments"
         >
           <h3 className="text-sm font-semibold text-neutral-900">Forms</h3>
@@ -228,6 +241,7 @@ export function IntakeCard({ patientId }: IntakeCardProps) {
               assignment={assignment}
             />
           ))}
+          <SendIntakeForm patientId={patientId} />
         </div>
       )}
 
