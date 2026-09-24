@@ -35,7 +35,8 @@ import type {
 } from "@/types/scheduling"
 import type { PatientResponse } from "@/types/patients"
 import type { UserPreferences } from "@/lib/api/users"
-import { DEFAULT_NOTE_TYPE } from "@/types/noteTypes"
+import { DEFAULT_NOTE_TYPE, type NoteInputSchema } from "@/types/noteTypes"
+import { ApiError } from "@/lib/api/client"
 import type { EditorialTheme } from "./editorial/EditorialSidebar"
 import "./editorial/editorial.css"
 
@@ -292,6 +293,63 @@ function fieldStyle(): React.CSSProperties {
   }
 }
 
+/** One control per input the chosen note type declares. */
+function NoteInputFields({
+  inputs,
+  values,
+  onChange,
+}: {
+  inputs: NoteInputSchema[]
+  values: Record<string, string>
+  onChange: (key: string, value: string) => void
+}) {
+  return (
+    <>
+      {inputs.map((input) => (
+        <div key={input.key}>
+          <FieldLabel hint={input.required ? "Required" : undefined}>{input.label}</FieldLabel>
+          {input.kind === "choice" ? (
+            <Select value={values[input.key] ?? ""} onValueChange={(v) => onChange(input.key, v)}>
+              <SelectTrigger aria-label={input.label} aria-required={input.required} className="w-full">
+                <SelectValue placeholder="Choose…" />
+              </SelectTrigger>
+              <SelectContent>
+                {input.options.map((option) => (
+                  <SelectItem key={option} value={option}>
+                    {option}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <input
+              value={values[input.key] ?? ""}
+              aria-label={input.label}
+              aria-required={input.required}
+              onChange={(e) => onChange(input.key, e.target.value)}
+              className={FIELD_CLASS}
+              style={fieldStyle()}
+            />
+          )}
+        </div>
+      ))}
+    </>
+  )
+}
+
+/** The declared inputs' non-blank values, trimmed — the shape the API takes. */
+function filledInputs(
+  inputs: NoteInputSchema[],
+  values: Record<string, string>,
+): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const input of inputs) {
+    const value = values[input.key]?.trim()
+    if (value) out[input.key] = value
+  }
+  return out
+}
+
 function AppointmentForm({
   appointment,
   defaultStart,
@@ -323,7 +381,11 @@ function AppointmentForm({
   const patients = patientData?.data ?? []
   const patientTotal = patientData?.total ?? patients.length
   const { data: noteTypesData } = useNoteTypes()
-  const noteTypes = noteTypesData?.note_types ?? []
+  // Only session notes are written from an appointment. The type already on
+  // the appointment stays listed so editing never shows a blank picker.
+  const noteTypes = (noteTypesData?.note_types ?? []).filter(
+    (t) => t.context === "session" || t.key === appointment?.note_type,
+  )
 
   const createMutation = useCreateAppointment()
   const createRecurringMutation = useCreateRecurringAppointment()
@@ -383,11 +445,34 @@ function AppointmentForm({
   const [editingTitle, setEditingTitle] = useState(false)
 
   const [moreOpen, setMoreOpen] = useState(
-    isEditing && (!!appointment.video_link || !!appointment.notes),
+    isEditing &&
+      (!!appointment.video_link ||
+        !!appointment.notes ||
+        Object.keys(appointment.note_inputs ?? {}).length > 0),
   )
   const [videoLink, setVideoLink] = useState(appointment?.video_link ?? "")
   const [noteType, setNoteType] = useState<string>(appointment?.note_type ?? DEFAULT_NOTE_TYPE)
+  const [noteInputs, setNoteInputs] = useState<Record<string, string>>(
+    appointment?.note_inputs ?? {},
+  )
+  const [noteInputsRejected, setNoteInputsRejected] = useState(false)
+  const declaredInputs = noteTypes.find((t) => t.key === noteType)?.inputs ?? []
+  // Creating a series has no field for inputs, so nothing is collected (or
+  // required) there; each occurrence can take them once it's booked.
+  const bookingSeries = !isEditing && repeat !== "none"
+  const collectedInputs = bookingSeries ? [] : declaredInputs
   const [notes, setNotes] = useState(appointment?.notes ?? "")
+
+  // Inputs belong to one note type; a different type starts with none.
+  const changeNoteType = (next: string) => {
+    setNoteType(next)
+    setNoteInputs({})
+    setNoteInputsRejected(false)
+  }
+  const changeNoteInput = (key: string, value: string) => {
+    setNoteInputs((prev) => ({ ...prev, [key]: value }))
+    setNoteInputsRejected(false)
+  }
 
   const newLenRef = useRef<HTMLInputElement>(null)
 
@@ -421,7 +506,9 @@ function AppointmentForm({
     setAddingLen(false)
   }
 
-  const canSave = !!patientId
+  const filledNoteInputs = filledInputs(collectedInputs, noteInputs)
+  const canSave =
+    !!patientId && collectedInputs.every((i) => !i.required || !!filledNoteInputs[i.key])
   const isSubmitting =
     createMutation.isPending ||
     createRecurringMutation.isPending ||
@@ -444,6 +531,14 @@ function AppointmentForm({
       note_type: noteType,
       rule_override: ruleOverride,
     }
+    // The backend answers INVALID_NOTE_INPUTS when a value doesn't fit the
+    // type (a choice no longer offered, say). Shown beside the inputs.
+    const onError = (err: Error) => {
+      if (err instanceof ApiError && err.code === "INVALID_NOTE_INPUTS") {
+        setNoteInputsRejected(true)
+        setMoreOpen(true)
+      }
+    }
     if (isEditing && appointment) {
       if (isRecurring && scope === "series") {
         // The edit-series endpoint only accepts this subset of fields —
@@ -463,9 +558,20 @@ function AppointmentForm({
         )
         return
       }
+      // An empty object clears inputs left over from the appointment's
+      // previous note type; omitted when there is nothing to set or clear.
+      const hadInputs = Object.keys(appointment.note_inputs ?? {}).length > 0
       updateMutation.mutate(
-        { appointmentId: appointment.id, data: payload },
-        { onSuccess: onClose },
+        {
+          appointmentId: appointment.id,
+          data: {
+            ...payload,
+            ...(declaredInputs.length > 0 || hadInputs
+              ? { note_inputs: filledNoteInputs }
+              : {}),
+          },
+        },
+        { onSuccess: onClose, onError },
       )
       return
     }
@@ -484,7 +590,13 @@ function AppointmentForm({
       )
       return
     }
-    createMutation.mutate(payload, { onSuccess: onClose })
+    createMutation.mutate(
+      {
+        ...payload,
+        ...(declaredInputs.length > 0 ? { note_inputs: filledNoteInputs } : {}),
+      },
+      { onSuccess: onClose, onError },
+    )
   }
 
   // The save-time engine check is the only authoritative answer — the slot
@@ -933,7 +1045,7 @@ function AppointmentForm({
               </div>
               <div>
                 <FieldLabel hint="Used when you start the session">Note type</FieldLabel>
-                <Select value={noteType} onValueChange={setNoteType}>
+                <Select value={noteType} onValueChange={changeNoteType}>
                   <SelectTrigger id="note-type" aria-label="Note type" className="w-full">
                     <SelectValue />
                   </SelectTrigger>
@@ -950,6 +1062,23 @@ function AppointmentForm({
                   </SelectContent>
                 </Select>
               </div>
+              {collectedInputs.length > 0 && (
+                <NoteInputFields
+                  inputs={collectedInputs}
+                  values={noteInputs}
+                  onChange={changeNoteInput}
+                />
+              )}
+              {bookingSeries && declaredInputs.length > 0 && (
+                <p className="-mt-2 text-[12.5px]" style={{ color: "var(--ed-ink-soft)" }}>
+                  You can add note details to each session once the series is booked.
+                </p>
+              )}
+              {noteInputsRejected && (
+                <p role="alert" className="-mt-2 text-[12.5px]" style={{ color: "var(--ed-status-noshow-fg)" }}>
+                  These note details weren&apos;t accepted. Check them and try again.
+                </p>
+              )}
               <div>
                 <FieldLabel>Notes</FieldLabel>
                 <Textarea
