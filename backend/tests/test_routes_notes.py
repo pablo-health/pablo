@@ -292,7 +292,7 @@ class TestCreateStandaloneNote:
 
         response = client.post(
             f"/api/patients/{patient.id}/notes",
-            json={"note_type": "dap"},
+            json={"note_type": "not_a_note_type"},
         )
 
         assert response.status_code == 400
