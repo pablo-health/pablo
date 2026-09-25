@@ -36,6 +36,8 @@ export interface AppointmentResponse {
   meeting_external_id?: string | null
   notes: string | null
   note_type: string
+  /** Values for the note type's declared inputs. */
+  note_inputs?: Record<string, string> | null
   recurrence_rule: string | null
   recurring_appointment_id: string | null
   recurrence_index: number | null
@@ -68,6 +70,8 @@ export interface CreateAppointmentRequest {
   provider?: string | null
   notes?: string | null
   note_type?: string
+  /** Values for the note type's declared inputs. */
+  note_inputs?: Record<string, string> | null
   /**
    * The clinician has been shown the conflicting availability rules and
    * confirmed they want this booking anyway. Omitted means no: a hard rule
@@ -110,6 +114,11 @@ export interface UpdateAppointmentRequest {
   video_platform?: string | null
   notes?: string | null
   note_type?: string
+  /**
+   * Values for the note type's declared inputs. An empty object clears them;
+   * omitted leaves them as they are.
+   */
+  note_inputs?: Record<string, string> | null
   status?: AppointmentStatus
   /**
    * The clinician has been shown the conflicting availability rules and

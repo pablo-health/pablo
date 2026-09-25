@@ -33,7 +33,10 @@ import { FinalizeButton } from "@/components/sessions/FinalizeButton"
 import { ChargeCardSection } from "@/components/payments/ChargeCardSection"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AlertCircle } from "lucide-react"
+import { useUpdateNoteEdits } from "@/hooks/useNotes"
+import { useNoteTypeLabel } from "@/hooks/useNoteTypes"
 import type { NoteContent, SOAPNoteModel } from "@/types/sessions"
+import { noteContentToJson } from "@/types/sessions"
 
 const HIGHLIGHT_DURATION_MS = 4000
 
@@ -63,6 +66,10 @@ export default function SessionDetailPage({ params }: PageProps) {
 
   // Local state for edited SOAP note (before finalization)
   const [localSoapNoteEdited, setLocalSoapNoteEdited] = useState<SOAPNoteModel | null>(null)
+  // Last saved edit of a non-SOAP note, shown until the session refetches.
+  const [localNoteEdited, setLocalNoteEdited] = useState<NoteContent | null>(null)
+  const updateNoteEdits = useUpdateNoteEdits()
+  const noteTypeLabel = useNoteTypeLabel()
 
   // Source linking state
   const [highlightedSegments, setHighlightedSegments] = useState<number[]>([])
@@ -113,6 +120,7 @@ export default function SessionDetailPage({ params }: PageProps) {
 
   const handleNoteSave = (edited: NoteContent) => {
     if (edited.note_type === "soap") {
+      // SOAP edits are held here and persisted by finalize (soap_note_edited).
       const soap: SOAPNoteModel = {
         subjective: edited.subjective,
         objective: edited.objective,
@@ -120,9 +128,18 @@ export default function SessionDetailPage({ params }: PageProps) {
         plan: edited.plan,
       }
       setLocalSoapNoteEdited(soap)
+      return
     }
-    // Narrative editing flows through this same callback once the
-    // sessions API persists narrative content (follow-up work).
+    // Finalize has no slot for any other type's content, so those edits are
+    // saved to the note straight away — the same PATCH the standalone note
+    // page uses. The local copy shows the edit until the session refetches.
+    const noteId = session?.note?.id
+    if (!noteId) return
+    setLocalNoteEdited(edited)
+    updateNoteEdits.mutate(
+      { noteId, data: { content_edited: noteContentToJson(edited) } },
+      { onError: () => setLocalNoteEdited(null) },
+    )
   }
 
   // Loading state
@@ -174,9 +191,13 @@ export default function SessionDetailPage({ params }: PageProps) {
   }
 
   const note = session.note
+  // localSoapNoteEdited is only ever set from a SOAP save, so tagging it
+  // "soap" here restates its type rather than imposing one.
   const pendingEdited: NoteContent | null = localSoapNoteEdited
     ? { note_type: "soap", ...localSoapNoteEdited }
-    : null
+    : localNoteEdited
+  // A session with no note yet doesn't say which type it will be.
+  const noteHeading = note ? `${noteTypeLabel(note.note_type)} note` : "Note"
   const canReview =
     session.status === "pending_review" && note !== null
   const finalizedRating = note?.finalized_at ? note.quality_rating : null
@@ -233,7 +254,7 @@ export default function SessionDetailPage({ params }: PageProps) {
         >
           <div>
             <div className="flex items-center justify-between mb-3 lg:sticky lg:top-0 lg:bg-white lg:z-10 lg:pb-2">
-              <h2 className="text-lg font-semibold text-neutral-900">SOAP Note</h2>
+              <h2 className="text-lg font-semibold text-neutral-900">{noteHeading}</h2>
               {finalizedRating !== null && (
                 <div className="flex items-center gap-2">
                   <span className="text-sm text-neutral-600">Quality:</span>
@@ -270,12 +291,17 @@ export default function SessionDetailPage({ params }: PageProps) {
               <div className="card p-12 text-center">
                 <p className="text-neutral-500">
                   {session.status === "processing"
-                    ? "SOAP note is being generated..."
+                    ? "Note is being generated…"
                     : session.status === "failed"
-                      ? "SOAP note generation failed"
-                      : "SOAP note not available"}
+                      ? "Note generation failed"
+                      : "Note not available"}
                 </p>
               </div>
+            )}
+            {updateNoteEdits.isError && (
+              <p role="alert" className="mt-2 text-sm text-red-600">
+                Your changes weren&apos;t saved. Try again.
+              </p>
             )}
           </div>
 

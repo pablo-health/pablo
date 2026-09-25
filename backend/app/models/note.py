@@ -25,6 +25,10 @@ class Note:
     created_at: datetime
     updated_at: datetime
     session_id: str | None = None
+    # Version of a practice-defined note type; None for built-in types.
+    note_type_version: int | None = None
+    # Values supplied for the note type's declared inputs.
+    note_inputs: dict[str, str] | None = None
     content: dict[str, Any] | None = None
     content_edited: dict[str, Any] | None = None
     finalized_at: datetime | None = None

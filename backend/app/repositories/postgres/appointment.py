@@ -405,6 +405,7 @@ def _row_to_appointment(row: AppointmentRow) -> Appointment:
         telehealth_ended_at=row.telehealth_ended_at,
         notes=row.notes,
         note_type=row.note_type,
+        note_inputs=row.note_inputs,
         recurrence_rule=row.recurrence_rule,
         recurring_appointment_id=row.recurring_appointment_id,
         recurrence_index=row.recurrence_index,
@@ -457,6 +458,7 @@ def _appointment_to_row(appt: Appointment, row: AppointmentRow) -> None:
     row.telehealth_ended_at = appt.telehealth_ended_at
     row.notes = appt.notes
     row.note_type = appt.note_type
+    row.note_inputs = appt.note_inputs
     row.recurrence_rule = appt.recurrence_rule
     row.recurring_appointment_id = appt.recurring_appointment_id
     row.recurrence_index = appt.recurrence_index

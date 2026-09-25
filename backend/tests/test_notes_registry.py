@@ -123,8 +123,12 @@ class TestBuiltinDefinitions:
         register_builtin_note_types(registry)
 
         assert registry.keys() == [
+            "birp",
+            "dap",
+            "girp",
             "intake",
             "medications",
+            "meeting_summary",
             "narrative",
             "safety_plan",
             "soap",
@@ -143,7 +147,7 @@ class TestBuiltinDefinitions:
         register_builtin_note_types(registry)
         register_builtin_note_types(registry)
 
-        assert len(registry.keys()) == 6
+        assert len(registry.keys()) == 10
 
     def test_alias_keys_are_not_registered(self) -> None:
         """The bundler's alternate keys are recognised on read, not registered
