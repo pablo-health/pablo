@@ -211,17 +211,31 @@ class GcsFileStorage(FileStorageProvider):
     ``client_factory`` is a test seam — production constructs a real
     ``google.cloud.storage.Client`` lazily so importing this module never
     requires GCP credentials.
+
+    ``api_endpoint`` and ``signed_url_endpoint`` replace Google's endpoints
+    for the JSON API and for signed URLs respectively; both unset is the
+    ordinary managed deployment.
     """
 
-    def __init__(self, *, client_factory: Callable[[], Any] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        client_factory: Callable[[], Any] | None = None,
+        api_endpoint: str | None = None,
+        signed_url_endpoint: str | None = None,
+    ) -> None:
         self._client_factory = client_factory
+        self._api_endpoint = api_endpoint
+        self._signed_url_endpoint = signed_url_endpoint
 
     def _client(self) -> Any:
         if self._client_factory is not None:
             return self._client_factory()
         from google.cloud import storage  # type: ignore[attr-defined]
 
-        return storage.Client()
+        if self._api_endpoint is None:
+            return storage.Client()
+        return storage.Client(client_options={"api_endpoint": self._api_endpoint})
 
     def make_upload_target(
         self,
@@ -241,6 +255,7 @@ class GcsFileStorage(FileStorageProvider):
             content_type=content_type,
             max_bytes=max_bytes,
             ttl_seconds=ttl_seconds,
+            api_access_endpoint=self._signed_url_endpoint,
         )
         # Mirrors what the URL was signed against — GCS rejects a PUT
         # whose headers don't match the signature.
@@ -269,6 +284,7 @@ class GcsFileStorage(FileStorageProvider):
             object_name=object_name,
             ttl_seconds=ttl_seconds,
             response_disposition=response_disposition,
+            api_access_endpoint=self._signed_url_endpoint,
         )
 
     def fetch_metadata(
@@ -613,4 +629,7 @@ def file_storage_from_settings(settings: Settings) -> FileStorageProvider:
             region=settings.aws_region,
             endpoint_url=settings.aws_s3_endpoint_url,
         )
-    return GcsFileStorage()
+    return GcsFileStorage(
+        api_endpoint=settings.gcs_api_endpoint,
+        signed_url_endpoint=settings.gcs_signed_url_endpoint,
+    )
