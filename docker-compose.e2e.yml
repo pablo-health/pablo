@@ -211,10 +211,14 @@ services:
   # to serve), so nothing here gates boot. What gates the suite is
   # create-bucket, which the frontend waits on.
   storage:
-    # quay.io, not Docker Hub: MinIO's Hub repository no longer serves
-    # pulls, so ``minio/minio:<tag>`` fails with a denied-access error that
-    # reads like a missing tag.
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    # Chainguard's build of MinIO. MinIO no longer serves anonymous pulls from
+    # Docker Hub or quay.io, and either one fails with an "unauthorized" or
+    # "denied" error that reads like a missing tag. Chainguard's free tier
+    # publishes only ``latest``, so this is pinned by digest; bumping it means
+    # pulling ``cgr.dev/chainguard/minio:latest`` and copying the new digest.
+    # The image carries ``mc`` and a shell, which the healthcheck below and
+    # create-bucket both need.
+    image: cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1
     command: ["server", "/data", "--address", ":9000"]
     network_mode: "service:backend"
     environment:
@@ -234,7 +238,9 @@ services:
   # no "create on first write", and an upload against a missing bucket is a
   # 500 from the signing call rather than anything a spec could read.
   create-bucket:
-    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+    # The server image, not Chainguard's minio-client: that one has ``mc``
+    # but no shell to run the two commands below in.
+    image: cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1
     network_mode: "service:backend"
     entrypoint:
       [
