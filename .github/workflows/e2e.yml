@@ -18,38 +18,32 @@ on:
     branches: [main]
     paths:
       - "frontend/**"
-      - "backend/app/routes/**"
-      - "backend/app/main.py"
-      # The data layer, added after it broke the stack and this filter did not
-      # notice. A change to how the database is built is about as likely to stop
-      # a stack booting as anything in this repo, and on 2026-09-14 one did:
-      # boot stopped building the platform schema, the backend refused to serve
-      # without it, and no pull-request run of this suite ever saw the change —
-      # ``backend/app/db/**``, ``backend/alembic/env.py`` and
-      # ``backend/bin/migrate.py`` matched none of the lines above. It first ran
-      # post-merge, in release.yml, where it blocked the image instead.
-      - "backend/app/db/**"
+      # The whole backend application, not a list of its folders. This job is
+      # a REQUIRED check, so a change it does not match is not merely untested
+      # but unmergeable: the check never reports, and branch protection waits
+      # for a run that will never start. A folder-by-folder list only ever
+      # grew after that bit someone -- the data layer on 2026-09-14, the
+      # models on 2026-09-21, and on 2026-09-23 a change confined to
+      # backend/app/notes/ that sat green on every other check and could not
+      # merge. services/, repositories/ and the rest were the same trap,
+      # waiting. Everything under backend/app/ is imported by the server this
+      # suite boots, so all of it is in scope.
+      - "backend/app/**"
       - "backend/alembic/**"
       - "backend/alembic_platform/**"
       - "backend/alembic.ini"
       - "backend/bin/**"
-      - "backend/app/settings.py"
       - "backend/Dockerfile*"
+      # The dependencies the backend image installs. A version bump can stop
+      # the stack booting as surely as a code change can.
+      - "pyproject.toml"
+      - "poetry.lock"
       - "docker-compose*.yml"
       - ".env.e2e"
       - "scripts/fake_clearinghouse.py"
       - "scripts/fake_mail.py"
       - "scripts/e2e/**"
       - ".github/workflows/e2e.yml"
-      # The models, added for the same reason ``backend/app/db/**`` was: this
-      # job is a REQUIRED check, so a change it does not match is not merely
-      # untested — it is unmergeable, because the check never reports and
-      # branch protection waits for a run that will never start. Field
-      # validation and model shape decide what the API accepts and what the
-      # browser is handed, which is squarely what this suite exercises.
-      # Found on 2026-09-21 by a change to ``models/validators.py`` that sat
-      # green on every check that ran and blocked anyway.
-      - "backend/app/models/**"
 
 permissions:
   contents: read
