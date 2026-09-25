@@ -804,6 +804,24 @@ class Settings(BaseSettings):
             "LocalStack). Leave unset for AWS S3."
         ),
     )
+    # Both default to Google's own endpoints. They exist so a local stack can
+    # put a GCS stand-in behind the real provider; the signed-URL host is its
+    # own setting because it is the address the BROWSER dials, which need not
+    # be the one the backend reaches the JSON API on.
+    gcs_api_endpoint: str | None = Field(
+        default=None,
+        description=(
+            "JSON API endpoint for the GCS file storage provider. Leave unset "
+            "for https://storage.googleapis.com."
+        ),
+    )
+    gcs_signed_url_endpoint: str | None = Field(
+        default=None,
+        description=(
+            "Origin that V4 signed upload/download URLs are minted for. Leave "
+            "unset for https://storage.googleapis.com."
+        ),
+    )
     # Compliance document storage (license copies, insurance declarations,
     # etc.). Accepts ``gs://<bucket>[/prefix]`` (GCS), ``s3://<bucket>[/prefix]``
     # (AWS S3 / S3-compatible), or an absolute local directory path (self-hosted
