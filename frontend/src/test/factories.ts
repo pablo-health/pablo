@@ -82,6 +82,8 @@ export function createMockNote(overrides: Partial<Note> = {}): Note {
     patient_id: "patient-456",
     session_id: "session-123",
     note_type: "soap" as NoteType,
+    note_type_version: null,
+    note_inputs: null,
     content: null,
     content_edited: null,
     finalized_at: null,

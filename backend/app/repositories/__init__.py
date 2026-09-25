@@ -120,6 +120,11 @@ from .patient_message import (
     PatientMessageAccessDeniedError,
     PatientMessageRepository,
 )
+from .practice_note_type import (
+    InMemoryPracticeNoteTypeRepository,
+    PracticeNoteTypeRepository,
+    StoredNoteType,
+)
 from .session import (
     InMemoryTherapySessionRepository,
     TherapySessionRepository,
@@ -337,6 +342,13 @@ def get_instrument_license_repository() -> InstrumentLicenseRepository:
     return PostgresInstrumentLicenseRepository(_get_pg_session())
 
 
+def get_practice_note_type_repository() -> PracticeNoteTypeRepository:
+    """Get practice note-type repository instance."""
+    from .postgres.practice_note_type import PostgresPracticeNoteTypeRepository
+
+    return PostgresPracticeNoteTypeRepository(_get_pg_session())
+
+
 def get_intake_blank_form_repository() -> IntakeBlankFormRepository:
     """Get intake blank-form repository instance."""
     from .postgres.intake_blank_form import PostgresIntakeBlankFormRepository
@@ -474,6 +486,7 @@ __all__ = [
     "InMemoryPatientIntakeSubmissionRepository",
     "InMemoryPatientMessageRepository",
     "InMemoryPatientRepository",
+    "InMemoryPracticeNoteTypeRepository",
     "InMemoryTherapySessionRepository",
     "InMemoryUserRepository",
     "InstrumentLicenseRepository",
@@ -491,6 +504,8 @@ __all__ = [
     "PatientMessageAccessDeniedError",
     "PatientMessageRepository",
     "PatientRepository",
+    "PracticeNoteTypeRepository",
+    "StoredNoteType",
     "TherapySessionRepository",
     "UserRepository",
     "get_allowlist_repository",
@@ -530,6 +545,7 @@ __all__ = [
     "get_patient_payment_repository",
     "get_patient_repository",
     "get_payer_repository",
+    "get_practice_note_type_repository",
     "get_session_repository",
     "get_supervision_repository",
     "get_user_repository",

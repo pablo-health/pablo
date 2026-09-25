@@ -24,6 +24,7 @@ import { PaymentsTab } from "@/components/payments/PaymentsTab"
 import { BalanceTab } from "@/components/payments/BalanceTab"
 import { InsuranceCard } from "@/components/insurance/InsuranceCard"
 import { usePatientNotes } from "@/hooks/useNotes"
+import { useNoteTypeLabel } from "@/hooks/useNoteTypes"
 import { usePatientDocuments } from "@/hooks/usePatientDocuments"
 import { usePatientOutcomeMeasures } from "@/hooks/useOutcomeMeasures"
 import { usePatientDiagnoses } from "@/hooks/useDiagnoses"
@@ -48,6 +49,7 @@ function CountBadge({ count }: { count: number }) {
 
 function NotesTab({ patientId }: { patientId: string }) {
   const { data, isLoading, error } = usePatientNotes(patientId)
+  const noteTypeLabel = useNoteTypeLabel()
 
   if (isLoading) {
     return (
@@ -92,7 +94,7 @@ function NotesTab({ patientId }: { patientId: string }) {
               >
                 <span className="flex min-w-0 items-center gap-2">
                   <span className="inline-flex items-center rounded bg-neutral-100 px-2 py-0.5 text-xs font-medium capitalize text-neutral-700">
-                    {note.note_type}
+                    {noteTypeLabel(note.note_type)}
                   </span>
                   <span className="text-xs text-neutral-500">
                     {note.session_id ? "Session" : "Standalone"}

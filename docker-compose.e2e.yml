@@ -12,8 +12,8 @@
 #
 # Host ports default to the ones the browser-facing design fixes (frontend
 # 3000, backend 8000, auth emulator 9099). Override E2E_FRONTEND_PORT,
-# E2E_BACKEND_PORT, E2E_CLEARINGHOUSE_PORT, E2E_MAIL_PORT or E2E_SMS_PORT when
-# something already listens there. The emulator port is baked into the
+# E2E_BACKEND_PORT, E2E_CLEARINGHOUSE_PORT, E2E_MAIL_PORT, E2E_SMS_PORT or
+# E2E_STORAGE_PORT when something already listens there. The emulator port is baked into the
 # frontend bundle at build time, so changing E2E_AUTH_EMULATOR_PORT needs
 # `make e2e-up` to rebuild.
 name: pablo-e2e
@@ -44,8 +44,8 @@ services:
       # The frontend shares this network namespace (see its network_mode),
       # so its port is published on this service.
       - "${E2E_FRONTEND_PORT:-3000}:3000"
-      # And so does the object store, for the reason its env block gives.
-      - "9000:9000"
+      # And so does fake-gcs, for the reason the storage env block gives.
+      - "${E2E_STORAGE_PORT:-9000}:${E2E_STORAGE_PORT:-9000}"
     environment:
       - DEBUG=true
       - LOG_LEVEL=INFO
@@ -136,23 +136,25 @@ services:
       - PORTAL_PRACTICE_RESOLVE_IP_RATE_PER_MIN=300
       - PORTAL_RECOVER_IP_RATE_PER_HOUR=200
       # Somewhere for a file to go. A document upload is browser→storage
-      # direct against a signed URL, so no fake can stand in for it at the
-      # API: the browser has to reach a real object store and the store has
-      # to check a real signature. MinIO speaks S3, which this codebase
-      # already has a provider for (see file_storage.py), and boto3 is in
-      # the dev dependency group this image installs.
+      # direct against a signed URL, so the browser has to reach a store
+      # that checks a real signature. The store is fake-gcs, which verifies
+      # Google's V4 signatures, so this stack runs the same GCS provider and
+      # signer a managed deployment does rather than a second backend.
       #
-      # The URL is signed for the host the browser will use, and the
-      # backend shares its network namespace, so ONE address serves both —
-      # which is why the port is fixed rather than overridable: a published
-      # port that disagreed with the signed one would fail the signature,
-      # not the connection, and read as "storage rejected the upload".
-      - FILE_STORAGE_PROVIDER=s3
-      - AWS_S3_ENDPOINT_URL=http://localhost:9000
-      - AWS_REGION=us-east-1
-      - AWS_DEFAULT_REGION=us-east-1
-      - AWS_ACCESS_KEY_ID=e2e-not-a-real-key
-      - AWS_SECRET_ACCESS_KEY=e2e-not-a-real-secret
+      # The URL is signed for the host the browser will use, and the fake
+      # shares this network namespace, so ONE address serves both — which
+      # is why E2E_STORAGE_PORT is the listening port, the published port
+      # and the signed port at once: a published port that disagreed with
+      # the signed one would fail the signature, not the connection, and
+      # read as "storage rejected the upload".
+      - FILE_STORAGE_PROVIDER=gcs
+      - GCS_API_ENDPOINT=http://localhost:${E2E_STORAGE_PORT:-9000}
+      - GCS_SIGNED_URL_ENDPOINT=http://localhost:${E2E_STORAGE_PORT:-9000}
+      # A service-account key minted at stack start (see fake-gcs-key), so
+      # the storage client signs locally the way it does with any key file.
+      # STORAGE_EMULATOR_HOST is not used: it swaps in anonymous credentials,
+      # which cannot sign a URL at all.
+      - GOOGLE_APPLICATION_CREDENTIALS=/srv/gcs-credentials/service-account.json
       - PATIENT_DOCUMENTS_GCS_BUCKET=pablo-e2e-documents
       # Video sessions. Only the two providers that need no vendor account
       # are offered here: a pasted link, and a clinician's own waiting room.
@@ -179,9 +181,12 @@ services:
       retries: 30
     volumes:
       - e2e-mail-tls:/srv/mail-tls:ro
+      - e2e-gcs-credentials:/srv/gcs-credentials:ro
     depends_on:
       postgres:
         condition: service_healthy
+      fake-gcs-key:
+        condition: service_completed_successfully
       # Nothing builds a schema at boot any more, so the backend cannot start
       # until the migrate job has finished. A non-zero exit there fails the stack,
       # which is right: a backend that cannot see its schema refuses to serve, and
@@ -201,27 +206,67 @@ services:
     networks:
       - e2e-net
 
-  # Object storage, in the backend's network namespace so that one address
-  # — localhost:9000 — is the store from inside the stack AND from the
-  # browser on the host. A presigned URL signs the host it was made for, so
-  # two addresses would mean a signature that never verifies.
+  # The key the backend signs storage URLs with and fake-gcs verifies them
+  # against, minted per stack so no private key is ever committed. One shot,
+  # before either of them: the backend reads it on its first storage call and
+  # the fake at boot. It only writes if the volume is empty, so a stack
+  # brought up again over its old volume keeps one key on both sides.
+  fake-gcs-key:
+    build:
+      context: .
+      dockerfile: scripts/e2e/fake-gcs.Dockerfile
+    command: ["python", "fake_gcs_signing.py", "/srv/gcs-credentials"]
+    environment:
+      # Where the storage client fetches its OAuth token. fake-gcs answers
+      # it, reached from the backend's namespace on localhost.
+      - FAKE_GCS_TOKEN_URI=http://localhost:${E2E_STORAGE_PORT:-9000}/token
+    volumes:
+      - e2e-gcs-credentials:/srv/gcs-credentials
+    network_mode: none
+    restart: "no"
+
+  # Object storage: a stand-in GCS (scripts/e2e/fake_gcs.py) that checks real V4
+  # signatures. In the backend's network namespace so that one address —
+  # localhost:$E2E_STORAGE_PORT — is the store from inside the stack AND from the browser
+  # on the host. A signed URL signs the host it was made for, so two
+  # addresses would mean a signature that never verifies.
   #
   # It cannot depend on the backend being HEALTHY (sharing a namespace
-  # already makes it start second, and the backend does not need a bucket
-  # to serve), so nothing here gates boot. What gates the suite is
-  # create-bucket, which the frontend waits on.
-  storage:
-    # quay.io, not Docker Hub: MinIO's Hub repository no longer serves
-    # pulls, so ``minio/minio:<tag>`` fails with a denied-access error that
-    # reads like a missing tag.
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
-    command: ["server", "/data", "--address", ":9000"]
+  # already makes it start second, and the backend does not need storage to
+  # serve), so nothing here gates boot. What gates the suite is this
+  # service's healthcheck, which the frontend waits on. Buckets are created
+  # on first write.
+  fake-gcs:
+    build:
+      context: .
+      dockerfile: scripts/e2e/fake-gcs.Dockerfile
     network_mode: "service:backend"
+    command:
+      [
+        "uvicorn",
+        "--factory",
+        "fake_gcs:app_from_env",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "${E2E_STORAGE_PORT:-9000}",
+        "--log-level",
+        "warning",
+      ]
     environment:
-      - MINIO_ROOT_USER=e2e-not-a-real-key
-      - MINIO_ROOT_PASSWORD=e2e-not-a-real-secret
+      - FAKE_GCS_CREDENTIALS_DIR=/srv/gcs-credentials
+      # A document upload from the page is a cross-origin PUT.
+      - FAKE_GCS_CORS_ORIGINS=http://localhost:${E2E_FRONTEND_PORT:-3000}
+    volumes:
+      - e2e-gcs-credentials:/srv/gcs-credentials:ro
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://localhost:${E2E_STORAGE_PORT:-9000}/_fake/health').getcode() == 200 else 1)",
+        ]
       interval: 3s
       timeout: 5s
       start_period: 5s
@@ -229,23 +274,8 @@ services:
     depends_on:
       backend:
         condition: service_started
-
-  # The bucket the document routes are configured with. One shot: MinIO has
-  # no "create on first write", and an upload against a missing bucket is a
-  # 500 from the signing call rather than anything a spec could read.
-  create-bucket:
-    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
-    network_mode: "service:backend"
-    entrypoint:
-      [
-        "sh",
-        "-c",
-        "mc alias set e2e http://localhost:9000 e2e-not-a-real-key e2e-not-a-real-secret && mc mb --ignore-existing e2e/pablo-e2e-documents",
-      ]
-    restart: "no"
-    depends_on:
-      storage:
-        condition: service_healthy
+      fake-gcs-key:
+        condition: service_completed_successfully
 
   # A SECOND practice, so cross-tenant isolation can be tested through the app
   # rather than only at the integration layer. Runs once, after the backend is
@@ -342,10 +372,10 @@ services:
       # is an origin the page dials and the Content-Security-Policy has to
       # name it. A managed deployment leaves this unset — its signed URLs
       # are on storage.googleapis.com, which the policy already allows —
-      # but this stack's store is MinIO, and without this the browser
+      # but this stack's store is fake-gcs, and without this the browser
       # blocks the upload while the init call that created the row
       # succeeds, so nothing server-side says anything went wrong.
-      - PUBLIC_FILE_STORAGE_URL=http://localhost:9000
+      - PUBLIC_FILE_STORAGE_URL=http://localhost:${E2E_STORAGE_PORT:-9000}
       # The booking pages are reached with no session: the link is the
       # credential. A deployment that publishes them says so here, and the
       # auth middleware unions this into its own allowlist.
@@ -382,13 +412,11 @@ services:
       # suite that needs the second practice should not run without it.
       seed-second-practice:
         condition: service_completed_successfully
-      # Same reasoning as the line above: ``up --wait`` returns when every
-      # service is running or healthy, and a one-shot that has exited is
-      # neither — so naming it here is what makes the bucket's creation
-      # part of "the stack is ready" rather than a race a document spec
-      # loses occasionally.
-      create-bucket:
-        condition: service_completed_successfully
+      # The store has no ordering tie to the backend's health (see
+      # fake-gcs), so it is named here to make it part of "the stack is
+      # ready" rather than a race a document spec loses occasionally.
+      fake-gcs:
+        condition: service_healthy
 
   firebase-auth:
     build:
@@ -523,3 +551,5 @@ volumes:
   # The mail server's start-of-run certificate, shared with the backend so it
   # can trust the STARTTLS handshake.
   e2e-mail-tls:
+  # The storage signing key; see fake-gcs-key.
+  e2e-gcs-credentials:

@@ -256,6 +256,7 @@ APPOINTMENT_COLUMN_DECISIONS: Final[Mapping[str, str | None]] = {
     "telehealth_ended_at": "Vendor call bookkeeping, unreviewed.",
     "notes": "Written by the clinician, for the clinician.",
     "note_type": "An internal link to the clinical record this visit produces.",
+    "note_inputs": "Context the clinician supplied for drafting the visit's note.",
     "recurrence_rule": SHOWN,
     "recurring_appointment_id": SHOWN,
     "recurrence_index": "Internal scheduling bookkeeping with no meaning to a patient.",
