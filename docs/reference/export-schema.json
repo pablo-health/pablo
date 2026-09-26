@@ -1,0 +1,455 @@
+{
+  "$defs": {
+    "DocumentReference": {
+      "description": "One note. ``final_content`` is what the clinician signed off on.",
+      "properties": {
+        "content": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Content"
+        },
+        "content_edited": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Content Edited"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "final_content": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Final Content"
+        },
+        "finalized_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Finalized At"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "note_type": {
+          "title": "Note Type",
+          "type": "string"
+        },
+        "restricted": {
+          "description": "A psychotherapy note, readable by its author alone.",
+          "title": "Restricted",
+          "type": "boolean"
+        },
+        "was_edited": {
+          "title": "Was Edited",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "note_type",
+        "restricted",
+        "content",
+        "content_edited",
+        "final_content",
+        "was_edited",
+        "created_at",
+        "finalized_at"
+      ],
+      "title": "DocumentReference",
+      "type": "object"
+    },
+    "Encounter": {
+      "description": "One session, with its note when it has one.\n\n``transcript`` is absent, not null, when transcripts were not included,\nso an omitted transcript never reads as an empty one; the document's\n``options`` say which it was.",
+      "properties": {
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "document_reference": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DocumentReference"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "session_date": {
+          "format": "date-time",
+          "title": "Session Date",
+          "type": "string"
+        },
+        "session_number": {
+          "title": "Session Number",
+          "type": "integer"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "transcript": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExportTranscript"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id",
+        "session_number",
+        "session_date",
+        "status",
+        "created_at",
+        "document_reference"
+      ],
+      "title": "Encounter",
+      "type": "object"
+    },
+    "ExportOptions": {
+      "description": "What the caller chose to include beyond the default record copy.",
+      "properties": {
+        "include_psychotherapy_notes": {
+          "default": false,
+          "title": "Include Psychotherapy Notes",
+          "type": "boolean"
+        },
+        "include_transcripts": {
+          "default": false,
+          "title": "Include Transcripts",
+          "type": "boolean"
+        }
+      },
+      "title": "ExportOptions",
+      "type": "object"
+    },
+    "ExportPatient": {
+      "description": "The client's demographics.",
+      "properties": {
+        "address_line1": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Address Line1"
+        },
+        "address_line2": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Address Line2"
+        },
+        "birth_date": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "YYYY-MM-DD, when recorded.",
+          "title": "Birth Date"
+        },
+        "chart_closed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chart Closed At"
+        },
+        "city": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "City"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "diagnosis": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Diagnosis"
+        },
+        "email": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Email"
+        },
+        "first_name": {
+          "title": "First Name",
+          "type": "string"
+        },
+        "identifier": {
+          "description": "Pablo's id for the client.",
+          "title": "Identifier",
+          "type": "string"
+        },
+        "last_name": {
+          "title": "Last Name",
+          "type": "string"
+        },
+        "phone": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Phone"
+        },
+        "postal_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Postal Code"
+        },
+        "sex": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Administrative sex: M, F or U.",
+          "title": "Sex"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "State"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "identifier",
+        "first_name",
+        "last_name",
+        "status",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "ExportPatient",
+      "type": "object"
+    },
+    "ExportTranscript": {
+      "properties": {
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "format": {
+          "title": "Format",
+          "type": "string"
+        }
+      },
+      "required": [
+        "format",
+        "content"
+      ],
+      "title": "ExportTranscript",
+      "type": "object"
+    },
+    "Practitioner": {
+      "description": "Who the record comes from, as the practice has set itself up to bill.",
+      "properties": {
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "npi": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "National Provider Identifier.",
+          "title": "Npi"
+        },
+        "taxonomy_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "NUCC provider taxonomy code.",
+          "title": "Taxonomy Code"
+        }
+      },
+      "title": "Practitioner",
+      "type": "object"
+    }
+  },
+  "description": "One client's chart as structured data (``patient.json``).",
+  "properties": {
+    "exported_at": {
+      "format": "date-time",
+      "title": "Exported At",
+      "type": "string"
+    },
+    "options": {
+      "$ref": "#/$defs/ExportOptions"
+    },
+    "patient": {
+      "$ref": "#/$defs/ExportPatient"
+    },
+    "practitioner": {
+      "$ref": "#/$defs/Practitioner"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "sessions": {
+      "items": {
+        "$ref": "#/$defs/Encounter"
+      },
+      "title": "Sessions",
+      "type": "array"
+    },
+    "standalone_notes": {
+      "description": "Notes written without a session, such as an intake or narrative.",
+      "items": {
+        "$ref": "#/$defs/DocumentReference"
+      },
+      "title": "Standalone Notes",
+      "type": "array"
+    }
+  },
+  "required": [
+    "exported_at",
+    "options",
+    "patient",
+    "practitioner",
+    "sessions",
+    "standalone_notes"
+  ],
+  "title": "PatientExportDocument",
+  "type": "object"
+}
