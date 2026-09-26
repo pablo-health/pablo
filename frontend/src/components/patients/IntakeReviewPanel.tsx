@@ -5,6 +5,7 @@
 import { useState } from "react"
 
 import { ApiError } from "@/lib/api/client"
+import { saveFile } from "@/lib/saveFile"
 import {
   downloadIntakeExport,
   intakeExportFilename,
@@ -100,24 +101,6 @@ function formatValue(value: Record<string, unknown> | null): string | null {
 function errorMessage(error: Error | null): string | null {
   if (!error) return null
   return error instanceof ApiError && error.message ? error.message : COPY.actionError
-}
-
-/**
- * Hand a downloaded file to the browser to save.
- *
- * The route answers with the document itself rather than a link to one, so
- * there is nothing to open in a tab — the blob is turned into a URL that
- * lives exactly as long as the click.
- */
-function saveFile(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement("a")
-  link.href = url
-  link.download = filename
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-  URL.revokeObjectURL(url)
 }
 
 interface ReviewItemRowProps {

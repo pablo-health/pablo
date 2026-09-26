@@ -488,11 +488,12 @@ export async function postForm<T>(
 }
 
 /**
- * GET binary content (a file download) as a Blob. apiClient() coerces
- * non-JSON responses to text, which corrupts binary payloads, so file
- * downloads need their own path. Error shapes mirror apiClient().
+ * GET a file download and return the raw response once it is known to be OK.
+ * apiClient() coerces non-JSON responses to text, which corrupts binary
+ * payloads, so file downloads need their own path. Error shapes mirror
+ * apiClient().
  */
-export async function getBlob(endpoint: string, token?: string): Promise<Blob> {
+async function fetchDownload(endpoint: string, token?: string): Promise<Response> {
   const response = await fetch(buildApiUrl(endpoint), {
     method: "GET",
     headers: await getAuthHeader(token),
@@ -524,7 +525,45 @@ export async function getBlob(endpoint: string, token?: string): Promise<Blob> {
       response.status,
     )
   }
-  return response.blob()
+  return response
+}
+
+/** GET binary content (a file download) as a Blob. */
+export async function getBlob(endpoint: string, token?: string): Promise<Blob> {
+  return (await fetchDownload(endpoint, token)).blob()
+}
+
+/** A downloaded file and the name the server asked for it to be saved as. */
+export interface DownloadedFile {
+  blob: Blob
+  filename: string | null
+}
+
+/**
+ * The filename in a Content-Disposition header, or null when there is none.
+ *
+ * Reads the quoted and the bare form of `filename=`. The routes that send an
+ * attachment write the quoted form with an ASCII name, so the RFC 5987
+ * `filename*=` form is not needed yet.
+ */
+export function filenameFromDisposition(disposition: string | null): string | null {
+  const match = disposition?.match(/filename="([^"]+)"|filename=([^;]+)/i)
+  const name = match?.[1] ?? match?.[2]?.trim()
+  return name || null
+}
+
+/**
+ * GET a file download with the filename its Content-Disposition names.
+ *
+ * The header is only readable cross-origin because the API lists it in the
+ * CORS `expose_headers`.
+ */
+export async function getFile(endpoint: string, token?: string): Promise<DownloadedFile> {
+  const response = await fetchDownload(endpoint, token)
+  return {
+    blob: await response.blob(),
+    filename: filenameFromDisposition(response.headers.get("content-disposition")),
+  }
 }
 
 // Surface any downstream-build additions (interceptors, error-readers) through

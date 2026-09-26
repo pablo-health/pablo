@@ -238,6 +238,9 @@ app.add_middleware(
         "X-Client-Version",
         "X-Client-Platform",
     ],
+    # A download saves under the name the route sends; a cross-origin page
+    # cannot read that header unless it is listed here.
+    expose_headers=["Content-Disposition"],
 )
 
 # Request-context middleware — added last so it wraps every other layer

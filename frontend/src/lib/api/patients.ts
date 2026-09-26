@@ -14,7 +14,7 @@ import type {
   PatientResponse,
   UpdatePatientRequest,
 } from "@/types/patients"
-import { del, get, patch, post } from "./client"
+import { del, get, getFile, patch, post } from "./client"
 
 /**
  * Create a new patient
@@ -168,4 +168,44 @@ export async function restorePatient(
   token?: string
 ): Promise<PatientResponse> {
   return post<PatientResponse>(`/api/patients/${patientId}/restore`, undefined, token)
+}
+
+export type PatientExportFormat = "json" | "pdf"
+
+/** What goes into a chart export beyond demographics, sessions and notes. */
+export interface PatientExportOptions {
+  includeTranscripts: boolean
+  includePsychotherapyNotes: boolean
+}
+
+/**
+ * The chart as one file: JSON to hand to another system, or a PDF to read.
+ *
+ * A blob rather than parsed content, JSON included, because the only thing
+ * this side does with it is save it. The route writes the audit row with the
+ * options chosen.
+ *
+ * The PDF names itself through Content-Disposition. The JSON answer carries
+ * no attachment header, so it is named the way the route names the PDF.
+ */
+export async function downloadPatientExport(
+  patientId: string,
+  format: PatientExportFormat,
+  options: PatientExportOptions,
+  token?: string,
+): Promise<{ blob: Blob; filename: string }> {
+  const query = new URLSearchParams({
+    format,
+    include_transcripts: String(options.includeTranscripts),
+    include_psychotherapy_notes: String(options.includePsychotherapyNotes),
+  })
+  const file = await getFile(
+    `/api/patients/${patientId}/export?${query.toString()}`,
+    token,
+  )
+  const today = new Date().toISOString().split("T")[0]
+  return {
+    blob: file.blob,
+    filename: file.filename ?? `patient_${patientId}_export_${today}.${format}`,
+  }
 }

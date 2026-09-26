@@ -14,6 +14,7 @@ import {
   getPatient,
   updatePatient,
   deletePatient,
+  downloadPatientExport,
 } from "../patients"
 import { createMockPatient } from "@/test/factories"
 
@@ -327,5 +328,38 @@ describe("Patient API Functions", () => {
         { acknowledged_retention_obligation: false }
       )
     })
+  })
+})
+
+describe("downloadPatientExport", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it("sends the format and both options, and keeps the server's filename", async () => {
+    const blob = new Blob(["%PDF"])
+    vi.mocked(client.getFile).mockResolvedValue({ blob, filename: "chart.pdf" })
+
+    const file = await downloadPatientExport("p1", "pdf", {
+      includeTranscripts: true,
+      includePsychotherapyNotes: false,
+    })
+
+    expect(client.getFile).toHaveBeenCalledWith(
+      "/api/patients/p1/export?format=pdf&include_transcripts=true&include_psychotherapy_notes=false",
+      undefined,
+    )
+    expect(file).toEqual({ blob, filename: "chart.pdf" })
+  })
+
+  it("names a JSON export the way the route names its PDF when no header comes back", async () => {
+    vi.mocked(client.getFile).mockResolvedValue({ blob: new Blob(["{}"]), filename: null })
+
+    const file = await downloadPatientExport("p1", "json", {
+      includeTranscripts: false,
+      includePsychotherapyNotes: false,
+    })
+
+    expect(file.filename).toMatch(/^patient_p1_export_\d{4}-\d{2}-\d{2}\.json$/)
   })
 })
