@@ -28,6 +28,12 @@ Design notes:
 * **Audio is out of scope (v1).** ``include_audio`` requests are
   accepted for forward compatibility but ignored; only structured
   rows ship in the archive.
+* **Psychotherapy notes are opt-in.** A restricted note is readable by
+  its author alone, so an admin's session sees their own and nobody
+  else's. Rather than let that policy decide what ships, restricted
+  rows are filtered out unless the caller sets
+  ``include_psychotherapy_notes``; with it set, the admin's own ship
+  and the manifest says that is all it can hold.
 """
 
 from __future__ import annotations
@@ -58,6 +64,11 @@ if TYPE_CHECKING:
 
 ExportFormat = Literal["json", "csv"]
 
+PSYCHOTHERAPY_NOTES_SCOPE = (
+    "Psychotherapy notes are included only where you are the author; "
+    "each clinician exports their own."
+)
+
 
 # Row-type tables included in the archive. Order is stable so the
 # audit log's ``counts`` payload is deterministic and so consumers
@@ -77,12 +88,16 @@ class TenantExportSummary:
     ``size_bytes`` is the on-the-wire archive size (post-gzip).
     ``counts`` maps each row type to the number of rows actually
     shipped — the rows visible to the exporting session, not a
-    schema-wide total. Both fields are PHI-free and safe for the
-    audit log payload.
+    schema-wide total. ``psychotherapy_notes_included`` is how many of
+    the shipped notes were restricted; it is zero whenever
+    ``include_psychotherapy_notes`` is off. All fields are PHI-free and
+    safe for the audit log payload.
     """
 
     size_bytes: int
     counts: dict[str, int]
+    include_psychotherapy_notes: bool = False
+    psychotherapy_notes_included: int = 0
 
 
 def visible_counts_payload(counts: dict[str, int]) -> dict[str, dict[str, int | None]]:
@@ -132,13 +147,19 @@ def _iter_rows(db: Session, model: type[Any]) -> Iterator[Any]:
     yield from db.execute(select(model)).scalars()
 
 
+def _select_notes(db: Session, *, include_psychotherapy_notes: bool) -> list[NoteRow]:
+    """The notes to ship: restricted ones only when the caller asked for them."""
+    query = select(NoteRow)
+    if not include_psychotherapy_notes:
+        query = query.where(NoteRow.restricted.is_(False))
+    return list(db.execute(query).scalars())
+
+
 def _row_iter_for(table: str, db: Session) -> Iterator[Any]:
     if table == "patients":
         return _iter_rows(db, PatientRow)
     if table == "therapy_sessions":
         return _iter_rows(db, TherapySessionRow)
-    if table == "notes":
-        return _iter_rows(db, NoteRow)
     if table == "audit_logs":
         return _iter_rows(db, AuditLogRow)
     msg = f"Unknown tenant export table: {table!r}"
@@ -218,6 +239,7 @@ def stream_tenant_archive(
     db: Session,
     *,
     export_format: ExportFormat = "json",
+    include_psychotherapy_notes: bool = False,
     state: TenantExportState | None = None,
 ) -> Iterator[bytes]:
     """Yield successive byte chunks of a tar.gz archive of the tenant.
@@ -235,6 +257,10 @@ def stream_tenant_archive(
         for tenant isolation; this function does not check.
     export_format:
         ``"json"`` (default) or ``"csv"``.
+    include_psychotherapy_notes:
+        When False (default), restricted notes are left out of
+        ``notes``. When True, the ones this session can read ship —
+        under the row policy, only the caller's own.
     state:
         Optional :class:`TenantExportState` holder. When supplied, the
         generator populates ``state.summary`` after the final byte is
@@ -246,6 +272,7 @@ def stream_tenant_archive(
     """
     pipe = _PipeWriter()
     counts: dict[str, int] = {}
+    psychotherapy_notes_included = 0
     exported_at = utc_now_iso()
     serializer = _serialize_csv if export_format == "csv" else _serialize_json
     extension = "csv" if export_format == "csv" else "json"
@@ -257,7 +284,14 @@ def stream_tenant_archive(
     # but it does not satisfy mypy's ``_Fileobj`` Protocol.
     with tarfile.open(fileobj=pipe, mode="w|gz") as tar:  # type: ignore[call-overload]
         for table in _ROW_TYPES:
-            payload, count = serializer(_row_iter_for(table, db))
+            rows: Iterable[Any]
+            if table == "notes":
+                notes = _select_notes(db, include_psychotherapy_notes=include_psychotherapy_notes)
+                psychotherapy_notes_included = sum(1 for note in notes if note.restricted)
+                rows = notes
+            else:
+                rows = _row_iter_for(table, db)
+            payload, count = serializer(rows)
             counts[table] = count
             info = tarfile.TarInfo(name=f"{table}.{extension}")
             info.size = len(payload)
@@ -267,13 +301,17 @@ def stream_tenant_archive(
             if chunk:
                 yield chunk
 
-        manifest = {
+        manifest: dict[str, Any] = {
             "exported_at": exported_at,
             "format": export_format,
             "include_audio": False,
             "partial_possible": True,
             "counts": visible_counts_payload(counts),
+            "include_psychotherapy_notes": include_psychotherapy_notes,
+            "psychotherapy_notes_included": psychotherapy_notes_included,
         }
+        if include_psychotherapy_notes:
+            manifest["psychotherapy_notes_scope"] = PSYCHOTHERAPY_NOTES_SCOPE
         manifest_bytes = json.dumps(manifest, separators=(",", ":")).encode("utf-8")
         info = tarfile.TarInfo(name="manifest.json")
         info.size = len(manifest_bytes)
@@ -288,4 +326,9 @@ def stream_tenant_archive(
         yield chunk
 
     if state is not None:
-        state.summary = TenantExportSummary(size_bytes=pipe.total_bytes, counts=counts)
+        state.summary = TenantExportSummary(
+            size_bytes=pipe.total_bytes,
+            counts=counts,
+            include_psychotherapy_notes=include_psychotherapy_notes,
+            psychotherapy_notes_included=psychotherapy_notes_included,
+        )

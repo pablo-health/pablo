@@ -11,6 +11,11 @@ Coverage:
   the correct content-disposition, the stream actually opens (i.e.
   StreamingResponse begins iterating), and the TENANT_EXPORTED audit
   log fires once draining completes.
+* **Psychotherapy notes are opt-in.** The flag reaches the service, the
+  notes query filters restricted rows unless it is set, and the manifest
+  and the audit row record the flag and how many shipped. The
+  two-clinician proof against real row policy lives in
+  ``tests_integration/database/test_tenant_export_restricted_notes.py``.
 
 We do **not** materialize the full archive in tests — we open the
 stream, read enough bytes to confirm a tar.gz signature, and then
@@ -24,19 +29,23 @@ import gzip
 import io
 import json
 import tarfile
-from datetime import datetime
+import uuid
+from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 from app.api_errors import register_exception_handlers
 from app.auth.service import get_current_user, require_admin
 from app.db import get_db_session
+from app.db.models import NoteRow
 from app.models import User
 from app.models.audit import AuditAction
 from app.routes.admin import TenantExportRequest
 from app.routes.admin import router as admin_router
 from app.services import AuditService, get_audit_service
 from app.services.tenant_export_service import (
+    PSYCHOTHERAPY_NOTES_SCOPE,
     TenantExportState,
     TenantExportSummary,
     stream_tenant_archive,
@@ -163,7 +172,7 @@ class TestTenantExportHappyPath:
         Starlette runs the BackgroundTask that emits the audit row.
         """
 
-        def _fake_stream(db, *, export_format, state):  # type: ignore[no-untyped-def]
+        def _fake_stream(db, *, export_format, include_psychotherapy_notes, state):  # type: ignore[no-untyped-def]
             # Yield a couple of chunks that together start with the
             # gzip magic so a sniffing client could identify it.
             yield b"\x1f\x8b\x08\x00fake-tar-gz-prelude"
@@ -229,7 +238,7 @@ class TestTenantExportHappyPath:
     ) -> None:
         """v1 ignores include_audio; manifest+audit always record False."""
 
-        def _fake_stream(db, *, export_format, state):  # type: ignore[no-untyped-def]
+        def _fake_stream(db, *, export_format, include_psychotherapy_notes, state):  # type: ignore[no-untyped-def]
             yield b"\x1f\x8b\x08\x00"
             state.summary = TenantExportSummary(
                 size_bytes=4,
@@ -260,12 +269,70 @@ class TestTenantExportHappyPath:
         assert entry["changes"]["format"] == "csv"
         assert entry["changes"]["include_audio"] is False
 
+    def test_psychotherapy_notes_default_off_and_recorded(
+        self, client: TestClient, captured_audit_entries: list
+    ) -> None:
+        """No flag on the wire: the service is told to leave restricted notes
+        out, and the audit row says none shipped."""
+        seen: dict[str, bool] = {}
+
+        def _fake_stream(db, *, export_format, include_psychotherapy_notes, state):  # type: ignore[no-untyped-def]
+            seen["flag"] = include_psychotherapy_notes
+            yield b"\x1f\x8b\x08\x00"
+            state.summary = TenantExportSummary(size_bytes=4, counts={"notes": 2})
+
+        with (
+            patch("app.routes.admin.stream_tenant_archive", side_effect=_fake_stream),
+            client.stream("POST", "/api/admin/tenant-export", json={"format": "json"}) as resp,
+        ):
+            assert resp.status_code == 200
+            for _ in resp.iter_bytes():
+                pass
+
+        assert seen["flag"] is False
+        changes = captured_audit_entries[0]["changes"]
+        assert changes["include_psychotherapy_notes"] is False
+        assert changes["psychotherapy_notes_included"] == 0
+
+    def test_psychotherapy_notes_flag_is_passed_through_and_audited(
+        self, client: TestClient, captured_audit_entries: list
+    ) -> None:
+        """The audit row carries the flag and the count, nothing about the notes."""
+        seen: dict[str, bool] = {}
+
+        def _fake_stream(db, *, export_format, include_psychotherapy_notes, state):  # type: ignore[no-untyped-def]
+            seen["flag"] = include_psychotherapy_notes
+            yield b"\x1f\x8b\x08\x00"
+            state.summary = TenantExportSummary(
+                size_bytes=4,
+                counts={"notes": 3},
+                include_psychotherapy_notes=True,
+                psychotherapy_notes_included=1,
+            )
+
+        with (
+            patch("app.routes.admin.stream_tenant_archive", side_effect=_fake_stream),
+            client.stream(
+                "POST",
+                "/api/admin/tenant-export",
+                json={"format": "json", "include_psychotherapy_notes": True},
+            ) as resp,
+        ):
+            assert resp.status_code == 200
+            for _ in resp.iter_bytes():
+                pass
+
+        assert seen["flag"] is True
+        changes = captured_audit_entries[0]["changes"]
+        assert changes["include_psychotherapy_notes"] is True
+        assert changes["psychotherapy_notes_included"] == 1
+
     def test_audit_changes_carry_visible_counts_and_partial_flag(
         self, client: TestClient, captured_audit_entries: list
     ) -> None:
         """The audit payload reports what shipped, not a schema total."""
 
-        def _fake_stream(db, *, export_format, state):  # type: ignore[no-untyped-def]
+        def _fake_stream(db, *, export_format, include_psychotherapy_notes, state):  # type: ignore[no-untyped-def]
             yield b"\x1f\x8b\x08\x00"
             state.summary = TenantExportSummary(
                 size_bytes=4,
@@ -314,7 +381,7 @@ class TestTenantExportHappyPath:
         TENANT_EXPORTED row that overstates what was actually delivered.
         """
 
-        def _aborting_stream(db, *, export_format, state):  # type: ignore[no-untyped-def]
+        def _aborting_stream(db, *, export_format, include_psychotherapy_notes, state):  # type: ignore[no-untyped-def]
             yield b"\x1f\x8b\x08\x00partial"
             msg = "simulated mid-stream serializer failure"
             raise RuntimeError(msg)
@@ -397,6 +464,37 @@ class TestTenantExportService:
         assert manifest["partial_possible"] is True
         assert manifest["counts"]["patients"] == {"visible_count": 0, "total_count": None}
         assert manifest["counts"]["audit_logs"] == {"visible_count": 0, "total_count": None}
+        assert manifest["include_psychotherapy_notes"] is False
+        assert manifest["psychotherapy_notes_included"] == 0
+        assert "psychotherapy_notes_scope" not in manifest
+
+    def test_notes_query_filters_restricted_unless_asked(self) -> None:
+        """Only the notes query changes with the flag, and only by that filter."""
+        for flag, expect_filter in ((False, True), (True, False)):
+            db = _db_returning({})
+            _drain(db, include_psychotherapy_notes=flag)
+            notes_sql = [
+                str(call.args[0])
+                for call in db.execute.call_args_list
+                if _entity(call.args[0]) is NoteRow
+            ]
+            assert len(notes_sql) == 1
+            assert ("restricted IS false" in notes_sql[0]) is expect_filter
+
+    def test_manifest_counts_the_restricted_notes_that_shipped(self) -> None:
+        """With the flag, the manifest records the count and says whose they are."""
+        db = _db_returning({NoteRow: [_note(restricted=False), _note(restricted=True)]})
+        state = TenantExportState()
+        manifest, notes = _drain(db, include_psychotherapy_notes=True, state=state)
+
+        assert [n["restricted"] for n in notes] == [False, True]
+        assert manifest["include_psychotherapy_notes"] is True
+        assert manifest["psychotherapy_notes_included"] == 1
+        assert manifest["psychotherapy_notes_scope"] == PSYCHOTHERAPY_NOTES_SCOPE
+        assert manifest["counts"]["notes"] == {"visible_count": 2, "total_count": None}
+        assert state.summary is not None
+        assert state.summary.include_psychotherapy_notes is True
+        assert state.summary.psychotherapy_notes_included == 1
 
     def test_unknown_format_rejected_at_schema_layer(self) -> None:
         """Pydantic rejects format values outside the literal."""
@@ -410,3 +508,54 @@ class TestTenantExportService:
             "patients": {"visible_count": 3, "total_count": None},
             "notes": {"visible_count": 0, "total_count": None},
         }
+
+
+def _entity(statement: Any) -> Any:
+    return statement.column_descriptions[0]["entity"]
+
+
+def _db_returning(rows_by_model: dict[type, list[Any]]) -> MagicMock:
+    """A session stub that answers each table's select with the given rows."""
+
+    def _execute(statement: Any) -> MagicMock:
+        result = MagicMock()
+        result.scalars.return_value = rows_by_model.get(_entity(statement), [])
+        return result
+
+    db = MagicMock()
+    db.execute.side_effect = _execute
+    return db
+
+
+def _note(*, restricted: bool) -> NoteRow:
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    return NoteRow(
+        id=str(uuid.uuid4()),
+        patient_id=str(uuid.uuid4()),
+        note_type="psychotherapy" if restricted else "narrative",
+        status="complete",
+        restricted=restricted,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def _drain(
+    db: MagicMock,
+    *,
+    include_psychotherapy_notes: bool,
+    state: TenantExportState | None = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Run the real stream; return its manifest and its notes."""
+    archive = b"".join(
+        stream_tenant_archive(
+            db,
+            export_format="json",
+            include_psychotherapy_notes=include_psychotherapy_notes,
+            state=state,
+        )
+    )
+    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as tar:
+        manifest = json.loads(tar.extractfile("manifest.json").read())
+        notes = json.loads(tar.extractfile("notes.json").read())
+    return manifest, notes

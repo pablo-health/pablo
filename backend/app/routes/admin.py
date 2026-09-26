@@ -195,10 +195,14 @@ class TenantExportRequest(BaseModel):
     in v1; audio export is out of scope (see THERAPY-d11). The route
     will still record ``include_audio=False`` in the manifest regardless
     of what the client sends.
+
+    ``include_psychotherapy_notes`` opts the caller's own restricted
+    notes into the archive; left off, no restricted note ships.
     """
 
     format: Literal["json", "csv"] = "json"
     include_audio: bool = False
+    include_psychotherapy_notes: bool = False
 
 
 @router.post("/api/admin/tenant-export")
@@ -247,6 +251,8 @@ def tenant_export(
                 "size_bytes": state.summary.size_bytes,
                 "partial_possible": True,
                 "counts": visible_counts_payload(state.summary.counts),
+                "include_psychotherapy_notes": state.summary.include_psychotherapy_notes,
+                "psychotherapy_notes_included": state.summary.psychotherapy_notes_included,
             },
         )
         logger.info(
@@ -260,6 +266,7 @@ def tenant_export(
     stream = stream_tenant_archive(
         db,
         export_format=body.format,
+        include_psychotherapy_notes=body.include_psychotherapy_notes,
         state=state,
     )
 
