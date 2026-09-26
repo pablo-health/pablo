@@ -112,6 +112,12 @@ def test_zip_holds_the_five_files(service: ExportService) -> None:
     assert files["README.txt"].decode() == README
 
 
+def test_readme_names_the_schema_version_patient_json_carries(service: ExportService) -> None:
+    _, files = _export(service)
+    version = json.loads(files["patient.json"])["schema_version"]
+    assert f"Schema version: {version} " in files["README.txt"].decode()
+
+
 def test_patient_json_validates_against_the_schema_beside_it(service: ExportService) -> None:
     for options in ({}, {"include_transcripts": True, "include_psychotherapy_notes": True}):
         _, files = _export(service, **options)

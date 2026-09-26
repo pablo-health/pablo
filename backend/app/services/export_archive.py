@@ -24,6 +24,7 @@ from io import BytesIO
 from typing import TYPE_CHECKING, cast
 
 from ..models.export import (
+    SCHEMA_VERSION,
     DocumentReference,
     Encounter,
     ExportDocument,
@@ -46,8 +47,10 @@ if TYPE_CHECKING:
     from ..repositories.clinician_profile import ClinicianProfile
     from .record_set import RecordSetSelector
 
-README = """\
+README = f"""\
 This archive is one client's chart, exported from Pablo.
+Schema version: {SCHEMA_VERSION} (see docs/reference/export-format.md in the Pablo source).
+
 chart.pdf      The chart as a document to read or print.
 patient.json   The same chart as structured data.
 schema.json    The JSON Schema that patient.json follows.
@@ -55,8 +58,6 @@ documents/     Files uploaded to the chart, as they were uploaded.
 intake/        Each submitted intake form, as a document to read or print.
 manifest.json  Every other file in this archive, with its size and SHA-256 checksum.
 README.txt     This file.
-
-The format is documented in docs/reference/export-format.md in the Pablo source.
 """
 
 #: Characters an uploaded filename may not carry into an archive entry name:

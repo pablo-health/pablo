@@ -315,5 +315,8 @@ test.describe("patient export", () => {
 
     expect(read("chart.pdf").subarray(0, 4).toString("latin1")).toBe("%PDF")
     expect(read("README.txt").toString("utf8")).toContain("patient.json")
+    expect(read("README.txt").toString("utf8")).toContain(
+      `Schema version: ${document.schema_version} `,
+    )
   })
 })
