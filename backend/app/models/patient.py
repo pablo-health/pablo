@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from .validators import validate_email, validate_iso_date, validate_phone, validate_status
 
@@ -227,24 +227,6 @@ class CloseChartRequest(BaseModel):
     """
 
     closure_reason: str | None = Field(None, max_length=2000)
-
-
-class ExportFormat(str):
-    """Supported export formats for patient data."""
-
-    JSON = "json"
-    PDF = "pdf"
-
-
-class PatientExportData(BaseModel):
-    """Complete patient data export for HIPAA Right to Access (§ 164.524)."""
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    patient: PatientResponse
-    sessions: list[dict[str, Any]]
-    exported_at: datetime
-    export_format: str
 
 
 @dataclass

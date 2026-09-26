@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse, Response
 
 from ..api_errors import BadRequestError, NotFoundError, ServerError
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
+from ..db import get_db_session
 from ..models import (
     AuditAction,
     CloseChartRequest,
@@ -30,10 +31,14 @@ from ..models import (
     UpdatePatientRequest,
     User,
 )
+from ..models.export import Practitioner
 from ..repositories import (
     NotesRepository,
     PatientRepository,
     TherapySessionRepository,
+)
+from ..repositories import (
+    get_clinician_profile_repository as _clinician_profile_repo_factory,
 )
 from ..repositories import (
     get_notes_repository as _notes_repo_factory,
@@ -45,6 +50,8 @@ from ..repositories import (
     get_session_repository as _session_repo_factory,
 )
 from ..services import AuditService, ExportService, get_audit_service
+from ..services.export_archive import practitioner_from
+from ..services.practice_billing_profile import load_billing_profile
 from ..utcnow import utc_now
 
 logger = logging.getLogger(__name__)
@@ -122,8 +129,14 @@ def get_export_service(
     session_repo: TherapySessionRepository = Depends(get_therapy_session_repository),
     notes_repo: NotesRepository = Depends(get_notes_repository),
 ) -> ExportService:
-    """Get export service instance."""
-    return ExportService(patient_repo, session_repo, notes_repo)
+    """Get export service instance, scoped to the tenant like its repositories."""
+    db = get_db_session()
+    clinician_profiles = _clinician_profile_repo_factory()
+
+    def practitioner(user_id: str) -> Practitioner:
+        return practitioner_from(load_billing_profile(db), clinician_profiles.get(user_id))
+
+    return ExportService(patient_repo, session_repo, notes_repo, practitioner=practitioner)
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -507,7 +520,7 @@ def reopen_chart(
 def export_patient_data(
     patient_id: str,
     request: Request,
-    format: str = Query("json", description="Export format: json or pdf"),
+    format: str = Query("json", description="Export format: zip, json or pdf"),
     include_transcripts: bool = Query(
         False, description="Add each session's transcript to the export"
     ),
@@ -523,7 +536,10 @@ def export_patient_data(
     Export patient data for HIPAA Right to Access (§ 164.524).
 
     - **patient_id**: The patient's unique identifier
-    - **format**: Export format - 'json' or 'pdf' (defaults to 'json')
+    - **format**: Export format - 'zip', 'json' or 'pdf' (defaults to 'json').
+      'zip' is the export archive: the PDF, the chart as ``patient.json``,
+      its ``schema.json``, a ``manifest.json`` with each file's SHA-256,
+      and a README.
     - **include_transcripts**: Add session transcripts (defaults to false)
     - **include_psychotherapy_notes**: Add the caller's psychotherapy notes
       (defaults to false). The right of access does not reach them
@@ -565,8 +581,8 @@ def export_patient_data(
         },
     )
 
-    # Return PDF as file download
-    if format == "pdf":
+    # The PDF and the archive are file downloads
+    if format in ("pdf", "zip"):
         return Response(
             content=cast("bytes", export_data["content"]),
             media_type=cast("str", export_data["content_type"]),

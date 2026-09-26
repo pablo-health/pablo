@@ -37,6 +37,7 @@ from .ehr_route import (
     UpdateEhrRouteStepRequest,
 )
 from .enums import EhrAction, EhrSystem
+from .export import PatientExportDocument
 from .llm_usage import LlmUsageRecord, QuotaStatus, UsageSummary
 from .note import Note
 from .notes import (
@@ -51,9 +52,7 @@ from .patient import (
     CreatePatientRequest,
     DeletePatientRequest,
     DeletePatientResponse,
-    ExportFormat,
     Patient,
-    PatientExportData,
     PatientListResponse,
     PatientResponse,
     UpdatePatientRequest,
@@ -194,7 +193,6 @@ __all__ = [
     "EhrRouteStep",
     "EhrRouteStepResponse",
     "EhrSystem",
-    "ExportFormat",
     "ExtractionStatus",
     "FinalizeNoteRequest",
     "FinalizeSessionRequest",
@@ -214,7 +212,7 @@ __all__ = [
     "PatientChatConversationResponse",
     "PatientChatMessageResponse",
     "PatientDocument",
-    "PatientExportData",
+    "PatientExportDocument",
     "PatientListResponse",
     "PatientMessage",
     "PatientMessageResponse",

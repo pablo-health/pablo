@@ -157,6 +157,28 @@ def test_export_patient_pdf_success(client, mock_export_service):
     )
 
 
+def test_export_patient_zip_is_a_download_and_audited_as_zip(mock_export_service, mock_user):
+    archive = b"PK\x03\x04 fake archive"
+    mock_export_service.get_patient_export_data.return_value = {
+        "content": archive,
+        "content_type": "application/zip",
+        "filename": "patient_patient-123_export_2024-01-15.zip",
+    }
+    audit = Mock()
+    client = _audited_client(mock_export_service, mock_user, audit)
+
+    response = client.get("/api/patients/patient-123/export?format=zip")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/zip"
+    assert (
+        response.headers["content-disposition"]
+        == 'attachment; filename="patient_patient-123_export_2024-01-15.zip"'
+    )
+    assert response.content == archive
+    assert audit.log_patient_action.call_args.kwargs["changes"]["export_format"] == "zip"
+
+
 def test_export_patient_not_found(client, mock_export_service):
     """Test export returns 400 when patient not found."""
     mock_export_service.get_patient_export_data.side_effect = ValueError(

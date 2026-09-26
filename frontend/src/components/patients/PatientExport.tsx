@@ -3,7 +3,15 @@
 "use client"
 
 import { useState } from "react"
-import { Download, FileJson, FileText, X, Loader2, CheckCircle } from "lucide-react"
+import {
+  CheckCircle,
+  Download,
+  FileArchive,
+  FileJson,
+  FileText,
+  Loader2,
+  X,
+} from "lucide-react"
 import { downloadPatientExport } from "@/lib/api/patients"
 import type { PatientExportFormat } from "@/lib/api/patients"
 import { saveFile } from "@/lib/saveFile"
@@ -16,6 +24,7 @@ interface PatientExportProps {
 type DialogStep = "format" | "confirm" | "exporting" | "complete"
 
 const FORMAT_LABEL: Record<PatientExportFormat, string> = {
+  zip: "archive",
   json: "JSON file",
   pdf: "PDF",
 }
@@ -49,7 +58,7 @@ export function exportSummary(
 export function PatientExport({ patientId, patientName }: PatientExportProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [step, setStep] = useState<DialogStep>("format")
-  const [selectedFormat, setSelectedFormat] = useState<PatientExportFormat>("json")
+  const [selectedFormat, setSelectedFormat] = useState<PatientExportFormat>("zip")
   const [exportFailed, setExportFailed] = useState(false)
   // Both start unchecked, matching the export endpoint's defaults. The right
   // of access does not reach psychotherapy notes (45 CFR 164.524(a)(1)(i)),
@@ -79,7 +88,7 @@ export function PatientExport({ patientId, patientName }: PatientExportProps) {
   // inherits the first one's choices.
   const handleOpen = () => {
     setStep("format")
-    setSelectedFormat("json")
+    setSelectedFormat("zip")
     setExportFailed(false)
     setIncludeTranscripts(false)
     setIncludePsychotherapyNotes(false)
@@ -161,6 +170,15 @@ export function PatientExport({ patientId, patientName }: PatientExportProps) {
               {step === "format" && (
                 <div className="space-y-4">
                   <div className="space-y-3">
+                    {/* The archive is the default: it carries the PDF and
+                        the JSON together, with the schema and checksums
+                        that let another system trust what it received. */}
+                    {formatOption(
+                      "zip",
+                      FileArchive,
+                      "Archive",
+                      "A PDF and structured data in one ZIP file",
+                    )}
                     {formatOption(
                       "json",
                       FileJson,
