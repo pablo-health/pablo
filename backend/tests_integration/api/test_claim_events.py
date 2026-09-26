@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import uuid
 from contextlib import contextmanager
 from datetime import UTC, date, datetime
@@ -61,13 +62,17 @@ pytestmark = pytest.mark.skipif(
 _SUFFIX = uuid.uuid4().hex[:8]
 _SCHEMA = f"practice_test_claimev_{_SUFFIX}"
 
-_USER_ID = str(uuid.uuid4())
-_OTHER_USER_ID = str(uuid.uuid4())
-_CLAIM_ID = str(uuid.uuid4())
+# Fixed, not random: a random id has about a 1-in-4096 chance of containing
+# the substring "f41" (an ICD-10 mental-health code shape), which flakes the
+# clinical-identifier guards below. Deterministic ids can't collide with the
+# thing they're being checked against.
+_USER_ID = "00000000-0000-4000-8000-000000000001"
+_OTHER_USER_ID = "00000000-0000-4000-8000-000000000002"
+_CLAIM_ID = "00000000-0000-4000-8000-000000000003"
 _CONTROL_NUMBER = "PCN20260906ABC"
-_OTHER_CLAIM_ID = str(uuid.uuid4())
+_OTHER_CLAIM_ID = "00000000-0000-4000-8000-000000000004"
 _OTHER_CONTROL_NUMBER = "OTHER-CLAIM"
-_PATIENT_ID = str(uuid.uuid4())
+_PATIENT_ID = "00000000-0000-4000-8000-000000000005"
 _OCCURRED_AT = datetime(2026, 9, 6, 15, 30, tzinfo=UTC)
 
 _ALL_KINDS: tuple[ClaimEventKind, ...] = get_args(ClaimEventKind)
@@ -128,6 +133,31 @@ def _event(kind: ClaimEventKind = "rejected", **overrides: object) -> ClaimEvent
     }
     fields.update(overrides)
     return ClaimEvent(**fields)  # type: ignore[arg-type]  # overrides are test-typed
+
+
+_ICD10_CODE_SHAPE = re.compile(r"\bf\d{2}(\.\d+)?\b")
+"""An ICD-10 mental-health code shape (e.g. ``f41`` or ``f41.1``).
+
+Precise, not a bare "f41" substring check: a bare substring also matches
+inside a random hex id, which is exactly what made this guard flaky
+(pablo#1315).
+"""
+
+
+def _assert_no_clinical_identifiers(lowercased_text: str, *extra_forbidden: str) -> None:
+    """Fail if ``lowercased_text`` carries a clinical identifier.
+
+    ``lowercased_text`` must already be lowercased by the caller — the regex
+    and the literal tokens below are both lowercase. ``extra_forbidden`` lets
+    a caller add tokens specific to its own fixture (e.g. "precertification"
+    is a legitimate CARC/RARC code description in a serialised event's own
+    detail, so it's only forbidden where a caller's context makes it a leak).
+    """
+    for forbidden in ("member", "dob", "subscriber", *extra_forbidden):
+        assert forbidden not in lowercased_text, f"found {forbidden!r} in {lowercased_text!r}"
+    assert not _ICD10_CODE_SHAPE.search(lowercased_text), (
+        f"found an ICD-10-shaped code in {lowercased_text!r}"
+    )
 
 
 @pytest.fixture(scope="module")
@@ -304,8 +334,7 @@ def test_raising_listener_is_logged_and_the_rest_still_run(
     assert "denied" in message
     assert _CONTROL_NUMBER in message
     assert "RuntimeError" in message
-    for forbidden in ("member", "dob", "F41", "subscriber", "Precertification"):
-        assert forbidden not in message
+    _assert_no_clinical_identifiers(message.lower(), "precertification")
 
 
 @pytest.mark.usefixtures("listeners")
@@ -348,8 +377,18 @@ def test_raising_listener_does_not_stop_the_callers_commit(engine: Engine) -> No
 @pytest.mark.parametrize("kind", _ALL_KINDS)
 def test_serialised_event_carries_no_clinical_identifiers(kind: ClaimEventKind) -> None:
     serialised = json.dumps(_event(kind).to_dict()).lower()
-    for forbidden in ("member", "dob", "f41", "subscriber"):
-        assert forbidden not in serialised
+    _assert_no_clinical_identifiers(serialised)
+
+
+def test_clinical_identifier_guard_still_catches_a_real_icd10_code() -> None:
+    """The precise guard isn't lenient: a genuine F41.1 still trips it.
+
+    Guards against weakening the regex into something that only avoided the
+    false positive on random ids without keeping the true positive.
+    """
+    serialised = json.dumps({"note": "payer cited F41.1 as the primary diagnosis"}).lower()
+    with pytest.raises(AssertionError):
+        _assert_no_clinical_identifiers(serialised)
 
 
 def test_to_dict_round_trips_the_fields_a_listener_needs() -> None:
