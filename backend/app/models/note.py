@@ -40,14 +40,8 @@ class Note:
     # 'complete' (with content) or 'failed'. Every note created any other
     # way (no dictation, session-derived) starts and stays 'complete'.
     status: str = "complete"
-    export_status: str = "not_queued"
-    export_queued_at: datetime | None = None
-    export_reviewed_at: datetime | None = None
-    export_reviewed_by: str | None = None
-    exported_at: datetime | None = None
     redacted_content: dict[str, Any] | None = None
     naturalized_content: dict[str, Any] | None = None
-    redacted_export_payload: dict[str, Any] | None = None
     # Who wrote the note; None on rows that predate the column.
     author_user_id: str | None = None
     # Readable by its author alone. Stamped from the note type's definition

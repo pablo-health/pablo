@@ -19,13 +19,6 @@ import type { TranscriptModel } from "./sessions"
  */
 export type NoteType = "soap" | "narrative" | (string & {})
 
-export type ExportStatus =
-  | "not_queued"
-  | "pending_review"
-  | "approved"
-  | "exported"
-  | "skipped"
-
 /**
  * Lifecycle of the standalone-note dictation path: 'processing' from the
  * moment the skeleton is persisted, until the Cloud Tasks worker writes
@@ -53,11 +46,6 @@ export interface Note {
   quality_rating_reason: string | null
   quality_rating_sections: string[] | null
   status: NoteGenerationStatus
-  export_status: ExportStatus
-  export_queued_at: string | null
-  export_reviewed_at: string | null
-  export_reviewed_by: string | null
-  exported_at: string | null
   /** Who wrote the note; null on rows that predate the column. */
   author_user_id: string | null
   /** Readable by its author alone (a psychotherapy note). */
