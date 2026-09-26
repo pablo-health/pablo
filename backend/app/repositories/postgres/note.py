@@ -263,6 +263,8 @@ def _row_to_note(row: NoteRow) -> Note:
         patient_id=row.patient_id,
         session_id=row.session_id,
         note_type=row.note_type,
+        note_type_version=row.note_type_version,
+        note_inputs=row.note_inputs,
         content=row.content,
         content_edited=row.content_edited,
         finalized_at=row.finalized_at,
@@ -288,6 +290,8 @@ def _note_to_row(note: Note, row: NoteRow) -> None:
     row.patient_id = note.patient_id
     row.session_id = note.session_id
     row.note_type = note.note_type
+    row.note_type_version = note.note_type_version
+    row.note_inputs = note.note_inputs
     row.content = note.content
     row.content_edited = note.content_edited
     row.finalized_at = note.finalized_at

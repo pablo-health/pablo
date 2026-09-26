@@ -60,6 +60,13 @@ def _to_utc(iso_str: str, tz: tzinfo = UTC) -> str:
     return dt.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
+def _note_inputs(value: object) -> dict[str, str] | None:
+    """The caller's note inputs, already validated against the note type."""
+    if not isinstance(value, dict) or not value:
+        return None
+    return {str(k): str(v) for k, v in value.items()}
+
+
 def _as_datetime(value: datetime | str, tz: tzinfo = UTC) -> datetime:
     parsed = (
         value
@@ -262,6 +269,7 @@ class SchedulingService:
             video_platform=data.get("video_platform"),  # type: ignore[arg-type]
             notes=data.get("notes"),  # type: ignore[arg-type]
             note_type=str(data.get("note_type") or "soap"),
+            note_inputs=_note_inputs(data.get("note_inputs")),
             created_at=now,
             updated_at=now,
         )
@@ -322,6 +330,7 @@ class SchedulingService:
             "meeting_external_id",
             "notes",
             "note_type",
+            "note_inputs",
             "status",
             "session_id",
             "google_event_id",

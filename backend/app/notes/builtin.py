@@ -1,16 +1,20 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Built-in OSS note-type definitions.
+"""Built-in note-type definitions.
 
-SOAP mirrors :class:`app.models.soap_note.SOAPNote` exactly so the upcoming
+SOAP mirrors :class:`app.models.soap_note.SOAPNote` exactly so the
 schema-driven generation path is behavior-preserving. Narrative is a single
-free-form section used for non-structured session notes. Intake, Treatment
-Plan, Safety Plan, and Medications are patient-context formats that follow
-the client rather than a single session.
+free-form section used for non-structured session notes. DAP, BIRP and GIRP
+(:mod:`.session_formats`) are alternate session-note structures, and Meeting
+Summary (:mod:`.meeting_summary`) covers recordings that are not clinical
+sessions. Intake, Treatment Plan, Safety Plan and Medications are
+patient-context formats that follow the client rather than a single session.
 """
 
 from __future__ import annotations
 
+from .intake import INTAKE_DEFINITION
+from .meeting_summary import MEETING_SUMMARY_DEFINITION
 from .prompts.soap import build_soap_prompt
 from .registry import (
     NoteFieldDef,
@@ -18,6 +22,9 @@ from .registry import (
     NoteTypeDefinition,
     NoteTypeRegistry,
 )
+from .safety_plan import SAFETY_PLAN_DEFINITION
+from .session_formats import BIRP_DEFINITION, DAP_DEFINITION, GIRP_DEFINITION
+from .treatment_plan import TREATMENT_PLAN_DEFINITION
 
 SOAP_DEFINITION = NoteTypeDefinition(
     key="soap",
@@ -183,258 +190,6 @@ NARRATIVE_DEFINITION = NoteTypeDefinition(
 )
 
 
-INTAKE_DEFINITION = NoteTypeDefinition(
-    key="intake",
-    label="Intake",
-    description=(
-        "Initial biopsychosocial assessment completed at the start of care, "
-        "covering presenting concerns, history, and initial formulation."
-    ),
-    tier="core",
-    context="patient",
-    sections=(
-        NoteSectionDef(
-            key="presenting_concerns",
-            label="Presenting Concerns",
-            fields=(
-                NoteFieldDef(
-                    key="chief_complaint",
-                    label="Chief Complaint",
-                    kind="text",
-                    ai_hint="The primary reason the client is seeking care, in their own words.",
-                ),
-                NoteFieldDef(
-                    key="history_of_present_illness",
-                    label="History of Present Illness",
-                    kind="text",
-                    ai_hint="Onset, duration, and course of the presenting concern.",
-                ),
-            ),
-        ),
-        NoteSectionDef(
-            key="history",
-            label="History",
-            fields=(
-                NoteFieldDef(
-                    key="psychiatric_history",
-                    label="Psychiatric History",
-                    kind="text",
-                    ai_hint="Prior mental health diagnoses, treatment, and hospitalizations.",
-                ),
-                NoteFieldDef(
-                    key="medical_history",
-                    label="Medical History",
-                    kind="text",
-                    ai_hint="Relevant medical conditions and current treatment.",
-                ),
-                NoteFieldDef(
-                    key="family_history",
-                    label="Family History",
-                    kind="text",
-                    ai_hint="Family history of mental illness, substance use, or medical issues.",
-                ),
-                NoteFieldDef(
-                    key="social_history",
-                    label="Social History",
-                    kind="text",
-                    ai_hint="Living situation, relationships, education, employment, and support.",
-                ),
-            ),
-        ),
-        NoteSectionDef(
-            key="substance_use",
-            label="Substance Use",
-            fields=(
-                NoteFieldDef(
-                    key="substance_use_history",
-                    label="Substance Use History",
-                    kind="text",
-                    ai_hint="Current and past use of alcohol, tobacco, and other substances.",
-                ),
-            ),
-        ),
-        NoteSectionDef(
-            key="risk",
-            label="Risk",
-            fields=(
-                NoteFieldDef(
-                    key="risk_assessment",
-                    label="Risk Assessment",
-                    kind="text",
-                    ai_hint="Suicidality, self-harm, harm to others, and any safety concerns.",
-                ),
-            ),
-        ),
-        NoteSectionDef(
-            key="formulation",
-            label="Formulation",
-            fields=(
-                NoteFieldDef(
-                    key="initial_formulation",
-                    label="Initial Formulation",
-                    kind="text",
-                    ai_hint="Clinician's initial diagnostic impression and case conceptualization.",
-                ),
-            ),
-        ),
-    ),
-)
-
-
-TREATMENT_PLAN_DEFINITION = NoteTypeDefinition(
-    key="treatment_plan",
-    label="Treatment Plan",
-    description=(
-        "The client's active problems, goals, and objectives, with the "
-        "interventions in use and the next scheduled review."
-    ),
-    tier="core",
-    context="patient",
-    sections=(
-        NoteSectionDef(
-            key="problems",
-            label="Problems",
-            fields=(
-                NoteFieldDef(
-                    key="problem_list",
-                    label="Problem List",
-                    kind="list",
-                    ai_hint="Clinical problems being addressed in treatment.",
-                ),
-            ),
-        ),
-        NoteSectionDef(
-            key="goals",
-            label="Goals",
-            fields=(
-                NoteFieldDef(
-                    key="goal_list",
-                    label="Goals",
-                    kind="list",
-                    ai_hint="Long-term treatment goals tied to the problem list.",
-                ),
-                NoteFieldDef(
-                    key="objective_list",
-                    label="Objectives",
-                    kind="list",
-                    ai_hint="Short-term, measurable objectives supporting each goal.",
-                ),
-            ),
-        ),
-        NoteSectionDef(
-            key="interventions",
-            label="Interventions",
-            fields=(
-                NoteFieldDef(
-                    key="intervention_list",
-                    label="Interventions",
-                    kind="list",
-                    ai_hint="Therapeutic interventions and modalities used to pursue the goals.",
-                ),
-            ),
-        ),
-        NoteSectionDef(
-            key="review",
-            label="Review",
-            fields=(
-                NoteFieldDef(
-                    key="review_date",
-                    label="Review Date",
-                    kind="text",
-                    ai_hint="Date this treatment plan is next scheduled for review.",
-                ),
-            ),
-        ),
-    ),
-)
-
-
-SAFETY_PLAN_DEFINITION = NoteTypeDefinition(
-    key="safety_plan",
-    label="Safety Plan",
-    description=(
-        "A Stanley-Brown style safety plan: warning signs, coping strategies, "
-        "and the people and professionals a client can turn to in crisis."
-    ),
-    tier="core",
-    context="patient",
-    sections=(
-        NoteSectionDef(
-            key="warning_signs",
-            label="Warning Signs",
-            fields=(
-                NoteFieldDef(
-                    key="warning_signs",
-                    label="Warning Signs",
-                    kind="list",
-                    ai_hint="Thoughts or situations that signal a crisis may be developing.",
-                ),
-            ),
-        ),
-        NoteSectionDef(
-            key="internal_coping",
-            label="Internal Coping Strategies",
-            fields=(
-                NoteFieldDef(
-                    key="coping_strategies",
-                    label="Internal Coping Strategies",
-                    kind="list",
-                    ai_hint="Things the client can do alone to take their mind off problems.",
-                ),
-            ),
-        ),
-        NoteSectionDef(
-            key="social_distraction",
-            label="People and Social Settings That Provide Distraction",
-            fields=(
-                NoteFieldDef(
-                    key="distractions",
-                    label="People and Social Settings",
-                    kind="list",
-                    ai_hint="People and social settings that provide distraction from a crisis.",
-                ),
-            ),
-        ),
-        NoteSectionDef(
-            key="social_support",
-            label="People to Ask for Help",
-            fields=(
-                NoteFieldDef(
-                    key="support_contacts",
-                    label="People to Ask for Help",
-                    kind="list",
-                    ai_hint="Family or friends the client can ask for help during a crisis.",
-                ),
-            ),
-        ),
-        NoteSectionDef(
-            key="professional_contacts",
-            label="Professionals and Agencies to Contact",
-            fields=(
-                NoteFieldDef(
-                    key="professional_contacts",
-                    label="Professionals and Agencies",
-                    kind="list",
-                    ai_hint="Clinicians, crisis lines, and agencies the client can contact.",
-                ),
-            ),
-        ),
-        NoteSectionDef(
-            key="environment_safety",
-            label="Making the Environment Safe",
-            fields=(
-                NoteFieldDef(
-                    key="environment_safety",
-                    label="Making the Environment Safe",
-                    kind="text",
-                    ai_hint="Steps to limit access to lethal means during a crisis.",
-                ),
-            ),
-        ),
-    ),
-)
-
-
 MEDICATIONS_DEFINITION = NoteTypeDefinition(
     key="medications",
     label="Medications",
@@ -494,18 +249,25 @@ MEDICATIONS_DEFINITION = NoteTypeDefinition(
 )
 
 
+BUILTIN_NOTE_DEFINITIONS: tuple[NoteTypeDefinition, ...] = (
+    SOAP_DEFINITION,
+    NARRATIVE_DEFINITION,
+    DAP_DEFINITION,
+    BIRP_DEFINITION,
+    GIRP_DEFINITION,
+    MEETING_SUMMARY_DEFINITION,
+    INTAKE_DEFINITION,
+    TREATMENT_PLAN_DEFINITION,
+    SAFETY_PLAN_DEFINITION,
+    MEDICATIONS_DEFINITION,
+)
+
+
 def register_builtin_note_types(registry: NoteTypeRegistry) -> None:
-    """Register OSS note types on ``registry``.
+    """Register the built-in note types on ``registry``.
 
     Idempotent: if called twice on the same registry, re-registers with
     ``replace=True`` so startup ordering and tests stay simple.
     """
-    for definition in (
-        SOAP_DEFINITION,
-        NARRATIVE_DEFINITION,
-        INTAKE_DEFINITION,
-        TREATMENT_PLAN_DEFINITION,
-        SAFETY_PLAN_DEFINITION,
-        MEDICATIONS_DEFINITION,
-    ):
+    for definition in BUILTIN_NOTE_DEFINITIONS:
         registry.register(definition, replace=True)

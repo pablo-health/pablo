@@ -17,12 +17,14 @@ import { ToastProvider } from "@/components/ui/Toast"
 import { createMockNote } from "@/test/factories"
 import * as notesApi from "@/lib/api/notes"
 import * as documentsApi from "@/lib/api/patientDocuments"
+import * as noteTypesApi from "@/lib/api/noteTypes"
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn() }),
 }))
 vi.mock("@/lib/api/notes")
 vi.mock("@/lib/api/patientDocuments")
+vi.mock("@/lib/api/noteTypes")
 
 const createWrapper = () => {
   const queryClient = new QueryClient({
@@ -61,6 +63,33 @@ describe("PatientChartTabs", () => {
       data: [],
       total: 1,
     })
+    // An empty catalog: labels fall back to the raw key.
+    vi.mocked(noteTypesApi.listNoteTypes).mockResolvedValue({ note_types: [] })
+  })
+
+  it("labels a note with its type's catalog name", async () => {
+    vi.mocked(noteTypesApi.listNoteTypes).mockResolvedValue({
+      note_types: [
+        {
+          key: "dap",
+          label: "DAP",
+          description: "",
+          tier: "extension",
+          context: "session",
+          sections: [],
+          inputs: [],
+          version: null,
+        },
+      ],
+    })
+    vi.mocked(notesApi.listNotesForPatient).mockResolvedValue({
+      data: [createMockNote({ id: "n3", note_type: "dap", session_id: null })],
+      total: 1,
+    })
+    render(<PatientChartTabs patientId="p1" />, { wrapper: createWrapper() })
+
+    expect(await screen.findByText("DAP")).toBeInTheDocument()
+    expect(screen.queryByText("dap")).not.toBeInTheDocument()
   })
 
   it("defaults to the Notes tab and previews recent notes", async () => {

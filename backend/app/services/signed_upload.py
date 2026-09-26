@@ -96,6 +96,11 @@ def _iam_signing_kwargs() -> dict[str, Any]:
     return {}
 
 
+def _endpoint_kwargs(api_access_endpoint: str | None) -> dict[str, Any]:
+    """Left out when unset, so the default call is exactly what it always was."""
+    return {} if api_access_endpoint is None else {"api_access_endpoint": api_access_endpoint}
+
+
 def make_upload_url(
     *,
     client: Any,
@@ -104,6 +109,7 @@ def make_upload_url(
     content_type: str,
     max_bytes: int,
     ttl_seconds: int,
+    api_access_endpoint: str | None = None,
 ) -> str:
     """Generate a V4 signed PUT URL constrained by content-type + size.
 
@@ -112,6 +118,9 @@ def make_upload_url(
     exceeds ``max_bytes``, gets a 400 — no garbage lands in the
     bucket. ``ttl_seconds`` should be short (5 min by default); the
     URL is only useful for the immediate browser PUT.
+
+    ``api_access_endpoint`` is the origin the URL is signed for; unset, the
+    library signs for the client's own endpoint (Google's, by default).
     """
     blob = client.bucket(bucket).blob(object_name)
     signed: str = blob.generate_signed_url(
@@ -122,6 +131,7 @@ def make_upload_url(
         headers={
             "x-goog-content-length-range": f"0,{max_bytes}",
         },
+        **_endpoint_kwargs(api_access_endpoint),
         **_iam_signing_kwargs(),
     )
     return signed
@@ -134,6 +144,7 @@ def make_download_url(
     object_name: str,
     ttl_seconds: int,
     response_disposition: str | None = None,
+    api_access_endpoint: str | None = None,
 ) -> str:
     """Generate a V4 signed GET URL for a 302-redirect download.
 
@@ -146,6 +157,7 @@ def make_download_url(
         "version": "v4",
         "expiration": timedelta(seconds=ttl_seconds),
         "method": "GET",
+        **_endpoint_kwargs(api_access_endpoint),
         **_iam_signing_kwargs(),
     }
     if response_disposition is not None:

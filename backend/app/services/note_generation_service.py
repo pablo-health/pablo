@@ -17,6 +17,7 @@ the hand-tuned clinical prompt migrated from the legacy plugin.
 import json
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -32,6 +33,7 @@ from ..models import (
     Transcript,
 )
 from ..notes import NoteTypeDefinition, NoteTypeRegistry, get_default_registry
+from ..notes.practice_types import render_user_prompt
 from ..notes.prompts.soap import SOAP_SYSTEM_PROMPT
 from ..settings import get_settings
 from .source_attribution_service import (
@@ -137,6 +139,8 @@ class GeneratedNote:
     note_type: str
     content: dict[str, Any] = field(default_factory=dict)
     soap_note: SOAPNote | None = None
+    #: Version of a practice-defined type the content was generated from.
+    note_type_version: int | None = None
 
 
 class NoteGenerationService(ABC):
@@ -149,8 +153,16 @@ class NoteGenerationService(ABC):
         transcript: Transcript,
         patient: Patient,
         session_date: datetime,
+        inputs: Mapping[str, str] | None = None,
+        definition: NoteTypeDefinition | None = None,
     ) -> GeneratedNote:
         """Generate a note of ``note_type`` from ``transcript``.
+
+        ``inputs`` are the values supplied for the type's declared inputs.
+        ``definition`` is the type already resolved by a caller that is
+        about to release its database connection: a practice type is read
+        from the database, and resolving it here would reopen a connection
+        and hold it across the model call.
 
         Raises:
             KeyError: If ``note_type`` is not registered.
@@ -197,9 +209,13 @@ class RegistryNoteGenerationService(NoteGenerationService):
         transcript: Transcript,
         patient: Patient,
         session_date: datetime,
+        inputs: Mapping[str, str] | None = None,
+        definition: NoteTypeDefinition | None = None,
     ) -> GeneratedNote:
-        definition = self.registry.get(note_type)
-        content = self._generate_via_registry(definition, transcript, patient, session_date)
+        definition = definition or self.registry.get(note_type)
+        content = self._generate_via_registry(
+            definition, transcript, patient, session_date, inputs or {}
+        )
         if note_type == SOAP_KEY:
             soap_note = _coerce_content_to_soap_note(content)
             self._run_source_attribution(soap_note, transcript.content)
@@ -208,7 +224,9 @@ class RegistryNoteGenerationService(NoteGenerationService):
                 content=soap_note.to_dict(),
                 soap_note=soap_note,
             )
-        return GeneratedNote(note_type=note_type, content=content)
+        return GeneratedNote(
+            note_type=note_type, content=content, note_type_version=definition.version
+        )
 
     def _generate_via_registry(
         self,
@@ -216,6 +234,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
         transcript: Transcript,
         patient: Patient,
         session_date: datetime,
+        inputs: Mapping[str, str],
     ) -> dict[str, Any]:
         if definition.system_prompt is not None:
             system_prompt = definition.system_prompt
@@ -226,6 +245,10 @@ class RegistryNoteGenerationService(NoteGenerationService):
 
         if definition.prompt_builder is not None:
             user_prompt = definition.prompt_builder(definition, transcript, patient, session_date)
+        elif definition.user_template is not None or definition.inputs:
+            user_prompt = render_user_prompt(
+                definition, transcript, session_date, inputs, _fields_block(definition)
+            )
         else:
             user_prompt = _build_registry_user_prompt(definition, transcript, patient, session_date)
 
@@ -421,8 +444,10 @@ class MockNoteGenerationService(NoteGenerationService):
         transcript: Transcript,  # noqa: ARG002  # deterministic mock ignores transcript
         patient: Patient,
         session_date: datetime,  # noqa: ARG002  # deterministic mock ignores date
+        inputs: Mapping[str, str] | None = None,  # noqa: ARG002  # mock ignores inputs
+        definition: NoteTypeDefinition | None = None,
     ) -> GeneratedNote:
-        definition = self.registry.get(note_type)
+        definition = definition or self.registry.get(note_type)
         if note_type == SOAP_KEY:
             soap_note = _mock_soap_note(patient)
             return GeneratedNote(
@@ -431,7 +456,9 @@ class MockNoteGenerationService(NoteGenerationService):
                 soap_note=soap_note,
             )
         content = _mock_registry_content(definition, patient)
-        return GeneratedNote(note_type=note_type, content=content)
+        return GeneratedNote(
+            note_type=note_type, content=content, note_type_version=definition.version
+        )
 
 
 def _mock_soap_note(patient: Patient) -> SOAPNote:
@@ -546,8 +573,23 @@ def _build_registry_user_prompt(
         "",
         definition.description,
         "",
-        "Fields:",
+        _fields_block(definition),
     ]
+    lines.extend(
+        [
+            "",
+            f"Session date: {session_date.isoformat().split('T', 1)[0]}",
+        ]
+    )
+    if patient.diagnosis:
+        lines.append(f"Working diagnosis: {patient.diagnosis}")
+    lines.extend(["", "Transcript:", transcript.content])
+    return "\n".join(lines)
+
+
+def _fields_block(definition: NoteTypeDefinition) -> str:
+    """The field enumeration every generated prompt carries."""
+    lines = ["Fields:"]
     for section in definition.sections:
         lines.append(f"- Section '{section.key}' ({section.label}):")
         for f in section.fields:
@@ -558,15 +600,6 @@ def _build_registry_user_prompt(
                 "structured": "nested object",
             }[f.kind]
             lines.append(f"    * {f.key} ({kind_label}) — {hint}")
-    lines.extend(
-        [
-            "",
-            f"Session date: {session_date.isoformat().split('T', 1)[0]}",
-        ]
-    )
-    if patient.diagnosis:
-        lines.append(f"Working diagnosis: {patient.diagnosis}")
-    lines.extend(["", "Transcript:", transcript.content])
     return "\n".join(lines)
 
 

@@ -5,7 +5,8 @@
  *
  * Polymorphic clinical note viewer/editor. Branches on the Note's
  * `note_type` to render the right layout — SOAP keeps the historical
- * four-section document; Narrative renders a single free-form body.
+ * four-section document; Narrative renders a single free-form body; every
+ * other type renders from its catalog definition (SchemaNoteView).
  *
  * Operates on a Note record from /api/notes (pa-0nx.4); the embedded
  * structured SOAP tree (with source references) is derived from
@@ -35,6 +36,7 @@ import {
 import type {
   NarrativeNoteContent,
   NoteContent,
+  SchemaNoteContent,
   SOAPNoteContent,
   SOAPNoteModel,
   SOAPSentence,
@@ -61,6 +63,7 @@ import {
 } from "./ClinicalObservationForm"
 import { parseNarrativeBlocks } from "@/lib/utils/narrativeParser"
 import { SourceBadge, SourceHighlight } from "./SourceBadge"
+import { SchemaNoteView } from "./SchemaNoteView"
 
 export interface NoteViewerProps {
   note: Note
@@ -112,6 +115,20 @@ export function NoteViewer({
     )
   }
 
+  if (noteType !== "soap") {
+    return (
+      <SchemaNoteView
+        noteTypeKey={noteType}
+        version={note.note_type_version}
+        note={asSchema(baseContent)}
+        noteEdited={asSchema(editedContent)}
+        readonly={viewOnly}
+        onSave={onSave}
+        className={className}
+      />
+    )
+  }
+
   return (
     <SOAPNoteView
       note={asSOAP(baseContent)}
@@ -133,6 +150,10 @@ function asSOAP(n: NoteContent | null): SOAPNoteContent | null {
 
 function asNarrative(n: NoteContent | null): NarrativeNoteContent | null {
   return n && n.note_type === "narrative" ? n : null
+}
+
+function asSchema(n: NoteContent | null): SchemaNoteContent | null {
+  return n && n.note_type === "schema" ? n : null
 }
 
 // --- SOAP --------------------------------------------------------------

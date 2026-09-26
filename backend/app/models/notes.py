@@ -30,6 +30,9 @@ class NoteResponse(BaseModel):
     patient_id: str
     session_id: str | None = None
     note_type: str
+    #: Version of a practice-defined note type; ``None`` for built-ins.
+    note_type_version: int | None = None
+    note_inputs: dict[str, str] | None = None
     content: dict[str, Any] | None = None
     content_edited: dict[str, Any] | None = None
     finalized_at: datetime | None = None
@@ -52,6 +55,8 @@ class NoteResponse(BaseModel):
             patient_id=note.patient_id,
             session_id=note.session_id,
             note_type=note.note_type,
+            note_type_version=note.note_type_version,
+            note_inputs=note.note_inputs,
             content=note.content,
             content_edited=note.content_edited,
             finalized_at=note.finalized_at,
@@ -113,6 +118,8 @@ class CreateStandaloneNoteRequest(VisitCodingFields):
     """
 
     note_type: str
+    #: Values for the note type's declared inputs.
+    note_inputs: dict[str, str] | None = None
     content_edited: dict[str, Any] | None = None
     dictation_transcript: TranscriptModel | None = None
     appointment_id: str | None = None

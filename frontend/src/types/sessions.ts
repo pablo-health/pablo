@@ -59,7 +59,10 @@ export interface SOAPNoteModel {
  * ``content`` / ``content_edited`` JSONB columns deserialize into one of
  * these shapes per the note-type registry.
  */
-export type NoteContent = SOAPNoteContent | NarrativeNoteContent
+export type NoteContent =
+  | SOAPNoteContent
+  | NarrativeNoteContent
+  | SchemaNoteContent
 
 export interface SOAPNoteContent extends SOAPNoteModel {
   note_type: "soap"
@@ -68,6 +71,22 @@ export interface SOAPNoteContent extends SOAPNoteModel {
 export interface NarrativeNoteContent {
   note_type: "narrative"
   body: string
+}
+
+/** One section's field values: text, a list of lines, or structured data. */
+export type SchemaSectionValues = Record<string, unknown>
+
+/**
+ * Content of any note type rendered from its catalog definition (every type
+ * but SOAP and Narrative). Stored as ``{section_key: {field_key: value}}``;
+ * the discriminant is the fixed ``"schema"`` rather than the registry key so
+ * narrowing on ``"soap"`` / ``"narrative"`` stays exact. ``key`` carries the
+ * real registry key.
+ */
+export interface SchemaNoteContent {
+  note_type: "schema"
+  key: string
+  sections: Record<string, SchemaSectionValues>
 }
 
 /**
@@ -331,10 +350,21 @@ function projectContent(
       plan: (narrative.plan as string | undefined) ?? "",
     }
   }
-  return {
-    note_type: "narrative",
-    body: (raw.body as string | undefined) ?? "",
+  if (noteType === "narrative") {
+    return {
+      note_type: "narrative",
+      body: (raw.body as string | undefined) ?? "",
+    }
   }
+  const sections: Record<string, SchemaSectionValues> = {}
+  for (const [sectionKey, value] of Object.entries(raw)) {
+    if (isPlainObject(value)) sections[sectionKey] = value
+  }
+  return { note_type: "schema", key: noteType, sections }
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 /**
@@ -348,6 +378,9 @@ export function noteContentToJson(
     const { note_type: _t, ...rest } = content
     void _t
     return { ...rest }
+  }
+  if (content.note_type === "schema") {
+    return { ...content.sections }
   }
   const { note_type: _t, ...rest } = content
   void _t
