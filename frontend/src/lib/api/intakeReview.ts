@@ -247,6 +247,30 @@ export function intakeExportFilename(assignmentId: string, receiptCode: string |
   return `intake-${receiptCode || assignmentId}.html`
 }
 
+/**
+ * Ask this patient to fill in a published version of a form.
+ *
+ * A 201 when the request is new and a 200 when one was already live for the
+ * same version — sending twice must not leave somebody holding two copies of
+ * one form. Both are success here: the caller wanted this form out with this
+ * patient, and after either it is.
+ *
+ * Only a published version can be sent. The picker offers published ones
+ * only, so a 422 from here means the version stopped being published under
+ * the screen rather than anything the clinician chose wrongly.
+ */
+export async function assignIntakePacket(
+  patientId: string,
+  versionId: string,
+  token?: string,
+): Promise<IntakeAssignment> {
+  return post<IntakeAssignment>(
+    `/api/patients/${patientId}/intake-assignments`,
+    { version_id: versionId },
+    token,
+  )
+}
+
 /** Write an answer down for somebody sitting in the room. */
 export async function enterIntakeAnswerForPatient(
   patientId: string,

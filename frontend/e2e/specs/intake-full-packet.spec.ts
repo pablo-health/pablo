@@ -19,13 +19,19 @@
  * received, read back, sent back, corrected, written into, accepted, and
  * exported as one file a practice can put in a drawer.
  *
- * **The clinician half is driven at the API.** Not for want of trying: the
- * review panel is built but no route mounts it yet, so there is no screen to
- * click. The two sibling specs say the same thing and for the same reason.
- * What a browser is here for is the patient's half, where the screens exist
- * and are the only place the walk can be seen at all — plus the two clinician
- * surfaces that do render, the chart's file list and the plan read off a
- * photographed card.
+ * **The journey starts on a screen.** Sending the form and inviting the
+ * patient to open it are one press on the chart, because that is the only
+ * part of this a clinician cannot do any other way — a route can be called
+ * by a test forever and still have no button. The rest of the clinician's
+ * half is still driven at the API: writing an answer down for somebody in
+ * the room, asking for a correction, accepting. Those have screens now and
+ * converting them is worth doing, but each is its own walk and this one is
+ * already long.
+ *
+ * What a browser is otherwise here for is the patient's half, where the
+ * screens are the only place the walk can be seen at all — plus the
+ * clinician surfaces that render either way, the chart's file list and the
+ * plan read off a photographed card.
  *
  * **Both factors are read from the stand-in their channel is wired to**: the
  * link out of the mail server, the step-up code out of the text-message
@@ -94,6 +100,7 @@ interface IntakeVersionDetail extends IntakeVersion {
 
 interface Assignment {
   id: string
+  version_id: string
   status: string
   receipt_code: string | null
   progress: { complete: boolean; missing: string[] }
@@ -353,25 +360,61 @@ async function oneMore<T>(read: () => Promise<T[]>, already: number, what: strin
   }
 }
 
-/** Invite the patient and read back the two factors THIS invitation sent. */
-async function nextInvitation(
-  api: ApiClient,
-  patientId: string,
+/**
+ * What the practice calls the form this version belongs to.
+ *
+ * The picker lists forms by name, and the name is on the template rather
+ * than on the version — so a spec that publishes a version and then wants to
+ * choose it on a screen has to ask. Named rather than taken first, because
+ * the practice this runs against keeps every form a sibling spec published.
+ */
+async function templateName(api: ApiClient, templateId: string): Promise<string> {
+  const templates = await api.get<IntakeTemplate[]>("/api/intake/templates")
+  const mine = templates.find((template) => template.id === templateId)
+  expect(mine, `the practice still has template ${templateId}`).toBeTruthy()
+  return (mine as IntakeTemplate).name
+}
+
+/**
+ * Read back the two factors of whichever invitation `send` causes.
+ *
+ * Counted before and after rather than drained, because the mail server and
+ * the text gateway are shared: what makes this invitation THIS one is that
+ * it arrived after the send, not that the box was empty first.
+ *
+ * Taking the send as an argument is what lets a screen prove it: the route
+ * and the button reach the same place, and a test that always POSTs cannot
+ * tell whether the button does.
+ */
+async function invitationFrom(
   email: string,
   phone: string,
+  send: () => Promise<void>,
 ): Promise<PortalInvitation> {
   const letters = async () => (await mail.received()).filter((m) => m.to.includes(email))
   const texts = async () => (await sms.received()).filter((m) => m.to === phone)
   const sentLetters = (await letters()).length
   const sentTexts = (await texts()).length
 
-  await api.post(`/api/patients/${patientId}/portal-invite`)
+  await send()
 
   const link = firstLink(await oneMore(letters, sentLetters, `mail for ${email}`))
   const token = new URLSearchParams(new URL(link).hash.slice(1)).get("invite")
   expect(token, `the invitation email carries a token: ${link}`).toBeTruthy()
   const otp = stepUpCode(await oneMore(texts, sentTexts, `text for ${phone}`))
   return { link, token: token as string, otp }
+}
+
+/** Invite the patient through the route, and read back what it sent. */
+async function nextInvitation(
+  api: ApiClient,
+  patientId: string,
+  email: string,
+  phone: string,
+): Promise<PortalInvitation> {
+  return invitationFrom(email, phone, async () => {
+    await api.post(`/api/patients/${patientId}/portal-invite`)
+  })
 }
 
 /**
@@ -682,11 +725,31 @@ test.describe("intake, assignment through accepted export", () => {
     const heard = itemOf(version, "heard")
     const kin = itemOf(version, "kin")
 
-    // --- the practice sends it ---------------------------------------------
-    const assigned = await api.post<Assignment>(
-      `/api/patients/${patient.id}/intake-assignments`,
-      { version_id: version.id },
-    )
+    // --- the practice sends it, from the chart ------------------------------
+    // Both halves of starting an intake are one press here: the form goes out
+    // and, because this patient has no way in yet, so does an invitation.
+    // Driving it from the screen is the point — the routes underneath are
+    // proven either way, and what a clinician cannot do is POST.
+    const packetName = await templateName(api, version.template_id)
+
+    await page.goto(`/dashboard/patients/${patient.id}`)
+    await page.getByRole("combobox", { name: "Form" }).click()
+    await page.getByRole("option", { name: packetName }).click()
+
+    const invitation = await invitationFrom(email, phone, async () => {
+      await page.getByTestId("send-intake-form-button").click()
+      await expect(page.getByTestId("send-intake-form-sent")).toContainText(
+        "link by email and a code by text",
+      )
+    })
+
+    // The form the press sent is on the chart, named, before anybody answers it.
+    await expect(page.getByTestId("intake-assignments")).toContainText(packetName)
+
+    const assigned = (
+      await api.get<Assignment[]>(`/api/patients/${patient.id}/intake-assignments`)
+    )[0]
+    expect(assigned.version_id, "the version the picker offered").toBe(version.id)
     const chart = `/api/patients/${patient.id}/intake-assignments/${assigned.id}`
 
     // Eight of the nine are outstanding, and the server is what says so —
@@ -705,7 +768,7 @@ test.describe("intake, assignment through accepted export", () => {
 
     // --- the invitation arrives, and is met on a phone ----------------------
     await page.setViewportSize(PHONE)
-    await signInToPortal(page, await nextInvitation(api, patient.id, email, phone))
+    await signInToPortal(page, invitation)
 
     await expect(page.getByTestId("forms-list-state")).toContainText("8 questions left")
     await page.getByTestId("forms-list-open").click()
