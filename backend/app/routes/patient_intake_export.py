@@ -71,11 +71,14 @@ from .patient_intake_review import (
 if TYPE_CHECKING:
     from datetime import datetime, tzinfo
 
+    from ..models import Patient
+    from ..models.patient_intake_assignment_api import IntakeAssignmentResponse
     from ..repositories.intake_document import IntakeDocumentRepository
     from ..repositories.patient import PatientRepository
     from ..repositories.patient_document import PatientDocumentRepository
     from ..repositories.patient_intake_artifact import PatientIntakeArtifactRepository
     from ..repositories.patient_intake_signature import PatientIntakeSignatureRepository
+    from ..services.export_service import IntakeFormFiles
     from ..services.patient_intake_review_service import IntakeReviewService
 
 #: What the browser saves the file as. The receipt is what a practice and a
@@ -192,6 +195,81 @@ ClinicianAssignments = Annotated[
 Exports = Annotated[IntakeExportService, Depends(get_intake_export_service)]
 
 
+class _FormRenderer:
+    """One form on one chart, as the document this route serves.
+
+    Shared by the route and by the chart export archive, so a form in the
+    archive is byte for byte the file this route would have given for the
+    same moment.
+    """
+
+    def __init__(
+        self,
+        assignments: IntakeAssignmentService,
+        exports: IntakeExportService,
+        practice_name: str | None,
+        timezone: tzinfo,
+        url_base: str,
+    ) -> None:
+        self._assignments = assignments
+        self._exports = exports
+        self._practice_name = practice_name
+        self._timezone = timezone
+        self._url_base = url_base
+
+    def render(
+        self,
+        assignment: dict[str, object],
+        patient: Patient,
+        user_id: str,
+        exported_at: datetime,
+    ) -> tuple[IntakeAssignmentResponse, str]:
+        """The assignment's summary, for naming the file, and the document."""
+        base = assignment_response(self._assignments, assignment, patient.id)
+        document = self._exports.build(
+            assignment,
+            user_id,
+            patient_name=f"{patient.first_name} {patient.last_name}".strip(),
+            patient_date_of_birth=patient.date_of_birth,
+            packet_name=base.packet_name,
+            version=base.version,
+            practice_name=self._practice_name,
+            exported_at=exported_at,
+            timezone=self._timezone,
+            document_url=lambda document_id: f"{self._url_base}{DOCUMENT_PATH}{document_id}/file",
+        )
+        return base, render(document)
+
+    def submitted_forms(
+        self, patient: Patient, user_id: str, exported_at: datetime
+    ) -> list[tuple[str, bytes]]:
+        """Every form on the chart that was handed in, as ``(assignment_id, file)``.
+
+        Handed in means it has a submission time, whatever happened after:
+        a form accepted, sent back or withdrawn once submitted is still a
+        form the patient filled in. One never submitted holds nothing the
+        patient finished, so it stays out of a copy.
+        """
+        forms: list[tuple[str, bytes]] = []
+        for assignment in self._assignments.list_for_clinician(patient.id, user_id):
+            if assignment.get("submitted_at") is None:
+                continue
+            _, html = self.render(assignment, patient, user_id, exported_at)
+            forms.append((str(assignment["id"]), html.encode()))
+        return forms
+
+
+def get_intake_form_files(
+    assignments: ClinicianAssignments,
+    exports: Exports,
+    practice_name: str | None = Depends(get_practice_name),
+    timezone: tzinfo = Depends(get_practice_timezone),
+    url_base: str = Depends(get_document_url_base),
+) -> IntakeFormFiles:
+    """The chart's submitted forms for the export archive, rendered as this route renders one."""
+    return _FormRenderer(assignments, exports, practice_name, timezone, url_base).submitted_forms
+
+
 @clinician_router.get(
     "/{patient_id}/intake-assignments/{assignment_id}/export",
     response_class=Response,
@@ -229,19 +307,8 @@ def export_intake_assignment(
     if assignment is None or str(assignment["patient_id"]) != patient_id:
         raise NotFoundError("Form not found", {"assignment_id": assignment_id})
 
-    base = assignment_response(assignments, assignment, patient_id)
-    document = exports.build(
-        assignment,
-        user.id,
-        patient_name=f"{patient.first_name} {patient.last_name}".strip(),
-        patient_date_of_birth=patient.date_of_birth,
-        packet_name=base.packet_name,
-        version=base.version,
-        practice_name=practice_name,
-        exported_at=exported_at,
-        timezone=timezone,
-        document_url=lambda document_id: f"{url_base}{DOCUMENT_PATH}{document_id}/file",
-    )
+    form = _FormRenderer(assignments, exports, practice_name, timezone, url_base)
+    base, html = form.render(assignment, patient, user.id, exported_at)
 
     # Which form left, and nothing that was on it. The document carries the
     # patient's own words; a second copy in the compliance log would put
@@ -258,7 +325,7 @@ def export_intake_assignment(
 
     filename = f"{FILENAME_PREFIX}{base.receipt_code or assignment_id}.html"
     return Response(
-        content=render(document),
+        content=html,
         media_type="text/html; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
@@ -273,6 +340,7 @@ __all__ = [
     "get_document_url_base",
     "get_export_clock",
     "get_intake_export_service",
+    "get_intake_form_files",
     "get_practice_name",
     "get_practice_timezone",
 ]

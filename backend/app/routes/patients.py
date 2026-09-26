@@ -31,6 +31,7 @@ from ..models import (
     UpdatePatientRequest,
     User,
 )
+from ..models.audit import ResourceType
 from ..models.export import Practitioner
 from ..repositories import (
     NotesRepository,
@@ -49,10 +50,13 @@ from ..repositories import (
 from ..repositories import (
     get_session_repository as _session_repo_factory,
 )
-from ..services import AuditService, ExportService, get_audit_service
+from ..services import AuditService, ExportService, PatientDocumentsService, get_audit_service
 from ..services.export_archive import practitioner_from
+from ..services.export_service import IntakeFormFiles
 from ..services.practice_billing_profile import load_billing_profile
 from ..utcnow import utc_now
+from .patient_documents import download_action_for, get_patient_documents_service
+from .patient_intake_export import get_intake_form_files
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +132,8 @@ def get_export_service(
     patient_repo: PatientRepository = Depends(get_patient_repository),
     session_repo: TherapySessionRepository = Depends(get_therapy_session_repository),
     notes_repo: NotesRepository = Depends(get_notes_repository),
+    documents: PatientDocumentsService = Depends(get_patient_documents_service),
+    intake_forms: IntakeFormFiles = Depends(get_intake_form_files),
 ) -> ExportService:
     """Get export service instance, scoped to the tenant like its repositories."""
     db = get_db_session()
@@ -136,7 +142,14 @@ def get_export_service(
     def practitioner(user_id: str) -> Practitioner:
         return practitioner_from(load_billing_profile(db), clinician_profiles.get(user_id))
 
-    return ExportService(patient_repo, session_repo, notes_repo, practitioner=practitioner)
+    return ExportService(
+        patient_repo,
+        session_repo,
+        notes_repo,
+        practitioner=practitioner,
+        documents=documents,
+        intake_forms=intake_forms,
+    )
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -580,6 +593,30 @@ def export_patient_data(
             "include_psychotherapy_notes": include_psychotherapy_notes,
         },
     )
+    # Each file carried beside the chart is a disclosure of that file, so it
+    # is recorded the way its own download route records one: an uploaded
+    # document under its category's download action (restricted apart), a
+    # form under the form export action.
+    for document in export_data.get("documents", []):
+        audit.log_patient_document_action(
+            download_action_for(document.category),
+            user,
+            request,
+            document_id=document.id,
+            patient_id=document.patient_id,
+            mime_type=document.mime_type,
+            size_bytes=document.size_bytes,
+            category=document.category.value,
+        )
+    for assignment_id in export_data.get("intake_assignment_ids", []):
+        audit.log(
+            action=AuditAction.INTAKE_PACKET_EXPORTED,
+            user=user,
+            request=request,
+            resource_type=ResourceType.PATIENT_INTAKE_ASSIGNMENT,
+            resource_id=assignment_id,
+            patient=patient,
+        )
 
     # The PDF and the archive are file downloads
     if format in ("pdf", "zip"):

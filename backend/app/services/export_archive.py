@@ -3,8 +3,10 @@
 """The patient export archive: one ZIP a person, another system or a script can use.
 
 ``chart.pdf`` is the chart to read, ``patient.json`` the same chart as data,
-``schema.json`` the JSON Schema that data follows, ``manifest.json`` every
-other file with its size and SHA-256, and ``README.txt`` says which is which.
+``schema.json`` the JSON Schema that data follows, ``documents/`` the files
+uploaded to the chart as they were uploaded, ``intake/`` each submitted form
+as its own document, ``manifest.json`` every other file with its size and
+SHA-256, and ``README.txt`` says which is which.
 
 Built in memory: one client's archive is small. The archive is deterministic
 for the same rows and the same export time (entries carry the export time,
@@ -15,13 +17,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import zipfile
+from dataclasses import dataclass
 from io import BytesIO
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from ..models.export import (
+    SCHEMA_VERSION,
     DocumentReference,
     Encounter,
+    ExportDocument,
+    ExportDocumentCategory,
     ExportManifest,
     ExportPatient,
     ExportTranscript,
@@ -33,23 +40,69 @@ from ..models.export import (
 from .export_pdf import final_content
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
     from datetime import datetime
 
-    from ..models import Note, Patient, TherapySession
+    from ..models import Note, Patient, PatientDocument, TherapySession
     from ..repositories.clinician_profile import ClinicianProfile
     from .record_set import RecordSetSelector
 
-README = """\
+README = f"""\
 This archive is one client's chart, exported from Pablo.
+Schema version: {SCHEMA_VERSION} (see docs/reference/export-format.md in the Pablo source).
+
 chart.pdf      The chart as a document to read or print.
 patient.json   The same chart as structured data.
 schema.json    The JSON Schema that patient.json follows.
+documents/     Files uploaded to the chart, as they were uploaded.
+intake/        Each submitted intake form, as a document to read or print.
 manifest.json  Every other file in this archive, with its size and SHA-256 checksum.
 README.txt     This file.
-
-The format is documented in docs/reference/export-format.md in the Pablo source.
 """
+
+#: Characters an uploaded filename may not carry into an archive entry name:
+#: path separators, which would move the entry out of its directory, and
+#: control characters, which some unzip tools print raw.
+_UNSAFE_IN_ENTRY_NAME = re.compile(r"[\x00-\x1f\x7f/\\]")
+
+
+@dataclass(frozen=True)
+class ArchiveFile:
+    """A file carried in the archive beside the chart, as its own bytes."""
+
+    path: str
+    kind: ManifestFileKind
+    data: bytes
+
+
+def document_archive_path(document: PatientDocument) -> str:
+    """``documents/<id>__<filename>``: unique by id, recognisable by name."""
+    name = _UNSAFE_IN_ENTRY_NAME.sub("_", document.filename).strip() or "document"
+    return f"documents/{document.id}__{name}"
+
+
+def intake_form_archive_path(assignment_id: str) -> str:
+    return f"intake/{assignment_id}.html"
+
+
+def export_document(document: PatientDocument, data: bytes) -> ExportDocument:
+    """The ``patient.json`` entry for one uploaded file, measured from its bytes.
+
+    Size and checksum come from the bytes that go into the archive, not from
+    the row, so the entry describes the copy the reader holds.
+    """
+    return ExportDocument(
+        id=document.id,
+        # The selector admitted it, so it is one of the categories a copy carries.
+        category=cast("ExportDocumentCategory", document.category.value),
+        filename=document.filename,
+        content_type=document.mime_type,
+        bytes=len(data),
+        sha256=hashlib.sha256(data).hexdigest(),
+        uploaded_at=document.finalized_at or document.created_at,
+        uploaded_by="patient" if document.uploaded_by == "patient" else "clinician",
+        archive_path=document_archive_path(document),
+    )
 
 
 def practitioner_from(
@@ -112,6 +165,7 @@ def build_export_document(
     sessions: list[TherapySession],
     notes_by_session: dict[str, Note | None],
     standalone_notes: list[Note],
+    documents: list[ExportDocument],
     exported_at: datetime,
     selector: RecordSetSelector,
 ) -> PatientExportDocument:
@@ -140,6 +194,7 @@ def build_export_document(
         practitioner=practitioner,
         sessions=[_encounter(s, notes_by_session.get(s.id), selector) for s in sessions],
         standalone_notes=[_document_reference(n) for n in standalone_notes],
+        documents=documents,
     )
 
 
@@ -147,26 +202,40 @@ def _json_bytes(value: object) -> bytes:
     return (json.dumps(value, indent=2, ensure_ascii=False) + "\n").encode()
 
 
-def build_archive(document: PatientExportDocument, chart_pdf: bytes) -> bytes:
-    """The ZIP: the four described files, then the manifest that describes them."""
-    described: list[tuple[str, ManifestFileKind, bytes]] = [
-        ("chart.pdf", "pdf", chart_pdf),
-        ("patient.json", "json", _json_bytes(document.model_dump(mode="json"))),
-        ("schema.json", "schema", _json_bytes(PatientExportDocument.model_json_schema())),
-        ("README.txt", "text", README.encode()),
+def build_archive(
+    document: PatientExportDocument,
+    chart_pdf: bytes,
+    files: Sequence[ArchiveFile] = (),
+) -> bytes:
+    """The ZIP: the described files, then the manifest that describes them.
+
+    ``files`` are the uploaded documents and intake forms, each at the path
+    ``patient.json`` or the caller gave it.
+    """
+    described = [
+        ArchiveFile("chart.pdf", "pdf", chart_pdf),
+        ArchiveFile("patient.json", "json", _json_bytes(document.model_dump(mode="json"))),
+        ArchiveFile(
+            "schema.json", "schema", _json_bytes(PatientExportDocument.model_json_schema())
+        ),
+        ArchiveFile("README.txt", "text", README.encode()),
+        *files,
     ]
     manifest = ExportManifest(
         exported_at=document.exported_at,
         options=document.options,
         files=[
             ManifestFile(
-                path=path, bytes=len(data), sha256=hashlib.sha256(data).hexdigest(), kind=kind
+                path=f.path,
+                bytes=len(f.data),
+                sha256=hashlib.sha256(f.data).hexdigest(),
+                kind=f.kind,
             )
-            for path, kind, data in described
+            for f in described
         ],
     )
     entries = [
-        *((path, data) for path, _, data in described),
+        *((f.path, f.data) for f in described),
         ("manifest.json", _json_bytes(manifest.model_dump(mode="json"))),
     ]
 

@@ -8,7 +8,8 @@ from unittest.mock import MagicMock, Mock
 import pytest
 from app.api_errors import register_exception_handlers
 from app.auth.service import require_baa_acceptance
-from app.models import User
+from app.models import AuditAction, DocumentCategory, PatientDocument, User
+from app.models.audit import ResourceType
 from app.routes.patients import get_export_service, get_patient_repository, router
 from app.services import AuditService, get_audit_service
 from fastapi import FastAPI
@@ -308,3 +309,58 @@ def test_export_options_reach_service_and_audit_row(
         "include_transcripts": transcripts,
         "include_psychotherapy_notes": psychotherapy,
     }
+
+
+def _upload(document_id: str, category: DocumentCategory) -> PatientDocument:
+    return PatientDocument(
+        id=document_id,
+        patient_id="patient-123",
+        user_id="user-456",
+        filename=f"{document_id}.pdf",
+        mime_type="application/pdf",
+        gcs_path=f"default/{category.value}/{document_id}",
+        size_bytes=10,
+        created_at=datetime(2024, 1, 15, tzinfo=UTC),
+        category=category,
+    )
+
+
+def test_each_file_carried_in_the_archive_is_audited_as_its_own_disclosure(
+    mock_export_service, mock_user
+):
+    """An uploaded document is recorded under its category's download action,
+    a restricted one apart, and each intake form under the form export action."""
+    mock_export_service.get_patient_export_data.return_value = {
+        "content": b"PK\x03\x04 fake archive",
+        "content_type": "application/zip",
+        "filename": "export.zip",
+        "documents": [
+            _upload("doc-chart", DocumentCategory.CHART),
+            _upload("doc-restricted", DocumentCategory.PSYCHOTHERAPY_NOTES),
+        ],
+        "intake_assignment_ids": ["assignment-1"],
+    }
+    audit = Mock()
+    client = _audited_client(mock_export_service, mock_user, audit)
+
+    response = client.get(
+        "/api/patients/patient-123/export?format=zip&include_psychotherapy_notes=true"
+    )
+
+    assert response.status_code == 200, response.text
+    documents = [
+        (c.args[0], c.kwargs["document_id"], c.kwargs["category"])
+        for c in audit.log_patient_document_action.call_args_list
+    ]
+    assert documents == [
+        (AuditAction.PATIENT_DOCUMENT_DOWNLOADED, "doc-chart", "chart"),
+        (
+            AuditAction.PATIENT_DOCUMENT_DOWNLOADED_RESTRICTED,
+            "doc-restricted",
+            "psychotherapy_notes",
+        ),
+    ]
+    [form] = audit.log.call_args_list
+    assert form.kwargs["action"] == AuditAction.INTAKE_PACKET_EXPORTED
+    assert form.kwargs["resource_type"] == ResourceType.PATIENT_INTAKE_ASSIGNMENT
+    assert form.kwargs["resource_id"] == "assignment-1"

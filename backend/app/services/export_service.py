@@ -5,7 +5,8 @@
 Three formats:
 
 * ``zip``: the export archive (:mod:`.export_archive`): the chart as a PDF,
-  the same chart as ``patient.json``, its JSON Schema, and a manifest.
+  the same chart as ``patient.json``, its JSON Schema, the files uploaded to
+  the chart, each submitted intake form, and a manifest.
 * ``json``: the chart as a bare JSON object, the shape this endpoint has
   always returned.
 * ``pdf``: the chart as a PDF on its own (:mod:`.export_pdf`).
@@ -20,24 +21,34 @@ records it on the audit row.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from ..models import PatientResponse
+from ..models import Patient, PatientResponse
 from ..models.export import Practitioner
 from ..notes import get_default_registry
-from .export_archive import build_archive, build_export_document
+from .export_archive import (
+    ArchiveFile,
+    build_archive,
+    build_export_document,
+    export_document,
+    intake_form_archive_path,
+)
 from .export_pdf import final_content, render_chart_pdf
 from .record_set import RecordSetSelector
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from ..models import Note, TherapySession, Transcript
+    from ..models import Note, PatientDocument, TherapySession, Transcript
     from ..notes import NoteTypeRegistry
     from ..repositories import NotesRepository, PatientRepository, TherapySessionRepository
+    from .patient_documents_service import PatientDocumentsService
 
 EXPORT_FORMATS = ("json", "pdf", "zip")
+
+#: Given the patient, the exporting clinician's id and the export time, each
+#: submitted intake form on the chart as ``(assignment_id, document bytes)``.
+IntakeFormFiles = Callable[[Patient, str, datetime], list[tuple[str, bytes]]]
 
 
 class ExportService:
@@ -51,9 +62,13 @@ class ExportService:
         *,
         practitioner: Callable[[str], Practitioner] | None = None,
         note_types: NoteTypeRegistry | None = None,
+        documents: PatientDocumentsService | None = None,
+        intake_forms: IntakeFormFiles | None = None,
     ) -> None:
         """``practitioner`` loads who the archive says the record comes from,
-        given the exporting clinician's user id; read only for ``zip``.
+        given the exporting clinician's user id. ``documents`` reads the
+        files uploaded to the chart, and ``intake_forms`` renders each
+        submitted intake form. All three are read only for ``zip``.
         ``note_types`` labels note fields in the PDF.
         """
         self.patient_repo = patient_repo
@@ -61,6 +76,8 @@ class ExportService:
         self.notes_repo = notes_repo
         self._practitioner = practitioner or (lambda _user_id: Practitioner())
         self._note_types = note_types or get_default_registry()
+        self._documents = documents
+        self._intake_forms = intake_forms or (lambda _patient, _user_id, _at: [])
 
     def get_patient_export_data(
         self,
@@ -116,6 +133,25 @@ class ExportService:
                 selector,
             )
 
+        stem = f"patient_{patient.id}_export_{exported_at_iso.split('T', maxsplit=1)[0]}"
+        if export_format == "pdf":
+            return {
+                "content": render_chart_pdf(
+                    patient_response,
+                    sessions,
+                    notes_by_session,
+                    standalone_notes,
+                    exported_at_iso,
+                    selector,
+                    self._note_types,
+                ),
+                "content_type": "application/pdf",
+                "filename": f"{stem}.pdf",
+            }
+
+        uploads = self._select_documents(patient_id, user_id, selector)
+        documents = [export_document(upload, data) for upload, data in uploads]
+        intake_forms = self._intake_forms(patient, user_id, exported_at)
         chart_pdf = render_chart_pdf(
             patient_response,
             sessions,
@@ -124,29 +160,52 @@ class ExportService:
             exported_at_iso,
             selector,
             self._note_types,
+            documents,
         )
-        stem = f"patient_{patient.id}_export_{exported_at_iso.split('T', maxsplit=1)[0]}"
-        if export_format == "pdf":
-            return {
-                "content": chart_pdf,
-                "content_type": "application/pdf",
-                "filename": f"{stem}.pdf",
-            }
-
         document = build_export_document(
             patient,
             self._practitioner(user_id),
             sessions,
             notes_by_session,
             standalone_notes,
+            documents,
             exported_at,
             selector,
         )
+        files = [
+            *(
+                ArchiveFile(entry.archive_path, "document", data)
+                for entry, (_, data) in zip(documents, uploads, strict=True)
+            ),
+            *(
+                ArchiveFile(intake_form_archive_path(assignment_id), "intake_form", html)
+                for assignment_id, html in intake_forms
+            ),
+        ]
         return {
-            "content": build_archive(document, chart_pdf),
+            "content": build_archive(document, chart_pdf, files),
             "content_type": "application/zip",
             "filename": f"{stem}.zip",
+            # What left beside the chart, for the route's audit rows.
+            "documents": [upload for upload, _ in uploads],
+            "intake_assignment_ids": [assignment_id for assignment_id, _ in intake_forms],
         }
+
+    def _select_documents(
+        self, patient_id: str, user_id: str, selector: RecordSetSelector
+    ) -> list[tuple[PatientDocument, bytes]]:
+        """The uploaded files the selector admits, each with its stored bytes.
+
+        Read through the same repository the chart's document list uses, so
+        a file the caller cannot open there is not in the copy either.
+        """
+        if self._documents is None:
+            return []
+        return [
+            (upload, self._documents.read_file(upload))
+            for upload in self._documents.list_for_patient(patient_id, user_id)
+            if selector.includes_document(upload)
+        ]
 
     def _select_notes(
         self, patient_id: str, user_id: str, selector: RecordSetSelector

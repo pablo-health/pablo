@@ -611,6 +611,18 @@ class PatientDocumentsService:
     def list_for_patient(self, patient_id: str, user_id: str) -> list[PatientDocument]:
         return self._repo.list_for_patient(patient_id, user_id)
 
+    def read_file(self, document: PatientDocument) -> bytes:
+        """The stored file's bytes, for a document the caller already read.
+
+        Access was decided by the read that produced ``document``; this
+        only fetches what that row points at, from whichever store the
+        deployment runs.
+        """
+        return self._storage().download_bytes(
+            bucket=self._bucket(),
+            object_name=document.gcs_path,
+        )
+
     def signed_download_url(
         self,
         document_id: str,

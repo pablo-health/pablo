@@ -31,7 +31,10 @@ from reportlab.platypus import (
 from ..models.session import SOAPNote
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from ..models import Note, PatientResponse, TherapySession, Transcript
+    from ..models.export import ExportDocument
     from ..notes import NoteTypeDefinition, NoteTypeRegistry
     from .record_set import RecordSetSelector
 
@@ -231,6 +234,53 @@ def _session_flowables(
     return out
 
 
+#: How each document category reads in the chart copy.
+_CATEGORY_LABELS: dict[str, str] = {
+    "chart": "Chart",
+    "consent": "Consent",
+    "intake_artifact": "Intake",
+    "message": "Message attachment",
+    "psychotherapy_notes": "Psychotherapy notes",
+}
+
+
+def _document_flowables(documents: Sequence[ExportDocument], styles: StyleSheet1) -> list[Flowable]:
+    """Each uploaded file: what it is, and where its copy is in the archive.
+
+    The files themselves are not embedded; the checksum lets a reader match
+    this page to the file beside it.
+    """
+    out: list[Flowable] = []
+    for document in documents:
+        out.append(Paragraph(escape(document.filename), styles["Heading3"]))
+        table = Table(
+            [
+                ["Category", _CATEGORY_LABELS.get(document.category, document.category)],
+                ["Type", document.content_type],
+                ["Size", f"{document.bytes:,} bytes"],
+                ["Uploaded", str(document.uploaded_at.date())],
+                ["Uploaded by", document.uploaded_by.capitalize()],
+                ["In this archive", document.archive_path],
+                ["SHA-256", document.sha256],
+                ["Document ID", document.id],
+            ],
+            colWidths=[1.5 * inch, 5 * inch],
+        )
+        table.setStyle(
+            TableStyle(
+                [
+                    ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 8),
+                    ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ]
+            )
+        )
+        out.append(table)
+        out.append(Spacer(1, 0.15 * inch))
+    return out
+
+
 def render_chart_pdf(
     patient: PatientResponse,
     sessions: list[TherapySession],
@@ -239,7 +289,9 @@ def render_chart_pdf(
     exported_at: str,
     selector: RecordSetSelector,
     note_types: NoteTypeRegistry,
+    documents: Sequence[ExportDocument] = (),
 ) -> bytes:
+    """The chart as a PDF. ``documents`` lists files carried beside it in an archive."""
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -294,6 +346,11 @@ def render_chart_pdf(
         story.append(PageBreak())
         story.append(Paragraph("Other notes", heading_style))
         story.extend(_standalone_note_flowables(standalone_notes, styles, note_types))
+
+    if documents:
+        story.append(PageBreak())
+        story.append(Paragraph(f"Documents ({len(documents)})", heading_style))
+        story.extend(_document_flowables(documents, styles))
 
     doc.build(story)
     return buffer.getvalue()

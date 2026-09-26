@@ -146,6 +146,76 @@
       "title": "Encounter",
       "type": "object"
     },
+    "ExportDocument": {
+      "description": "One uploaded file, carried in the archive as its original bytes.\n\n``bytes`` and ``sha256`` describe the file at ``archive_path`` exactly,\nso a consumer can check its copy against this entry alone.",
+      "properties": {
+        "archive_path": {
+          "description": "Where the file is in this archive.",
+          "title": "Archive Path",
+          "type": "string"
+        },
+        "bytes": {
+          "title": "Bytes",
+          "type": "integer"
+        },
+        "category": {
+          "description": "What the file is filed as on the chart.",
+          "enum": [
+            "chart",
+            "consent",
+            "intake_artifact",
+            "message",
+            "psychotherapy_notes"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "content_type": {
+          "title": "Content Type",
+          "type": "string"
+        },
+        "filename": {
+          "description": "The name the file was uploaded with.",
+          "title": "Filename",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        },
+        "uploaded_at": {
+          "format": "date-time",
+          "title": "Uploaded At",
+          "type": "string"
+        },
+        "uploaded_by": {
+          "description": "Who put the file on the chart, by role.",
+          "enum": [
+            "clinician",
+            "patient"
+          ],
+          "title": "Uploaded By",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "category",
+        "filename",
+        "content_type",
+        "bytes",
+        "sha256",
+        "uploaded_at",
+        "uploaded_by",
+        "archive_path"
+      ],
+      "title": "ExportDocument",
+      "type": "object"
+    },
     "ExportOptions": {
       "description": "What the caller chose to include beyond the default record copy.",
       "properties": {
@@ -406,6 +476,14 @@
   },
   "description": "One client's chart as structured data (``patient.json``).",
   "properties": {
+    "documents": {
+      "description": "Files uploaded to the chart, each carried under documents/ in the archive.",
+      "items": {
+        "$ref": "#/$defs/ExportDocument"
+      },
+      "title": "Documents",
+      "type": "array"
+    },
     "exported_at": {
       "format": "date-time",
       "title": "Exported At",
@@ -421,8 +499,8 @@
       "$ref": "#/$defs/Practitioner"
     },
     "schema_version": {
-      "const": "1.0",
-      "default": "1.0",
+      "const": "1.1",
+      "default": "1.1",
       "title": "Schema Version",
       "type": "string"
     },
@@ -448,7 +526,8 @@
     "patient",
     "practitioner",
     "sessions",
-    "standalone_notes"
+    "standalone_notes",
+    "documents"
   ],
   "title": "PatientExportDocument",
   "type": "object"

@@ -19,7 +19,7 @@ from typing import Annotated, Any, Final, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
-SCHEMA_VERSION: Final = "1.0"
+SCHEMA_VERSION: Final = "1.1"
 
 
 def _with_offset(value: datetime) -> datetime:
@@ -105,10 +105,35 @@ class Encounter(BaseModel):
     document_reference: DocumentReference | None
 
 
+ExportDocumentCategory = Literal[
+    "chart", "consent", "intake_artifact", "message", "psychotherapy_notes"
+]
+
+
+class ExportDocument(BaseModel):
+    """One uploaded file, carried in the archive as its original bytes.
+
+    ``bytes`` and ``sha256`` describe the file at ``archive_path`` exactly,
+    so a consumer can check its copy against this entry alone.
+    """
+
+    id: str
+    category: ExportDocumentCategory = Field(description="What the file is filed as on the chart.")
+    filename: str = Field(description="The name the file was uploaded with.")
+    content_type: str
+    bytes: int
+    sha256: str
+    uploaded_at: Timestamp
+    uploaded_by: Literal["clinician", "patient"] = Field(
+        description="Who put the file on the chart, by role."
+    )
+    archive_path: str = Field(description="Where the file is in this archive.")
+
+
 class PatientExportDocument(BaseModel):
     """One client's chart as structured data (``patient.json``)."""
 
-    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    schema_version: Literal["1.1"] = SCHEMA_VERSION
     exported_at: Timestamp
     options: ExportOptions
     patient: ExportPatient
@@ -117,9 +142,12 @@ class PatientExportDocument(BaseModel):
     standalone_notes: list[DocumentReference] = Field(
         description="Notes written without a session, such as an intake or narrative."
     )
+    documents: list[ExportDocument] = Field(
+        description="Files uploaded to the chart, each carried under documents/ in the archive."
+    )
 
 
-ManifestFileKind = Literal["pdf", "json", "schema", "text"]
+ManifestFileKind = Literal["pdf", "json", "schema", "text", "document", "intake_form"]
 
 
 class ManifestFile(BaseModel):
@@ -132,7 +160,7 @@ class ManifestFile(BaseModel):
 class ExportManifest(BaseModel):
     """``manifest.json``: every other file in the archive, with its checksum."""
 
-    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    schema_version: Literal["1.1"] = SCHEMA_VERSION
     exported_at: Timestamp
     options: ExportOptions
     files: list[ManifestFile]
