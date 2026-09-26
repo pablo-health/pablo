@@ -283,7 +283,7 @@ test.describe("patient export", () => {
       sha256(records.body),
     )
     expect([...files.keys()].sort()).toEqual([...ARCHIVE_FILES, uploaded.archive_path].sort())
-    expect(document.schema_version).toBe("1.0")
+    expect(document.schema_version).toBe("1.1")
     expect(document.options).toEqual({
       include_transcripts: false,
       include_psychotherapy_notes: false,
@@ -299,7 +299,7 @@ test.describe("patient export", () => {
 
     // The manifest names every other file, with its true size and checksum.
     const manifest = JSON.parse(read("manifest.json").toString("utf8")) as ArchiveManifest
-    expect(manifest.schema_version).toBe("1.0")
+    expect(manifest.schema_version).toBe("1.1")
     expect(manifest.options).toEqual(document.options)
     expect(manifest.files.map((file) => file.path).sort()).toEqual(
       [...files.keys()].filter((name) => name !== "manifest.json").sort(),

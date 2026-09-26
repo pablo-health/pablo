@@ -34,8 +34,18 @@ are recorded in `options` and on the export's audit log entry.
 | `chart.pdf` | The chart as a document to read or print. |
 | `patient.json` | The same chart as structured data. |
 | `schema.json` | The JSON Schema that `patient.json` follows. |
+| `documents/<id>__<filename>` | Each file uploaded to the chart, as it was uploaded. |
+| `intake/<assignment_id>.html` | Each submitted intake form, as a document to read or print. |
 | `manifest.json` | Every other file, with its size and SHA-256 checksum. |
-| `README.txt` | Which file is which, and a pointer to this page. |
+| `README.txt` | Which file is which, the schema version, and a pointer to this page. |
+
+`patient.json` lists every file under `documents/` in `documents`, with its
+category, uploaded filename, content type, size, SHA-256, upload time, who
+uploaded it (`clinician` or `patient`) and its path in the archive.
+Psychotherapy-notes documents are included only with
+`include_psychotherapy_notes`. A clinician's private working files are not
+part of the record and are never included. In `manifest.json`, uploaded
+files have kind `document` and intake forms kind `intake_form`.
 
 Object names follow FHIR where that costs nothing: a session is an
 `Encounter`, a note a `DocumentReference`. Keys are snake_case and every
@@ -50,13 +60,14 @@ from the export models. CI fails when the two disagree, so it matches the
 ## Versioning
 
 `schema_version` in `patient.json` and `manifest.json` names the version an
-archive was written in. The current version is `1.0`.
+archive was written in. The current version is `1.1`, which added uploaded
+documents and intake forms to `1.0`.
 
 - **Minor** (`1.0` to `1.1`): an additive change, such as a new field or
   file. A consumer written for `1.0` still reads a `1.1` archive.
 - **Major** (`1.x` to `2.0`): a rename, a removal or a change of meaning.
   Check the major version before reading anything else.
 
-Documents, clinical data, billing and CSV files are planned for the archive.
+Clinical data, billing and CSV files are planned for the archive.
 Each arrives as a minor version that adds fields and files without changing
 the ones described here.

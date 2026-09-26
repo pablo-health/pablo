@@ -19,7 +19,7 @@ from typing import Annotated, Any, Final, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
-SCHEMA_VERSION: Final = "1.0"
+SCHEMA_VERSION: Final = "1.1"
 
 
 def _with_offset(value: datetime) -> datetime:
@@ -133,7 +133,7 @@ class ExportDocument(BaseModel):
 class PatientExportDocument(BaseModel):
     """One client's chart as structured data (``patient.json``)."""
 
-    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    schema_version: Literal["1.1"] = SCHEMA_VERSION
     exported_at: Timestamp
     options: ExportOptions
     patient: ExportPatient
@@ -160,7 +160,7 @@ class ManifestFile(BaseModel):
 class ExportManifest(BaseModel):
     """``manifest.json``: every other file in the archive, with its checksum."""
 
-    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    schema_version: Literal["1.1"] = SCHEMA_VERSION
     exported_at: Timestamp
     options: ExportOptions
     files: list[ManifestFile]

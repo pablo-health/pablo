@@ -664,7 +664,7 @@ class TestZip:
         assert result["content_type"] == "application/zip"
         files = _unzip(result["content"])
         document = _assert_archive_keeps_its_promises(files)
-        assert document["schema_version"] == "1.0"
+        assert document["schema_version"] == "1.1"
         assert document["options"] == {
             "include_transcripts": True,
             "include_psychotherapy_notes": True,

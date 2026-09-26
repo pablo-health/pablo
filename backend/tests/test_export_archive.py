@@ -15,7 +15,7 @@ from unittest.mock import Mock
 
 import pytest
 from app.models import Note, Patient, TherapySession, Transcript
-from app.models.export import PatientExportDocument, Practitioner
+from app.models.export import SCHEMA_VERSION, PatientExportDocument, Practitioner
 from app.repositories.clinician_profile import ClinicianProfile
 from app.services import ExportService
 from app.services.export_archive import README, build_archive, practitioner_from
@@ -135,7 +135,7 @@ def test_manifest_lists_every_other_file_with_a_matching_checksum(service: Expor
     _, files = _export(service, include_transcripts=True)
     manifest = json.loads(files["manifest.json"])
 
-    assert manifest["schema_version"] == "1.0"
+    assert manifest["schema_version"] == SCHEMA_VERSION
     assert manifest["options"] == {
         "include_transcripts": True,
         "include_psychotherapy_notes": False,
@@ -159,7 +159,7 @@ def test_default_document_leaves_out_transcripts_and_psychotherapy_notes(
     _, files = _export(service)
     document = json.loads(files["patient.json"])
 
-    assert document["schema_version"] == "1.0"
+    assert document["schema_version"] == SCHEMA_VERSION
     assert document["options"] == {
         "include_transcripts": False,
         "include_psychotherapy_notes": False,
