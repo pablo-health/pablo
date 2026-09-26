@@ -340,3 +340,35 @@ describe("apiClient error messages", () => {
     })
   })
 })
+
+describe("file downloads", () => {
+  it("reads the filename out of a quoted or bare Content-Disposition", async () => {
+    const client = await freshClient()
+    expect(client.filenameFromDisposition('attachment; filename="chart.pdf"')).toBe("chart.pdf")
+    expect(client.filenameFromDisposition("attachment; filename=chart.pdf; size=3")).toBe(
+      "chart.pdf",
+    )
+    expect(client.filenameFromDisposition("attachment")).toBeNull()
+    expect(client.filenameFromDisposition(null)).toBeNull()
+  })
+
+  it("returns the bytes with the name the server sent", async () => {
+    const client = await freshClient()
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response("%PDF-1.4", {
+          status: 200,
+          headers: {
+            "content-type": "application/pdf",
+            "content-disposition": 'attachment; filename="patient_p1_export_2026-09-26.pdf"',
+          },
+        }),
+      ),
+    )
+
+    const file = await client.getFile("/api/patients/p1/export?format=pdf")
+    expect(file.filename).toBe("patient_p1_export_2026-09-26.pdf")
+    expect(await file.blob.text()).toBe("%PDF-1.4")
+  })
+})

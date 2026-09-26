@@ -183,6 +183,7 @@ export async function giveVisitReadyToBill(
   api: ApiClient,
   patientId: string,
   codes: VisitCodes,
+  plan = "Continue weekly sessions; practise paced breathing.",
 ): Promise<BilledVisit> {
   // Each visit is booked an hour before the last. The calendar refuses two
   // appointments that overlap, so a fixed time would let one spec seed a
@@ -203,11 +204,28 @@ export async function giveVisitReadyToBill(
       subjective: "Reports steady mood since the last visit.",
       objective: "Alert, oriented, no acute distress.",
       assessment: "Adjustment-related anxiety, improving.",
-      plan: "Continue weekly sessions; practise paced breathing.",
+      plan,
     },
   })
   await api.post(`/api/notes/${noteId}/finalize`, {})
   return { appointmentId: appointment.id, sessionId: session.id, noteId }
+}
+
+/**
+ * A session that carries a transcript, uploaded the way a recording's text
+ * arrives. Note generation is queued and, with no task runner in the stack,
+ * never runs, so the session holds the transcript and no note.
+ */
+export async function giveTranscribedSession(
+  api: ApiClient,
+  patientId: string,
+  transcript: string,
+): Promise<{ id: string }> {
+  return api.post<{ id: string }>(`/api/patients/${patientId}/sessions/upload`, {
+    patient_id: patientId,
+    session_date: hoursAgo(48).toISOString(),
+    transcript: { format: "txt", content: transcript },
+  })
 }
 
 export interface AvailabilityRule {

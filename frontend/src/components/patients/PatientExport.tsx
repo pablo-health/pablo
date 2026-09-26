@@ -4,22 +4,53 @@
 
 import { useState } from "react"
 import { Download, FileJson, FileText, X, Loader2, CheckCircle } from "lucide-react"
-import { usePatient } from "@/hooks/usePatients"
-import { useSessionList } from "@/hooks/useSessions"
+import { downloadPatientExport } from "@/lib/api/patients"
+import type { PatientExportFormat } from "@/lib/api/patients"
+import { saveFile } from "@/lib/saveFile"
 
 interface PatientExportProps {
   patientId: string
   patientName: string
 }
 
-type ExportFormat = "json" | "pdf"
 type DialogStep = "format" | "confirm" | "exporting" | "complete"
+
+const FORMAT_LABEL: Record<PatientExportFormat, string> = {
+  json: "JSON file",
+  pdf: "PDF",
+}
+
+/** "a, b and c" — the list the confirm sentence is built from. */
+function joinList(items: string[]): string {
+  return items.length > 1
+    ? `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`
+    : items.join("")
+}
+
+/**
+ * One sentence saying what the file will hold, built from the choices made.
+ *
+ * It names only what is going in. The export is a disclosure of health
+ * information and the route records it, options included, on the audit
+ * trail; that is the safeguard, so the screen does not recite regulation.
+ */
+export function exportSummary(
+  format: PatientExportFormat,
+  patientName: string,
+  includeTranscripts: boolean,
+  includePsychotherapyNotes: boolean,
+): string {
+  const contents = ["details", "sessions", "notes"]
+  if (includeTranscripts) contents.push("session transcripts")
+  const yours = includePsychotherapyNotes ? ", plus your psychotherapy notes" : ""
+  return `The ${FORMAT_LABEL[format]} will include ${patientName}'s ${joinList(contents)}${yours}.`
+}
 
 export function PatientExport({ patientId, patientName }: PatientExportProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [step, setStep] = useState<DialogStep>("format")
-  const [selectedFormat, setSelectedFormat] = useState<ExportFormat>("json")
-  const [progress, setProgress] = useState(0)
+  const [selectedFormat, setSelectedFormat] = useState<PatientExportFormat>("json")
+  const [exportFailed, setExportFailed] = useState(false)
   // Both start unchecked, matching the export endpoint's defaults. The right
   // of access does not reach psychotherapy notes (45 CFR 164.524(a)(1)(i)),
   // and transcripts are the rawest part of the chart, so including either is
@@ -28,125 +59,96 @@ export function PatientExport({ patientId, patientName }: PatientExportProps) {
   const [includePsychotherapyNotes, setIncludePsychotherapyNotes] =
     useState(false)
 
-  const { data: patient } = usePatient(patientId)
-  const { data: sessionsData } = useSessionList()
-
   const handleExport = async () => {
     setStep("exporting")
-    setProgress(0)
-
-    const progressInterval = setInterval(() => {
-      setProgress((prev) => {
-        if (prev >= 100) {
-          clearInterval(progressInterval)
-          return 100
-        }
-        return prev + 10
+    setExportFailed(false)
+    try {
+      const file = await downloadPatientExport(patientId, selectedFormat, {
+        includeTranscripts,
+        includePsychotherapyNotes,
       })
-    }, 200)
-
-    await new Promise((resolve) => setTimeout(resolve, 2000))
-
-    const sessions =
-      sessionsData?.data.filter((s) => s.patient_id === patientId) ?? []
-
-    const exportData = {
-      patient,
-      sessions,
-      exportDate: new Date().toISOString(),
-      totalSessions: sessions.length,
+      saveFile(file.blob, file.filename)
+      setStep("complete")
+    } catch {
+      setExportFailed(true)
+      setStep("confirm")
     }
-
-    if (selectedFormat === "json") {
-      // Download as JSON
-      const blob = new Blob([JSON.stringify(exportData, null, 2)], {
-        type: "application/json",
-      })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement("a")
-      a.href = url
-      a.download = `patient-${patientId}-export-${new Date().toISOString().split("T")[0]}.json`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-    } else {
-      const pdfContent = `
-PATIENT DATA EXPORT
-===================
-
-Export Date: ${new Date().toLocaleDateString()}
-
-Patient Information:
--------------------
-Name: ${patient?.first_name} ${patient?.last_name}
-Email: ${patient?.email ?? "N/A"}
-Phone: ${patient?.phone ?? "N/A"}
-Date of Birth: ${patient?.date_of_birth ? new Date(patient.date_of_birth).toLocaleDateString() : "N/A"}
-Status: ${patient?.status}
-Diagnosis: ${patient?.diagnosis ?? "N/A"}
-
-Session History (${sessions.length} sessions):
--------------------
-${sessions
-  .map(
-    (s, i) => `
-${i + 1}. ${new Date(s.session_date).toLocaleString()}
-   Session #: ${s.session_number}
-   Status: ${s.status}
-`
-  )
-  .join("\n")}
-      `.trim()
-
-      const blob = new Blob([pdfContent], { type: "text/plain" })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement("a")
-      a.href = url
-      a.download = `patient-${patientId}-export-${new Date().toISOString().split("T")[0]}.txt`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-    }
-
-    setStep("complete")
   }
 
-  const handleClose = () => {
-    setIsOpen(false)
-    setTimeout(() => {
-      setStep("format")
-      setProgress(0)
-      setSelectedFormat("json")
-      setIncludeTranscripts(false)
-      setIncludePsychotherapyNotes(false)
-    }, 200)
+  // Every opening starts from the defaults, so a second export never
+  // inherits the first one's choices.
+  const handleOpen = () => {
+    setStep("format")
+    setSelectedFormat("json")
+    setExportFailed(false)
+    setIncludeTranscripts(false)
+    setIncludePsychotherapyNotes(false)
+    setIsOpen(true)
+  }
+
+  const handleClose = () => setIsOpen(false)
+
+  const formatOption = (
+    format: PatientExportFormat,
+    Icon: typeof FileJson,
+    title: string,
+    description: string,
+  ) => {
+    const selected = selectedFormat === format
+    return (
+      <button
+        onClick={() => setSelectedFormat(format)}
+        aria-pressed={selected}
+        className={`w-full p-4 border-2 rounded-lg text-left transition-all ${
+          selected
+            ? "border-primary-500 bg-primary-50"
+            : "border-neutral-200 hover:border-neutral-300"
+        }`}
+      >
+        <div className="flex items-start gap-3">
+          <Icon
+            className={`w-6 h-6 flex-shrink-0 ${
+              selected ? "text-primary-600" : "text-neutral-400"
+            }`}
+          />
+          <div>
+            <div className="font-semibold text-neutral-900">{title}</div>
+            <div className="text-sm text-neutral-600">{description}</div>
+          </div>
+        </div>
+      </button>
+    )
   }
 
   return (
     <>
       <button
-        onClick={() => setIsOpen(true)}
+        onClick={handleOpen}
         className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary-600 px-3 text-sm font-medium text-white transition-colors hover:bg-primary-700"
       >
         <Download className="w-4 h-4" />
-        Export Patient Data
+        Export
       </button>
 
       {isOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-card rounded-lg shadow-xl max-w-md w-full">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="patient-export-title"
+            className="bg-card rounded-lg shadow-xl max-w-md w-full"
+          >
             {/* Header */}
             <div className="flex items-center justify-between p-6 border-b border-neutral-200">
-              <h2 className="text-xl font-display font-bold text-neutral-900">
-                {step === "format" && "Export Patient Data"}
-                {step === "confirm" && "Confirm Export"}
-                {step === "exporting" && "Exporting..."}
-                {step === "complete" && "Export Complete"}
+              <h2
+                id="patient-export-title"
+                className="text-xl font-display font-bold text-neutral-900"
+              >
+                Export this chart
               </h2>
               <button
                 onClick={handleClose}
+                aria-label="Close export"
                 className="text-neutral-400 hover:text-neutral-600 transition-colors"
                 disabled={step === "exporting"}
               >
@@ -158,64 +160,19 @@ ${i + 1}. ${new Date(s.session_date).toLocaleString()}
             <div className="p-6">
               {step === "format" && (
                 <div className="space-y-4">
-                  <p className="text-neutral-600">
-                    Select the format for exporting {patientName}&apos;s data:
-                  </p>
-
                   <div className="space-y-3">
-                    <button
-                      onClick={() => setSelectedFormat("json")}
-                      className={`w-full p-4 border-2 rounded-lg text-left transition-all ${
-                        selectedFormat === "json"
-                          ? "border-primary-500 bg-primary-50"
-                          : "border-neutral-200 hover:border-neutral-300"
-                      }`}
-                    >
-                      <div className="flex items-start gap-3">
-                        <FileJson
-                          className={`w-6 h-6 flex-shrink-0 ${
-                            selectedFormat === "json"
-                              ? "text-primary-600"
-                              : "text-neutral-400"
-                          }`}
-                        />
-                        <div>
-                          <div className="font-semibold text-neutral-900">
-                            JSON Format
-                          </div>
-                          <div className="text-sm text-neutral-600">
-                            Structured data format, easy to process programmatically
-                          </div>
-                        </div>
-                      </div>
-                    </button>
-
-                    <button
-                      onClick={() => setSelectedFormat("pdf")}
-                      className={`w-full p-4 border-2 rounded-lg text-left transition-all ${
-                        selectedFormat === "pdf"
-                          ? "border-primary-500 bg-primary-50"
-                          : "border-neutral-200 hover:border-neutral-300"
-                      }`}
-                    >
-                      <div className="flex items-start gap-3">
-                        <FileText
-                          className={`w-6 h-6 flex-shrink-0 ${
-                            selectedFormat === "pdf"
-                              ? "text-primary-600"
-                              : "text-neutral-400"
-                          }`}
-                        />
-                        <div>
-                          <div className="font-semibold text-neutral-900">
-                            PDF Format
-                          </div>
-                          <div className="text-sm text-neutral-600">
-                            Human-readable document, suitable for printing
-                          </div>
-                        </div>
-                      </div>
-                    </button>
+                    {formatOption(
+                      "json",
+                      FileJson,
+                      "JSON",
+                      "Structured data another system can read",
+                    )}
+                    {formatOption(
+                      "pdf",
+                      FileText,
+                      "PDF",
+                      "A document to read or print",
+                    )}
                   </div>
 
                   <div className="space-y-2">
@@ -252,65 +209,36 @@ ${i + 1}. ${new Date(s.session_date).toLocaleString()}
               )}
 
               {step === "confirm" && (
-                <div className="space-y-4">
-                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
-                    <p className="text-sm text-amber-900">
-                      <strong>Please confirm:</strong> You are about to export all
-                      patient data for {patientName} in{" "}
-                      {selectedFormat.toUpperCase()} format. This data contains
-                      sensitive health information protected by HIPAA.
+                <div className="space-y-3">
+                  <p className="text-sm text-neutral-900">
+                    {exportSummary(
+                      selectedFormat,
+                      patientName,
+                      includeTranscripts,
+                      includePsychotherapyNotes,
+                    )}
+                  </p>
+                  {exportFailed && (
+                    <p role="alert" className="text-sm text-red-600">
+                      The export didn&apos;t download. Try again.
                     </p>
-                  </div>
-
-                  <div className="space-y-2 text-sm text-neutral-600">
-                    <p className="font-semibold text-neutral-900">
-                      This export will include:
-                    </p>
-                    <ul className="list-disc list-inside space-y-1 ml-2">
-                      <li>Patient demographics and contact information</li>
-                      {includeTranscripts && <li>Session transcripts</li>}
-                      <li>All SOAP notes and clinical documentation</li>
-                      {includePsychotherapyNotes && (
-                        <li>Your psychotherapy notes</li>
-                      )}
-                      <li>Session metadata and scheduling information</li>
-                    </ul>
-                  </div>
+                  )}
                 </div>
               )}
 
               {step === "exporting" && (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-center py-8">
-                    <Loader2 className="w-12 h-12 text-primary-600 animate-spin" />
-                  </div>
-
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-sm text-neutral-600">
-                      <span>Preparing export...</span>
-                      <span>{progress}%</span>
-                    </div>
-                    <div className="w-full bg-neutral-200 rounded-full h-2">
-                      <div
-                        className="bg-primary-600 h-2 rounded-full transition-all duration-300"
-                        style={{ width: `${progress}%` }}
-                      />
-                    </div>
-                  </div>
+                <div className="flex flex-col items-center justify-center gap-3 py-8">
+                  <Loader2 className="w-12 h-12 text-primary-600 animate-spin" />
+                  <p className="text-sm text-neutral-600">Preparing the file…</p>
                 </div>
               )}
 
               {step === "complete" && (
-                <div className="space-y-4">
-                  <div className="flex flex-col items-center justify-center py-8">
-                    <CheckCircle className="w-16 h-16 text-secondary-600 mb-4" />
-                    <p className="text-lg font-semibold text-neutral-900">
-                      Export Successful
-                    </p>
-                    <p className="text-sm text-neutral-600 text-center mt-2">
-                      Patient data has been downloaded to your device.
-                    </p>
-                  </div>
+                <div className="flex flex-col items-center justify-center py-8">
+                  <CheckCircle className="w-16 h-16 text-secondary-600 mb-4" />
+                  <p className="text-sm text-neutral-600 text-center">
+                    Your download has started.
+                  </p>
                 </div>
               )}
             </div>
@@ -340,7 +268,7 @@ ${i + 1}. ${new Date(s.session_date).toLocaleString()}
                     Back
                   </button>
                   <button onClick={handleExport} className="btn-primary">
-                    Confirm & Export
+                    Download
                   </button>
                 </>
               )}
