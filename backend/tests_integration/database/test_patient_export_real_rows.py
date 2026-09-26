@@ -14,7 +14,10 @@ One chart, one clinician:
 * a narrative note written without a session;
 * a psychotherapy note (``restricted``) by the same clinician;
 * one uploaded document in every category, its bytes in a real store;
-* one intake form handed in and one never started.
+* one intake form handed in and one never started;
+* one appointment, PHQ-9, message thread (opened by the patient, answered by
+  the clinician, the message document attached), medication and diagnosis;
+* one conversation with the assistant, which is not part of the record.
 
 Each piece of content carries a sentinel string found nowhere else, so an
 absence assertion can only pass because the content really was left out. The
@@ -46,7 +49,7 @@ import tempfile
 import uuid
 import zipfile
 import zlib
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import Mock
@@ -79,6 +82,11 @@ _TRANSCRIPT_SENTINEL = "TRANSCRIPTSENTINEL7Q4Z"
 _SOAP_SENTINEL = "SOAPSENTINEL2K8M"
 _NARRATIVE_SENTINEL = "NARRATIVESENTINEL5R1T"
 _RESTRICTED_SENTINEL = "PSYCHOTHERAPYSENTINEL9W3X"
+_MESSAGE_SENTINEL = "PORTALMESSAGESENTINEL4H6J"
+_CHAT_SENTINEL = "ASSISTANTCHATSENTINEL8N2P"
+
+_CLINICIAN_NAME = "Dana Reyes"
+_CLINICIAN_TIMEZONE = "America/Chicago"
 
 _PRACTICE_NAME = "Harbor Light Counseling"
 _NPI = "1234567893"
@@ -242,7 +250,207 @@ def chart(engine: Engine, tenant_schema: str) -> dict[str, str]:
     finally:
         _close_tenant_session(session, tokens)
     ids.update(_seed_intake(engine, tenant_schema, patient_id, now))
+    ids.update(_seed_clinical(engine, tenant_schema, patient_id, ids, now))
     return ids
+
+
+def _seed_clinical(
+    engine: Engine, tenant_schema: str, patient_id: str, ids: dict[str, str], now: datetime
+) -> dict[str, str]:
+    """One row of each clinical list, through the repositories that own them.
+
+    The thread is opened on a patient-armed session, as the portal opens one,
+    and answered on the clinician's. The assistant conversation is the
+    clinician's own, about this patient.
+    """
+    from app.models import (  # noqa: PLC0415
+        ChatConversation,
+        ChatMessage,
+        PatientMessage,
+        PatientMessageThread,
+        User,
+        UserPreferences,
+    )
+    from app.repositories.postgres.appointment import (  # noqa: PLC0415
+        PostgresAppointmentRepository,
+    )
+    from app.repositories.postgres.chat import PostgresChatRepository  # noqa: PLC0415
+    from app.repositories.postgres.diagnostic_assessment import (  # noqa: PLC0415
+        PostgresDiagnosticAssessmentRepository,
+    )
+    from app.repositories.postgres.medication import (  # noqa: PLC0415
+        PostgresMedicationRepository,
+    )
+    from app.repositories.postgres.outcome_measure import (  # noqa: PLC0415
+        PostgresOutcomeMeasureRepository,
+    )
+    from app.repositories.postgres.patient_message import (  # noqa: PLC0415
+        PostgresPatientMessageRepository,
+    )
+    from app.repositories.postgres.user import PostgresUserRepository  # noqa: PLC0415
+    from app.scheduling_engine.models.appointment import Appointment  # noqa: PLC0415
+
+    seeded = {
+        "appointment": str(uuid.uuid4()),
+        "measure": str(uuid.uuid4()),
+        "thread": str(uuid.uuid4()),
+        "message:patient": str(uuid.uuid4()),
+        "message:clinician": str(uuid.uuid4()),
+        "medication": str(uuid.uuid4()),
+        "diagnosis": str(uuid.uuid4()),
+        "chat": str(uuid.uuid4()),
+    }
+
+    session, tokens = _open_patient_session(engine, tenant_schema, patient_id)
+    try:
+        messages = PostgresPatientMessageRepository(session)
+        messages.add_patient_thread(
+            PatientMessageThread(
+                id=seeded["thread"],
+                patient_id=patient_id,
+                subject="Moving Thursday",
+                status="open",
+                created_at=now,
+                last_message_at=now,
+            ),
+            PatientMessage(
+                id=seeded["message:patient"],
+                thread_id=seeded["thread"],
+                patient_id=patient_id,
+                sender="patient",
+                body=f"Could we move Thursday? {_MESSAGE_SENTINEL}",
+                created_at=now,
+            ),
+        )
+        messages.link_attachments(
+            message_id=seeded["message:patient"],
+            patient_id=patient_id,
+            document_ids=[ids["document:message"]],
+            created_at=now,
+        )
+        session.commit()
+    finally:
+        _close_patient_session(session, tokens)
+
+    session, tokens = _open_tenant_session(engine, tenant_schema)
+    try:
+        PostgresPatientMessageRepository(session).add_reply(
+            PatientMessage(
+                id=seeded["message:clinician"],
+                thread_id=seeded["thread"],
+                patient_id=patient_id,
+                sender="clinician",
+                body="Friday at the same time works.",
+                created_at=now,
+            ),
+            _CLINICIAN,
+        )
+        users = PostgresUserRepository(session)
+        users.update(
+            User(
+                id=_CLINICIAN,
+                email=f"{tenant_schema}@example.test",
+                name=_CLINICIAN_NAME,
+                created_at=now,
+            )
+        )
+        users.save_preferences(_CLINICIAN, UserPreferences(timezone=_CLINICIAN_TIMEZONE))
+        PostgresAppointmentRepository(session).create(
+            Appointment(
+                id=seeded["appointment"],
+                user_id=_CLINICIAN,
+                patient_id=patient_id,
+                title="Session",
+                start_at=now,
+                end_at=now + timedelta(minutes=50),
+                duration_minutes=50,
+                status="completed",
+                session_type="Individual therapy",
+                provider="zoom",
+                video_link="https://meet.example/room",
+                place_of_service="10",
+                session_id=ids["session"],
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        PostgresOutcomeMeasureRepository(session).add(
+            {
+                "id": seeded["measure"],
+                "patient_id": patient_id,
+                "session_id": ids["session"],
+                "instrument": "phq9",
+                "total_score": 9,
+                "item_scores": {str(i): 1 for i in range(1, 10)},
+                "is_complete": True,
+                "source": "patient_self_report",
+                "administered_at": now,
+                "created_by": _CLINICIAN,
+                "created_at": now,
+                "updated_at": now,
+            },
+            _CLINICIAN,
+        )
+        PostgresMedicationRepository(session).create(
+            {
+                "id": seeded["medication"],
+                "patient_id": patient_id,
+                "drug_name": "Sertraline",
+                "dose": "50 mg daily",
+                "status": "active",
+                "started_at": now.date(),
+                "created_by": _CLINICIAN,
+                "created_at": now,
+                "updated_at": now,
+            },
+            _CLINICIAN,
+        )
+        PostgresDiagnosticAssessmentRepository(session).add(
+            {
+                "id": seeded["diagnosis"],
+                "patient_id": patient_id,
+                "instrument": "gad",
+                "definition_version": 1,
+                "criterion_responses": {},
+                "gate_responses": {},
+                "meets_criteria": True,
+                "determined_icd10": "F41.1",
+                "diagnosis_label": "Generalized anxiety disorder",
+                "source": "manual",
+                "assessed_at": now,
+                "created_by": _CLINICIAN,
+                "created_at": now,
+                "updated_at": now,
+            },
+            _CLINICIAN,
+        )
+        chat = PostgresChatRepository(session)
+        chat.add_conversation(
+            ChatConversation(
+                id=seeded["chat"],
+                patient_id=patient_id,
+                owner_user_id=_CLINICIAN,
+                title="Assistant",
+                caller_system_prompt="You help a clinician.",
+                caller_feature_key="chart_chat",
+                created_at=now,
+            ),
+            _CLINICIAN,
+        )
+        chat.add_message(
+            ChatMessage(
+                id=str(uuid.uuid4()),
+                conversation_id=seeded["chat"],
+                sequence=1,
+                role="user",
+                content=f"Summarise the last session. {_CHAT_SENTINEL}",
+                created_at=now,
+            )
+        )
+        session.commit()
+    finally:
+        _close_tenant_session(session, tokens)
+    return seeded
 
 
 def _seed_documents(
@@ -394,6 +602,32 @@ def _open_tenant_session(engine: Engine, tenant_schema: str) -> tuple[Session, t
     return session, tokens
 
 
+def _open_patient_session(
+    engine: Engine, tenant_schema: str, patient_id: str
+) -> tuple[Session, tuple[Any, Any]]:
+    """An ORM session on the practice schema, armed as the patient and nobody else."""
+    from app.db import (  # noqa: PLC0415
+        _current_patient_id,
+        _current_tenant_schema,
+        arm_current_patient_id,
+    )
+    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+
+    tokens = (_current_tenant_schema.set(tenant_schema), _current_patient_id.set(patient_id))
+    session = OrmSession(bind=engine)
+    session.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
+    arm_current_patient_id(session, patient_id)
+    return session, tokens
+
+
+def _close_patient_session(session: Session, tokens: tuple[Any, Any]) -> None:
+    from app.db import _current_patient_id, _current_tenant_schema  # noqa: PLC0415
+
+    session.close()
+    _current_tenant_schema.reset(tokens[0])
+    _current_patient_id.reset(tokens[1])
+
+
 def _close_tenant_session(session: Session, tokens: tuple[Any, Any]) -> None:
     from app.db import _current_tenant_schema, _current_user_id  # noqa: PLC0415
 
@@ -414,12 +648,19 @@ def _export(
     Wired the way the route wires it: the practitioner comes from the
     practice's billing profile and the clinician's profile in the same
     tenant session, notes are labelled by the built-in note types, uploaded
-    files come through the document service and its store, and each
-    submitted form is rendered by the intake export's own renderer.
+    files come through the document service and its store, each
+    submitted form is rendered by the intake export's own renderer, and the
+    clinical lists come through their own repositories.
     """
     from app.notes import NoteTypeRegistry, register_builtin_note_types  # noqa: PLC0415
+    from app.repositories.postgres.appointment import (  # noqa: PLC0415
+        PostgresAppointmentRepository,
+    )
     from app.repositories.postgres.clinician_profile import (  # noqa: PLC0415
         PostgresClinicianProfileRepository,
+    )
+    from app.repositories.postgres.diagnostic_assessment import (  # noqa: PLC0415
+        PostgresDiagnosticAssessmentRepository,
     )
     from app.repositories.postgres.intake_document import (  # noqa: PLC0415
         PostgresIntakeDocumentRepository,
@@ -427,7 +668,13 @@ def _export(
     from app.repositories.postgres.intake_packet import (  # noqa: PLC0415
         PostgresIntakePacketRepository,
     )
+    from app.repositories.postgres.medication import (  # noqa: PLC0415
+        PostgresMedicationRepository,
+    )
     from app.repositories.postgres.note import PostgresNotesRepository  # noqa: PLC0415
+    from app.repositories.postgres.outcome_measure import (  # noqa: PLC0415
+        PostgresOutcomeMeasureRepository,
+    )
     from app.repositories.postgres.patient import PostgresPatientRepository  # noqa: PLC0415
     from app.repositories.postgres.patient_document import (  # noqa: PLC0415
         PostgresPatientDocumentRepository,
@@ -441,12 +688,17 @@ def _export(
     from app.repositories.postgres.patient_intake_signature import (  # noqa: PLC0415
         PostgresPatientIntakeSignatureRepository,
     )
+    from app.repositories.postgres.patient_message import (  # noqa: PLC0415
+        PostgresPatientMessageRepository,
+    )
     from app.repositories.postgres.session import (  # noqa: PLC0415
         PostgresTherapySessionRepository,
     )
+    from app.repositories.postgres.user import PostgresUserRepository  # noqa: PLC0415
     from app.routes.patient_intake_export import _FormRenderer  # noqa: PLC0415
     from app.services import ExportService  # noqa: PLC0415
     from app.services.export_archive import practitioner_from  # noqa: PLC0415
+    from app.services.export_clinical import ClinicalRecordSource  # noqa: PLC0415
     from app.services.file_storage import LocalFileStorage  # noqa: PLC0415
     from app.services.patient_documents_service import PatientDocumentsService  # noqa: PLC0415
     from app.services.patient_intake_assignment_service import (  # noqa: PLC0415
@@ -487,6 +739,14 @@ def _export(
             UTC,
             "https://pablo.example",
         )
+        clinical = ClinicalRecordSource(
+            appointments=PostgresAppointmentRepository(session),
+            users=PostgresUserRepository(session),
+            outcome_measures=PostgresOutcomeMeasureRepository(session),
+            messages=PostgresPatientMessageRepository(session),
+            medications=PostgresMedicationRepository(session),
+            diagnoses=PostgresDiagnosticAssessmentRepository(session),
+        )
         service = ExportService(
             PostgresPatientRepository(session),
             PostgresTherapySessionRepository(session),
@@ -495,6 +755,7 @@ def _export(
             note_types=note_types,
             documents=documents,
             intake_forms=forms.submitted_forms,
+            clinical_record=clinical.read,
         )
         return service.get_patient_export_data(
             patient_id,
@@ -664,7 +925,7 @@ class TestZip:
         assert result["content_type"] == "application/zip"
         files = _unzip(result["content"])
         document = _assert_archive_keeps_its_promises(files)
-        assert document["schema_version"] == "1.1"
+        assert document["schema_version"] == "1.2"
         assert document["options"] == {
             "include_transcripts": True,
             "include_psychotherapy_notes": True,
@@ -804,3 +1065,124 @@ class TestZipDocuments:
         kinds = {entry["path"]: entry["kind"] for entry in manifest["files"]}
         assert kinds[f"intake/{chart['intake:submitted']}.html"] == "intake_form"
         assert {kinds[name] for name in files if name.startswith("documents/")} == {"document"}
+
+
+class TestZipClinical:
+    def test_each_clinical_list_is_in_patient_json_as_the_rows_say(
+        self, engine: Engine, tenant_schema: str, chart: dict[str, str]
+    ) -> None:
+        result = _export(engine, tenant_schema, chart["patient"], "zip")
+        files = _unzip(result["content"])
+        document = _assert_archive_keeps_its_promises(files)
+
+        [appointment] = document["appointments"]
+        assert appointment | {"start": None, "end": None} == {
+            "id": chart["appointment"],
+            "start": None,
+            "end": None,
+            "timezone": _CLINICIAN_TIMEZONE,
+            "appointment_type": "Individual therapy",
+            "status": "completed",
+            "clinician_name": _CLINICIAN_NAME,
+            "telehealth": True,
+            "place_of_service": "10",
+            "note_type": "soap",
+            "session_id": chart["session"],
+        }
+
+        [measure] = document["outcome_measures"]
+        assert measure | {"administered_at": None} == {
+            "id": chart["measure"],
+            "instrument": "phq9",
+            "instrument_name": "PHQ-9",
+            "administered_at": None,
+            "total_score": 9,
+            "severity": "mild",
+            "item_responses": {str(i): 1 for i in range(1, 10)},
+            "is_complete": True,
+            "source": "patient_self_report",
+            "session_id": chart["session"],
+        }
+
+        [thread] = document["message_threads"]
+        assert thread["id"] == chart["thread"]
+        assert thread["subject"] == "Moving Thursday"
+        assert [(m["id"], m["sender"]) for m in thread["messages"]] == [
+            (chart["message:patient"], "patient"),
+            (chart["message:clinician"], "clinician"),
+        ]
+        opening = thread["messages"][0]
+        assert _MESSAGE_SENTINEL in opening["body"]
+        assert opening["attachment_document_ids"] == [chart["document:message"]]
+        assert chart["document:message"] in {d["id"] for d in document["documents"]}, (
+            "an attachment names a file the archive carries"
+        )
+        assert result["message_threads"] == [(chart["thread"], 2)]
+
+        [medication] = document["medications"]
+        assert medication | {"started_on": None} == {
+            "id": chart["medication"],
+            "drug_name": "Sertraline",
+            "dose": "50 mg daily",
+            "status": "active",
+            "started_on": None,
+            "stopped_on": None,
+            "stop_reason": None,
+            "notes": None,
+        }
+
+        [diagnosis] = document["diagnoses"]
+        assert diagnosis | {"assessed_at": None} == {
+            "id": chart["diagnosis"],
+            "icd10_code": "F41.1",
+            "description": "Generalized anxiety disorder",
+            "assessed_at": None,
+            "status": "confirmed",
+            "instrument": "gad",
+            "meets_criteria": True,
+            "session_id": None,
+        }
+
+    def test_assistant_conversations_are_not_in_the_copy(
+        self, engine: Engine, tenant_schema: str, chart: dict[str, str]
+    ) -> None:
+        for options in ({}, {"include_transcripts": True, "include_psychotherapy_notes": True}):
+            files = _unzip(
+                _export(engine, tenant_schema, chart["patient"], "zip", **options)["content"]
+            )
+            _assert_archive_keeps_its_promises(files)
+            for name, data in files.items():
+                text = _pdf_text(data) if name == "chart.pdf" else data.decode("latin-1")
+                assert _CHAT_SENTINEL not in text, name
+                assert chart["chat"] not in text, name
+            # Control: the portal thread beside it is in the same copy.
+            assert _MESSAGE_SENTINEL in files["patient.json"].decode()
+
+    def test_chart_pdf_has_a_section_per_list(
+        self, engine: Engine, tenant_schema: str, chart: dict[str, str]
+    ) -> None:
+        for export_format in ("zip", "pdf"):
+            result = _export(engine, tenant_schema, chart["patient"], export_format)
+            pdf = (
+                result["content"]
+                if export_format == "pdf"
+                else _unzip(result["content"])["chart.pdf"]
+            )
+
+            page_text = _pdf_text(pdf)
+            # A PDF string escapes its parentheses.
+            headings = [
+                "Appointments \\(1\\)",
+                "Outcome measures \\(1\\)",
+                "Messages \\(1\\)",
+                "Medications \\(1\\)",
+                "Diagnoses \\(1\\)",
+            ]
+            positions = [page_text.find(heading) for heading in headings]
+            assert -1 not in positions, (export_format, positions)
+            assert positions == sorted(positions), "in the order the lists are named"
+            assert _MESSAGE_SENTINEL in page_text
+            assert "PHQ-9" in page_text
+            assert "Sertraline" in page_text
+            assert "F41.1" in page_text
+            assert _CHAT_SENTINEL not in page_text
