@@ -3,7 +3,8 @@
 /**
  * PatientExport: the chart's Export action asks the export endpoint for the
  * chosen format and options, and saves what comes back under the name the
- * server gave it. Transcripts and psychotherapy notes are opt-in.
+ * server gave it. The archive is the default format; JSON and PDF stay
+ * selectable. Transcripts and psychotherapy notes are opt-in.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest"
@@ -48,23 +49,60 @@ describe("PatientExport", () => {
     ).not.toBeChecked()
   })
 
+  it("offers the archive first and selected, with JSON and PDF beside it", async () => {
+    await openDialog()
+
+    expect(screen.getByRole("button", { name: /^Archive/ })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    )
+    expect(screen.getByRole("button", { name: /^JSON/ })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    )
+    expect(screen.getByRole("button", { name: /^PDF/ })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    )
+  })
+
   it("says in one sentence what the file will hold, and cites no regulation", async () => {
     const user = await openDialog()
 
     await user.click(screen.getByRole("button", { name: "Continue" }))
     const dialog = screen.getByRole("dialog")
     expect(dialog).toHaveTextContent(
-      "The JSON file will include Maria Lopez's details, sessions and notes.",
+      "The archive will include Maria Lopez's details, sessions and notes.",
     )
     expect(dialog.textContent).not.toMatch(/HIPAA|CFR|164\./)
   })
 
   it("asks the endpoint for the defaults and saves under the server's name", async () => {
+    const blob = new Blob(["PK"], { type: "application/zip" })
+    mockDownload.mockResolvedValue({ blob, filename: "patient_patient-1_export.zip" })
+    const user = await openDialog()
+
+    await user.click(screen.getByRole("button", { name: "Continue" }))
+    await user.click(screen.getByRole("button", { name: "Download" }))
+
+    expect(mockDownload).toHaveBeenCalledWith("patient-1", "zip", {
+      includeTranscripts: false,
+      includePsychotherapyNotes: false,
+    })
+    expect(mockSave).toHaveBeenCalledWith(blob, "patient_patient-1_export.zip")
+    expect(await screen.findByText("Your download has started.")).toBeInTheDocument()
+  })
+
+  it("still sends JSON, and names it, when JSON is chosen", async () => {
     const blob = new Blob(["{}"], { type: "application/json" })
     mockDownload.mockResolvedValue({ blob, filename: "patient_patient-1_export.json" })
     const user = await openDialog()
 
+    await user.click(screen.getByRole("button", { name: /^JSON/ }))
     await user.click(screen.getByRole("button", { name: "Continue" }))
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "The JSON file will include Maria Lopez's details, sessions and notes.",
+    )
     await user.click(screen.getByRole("button", { name: "Download" }))
 
     expect(mockDownload).toHaveBeenCalledWith("patient-1", "json", {
@@ -72,7 +110,19 @@ describe("PatientExport", () => {
       includePsychotherapyNotes: false,
     })
     expect(mockSave).toHaveBeenCalledWith(blob, "patient_patient-1_export.json")
-    expect(await screen.findByText("Your download has started.")).toBeInTheDocument()
+  })
+
+  it("reopens on the archive after another format was picked", async () => {
+    const user = await openDialog()
+    await user.click(screen.getByRole("button", { name: /^PDF/ }))
+    await user.click(screen.getByRole("button", { name: "Cancel" }))
+
+    await user.click(screen.getByRole("button", { name: "Export" }))
+
+    expect(screen.getByRole("button", { name: /^Archive/ })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    )
   })
 
   it("passes the format and both options through when they are chosen", async () => {
@@ -121,6 +171,9 @@ describe("exportSummary", () => {
     )
     expect(exportSummary("pdf", "Sam Lee", false, true)).toBe(
       "The PDF will include Sam Lee's details, sessions and notes, plus your psychotherapy notes.",
+    )
+    expect(exportSummary("zip", "Sam Lee", false, false)).toBe(
+      "The archive will include Sam Lee's details, sessions and notes.",
     )
   })
 })
