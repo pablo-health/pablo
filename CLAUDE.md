@@ -264,6 +264,10 @@ bd close <id>         # Complete work
 - Run `bd prime` for detailed command reference and session close protocol
 - Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
 
+### Worktrees
+
+After creating a git worktree, run `scripts/beads-worktree-sync.sh` from inside it before trusting any `bd` output there. A fresh worktree starts from the committed `.beads/metadata.json` (embedded mode) rather than the main checkout's local override, so without the sync `bd` reads a stale snapshot and its writes never reach the shared board. Confirm `.beads/metadata.json` in the worktree shows the same `dolt_mode` as the main checkout.
+
 ## Session Completion
 
 **When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
