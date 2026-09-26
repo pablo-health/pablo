@@ -173,7 +173,15 @@ def _insert(conn: Connection, patient_id: str, author: str, *, restricted: bool)
 def _export_as_admin(
     engine: Engine, schema: str, *, include_psychotherapy_notes: bool
 ) -> tuple[dict[str, Any], list[dict[str, Any]], Any]:
-    """Run the real export on admin A's session; return manifest, notes, summary."""
+    """Run the real export on admin A's session; return manifest, notes, summary.
+
+    The session is armed the way the app arms a request's session. Setting
+    the GUC on the connection alone is not enough: every transaction the
+    Session opens re-arms ``app.current_user_id`` from ``session.info``,
+    falling back to the ambient ContextVar, so a clinician left there by an
+    earlier module would replace A and the export would come back empty.
+    """
+    from app.db import arm_current_user_id  # noqa: PLC0415
     from app.services.tenant_export_service import (  # noqa: PLC0415
         TenantExportState,
         stream_tenant_archive,
@@ -183,6 +191,7 @@ def _export_as_admin(
     state = TenantExportState()
     try:
         with Session(bind=conn) as db:
+            arm_current_user_id(db, _ADMIN_A)
             archive = b"".join(
                 stream_tenant_archive(
                     db,
