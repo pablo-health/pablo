@@ -11,13 +11,13 @@
 import type { TranscriptModel } from "./sessions"
 
 /**
- * Note-type registry key. The core distribution ships SOAP and Narrative;
- * additional types (DAP / BIRP / meeting / ...) may be registered by
- * downstream consumers. Treated as an open string at runtime; the
- * bundled keys are listed for static narrowing on the discriminated
- * `NoteContent` union.
+ * Note-type registry key. SOAP and Narrative have their own editors; every
+ * other built-in type (DAP, BIRP, ...) and a practice's own types
+ * (`custom.<slug>`) render from their catalog definition. `string & {}`
+ * keeps the key open while leaving the two bespoke literals visible to
+ * autocomplete.
  */
-export type NoteType = "soap" | "narrative"
+export type NoteType = "soap" | "narrative" | (string & {})
 
 export type ExportStatus =
   | "not_queued"
@@ -42,6 +42,10 @@ export interface Note {
   patient_id: string
   session_id: string | null
   note_type: NoteType
+  /** Version of a practice-defined type the note was written against; null for built-in types. */
+  note_type_version: number | null
+  /** Values supplied for the note type's declared inputs. */
+  note_inputs: Record<string, string> | null
   content: Record<string, unknown> | null
   content_edited: Record<string, unknown> | null
   finalized_at: string | null
@@ -79,7 +83,7 @@ export interface FinalizeNoteRequest {
 }
 
 export interface CreateStandaloneNoteRequest {
-  note_type: NoteType | string
+  note_type: NoteType
   content_edited?: Record<string, unknown> | null
   dictation_transcript?: TranscriptModel | null
 }

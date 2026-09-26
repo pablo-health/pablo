@@ -117,6 +117,9 @@ class Appointment:
     # Registry key for the note generated when a session is started from this
     # appointment. Defaults to SOAP, mirroring notes.note_type.
     note_type: str = "soap"
+    # Values for the note type's declared inputs, copied onto the note when
+    # the session starts.
+    note_inputs: dict[str, str] | None = None
 
     # Recurrence
     recurrence_rule: str | None = None
@@ -237,6 +240,7 @@ class Appointment:
             telehealth_ended_at=data.get("telehealth_ended_at"),
             notes=data.get("notes"),
             note_type=data.get("note_type") or "soap",
+            note_inputs=data.get("note_inputs"),
             recurrence_rule=data.get("recurrence_rule"),
             recurring_appointment_id=data.get("recurring_appointment_id"),
             recurrence_index=data.get("recurrence_index"),
@@ -290,6 +294,7 @@ class Appointment:
             "telehealth_ended_at": self.telehealth_ended_at,
             "notes": self.notes,
             "note_type": self.note_type,
+            "note_inputs": self.note_inputs,
             "recurrence_rule": self.recurrence_rule,
             "recurring_appointment_id": self.recurring_appointment_id,
             "recurrence_index": self.recurrence_index,

@@ -106,11 +106,19 @@ export function OutcomeMeasureTrend({
         </div>
         {latest.total_score !== null && (
           <div className="text-right">
-            <div className="text-2xl font-semibold text-neutral-900">
+            {/* Named, because the newest score also appears further down in
+                the dated list: a test or a screen reader reaching for "the
+                score" otherwise finds two and cannot say which is the
+                headline. */}
+            <div
+              className="text-2xl font-semibold text-neutral-900"
+              data-testid="outcome-latest-score"
+            >
               {latest.total_score}
             </div>
             {latest.severity && (
               <span
+                data-testid="outcome-latest-severity"
                 className={`inline-flex rounded px-2 py-0.5 text-xs font-medium capitalize ${severityBadgeClasses(
                   latest.severity,
                 )}`}

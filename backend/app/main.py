@@ -34,6 +34,7 @@ from .middleware import (
     SecurityHeadersMiddleware,
 )
 from .notes import get_default_registry, register_builtin_note_types
+from .notes.practice_types import RepositoryPracticeNoteTypeSource
 from .outcome_measures.router import (
     outcome_measures_router,
     patient_outcome_measures_router,
@@ -43,6 +44,7 @@ from .portal import practice_routes as portal_practice_routes
 from .portal import recovery as portal_recovery
 from .portal import routes as portal_routes
 from .portal.resolver import register_portal_resolver
+from .repositories import get_practice_note_type_repository
 from .routes import (
     admin,
     admin_pentest,
@@ -196,10 +198,13 @@ app = FastAPI(
 
 register_exception_handlers(app)
 
-# Populate the note-type registry with the built-in note types
-# (SOAP + Narrative). Downstream consumers may register additional
-# formats against the same default registry.
+# Populate the note-type registry with the built-in note types, and resolve
+# each practice's own types from its schema. Downstream consumers may register
+# additional formats against the same default registry.
 register_builtin_note_types(get_default_registry())
+get_default_registry().set_practice_source(
+    RepositoryPracticeNoteTypeSource(get_practice_note_type_repository)
+)
 
 # DPoP proof-validation middleware. Added BEFORE DatabaseSessionMiddleware
 # so it ends up *inside* it at request time (add_middleware is

@@ -236,6 +236,12 @@ class NoteRow(Base):
     note_type: Mapped[str] = mapped_column(
         String(30), nullable=False, server_default="soap", default="soap"
     )
+    # Which version of a practice-defined note type the content was written
+    # against. NULL for built-in types, which have one version.
+    note_type_version: Mapped[int | None] = mapped_column(Integer)
+    # Values the clinician supplied for the note type's declared inputs,
+    # kept so generation sees the same context every time it runs.
+    note_inputs: Mapped[dict | None] = mapped_column(JSONB)
     # AI-generated and clinician-edited note bodies. Shape varies by
     # note_type; the registry owns validation. Mirrors the existing
     # TherapySessionRow.note_content / note_content_edited columns.
@@ -674,6 +680,38 @@ class InstrumentLicenseAttestationRow(Base):
             unique=True,
             postgresql_where=text("revoked_at IS NULL"),
         ),
+    )
+
+
+class PracticeNoteTypeRow(Base):
+    """One saved version of a note type the practice defined itself.
+
+    Practice-level like the intake tables above, and registered
+    not-row-scoped for the same reason: a note format is the practice's
+    paperwork, so there is no ``user_id`` or ``patient_id`` to key a row
+    policy on. ``created_by`` is who saved the version, a fact about the
+    record and not an owner.
+
+    **Versions are immutable.** Saving writes the next ``version`` for the
+    key, so a note generated from an earlier version keeps rendering against
+    the fields it was written for. Retiring stamps ``retired_at`` on the
+    latest version; saving again writes a fresh, active one.
+    ``definition`` is the validated
+    :class:`app.notes.practice_types.PracticeNoteTypeSpec`.
+    """
+
+    __tablename__ = "practice_note_types"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    key: Mapped[str] = mapped_column(String(30), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    definition: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_by: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        UniqueConstraint("key", "version", name="uq_practice_note_types_key_version"),
     )
 
 
@@ -1686,6 +1724,9 @@ class AppointmentRow(Base):
     note_type: Mapped[str] = mapped_column(
         String(30), nullable=False, server_default="soap", default="soap"
     )
+    # Values for the note type's declared inputs, copied onto the note when
+    # the session starts. Mirrors NoteRow.note_inputs.
+    note_inputs: Mapped[dict | None] = mapped_column(JSONB)
     # Recurrence
     recurrence_rule: Mapped[str | None] = mapped_column(String(50))
     recurring_appointment_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False), index=True)

@@ -15,6 +15,7 @@ import Link from "next/link"
 import { ArrowLeft, FileText } from "lucide-react"
 import { usePatient } from "@/hooks/usePatients"
 import { usePatientNotes } from "@/hooks/useNotes"
+import { useNoteTypeLabel } from "@/hooks/useNoteTypes"
 import { Skeleton } from "@/components/ui/skeleton"
 import { NewNoteButton } from "@/components/notes/NewNoteButton"
 import { formatNoteDateTime, noteHref, noteStatus } from "@/lib/noteDisplay"
@@ -27,6 +28,7 @@ export default function PatientNotesListPage({ params }: PageProps) {
   const { id } = use(params)
   const { data: patient, isLoading: patientLoading } = usePatient(id)
   const { data: notesData, isLoading: notesLoading, error } = usePatientNotes(id)
+  const noteTypeLabel = useNoteTypeLabel()
 
   if (patientLoading) {
     return (
@@ -117,7 +119,7 @@ export default function PatientNotesListPage({ params }: PageProps) {
                         href={noteHref(patient.id, note)}
                         className="hover:underline"
                       >
-                        {note.note_type}
+                        {noteTypeLabel(note.note_type)}
                       </Link>
                     </td>
                     <td className="px-4 py-4 text-sm text-neutral-600">

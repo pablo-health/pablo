@@ -16,40 +16,24 @@ on:
   workflow_dispatch:
   pull_request:
     branches: [main]
-    paths:
-      - "frontend/**"
-      - "backend/app/routes/**"
-      - "backend/app/main.py"
-      # The data layer, added after it broke the stack and this filter did not
-      # notice. A change to how the database is built is about as likely to stop
-      # a stack booting as anything in this repo, and on 2026-09-14 one did:
-      # boot stopped building the platform schema, the backend refused to serve
-      # without it, and no pull-request run of this suite ever saw the change —
-      # ``backend/app/db/**``, ``backend/alembic/env.py`` and
-      # ``backend/bin/migrate.py`` matched none of the lines above. It first ran
-      # post-merge, in release.yml, where it blocked the image instead.
-      - "backend/app/db/**"
-      - "backend/alembic/**"
-      - "backend/alembic_platform/**"
-      - "backend/alembic.ini"
-      - "backend/bin/**"
-      - "backend/app/settings.py"
-      - "backend/Dockerfile*"
-      - "docker-compose*.yml"
-      - ".env.e2e"
-      - "scripts/fake_clearinghouse.py"
-      - "scripts/fake_mail.py"
-      - "scripts/e2e/**"
-      - ".github/workflows/e2e.yml"
-      # The models, added for the same reason ``backend/app/db/**`` was: this
-      # job is a REQUIRED check, so a change it does not match is not merely
-      # untested — it is unmergeable, because the check never reports and
-      # branch protection waits for a run that will never start. Field
-      # validation and model shape decide what the API accepts and what the
-      # browser is handed, which is squarely what this suite exercises.
-      # Found on 2026-09-21 by a change to ``models/validators.py`` that sat
-      # green on every check that ran and blocked anyway.
-      - "backend/app/models/**"
+    # NO paths: filter, deliberately. This job owns a REQUIRED check, and a
+    # filtered workflow does not report a skipped result — it reports nothing
+    # at all, so branch protection waits for a run that will never start. The
+    # only ways out are an admin merge or an unrelated commit that happens to
+    # match, and per ENGINEERING-STANDARD.md §3 the first of those is an
+    # incident rather than a process.
+    #
+    # It had already happened twice by the time it was fixed here: a change to
+    # backend/app/models/ (#1288) sat green on all nineteen checks that ran and
+    # could not merge, and #1294 — a beads export, one line of .beads/ — sat
+    # blocked for a day for the same reason with auto-merge armed and nothing
+    # to arm against.
+    #
+    # Skipping WORK is a cost decision; skipping a required CHECK is a merge
+    # policy. scripts/ci_classify_diff.sh separates the two, exactly as the
+    # four jobs in ci.yml already use it. The directory list that used to live
+    # here is gone rather than moved: the classifier's ignorable set is the
+    # single place that decides, so there is no second list to drift.
 
 permissions:
   contents: read
@@ -68,14 +52,29 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Need history back to the PR base for the classify step below.
+          fetch-depth: 0
+
+      - id: classify
+        # Self-contained rather than a shared `needs:` job, matching ci.yml: a
+        # skipped dependency skips its dependents, and the classification only
+        # makes sense for a pull request. When this step does not run,
+        # `substantive` is '' and every gate below fails open to the full
+        # suite — so workflow_call (release, deploy), schedule and dispatch all
+        # run everything, unchanged.
+        if: github.event_name == 'pull_request'
+        run: bash scripts/ci_classify_diff.sh "origin/${{ github.base_ref }}"
 
       - uses: actions/setup-node@v7
+        if: steps.classify.outputs.substantive != 'false'
         with:
           node-version: "24"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
+        if: steps.classify.outputs.substantive != 'false'
         working-directory: frontend
         run: npm ci
         env:
@@ -83,17 +82,24 @@ jobs:
           npm_config_fetch_retry_mintimeout: 20000
 
       - name: Install the Playwright browser
+        if: steps.classify.outputs.substantive != 'false'
         working-directory: frontend
         run: npx playwright install --with-deps chromium
 
       - name: Start the stack
+        if: steps.classify.outputs.substantive != 'false'
         run: docker compose -f docker-compose.e2e.yml up --build --wait
 
       - name: Run the suite
+        if: steps.classify.outputs.substantive != 'false'
         working-directory: frontend
         run: npm run test:e2e
         env:
           CI: "1"
+
+      - name: Nothing to exercise
+        if: steps.classify.outputs.substantive == 'false'
+        run: echo "Diff touches only the ignorable set (see scripts/ci_classify_diff.sh) - the stack cannot be affected, so the suite is skipped and this check reports green."
 
       - name: Stack logs
         if: failure()

@@ -80,6 +80,8 @@ class NoteService:
         note_type: str,
         content: dict[str, Any] | None,
         user_id: str,
+        note_type_version: int | None = None,
+        note_inputs: dict[str, str] | None = None,
     ) -> Note:
         """Persist a note tied to a session.
 
@@ -90,11 +92,18 @@ class NoteService:
         a row for a scheduled session whose note has not been generated
         yet — a placeholder so the requested ``note_type`` survives until
         generation.
+
+        ``note_type_version`` is always written, since it describes the
+        content being stored. ``note_inputs`` is written only when given, so
+        generating the note keeps the inputs chosen when it was scheduled.
         """
         existing = self._notes.get_by_session_id(session_id, user_id)
         now = utc_now()
         if existing is not None:
             existing.note_type = note_type
+            existing.note_type_version = note_type_version
+            if note_inputs is not None:
+                existing.note_inputs = note_inputs
             if content is not None:
                 existing.content = content
                 existing.content_edited = None
@@ -106,6 +115,8 @@ class NoteService:
             patient_id=patient_id,
             session_id=session_id,
             note_type=note_type,
+            note_type_version=note_type_version,
+            note_inputs=note_inputs,
             content=content,
             created_at=now,
             updated_at=now,
@@ -121,6 +132,8 @@ class NoteService:
         content_edited: dict[str, Any] | None = None,
         status: str = "complete",
         user_id: str,
+        note_type_version: int | None = None,
+        note_inputs: dict[str, str] | None = None,
     ) -> Note:
         """Persist a patient-owned note that is not bound to a session.
 
@@ -137,6 +150,8 @@ class NoteService:
             patient_id=patient_id,
             session_id=None,
             note_type=note_type,
+            note_type_version=note_type_version,
+            note_inputs=note_inputs,
             content=content,
             content_edited=content_edited,
             status=status,
@@ -151,7 +166,13 @@ class NoteService:
                 {"patient_id": patient_id},
             ) from exc
 
-    def complete_generation(self, note_id: str, content: dict[str, Any], user_id: str) -> Note:
+    def complete_generation(
+        self,
+        note_id: str,
+        content: dict[str, Any],
+        user_id: str,
+        note_type_version: int | None = None,
+    ) -> Note:
         """Write generated content onto a ``processing`` note and mark it complete.
 
         Called by the standalone-note dictation worker once generation
@@ -159,6 +180,7 @@ class NoteService:
         """
         note = self.get_note(note_id, user_id)
         note.content = content
+        note.note_type_version = note_type_version
         note.status = "complete"
         note.updated_at = utc_now()
         return self._notes.update(note, user_id)

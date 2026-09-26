@@ -33,6 +33,20 @@ export interface NoteSectionSchema {
   fields: NoteFieldSchema[]
 }
 
+export type NoteInputKind = "text" | "choice"
+
+/**
+ * A value supplied when a note of this type is generated — set on the
+ * appointment. `options` only applies to `choice`.
+ */
+export interface NoteInputSchema {
+  key: string
+  label: string
+  kind: NoteInputKind
+  options: string[]
+  required: boolean
+}
+
 export interface NoteTypeSchema {
   key: string
   label: string
@@ -40,6 +54,9 @@ export interface NoteTypeSchema {
   tier: NoteTier
   context: NoteContext
   sections: NoteSectionSchema[]
+  inputs: NoteInputSchema[]
+  /** Version of a practice-defined type; null for built-in types. */
+  version: number | null
   /**
    * True when the caller's subscription / role does not permit creating
    * a note of this type. Defaults to false for OSS (allow-all

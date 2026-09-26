@@ -90,6 +90,8 @@ class CreateAppointmentRequest(BaseModel):
     provider: str | None = None
     notes: str | None = None
     note_type: str | None = None
+    #: Values for the note type's declared inputs.
+    note_inputs: dict[str, str] | None = None
     #: The clinician has been shown the conflicting availability rules and
     #: confirmed they want this booking anyway. Defaults to False, so a
     #: caller that says nothing gets exactly today's behaviour: a hard rule
@@ -153,6 +155,8 @@ class UpdateAppointmentRequest(VisitCodingFields):
     video_platform: str | None = None
     notes: str | None = None
     note_type: str | None = None
+    #: Values for the note type's declared inputs.
+    note_inputs: dict[str, str] | None = None
     status: AppointmentStatus | None = None
     #: The clinician has been shown the conflicting availability rules and
     #: confirmed they want this booking anyway. Defaults to False, so a
@@ -187,6 +191,7 @@ class AppointmentResponse(BaseModel):
     meeting_external_id: str | None = None
     notes: str | None = None
     note_type: str = "soap"
+    note_inputs: dict[str, str] | None = None
     recurrence_rule: str | None = None
     recurring_appointment_id: str | None = None
     recurrence_index: int | None = None

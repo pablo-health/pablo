@@ -8,6 +8,7 @@ import { AppointmentModal } from "../AppointmentModal"
 import type { UserPreferences } from "@/lib/api/users"
 import type { AppointmentResponse } from "@/types/scheduling"
 import type { PatientListParams } from "@/types/patients"
+import { ApiError } from "@/lib/api/client"
 
 const {
   mockCreate,
@@ -83,6 +84,33 @@ vi.mock("@/hooks/useNoteTypes", () => ({
           description: "Free-form narrative note",
           tier: "core",
           context: "session",
+          sections: [],
+        },
+        {
+          key: "custom.interview_coach",
+          label: "Interview Coach",
+          description: "Practice-defined",
+          tier: "extension",
+          context: "session",
+          sections: [],
+          version: 2,
+          inputs: [
+            {
+              key: "role",
+              label: "Role",
+              kind: "choice",
+              options: ["Engineer", "Designer"],
+              required: true,
+            },
+            { key: "company", label: "Company", kind: "text", options: [], required: false },
+          ],
+        },
+        {
+          key: "treatment_plan",
+          label: "Treatment Plan",
+          description: "Patient-level plan",
+          tier: "extension",
+          context: "patient",
           sections: [],
         },
       ],
@@ -472,6 +500,170 @@ describe("AppointmentModal", () => {
       await user.click(screen.getByRole("button", { name: "Save changes" }))
       expect(mockUpdate).toHaveBeenCalledTimes(1)
       expect(mockUpdate.mock.calls[0][0].data).toMatchObject({ note_type: "narrative" })
+    })
+
+    it("lists only session note types", async () => {
+      const user = userEvent.setup()
+      render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+      await user.click(screen.getByRole("button", { name: /more options/i }))
+      await user.click(screen.getByRole("combobox", { name: /note type/i }))
+      expect(screen.getByRole("option", { name: "Interview Coach" })).toBeInTheDocument()
+      expect(screen.queryByRole("option", { name: "Treatment Plan" })).not.toBeInTheDocument()
+    })
+  })
+
+  describe("Note inputs", () => {
+    async function pickPatientAndCoachType(user: ReturnType<typeof userEvent.setup>) {
+      await user.click(screen.getByRole("combobox", { name: /patient/i }))
+      await user.click(screen.getByRole("option", { name: /Doe, Jane/i }))
+      await user.click(screen.getByRole("button", { name: /more options/i }))
+      await user.click(screen.getByRole("combobox", { name: /note type/i }))
+      await user.click(screen.getByRole("option", { name: "Interview Coach" }))
+    }
+
+    it("shows no inputs for a type that declares none", async () => {
+      const user = userEvent.setup()
+      render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+      await user.click(screen.getByRole("button", { name: /more options/i }))
+      expect(screen.queryByRole("combobox", { name: "Role" })).not.toBeInTheDocument()
+    })
+
+    it("renders the declared inputs and submits them as note_inputs", async () => {
+      const user = userEvent.setup()
+      render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+      await pickPatientAndCoachType(user)
+
+      // The required choice has to be made before the booking can be saved.
+      expect(screen.getByRole("button", { name: "Schedule" })).toBeDisabled()
+      await user.click(screen.getByRole("combobox", { name: "Role" }))
+      expect(screen.getByRole("option", { name: "Designer" })).toBeInTheDocument()
+      await user.click(screen.getByRole("option", { name: "Engineer" }))
+      await user.type(screen.getByRole("textbox", { name: "Company" }), "  Acme ")
+      await user.click(screen.getByRole("button", { name: "Schedule" }))
+
+      expect(mockCreate).toHaveBeenCalledTimes(1)
+      expect(mockCreate.mock.calls[0][0]).toMatchObject({
+        note_type: "custom.interview_coach",
+        note_inputs: { role: "Engineer", company: "Acme" },
+      })
+    })
+
+    it("clears the inputs when the note type changes", async () => {
+      const user = userEvent.setup()
+      render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+      await pickPatientAndCoachType(user)
+      await user.type(screen.getByRole("textbox", { name: "Company" }), "Acme")
+
+      await user.click(screen.getByRole("combobox", { name: /note type/i }))
+      await user.click(screen.getByRole("option", { name: /narrative/i }))
+      await user.click(screen.getByRole("combobox", { name: /note type/i }))
+      await user.click(screen.getByRole("option", { name: "Interview Coach" }))
+      expect(screen.getByRole("textbox", { name: "Company" })).toHaveValue("")
+    })
+
+    it("pre-fills the inputs stored on the appointment when editing", async () => {
+      const user = userEvent.setup()
+      render(
+        <AppointmentModal
+          open
+          onClose={vi.fn()}
+          appointment={{
+            ...baseAppointment,
+            note_type: "custom.interview_coach",
+            note_inputs: { role: "Designer" },
+          }}
+        />,
+        { wrapper: createWrapper() },
+      )
+      expect(screen.getByRole("combobox", { name: "Role" })).toHaveTextContent("Designer")
+
+      await user.click(screen.getByRole("button", { name: "Save changes" }))
+      expect(mockUpdate.mock.calls[0][0].data).toMatchObject({
+        note_inputs: { role: "Designer" },
+      })
+    })
+
+    it("clears stored inputs when the appointment moves to a type without any", async () => {
+      const user = userEvent.setup()
+      render(
+        <AppointmentModal
+          open
+          onClose={vi.fn()}
+          appointment={{
+            ...baseAppointment,
+            note_type: "custom.interview_coach",
+            note_inputs: { role: "Designer" },
+          }}
+        />,
+        { wrapper: createWrapper() },
+      )
+      await user.click(screen.getByRole("combobox", { name: /note type/i }))
+      await user.click(screen.getByRole("option", { name: /narrative/i }))
+      await user.click(screen.getByRole("button", { name: "Save changes" }))
+      expect(mockUpdate.mock.calls[0][0].data).toMatchObject({
+        note_type: "narrative",
+        note_inputs: {},
+      })
+    })
+
+    it("says so when the server rejects the inputs", async () => {
+      mockCreate.mockImplementation((_payload, options?: { onError?: (e: Error) => void }) => {
+        options?.onError?.(
+          new ApiError("INVALID_NOTE_INPUTS", "'Manager' is not an option for 'role'", {}, 400),
+        )
+      })
+      const user = userEvent.setup()
+      const onClose = vi.fn()
+      render(<AppointmentModal open onClose={onClose} />, { wrapper: createWrapper() })
+      await pickPatientAndCoachType(user)
+      await user.click(screen.getByRole("combobox", { name: "Role" }))
+      await user.click(screen.getByRole("option", { name: "Engineer" }))
+      await user.click(screen.getByRole("button", { name: "Schedule" }))
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "These note details weren't accepted. Check them and try again.",
+      )
+      expect(onClose).not.toHaveBeenCalled()
+    })
+
+    it("collects no inputs, and requires none, while booking a series", async () => {
+      const user = userEvent.setup()
+      render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+      await pickPatientAndCoachType(user)
+      expect(screen.getByRole("combobox", { name: "Role" })).toBeInTheDocument()
+
+      await user.click(screen.getByRole("radio", { name: "Weekly" }))
+      expect(screen.queryByRole("combobox", { name: "Role" })).not.toBeInTheDocument()
+      expect(
+        screen.getByText("You can add note details to each session once the series is booked."),
+      ).toBeInTheDocument()
+
+      await user.click(screen.getByRole("button", { name: "Schedule" }))
+      expect(mockCreateRecurring).toHaveBeenCalledTimes(1)
+      expect(mockCreateRecurring.mock.calls[0][0]).not.toHaveProperty("note_inputs")
+      expect(mockCreateRecurring.mock.calls[0][0]).toMatchObject({
+        note_type: "custom.interview_coach",
+      })
+    })
+
+    it("leaves inputs out of a whole-series edit", async () => {
+      const user = userEvent.setup()
+      render(
+        <AppointmentModal
+          open
+          onClose={vi.fn()}
+          appointment={{
+            ...recurringAppointment,
+            note_type: "custom.interview_coach",
+            note_inputs: { role: "Designer" },
+          }}
+        />,
+        { wrapper: createWrapper() },
+      )
+      await user.click(screen.getByRole("radio", { name: /this and future sessions/i }))
+      await user.click(screen.getByRole("button", { name: "Save changes" }))
+      expect(mockEditSeries).toHaveBeenCalledTimes(1)
+      expect(mockEditSeries.mock.calls[0][0].data).not.toHaveProperty("note_inputs")
     })
   })
 

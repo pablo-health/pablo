@@ -254,8 +254,8 @@ const baseQueryKeys = {
   noteTypes: {
     all: ["note-types"] as const,
     list: () => [...baseQueryKeys.noteTypes.all, "list"] as const,
-    detail: (key: string) =>
-      [...baseQueryKeys.noteTypes.all, "detail", key] as const,
+    detail: (key: string, version?: number | null) =>
+      [...baseQueryKeys.noteTypes.all, "detail", key, version ?? null] as const,
   },
 
   // Compliance query keys (therapist-owned reminders)

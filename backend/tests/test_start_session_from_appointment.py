@@ -6,16 +6,21 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from unittest.mock import Mock
 
 import pytest
 from app.models import Patient, ScheduleSessionRequest, SessionStatus, VideoPlatform
 from app.models.enums import SessionSource, SessionType
 from app.models.session import SOAPNote
+from app.notes import get_default_registry
+from app.notes.practice_types import RepositoryPracticeNoteTypeSource
 from app.repositories import (
     InMemoryNotesRepository,
     InMemoryPatientRepository,
+    InMemoryPracticeNoteTypeRepository,
     InMemoryTherapySessionRepository,
+    get_practice_note_type_repository,
 )
 from app.scheduling_engine.exceptions import AppointmentNotFoundError
 from app.scheduling_engine.models.appointment import Appointment, AppointmentStatus
@@ -25,6 +30,9 @@ from app.services.note_generation_service import GeneratedNote, NoteGenerationSe
 from app.services.note_service import NoteService
 from app.services.session_service import InvalidNoteTypeError, PatientNotFoundError, SessionService
 from app.utcnow import utc_now
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 USER_ID = "test-user-1"
 PATIENT_ID = "test-patient-1"
@@ -345,6 +353,73 @@ class TestNoteTypeWiring:
             note_type="not-a-real-type",
         )
         with pytest.raises(InvalidNoteTypeError):
+            session_service.schedule_session(USER_ID, request)
+
+    @pytest.fixture
+    def practice_type(self) -> Iterator[None]:
+        """A practice-defined type with one required choice input."""
+        repo = InMemoryPracticeNoteTypeRepository()
+        repo.add_version(
+            "custom.coach",
+            {
+                "label": "Coach",
+                "sections": [{"key": "s", "label": "S", "fields": [{"key": "f", "label": "F"}]}],
+                "inputs": [
+                    {
+                        "key": "segment",
+                        "label": "Segment",
+                        "kind": "choice",
+                        "options": ["Network", "Starter"],
+                        "required": True,
+                    }
+                ],
+            },
+            created_by=USER_ID,
+            created_at=utc_now(),
+        )
+        registry = get_default_registry()
+        registry.set_practice_source(RepositoryPracticeNoteTypeSource(lambda: repo))
+        try:
+            yield
+        finally:
+            registry.set_practice_source(
+                RepositoryPracticeNoteTypeSource(get_practice_note_type_repository)
+            )
+
+    @pytest.mark.usefixtures("practice_type", "patient")
+    def test_inputs_and_version_land_on_the_note(
+        self,
+        appt_repo: InMemoryAppointmentRepository,
+        session_service: SessionService,
+        notes_repo: InMemoryNotesRepository,
+    ) -> None:
+        appt = _make_appointment(appt_repo)
+        request = ScheduleSessionRequest(
+            patient_id=appt.patient_id,
+            scheduled_at=appt.start_at,
+            note_type="custom.coach",
+            note_inputs={"segment": "Starter"},
+        )
+        session, _ = session_service.schedule_session(USER_ID, request)
+        note = notes_repo.get_by_session_id(session.id)
+        assert note is not None
+        assert note.note_inputs == {"segment": "Starter"}
+        assert note.note_type_version == 1
+
+    @pytest.mark.usefixtures("practice_type", "patient")
+    def test_rejects_inputs_the_type_does_not_accept(
+        self,
+        appt_repo: InMemoryAppointmentRepository,
+        session_service: SessionService,
+    ) -> None:
+        appt = _make_appointment(appt_repo)
+        request = ScheduleSessionRequest(
+            patient_id=appt.patient_id,
+            scheduled_at=appt.start_at,
+            note_type="custom.coach",
+            note_inputs={"segment": "Solo"},
+        )
+        with pytest.raises(InvalidNoteTypeError, match="not an option"):
             session_service.schedule_session(USER_ID, request)
 
 

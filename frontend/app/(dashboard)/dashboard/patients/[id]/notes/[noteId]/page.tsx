@@ -24,6 +24,7 @@ import {
   type RatingFeedback,
 } from "@/components/sessions/QualityRatingWithFeedback"
 import { usePatient } from "@/hooks/usePatients"
+import { useNoteTypeLabel } from "@/hooks/useNoteTypes"
 import {
   useFinalizeNote,
   useNote,
@@ -46,6 +47,7 @@ export default function StandaloneNotePage({ params }: PageProps) {
       query.state.data?.status === "processing" ? 3000 : false,
   })
   const updateEdits = useUpdateNoteEdits()
+  const noteTypeLabel = useNoteTypeLabel()
   const finalize = useFinalizeNote()
 
   const [feedback, setFeedback] = useState<RatingFeedback>({
@@ -134,7 +136,7 @@ export default function StandaloneNotePage({ params }: PageProps) {
 
       <div>
         <h1 className="text-3xl font-display font-bold text-neutral-900 mb-1 capitalize">
-          {note.note_type} note
+          {noteTypeLabel(note.note_type)} note
         </h1>
         <p className="text-neutral-600">
           {patientName}

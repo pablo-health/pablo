@@ -42,10 +42,12 @@ from ..models import (
 )
 from ..notes import (
     NoteTypeAuthorizer,
+    NoteTypeDefinition,
     NoteTypeRegistry,
     get_default_registry,
     get_note_type_authorizer,
 )
+from ..notes.practice_types import validate_note_inputs
 from ..repositories import NotesRepository, PatientRepository, UserRepository, get_user_repository
 from ..repositories import (
     get_appointment_repository as _appt_repo_factory,
@@ -366,6 +368,13 @@ def create_standalone_note(
                 {"appointment_id": request.appointment_id},
             )
 
+    try:
+        note_inputs = validate_note_inputs(definition, request.note_inputs)
+    except ValueError as exc:
+        raise BadRequestError(
+            str(exc), {"note_type": request.note_type}, code="INVALID_NOTE_INPUTS"
+        ) from exc
+
     note = note_service.create_standalone_note(
         patient_id=patient.id,
         note_type=request.note_type,
@@ -373,6 +382,8 @@ def create_standalone_note(
         content_edited=request.content_edited,
         status="processing" if request.dictation_transcript is not None else "complete",
         user_id=user.id,
+        note_type_version=definition.version,
+        note_inputs=note_inputs or None,
     )
 
     audit.log_note_action(
@@ -468,6 +479,7 @@ def generate_standalone_note_job(
     note_generation_service: NoteGenerationService = Depends(get_note_generation_service),
     user_repo: UserRepository = Depends(get_user_repository),
     audit: AuditService = Depends(get_audit_service),
+    registry: NoteTypeRegistry = Depends(get_registry),
 ) -> dict[str, str]:
     """Worker: generate content for a ``processing`` standalone note.
 
@@ -518,6 +530,12 @@ def generate_standalone_note_job(
         format=payload.transcript.format.value,
         content=payload.transcript.content,
     )
+    # Resolved before the release below: a practice-defined type is read
+    # from the database. An unknown key is left for generation to raise.
+    try:
+        definition: NoteTypeDefinition | None = registry.get(payload.note_type)
+    except KeyError:
+        definition = None
     # Release the pooled connection before the multi-second LLM call — same
     # seam ``upload_session`` and the old inline dictation path used.
     release_db_connection()
@@ -527,6 +545,8 @@ def generate_standalone_note_job(
             transcript,
             patient,
             utc_now(),
+            inputs=note.note_inputs,
+            definition=definition,
         )
     except TransientNoteGenerationError:
         if not _is_final_note_generation_attempt(http_request):
@@ -552,7 +572,12 @@ def generate_standalone_note_job(
         note_service.fail_generation(payload.note_id, payload.user_id)
         return {"status": "failed"}
 
-    note = note_service.complete_generation(payload.note_id, generated.content, payload.user_id)
+    note = note_service.complete_generation(
+        payload.note_id,
+        generated.content,
+        payload.user_id,
+        note_type_version=generated.note_type_version,
+    )
 
     owner = user_repo.get(payload.user_id)
     if owner is not None:
