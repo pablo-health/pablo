@@ -11,7 +11,7 @@
 
 import type { Note, NoteType } from "./notes"
 
-export type { Note, NoteType, ExportStatus } from "./notes"
+export type { Note, NoteType } from "./notes"
 
 /**
  * Session status enum
@@ -248,33 +248,6 @@ export interface UpdateSessionMetadataRequest {
   video_link?: string
   duration_minutes?: number
   notes?: string
-}
-
-/**
- * Export queue item for admin review
- */
-export interface ExportQueueItem {
-  id: string
-  user_id: string
-  patient_name: string
-  session_date: string
-  session_number: number
-  quality_rating: number | null
-  redacted_transcript: string | null
-  redacted_soap_note: SOAPNoteModel | null
-  export_status: import("./notes").ExportStatus
-  export_queued_at: string | null
-  finalized_at: string | null
-}
-
-export interface ExportQueueListResponse {
-  data: ExportQueueItem[]
-  total: number
-}
-
-export interface ExportActionRequest {
-  action: "approve" | "skip" | "flag"
-  reason?: string
 }
 
 /**

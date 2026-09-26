@@ -210,11 +210,8 @@ class TestPostgresNotesRepositoryMapping:
             quality_rating=4,
             quality_rating_reason="solid",
             quality_rating_sections=["plan"],
-            export_status="queued",
-            export_queued_at=now,
             redacted_content={"s": "<REDACTED>"},
             naturalized_content={"s": "Jane"},
-            redacted_export_payload={"payload": "ok"},
             created_at=now,
             updated_at=now,
         )
@@ -232,11 +229,8 @@ class TestPostgresNotesRepositoryMapping:
         assert added.quality_rating == 4
         assert added.quality_rating_reason == "solid"
         assert added.quality_rating_sections == ["plan"]
-        assert added.export_status == "queued"
-        assert added.export_queued_at == now
         assert added.redacted_content == {"s": "<REDACTED>"}
         assert added.naturalized_content == {"s": "Jane"}
-        assert added.redacted_export_payload == {"payload": "ok"}
         assert added.created_at == now
         assert added.updated_at == now
         session.flush.assert_called_once()

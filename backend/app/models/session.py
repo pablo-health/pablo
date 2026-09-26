@@ -3,7 +3,7 @@
 """Session domain models — TherapySession dataclass and API request/response models.
 
 Sub-modules:
-- enums.py: SessionStatus, SOAPSection, ExportStatus, TranscriptFormat
+- enums.py: SessionStatus, SOAPSection, TranscriptFormat
 - soap_note.py: SOAPNote, SOAPSentence, structured sub-fields, Pydantic models
 - transcript.py: Transcript, TranscriptModel, parsing helpers
 """
@@ -17,7 +17,6 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from .enums import (
-    ExportStatus,
     SessionSource,
     SessionStatus,
     SessionType,
@@ -392,8 +391,6 @@ __all__ = [
     "CONFIDENCE_THRESHOLDS",
     "AssessmentNote",
     "AssessmentNoteModel",
-    # enums
-    "ExportStatus",
     # session (defined here)
     "FinalizeSessionRequest",
     "ObjectiveNote",

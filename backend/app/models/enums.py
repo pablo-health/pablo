@@ -59,16 +59,6 @@ class SOAPSection(StrEnum):
     PLAN = "plan"
 
 
-class ExportStatus(StrEnum):
-    """Export queue status for eval sessions."""
-
-    NOT_QUEUED = "not_queued"  # Default - not selected for export
-    PENDING_REVIEW = "pending_review"  # Queued, awaiting manual review
-    APPROVED = "approved"  # Reviewed and approved for export
-    EXPORTED = "exported"  # Successfully exported
-    SKIPPED = "skipped"  # Redaction failed or manually skipped
-
-
 class TranscriptFormat(StrEnum):
     """Supported transcript formats."""
 

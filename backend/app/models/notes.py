@@ -40,11 +40,6 @@ class NoteResponse(BaseModel):
     quality_rating_reason: str | None = None
     quality_rating_sections: list[str] | None = None
     status: str = "complete"
-    export_status: str = "not_queued"
-    export_queued_at: datetime | None = None
-    export_reviewed_at: datetime | None = None
-    export_reviewed_by: str | None = None
-    exported_at: datetime | None = None
     #: Who wrote the note; ``None`` on rows that predate the column.
     author_user_id: str | None = None
     #: Readable by its author alone (a psychotherapy note).
@@ -68,11 +63,6 @@ class NoteResponse(BaseModel):
             quality_rating_reason=note.quality_rating_reason,
             quality_rating_sections=note.quality_rating_sections,
             status=note.status,
-            export_status=note.export_status,
-            export_queued_at=note.export_queued_at,
-            export_reviewed_at=note.export_reviewed_at,
-            export_reviewed_by=note.export_reviewed_by,
-            exported_at=note.exported_at,
             author_user_id=note.author_user_id,
             restricted=note.restricted,
             created_at=note.created_at,

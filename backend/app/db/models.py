@@ -255,16 +255,9 @@ class NoteRow(Base):
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, server_default="complete", default="complete"
     )
-    # Export tracking — mirrors TherapySessionRow.export_*
-    export_status: Mapped[str] = mapped_column(String(20), default="not_queued")
-    export_queued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    export_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    export_reviewed_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
-    exported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # PII-redacted variants (extension-tier).
     redacted_content: Mapped[dict | None] = mapped_column(JSONB)
     naturalized_content: Mapped[dict | None] = mapped_column(JSONB)
-    redacted_export_payload: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     # Soft-delete marker (THERAPY-nyb). NULL = live row.

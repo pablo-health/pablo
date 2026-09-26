@@ -148,11 +148,11 @@ def _insert_note(
             """
             INSERT INTO practice.notes (
                 id, patient_id, session_id, note_type, content,
-                created_at, updated_at, export_status
+                created_at, updated_at
             )
             VALUES (
                 :id, :pid, :sid, 'soap', CAST(:c AS jsonb),
-                :now, :now, 'not_queued'
+                :now, :now
             )
             """
         ),
@@ -187,18 +187,21 @@ def test_notes_table_and_indexes_exist(pg_session: Session) -> None:
         "quality_rating",
         "quality_rating_reason",
         "quality_rating_sections",
+        "redacted_content",
+        "naturalized_content",
+        "created_at",
+        "updated_at",
+    }
+    assert expected.issubset(cols)
+    dropped = {
         "export_status",
         "export_queued_at",
         "export_reviewed_at",
         "export_reviewed_by",
         "exported_at",
-        "redacted_content",
-        "naturalized_content",
         "redacted_export_payload",
-        "created_at",
-        "updated_at",
     }
-    assert expected.issubset(cols)
+    assert cols.isdisjoint(dropped), sorted(cols & dropped)
 
     indexes = {
         row[0]
@@ -223,9 +226,9 @@ def test_partial_unique_index_allows_multiple_null_session_ids(
                 """
                 INSERT INTO practice.notes (
                     id, patient_id, session_id, note_type,
-                    created_at, updated_at, export_status
+                    created_at, updated_at
                 )
-                VALUES (:id, :pid, NULL, 'soap', :now, :now, 'not_queued')
+                VALUES (:id, :pid, NULL, 'soap', :now, :now)
                 """
             ),
             {"id": str(uuid.uuid4()), "pid": _PATIENT_ID_P1, "now": now},
