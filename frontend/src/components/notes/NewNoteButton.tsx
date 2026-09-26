@@ -197,6 +197,11 @@ export function NewNoteButton({ patientId }: NewNoteButtonProps) {
                     <div className="text-sm text-neutral-600">
                       {type.description}
                     </div>
+                    {type.restricted && (
+                      <div className="text-xs text-neutral-500 mt-1">
+                        Only you can see this note.
+                      </div>
+                    )}
                     {locked && (
                       <div className="text-xs text-amber-700 mt-1">
                         Upgrade to unlock {type.label} notes.

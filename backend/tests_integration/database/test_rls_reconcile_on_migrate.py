@@ -394,6 +394,40 @@ def test_a_migrated_schema_ends_up_matching_a_freshly_provisioned_one(
     assert all(r.ok for r in results), [(r.schema, r.status, r.detail) for r in results]
     assert _policy_map(engine, schema) == _policy_map(engine, reference)
     assert _rls_flag_map(engine, schema) == _rls_flag_map(engine, reference)
+    # A map comparison cannot tell "both hold the right policy" from "both
+    # lost it". Name the one the notes carve-out depends on, so a reconcile
+    # that stopped applying the author-only arm fails here by name.
+    assert ("notes", "rls_note_access") in _policy_map(engine, reference)
+
+
+def test_an_author_only_note_policy_reaches_an_old_practice(
+    engine: Engine, aged: tuple[str, str, str]
+) -> None:
+    """``notes`` was policed by ``has_patient_access`` alone before it could
+    hold an author-only row. A practice provisioned then still carries that
+    policy, and a psychotherapy note written there would be readable by
+    every co-treater until the reconcile swaps the arm in."""
+    schema, _, _ = aged
+    _age_table(engine, schema, "notes")
+    with engine.begin() as conn:
+        # ``has_patient_access`` lives in the practice schema; the policy
+        # text is resolved at CREATE time, as provisioning's own is.
+        conn.execute(text(f'SET search_path = "{schema}", practice, platform, public'))
+        conn.execute(
+            text(
+                f'CREATE POLICY rls_patient_access ON "{schema}".notes USING ('
+                "has_patient_access(patient_id, current_setting('app.current_user_id', true)))"
+            )
+        )
+        conn.execute(text(f'ALTER TABLE "{schema}".notes ENABLE ROW LEVEL SECURITY'))
+        conn.execute(text(f'ALTER TABLE "{schema}".notes FORCE ROW LEVEL SECURITY'))
+    assert _policy_names(engine, schema, "notes") == {"rls_patient_access"}
+
+    results = fan_out(engine, [schema])
+
+    assert all(r.ok for r in results), [(r.schema, r.status, r.detail) for r in results]
+    assert _policy_names(engine, schema, "notes") == {"rls_note_access"}
+    assert _rls_flags(engine, schema, "notes") == (True, True)
 
 
 def _add_foreign_table(engine: Engine, schema: str, table: str, extra_column: str) -> None:

@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..api_errors import APIError, BadRequestError, ConflictError, NotFoundError
 from ..models import Note
+from ..notes import get_default_registry, is_practice_key
 from ..repositories import NotesRepository  # noqa: TC001 — runtime DI type
 from ..repositories.note import PatientAccessDeniedError
 from ..utcnow import utc_now
@@ -48,6 +49,31 @@ class NoteNotFinalizedError(BadRequestError):
     """Raised when an operation requires the note to be finalized first."""
 
     code = "NOTE_NOT_FINALIZED"
+
+
+class RestrictedNoteTypeError(BadRequestError):
+    """Raised when a restricted note type is asked to do what it never does.
+
+    A restricted note (a psychotherapy note) is written by hand and stands
+    on its own: it is never bound to a session and never generated from a
+    transcript.
+    """
+
+    code = "NOTE_TYPE_RESTRICTED"
+
+
+def is_restricted_note_type(note_type: str) -> bool:
+    """Whether ``note_type`` is one of the built-in author-only types.
+
+    Only built-in definitions can be restricted, so the default registry is
+    the whole answer: a practice-defined type is never restricted (and is
+    answered without touching the practice's own store), and an unknown key
+    is left for the caller's own validation to reject.
+    """
+    if is_practice_key(note_type):
+        return False
+    registry = get_default_registry()
+    return registry.has(note_type) and registry.get(note_type).restricted
 
 
 class NoteService:
@@ -96,7 +122,15 @@ class NoteService:
         ``note_type_version`` is always written, since it describes the
         content being stored. ``note_inputs`` is written only when given, so
         generating the note keeps the inputs chosen when it was scheduled.
+
+        A restricted type is refused outright: the session's one note is
+        the progress note, and a psychotherapy note is never bound to one.
         """
+        if is_restricted_note_type(note_type):
+            raise RestrictedNoteTypeError(
+                f"Note type {note_type!r} cannot be attached to a session",
+                {"note_type": note_type, "session_id": session_id},
+            )
         existing = self._notes.get_by_session_id(session_id, user_id)
         now = utc_now()
         if existing is not None:
@@ -118,6 +152,7 @@ class NoteService:
             note_type_version=note_type_version,
             note_inputs=note_inputs,
             content=content,
+            author_user_id=user_id,
             created_at=now,
             updated_at=now,
         )
@@ -143,7 +178,19 @@ class NoteService:
         dictation that generates off-request, in which case the caller
         passes ``'processing'`` and a Cloud Tasks worker completes it
         via :meth:`complete_generation` / :meth:`fail_generation`.
+
+        The author is stamped on the row, and ``restricted`` is taken from
+        the note type's definition: a restricted note may only ever start
+        empty and ``complete`` — a ``processing`` skeleton means a
+        dictation is about to be generated into it, which a restricted
+        type never allows.
         """
+        restricted = is_restricted_note_type(note_type)
+        if restricted and (status != "complete" or content is not None):
+            raise RestrictedNoteTypeError(
+                f"Note type {note_type!r} is written by hand, not generated",
+                {"note_type": note_type},
+            )
         now = utc_now()
         note = Note(
             id=str(uuid.uuid4()),
@@ -155,6 +202,8 @@ class NoteService:
             content=content,
             content_edited=content_edited,
             status=status,
+            author_user_id=user_id,
+            restricted=restricted,
             created_at=now,
             updated_at=now,
         )

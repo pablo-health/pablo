@@ -96,6 +96,8 @@ export function createMockNote(overrides: Partial<Note> = {}): Note {
     export_reviewed_at: null,
     export_reviewed_by: null,
     exported_at: null,
+    author_user_id: null,
+    restricted: false,
     created_at: "2024-01-15T14:30:00Z",
     updated_at: "2024-01-15T14:30:00Z",
     ...overrides,

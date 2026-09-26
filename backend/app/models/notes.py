@@ -45,6 +45,10 @@ class NoteResponse(BaseModel):
     export_reviewed_at: datetime | None = None
     export_reviewed_by: str | None = None
     exported_at: datetime | None = None
+    #: Who wrote the note; ``None`` on rows that predate the column.
+    author_user_id: str | None = None
+    #: Readable by its author alone (a psychotherapy note).
+    restricted: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -69,6 +73,8 @@ class NoteResponse(BaseModel):
             export_reviewed_at=note.export_reviewed_at,
             export_reviewed_by=note.export_reviewed_by,
             exported_at=note.exported_at,
+            author_user_id=note.author_user_id,
+            restricted=note.restricted,
             created_at=note.created_at,
             updated_at=note.updated_at,
         )

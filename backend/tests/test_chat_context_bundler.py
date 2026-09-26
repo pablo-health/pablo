@@ -335,6 +335,53 @@ class TestProgressNotesExplicit:
                 selection={SOURCE_KEY_PROGRESS_NOTES_EXPLICIT: {"note_ids": [1, 2]}},
             )
 
+    def test_a_restricted_note_stays_out_even_when_named_by_id(
+        self,
+        notes_repo: InMemoryNotesRepository,
+        soap_content: dict,
+    ) -> None:
+        """A psychotherapy note never reaches a chat turn. Asking for it by
+        id gets the same answer as asking for an id that does not exist,
+        and the recent-notes source does not pick it up either."""
+        base = datetime.now(UTC)
+        shared = _make_note(
+            note_type="soap", content=soap_content, created_at=base, note_id="note-shared"
+        )
+        private = _make_note(
+            note_type="psychotherapy",
+            content={"note": {"body": "SENTINEL-PRIVATE-REFLECTION"}},
+            created_at=base,
+            note_id="note-private",
+        )
+        private.restricted = True
+        # Type sets are the first line; this proves the row flag holds on
+        # its own even for a type the recent-notes source would take.
+        masquerading = _make_note(
+            note_type="soap", content=soap_content, created_at=base, note_id="note-masked"
+        )
+        masquerading.restricted = True
+        for n in (shared, private, masquerading):
+            notes_repo.add(n)
+
+        bundle = assemble_context_bundle(
+            notes_repo=notes_repo,
+            patient_id=PATIENT_ID,
+            user_id=USER_ID,
+            selection={
+                SOURCE_KEY_PROGRESS_NOTES_EXPLICIT: {
+                    "note_ids": ["note-private", "note-masked", "note-shared"]
+                },
+                SOURCE_KEY_PROGRESS_NOTES_RECENT: True,
+            },
+        )
+
+        by_key = {s["source_key"]: s for s in bundle.manifest["sources_included"]}
+        explicit = by_key[SOURCE_KEY_PROGRESS_NOTES_EXPLICIT]
+        assert explicit["note_ids"] == ["note-shared"]
+        assert explicit["row_count"] == 1
+        assert by_key[SOURCE_KEY_PROGRESS_NOTES_RECENT]["note_ids"] == ["note-shared"]
+        assert "SENTINEL-PRIVATE-REFLECTION" not in bundle.text
+
 
 # ---------------------------------------------------------------------------
 # Patient-document sources — intake, treatment plan, safety plan, meds

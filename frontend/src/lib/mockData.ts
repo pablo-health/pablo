@@ -171,6 +171,8 @@ function buildNote(opts: {
     export_reviewed_at: null,
     export_reviewed_by: null,
     exported_at: null,
+    author_user_id: null,
+    restricted: false,
     created_at: opts.created_at,
     updated_at: opts.updated_at ?? opts.created_at,
   }

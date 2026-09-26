@@ -92,6 +92,29 @@ describe("PatientChartTabs", () => {
     expect(screen.queryByText("dap")).not.toBeInTheDocument()
   })
 
+  it("marks a restricted note as the author's alone, and no other", async () => {
+    vi.mocked(notesApi.listNotesForPatient).mockResolvedValue({
+      data: [
+        createMockNote({ id: "n1", note_type: "soap", session_id: "s1" }),
+        createMockNote({
+          id: "n4",
+          note_type: "psychotherapy",
+          session_id: null,
+          restricted: true,
+        }),
+      ],
+      total: 2,
+    })
+    render(<PatientChartTabs patientId="p1" />, { wrapper: createWrapper() })
+
+    await waitFor(() =>
+      expect(screen.getAllByTestId("only-you-badge")).toHaveLength(1),
+    )
+    const row = screen.getByTestId("only-you-badge").closest("li")
+    expect(row).not.toBeNull()
+    expect(within(row as HTMLElement).getByText("psychotherapy")).toBeInTheDocument()
+  })
+
   it("defaults to the Notes tab and previews recent notes", async () => {
     render(<PatientChartTabs patientId="p1" />, { wrapper: createWrapper() })
 

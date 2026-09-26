@@ -143,6 +143,22 @@ class GeneratedNote:
     note_type_version: int | None = None
 
 
+class RestrictedNoteGenerationError(ValueError):
+    """A restricted note type was asked to be generated.
+
+    A restricted note (a psychotherapy note) is written by hand. Raised
+    before any prompt is built or any model is called, by every
+    implementation, so no path that reaches generation can draft one.
+    """
+
+
+def _refuse_restricted(definition: NoteTypeDefinition) -> None:
+    if definition.restricted:
+        raise RestrictedNoteGenerationError(
+            f"Note type {definition.key!r} is written by hand, not generated"
+        )
+
+
 class NoteGenerationService(ABC):
     """Abstract interface for note generation across all note types."""
 
@@ -213,6 +229,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
         definition: NoteTypeDefinition | None = None,
     ) -> GeneratedNote:
         definition = definition or self.registry.get(note_type)
+        _refuse_restricted(definition)
         content = self._generate_via_registry(
             definition, transcript, patient, session_date, inputs or {}
         )
@@ -448,6 +465,7 @@ class MockNoteGenerationService(NoteGenerationService):
         definition: NoteTypeDefinition | None = None,
     ) -> GeneratedNote:
         definition = definition or self.registry.get(note_type)
+        _refuse_restricted(definition)
         if note_type == SOAP_KEY:
             soap_note = _mock_soap_note(patient)
             return GeneratedNote(

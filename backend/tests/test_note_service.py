@@ -13,6 +13,7 @@ from app.services.note_service import (
     NoteNotFinalizedError,
     NoteNotFoundError,
     NoteService,
+    RestrictedNoteTypeError,
 )
 
 _USER = "clinician-1"
@@ -92,6 +93,70 @@ class TestCreateOrUpdateForSession:
         )
         assert note.content is None
         assert note.note_type == "narrative"
+
+    def test_stamps_author_and_leaves_progress_note_unrestricted(
+        self, service: NoteService
+    ) -> None:
+        note = service.create_or_update_for_session(
+            session_id=_new_session_id(),
+            patient_id="p1",
+            note_type="soap",
+            content=_SOAP,
+            user_id=_USER,
+        )
+        assert note.author_user_id == _USER
+        assert note.restricted is False
+
+    def test_refuses_to_bind_a_restricted_type_to_a_session(self, service: NoteService) -> None:
+        """The session's one note is the progress note; a psychotherapy
+        note is never it."""
+        with pytest.raises(RestrictedNoteTypeError):
+            service.create_or_update_for_session(
+                session_id=_new_session_id(),
+                patient_id="p1",
+                note_type="psychotherapy",
+                content=None,
+                user_id=_USER,
+            )
+
+
+class TestCreateStandaloneNote:
+    def test_stamps_author_and_restricted_from_the_definition(self, service: NoteService) -> None:
+        private = service.create_standalone_note(
+            patient_id="p1", note_type="psychotherapy", user_id=_USER
+        )
+        shared = service.create_standalone_note(patient_id="p1", note_type="soap", user_id=_USER)
+
+        assert private.author_user_id == _USER
+        assert private.restricted is True
+        assert private.session_id is None
+        assert private.status == "complete"
+        assert shared.author_user_id == _USER
+        assert shared.restricted is False
+
+    def test_a_restricted_note_only_ever_starts_empty(self, service: NoteService) -> None:
+        """A ``processing`` skeleton or pre-filled content both mean
+        something other than the clinician is about to write it."""
+        with pytest.raises(RestrictedNoteTypeError):
+            service.create_standalone_note(
+                patient_id="p1",
+                note_type="psychotherapy",
+                status="processing",
+                user_id=_USER,
+            )
+        with pytest.raises(RestrictedNoteTypeError):
+            service.create_standalone_note(
+                patient_id="p1",
+                note_type="psychotherapy",
+                content={"note": {"body": "drafted elsewhere"}},
+                user_id=_USER,
+            )
+
+    def test_a_practice_defined_type_is_never_restricted(self, service: NoteService) -> None:
+        note = service.create_standalone_note(
+            patient_id="p1", note_type="custom.house-style", user_id=_USER
+        )
+        assert note.restricted is False
 
 
 class TestGetNote:
