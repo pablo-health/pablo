@@ -170,7 +170,7 @@ export async function restorePatient(
   return post<PatientResponse>(`/api/patients/${patientId}/restore`, undefined, token)
 }
 
-export type PatientExportFormat = "json" | "pdf"
+export type PatientExportFormat = "zip" | "json" | "pdf"
 
 /** What goes into a chart export beyond demographics, sessions and notes. */
 export interface PatientExportOptions {
@@ -179,14 +179,17 @@ export interface PatientExportOptions {
 }
 
 /**
- * The chart as one file: JSON to hand to another system, or a PDF to read.
+ * The chart as one file: the archive (a ZIP holding the PDF, the chart as
+ * JSON, its schema and a manifest), JSON on its own to hand to another
+ * system, or a PDF to read.
  *
  * A blob rather than parsed content, JSON included, because the only thing
  * this side does with it is save it. The route writes the audit row with the
  * options chosen.
  *
- * The PDF names itself through Content-Disposition. The JSON answer carries
- * no attachment header, so it is named the way the route names the PDF.
+ * The archive and the PDF name themselves through Content-Disposition. The
+ * JSON answer carries no attachment header, so it is named the way the route
+ * names the others.
  */
 export async function downloadPatientExport(
   patientId: string,

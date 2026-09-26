@@ -216,7 +216,7 @@ def test_export_with_no_sessions(export_service, mock_patient_repo, mock_session
 def test_session_to_export_dict_includes_all_fields(export_service, mock_sessions, mock_notes):
     """Test that session export includes all relevant fields."""
     session_dict = export_service._session_to_export_dict(
-        mock_sessions[0], mock_notes["session-1"], include_transcript=True
+        mock_sessions[0], mock_notes["session-1"], transcript=mock_sessions[0].transcript
     )
 
     # Verify all expected fields are present (excluding internal metadata)
@@ -245,7 +245,7 @@ def test_session_to_export_dict_includes_all_fields(export_service, mock_session
 def test_session_to_export_dict_with_no_note(export_service, mock_sessions):
     """A session without a Note exports gracefully (all SOAP fields None)."""
     session_dict = export_service._session_to_export_dict(
-        mock_sessions[0], None, include_transcript=True
+        mock_sessions[0], None, transcript=mock_sessions[0].transcript
     )
     assert session_dict["soap_note"] is None
     assert session_dict["soap_note_edited"] is None

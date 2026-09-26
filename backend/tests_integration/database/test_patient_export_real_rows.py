@@ -20,6 +20,10 @@ all-included case runs against the same rows and is the control: it proves
 every sentinel is reachable, in JSON and in the PDF text, before any is
 asserted missing.
 
+The archive (``format=zip``) is unpacked and held to its own promises:
+``patient.json`` validates against the ``schema.json`` shipped beside it,
+and every checksum in ``manifest.json`` matches the file it names.
+
 Run: ``make test-integration``.
 """
 
@@ -27,9 +31,13 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import hashlib
+import io
+import json
 import os
 import re
 import uuid
+import zipfile
 import zlib
 from datetime import UTC, datetime
 from pathlib import Path
@@ -38,11 +46,13 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from alembic import command
 from alembic.config import Config
+from jsonschema import Draft202012Validator
 from sqlalchemy import create_engine, text
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from app.models.export import Practitioner
     from sqlalchemy.engine import Engine
     from sqlalchemy.orm import Session
 
@@ -61,6 +71,10 @@ _TRANSCRIPT_SENTINEL = "TRANSCRIPTSENTINEL7Q4Z"
 _SOAP_SENTINEL = "SOAPSENTINEL2K8M"
 _NARRATIVE_SENTINEL = "NARRATIVESENTINEL5R1T"
 _RESTRICTED_SENTINEL = "PSYCHOTHERAPYSENTINEL9W3X"
+
+_PRACTICE_NAME = "Harbor Light Counseling"
+_NPI = "1234567893"
+_TAXONOMY = "101YM0800X"
 
 
 @pytest.fixture(scope="module")
@@ -96,10 +110,15 @@ def tenant_schema(engine: Engine) -> Iterator[str]:
 def chart(engine: Engine, tenant_schema: str) -> dict[str, str]:
     """Seed the chart through the real repositories and return its ids."""
     from app.models import Note, TherapySession, Transcript  # noqa: PLC0415
+    from app.repositories.clinician_profile import ClinicianProfile  # noqa: PLC0415
+    from app.repositories.postgres.clinician_profile import (  # noqa: PLC0415
+        PostgresClinicianProfileRepository,
+    )
     from app.repositories.postgres.note import PostgresNotesRepository  # noqa: PLC0415
     from app.repositories.postgres.session import (  # noqa: PLC0415
         PostgresTherapySessionRepository,
     )
+    from app.services.practice_billing_profile import update_billing_profile  # noqa: PLC0415
 
     patient_id = _seed_patient(engine, tenant_schema)
     now = datetime.now(UTC).replace(microsecond=0)
@@ -166,6 +185,15 @@ def chart(engine: Engine, tenant_schema: str) -> dict[str, str]:
             ),
             _CLINICIAN,
         )
+        PostgresClinicianProfileRepository(session).create(
+            ClinicianProfile(
+                user_id=_CLINICIAN,
+                practice_id=tenant_schema,
+                npi_number="1111111112",
+                taxonomy_code=_TAXONOMY,
+            )
+        )
+        update_billing_profile(session, {"legal_name": _PRACTICE_NAME, "billing_npi": _NPI})
         notes.add(
             Note(
                 id=ids["psychotherapy"],
@@ -249,20 +277,40 @@ def _export(
     export_format: str,
     **options: bool,
 ) -> dict[str, Any]:
-    """Run the real service as the clinician; ``options`` are its two flags."""
+    """Run the real service as the clinician; ``options`` are its two flags.
+
+    Wired the way the route wires it: the practitioner comes from the
+    practice's billing profile and the clinician's profile in the same
+    tenant session, and notes are labelled by the built-in note types.
+    """
+    from app.notes import NoteTypeRegistry, register_builtin_note_types  # noqa: PLC0415
+    from app.repositories.postgres.clinician_profile import (  # noqa: PLC0415
+        PostgresClinicianProfileRepository,
+    )
     from app.repositories.postgres.note import PostgresNotesRepository  # noqa: PLC0415
     from app.repositories.postgres.patient import PostgresPatientRepository  # noqa: PLC0415
     from app.repositories.postgres.session import (  # noqa: PLC0415
         PostgresTherapySessionRepository,
     )
     from app.services import ExportService  # noqa: PLC0415
+    from app.services.export_archive import practitioner_from  # noqa: PLC0415
+    from app.services.practice_billing_profile import load_billing_profile  # noqa: PLC0415
 
+    note_types = NoteTypeRegistry()
+    register_builtin_note_types(note_types)
     session, tokens = _open_tenant_session(engine, tenant_schema)
     try:
+        clinician_profiles = PostgresClinicianProfileRepository(session)
+
+        def practitioner(user_id: str) -> Practitioner:
+            return practitioner_from(load_billing_profile(session), clinician_profiles.get(user_id))
+
         service = ExportService(
             PostgresPatientRepository(session),
             PostgresTherapySessionRepository(session),
             PostgresNotesRepository(session),
+            practitioner=practitioner,
+            note_types=note_types,
         )
         return service.get_patient_export_data(
             patient_id,
@@ -369,6 +417,9 @@ class TestPdf:
         assert "Other notes" in page_text
         assert _NARRATIVE_SENTINEL in page_text
         assert _RESTRICTED_SENTINEL in page_text
+        # Standalone notes are headed by the note type's own label.
+        assert "Psychotherapy note - " in page_text
+        assert "Narrative - " in page_text
 
     def test_default_leaves_out_transcripts_and_psychotherapy_notes(
         self, engine: Engine, tenant_schema: str, chart: dict[str, str]
@@ -383,3 +434,93 @@ class TestPdf:
         assert "Transcript" not in page_text
         assert _TRANSCRIPT_SENTINEL not in page_text
         assert _RESTRICTED_SENTINEL not in page_text
+
+
+def _unzip(content: bytes) -> dict[str, bytes]:
+    with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        return {name: archive.read(name) for name in archive.namelist()}
+
+
+def _assert_archive_keeps_its_promises(files: dict[str, bytes]) -> dict[str, Any]:
+    """The five files, a document valid against its own schema, true checksums."""
+    assert sorted(files) == [
+        "README.txt",
+        "chart.pdf",
+        "manifest.json",
+        "patient.json",
+        "schema.json",
+    ]
+    schema = json.loads(files["schema.json"])
+    Draft202012Validator.check_schema(schema)
+    document = json.loads(files["patient.json"])
+    Draft202012Validator(schema).validate(document)
+
+    manifest = json.loads(files["manifest.json"])
+    listed = {entry["path"]: entry for entry in manifest["files"]}
+    assert set(listed) == set(files) - {"manifest.json"}
+    for path, entry in listed.items():
+        assert entry["bytes"] == len(files[path]), path
+        assert entry["sha256"] == hashlib.sha256(files[path]).hexdigest(), path
+    assert manifest["options"] == document["options"]
+    assert manifest["exported_at"] == document["exported_at"]
+    return document
+
+
+class TestZip:
+    def test_everything_is_there_when_both_options_are_on(
+        self, engine: Engine, tenant_schema: str, chart: dict[str, str]
+    ) -> None:
+        result = _export(
+            engine,
+            tenant_schema,
+            chart["patient"],
+            "zip",
+            include_transcripts=True,
+            include_psychotherapy_notes=True,
+        )
+
+        assert result["content_type"] == "application/zip"
+        files = _unzip(result["content"])
+        document = _assert_archive_keeps_its_promises(files)
+        assert document["schema_version"] == "1.0"
+        assert document["options"] == {
+            "include_transcripts": True,
+            "include_psychotherapy_notes": True,
+        }
+        assert document["patient"]["identifier"] == chart["patient"]
+        assert document["practitioner"] == {
+            "name": _PRACTICE_NAME,
+            "npi": _NPI,
+            "taxonomy_code": _TAXONOMY,
+        }
+        [encounter] = document["sessions"]
+        assert encounter["id"] == chart["session"]
+        assert _TRANSCRIPT_SENTINEL in encounter["transcript"]["content"]
+        assert encounter["document_reference"]["id"] == chart["soap"]
+        assert _SOAP_SENTINEL in str(encounter["document_reference"]["final_content"])
+        standalone = {n["id"]: n for n in document["standalone_notes"]}
+        assert set(standalone) == {chart["narrative"], chart["psychotherapy"]}
+        assert standalone[chart["psychotherapy"]]["restricted"] is True
+
+        page_text = _pdf_text(files["chart.pdf"])
+        assert _TRANSCRIPT_SENTINEL in page_text
+        assert _RESTRICTED_SENTINEL in page_text
+
+    def test_default_leaves_out_transcripts_and_psychotherapy_notes(
+        self, engine: Engine, tenant_schema: str, chart: dict[str, str]
+    ) -> None:
+        files = _unzip(_export(engine, tenant_schema, chart["patient"], "zip")["content"])
+
+        document = _assert_archive_keeps_its_promises(files)
+        assert document["options"] == {
+            "include_transcripts": False,
+            "include_psychotherapy_notes": False,
+        }
+        [encounter] = document["sessions"]
+        assert "transcript" not in encounter
+        assert _SOAP_SENTINEL in str(encounter["document_reference"]["final_content"])
+        assert [n["id"] for n in document["standalone_notes"]] == [chart["narrative"]]
+        for name, data in files.items():
+            text = data.decode("latin-1") if name != "chart.pdf" else _pdf_text(data)
+            assert _TRANSCRIPT_SENTINEL not in text, name
+            assert _RESTRICTED_SENTINEL not in text, name

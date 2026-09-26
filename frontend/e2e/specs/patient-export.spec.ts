@@ -13,8 +13,12 @@
  * it.
  */
 
+import { createHash } from "node:crypto"
 import { readFile } from "node:fs/promises"
 import type { Download, Page, Response } from "@playwright/test"
+import Ajv2020 from "ajv/dist/2020.js"
+import addFormats from "ajv-formats"
+import JSZip from "jszip"
 import { expect, test } from "../fixtures/auth"
 import { giveTranscribedSession, givePatient, giveVisitReadyToBill } from "../fixtures/scenarios"
 
@@ -48,13 +52,17 @@ const VISIT = {
  */
 async function exportFromChart(
   page: Page,
-  format: "JSON" | "PDF",
+  format: "Archive" | "JSON" | "PDF",
   options: { transcripts?: boolean } = {},
 ): Promise<SavedExport> {
   await page.getByRole("button", { name: "Export", exact: true }).click()
   const dialog = page.getByRole("dialog", { name: "Export this chart" })
   await expect(dialog).toBeVisible()
 
+  await expect(
+    dialog.getByRole("button", { name: /^Archive/ }),
+    "the archive is the default choice",
+  ).toHaveAttribute("aria-pressed", "true")
   await dialog.getByRole("button", { name: new RegExp(`^${format}`) }).click()
   const transcripts = dialog.getByRole("checkbox", { name: "Include session transcripts" })
   await expect(transcripts).not.toBeChecked()
@@ -82,6 +90,24 @@ async function exportFromChart(
   await dialog.getByRole("button", { name: "Close", exact: true }).click()
   await expect(dialog).toBeHidden()
   return { response, download, bytes }
+}
+
+const ARCHIVE_FILES = ["README.txt", "chart.pdf", "manifest.json", "patient.json", "schema.json"]
+
+interface ArchiveManifest {
+  schema_version: string
+  options: ExportedChart["options"]
+  files: { path: string; bytes: number; sha256: string; kind: string }[]
+}
+
+/** Every file in the ZIP, by name. */
+async function unzip(bytes: Buffer): Promise<Map<string, Buffer>> {
+  const archive = await JSZip.loadAsync(bytes)
+  const files = new Map<string, Buffer>()
+  for (const [name, entry] of Object.entries(archive.files)) {
+    if (!entry.dir) files.set(name, await entry.async("nodebuffer"))
+  }
+  return files
 }
 
 /** The name in a Content-Disposition header, if the response sent one. */
@@ -162,5 +188,89 @@ test.describe("patient export", () => {
     const heard = fuller.sessions.find((session) => session.id === transcribed.id)
     expect(heard?.transcript?.content).toContain(transcriptSentinel)
     expect(withTranscripts.bytes.toString("utf8")).toContain(planSentinel)
+  })
+
+  test("the default export is an archive whose data validates against the schema it ships", async ({
+    api,
+    signedInPage: page,
+  }) => {
+    const marker = Date.now().toString(36)
+    const planSentinel = `Walk the harbor path ${marker}`
+    const transcriptSentinel = `The gulls were loud today ${marker}`
+
+    const patient = await givePatient(api)
+    const visit = await giveVisitReadyToBill(api, patient.id, VISIT, planSentinel)
+    await giveTranscribedSession(
+      api,
+      patient.id,
+      `Clinician: What stood out?\nClient: ${transcriptSentinel}.`,
+    )
+
+    await page.goto(`/dashboard/patients/${patient.id}`)
+    await expect(
+      page.getByRole("heading", { name: `${patient.first_name} ${patient.last_name}` }),
+    ).toBeVisible()
+
+    const zip = await exportFromChart(page, "Archive")
+    expect(zip.response.url()).toContain("format=zip")
+    expect(zip.response.headers()["content-type"]).toContain("application/zip")
+    const zipName = dispositionFilename(zip.response)
+    expect(zipName).toMatch(new RegExp(`^patient_${patient.id}_export_\\d{4}-\\d{2}-\\d{2}\\.zip$`))
+    expect(zip.download.suggestedFilename()).toBe(zipName)
+
+    const files = await unzip(zip.bytes)
+    expect([...files.keys()].sort()).toEqual(ARCHIVE_FILES)
+    const read = (name: string): Buffer => {
+      const data = files.get(name)
+      if (!data) throw new Error(`${name} is missing from the archive`)
+      return data
+    }
+
+    // patient.json against the schema.json shipped beside it.
+    const schema = JSON.parse(read("schema.json").toString("utf8")) as object
+    const ajv = new Ajv2020({ allErrors: true })
+    addFormats(ajv)
+    const validate = ajv.compile(schema)
+    const text = read("patient.json").toString("utf8")
+    const document = JSON.parse(text) as {
+      schema_version: string
+      options: ExportedChart["options"]
+      patient: { identifier: string }
+      sessions: {
+        id: string
+        transcript?: unknown
+        document_reference: { finalized_at: string | null } | null
+      }[]
+    }
+    expect(validate(document), JSON.stringify(validate.errors)).toBe(true)
+    expect(document.schema_version).toBe("1.0")
+    expect(document.options).toEqual({
+      include_transcripts: false,
+      include_psychotherapy_notes: false,
+    })
+    expect(document.patient.identifier).toBe(patient.id)
+    const noted = document.sessions.find((session) => session.id === visit.sessionId)
+    expect(noted?.document_reference?.finalized_at, "the seeded note is exported finalized").toBeTruthy()
+    for (const session of document.sessions) {
+      expect(session, "no transcript key by default").not.toHaveProperty("transcript")
+    }
+    expect(text).toContain(planSentinel)
+    expect(text).not.toContain(transcriptSentinel)
+
+    // The manifest names every other file, with its true size and checksum.
+    const manifest = JSON.parse(read("manifest.json").toString("utf8")) as ArchiveManifest
+    expect(manifest.schema_version).toBe("1.0")
+    expect(manifest.options).toEqual(document.options)
+    expect(manifest.files.map((file) => file.path).sort()).toEqual(
+      ARCHIVE_FILES.filter((name) => name !== "manifest.json"),
+    )
+    for (const file of manifest.files) {
+      const data = read(file.path)
+      expect(file.bytes, file.path).toBe(data.length)
+      expect(file.sha256, file.path).toBe(createHash("sha256").update(data).digest("hex"))
+    }
+
+    expect(read("chart.pdf").subarray(0, 4).toString("latin1")).toBe("%PDF")
+    expect(read("README.txt").toString("utf8")).toContain("patient.json")
   })
 })
