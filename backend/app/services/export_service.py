@@ -1,16 +1,35 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Patient data export service for HIPAA Right to Access compliance."""
+"""Patient data export service for HIPAA Right to Access compliance.
 
+Two parts of the chart are left out unless the caller asks for them:
+
+* **Psychotherapy notes** (``Note.restricted``). The right of access in
+  45 CFR 164.524(a)(1)(i) does not reach them, and disclosing them needs a
+  separate authorization under 164.508(a)(2). Row security already hides
+  other authors' restricted notes, so the option only governs the caller's
+  own.
+* **Session transcripts.** Not carved out of the right of access, but the
+  rawest thing in the chart, so including them in a copy is a deliberate
+  choice rather than the default.
+
+Whatever was applied is echoed in the JSON ``options`` object, so a consumer
+can tell an omitted transcript from an empty one, and the route records it
+on the audit row.
+"""
+
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from io import BytesIO
 from typing import Any
+from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.styles import ParagraphStyle, StyleSheet1, getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.platypus import (
+    Flowable,
     PageBreak,
     Paragraph,
     SimpleDocTemplate,
@@ -22,6 +41,96 @@ from reportlab.platypus import (
 from ..models import Note, PatientResponse, TherapySession
 from ..models.session import SOAPNote
 from ..repositories import NotesRepository, PatientRepository, TherapySessionRepository
+
+
+@dataclass(frozen=True)
+class ExportOptions:
+    """What the caller chose to include beyond the default record copy."""
+
+    include_transcripts: bool = False
+    include_psychotherapy_notes: bool = False
+
+    def as_dict(self) -> dict[str, bool]:
+        return {
+            "include_transcripts": self.include_transcripts,
+            "include_psychotherapy_notes": self.include_psychotherapy_notes,
+        }
+
+
+def _final_content(note: Note) -> dict[str, Any] | None:
+    return note.content_edited or note.content
+
+
+def _field_label(key: str) -> str:
+    return key.replace("_", " ").capitalize()
+
+
+def _field_text(value: Any) -> str:
+    if isinstance(value, list):
+        return "; ".join(str(item) for item in value if item not in (None, ""))
+    return "" if value is None else str(value)
+
+
+def _note_paragraphs(content: dict[str, Any] | None) -> list[tuple[str, str]]:
+    """Flatten ``{section: {field: value}}`` note content into labelled text.
+
+    Works for every note type without consulting the registry, so a
+    practice-defined type exports as faithfully as a built-in one. A section
+    with a single field (narrative's ``note.body``) prints under the section
+    label alone.
+    """
+    if not content:
+        return []
+    out: list[tuple[str, str]] = []
+    for section_key, section in content.items():
+        if isinstance(section, dict):
+            for field_key, value in section.items():
+                text = _field_text(value)
+                if not text:
+                    continue
+                label = _field_label(section_key)
+                if len(section) > 1:
+                    label = f"{label} - {_field_label(field_key)}"
+                out.append((label, text))
+        else:
+            text = _field_text(section)
+            if text:
+                out.append((_field_label(section_key), text))
+    return out
+
+
+def _transcript_flowables(session: TherapySession, styles: StyleSheet1) -> list[Flowable]:
+    """A "Transcript" heading and the transcript as plain paragraphs.
+
+    Escaped, because ``Paragraph`` parses its text as markup and a
+    transcript line can hold an angle bracket or an ampersand.
+    """
+    out: list[Flowable] = [Paragraph("Transcript", styles["Heading4"])]
+    out.extend(
+        Paragraph(escape(line), styles["Normal"])
+        for line in session.transcript.content.splitlines()
+        if line.strip()
+    )
+    out.append(Spacer(1, 0.1 * inch))
+    return out
+
+
+def _standalone_note_flowables(notes: list[Note], styles: StyleSheet1) -> list[Flowable]:
+    """Each note written without a session: its type and date, then its text."""
+    out: list[Flowable] = []
+    for note in notes:
+        written = note.finalized_at or note.created_at
+        out.append(
+            Paragraph(
+                f"{escape(_field_label(note.note_type))} - {written.date()}",
+                styles["Heading3"],
+            )
+        )
+        for label, text in _note_paragraphs(_final_content(note)):
+            out.append(Paragraph(f"<b>{escape(label)}:</b>", styles["Normal"]))
+            out.append(Paragraph(escape(text), styles["Normal"]))
+            out.append(Spacer(1, 0.1 * inch))
+    return out
 
 
 def _coerce_soap_note(content: dict[str, Any] | None) -> SOAPNote | None:
@@ -49,15 +158,23 @@ class ExportService:
         self.notes_repo = notes_repo
 
     def get_patient_export_data(
-        self, patient_id: str, user_id: str, export_format: str
+        self,
+        patient_id: str,
+        user_id: str,
+        export_format: str,
+        *,
+        include_transcripts: bool = False,
+        include_psychotherapy_notes: bool = False,
     ) -> dict[str, Any]:
         """
-        Export complete patient data for HIPAA Right to Access (§ 164.524).
+        Export patient data for HIPAA Right to Access (§ 164.524).
 
         Args:
             patient_id: Patient ID to export
             user_id: Therapist/clinician user ID (for multi-tenant security)
             export_format: "json" or "pdf"
+            include_transcripts: Add each session's transcript
+            include_psychotherapy_notes: Add the caller's restricted notes
 
         Returns:
             Dictionary with export data or error information
@@ -70,63 +187,115 @@ class ExportService:
         if not patient:
             raise ValueError(f"Patient {patient_id} not found")
 
+        if export_format not in ("json", "pdf"):
+            raise ValueError(f"Unsupported export format: {export_format}")
+
+        options = ExportOptions(
+            include_transcripts=include_transcripts,
+            include_psychotherapy_notes=include_psychotherapy_notes,
+        )
+
         # Get all sessions for this patient
         sessions = self.session_repo.list_by_patient(patient_id, user_id)
         # Load every note for the patient in one query and index by session,
         # rather than a per-session round-trip (a 200-session export was 201
         # queries). list_by_patient is newest-first, so the first note seen
-        # for a session is the one to keep.
+        # for a session is the one to keep. Notes with no session (a
+        # narrative or intake written without a recording) are exported on
+        # their own. Restricted notes are dropped before either, so one can
+        # never stand in as a session's note.
         notes_by_session: dict[str, Note | None] = {}
+        standalone_notes: list[Note] = []
         for note in self.notes_repo.list_by_patient(patient_id, user_id):
+            if note.restricted and not options.include_psychotherapy_notes:
+                continue
             if note.session_id is not None:
                 notes_by_session.setdefault(note.session_id, note)
+            else:
+                standalone_notes.append(note)
 
         # Convert to response format
         patient_response = PatientResponse.from_patient(patient)
         exported_at = datetime.now(UTC).isoformat()
 
         if export_format == "json":
-            return self._export_as_json(patient_response, sessions, notes_by_session, exported_at)
-        elif export_format == "pdf":
-            return self._export_as_pdf(patient_response, sessions, notes_by_session, exported_at)
-        else:
-            raise ValueError(f"Unsupported export format: {export_format}")
+            return self._export_as_json(
+                patient_response, sessions, notes_by_session, standalone_notes, exported_at, options
+            )
+        return self._export_as_pdf(
+            patient_response, sessions, notes_by_session, standalone_notes, exported_at, options
+        )
 
     def _export_as_json(
         self,
         patient: PatientResponse,
         sessions: list[TherapySession],
         notes_by_session: dict[str, Note | None],
+        standalone_notes: list[Note],
         exported_at: str,
+        options: ExportOptions,
     ) -> dict[str, Any]:
         """Export patient data as JSON."""
         return {
             "patient": patient.model_dump(),
             "sessions": [
-                self._session_to_export_dict(s, notes_by_session.get(s.id)) for s in sessions
+                self._session_to_export_dict(
+                    s,
+                    notes_by_session.get(s.id),
+                    include_transcript=options.include_transcripts,
+                )
+                for s in sessions
             ],
+            "standalone_notes": [self._note_to_export_dict(n) for n in standalone_notes],
             "exported_at": exported_at,
             "export_format": "json",
+            "options": options.as_dict(),
         }
 
-    def _session_to_export_dict(self, session: TherapySession, note: Note | None) -> dict[str, Any]:
-        """Convert TherapySession + linked note to export dictionary."""
-        final_content = (note.content_edited or note.content) if note else None
-        return {
+    def _session_to_export_dict(
+        self, session: TherapySession, note: Note | None, *, include_transcript: bool
+    ) -> dict[str, Any]:
+        """Convert TherapySession + linked note to export dictionary.
+
+        With ``include_transcript`` false the ``transcript`` key is absent,
+        not null, so an omitted transcript never reads as an empty one.
+        """
+        final_content = _final_content(note) if note else None
+        exported: dict[str, Any] = {
             "id": session.id,
             "session_date": session.session_date,
             "session_number": session.session_number,
             "status": session.status,
-            "transcript": {
+        }
+        if include_transcript:
+            exported["transcript"] = {
                 "format": session.transcript.format,
                 "content": session.transcript.content,
-            },
-            "soap_note": note.content if note else None,
-            "soap_note_edited": note.content_edited if note else None,
-            "final_soap_note": final_content,
-            "was_edited": bool(note and note.content_edited),
-            "created_at": session.created_at,
-            "finalized_at": note.finalized_at if note else None,
+            }
+        exported.update(
+            {
+                "soap_note": note.content if note else None,
+                "soap_note_edited": note.content_edited if note else None,
+                "final_soap_note": final_content,
+                "was_edited": bool(note and note.content_edited),
+                "created_at": session.created_at,
+                "finalized_at": note.finalized_at if note else None,
+            }
+        )
+        return exported
+
+    def _note_to_export_dict(self, note: Note) -> dict[str, Any]:
+        """Convert a note with no session to an export dictionary."""
+        return {
+            "id": note.id,
+            "note_type": note.note_type,
+            "restricted": note.restricted,
+            "content": note.content,
+            "content_edited": note.content_edited,
+            "final_content": _final_content(note),
+            "was_edited": bool(note.content_edited),
+            "created_at": note.created_at,
+            "finalized_at": note.finalized_at,
         }
 
     def _export_as_pdf(
@@ -134,7 +303,9 @@ class ExportService:
         patient: PatientResponse,
         sessions: list[TherapySession],
         notes_by_session: dict[str, Note | None],
+        standalone_notes: list[Note],
         exported_at: str,
+        options: ExportOptions,
     ) -> dict[str, Any]:
         """Export patient data as PDF."""
         buffer = BytesIO()
@@ -280,11 +451,19 @@ class ExportService:
                         story.append(Paragraph(section_text, styles["Normal"]))
                         story.append(Spacer(1, 0.1 * inch))
 
+                if options.include_transcripts:
+                    story.extend(_transcript_flowables(session, styles))
+
                 # Add page break between sessions (except last)
                 if idx < len(sessions):
                     story.append(PageBreak())
         else:
             story.append(Paragraph("No therapy sessions recorded.", styles["Normal"]))
+
+        if standalone_notes:
+            story.append(PageBreak())
+            story.append(Paragraph("Other notes", heading_style))
+            story.extend(_standalone_note_flowables(standalone_notes, styles))
 
         # Build PDF
         doc.build(story)

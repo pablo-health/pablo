@@ -77,7 +77,11 @@ def test_export_patient_json_success(client, mock_export_service):
     assert data["patient"]["id"] == "patient-123"
 
     mock_export_service.get_patient_export_data.assert_called_once_with(
-        "patient-123", "user-456", "json"
+        "patient-123",
+        "user-456",
+        "json",
+        include_transcripts=False,
+        include_psychotherapy_notes=False,
     )
 
 
@@ -119,7 +123,11 @@ def test_export_patient_json_default_format(client, mock_export_service):
 
     assert response.status_code == 200
     mock_export_service.get_patient_export_data.assert_called_once_with(
-        "patient-123", "user-456", "json"
+        "patient-123",
+        "user-456",
+        "json",
+        include_transcripts=False,
+        include_psychotherapy_notes=False,
     )
 
 
@@ -141,7 +149,11 @@ def test_export_patient_pdf_success(client, mock_export_service):
     assert response.content == pdf_content
 
     mock_export_service.get_patient_export_data.assert_called_once_with(
-        "patient-123", "user-456", "pdf"
+        "patient-123",
+        "user-456",
+        "pdf",
+        include_transcripts=False,
+        include_psychotherapy_notes=False,
     )
 
 
@@ -188,7 +200,11 @@ def test_export_multi_tenant_security(client, mock_export_service):
 
     # Verify user_id from auth is passed to service
     mock_export_service.get_patient_export_data.assert_called_once_with(
-        "patient-123", "user-456", "json"
+        "patient-123",
+        "user-456",
+        "json",
+        include_transcripts=False,
+        include_psychotherapy_notes=False,
     )
 
 
@@ -214,3 +230,59 @@ def test_export_with_sessions(client, mock_export_service):
     data = response.json()
     assert len(data["sessions"]) == 1
     assert data["sessions"][0]["id"] == "session-1"
+
+
+def _audited_client(mock_export_service, mock_user, audit):
+    app = FastAPI()
+    register_exception_handlers(app)
+    app.include_router(router)
+    mock_repo = Mock()
+    mock_repo.get.return_value = Mock(id="patient-123", first_name="John", last_name="Doe")
+    app.dependency_overrides[get_export_service] = lambda: mock_export_service
+    app.dependency_overrides[require_baa_acceptance] = lambda: mock_user
+    app.dependency_overrides[get_patient_repository] = lambda: mock_repo
+    app.dependency_overrides[get_audit_service] = lambda: audit
+    return TestClient(app)
+
+
+@pytest.mark.parametrize(
+    ("query", "transcripts", "psychotherapy"),
+    [
+        ("format=json", False, False),
+        ("format=pdf&include_transcripts=true", True, False),
+        ("format=json&include_transcripts=true&include_psychotherapy_notes=true", True, True),
+    ],
+)
+def test_export_options_reach_service_and_audit_row(
+    mock_export_service, mock_user, query, transcripts, psychotherapy
+):
+    """Both choices are forwarded to the service and recorded on the audit
+    row next to the format, so the record shows what left the chart."""
+    fmt = "pdf" if "format=pdf" in query else "json"
+    if fmt == "pdf":
+        mock_export_service.get_patient_export_data.return_value = {
+            "content": b"%PDF-1.4",
+            "content_type": "application/pdf",
+            "filename": "export.pdf",
+        }
+    else:
+        mock_export_service.get_patient_export_data.return_value = {"sessions": []}
+    audit = Mock()
+    client = _audited_client(mock_export_service, mock_user, audit)
+
+    response = client.get(f"/api/patients/patient-123/export?{query}")
+
+    assert response.status_code == 200, response.text
+    mock_export_service.get_patient_export_data.assert_called_once_with(
+        "patient-123",
+        "user-456",
+        fmt,
+        include_transcripts=transcripts,
+        include_psychotherapy_notes=psychotherapy,
+    )
+    audit.log_patient_action.assert_called_once()
+    assert audit.log_patient_action.call_args.kwargs["changes"] == {
+        "export_format": fmt,
+        "include_transcripts": transcripts,
+        "include_psychotherapy_notes": psychotherapy,
+    }
