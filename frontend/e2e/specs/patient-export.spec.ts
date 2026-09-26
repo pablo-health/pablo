@@ -10,7 +10,9 @@
  * format, the options, the download — and every claim is checked against the
  * bytes the browser saved and the response they came in on, so what is
  * proven is the file a practice would hand over, not the dialog's opinion of
- * it.
+ * it. The archive case also uploads a document through the chart's own
+ * Documents tab, and the copy of it in the archive is held to the bytes that
+ * were uploaded.
  */
 
 import { createHash } from "node:crypto"
@@ -21,6 +23,7 @@ import addFormats from "ajv-formats"
 import JSZip from "jszip"
 import { expect, test } from "../fixtures/auth"
 import { giveTranscribedSession, givePatient, giveVisitReadyToBill } from "../fixtures/scenarios"
+import { fixtureFile, sha256, toInputFile } from "../fixtures/upload"
 
 interface ExportedSession {
   id: string
@@ -93,6 +96,17 @@ async function exportFromChart(
 }
 
 const ARCHIVE_FILES = ["README.txt", "chart.pdf", "manifest.json", "patient.json", "schema.json"]
+
+interface ExportedDocument {
+  id: string
+  category: string
+  filename: string
+  content_type: string
+  bytes: number
+  sha256: string
+  uploaded_by: string
+  archive_path: string
+}
 
 interface ArchiveManifest {
   schema_version: string
@@ -211,6 +225,15 @@ test.describe("patient export", () => {
       page.getByRole("heading", { name: `${patient.first_name} ${patient.last_name}` }),
     ).toBeVisible()
 
+    // A document filed on the chart the way a clinician files one.
+    const records = fixtureFile("records.pdf", "application/pdf")
+    await page.getByRole("tab", { name: /Documents/ }).click()
+    await page.getByTestId("patient-document-file-input").setInputFiles(toInputFile(records))
+    await expect(
+      page.getByRole("listitem").filter({ hasText: records.name }),
+      "the upload lands on the chart",
+    ).toBeVisible()
+
     const zip = await exportFromChart(page, "Archive")
     expect(zip.response.url()).toContain("format=zip")
     expect(zip.response.headers()["content-type"]).toContain("application/zip")
@@ -219,7 +242,6 @@ test.describe("patient export", () => {
     expect(zip.download.suggestedFilename()).toBe(zipName)
 
     const files = await unzip(zip.bytes)
-    expect([...files.keys()].sort()).toEqual(ARCHIVE_FILES)
     const read = (name: string): Buffer => {
       const data = files.get(name)
       if (!data) throw new Error(`${name} is missing from the archive`)
@@ -241,8 +263,26 @@ test.describe("patient export", () => {
         transcript?: unknown
         document_reference: { finalized_at: string | null } | null
       }[]
+      documents: ExportedDocument[]
     }
     expect(validate(document), JSON.stringify(validate.errors)).toBe(true)
+
+    // The uploaded document is in the archive as the bytes that were sent.
+    expect(document.documents).toHaveLength(1)
+    const [uploaded] = document.documents
+    expect(uploaded).toMatchObject({
+      category: "chart",
+      filename: records.name,
+      content_type: "application/pdf",
+      bytes: records.body.length,
+      sha256: sha256(records.body),
+      uploaded_by: "clinician",
+      archive_path: `documents/${uploaded.id}__${records.name}`,
+    })
+    expect(sha256(read(uploaded.archive_path)), "the extracted file is the uploaded file").toBe(
+      sha256(records.body),
+    )
+    expect([...files.keys()].sort()).toEqual([...ARCHIVE_FILES, uploaded.archive_path].sort())
     expect(document.schema_version).toBe("1.0")
     expect(document.options).toEqual({
       include_transcripts: false,
@@ -262,7 +302,10 @@ test.describe("patient export", () => {
     expect(manifest.schema_version).toBe("1.0")
     expect(manifest.options).toEqual(document.options)
     expect(manifest.files.map((file) => file.path).sort()).toEqual(
-      ARCHIVE_FILES.filter((name) => name !== "manifest.json"),
+      [...files.keys()].filter((name) => name !== "manifest.json").sort(),
+    )
+    expect(manifest.files.find((file) => file.path === uploaded.archive_path)?.kind).toBe(
+      "document",
     )
     for (const file of manifest.files) {
       const data = read(file.path)

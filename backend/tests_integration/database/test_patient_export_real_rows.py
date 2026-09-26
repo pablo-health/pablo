@@ -12,7 +12,9 @@ One chart, one clinician:
 
 * a session with a transcript and its SOAP note;
 * a narrative note written without a session;
-* a psychotherapy note (``restricted``) by the same clinician.
+* a psychotherapy note (``restricted``) by the same clinician;
+* one uploaded document in every category, its bytes in a real store;
+* one intake form handed in and one never started.
 
 Each piece of content carries a sentinel string found nowhere else, so an
 absence assertion can only pass because the content really was left out. The
@@ -22,7 +24,10 @@ asserted missing.
 
 The archive (``format=zip``) is unpacked and held to its own promises:
 ``patient.json`` validates against the ``schema.json`` shipped beside it,
-and every checksum in ``manifest.json`` matches the file it names.
+and every checksum in ``manifest.json`` matches the file it names. Uploaded
+documents are read back through the document service and its store, the
+way the route reads them, and each file under ``documents/`` is compared
+with the bytes that were stored.
 
 Run: ``make test-integration``.
 """
@@ -36,12 +41,15 @@ import io
 import json
 import os
 import re
+import shutil
+import tempfile
 import uuid
 import zipfile
 import zlib
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from unittest.mock import Mock
 
 import pytest
 from alembic import command
@@ -76,6 +84,27 @@ _PRACTICE_NAME = "Harbor Light Counseling"
 _NPI = "1234567893"
 _TAXONOMY = "101YM0800X"
 
+#: Every category a document can be filed under, and the ones a default copy carries.
+_ALL_CATEGORIES = (
+    "chart",
+    "consent",
+    "intake_artifact",
+    "message",
+    "therapist_private",
+    "psychotherapy_notes",
+)
+_DEFAULT_CATEGORIES = {"chart", "consent", "intake_artifact", "message"}
+
+
+def _document_bytes(category: str) -> bytes:
+    """A small PDF-shaped body whose text names its category and nothing else."""
+    return f"%PDF-1.4\n% DOCUMENTSENTINEL-{category.upper()}\n%%EOF\n".encode()
+
+
+def _storage_root(tenant_schema: str) -> Path:
+    """Where this module's store keeps its files: one directory per schema."""
+    return Path(tempfile.gettempdir()) / f"{tenant_schema}-documents"
+
 
 @pytest.fixture(scope="module")
 def engine() -> Iterator[Engine]:
@@ -101,6 +130,7 @@ def tenant_schema(engine: Engine) -> Iterator[str]:
     schema = f"practice_test_export_{uuid.uuid4().hex[:8]}"
     create_practice_schema(engine, schema)
     yield schema
+    shutil.rmtree(_storage_root(schema), ignore_errors=True)
     with engine.connect() as conn:
         conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
         conn.commit()
@@ -207,10 +237,112 @@ def chart(engine: Engine, tenant_schema: str) -> dict[str, str]:
             ),
             _CLINICIAN,
         )
+        ids.update(_seed_documents(session, tenant_schema, patient_id, now))
         session.commit()
     finally:
         _close_tenant_session(session, tokens)
+    ids.update(_seed_intake(engine, tenant_schema, patient_id, now))
     return ids
+
+
+def _seed_documents(
+    session: Session, tenant_schema: str, patient_id: str, now: datetime
+) -> dict[str, str]:
+    """One finalized upload per category, its bytes written to the store."""
+    from app.models import DocumentCategory, PatientDocument  # noqa: PLC0415
+    from app.repositories.postgres.patient_document import (  # noqa: PLC0415
+        PostgresPatientDocumentRepository,
+    )
+    from app.services.file_storage import LocalFileStorage  # noqa: PLC0415
+
+    repo = PostgresPatientDocumentRepository(session)
+    storage = LocalFileStorage()
+    ids: dict[str, str] = {}
+    for category in _ALL_CATEGORIES:
+        document_id = str(uuid.uuid4())
+        object_name = f"{tenant_schema}/{category}/{document_id}"
+        data = _document_bytes(category)
+        storage.upload_bytes(
+            bucket=str(_storage_root(tenant_schema)),
+            object_name=object_name,
+            data=data,
+            content_type="application/pdf",
+        )
+        repo.add(
+            PatientDocument(
+                id=document_id,
+                patient_id=patient_id,
+                user_id=_CLINICIAN,
+                filename=f"{category}-upload.pdf",
+                mime_type="application/pdf",
+                gcs_path=object_name,
+                size_bytes=len(data),
+                created_at=now,
+                finalized_at=now,
+                category=DocumentCategory(category),
+            )
+        )
+        ids[f"document:{category}"] = document_id
+    return ids
+
+
+def _seed_intake(
+    engine: Engine, tenant_schema: str, patient_id: str, now: datetime
+) -> dict[str, str]:
+    """Two published one-question forms: one handed in, one sent and not started."""
+    submitted, unstarted = str(uuid.uuid4()), str(uuid.uuid4())
+    with engine.begin() as conn:
+        conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
+        conn.execute(text("SELECT set_config('app.current_user_id', :u, false)"), {"u": _CLINICIAN})
+        for assignment_id, status, submitted_at in (
+            (submitted, "submitted", now),
+            (unstarted, "assigned", None),
+        ):
+            template_id, version_id = str(uuid.uuid4()), str(uuid.uuid4())
+            conn.execute(
+                text(
+                    "INSERT INTO intake_packet_templates (id, name, created_by, created_at) "
+                    "VALUES (CAST(:tid AS uuid), 'Intake', CAST(:u AS uuid), :now)"
+                ),
+                {"tid": template_id, "u": _CLINICIAN, "now": now},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO intake_packet_versions "
+                    "(id, template_id, version, published_at, published_by, created_at) "
+                    "VALUES (CAST(:vid AS uuid), CAST(:tid AS uuid), 1, :now, "
+                    "CAST(:u AS uuid), :now)"
+                ),
+                {"vid": version_id, "tid": template_id, "u": _CLINICIAN, "now": now},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO intake_item_definitions "
+                    "(id, version_id, key, position, item_type, required, label, config) "
+                    "VALUES (CAST(:iid AS uuid), CAST(:vid AS uuid), 'reason', 1, 'reason', "
+                    "true, NULL, '{}'::jsonb)"
+                ),
+                {"iid": str(uuid.uuid4()), "vid": version_id},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO patient_intake_assignments "
+                    "(id, patient_id, version_id, status, assigned_by, assigned_at, "
+                    "submitted_at, updated_at) "
+                    "VALUES (CAST(:id AS uuid), CAST(:pid AS uuid), CAST(:vid AS uuid), "
+                    ":status, CAST(:u AS uuid), :now, :submitted_at, :now)"
+                ),
+                {
+                    "id": assignment_id,
+                    "pid": patient_id,
+                    "vid": version_id,
+                    "status": status,
+                    "u": _CLINICIAN,
+                    "now": now,
+                    "submitted_at": submitted_at,
+                },
+            )
+    return {"intake:submitted": submitted, "intake:unstarted": unstarted}
 
 
 # ---------------------------------------------------------------------------
@@ -281,19 +413,47 @@ def _export(
 
     Wired the way the route wires it: the practitioner comes from the
     practice's billing profile and the clinician's profile in the same
-    tenant session, and notes are labelled by the built-in note types.
+    tenant session, notes are labelled by the built-in note types, uploaded
+    files come through the document service and its store, and each
+    submitted form is rendered by the intake export's own renderer.
     """
     from app.notes import NoteTypeRegistry, register_builtin_note_types  # noqa: PLC0415
     from app.repositories.postgres.clinician_profile import (  # noqa: PLC0415
         PostgresClinicianProfileRepository,
     )
+    from app.repositories.postgres.intake_document import (  # noqa: PLC0415
+        PostgresIntakeDocumentRepository,
+    )
+    from app.repositories.postgres.intake_packet import (  # noqa: PLC0415
+        PostgresIntakePacketRepository,
+    )
     from app.repositories.postgres.note import PostgresNotesRepository  # noqa: PLC0415
     from app.repositories.postgres.patient import PostgresPatientRepository  # noqa: PLC0415
+    from app.repositories.postgres.patient_document import (  # noqa: PLC0415
+        PostgresPatientDocumentRepository,
+    )
+    from app.repositories.postgres.patient_intake_artifact import (  # noqa: PLC0415
+        PostgresPatientIntakeArtifactRepository,
+    )
+    from app.repositories.postgres.patient_intake_assignment import (  # noqa: PLC0415
+        PostgresPatientIntakeAssignmentRepository,
+    )
+    from app.repositories.postgres.patient_intake_signature import (  # noqa: PLC0415
+        PostgresPatientIntakeSignatureRepository,
+    )
     from app.repositories.postgres.session import (  # noqa: PLC0415
         PostgresTherapySessionRepository,
     )
+    from app.routes.patient_intake_export import _FormRenderer  # noqa: PLC0415
     from app.services import ExportService  # noqa: PLC0415
     from app.services.export_archive import practitioner_from  # noqa: PLC0415
+    from app.services.file_storage import LocalFileStorage  # noqa: PLC0415
+    from app.services.patient_documents_service import PatientDocumentsService  # noqa: PLC0415
+    from app.services.patient_intake_assignment_service import (  # noqa: PLC0415
+        IntakeAssignmentService,
+    )
+    from app.services.patient_intake_export_service import IntakeExportService  # noqa: PLC0415
+    from app.services.patient_intake_review_service import IntakeReviewService  # noqa: PLC0415
     from app.services.practice_billing_profile import load_billing_profile  # noqa: PLC0415
 
     note_types = NoteTypeRegistry()
@@ -305,12 +465,36 @@ def _export(
         def practitioner(user_id: str) -> Practitioner:
             return practitioner_from(load_billing_profile(session), clinician_profiles.get(user_id))
 
+        documents = PatientDocumentsService(
+            repo=PostgresPatientDocumentRepository(session),
+            settings=Mock(patient_documents_gcs_bucket=str(_storage_root(tenant_schema))),
+            storage=LocalFileStorage(),
+        )
+        assignment_repo = PostgresPatientIntakeAssignmentRepository(session)
+        packets = PostgresIntakePacketRepository(session)
+        assignments = IntakeAssignmentService(assignment_repo, packets)
+        forms = _FormRenderer(
+            assignments,
+            IntakeExportService(
+                assignments,
+                IntakeReviewService(assignment_repo, packets),
+                PostgresPatientIntakeSignatureRepository(session),
+                PostgresIntakeDocumentRepository(session),
+                PostgresPatientIntakeArtifactRepository(session),
+                PostgresPatientDocumentRepository(session),
+            ),
+            _PRACTICE_NAME,
+            UTC,
+            "https://pablo.example",
+        )
         service = ExportService(
             PostgresPatientRepository(session),
             PostgresTherapySessionRepository(session),
             PostgresNotesRepository(session),
             practitioner=practitioner,
             note_types=note_types,
+            documents=documents,
+            intake_forms=forms.submitted_forms,
         )
         return service.get_patient_export_data(
             patient_id,
@@ -442,14 +626,12 @@ def _unzip(content: bytes) -> dict[str, bytes]:
 
 
 def _assert_archive_keeps_its_promises(files: dict[str, bytes]) -> dict[str, Any]:
-    """The five files, a document valid against its own schema, true checksums."""
-    assert sorted(files) == [
-        "README.txt",
-        "chart.pdf",
-        "manifest.json",
-        "patient.json",
-        "schema.json",
-    ]
+    """The five files and the carried ones, a document valid against its own
+    schema, true checksums."""
+    described = {"README.txt", "chart.pdf", "manifest.json", "patient.json", "schema.json"}
+    assert described <= set(files)
+    carried = set(files) - described
+    assert all(name.startswith(("documents/", "intake/")) for name in carried), carried
     schema = json.loads(files["schema.json"])
     Draft202012Validator.check_schema(schema)
     document = json.loads(files["patient.json"])
@@ -524,3 +706,101 @@ class TestZip:
             text = data.decode("latin-1") if name != "chart.pdf" else _pdf_text(data)
             assert _TRANSCRIPT_SENTINEL not in text, name
             assert _RESTRICTED_SENTINEL not in text, name
+
+
+def _carried_documents(files: dict[str, bytes], document: dict[str, Any]) -> dict[str, bytes]:
+    """Each file under ``documents/`` by category, held to its ``patient.json`` entry."""
+    entries = document["documents"]
+    assert {e["archive_path"] for e in entries} == {
+        name for name in files if name.startswith("documents/")
+    }
+    by_category: dict[str, bytes] = {}
+    for entry in entries:
+        data = files[entry["archive_path"]]
+        assert entry["bytes"] == len(data), entry["archive_path"]
+        assert entry["sha256"] == hashlib.sha256(data).hexdigest(), entry["archive_path"]
+        by_category[entry["category"]] = data
+    return by_category
+
+
+class TestZipDocuments:
+    def test_psychotherapy_notes_join_with_the_option_and_therapist_private_never_does(
+        self, engine: Engine, tenant_schema: str, chart: dict[str, str]
+    ) -> None:
+        """The control for the default below: every admitted category is reachable."""
+        files = _unzip(
+            _export(
+                engine,
+                tenant_schema,
+                chart["patient"],
+                "zip",
+                include_transcripts=True,
+                include_psychotherapy_notes=True,
+            )["content"]
+        )
+        document = _assert_archive_keeps_its_promises(files)
+
+        carried = _carried_documents(files, document)
+        assert set(carried) == {*_DEFAULT_CATEGORIES, "psychotherapy_notes"}
+        for category, data in carried.items():
+            assert data == _document_bytes(category), "the stored bytes, unchanged"
+        by_id = {e["id"]: e for e in document["documents"]}
+        assert chart["document:therapist_private"] not in by_id
+        assert by_id[chart["document:chart"]] | {"uploaded_at": None} == {
+            "id": chart["document:chart"],
+            "category": "chart",
+            "filename": "chart-upload.pdf",
+            "content_type": "application/pdf",
+            "bytes": len(_document_bytes("chart")),
+            "sha256": hashlib.sha256(_document_bytes("chart")).hexdigest(),
+            "uploaded_at": None,
+            "uploaded_by": "clinician",
+            "archive_path": f"documents/{chart['document:chart']}__chart-upload.pdf",
+        }
+        private = _document_bytes("therapist_private")
+        assert all(private not in data for data in files.values())
+
+    def test_default_carries_the_record_categories_and_neither_restricted_one(
+        self, engine: Engine, tenant_schema: str, chart: dict[str, str]
+    ) -> None:
+        files = _unzip(_export(engine, tenant_schema, chart["patient"], "zip")["content"])
+        document = _assert_archive_keeps_its_promises(files)
+
+        carried = _carried_documents(files, document)
+        assert set(carried) == _DEFAULT_CATEGORIES
+        for category, data in carried.items():
+            assert data == _document_bytes(category)
+        for restricted in ("therapist_private", "psychotherapy_notes"):
+            stored = _document_bytes(restricted)
+            assert all(stored not in data for data in files.values()), restricted
+            assert chart[f"document:{restricted}"] not in files["patient.json"].decode()
+
+    def test_chart_pdf_lists_the_documents_beside_it(
+        self, engine: Engine, tenant_schema: str, chart: dict[str, str]
+    ) -> None:
+        files = _unzip(_export(engine, tenant_schema, chart["patient"], "zip")["content"])
+        document = json.loads(files["patient.json"])
+
+        page_text = _pdf_text(files["chart.pdf"])
+        # A PDF string escapes its parentheses.
+        assert f"Documents \\({len(_DEFAULT_CATEGORIES)}\\)" in page_text
+        for entry in document["documents"]:
+            assert entry["filename"] in page_text
+            assert entry["sha256"] in page_text
+        assert "therapist_private-upload.pdf" not in page_text
+
+    def test_each_submitted_intake_form_is_carried_as_its_own_export(
+        self, engine: Engine, tenant_schema: str, chart: dict[str, str]
+    ) -> None:
+        files = _unzip(_export(engine, tenant_schema, chart["patient"], "zip")["content"])
+        _assert_archive_keeps_its_promises(files)
+
+        intake = {name for name in files if name.startswith("intake/")}
+        assert intake == {f"intake/{chart['intake:submitted']}.html"}
+        form = files[f"intake/{chart['intake:submitted']}.html"].decode()
+        assert form.startswith("<!DOCTYPE html>")
+        assert _PRACTICE_NAME in form
+        manifest = json.loads(files["manifest.json"])
+        kinds = {entry["path"]: entry["kind"] for entry in manifest["files"]}
+        assert kinds[f"intake/{chart['intake:submitted']}.html"] == "intake_form"
+        assert {kinds[name] for name in files if name.startswith("documents/")} == {"document"}

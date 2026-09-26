@@ -213,6 +213,7 @@ def test_a_stored_timestamp_without_a_zone_is_read_as_utc() -> None:
             "practitioner": {},
             "sessions": [],
             "standalone_notes": [],
+            "documents": [],
         }
     )
     assert document.exported_at.tzinfo is UTC

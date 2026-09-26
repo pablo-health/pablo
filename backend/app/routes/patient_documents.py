@@ -110,7 +110,7 @@ def _read_action_for(category: DocumentCategory) -> AuditAction:
     return AuditAction.PATIENT_DOCUMENT_VIEWED
 
 
-def _download_action_for(category: DocumentCategory) -> AuditAction:
+def download_action_for(category: DocumentCategory) -> AuditAction:
     """Pick the DOWNLOADED audit action for a document's category.
 
     Same split as :func:`_read_action_for`.
@@ -654,7 +654,7 @@ def download_document_file(
 
     document, signed_url = result
     audit.log_patient_document_action(
-        _download_action_for(document.category),
+        download_action_for(document.category),
         user,
         http_request,
         document_id=document.id,

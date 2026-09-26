@@ -382,7 +382,7 @@ class AuditService:
 
         Note: the *action* itself is split into chart vs. restricted
         variants by the caller (see ``_read_action_for`` /
-        ``_download_action_for`` in the route layer). The ``category``
+        ``download_action_for`` in the route layer). The ``category``
         field on the payload disambiguates therapist_private vs.
         psychotherapy_notes within the restricted action.
         """
