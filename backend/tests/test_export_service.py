@@ -215,7 +215,9 @@ def test_export_with_no_sessions(export_service, mock_patient_repo, mock_session
 
 def test_session_to_export_dict_includes_all_fields(export_service, mock_sessions, mock_notes):
     """Test that session export includes all relevant fields."""
-    session_dict = export_service._session_to_export_dict(mock_sessions[0], mock_notes["session-1"])
+    session_dict = export_service._session_to_export_dict(
+        mock_sessions[0], mock_notes["session-1"], include_transcript=True
+    )
 
     # Verify all expected fields are present (excluding internal metadata)
     assert "id" in session_dict
@@ -242,7 +244,9 @@ def test_session_to_export_dict_includes_all_fields(export_service, mock_session
 
 def test_session_to_export_dict_with_no_note(export_service, mock_sessions):
     """A session without a Note exports gracefully (all SOAP fields None)."""
-    session_dict = export_service._session_to_export_dict(mock_sessions[0], None)
+    session_dict = export_service._session_to_export_dict(
+        mock_sessions[0], None, include_transcript=True
+    )
     assert session_dict["soap_note"] is None
     assert session_dict["soap_note_edited"] is None
     assert session_dict["final_soap_note"] is None
@@ -267,3 +271,96 @@ def test_multi_tenant_security(
 
 # Avoid unused-fixture warnings.
 _ = UTC
+
+
+# ---------------------------------------------------------------------------
+# Export options: transcripts and psychotherapy notes are out by default
+# ---------------------------------------------------------------------------
+
+
+def _standalone(note_id: str, *, restricted: bool, body: str) -> Note:
+    ts = datetime.fromisoformat("2024-01-20T10:00:00+00:00")
+    return Note(
+        id=note_id,
+        patient_id="patient-123",
+        session_id=None,
+        note_type="psychotherapy" if restricted else "narrative",
+        content={"note": {"body": body}},
+        created_at=ts,
+        updated_at=ts,
+        restricted=restricted,
+    )
+
+
+@pytest.fixture
+def notes_with_standalone(mock_notes):
+    return [
+        *mock_notes.values(),
+        _standalone("narrative-1", restricted=False, body="Intake without a recording."),
+        _standalone("psychotherapy-1", restricted=True, body="Private working hypothesis."),
+    ]
+
+
+def test_default_json_omits_transcripts_and_restricted_notes(
+    export_service, mock_session_repo, mock_sessions, mock_notes_repo, notes_with_standalone
+):
+    mock_session_repo.list_by_patient.return_value = mock_sessions
+    mock_notes_repo.list_by_patient.return_value = notes_with_standalone
+
+    result = export_service.get_patient_export_data("patient-123", "user-456", "json")
+
+    assert result["options"] == {
+        "include_transcripts": False,
+        "include_psychotherapy_notes": False,
+    }
+    assert len(result["sessions"]) == 2
+    assert all("transcript" not in s for s in result["sessions"])
+    assert [n["id"] for n in result["standalone_notes"]] == ["narrative-1"]
+
+
+def test_both_options_include_transcripts_and_restricted_notes(
+    export_service, mock_session_repo, mock_sessions, mock_notes_repo, notes_with_standalone
+):
+    mock_session_repo.list_by_patient.return_value = mock_sessions
+    mock_notes_repo.list_by_patient.return_value = notes_with_standalone
+
+    result = export_service.get_patient_export_data(
+        "patient-123",
+        "user-456",
+        "json",
+        include_transcripts=True,
+        include_psychotherapy_notes=True,
+    )
+
+    assert result["options"] == {
+        "include_transcripts": True,
+        "include_psychotherapy_notes": True,
+    }
+    assert [s["transcript"]["content"] for s in result["sessions"]] == [
+        "Patient discussed anxiety.",
+        "Initial intake session.",
+    ]
+    by_id = {n["id"]: n for n in result["standalone_notes"]}
+    assert set(by_id) == {"narrative-1", "psychotherapy-1"}
+    assert by_id["psychotherapy-1"]["restricted"] is True
+    assert by_id["psychotherapy-1"]["final_content"] == {
+        "note": {"body": "Private working hypothesis."}
+    }
+
+
+def test_pdf_escapes_markup_in_transcripts_and_notes(
+    export_service, mock_session_repo, mock_sessions, mock_notes_repo
+):
+    """Paragraph parses its text as markup; a transcript line with an angle
+    bracket must not break the build."""
+    mock_sessions[0].transcript = Transcript(format="txt", content="a < b & c\n\n<unclosed")
+    mock_session_repo.list_by_patient.return_value = mock_sessions
+    mock_notes_repo.list_by_patient.return_value = [
+        _standalone("narrative-1", restricted=False, body="x <y> & z")
+    ]
+
+    result = export_service.get_patient_export_data(
+        "patient-123", "user-456", "pdf", include_transcripts=True
+    )
+
+    assert result["content"].startswith(b"%PDF")

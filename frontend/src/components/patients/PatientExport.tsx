@@ -20,6 +20,13 @@ export function PatientExport({ patientId, patientName }: PatientExportProps) {
   const [step, setStep] = useState<DialogStep>("format")
   const [selectedFormat, setSelectedFormat] = useState<ExportFormat>("json")
   const [progress, setProgress] = useState(0)
+  // Both start unchecked, matching the export endpoint's defaults. The right
+  // of access does not reach psychotherapy notes (45 CFR 164.524(a)(1)(i)),
+  // and transcripts are the rawest part of the chart, so including either is
+  // a deliberate choice. The reasoning stays here, not on the screen.
+  const [includeTranscripts, setIncludeTranscripts] = useState(false)
+  const [includePsychotherapyNotes, setIncludePsychotherapyNotes] =
+    useState(false)
 
   const { data: patient } = usePatient(patientId)
   const { data: sessionsData } = useSessionList()
@@ -112,6 +119,8 @@ ${i + 1}. ${new Date(s.session_date).toLocaleString()}
       setStep("format")
       setProgress(0)
       setSelectedFormat("json")
+      setIncludeTranscripts(false)
+      setIncludePsychotherapyNotes(false)
     }, 200)
   }
 
@@ -208,6 +217,37 @@ ${i + 1}. ${new Date(s.session_date).toLocaleString()}
                       </div>
                     </button>
                   </div>
+
+                  <div className="space-y-2">
+                    <label
+                      htmlFor="patient-export-include-transcripts"
+                      className="flex items-start gap-2 text-sm text-neutral-900"
+                    >
+                      <input
+                        type="checkbox"
+                        id="patient-export-include-transcripts"
+                        className="mt-0.5 h-4 w-4"
+                        checked={includeTranscripts}
+                        onChange={(e) => setIncludeTranscripts(e.target.checked)}
+                      />
+                      <span>Include session transcripts</span>
+                    </label>
+                    <label
+                      htmlFor="patient-export-include-psychotherapy-notes"
+                      className="flex items-start gap-2 text-sm text-neutral-900"
+                    >
+                      <input
+                        type="checkbox"
+                        id="patient-export-include-psychotherapy-notes"
+                        className="mt-0.5 h-4 w-4"
+                        checked={includePsychotherapyNotes}
+                        onChange={(e) =>
+                          setIncludePsychotherapyNotes(e.target.checked)
+                        }
+                      />
+                      <span>Include psychotherapy notes</span>
+                    </label>
+                  </div>
                 </div>
               )}
 
@@ -228,8 +268,11 @@ ${i + 1}. ${new Date(s.session_date).toLocaleString()}
                     </p>
                     <ul className="list-disc list-inside space-y-1 ml-2">
                       <li>Patient demographics and contact information</li>
-                      <li>All session transcripts and recordings</li>
+                      {includeTranscripts && <li>Session transcripts</li>}
                       <li>All SOAP notes and clinical documentation</li>
+                      {includePsychotherapyNotes && (
+                        <li>Your psychotherapy notes</li>
+                      )}
                       <li>Session metadata and scheduling information</li>
                     </ul>
                   </div>

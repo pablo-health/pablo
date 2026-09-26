@@ -508,18 +508,29 @@ def export_patient_data(
     patient_id: str,
     request: Request,
     format: str = Query("json", description="Export format: json or pdf"),
+    include_transcripts: bool = Query(
+        False, description="Add each session's transcript to the export"
+    ),
+    include_psychotherapy_notes: bool = Query(
+        False, description="Add your own psychotherapy notes to the export"
+    ),
     user: User = Depends(require_baa_acceptance),
     repo: PatientRepository = Depends(get_patient_repository),
     export_service: ExportService = Depends(get_export_service),
     audit: AuditService = Depends(get_audit_service),
 ) -> Response:
     """
-    Export complete patient data for HIPAA Right to Access (§ 164.524).
+    Export patient data for HIPAA Right to Access (§ 164.524).
 
     - **patient_id**: The patient's unique identifier
     - **format**: Export format - 'json' or 'pdf' (defaults to 'json')
+    - **include_transcripts**: Add session transcripts (defaults to false)
+    - **include_psychotherapy_notes**: Add the caller's psychotherapy notes
+      (defaults to false). The right of access does not reach them
+      (164.524(a)(1)(i)); disclosing them needs its own authorization.
 
-    Returns all patient data including demographics, sessions, transcripts, and SOAP notes.
+    Returns demographics, sessions with their notes, and notes written without
+    a session. Both choices are recorded on the audit row.
     """
     # Get patient for audit log
     patient = repo.get(patient_id, user.id)
@@ -527,7 +538,13 @@ def export_patient_data(
         raise NotFoundError("Patient not found", {"patient_id": patient_id})
 
     try:
-        export_data = export_service.get_patient_export_data(patient_id, user.id, format)
+        export_data = export_service.get_patient_export_data(
+            patient_id,
+            user.id,
+            format,
+            include_transcripts=include_transcripts,
+            include_psychotherapy_notes=include_psychotherapy_notes,
+        )
     except ValueError as e:
         logger.error("Patient export failed: %s", e)
         raise BadRequestError(
@@ -541,7 +558,11 @@ def export_patient_data(
         user,
         request,
         patient,
-        changes={"export_format": format},
+        changes={
+            "export_format": format,
+            "include_transcripts": include_transcripts,
+            "include_psychotherapy_notes": include_psychotherapy_notes,
+        },
     )
 
     # Return PDF as file download
