@@ -96,6 +96,7 @@ _POLICY_NAME_BY_SHAPE = {
     Shape.PATIENT_ACCESS_BY_ID: "rls_patient_access",
     Shape.PATIENT_ACCESS_BY_PATIENT_ID: "rls_patient_access",
     Shape.PATIENT_DOCUMENTS: "rls_patient_doc_access",
+    Shape.NOTES: "rls_note_access",
     Shape.CHAT_MESSAGES: "rls_chat_message_access",
 }
 

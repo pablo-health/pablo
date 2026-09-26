@@ -52,5 +52,16 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # The two-arm policy reads ``restricted``, so Postgres refuses to drop the
+    # column while it stands. Put the plain patient-access policy back first,
+    # exactly as ``enable_rls_on_schema`` shapes it for a notes table without
+    # the column, so a walked-back schema is never left with RLS forced and no
+    # policy (which reads as an empty table, not an error).
+    op.execute("DROP POLICY IF EXISTS rls_note_access ON notes")
+    op.execute("DROP POLICY IF EXISTS rls_patient_access ON notes")
+    op.execute(
+        "CREATE POLICY rls_patient_access ON notes "
+        "USING (has_patient_access(patient_id, current_setting('app.current_user_id', true)))"
+    )
     op.execute("ALTER TABLE notes DROP COLUMN IF EXISTS restricted")
     op.execute("ALTER TABLE notes DROP COLUMN IF EXISTS author_user_id")

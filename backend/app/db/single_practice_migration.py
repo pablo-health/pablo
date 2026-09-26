@@ -85,6 +85,9 @@ class Shape(Enum):
     PATIENT_ACCESS_BY_ID = "has_patient_access(id)"
     PATIENT_ACCESS_BY_PATIENT_ID = "has_patient_access(patient_id)"
     PATIENT_DOCUMENTS = "patient_doc_access"
+    #: ``notes`` once it carries ``restricted``: shared rows follow the grant,
+    #: restricted rows are the author's alone (``rls_note_access``).
+    NOTES = "note_access"
     CHAT_MESSAGES = "chat_message_access"
 
 
@@ -135,6 +138,11 @@ def _classify(table_name: str, columns: set[str]) -> Shape:
     for name, shape in _CLASSIFY_RULES:
         if table_name == name:
             return shape
+    # Mirrors the ``table_name == "notes" and "restricted" in columns`` branch:
+    # a notes table that predates the column still takes the generic
+    # patient_id shape below.
+    if table_name == "notes" and "restricted" in columns:
+        return Shape.NOTES
     for column, shape in _CLASSIFY_BY_COLUMN:
         if column in columns:
             return shape
@@ -183,6 +191,16 @@ def _patient_document(schema: str, table: str) -> str:
     )
 
 
+def _note(schema: str, table: str) -> str:
+    """Mirrors ``rls_note_access``: a shared note follows the grant, a
+    restricted one is reachable only by its author, so it is orphaned exactly
+    when it names no author."""
+    shared_unreachable = "NOT " + _LIVE_GRANT.format(
+        schema=schema, ref=f"{schema}.{table}.patient_id"
+    )
+    return f"(NOT restricted AND {shared_unreachable}) OR (restricted AND author_user_id IS NULL)"
+
+
 def _chat_message(schema: str, table: str) -> str:
     """Mirrors ``rls_chat_message_access``: reachable only through the parent
     conversation's patient. A message whose conversation is missing is
@@ -205,6 +223,7 @@ _ORPHAN_PREDICATE = {
     Shape.PATIENT_ACCESS_BY_ID: _patient_by_id,
     Shape.PATIENT_ACCESS_BY_PATIENT_ID: _patient_by_patient_id,
     Shape.PATIENT_DOCUMENTS: _patient_document,
+    Shape.NOTES: _note,
     Shape.CHAT_MESSAGES: _chat_message,
 }
 
