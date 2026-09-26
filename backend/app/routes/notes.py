@@ -33,6 +33,7 @@ from ..models import (
     AuditAction,
     CreateStandaloneNoteRequest,
     FinalizeNoteRequest,
+    Note,
     NoteResponse,
     PatientNotesListResponse,
     Transcript,
@@ -134,6 +135,15 @@ def get_registry() -> NoteTypeRegistry:
     return get_default_registry()
 
 
+def _restricted_change(note: Note) -> dict[str, bool]:
+    """The audit ``changes`` entry a restricted note carries, or nothing.
+
+    Same audit actions as every other note; the flag is what lets a review
+    of the log tell an author-only read from an ordinary one.
+    """
+    return {"restricted": True} if note.restricted else {}
+
+
 def get_worker_note_service() -> NoteService:
     """NoteService for the off-request Cloud Tasks worker.
 
@@ -174,6 +184,7 @@ def get_note(
         note_id=note.id,
         patient_id=note.patient_id,
         session_id=note.session_id,
+        changes=_restricted_change(note) or None,
     )
     return NoteResponse.from_note(note)
 
@@ -200,7 +211,7 @@ def update_note(
         note_id=note.id,
         patient_id=note.patient_id,
         session_id=note.session_id,
-        changes={"changed_fields": ["content_edited"]},
+        changes={"changed_fields": ["content_edited"], **_restricted_change(note)},
     )
     return NoteResponse.from_note(note)
 
@@ -283,6 +294,7 @@ def list_patient_notes(
             note_id=n.id,
             patient_id=patient.id,
             session_id=n.session_id,
+            changes=_restricted_change(n) or None,
         )
     return PatientNotesListResponse(
         data=[NoteResponse.from_note(n) for n in notes],
@@ -350,6 +362,15 @@ def create_standalone_note(
             detail=f"Note type {request.note_type!r} not allowed for this subscription",
         )
 
+    # A restricted type is written by hand. Refused here, before a row
+    # exists, so nothing is queued and no model is ever asked.
+    if definition.restricted and request.dictation_transcript is not None:
+        raise BadRequestError(
+            f"Note type {request.note_type!r} is written by hand, not generated",
+            {"note_type": request.note_type},
+            code="NOTE_TYPE_RESTRICTED",
+        )
+
     patient = patient_repo.get(patient_id, user.id)
     if patient is None:
         raise NotFoundError("Patient not found", {"patient_id": patient_id})
@@ -393,7 +414,7 @@ def create_standalone_note(
         note_id=note.id,
         patient_id=note.patient_id,
         session_id=None,
-        changes={"note_type": note.note_type, "standalone": True},
+        changes={"note_type": note.note_type, "standalone": True, **_restricted_change(note)},
     )
 
     if request.dictation_transcript is not None:

@@ -292,6 +292,60 @@ class TestCreateStandaloneNote:
         assert response.json()["status"] == "complete"
         mock_enqueue.assert_not_called()
 
+    def test_psychotherapy_note_is_created_empty_restricted_and_authored(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_notes_repo: InMemoryNotesRepository,
+        mock_user_id: str,
+    ) -> None:
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+
+        response = client.post(
+            f"/api/patients/{patient.id}/notes",
+            json={"note_type": "psychotherapy"},
+        )
+
+        assert response.status_code == 201, response.text
+        body = response.json()
+        assert body["restricted"] is True
+        assert body["author_user_id"] == mock_user_id
+        assert body["session_id"] is None
+        assert body["status"] == "complete"
+
+    def test_dictating_into_a_psychotherapy_note_is_refused_before_anything_runs(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_notes_repo: InMemoryNotesRepository,
+        mock_user_id: str,
+    ) -> None:
+        """A restricted note is written by hand: no row, no queue entry, and
+        nothing for a model to be asked."""
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        gateway = MagicMock()
+
+        with (
+            patch("app.routes.notes.enqueue") as mock_enqueue,
+            patch(
+                "app.routes.notes.get_note_generation_service",
+                return_value=gateway,
+            ),
+        ):
+            response = client.post(
+                f"/api/patients/{patient.id}/notes",
+                json={
+                    "note_type": "psychotherapy",
+                    "dictation_transcript": {"format": "txt", "content": "Client reported..."},
+                },
+            )
+
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == "NOTE_TYPE_RESTRICTED"
+        mock_enqueue.assert_not_called()
+        gateway.generate_note.assert_not_called()
+        assert mock_notes_repo.list_by_patient(patient.id) == []
+
     def test_unknown_note_type_returns_400(
         self,
         client: TestClient,

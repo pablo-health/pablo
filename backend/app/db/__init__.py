@@ -1757,6 +1757,7 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
         session.execute(text(f"DROP POLICY IF EXISTS rls_user_isolation ON {qualified}"))
         session.execute(text(f"DROP POLICY IF EXISTS rls_patient_access ON {qualified}"))
         session.execute(text(f"DROP POLICY IF EXISTS rls_patient_doc_access ON {qualified}"))
+        session.execute(text(f"DROP POLICY IF EXISTS rls_note_access ON {qualified}"))
         # Per-command policies on ``patients`` (split out from the
         # legacy single ALL policy to fix the INSERT chicken-and-egg).
         # Idempotent for tables that don't have these policies.
@@ -1815,6 +1816,35 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
             )
             logger.info(
                 "RLS (patient_doc_access: chart=patient_access, restricted=uploader) enabled on %s",
+                qualified,
+            )
+            continue
+        if table_name == "notes" and "restricted" in columns:
+            # Same two-arm shape as patient_documents. An ordinary note
+            # follows patient_access (co-treaters share the chart); a
+            # restricted one (a psychotherapy note) is its author's alone.
+            # Keyed on the ``restricted`` column rather than on
+            # ``note_type`` so a future restricted type needs no RLS
+            # change. The column guard is what lets the heal revision
+            # earlier in the chain replay over a schema that predates it:
+            # such a schema falls through to the plain patient_access
+            # shape until its own upgrade adds the column.
+            session.execute(
+                text(
+                    f"CREATE POLICY rls_note_access ON {qualified} "
+                    f"USING ("
+                    f"  (NOT restricted "
+                    f"   AND has_patient_access("
+                    f"    patient_id, current_setting('app.current_user_id', true)"
+                    f"  )) "
+                    f"  OR "
+                    f"  (restricted "
+                    f"   AND author_user_id::text = current_setting('app.current_user_id', true))"
+                    f")"
+                )
+            )
+            logger.info(
+                "RLS (note_access: shared=patient_access, restricted=author) enabled on %s",
                 qualified,
             )
             continue

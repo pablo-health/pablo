@@ -288,7 +288,9 @@ class ContextBundle:
 
 
 def _filter_notes_by_type(notes: list[Note], note_types: frozenset[str]) -> list[Note]:
-    return [n for n in notes if n.note_type in note_types]
+    # A restricted note (a psychotherapy note) never reaches a chat turn,
+    # whichever type set a source asks for.
+    return [n for n in notes if n.note_type in note_types and not n.restricted]
 
 
 def _note_display_text(note: Note) -> str:
@@ -500,7 +502,9 @@ def _load_progress_notes_explicit(raw: Any, notes: list[Note]) -> LoadedSource:
             f"{SOURCE_KEY_PROGRESS_NOTES_EXPLICIT}.note_ids must be a list of strings"
         )
     requested = set(note_ids)
-    matched = [n for n in notes if n.id in requested]
+    # Naming a restricted note by id does not get it in: it is dropped here
+    # and reported under ``missing_note_ids`` like any id that did not match.
+    matched = [n for n in notes if n.id in requested and not n.restricted]
     # Order by the caller's note_ids list so the assembler is deterministic.
     by_id = {n.id: n for n in matched}
     ordered = [by_id[nid] for nid in note_ids if nid in by_id]

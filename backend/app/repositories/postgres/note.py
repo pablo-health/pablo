@@ -161,6 +161,10 @@ class PostgresNotesRepository(NotesRepository):
             )
             .where(
                 NoteRow.session_id.is_not(None),
+                # A restricted note never has a session, so this is
+                # belt-and-braces: the billing queue documents a visit
+                # from the progress note, never from a private one.
+                NoteRow.restricted.is_(False),
                 NoteRow.finalized_at.is_not(None),
                 NoteRow.deleted_at.is_(None),
                 PatientClinicianRow.user_id == user_id,
@@ -280,6 +284,8 @@ def _row_to_note(row: NoteRow) -> Note:
         redacted_content=row.redacted_content,
         naturalized_content=row.naturalized_content,
         redacted_export_payload=row.redacted_export_payload,
+        author_user_id=row.author_user_id,
+        restricted=row.restricted,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -307,5 +313,7 @@ def _note_to_row(note: Note, row: NoteRow) -> None:
     row.redacted_content = note.redacted_content
     row.naturalized_content = note.naturalized_content
     row.redacted_export_payload = note.redacted_export_payload
+    row.author_user_id = note.author_user_id
+    row.restricted = note.restricted
     row.created_at = note.created_at
     row.updated_at = note.updated_at

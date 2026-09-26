@@ -16,6 +16,7 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Skeleton } from "@/components/ui/skeleton"
 import { NewNoteButton } from "@/components/notes/NewNoteButton"
+import { OnlyYouBadge } from "@/components/notes/OnlyYouBadge"
 import { PatientDocuments } from "@/components/patients/PatientDocuments"
 import { OutcomeMeasuresTab } from "@/components/outcomeMeasures/OutcomeMeasuresTab"
 import { DiagnosesTab } from "@/components/diagnoses/DiagnosesTab"
@@ -96,6 +97,7 @@ function NotesTab({ patientId }: { patientId: string }) {
                   <span className="inline-flex items-center rounded bg-neutral-100 px-2 py-0.5 text-xs font-medium capitalize text-neutral-700">
                     {noteTypeLabel(note.note_type)}
                   </span>
+                  {note.restricted && <OnlyYouBadge />}
                   <span className="text-xs text-neutral-500">
                     {note.session_id ? "Session" : "Standalone"}
                   </span>

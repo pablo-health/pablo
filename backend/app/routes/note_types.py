@@ -117,6 +117,14 @@ class NoteTypeSchema(BaseModel):
         default=None,
         description="Version of a practice-defined type; null for built-in types.",
     )
+    restricted: bool = Field(
+        default=False,
+        description=(
+            "True for a note only its author can read (a psychotherapy note). "
+            "Such a note is written by hand and is never generated from a "
+            "transcript."
+        ),
+    )
     is_locked: bool = Field(
         default=False,
         description=(
@@ -145,6 +153,7 @@ class NoteTypeSchema(BaseModel):
             sections=[NoteSectionSchema.from_def(s) for s in definition.sections],
             inputs=[NoteInputSchema.from_def(i) for i in definition.inputs],
             version=definition.version,
+            restricted=definition.restricted,
             is_locked=is_locked,
         )
 

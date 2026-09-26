@@ -269,6 +269,16 @@ class NoteRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     # Soft-delete marker (THERAPY-nyb). NULL = live row.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Who wrote the note. Nullable because rows predate the column; no FK,
+    # since users live in the platform schema. The row policy reads it only
+    # for restricted rows.
+    author_user_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    # A restricted note is readable by its author alone (a psychotherapy
+    # note). Stamped from the note type's definition at creation and keyed
+    # on by the row policy, so a future restricted type needs no RLS change.
+    restricted: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
 
     __table_args__ = (
         Index(

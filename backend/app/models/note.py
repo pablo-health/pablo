@@ -48,3 +48,8 @@ class Note:
     redacted_content: dict[str, Any] | None = None
     naturalized_content: dict[str, Any] | None = None
     redacted_export_payload: dict[str, Any] | None = None
+    # Who wrote the note; None on rows that predate the column.
+    author_user_id: str | None = None
+    # Readable by its author alone. Stamped from the note type's definition
+    # at creation; the row policy keys on it.
+    restricted: bool = False

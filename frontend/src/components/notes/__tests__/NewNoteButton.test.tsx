@@ -89,6 +89,28 @@ describe("NewNoteButton", () => {
     expect(transcriptProps.open).toBe(true)
   })
 
+  it("says who can see a restricted type, and nothing for the rest", () => {
+    mockCatalog = {
+      note_types: [
+        soapType(),
+        {
+          key: "psychotherapy",
+          label: "Psychotherapy note",
+          description: "Your own notes on a session.",
+          context: "session",
+          restricted: true,
+          is_locked: false,
+        } as NoteTypeSchema,
+      ],
+    }
+    render(<NewNoteButton patientId="patient-1" />)
+
+    fireEvent.click(screen.getByRole("button", { name: /new note/i }))
+
+    expect(screen.getByText("Psychotherapy note")).toBeInTheDocument()
+    expect(screen.getAllByText("Only you can see this note.")).toHaveLength(1)
+  })
+
   it("creates a blank note and routes to it", async () => {
     mockMutateAsync.mockResolvedValue({ id: "note-9" })
     render(<NewNoteButton patientId="patient-1" />)

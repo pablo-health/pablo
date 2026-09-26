@@ -249,9 +249,32 @@ MEDICATIONS_DEFINITION = NoteTypeDefinition(
 )
 
 
+PSYCHOTHERAPY_DEFINITION = NoteTypeDefinition(
+    key="psychotherapy",
+    label="Psychotherapy note",
+    description="Your own notes on a session, kept apart from the progress note.",
+    tier="core",
+    restricted=True,
+    sections=(
+        NoteSectionDef(
+            key="note",
+            label="Note",
+            fields=(
+                NoteFieldDef(
+                    key="body",
+                    label="Note",
+                    kind="text",
+                ),
+            ),
+        ),
+    ),
+)
+
+
 BUILTIN_NOTE_DEFINITIONS: tuple[NoteTypeDefinition, ...] = (
     SOAP_DEFINITION,
     NARRATIVE_DEFINITION,
+    PSYCHOTHERAPY_DEFINITION,
     DAP_DEFINITION,
     BIRP_DEFINITION,
     GIRP_DEFINITION,

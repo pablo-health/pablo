@@ -19,6 +19,7 @@ import { AlertCircle, ArrowLeft, Check } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { NoteViewer } from "@/components/sessions/NoteViewer"
+import { OnlyYouBadge } from "@/components/notes/OnlyYouBadge"
 import {
   QualityRatingWithFeedback,
   type RatingFeedback,
@@ -137,6 +138,11 @@ export default function StandaloneNotePage({ params }: PageProps) {
       <div>
         <h1 className="text-3xl font-display font-bold text-neutral-900 mb-1 capitalize">
           {noteTypeLabel(note.note_type)} note
+          {note.restricted && (
+            <span className="ml-3 align-middle normal-case">
+              <OnlyYouBadge />
+            </span>
+          )}
         </h1>
         <p className="text-neutral-600">
           {patientName}

@@ -17,6 +17,7 @@ from app.notes import (
     INTAKE_DEFINITION,
     MEDICATIONS_DEFINITION,
     NARRATIVE_DEFINITION,
+    PSYCHOTHERAPY_DEFINITION,
     SAFETY_PLAN_DEFINITION,
     SOAP_DEFINITION,
     TREATMENT_PLAN_DEFINITION,
@@ -130,6 +131,7 @@ class TestBuiltinDefinitions:
             "medications",
             "meeting_summary",
             "narrative",
+            "psychotherapy",
             "safety_plan",
             "soap",
             "treatment_plan",
@@ -147,7 +149,7 @@ class TestBuiltinDefinitions:
         register_builtin_note_types(registry)
         register_builtin_note_types(registry)
 
-        assert len(registry.keys()) == 10
+        assert len(registry.keys()) == 11
 
     def test_alias_keys_are_not_registered(self) -> None:
         """The bundler's alternate keys are recognised on read, not registered
@@ -208,6 +210,25 @@ class TestBuiltinDefinitions:
             MEDICATIONS_DEFINITION,
         ):
             assert definition.prompt_builder is None
+
+    def test_only_the_psychotherapy_note_is_restricted(self) -> None:
+        """``restricted`` defaults off, and exactly one built-in turns it on."""
+        assert _tiny_type().restricted is False
+        registry = NoteTypeRegistry()
+        register_builtin_note_types(registry)
+
+        restricted = [d.key for d in registry.all() if d.restricted]
+
+        assert restricted == ["psychotherapy"]
+
+    def test_psychotherapy_note_is_a_hand_written_session_note(self) -> None:
+        assert PSYCHOTHERAPY_DEFINITION.restricted is True
+        assert PSYCHOTHERAPY_DEFINITION.tier == "core"
+        assert PSYCHOTHERAPY_DEFINITION.context == "session"
+        assert PSYCHOTHERAPY_DEFINITION.section_keys() == ["note"]
+        assert PSYCHOTHERAPY_DEFINITION.sections[0].field_keys() == ["body"]
+        assert PSYCHOTHERAPY_DEFINITION.prompt_builder is None
+        assert PSYCHOTHERAPY_DEFINITION.system_prompt is None
 
     def test_narrative_is_single_text_field(self) -> None:
         assert NARRATIVE_DEFINITION.tier == "core"

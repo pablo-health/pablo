@@ -18,6 +18,7 @@ import { usePatientNotes } from "@/hooks/useNotes"
 import { useNoteTypeLabel } from "@/hooks/useNoteTypes"
 import { Skeleton } from "@/components/ui/skeleton"
 import { NewNoteButton } from "@/components/notes/NewNoteButton"
+import { OnlyYouBadge } from "@/components/notes/OnlyYouBadge"
 import { formatNoteDateTime, noteHref, noteStatus } from "@/lib/noteDisplay"
 
 interface PageProps {
@@ -121,6 +122,11 @@ export default function PatientNotesListPage({ params }: PageProps) {
                       >
                         {noteTypeLabel(note.note_type)}
                       </Link>
+                      {note.restricted && (
+                        <span className="ml-2 normal-case">
+                          <OnlyYouBadge />
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-4 text-sm text-neutral-600">
                       {note.session_id ? "Session" : "Standalone"}

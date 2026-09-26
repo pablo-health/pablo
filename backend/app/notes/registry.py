@@ -119,6 +119,15 @@ class NoteTypeDefinition:
     sections: tuple[NoteSectionDef, ...]
     tier: NoteTier = "core"
     context: NoteContext = "session"
+    restricted: bool = False
+    """Readable by its author alone, and never generated from a transcript.
+
+    The psychotherapy note is the case this exists for: the clinician's own
+    analysis of a session, kept apart from the rest of the record. A
+    restricted note is stamped ``restricted`` on the row so the row policy
+    can hold it to its author, is left out of every note-backed chat source,
+    and is only ever created empty for the clinician to write by hand.
+    """
     prompt_builder: PromptBuilder | None = field(default=None, compare=False)
     """If set, used instead of the auto-built ``ai_hint``-based prompt.
 

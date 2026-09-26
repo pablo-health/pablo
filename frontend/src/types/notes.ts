@@ -58,6 +58,10 @@ export interface Note {
   export_reviewed_at: string | null
   export_reviewed_by: string | null
   exported_at: string | null
+  /** Who wrote the note; null on rows that predate the column. */
+  author_user_id: string | null
+  /** Readable by its author alone (a psychotherapy note). */
+  restricted: boolean
   created_at: string
   updated_at: string
 }

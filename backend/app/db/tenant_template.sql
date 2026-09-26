@@ -603,7 +603,9 @@ CREATE TABLE __TENANT_SCHEMA__.notes (
     deleted_at timestamp with time zone,
     status character varying(20) DEFAULT 'complete'::character varying NOT NULL,
     note_type_version integer,
-    note_inputs jsonb
+    note_inputs jsonb,
+    author_user_id uuid,
+    restricted boolean DEFAULT false NOT NULL
 );
 
 

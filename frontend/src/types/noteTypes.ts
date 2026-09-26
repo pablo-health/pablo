@@ -58,6 +58,11 @@ export interface NoteTypeSchema {
   /** Version of a practice-defined type; null for built-in types. */
   version: number | null
   /**
+   * True for a note only its author can read (a psychotherapy note). Such
+   * a note is written by hand and is never generated from a transcript.
+   */
+  restricted?: boolean
+  /**
    * True when the caller's subscription / role does not permit creating
    * a note of this type. Defaults to false for OSS (allow-all
    * authorizer); SaaS sets true for Practice-tier extension types
