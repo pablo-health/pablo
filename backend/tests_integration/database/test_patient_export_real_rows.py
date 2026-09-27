@@ -586,54 +586,70 @@ def _seed_patient(engine: Engine, tenant_schema: str) -> str:
     return patient_id
 
 
-def _open_tenant_session(engine: Engine, tenant_schema: str) -> tuple[Session, tuple[Any, Any]]:
-    """An ORM session on the practice schema, armed as the clinician."""
-    from app.db import (  # noqa: PLC0415
-        _current_tenant_schema,
-        _current_user_id,
-        arm_current_user_id,
-    )
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+def _open_tenant_session(engine: Engine, tenant_schema: str) -> tuple[Session, tuple[Any, ...]]:
+    """An ORM session on the practice schema, armed as the clinician and nobody else."""
+    from app.db import arm_current_user_id  # noqa: PLC0415
 
-    tokens = (_current_tenant_schema.set(tenant_schema), _current_user_id.set(_CLINICIAN))
-    session = OrmSession(bind=engine)
-    session.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
+    session, tokens = _open_session(engine, tenant_schema, user_id=_CLINICIAN, patient_id=None)
     arm_current_user_id(session, _CLINICIAN)
     return session, tokens
 
 
 def _open_patient_session(
     engine: Engine, tenant_schema: str, patient_id: str
-) -> tuple[Session, tuple[Any, Any]]:
+) -> tuple[Session, tuple[Any, ...]]:
     """An ORM session on the practice schema, armed as the patient and nobody else."""
-    from app.db import (  # noqa: PLC0415
-        _current_patient_id,
-        _current_tenant_schema,
-        arm_current_patient_id,
-    )
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from app.db import arm_current_patient_id  # noqa: PLC0415
 
-    tokens = (_current_tenant_schema.set(tenant_schema), _current_patient_id.set(patient_id))
-    session = OrmSession(bind=engine)
-    session.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
+    session, tokens = _open_session(engine, tenant_schema, user_id=None, patient_id=patient_id)
     arm_current_patient_id(session, patient_id)
     return session, tokens
 
 
-def _close_patient_session(session: Session, tokens: tuple[Any, Any]) -> None:
-    from app.db import _current_patient_id, _current_tenant_schema  # noqa: PLC0415
+def _open_session(
+    engine: Engine, tenant_schema: str, *, user_id: str | None, patient_id: str | None
+) -> tuple[Session, tuple[Any, ...]]:
+    """Open a session with exactly one principal on the ambient context.
 
-    session.close()
-    _current_tenant_schema.reset(tokens[0])
-    _current_patient_id.reset(tokens[1])
+    All three ContextVars are set here, the unused principal to ``None``,
+    because the ``after_begin`` listener reads them as a fallback and refuses
+    a transaction that shows both a clinician and a patient. Module-scoped
+    fixtures run before the per-test ContextVar reset, so whatever an earlier
+    module left armed is still ambient when the chart is seeded; the seeding
+    must not inherit it.
+    """
+    from app.db import (  # noqa: PLC0415
+        _current_patient_id,
+        _current_tenant_schema,
+        _current_user_id,
+    )
+    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+
+    tokens = (
+        _current_tenant_schema.set(tenant_schema),
+        _current_user_id.set(user_id),
+        _current_patient_id.set(patient_id),
+    )
+    session = OrmSession(bind=engine)
+    session.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
+    return session, tokens
 
 
-def _close_tenant_session(session: Session, tokens: tuple[Any, Any]) -> None:
-    from app.db import _current_tenant_schema, _current_user_id  # noqa: PLC0415
+def _close_session(session: Session, tokens: tuple[Any, ...]) -> None:
+    from app.db import (  # noqa: PLC0415
+        _current_patient_id,
+        _current_tenant_schema,
+        _current_user_id,
+    )
 
     session.close()
     _current_tenant_schema.reset(tokens[0])
     _current_user_id.reset(tokens[1])
+    _current_patient_id.reset(tokens[2])
+
+
+_close_tenant_session = _close_session
+_close_patient_session = _close_session
 
 
 def _export(
