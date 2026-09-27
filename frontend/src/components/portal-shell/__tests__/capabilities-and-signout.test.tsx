@@ -52,6 +52,7 @@ const ALL_OFF = {
   appointments: false,
   billing: false,
   chat: false,
+  refills: false,
 }
 
 function capabilities(modules: Partial<typeof ALL_OFF>, displayName: string | null = null) {

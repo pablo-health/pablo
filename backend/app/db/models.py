@@ -1519,6 +1519,59 @@ class PatientMedicationRow(Base):
     )
 
 
+class RefillRequestRow(Base):
+    """A patient's request, from the portal, to have a medication refilled.
+
+    A structured request rather than a message: it has one answer, and the
+    answer is a decision a prescriber records, not a reply. That is why it
+    is its own table instead of a thread with a subject line.
+
+    ``medication_text`` is copied from the medication row at submit time (or
+    typed by the patient when the medication is not on their list), so the
+    request keeps saying what was asked for if the list changes later.
+    ``medication_id`` points back at that row and is cleared, not cascaded,
+    if the row is ever hard-deleted.
+
+    The decision columns are written once: ``status`` leaves ``requested``
+    exactly one time, together with who decided and when. ``prescriber_note``
+    is the practice's own and never reaches the patient surface.
+
+    Deleting a patient takes their requests with them, the same as their
+    messages.
+    """
+
+    __tablename__ = "refill_requests"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("patients.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    medication_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("patient_medications.id", ondelete="SET NULL"),
+    )
+    medication_text: Mapped[str] = mapped_column(String(200), nullable=False)
+    pharmacy_text: Mapped[str | None] = mapped_column(String(200))
+    patient_note: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="requested")
+    decided_by_user_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    prescriber_note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('requested','approved','needs_visit','declined')",
+            name="ck_refill_requests_status",
+        ),
+        Index("ix_refill_requests_status_created", "status", "created_at"),
+    )
+
+
 # Fail-fast guard: the CHECK constraint string above and OutcomeMeasureSource
 # must enumerate the same set.  If a contributor adds a value to one without
 # the other, this trips at import (and therefore in every test run) instead of

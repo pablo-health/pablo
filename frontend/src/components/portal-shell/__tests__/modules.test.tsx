@@ -23,7 +23,7 @@ beforeEach(() => {
 })
 
 describe("portal modules", () => {
-  it("registers forms, then messaging, then appointments", async () => {
+  it("registers forms, then messaging, then appointments, then refills", async () => {
     await import("../modules")
     const { getPortalSlots } = await import("../slots")
 
@@ -31,13 +31,14 @@ describe("portal modules", () => {
       "forms",
       "messaging",
       "appointments",
+      "refills",
     ])
   })
 
   it("gates each slot on the module the deployment names", async () => {
     /**
      * The slot id and the module name are separate fields and only coincide
-     * for two of the three: the forms slot belongs to the `intake` module,
+     * for all but one: the forms slot belongs to the `intake` module,
      * which is the name the engine mounts routes under and the deployment
      * configures. Pinning the pairs here means a rename on either side has
      * to be deliberate.
@@ -49,6 +50,7 @@ describe("portal modules", () => {
       ["forms", "intake"],
       ["messaging", "messaging"],
       ["appointments", "appointments"],
+      ["refills", "refills"],
     ])
   })
 

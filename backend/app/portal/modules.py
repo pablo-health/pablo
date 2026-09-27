@@ -52,6 +52,7 @@ PORTAL_MODULE_NAMES: Final[tuple[str, ...]] = (
     "messaging",
     "documents",
     "appointments",
+    "refills",
     "billing",
     "chat",
 )
@@ -74,6 +75,7 @@ MODULE_MARKER_PATHS: Final[Mapping[str, str]] = {
     "messaging": "/api/patient/messages/threads",
     "documents": "/api/patient/documents",
     "appointments": "/api/patient/appointments",
+    "refills": "/api/patient/refills",
     "billing": "/api/patient/billing/summary",
     "chat": "/api/patient/chat/conversations",
 }

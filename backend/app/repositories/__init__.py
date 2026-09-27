@@ -125,6 +125,10 @@ from .practice_note_type import (
     PracticeNoteTypeRepository,
     StoredNoteType,
 )
+from .refill_request import (
+    InMemoryRefillRequestRepository,
+    RefillRequestRepository,
+)
 from .session import (
     InMemoryTherapySessionRepository,
     TherapySessionRepository,
@@ -427,6 +431,13 @@ def get_patient_message_repository() -> PatientMessageRepository:
     return PostgresPatientMessageRepository(_get_pg_session())
 
 
+def get_refill_request_repository() -> RefillRequestRepository:
+    """Get refill request repository instance."""
+    from .postgres.refill_request import PostgresRefillRequestRepository
+
+    return PostgresRefillRequestRepository(_get_pg_session())
+
+
 def get_diagnostic_assessment_repository() -> DiagnosticAssessmentRepository:
     """Get diagnostic assessment repository instance."""
     from .postgres.diagnostic_assessment import PostgresDiagnosticAssessmentRepository
@@ -487,6 +498,7 @@ __all__ = [
     "InMemoryPatientMessageRepository",
     "InMemoryPatientRepository",
     "InMemoryPracticeNoteTypeRepository",
+    "InMemoryRefillRequestRepository",
     "InMemoryTherapySessionRepository",
     "InMemoryUserRepository",
     "InstrumentLicenseRepository",
@@ -505,6 +517,7 @@ __all__ = [
     "PatientMessageRepository",
     "PatientRepository",
     "PracticeNoteTypeRepository",
+    "RefillRequestRepository",
     "StoredNoteType",
     "TherapySessionRepository",
     "UserRepository",
@@ -546,6 +559,7 @@ __all__ = [
     "get_patient_repository",
     "get_payer_repository",
     "get_practice_note_type_repository",
+    "get_refill_request_repository",
     "get_session_repository",
     "get_supervision_repository",
     "get_user_repository",

@@ -1244,7 +1244,7 @@ class Settings(BaseSettings):
         default="intake,messaging,appointments",
         description=(
             "Comma-separated patient-facing portal modules to serve: any of "
-            "intake, messaging, documents, appointments, billing, chat. A "
+            "intake, messaging, documents, appointments, refills, billing, chat. A "
             "module left out has its patient-facing routes unmounted, so "
             "they answer 404 rather than merely being hidden. Unknown names "
             "are ignored."

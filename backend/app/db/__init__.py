@@ -1154,6 +1154,16 @@ PATIENT_READABLE_TABLES: dict[str, str] = {
     # ``patient_documents`` row and is policied there, where the category
     # test that keeps the clinical record off the portal already lives.
     "patient_message_attachments": "patient_id",
+    # A patient's own refill requests: they make them, and they come back to
+    # see what the prescriber decided. The clinician side reaches the same
+    # rows through ``has_patient_access``.
+    "refill_requests": "patient_id",
+    # The patient's medication list, read so they can pick what to ask a
+    # refill of. Row-level only, like every entry here: the row also carries
+    # the practice's notes and stop reasons, and the one patient route that
+    # reads this table returns the drug name and dose and nothing else. Only
+    # active rows are offered; that filter is the route's too.
+    "patient_medications": "patient_id",
     # Read-only deliberately: booking and cancelling answer to the
     # practice's own rules — notice periods, which types are bookable,
     # whether a request needs confirming — so they belong to a route that
@@ -1276,6 +1286,12 @@ PATIENT_WRITABLE_TABLES: dict[str, str] = {
     # UPDATE once a table is writable — so the narrowing is the route
     # layer's, as on the two tables above.
     "patient_message_attachments": "patient_id",
+    # Asking for a refill is a patient INSERT, and that is all a patient does
+    # here. The grant is wider than that — RLS cannot give INSERT and
+    # withhold UPDATE — so the narrowing is the route layer's: no patient
+    # route updates a request, and the decision columns are written only by
+    # the clinician's decision route.
+    "refill_requests": "patient_id",
     # A patient starts their own conversations and archives or purges them,
     # so the conversation row is writable. The turn loop then writes the
     # message rows — the user's turn and the assistant's reply — which is

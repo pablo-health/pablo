@@ -2,7 +2,8 @@
 
 /**
  * What the engine mounts in the portal, in the order a patient meets it:
- * the forms they were asked for first, then messaging, then appointments.
+ * the forms they were asked for first, then messaging, then appointments,
+ * then refills.
  *
  * Imported for its side effect by the shell, which is a client component.
  * That is the whole reason this file exists rather than the registrations
@@ -22,6 +23,7 @@
 import { PortalAppointments } from "@/components/portal/appointments"
 import { PortalForms } from "@/components/portal/forms"
 import { PortalMessaging } from "@/components/portal/messaging/PortalMessaging"
+import { PortalRefills } from "@/components/portal/refills/PortalRefills"
 import { registerPortalSlot, type PortalSlotProps } from "./slots"
 
 function FormsSlot({ sessionToken }: PortalSlotProps) {
@@ -34,6 +36,10 @@ function MessagingSlot({ sessionToken }: PortalSlotProps) {
 
 function AppointmentsSlot({ sessionToken }: PortalSlotProps) {
   return <PortalAppointments sessionToken={sessionToken} />
+}
+
+function RefillsSlot({ sessionToken }: PortalSlotProps) {
+  return <PortalRefills sessionToken={sessionToken} />
 }
 
 // ``module`` names the capability the deployment has to have turned on for
@@ -54,7 +60,7 @@ registerPortalSlot({
   module: "messaging",
   label: "Messages",
 })
-// Last of the three, which is the product order rather than an accident:
+// After forms and messaging, which is the product order rather than an accident:
 // paperwork is what a practice asks for before a first visit, messaging is
 // how a patient reaches them, and appointments is what they come back to
 // check. Here the slot id and the module name do coincide — unlike forms
@@ -65,4 +71,13 @@ registerPortalSlot({
   Component: AppointmentsSlot,
   module: "appointments",
   label: "Appointments",
+})
+// Refills comes after appointments: it is an occasional errand between
+// visits rather than something a patient meets on the way in. The slot id,
+// the module name and what the patient reads all say the same thing here.
+registerPortalSlot({
+  id: "refills",
+  Component: RefillsSlot,
+  module: "refills",
+  label: "Refills",
 })
