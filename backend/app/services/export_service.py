@@ -35,6 +35,7 @@ from .export_archive import (
     export_document,
     intake_form_archive_path,
 )
+from .export_clinical import ClinicalRecord, ClinicalRecordReader
 from .export_pdf import final_content, render_chart_pdf
 from .record_set import RecordSetSelector
 
@@ -51,6 +52,11 @@ EXPORT_FORMATS = ("json", "pdf", "zip")
 IntakeFormFiles = Callable[[Patient, str, datetime], list[tuple[str, bytes]]]
 
 
+def _thread_counts(clinical: ClinicalRecord) -> list[tuple[str, int]]:
+    """Each exported thread's id and message count, for the route's audit rows."""
+    return [(thread.id, len(thread.messages)) for thread in clinical.message_threads]
+
+
 class ExportService:
     """Service for exporting patient data in various formats."""
 
@@ -64,11 +70,14 @@ class ExportService:
         note_types: NoteTypeRegistry | None = None,
         documents: PatientDocumentsService | None = None,
         intake_forms: IntakeFormFiles | None = None,
+        clinical_record: ClinicalRecordReader | None = None,
     ) -> None:
         """``practitioner`` loads who the archive says the record comes from,
         given the exporting clinician's user id. ``documents`` reads the
         files uploaded to the chart, and ``intake_forms`` renders each
         submitted intake form. All three are read only for ``zip``.
+        ``clinical_record`` reads appointments, outcome measures, messages,
+        medications and diagnoses, for ``zip`` and ``pdf``.
         ``note_types`` labels note fields in the PDF.
         """
         self.patient_repo = patient_repo
@@ -78,6 +87,7 @@ class ExportService:
         self._note_types = note_types or get_default_registry()
         self._documents = documents
         self._intake_forms = intake_forms or (lambda _patient, _user_id, _at: [])
+        self._clinical_record = clinical_record or (lambda _patient_id, _user_id: ClinicalRecord())
 
     def get_patient_export_data(
         self,
@@ -134,6 +144,7 @@ class ExportService:
             )
 
         stem = f"patient_{patient.id}_export_{exported_at_iso.split('T', maxsplit=1)[0]}"
+        clinical = self._clinical_record(patient_id, user_id)
         if export_format == "pdf":
             return {
                 "content": render_chart_pdf(
@@ -144,9 +155,11 @@ class ExportService:
                     exported_at_iso,
                     selector,
                     self._note_types,
+                    clinical=clinical,
                 ),
                 "content_type": "application/pdf",
                 "filename": f"{stem}.pdf",
+                "message_threads": _thread_counts(clinical),
             }
 
         uploads = self._select_documents(patient_id, user_id, selector)
@@ -161,6 +174,7 @@ class ExportService:
             selector,
             self._note_types,
             documents,
+            clinical,
         )
         document = build_export_document(
             patient,
@@ -169,6 +183,7 @@ class ExportService:
             notes_by_session,
             standalone_notes,
             documents,
+            clinical,
             exported_at,
             selector,
         )
@@ -189,6 +204,7 @@ class ExportService:
             # What left beside the chart, for the route's audit rows.
             "documents": [upload for upload, _ in uploads],
             "intake_assignment_ids": [assignment_id for assignment_id, _ in intake_forms],
+            "message_threads": _thread_counts(clinical),
         }
 
     def _select_documents(

@@ -8,18 +8,19 @@ exact shape it was given rather than against documentation.
 
 Object names follow FHIR where that costs nothing (a session is an
 ``Encounter``, a note a ``DocumentReference``, the clinician a
-``Practitioner``) so a FHIR bundle can be derived later, while JSON keys stay
-snake_case. Every timestamp is ISO-8601 with an offset.
+``Practitioner``, a scored instrument an ``Observation``, a medication a
+``MedicationStatement``, a diagnosis a ``Condition``) so a FHIR bundle can
+be derived later, while JSON keys stay snake_case. Every timestamp is ISO-8601 with an offset.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Annotated, Any, Final, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
-SCHEMA_VERSION: Final = "1.1"
+SCHEMA_VERSION: Final = "1.2"
 
 
 def _with_offset(value: datetime) -> datetime:
@@ -130,10 +131,105 @@ class ExportDocument(BaseModel):
     archive_path: str = Field(description="Where the file is in this archive.")
 
 
+class ExportAppointment(BaseModel):
+    """One appointment on the schedule, whatever became of it."""
+
+    id: str
+    start: Timestamp
+    end: Timestamp
+    timezone: str = Field(description="IANA time zone of the calendar the appointment is on.")
+    appointment_type: str = Field(description="The type's name as it was when booked.")
+    status: str = Field(description="pending, confirmed, cancelled, no_show or completed.")
+    clinician_name: str | None = Field(description="Whose calendar the appointment is on.")
+    telehealth: bool = Field(description="Held by video rather than in person.")
+    place_of_service: str | None = Field(description="CMS place-of-service code, when recorded.")
+    note_type: str = Field(description="The note type a session started from it is written in.")
+    session_id: str | None = Field(description="The session held for it, in sessions[].")
+
+
+OutcomeMeasureSource = Literal[
+    "patient_self_report", "clinician_administered_verbal", "manual", "inferred"
+]
+
+
+class Observation(BaseModel):
+    """One administration of a scored instrument, such as a PHQ-9."""
+
+    id: str
+    instrument: str = Field(description="The instrument's short code, such as phq9.")
+    instrument_name: str | None = Field(description="The instrument's name, when Pablo knows it.")
+    administered_at: Timestamp
+    total_score: int | None
+    severity: str | None = Field(description="The band the total score falls in.")
+    item_responses: dict[str, int] | None = Field(
+        description="The score given to each item, keyed by item number."
+    )
+    is_complete: bool = Field(description="Every item was answered.")
+    source: OutcomeMeasureSource = Field(description="Who answered it, and how.")
+    session_id: str | None
+
+
+MessageSender = Literal["patient", "clinician", "practice"]
+
+
+class Communication(BaseModel):
+    """One secure message."""
+
+    id: str
+    sender: MessageSender
+    sent_at: Timestamp
+    body: str
+    attachment_document_ids: list[str] = Field(
+        description="Files sent with the message, by their id in documents[]."
+    )
+
+
+class ExportMessageThread(BaseModel):
+    """One secure-message conversation between the client and the practice."""
+
+    id: str
+    subject: str | None
+    status: Literal["open", "closed"]
+    created_at: Timestamp
+    closed_at: Timestamp | None
+    messages: list[Communication] = Field(description="Oldest first.")
+
+
+class MedicationStatement(BaseModel):
+    """One medication on the client's medication list."""
+
+    id: str
+    drug_name: str
+    dose: str
+    status: Literal["active", "discontinued", "on_hold"]
+    started_on: date | None
+    stopped_on: date | None
+    stop_reason: str | None
+    notes: str | None
+
+
+class Condition(BaseModel):
+    """One diagnostic assessment and the diagnosis it recorded."""
+
+    id: str
+    icd10_code: str | None = Field(description="The ICD-10-CM code the clinician confirmed.")
+    description: str | None
+    assessed_at: Timestamp
+    status: Literal["confirmed", "unconfirmed"] = Field(
+        description="confirmed once the clinician has chosen a code."
+    )
+    instrument: str = Field(description="The diagnostic definition the assessment followed.")
+    meets_criteria: bool | None = Field(
+        description="Whether the recorded responses meet the definition's criteria; "
+        "null for a checklist, which makes no determination."
+    )
+    session_id: str | None
+
+
 class PatientExportDocument(BaseModel):
     """One client's chart as structured data (``patient.json``)."""
 
-    schema_version: Literal["1.1"] = SCHEMA_VERSION
+    schema_version: Literal["1.2"] = SCHEMA_VERSION
     exported_at: Timestamp
     options: ExportOptions
     patient: ExportPatient
@@ -145,6 +241,11 @@ class PatientExportDocument(BaseModel):
     documents: list[ExportDocument] = Field(
         description="Files uploaded to the chart, each carried under documents/ in the archive."
     )
+    appointments: list[ExportAppointment] = Field(description="Oldest first.")
+    outcome_measures: list[Observation] = Field(description="Oldest first.")
+    message_threads: list[ExportMessageThread] = Field(description="Oldest first.")
+    medications: list[MedicationStatement] = Field(description="Active medications first.")
+    diagnoses: list[Condition] = Field(description="Oldest first.")
 
 
 ManifestFileKind = Literal["pdf", "json", "schema", "text", "document", "intake_form"]
@@ -160,7 +261,7 @@ class ManifestFile(BaseModel):
 class ExportManifest(BaseModel):
     """``manifest.json``: every other file in the archive, with its checksum."""
 
-    schema_version: Literal["1.1"] = SCHEMA_VERSION
+    schema_version: Literal["1.2"] = SCHEMA_VERSION
     exported_at: Timestamp
     options: ExportOptions
     files: list[ManifestFile]

@@ -12,7 +12,9 @@
  * proven is the file a practice would hand over, not the dialog's opinion of
  * it. The archive case also uploads a document through the chart's own
  * Documents tab, and the copy of it in the archive is held to the bytes that
- * were uploaded.
+ * were uploaded. A third case has the client fill in the intake form, PHQ-9
+ * included, and send a message from the portal, then finds both in the
+ * archive the clinician downloads.
  */
 
 import { createHash } from "node:crypto"
@@ -22,6 +24,8 @@ import Ajv2020 from "ajv/dist/2020.js"
 import addFormats from "ajv-formats"
 import JSZip from "jszip"
 import { expect, test } from "../fixtures/auth"
+import { defaultIntakeVersion, fillTheFormIn } from "../fixtures/intake"
+import { givePortalContactDetails, givePortalInvitation, signInToPortal } from "../fixtures/portal"
 import { giveTranscribedSession, givePatient, giveVisitReadyToBill } from "../fixtures/scenarios"
 import { fixtureFile, sha256, toInputFile } from "../fixtures/upload"
 
@@ -283,7 +287,7 @@ test.describe("patient export", () => {
       sha256(records.body),
     )
     expect([...files.keys()].sort()).toEqual([...ARCHIVE_FILES, uploaded.archive_path].sort())
-    expect(document.schema_version).toBe("1.1")
+    expect(document.schema_version).toBe("1.2")
     expect(document.options).toEqual({
       include_transcripts: false,
       include_psychotherapy_notes: false,
@@ -299,7 +303,7 @@ test.describe("patient export", () => {
 
     // The manifest names every other file, with its true size and checksum.
     const manifest = JSON.parse(read("manifest.json").toString("utf8")) as ArchiveManifest
-    expect(manifest.schema_version).toBe("1.1")
+    expect(manifest.schema_version).toBe("1.2")
     expect(manifest.options).toEqual(document.options)
     expect(manifest.files.map((file) => file.path).sort()).toEqual(
       [...files.keys()].filter((name) => name !== "manifest.json").sort(),
@@ -319,4 +323,76 @@ test.describe("patient export", () => {
       `Schema version: ${document.schema_version} `,
     )
   })
+
+  test("a message and a PHQ-9 the client sent from the portal are in the archive", async ({
+    api,
+    signedInPage: page,
+  }) => {
+    const marker = Date.now().toString(36)
+    const messageSentinel = `Could we meet an hour earlier next week ${marker}`
+
+    const { email, phone } = givePortalContactDetails()
+    const patient = await givePatient(api, { email, phone, date_of_birth: "1988-11-04" })
+    await api.post(`/api/patients/${patient.id}/intake-assignments`, {
+      version_id: await defaultIntakeVersion(api),
+    })
+
+    // --- as the client, in the portal --------------------------------------
+    // The seeded form's third question is the PHQ-9; fillTheFormIn answers
+    // it on screen and hands the form in.
+    await signInToPortal(page, await givePortalInvitation(api, patient.id, email, phone))
+    await fillTheFormIn(page, `Trouble sleeping ${marker}`)
+
+    await page.getByTestId("portal-messaging-start-thread").click()
+    await page.getByTestId("portal-messaging-new-thread-subject").fill("Next week")
+    await page.getByTestId("portal-messaging-new-thread-body").fill(messageSentinel)
+    await page.getByTestId("portal-messaging-new-thread-send").click()
+    await expect(page.getByTestId("portal-messaging-thread-view")).toContainText(messageSentinel)
+
+    // --- as the clinician, from the chart ----------------------------------
+    await page.goto(`/dashboard/patients/${patient.id}`)
+    await expect(
+      page.getByRole("heading", { name: `${patient.first_name} ${patient.last_name}` }),
+    ).toBeVisible()
+    const zip = await exportFromChart(page, "Archive")
+    const files = await unzip(zip.bytes)
+    const schemaFile = files.get("schema.json")
+    const patientFile = files.get("patient.json")
+    if (!schemaFile || !patientFile) throw new Error("the archive is missing its data files")
+
+    const ajv = new Ajv2020({ allErrors: true })
+    addFormats(ajv)
+    const validate = ajv.compile(JSON.parse(schemaFile.toString("utf8")) as object)
+    const document = JSON.parse(patientFile.toString("utf8")) as {
+      schema_version: string
+      outcome_measures: ExportedMeasure[]
+      message_threads: ExportedThread[]
+    }
+    expect(validate(document), JSON.stringify(validate.errors)).toBe(true)
+    expect(document.schema_version).toBe("1.2")
+
+    const phq9 = document.outcome_measures.filter((measure) => measure.instrument === "phq9")
+    expect(phq9, "the PHQ-9 the client completed").toHaveLength(1)
+    expect(phq9[0]).toMatchObject({ source: "patient_self_report", is_complete: true })
+    expect(Object.keys(phq9[0].item_responses ?? {})).toHaveLength(9)
+
+    expect(document.message_threads, "the thread the client started").toHaveLength(1)
+    const [thread] = document.message_threads
+    expect(thread.subject).toBe("Next week")
+    expect(thread.messages.map((message) => [message.sender, message.body])).toEqual([
+      ["patient", messageSentinel],
+    ])
+  })
 })
+
+interface ExportedMeasure {
+  instrument: string
+  source: string
+  is_complete: boolean
+  item_responses: Record<string, number> | null
+}
+
+interface ExportedThread {
+  subject: string | null
+  messages: { sender: string; body: string; attachment_document_ids: string[] }[]
+}

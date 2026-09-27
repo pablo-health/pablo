@@ -47,9 +47,28 @@ Psychotherapy-notes documents are included only with
 part of the record and are never included. In `manifest.json`, uploaded
 files have kind `document` and intake forms kind `intake_form`.
 
+## What `patient.json` holds
+
+| Key | Contents |
+| --- | --- |
+| `patient`, `practitioner` | The client's demographics, and who the record comes from. |
+| `sessions` | Each session, with its note and, when asked for, its transcript. |
+| `standalone_notes` | Notes written without a session, such as an intake, a treatment plan or a safety plan. |
+| `documents` | Each uploaded file, with where it is in the archive and its checksum. |
+| `appointments` | The schedule, cancelled appointments included. |
+| `outcome_measures` | Each scored instrument, such as a PHQ-9, with its item responses. |
+| `message_threads` | Secure messages with the client. An attachment is named by its id in `documents`. |
+| `medications` | The medication list. |
+| `diagnoses` | Each diagnostic assessment, with the ICD-10-CM code the clinician confirmed. |
+
+`chart.pdf` has a section for each of these. Conversations with the
+assistant are not part of the record and are not exported.
+
 Object names follow FHIR where that costs nothing: a session is an
-`Encounter`, a note a `DocumentReference`. Keys are snake_case and every
-timestamp is ISO 8601 with an offset.
+`Encounter`, a note a `DocumentReference`, an instrument result an
+`Observation`, a medication a `MedicationStatement`, a diagnosis a
+`Condition`. Keys are snake_case and every timestamp is ISO 8601 with an
+offset.
 
 ## The schema
 
@@ -60,14 +79,18 @@ from the export models. CI fails when the two disagree, so it matches the
 ## Versioning
 
 `schema_version` in `patient.json` and `manifest.json` names the version an
-archive was written in. The current version is `1.1`, which added uploaded
-documents and intake forms to `1.0`.
+archive was written in. The current version is `1.2`.
+
+| Version | Change |
+| --- | --- |
+| `1.2` | Adds `appointments`, `outcome_measures`, `message_threads`, `medications` and `diagnoses`, and a `chart.pdf` section for each. |
+| `1.1` | Adds `documents` and the `documents/` and `intake/` folders. |
+| `1.0` | The first published version. |
 
 - **Minor** (`1.0` to `1.1`): an additive change, such as a new field or
   file. A consumer written for `1.0` still reads a `1.1` archive.
 - **Major** (`1.x` to `2.0`): a rename, a removal or a change of meaning.
   Check the major version before reading anything else.
 
-Clinical data, billing and CSV files are planned for the archive.
-Each arrives as a minor version that adds fields and files without changing
-the ones described here.
+Billing and CSV files are planned for the archive. Each arrives as a minor
+version that adds fields and files without changing the ones described here.

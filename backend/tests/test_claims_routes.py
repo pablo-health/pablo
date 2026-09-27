@@ -582,7 +582,9 @@ def _assert_nothing_off_the_card(rows: list[Any]) -> None:
     text = json.dumps([row.changes for row in rows])
     assert _MEMBER_ID not in text
     assert _DOB not in text
-    assert "F41" not in text
+    # The code as the fixture writes it, dot included. A control number is
+    # random base32, so the bare "F41" turns up inside one every so often.
+    assert "F41.1" not in text
     assert "Anon" not in text
     assert "Random St" not in text
 

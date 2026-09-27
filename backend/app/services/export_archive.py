@@ -45,6 +45,7 @@ if TYPE_CHECKING:
 
     from ..models import Note, Patient, PatientDocument, TherapySession
     from ..repositories.clinician_profile import ClinicianProfile
+    from .export_clinical import ClinicalRecord
     from .record_set import RecordSetSelector
 
 README = f"""\
@@ -166,6 +167,7 @@ def build_export_document(
     notes_by_session: dict[str, Note | None],
     standalone_notes: list[Note],
     documents: list[ExportDocument],
+    clinical: ClinicalRecord,
     exported_at: datetime,
     selector: RecordSetSelector,
 ) -> PatientExportDocument:
@@ -195,6 +197,11 @@ def build_export_document(
         sessions=[_encounter(s, notes_by_session.get(s.id), selector) for s in sessions],
         standalone_notes=[_document_reference(n) for n in standalone_notes],
         documents=documents,
+        appointments=clinical.appointments,
+        outcome_measures=clinical.outcome_measures,
+        message_threads=clinical.message_threads,
+        medications=clinical.medications,
+        diagnoses=clinical.diagnoses,
     )
 
 

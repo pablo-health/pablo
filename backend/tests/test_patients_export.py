@@ -364,3 +364,32 @@ def test_each_file_carried_in_the_archive_is_audited_as_its_own_disclosure(
     assert form.kwargs["action"] == AuditAction.INTAKE_PACKET_EXPORTED
     assert form.kwargs["resource_type"] == ResourceType.PATIENT_INTAKE_ASSIGNMENT
     assert form.kwargs["resource_id"] == "assignment-1"
+
+
+@pytest.mark.parametrize("fmt", ["zip", "pdf"])
+def test_each_message_thread_in_the_copy_is_audited_as_a_thread_export(
+    mock_export_service, mock_user, fmt
+):
+    """A conversation carried in the PDF or the archive is recorded the way its
+    own thread export is: one row per thread, a count and no words."""
+    mock_export_service.get_patient_export_data.return_value = {
+        "content": b"%PDF-1.4" if fmt == "pdf" else b"PK\x03\x04 fake archive",
+        "content_type": "application/pdf" if fmt == "pdf" else "application/zip",
+        "filename": f"export.{fmt}",
+        "message_threads": [("thread-1", 3), ("thread-2", 1)],
+    }
+    audit = Mock()
+    client = _audited_client(mock_export_service, mock_user, audit)
+
+    response = client.get(f"/api/patients/patient-123/export?format={fmt}")
+
+    assert response.status_code == 200, response.text
+    threads = [
+        (c.kwargs["action"], c.kwargs["resource_id"], c.kwargs["patient_id"], c.kwargs["changes"])
+        for c in audit.log_patient_message_action.call_args_list
+    ]
+    exported = AuditAction.PATIENT_MESSAGE_THREAD_EXPORTED
+    assert threads == [
+        (exported, "thread-1", "patient-123", {"message_count": 3}),
+        (exported, "thread-2", "patient-123", {"message_count": 1}),
+    ]

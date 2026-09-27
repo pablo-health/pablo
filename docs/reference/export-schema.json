@@ -1,5 +1,135 @@
 {
   "$defs": {
+    "Communication": {
+      "description": "One secure message.",
+      "properties": {
+        "attachment_document_ids": {
+          "description": "Files sent with the message, by their id in documents[].",
+          "items": {
+            "type": "string"
+          },
+          "title": "Attachment Document Ids",
+          "type": "array"
+        },
+        "body": {
+          "title": "Body",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "sender": {
+          "enum": [
+            "patient",
+            "clinician",
+            "practice"
+          ],
+          "title": "Sender",
+          "type": "string"
+        },
+        "sent_at": {
+          "format": "date-time",
+          "title": "Sent At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "sender",
+        "sent_at",
+        "body",
+        "attachment_document_ids"
+      ],
+      "title": "Communication",
+      "type": "object"
+    },
+    "Condition": {
+      "description": "One diagnostic assessment and the diagnosis it recorded.",
+      "properties": {
+        "assessed_at": {
+          "format": "date-time",
+          "title": "Assessed At",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Description"
+        },
+        "icd10_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The ICD-10-CM code the clinician confirmed.",
+          "title": "Icd10 Code"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "instrument": {
+          "description": "The diagnostic definition the assessment followed.",
+          "title": "Instrument",
+          "type": "string"
+        },
+        "meets_criteria": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Whether the recorded responses meet the definition's criteria; null for a checklist, which makes no determination.",
+          "title": "Meets Criteria"
+        },
+        "session_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Session Id"
+        },
+        "status": {
+          "description": "confirmed once the clinician has chosen a code.",
+          "enum": [
+            "confirmed",
+            "unconfirmed"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "icd10_code",
+        "description",
+        "assessed_at",
+        "status",
+        "instrument",
+        "meets_criteria",
+        "session_id"
+      ],
+      "title": "Condition",
+      "type": "object"
+    },
     "DocumentReference": {
       "description": "One note. ``final_content`` is what the clinician signed off on.",
       "properties": {
@@ -146,6 +276,101 @@
       "title": "Encounter",
       "type": "object"
     },
+    "ExportAppointment": {
+      "description": "One appointment on the schedule, whatever became of it.",
+      "properties": {
+        "appointment_type": {
+          "description": "The type's name as it was when booked.",
+          "title": "Appointment Type",
+          "type": "string"
+        },
+        "clinician_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Whose calendar the appointment is on.",
+          "title": "Clinician Name"
+        },
+        "end": {
+          "format": "date-time",
+          "title": "End",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "note_type": {
+          "description": "The note type a session started from it is written in.",
+          "title": "Note Type",
+          "type": "string"
+        },
+        "place_of_service": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "CMS place-of-service code, when recorded.",
+          "title": "Place Of Service"
+        },
+        "session_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The session held for it, in sessions[].",
+          "title": "Session Id"
+        },
+        "start": {
+          "format": "date-time",
+          "title": "Start",
+          "type": "string"
+        },
+        "status": {
+          "description": "pending, confirmed, cancelled, no_show or completed.",
+          "title": "Status",
+          "type": "string"
+        },
+        "telehealth": {
+          "description": "Held by video rather than in person.",
+          "title": "Telehealth",
+          "type": "boolean"
+        },
+        "timezone": {
+          "description": "IANA time zone of the calendar the appointment is on.",
+          "title": "Timezone",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "start",
+        "end",
+        "timezone",
+        "appointment_type",
+        "status",
+        "clinician_name",
+        "telehealth",
+        "place_of_service",
+        "note_type",
+        "session_id"
+      ],
+      "title": "ExportAppointment",
+      "type": "object"
+    },
     "ExportDocument": {
       "description": "One uploaded file, carried in the archive as its original bytes.\n\n``bytes`` and ``sha256`` describe the file at ``archive_path`` exactly,\nso a consumer can check its copy against this entry alone.",
       "properties": {
@@ -214,6 +439,69 @@
         "archive_path"
       ],
       "title": "ExportDocument",
+      "type": "object"
+    },
+    "ExportMessageThread": {
+      "description": "One secure-message conversation between the client and the practice.",
+      "properties": {
+        "closed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Closed At"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "messages": {
+          "description": "Oldest first.",
+          "items": {
+            "$ref": "#/$defs/Communication"
+          },
+          "title": "Messages",
+          "type": "array"
+        },
+        "status": {
+          "enum": [
+            "open",
+            "closed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "subject": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Subject"
+        }
+      },
+      "required": [
+        "id",
+        "subject",
+        "status",
+        "created_at",
+        "closed_at",
+        "messages"
+      ],
+      "title": "ExportMessageThread",
       "type": "object"
     },
     "ExportOptions": {
@@ -428,6 +716,200 @@
       "title": "ExportTranscript",
       "type": "object"
     },
+    "MedicationStatement": {
+      "description": "One medication on the client's medication list.",
+      "properties": {
+        "dose": {
+          "title": "Dose",
+          "type": "string"
+        },
+        "drug_name": {
+          "title": "Drug Name",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Notes"
+        },
+        "started_on": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Started On"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "discontinued",
+            "on_hold"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "stop_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Stop Reason"
+        },
+        "stopped_on": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Stopped On"
+        }
+      },
+      "required": [
+        "id",
+        "drug_name",
+        "dose",
+        "status",
+        "started_on",
+        "stopped_on",
+        "stop_reason",
+        "notes"
+      ],
+      "title": "MedicationStatement",
+      "type": "object"
+    },
+    "Observation": {
+      "description": "One administration of a scored instrument, such as a PHQ-9.",
+      "properties": {
+        "administered_at": {
+          "format": "date-time",
+          "title": "Administered At",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "instrument": {
+          "description": "The instrument's short code, such as phq9.",
+          "title": "Instrument",
+          "type": "string"
+        },
+        "instrument_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The instrument's name, when Pablo knows it.",
+          "title": "Instrument Name"
+        },
+        "is_complete": {
+          "description": "Every item was answered.",
+          "title": "Is Complete",
+          "type": "boolean"
+        },
+        "item_responses": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The score given to each item, keyed by item number.",
+          "title": "Item Responses"
+        },
+        "session_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Session Id"
+        },
+        "severity": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The band the total score falls in.",
+          "title": "Severity"
+        },
+        "source": {
+          "description": "Who answered it, and how.",
+          "enum": [
+            "patient_self_report",
+            "clinician_administered_verbal",
+            "manual",
+            "inferred"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "total_score": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Total Score"
+        }
+      },
+      "required": [
+        "id",
+        "instrument",
+        "instrument_name",
+        "administered_at",
+        "total_score",
+        "severity",
+        "item_responses",
+        "is_complete",
+        "source",
+        "session_id"
+      ],
+      "title": "Observation",
+      "type": "object"
+    },
     "Practitioner": {
       "description": "Who the record comes from, as the practice has set itself up to bill.",
       "properties": {
@@ -476,6 +958,22 @@
   },
   "description": "One client's chart as structured data (``patient.json``).",
   "properties": {
+    "appointments": {
+      "description": "Oldest first.",
+      "items": {
+        "$ref": "#/$defs/ExportAppointment"
+      },
+      "title": "Appointments",
+      "type": "array"
+    },
+    "diagnoses": {
+      "description": "Oldest first.",
+      "items": {
+        "$ref": "#/$defs/Condition"
+      },
+      "title": "Diagnoses",
+      "type": "array"
+    },
     "documents": {
       "description": "Files uploaded to the chart, each carried under documents/ in the archive.",
       "items": {
@@ -489,8 +987,32 @@
       "title": "Exported At",
       "type": "string"
     },
+    "medications": {
+      "description": "Active medications first.",
+      "items": {
+        "$ref": "#/$defs/MedicationStatement"
+      },
+      "title": "Medications",
+      "type": "array"
+    },
+    "message_threads": {
+      "description": "Oldest first.",
+      "items": {
+        "$ref": "#/$defs/ExportMessageThread"
+      },
+      "title": "Message Threads",
+      "type": "array"
+    },
     "options": {
       "$ref": "#/$defs/ExportOptions"
+    },
+    "outcome_measures": {
+      "description": "Oldest first.",
+      "items": {
+        "$ref": "#/$defs/Observation"
+      },
+      "title": "Outcome Measures",
+      "type": "array"
     },
     "patient": {
       "$ref": "#/$defs/ExportPatient"
@@ -499,8 +1021,8 @@
       "$ref": "#/$defs/Practitioner"
     },
     "schema_version": {
-      "const": "1.1",
-      "default": "1.1",
+      "const": "1.2",
+      "default": "1.2",
       "title": "Schema Version",
       "type": "string"
     },
@@ -527,7 +1049,12 @@
     "practitioner",
     "sessions",
     "standalone_notes",
-    "documents"
+    "documents",
+    "appointments",
+    "outcome_measures",
+    "message_threads",
+    "medications",
+    "diagnoses"
   ],
   "title": "PatientExportDocument",
   "type": "object"

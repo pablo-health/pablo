@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, Response
 
+from .. import repositories
 from ..api_errors import BadRequestError, NotFoundError, ServerError
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
 from ..db import get_db_session
@@ -52,6 +53,7 @@ from ..repositories import (
 )
 from ..services import AuditService, ExportService, PatientDocumentsService, get_audit_service
 from ..services.export_archive import practitioner_from
+from ..services.export_clinical import ClinicalRecordSource
 from ..services.export_service import IntakeFormFiles
 from ..services.practice_billing_profile import load_billing_profile
 from ..utcnow import utc_now
@@ -128,12 +130,27 @@ def get_notes_repository(
     return _notes_repo_factory()
 
 
+def get_clinical_record_source(
+    _ctx: TenantContext = Depends(get_tenant_context),
+) -> ClinicalRecordSource:
+    """The chart's own repositories for the clinical lists, scoped to the tenant."""
+    return ClinicalRecordSource(
+        appointments=repositories.get_appointment_repository(),
+        users=repositories.get_user_repository(),
+        outcome_measures=repositories.get_outcome_measure_repository(),
+        messages=repositories.get_patient_message_repository(),
+        medications=repositories.get_medication_repository(),
+        diagnoses=repositories.get_diagnostic_assessment_repository(),
+    )
+
+
 def get_export_service(
     patient_repo: PatientRepository = Depends(get_patient_repository),
     session_repo: TherapySessionRepository = Depends(get_therapy_session_repository),
     notes_repo: NotesRepository = Depends(get_notes_repository),
     documents: PatientDocumentsService = Depends(get_patient_documents_service),
     intake_forms: IntakeFormFiles = Depends(get_intake_form_files),
+    clinical: ClinicalRecordSource = Depends(get_clinical_record_source),
 ) -> ExportService:
     """Get export service instance, scoped to the tenant like its repositories."""
     db = get_db_session()
@@ -149,6 +166,7 @@ def get_export_service(
         practitioner=practitioner,
         documents=documents,
         intake_forms=intake_forms,
+        clinical_record=clinical.read,
     )
 
 
@@ -559,7 +577,9 @@ def export_patient_data(
       (164.524(a)(1)(i)); disclosing them needs its own authorization.
 
     Returns demographics, sessions with their notes, and notes written without
-    a session. Both choices are recorded on the audit row.
+    a session; the PDF and the archive add appointments, outcome measures,
+    messages, medications and diagnoses. Both choices are recorded on the
+    audit row.
     """
     # Get patient for audit log
     patient = repo.get(patient_id, user.id)
@@ -616,6 +636,16 @@ def export_patient_data(
             resource_type=ResourceType.PATIENT_INTAKE_ASSIGNMENT,
             resource_id=assignment_id,
             patient=patient,
+        )
+    # A conversation in the copy is recorded as its own thread export is.
+    for thread_id, message_count in export_data.get("message_threads", []):
+        audit.log_patient_message_action(
+            action=AuditAction.PATIENT_MESSAGE_THREAD_EXPORTED,
+            user=user,
+            request=request,
+            resource_id=thread_id,
+            patient_id=patient.id,
+            changes={"message_count": message_count},
         )
 
     # The PDF and the archive are file downloads
