@@ -29,6 +29,7 @@ from reportlab.platypus import (
 )
 
 from ..models.session import SOAPNote
+from .export_pdf_billing import billing_flowables
 from .export_pdf_clinical import clinical_flowables
 
 if TYPE_CHECKING:
@@ -37,6 +38,7 @@ if TYPE_CHECKING:
     from ..models import Note, PatientResponse, TherapySession, Transcript
     from ..models.export import ExportDocument
     from ..notes import NoteTypeDefinition, NoteTypeRegistry
+    from .export_billing import BillingRecord
     from .export_clinical import ClinicalRecord
     from .record_set import RecordSetSelector
 
@@ -293,10 +295,12 @@ def render_chart_pdf(
     note_types: NoteTypeRegistry,
     documents: Sequence[ExportDocument] = (),
     clinical: ClinicalRecord | None = None,
+    billing: BillingRecord | None = None,
 ) -> bytes:
     """The chart as a PDF. ``documents`` lists files carried beside it in an archive.
 
-    ``clinical`` adds a section per clinical list after the notes.
+    ``clinical`` adds a section per clinical list after the notes, and
+    ``billing`` a summary of the ledger, coverage and claims after those.
     """
     buffer = BytesIO()
     doc = SimpleDocTemplate(
@@ -360,6 +364,10 @@ def render_chart_pdf(
                 clinical, heading_style, styles, {d.id: d.filename for d in documents}
             )
         )
+
+    if billing is not None:
+        story.append(PageBreak())
+        story.extend(billing_flowables(billing, heading_style, styles))
 
     if documents:
         story.append(PageBreak())

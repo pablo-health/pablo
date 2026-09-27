@@ -35,6 +35,7 @@ from .export_archive import (
     export_document,
     intake_form_archive_path,
 )
+from .export_billing import STATEMENT_PATH, SUPERBILL_PATH, BillingRecord, BillingRecordReader
 from .export_clinical import ClinicalRecord, ClinicalRecordReader
 from .export_pdf import final_content, render_chart_pdf
 from .record_set import RecordSetSelector
@@ -57,6 +58,27 @@ def _thread_counts(clinical: ClinicalRecord) -> list[tuple[str, int]]:
     return [(thread.id, len(thread.messages)) for thread in clinical.message_threads]
 
 
+def _billing_ids(billing: BillingRecord) -> dict[str, Any]:
+    """What left of the billing record, by id, for the route's audit rows."""
+    return {
+        "charge_ids": [charge.id for charge in billing.charges],
+        "coverage_ids": [plan.id for plan in billing.coverage],
+        "claim_ids": [claim.id for claim in billing.claims],
+        "statement": billing.statement is not None,
+        "superbill": billing.superbill is not None,
+        "balance_cents": billing.balance_cents,
+    }
+
+
+def _billing_files(billing: BillingRecord) -> list[ArchiveFile]:
+    files = []
+    if billing.statement is not None:
+        files.append(ArchiveFile(STATEMENT_PATH, "statement", billing.statement))
+    if billing.superbill is not None:
+        files.append(ArchiveFile(SUPERBILL_PATH, "superbill", billing.superbill))
+    return files
+
+
 class ExportService:
     """Service for exporting patient data in various formats."""
 
@@ -71,14 +93,16 @@ class ExportService:
         documents: PatientDocumentsService | None = None,
         intake_forms: IntakeFormFiles | None = None,
         clinical_record: ClinicalRecordReader | None = None,
+        billing_record: BillingRecordReader | None = None,
     ) -> None:
         """``practitioner`` loads who the archive says the record comes from,
         given the exporting clinician's user id. ``documents`` reads the
         files uploaded to the chart, and ``intake_forms`` renders each
         submitted intake form. All three are read only for ``zip``.
         ``clinical_record`` reads appointments, outcome measures, messages,
-        medications and diagnoses, for ``zip`` and ``pdf``.
-        ``note_types`` labels note fields in the PDF.
+        medications and diagnoses, and ``billing_record`` the ledger,
+        coverage and claims with the statement and superbill, for ``zip``
+        and ``pdf``. ``note_types`` labels note fields in the PDF.
         """
         self.patient_repo = patient_repo
         self.session_repo = session_repo
@@ -88,6 +112,7 @@ class ExportService:
         self._documents = documents
         self._intake_forms = intake_forms or (lambda _patient, _user_id, _at: [])
         self._clinical_record = clinical_record or (lambda _patient_id, _user_id: ClinicalRecord())
+        self._billing_record = billing_record or (lambda _patient, _user_id, _at: BillingRecord())
 
     def get_patient_export_data(
         self,
@@ -145,6 +170,7 @@ class ExportService:
 
         stem = f"patient_{patient.id}_export_{exported_at_iso.split('T', maxsplit=1)[0]}"
         clinical = self._clinical_record(patient_id, user_id)
+        billing = self._billing_record(patient, user_id, exported_at)
         if export_format == "pdf":
             return {
                 "content": render_chart_pdf(
@@ -156,10 +182,12 @@ class ExportService:
                     selector,
                     self._note_types,
                     clinical=clinical,
+                    billing=billing,
                 ),
                 "content_type": "application/pdf",
                 "filename": f"{stem}.pdf",
                 "message_threads": _thread_counts(clinical),
+                **_billing_ids(billing),
             }
 
         uploads = self._select_documents(patient_id, user_id, selector)
@@ -175,6 +203,7 @@ class ExportService:
             self._note_types,
             documents,
             clinical,
+            billing,
         )
         document = build_export_document(
             patient,
@@ -186,6 +215,7 @@ class ExportService:
             clinical,
             exported_at,
             selector,
+            billing,
         )
         files = [
             *(
@@ -196,6 +226,7 @@ class ExportService:
                 ArchiveFile(intake_form_archive_path(assignment_id), "intake_form", html)
                 for assignment_id, html in intake_forms
             ),
+            *_billing_files(billing),
         ]
         return {
             "content": build_archive(document, chart_pdf, files),
@@ -205,6 +236,7 @@ class ExportService:
             "documents": [upload for upload, _ in uploads],
             "intake_assignment_ids": [assignment_id for assignment_id, _ in intake_forms],
             "message_threads": _thread_counts(clinical),
+            **_billing_ids(billing),
         }
 
     def _select_documents(

@@ -51,8 +51,9 @@ import zipfile
 import zlib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import Mock
+from zoneinfo import ZoneInfo
 
 import pytest
 from alembic import command
@@ -84,6 +85,11 @@ _NARRATIVE_SENTINEL = "NARRATIVESENTINEL5R1T"
 _RESTRICTED_SENTINEL = "PSYCHOTHERAPYSENTINEL9W3X"
 _MESSAGE_SENTINEL = "PORTALMESSAGESENTINEL4H6J"
 _CHAT_SENTINEL = "ASSISTANTCHATSENTINEL8N2P"
+#: The card on file: processor ids and display fields that must be in no copy.
+_CARD_SENTINEL = "CARDSENTINEL6B4V"
+_CARD_LAST4 = "4242"
+_CHECK_NUMBER = "1042"
+_TAX_ID = "844459714"
 
 _CLINICIAN_NAME = "Dana Reyes"
 _CLINICIAN_TIMEZONE = "America/Chicago"
@@ -112,6 +118,24 @@ def _document_bytes(category: str) -> bytes:
 def _storage_root(tenant_schema: str) -> Path:
     """Where this module's store keeps its files: one directory per schema."""
     return Path(tempfile.gettempdir()) / f"{tenant_schema}-documents"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _encryption_key() -> Iterator[None]:
+    """The tax id is stored encrypted; the superbill decrypts it at render time."""
+    from app.settings import get_settings  # noqa: PLC0415
+
+    previous = os.environ.get("GOOGLE_CALENDAR_ENCRYPTION_KEY")
+    os.environ["GOOGLE_CALENDAR_ENCRYPTION_KEY"] = base64.b64encode(os.urandom(32)).decode()
+    get_settings.cache_clear()
+    try:
+        yield
+    finally:
+        if previous is None:
+            del os.environ["GOOGLE_CALENDAR_ENCRYPTION_KEY"]
+        else:
+            os.environ["GOOGLE_CALENDAR_ENCRYPTION_KEY"] = previous
+        get_settings.cache_clear()
 
 
 @pytest.fixture(scope="module")
@@ -231,7 +255,20 @@ def chart(engine: Engine, tenant_schema: str) -> dict[str, str]:
                 taxonomy_code=_TAXONOMY,
             )
         )
-        update_billing_profile(session, {"legal_name": _PRACTICE_NAME, "billing_npi": _NPI})
+        update_billing_profile(
+            session,
+            {
+                "legal_name": _PRACTICE_NAME,
+                "billing_npi": _NPI,
+                "tax_id": _TAX_ID,
+                "tax_id_type": "ein",
+                "address_line1": "1 Harbor St",
+                "city": "Chicago",
+                "state": "IL",
+                "postal_code": "60601",
+                "phone": "3125550100",
+            },
+        )
         notes.add(
             Note(
                 id=ids["psychotherapy"],
@@ -251,6 +288,7 @@ def chart(engine: Engine, tenant_schema: str) -> dict[str, str]:
         _close_tenant_session(session, tokens)
     ids.update(_seed_intake(engine, tenant_schema, patient_id, now))
     ids.update(_seed_clinical(engine, tenant_schema, patient_id, ids, now))
+    ids.update(_seed_billing(engine, tenant_schema, patient_id, ids, now))
     return ids
 
 
@@ -553,6 +591,132 @@ def _seed_intake(
     return {"intake:submitted": submitted, "intake:unstarted": unstarted}
 
 
+def _seed_billing(
+    engine: Engine, tenant_schema: str, patient_id: str, ids: dict[str, str], now: datetime
+) -> dict[str, str]:
+    """A card on file, two ledger rows, a plan, and a claim for the visit with one hop.
+
+    Through the repositories the billing screens write with. The card is
+    seeded so the export can be held to never carrying it; the claim names
+    the seeded appointment on the practice-local date it was held, which is
+    what lets the superbill render.
+    """
+    from app.models.claims import ClaimReceipt  # noqa: PLC0415
+    from app.models.coverage import PatientCoverage  # noqa: PLC0415
+    from app.repositories.postgres.claim_receipts import (  # noqa: PLC0415
+        PostgresClaimReceiptRepository,
+    )
+    from app.repositories.postgres.claims import PostgresClaimRepository  # noqa: PLC0415
+    from app.repositories.postgres.coverage import (  # noqa: PLC0415
+        PostgresPatientCoverageRepository,
+        PostgresPayerRepository,
+    )
+    from app.repositories.postgres.patient_payment import (  # noqa: PLC0415
+        PostgresPatientPaymentRepository,
+    )
+    from app.services.coverage_intake import new_payer  # noqa: PLC0415
+    from tests.claims_fixtures import claim, line  # noqa: PLC0415
+
+    seeded = {
+        "coverage": str(uuid.uuid4()),
+        "claim": str(uuid.uuid4()),
+        "claim:line": str(uuid.uuid4()),
+        "claim:event": str(uuid.uuid4()),
+    }
+    control = uuid.uuid4().hex[:12].upper()
+    service_date = now.astimezone(ZoneInfo(_CLINICIAN_TIMEZONE)).date()
+
+    session, tokens = _open_tenant_session(engine, tenant_schema)
+    try:
+        payments = PostgresPatientPaymentRepository(session)
+        payments.start_card_setup(
+            patient_id=patient_id, stripe_customer_id=f"cus_{_CARD_SENTINEL}", user_id=_CLINICIAN
+        )
+        payments.complete_card_setup(
+            patient_id=patient_id,
+            stripe_payment_method_id=f"pm_{_CARD_SENTINEL}",
+            brand="visa",
+            last4=_CARD_LAST4,
+            exp_month=12,
+            exp_year=2030,
+            user_id=_CLINICIAN,
+        )
+        copay = payments.add_ledger_row(
+            patient_id=patient_id,
+            kind="copay",
+            amount_cents=2500,
+            currency="usd",
+            user_id=_CLINICIAN,
+            appointment_id=ids["appointment"],
+            method="card",
+        )
+        cheque = payments.add_ledger_row(
+            patient_id=patient_id,
+            kind="payment",
+            amount_cents=4000,
+            currency="usd",
+            user_id=_CLINICIAN,
+            method="check",
+            payment_reference=_CHECK_NUMBER,
+        )
+        seeded["charge:copay"] = copay.id
+        seeded["charge:cheque"] = cheque.id
+
+        payer = PostgresPayerRepository(session).create(
+            new_payer(name="Stedi Test Payer", payer_id="STEDI")
+        )
+        PostgresPatientCoverageRepository(session).create(
+            PatientCoverage(
+                id=seeded["coverage"],
+                patient_id=patient_id,
+                payer_id=payer.id,
+                member_id="MEM123456",
+                group_number="G7",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        PostgresClaimRepository(session).create(
+            claim(
+                id=seeded["claim"],
+                control_number=control,
+                patient_id=patient_id,
+                coverage_id=seeded["coverage"],
+                payer_id=payer.id,
+                state="submitted",
+                submitted_at=now,
+                created_at=now,
+                updated_at=now,
+                lines=[
+                    line(
+                        id=seeded["claim:line"],
+                        claim_id=seeded["claim"],
+                        patient_id=patient_id,
+                        appointment_id=ids["appointment"],
+                        line_control_number=f"{control}L1",
+                        service_date=service_date,
+                        created_at=now,
+                    )
+                ],
+            )
+        )
+        PostgresClaimReceiptRepository(session).add(
+            ClaimReceipt(
+                id=seeded["claim:event"],
+                claim_id=seeded["claim"],
+                kind="submitted",
+                from_state="validated",
+                to_state="submitted",
+                occurred_at=now,
+            )
+        )
+        session.commit()
+    finally:
+        _close_tenant_session(session, tokens)
+    seeded["claim:control"] = control
+    return seeded
+
+
 # ---------------------------------------------------------------------------
 # Wiring
 # ---------------------------------------------------------------------------
@@ -650,6 +814,58 @@ def _close_session(session: Session, tokens: tuple[Any, ...]) -> None:
 
 _close_tenant_session = _close_session
 _close_patient_session = _close_session
+
+
+def _billing_source(session: Session, clinician_profiles: Any) -> Any:
+    """The billing record wired as the route wires it, on the same tenant session."""
+    from app.payments.statement import PracticeBlock  # noqa: PLC0415
+    from app.repositories.postgres.appointment import (  # noqa: PLC0415
+        PostgresAppointmentRepository,
+    )
+    from app.repositories.postgres.claim_receipts import (  # noqa: PLC0415
+        PostgresClaimReceiptRepository,
+    )
+    from app.repositories.postgres.claims import PostgresClaimRepository  # noqa: PLC0415
+    from app.repositories.postgres.coverage import (  # noqa: PLC0415
+        PostgresPatientCoverageRepository,
+        PostgresPayerRepository,
+    )
+    from app.repositories.postgres.patient_payment import (  # noqa: PLC0415
+        PostgresPatientPaymentRepository,
+    )
+    from app.repositories.postgres.user import PostgresUserRepository  # noqa: PLC0415
+    from app.services.export_billing import BillingRecordSource  # noqa: PLC0415
+    from app.services.practice_billing_profile import (  # noqa: PLC0415
+        load_billing_profile,
+        load_billing_tax_id,
+    )
+
+    users = PostgresUserRepository(session)
+
+    def practice() -> PracticeBlock:
+        profile = load_billing_profile(session)
+        return PracticeBlock(
+            name=cast("str | None", profile.get("legal_name")),
+            address_line1=cast("str | None", profile.get("address_line1")),
+            address_line2=cast("str | None", profile.get("address_line2")),
+            city=cast("str | None", profile.get("city")),
+            state=cast("str | None", profile.get("state")),
+            postal_code=cast("str | None", profile.get("postal_code")),
+            phone=cast("str | None", profile.get("phone")),
+        )
+
+    return BillingRecordSource(
+        payments=PostgresPatientPaymentRepository(session),
+        coverage=PostgresPatientCoverageRepository(session),
+        payers=PostgresPayerRepository(session),
+        claims=PostgresClaimRepository(session),
+        receipts=PostgresClaimReceiptRepository(session),
+        appointments=PostgresAppointmentRepository(session),
+        practice=practice,
+        tax_id=lambda: load_billing_tax_id(session),
+        license_for=clinician_profiles.get,
+        timezone=lambda user_id: ZoneInfo(users.get_preferences(user_id).timezone),
+    )
 
 
 def _export(
@@ -772,6 +988,7 @@ def _export(
             documents=documents,
             intake_forms=forms.submitted_forms,
             clinical_record=clinical.read,
+            billing_record=_billing_source(session, clinician_profiles).read,
         )
         return service.get_patient_export_data(
             patient_id,
@@ -908,7 +1125,7 @@ def _assert_archive_keeps_its_promises(files: dict[str, bytes]) -> dict[str, Any
     described = {"README.txt", "chart.pdf", "manifest.json", "patient.json", "schema.json"}
     assert described <= set(files)
     carried = set(files) - described
-    assert all(name.startswith(("documents/", "intake/")) for name in carried), carried
+    assert all(name.startswith(("documents/", "intake/", "billing/")) for name in carried), carried
     schema = json.loads(files["schema.json"])
     Draft202012Validator.check_schema(schema)
     document = json.loads(files["patient.json"])
@@ -941,7 +1158,7 @@ class TestZip:
         assert result["content_type"] == "application/zip"
         files = _unzip(result["content"])
         document = _assert_archive_keeps_its_promises(files)
-        assert document["schema_version"] == "1.2"
+        assert document["schema_version"] == "1.3"
         assert document["options"] == {
             "include_transcripts": True,
             "include_psychotherapy_notes": True,
@@ -1202,3 +1419,130 @@ class TestZipClinical:
             assert "Sertraline" in page_text
             assert "F41.1" in page_text
             assert _CHAT_SENTINEL not in page_text
+
+
+class TestZipBilling:
+    def test_each_billing_list_is_in_patient_json_as_the_rows_say(
+        self, engine: Engine, tenant_schema: str, chart: dict[str, str]
+    ) -> None:
+        result = _export(engine, tenant_schema, chart["patient"], "zip")
+        files = _unzip(result["content"])
+        document = _assert_archive_keeps_its_promises(files)
+
+        copay, cheque = document["charges"]
+        assert copay | {"recorded_at": None, "updated_at": None} == {
+            "id": chart["charge:copay"],
+            "kind": "copay",
+            "appointment_id": chart["appointment"],
+            "claim_id": None,
+            "description": None,
+            "amount_cents": 2500,
+            "currency": "usd",
+            "status": "succeeded",
+            "method": "card",
+            "payment_reference": None,
+            "write_off_reason": None,
+            "settled_by_charge_id": None,
+            "recorded_at": None,
+            "updated_at": None,
+        }
+        assert (cheque["id"], cheque["method"], cheque["payment_reference"]) == (
+            chart["charge:cheque"],
+            "check",
+            _CHECK_NUMBER,
+        )
+
+        [plan] = document["coverage"]
+        assert plan | {"created_at": None, "updated_at": None, "verified_at": None} == {
+            "id": chart["coverage"],
+            "payer_name": "Stedi Test Payer",
+            "payer_id": "STEDI",
+            "member_id": "MEM123456",
+            "group_number": "G7",
+            "plan_name": None,
+            "subscriber_relationship": "self",
+            "subscriber": None,
+            "active": True,
+            "verified_at": None,
+            "created_at": None,
+            "updated_at": None,
+        }
+
+        [filed] = document["claims"]
+        assert filed["id"] == chart["claim"]
+        assert filed["control_number"] == chart["claim:control"]
+        assert filed["state"] == "submitted"
+        assert filed["payer_name"] == "Stedi Test Payer"
+        assert filed["diagnosis_codes"] == ["F41.1"]
+        [service] = filed["lines"]
+        assert (service["id"], service["cpt"], service["diagnosis_codes"]) == (
+            chart["claim:line"],
+            "90837",
+            ["F41.1"],
+        )
+        assert [(e["id"], e["kind"], e["to_state"]) for e in filed["events"]] == [
+            (chart["claim:event"], "submitted", "submitted")
+        ]
+
+        # What the route records.
+        assert result["charge_ids"] == [chart["charge:copay"], chart["charge:cheque"]]
+        assert result["coverage_ids"] == [chart["coverage"]]
+        assert result["claim_ids"] == [chart["claim"]]
+        # Nothing was owed, so both the copay and the cheque are money held for the client.
+        assert result["balance_cents"] == -6500
+
+    def test_the_statement_and_the_superbill_are_beside_the_chart(
+        self, engine: Engine, tenant_schema: str, chart: dict[str, str]
+    ) -> None:
+        result = _export(engine, tenant_schema, chart["patient"], "zip")
+        files = _unzip(result["content"])
+        _assert_archive_keeps_its_promises(files)
+
+        assert files["billing/statement.pdf"].startswith(b"%PDF")
+        assert files["billing/superbill.pdf"].startswith(b"%PDF")
+        assert "90837" in _pdf_text(files["billing/superbill.pdf"])
+        kinds = {f["path"]: f["kind"] for f in json.loads(files["manifest.json"])["files"]}
+        assert kinds["billing/statement.pdf"] == "statement"
+        assert kinds["billing/superbill.pdf"] == "superbill"
+        assert (result["statement"], result["superbill"]) == (True, True)
+
+    def test_nothing_about_the_card_is_anywhere_in_the_copy(
+        self, engine: Engine, tenant_schema: str, chart: dict[str, str]
+    ) -> None:
+        for options in ({}, {"include_transcripts": True, "include_psychotherapy_notes": True}):
+            files = _unzip(
+                _export(engine, tenant_schema, chart["patient"], "zip", **options)["content"]
+            )
+            _assert_archive_keeps_its_promises(files)
+            for name, data in files.items():
+                text = _pdf_text(data) if name.endswith(".pdf") else data.decode("latin-1")
+                assert _CARD_SENTINEL not in text, name
+                assert f"cus_{_CARD_SENTINEL}" not in text, name
+                assert "visa" not in text.lower(), name
+                if not name.endswith(".pdf"):
+                    assert _CARD_LAST4 not in text, name
+            # Control: the row the card paid is in the same copy, as a category.
+            assert chart["charge:copay"] in files["patient.json"].decode()
+
+    def test_chart_pdf_has_a_billing_section_after_the_clinical_ones(
+        self, engine: Engine, tenant_schema: str, chart: dict[str, str]
+    ) -> None:
+        for export_format in ("zip", "pdf"):
+            result = _export(engine, tenant_schema, chart["patient"], export_format)
+            pdf = (
+                result["content"]
+                if export_format == "pdf"
+                else _unzip(result["content"])["chart.pdf"]
+            )
+            page_text = _pdf_text(pdf)
+            headings = [
+                "Diagnoses \\(1\\)",
+                "Billing",
+                "Charges \\(2\\)",
+                "Coverage \\(1\\)",
+                "Claims \\(1\\)",
+            ]
+            positions = [page_text.find(heading) for heading in headings]
+            assert -1 not in positions, (export_format, positions)
+            assert positions == sorted(positions), "billing follows the clinical lists"
+            assert chart["claim:control"] in page_text

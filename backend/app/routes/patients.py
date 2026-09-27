@@ -10,7 +10,7 @@ import logging
 import uuid
 from datetime import timedelta
 from enum import StrEnum
-from typing import cast
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.encoders import jsonable_encoder
@@ -53,12 +53,16 @@ from ..repositories import (
 )
 from ..services import AuditService, ExportService, PatientDocumentsService, get_audit_service
 from ..services.export_archive import practitioner_from
+from ..services.export_billing import BillingRecordSource
 from ..services.export_clinical import ClinicalRecordSource
 from ..services.export_service import IntakeFormFiles
 from ..services.practice_billing_profile import load_billing_profile
 from ..utcnow import utc_now
+from .claims import _practice_timezone
 from .patient_documents import download_action_for, get_patient_documents_service
 from .patient_intake_export import get_intake_form_files
+from .patient_statements import get_practice_block
+from .superbills import get_billing_tax_id_loader
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +148,37 @@ def get_clinical_record_source(
     )
 
 
+def _ids(export_data: dict[str, Any], key: str) -> dict[str, Any] | None:
+    """``{key: ids}`` when the export carried any, else ``None`` for no audit row."""
+    ids = export_data.get(key, [])
+    return {key: ids} if ids else None
+
+
+def get_billing_record_source(
+    _ctx: TenantContext = Depends(get_tenant_context),
+) -> BillingRecordSource:
+    """The billing screens' own repositories and helpers, scoped to the tenant.
+
+    The statement's practice block, the superbill's tax id and the
+    practice timezone come from the routes that render those documents on
+    their own, so the copies in an archive are the ones a client would be
+    handed.
+    """
+    users = repositories.get_user_repository()
+    return BillingRecordSource(
+        payments=repositories.get_patient_payment_repository(),
+        coverage=repositories.get_patient_coverage_repository(),
+        payers=repositories.get_payer_repository(),
+        claims=repositories.get_claim_repository(),
+        receipts=repositories.get_claim_receipt_repository(),
+        appointments=repositories.get_appointment_repository(),
+        practice=get_practice_block,
+        tax_id=get_billing_tax_id_loader,
+        license_for=_clinician_profile_repo_factory().get,
+        timezone=lambda user_id: _practice_timezone(users, user_id),
+    )
+
+
 def get_export_service(
     patient_repo: PatientRepository = Depends(get_patient_repository),
     session_repo: TherapySessionRepository = Depends(get_therapy_session_repository),
@@ -151,6 +186,7 @@ def get_export_service(
     documents: PatientDocumentsService = Depends(get_patient_documents_service),
     intake_forms: IntakeFormFiles = Depends(get_intake_form_files),
     clinical: ClinicalRecordSource = Depends(get_clinical_record_source),
+    billing: BillingRecordSource = Depends(get_billing_record_source),
 ) -> ExportService:
     """Get export service instance, scoped to the tenant like its repositories."""
     db = get_db_session()
@@ -167,6 +203,7 @@ def get_export_service(
         documents=documents,
         intake_forms=intake_forms,
         clinical_record=clinical.read,
+        billing_record=billing.read,
     )
 
 
@@ -647,6 +684,39 @@ def export_patient_data(
             patient_id=patient.id,
             changes={"message_count": message_count},
         )
+    # The billing record in the copy is recorded as its own screens and
+    # documents record a read: identifiers and amounts, nothing clinical.
+    billing_rows: list[tuple[AuditAction, dict[str, Any] | None]] = [
+        (AuditAction.PATIENT_CHARGES_VIEWED, _ids(export_data, "charge_ids")),
+        (AuditAction.PATIENT_COVERAGE_VIEWED, _ids(export_data, "coverage_ids")),
+        (AuditAction.PATIENT_CLAIMS_VIEWED, _ids(export_data, "claim_ids")),
+        (
+            AuditAction.STATEMENT_GENERATED,
+            {
+                "charge_ids": export_data.get("charge_ids", []),
+                "balance_cents": export_data.get("balance_cents", 0),
+            }
+            if export_data.get("statement")
+            else None,
+        ),
+        (
+            AuditAction.SUPERBILL_GENERATED,
+            {"claim_ids": export_data.get("claim_ids", [])}
+            if export_data.get("superbill")
+            else None,
+        ),
+    ]
+    for action, changes in billing_rows:
+        if changes is not None:
+            audit.log(
+                action,
+                user,
+                request,
+                resource_type=ResourceType.PATIENT,
+                resource_id=patient.id,
+                patient=patient,
+                changes=changes,
+            )
 
     # The PDF and the archive are file downloads
     if format in ("pdf", "zip"):

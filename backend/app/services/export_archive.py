@@ -45,6 +45,7 @@ if TYPE_CHECKING:
 
     from ..models import Note, Patient, PatientDocument, TherapySession
     from ..repositories.clinician_profile import ClinicianProfile
+    from .export_billing import BillingRecord
     from .export_clinical import ClinicalRecord
     from .record_set import RecordSetSelector
 
@@ -57,6 +58,7 @@ patient.json   The same chart as structured data.
 schema.json    The JSON Schema that patient.json follows.
 documents/     Files uploaded to the chart, as they were uploaded.
 intake/        Each submitted intake form, as a document to read or print.
+billing/       The client's statement, and the superbill for the visits claims were filed for.
 manifest.json  Every other file in this archive, with its size and SHA-256 checksum.
 README.txt     This file.
 """
@@ -170,6 +172,7 @@ def build_export_document(
     clinical: ClinicalRecord,
     exported_at: datetime,
     selector: RecordSetSelector,
+    billing: BillingRecord | None = None,
 ) -> PatientExportDocument:
     return PatientExportDocument(
         exported_at=exported_at,
@@ -202,6 +205,9 @@ def build_export_document(
         message_threads=clinical.message_threads,
         medications=clinical.medications,
         diagnoses=clinical.diagnoses,
+        charges=billing.charges if billing else [],
+        coverage=billing.coverage if billing else [],
+        claims=billing.claims if billing else [],
     )
 
 

@@ -99,7 +99,14 @@ async function exportFromChart(
   return { response, download, bytes }
 }
 
-const ARCHIVE_FILES = ["README.txt", "chart.pdf", "manifest.json", "patient.json", "schema.json"]
+const ARCHIVE_FILES = [
+  "README.txt",
+  "billing/statement.pdf",
+  "chart.pdf",
+  "manifest.json",
+  "patient.json",
+  "schema.json",
+]
 
 interface ExportedDocument {
   id: string
@@ -287,7 +294,7 @@ test.describe("patient export", () => {
       sha256(records.body),
     )
     expect([...files.keys()].sort()).toEqual([...ARCHIVE_FILES, uploaded.archive_path].sort())
-    expect(document.schema_version).toBe("1.2")
+    expect(document.schema_version).toBe("1.3")
     expect(document.options).toEqual({
       include_transcripts: false,
       include_psychotherapy_notes: false,
@@ -303,7 +310,7 @@ test.describe("patient export", () => {
 
     // The manifest names every other file, with its true size and checksum.
     const manifest = JSON.parse(read("manifest.json").toString("utf8")) as ArchiveManifest
-    expect(manifest.schema_version).toBe("1.2")
+    expect(manifest.schema_version).toBe("1.3")
     expect(manifest.options).toEqual(document.options)
     expect(manifest.files.map((file) => file.path).sort()).toEqual(
       [...files.keys()].filter((name) => name !== "manifest.json").sort(),
@@ -369,7 +376,7 @@ test.describe("patient export", () => {
       message_threads: ExportedThread[]
     }
     expect(validate(document), JSON.stringify(validate.errors)).toBe(true)
-    expect(document.schema_version).toBe("1.2")
+    expect(document.schema_version).toBe("1.3")
 
     const phq9 = document.outcome_measures.filter((measure) => measure.instrument === "phq9")
     expect(phq9, "the PHQ-9 the client completed").toHaveLength(1)
@@ -384,6 +391,78 @@ test.describe("patient export", () => {
     ])
   })
 })
+
+test.describe("patient export billing", () => {
+  test("a payment recorded in the chart is in the archive, with the statement beside it", async ({
+    api,
+    signedInPage: page,
+  }) => {
+    const patient = await givePatient(api)
+
+    // The payment, recorded the way a clinician records one: from the
+    // chart's Balance tab, a cheque with its number.
+    await page.goto(`/dashboard/patients/${patient.id}`)
+    await page.getByRole("tab", { name: /Balance/ }).click()
+    await page.getByRole("button", { name: "Record payment" }).click()
+    await page.getByLabel("Amount").fill("150.00")
+    await page.getByRole("combobox", { name: /how it arrived/i }).click()
+    await page.getByRole("option", { name: "Check" }).click()
+    await page.getByLabel("Check number").fill("1042")
+    await page.getByRole("button", { name: "Record payment" }).click()
+    await expect(page.getByText("check · 1042")).toBeVisible()
+
+    await page.goto(`/dashboard/patients/${patient.id}`)
+    await expect(
+      page.getByRole("heading", { name: `${patient.first_name} ${patient.last_name}` }),
+    ).toBeVisible()
+    const zip = await exportFromChart(page, "Archive")
+    const files = await unzip(zip.bytes)
+    const schemaFile = files.get("schema.json")
+    const patientFile = files.get("patient.json")
+    if (!schemaFile || !patientFile) throw new Error("the archive is missing its data files")
+
+    const ajv = new Ajv2020({ allErrors: true })
+    addFormats(ajv)
+    const validate = ajv.compile(JSON.parse(schemaFile.toString("utf8")) as object)
+    const document = JSON.parse(patientFile.toString("utf8")) as {
+      charges: ExportedCharge[]
+      coverage: unknown[]
+      claims: unknown[]
+    }
+    expect(validate(document), JSON.stringify(validate.errors)).toBe(true)
+
+    expect(document.charges, "the payment the clinician recorded").toHaveLength(1)
+    expect(document.charges[0]).toMatchObject({
+      kind: "payment",
+      amount_cents: 15000,
+      status: "succeeded",
+      method: "check",
+      payment_reference: "1042",
+    })
+    expect(document.coverage).toEqual([])
+    expect(document.claims).toEqual([])
+
+    // The statement is beside the chart; no claim was filed, so no superbill.
+    const statement = files.get("billing/statement.pdf")
+    expect(statement, "billing/statement.pdf").toBeTruthy()
+    expect(statement?.subarray(0, 4).toString("latin1")).toBe("%PDF")
+    expect(files.has("billing/superbill.pdf")).toBe(false)
+    const manifest = JSON.parse(
+      files.get("manifest.json")?.toString("utf8") ?? "{}",
+    ) as ArchiveManifest
+    expect(manifest.files.find((file) => file.path === "billing/statement.pdf")?.kind).toBe(
+      "statement",
+    )
+  })
+})
+
+interface ExportedCharge {
+  kind: string
+  amount_cents: number
+  status: string
+  method: string | null
+  payment_reference: string | null
+}
 
 interface ExportedMeasure {
   instrument: string
