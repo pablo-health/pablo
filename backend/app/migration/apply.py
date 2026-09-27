@@ -750,7 +750,7 @@ class ArchiveApplier:
     def _remove(self, table: str, target_id: str) -> bool:
         removers = {
             "patients": lambda: self._patients.delete(target_id, self._user_id),
-            "notes": lambda: self._notes_repo.delete(target_id, self._user_id),
+            "notes": lambda: self._remove_note(target_id),
             "appointments": lambda: self._appointments.delete(target_id, self._user_id),
             "outcome_measures": lambda: self._remove_measure(target_id),
             "patient_documents": lambda: get_patient_document_repository().soft_delete(
@@ -763,6 +763,13 @@ class ArchiveApplier:
         }
         remover = removers.get(table)
         return bool(remover()) if remover else False
+
+    def _remove_note(self, note_id: str) -> bool:
+        # The repository's delete returns nothing; whether it took effect is
+        # whether the row is now soft-deleted.
+        self._notes_repo.delete(note_id, self._user_id)
+        row = self._session.get(NoteRow, note_id)
+        return row is not None and row.deleted_at is not None
 
     def _remove_measure(self, measure_id: str) -> bool:
         self._measures.soft_delete(measure_id, self._user_id)

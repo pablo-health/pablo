@@ -295,16 +295,20 @@ def test_main_export_end_to_end(client: TestClient, engine: Engine, schema: str)
     assert second["report"]["counts"]["contact"] == {"unchanged": 3}
     assert _chart(engine, schema) == chart
 
-    # Undo the first run: everything it created goes.
-    undone = client.post(f"/api/migration/runs/{run['id']}/undo", json={})
-    assert undone.status_code == 200, undone.text
-    assert undone.json()["state"] == "undone"
-    after = _chart(engine, schema)
-    assert after["patients"] == 0
-    assert after["notes"] == 0
-    assert after["measures"] == 0
-    assert after["threads"] == 0
+    _undo_everything(client, engine, schema, run["id"])
 
+
+def _undo_everything(client: TestClient, engine: Engine, schema: str, run_id: str) -> None:
+    """Undo the first run: everything it created goes, and the report says so."""
+    undone = client.post(f"/api/migration/runs/{run_id}/undo", json={})
+    assert undone.status_code == 200, undone.text
+    body = undone.json()
+    assert body["state"] == "undone"
+    assert body["report"]["undo"]["removed"]["note"] == 15
+    assert body["report"]["undo"]["removed"]["contact"] == 3
+    assert body["report"]["undo"]["kept"] == []
+    after = _chart(engine, schema)
+    assert (after["patients"], after["notes"], after["measures"], after["threads"]) == (0, 0, 0, 0)
     history = client.get("/api/migration/runs").json()["runs"]
     assert [r["state"] for r in history] == ["applied", "undone"]
 
