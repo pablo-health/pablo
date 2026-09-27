@@ -375,7 +375,16 @@ class PatientExportDocument(BaseModel):
 
 
 ManifestFileKind = Literal[
-    "pdf", "json", "schema", "text", "document", "intake_form", "statement", "superbill", "csv"
+    "pdf",
+    "json",
+    "schema",
+    "text",
+    "document",
+    "intake_form",
+    "statement",
+    "superbill",
+    "csv",
+    "archive",
 ]
 
 

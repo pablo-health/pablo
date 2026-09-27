@@ -43,6 +43,7 @@ from app.models import User
 from app.models.audit import AuditAction
 from app.routes.admin import TenantExportRequest
 from app.routes.admin import router as admin_router
+from app.routes.patients import get_export_service, get_patient_repository
 from app.services import AuditService, get_audit_service
 from app.services.tenant_export_service import (
     PSYCHOTHERAPY_NOTES_SCOPE,
@@ -55,6 +56,13 @@ from app.settings import Settings
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+
+
+def _stub_dependency() -> MagicMock:
+    """A dependency the raw path never reaches. Named, because FastAPI reads an
+    override's signature for sub-dependencies and ``MagicMock`` itself has one
+    it cannot make sense of."""
+    return MagicMock()
 
 
 @pytest.fixture
@@ -117,6 +125,8 @@ def client(admin_user: User, audit_service: AuditService) -> TestClient:
     # is patched per-test so the DB session itself is irrelevant.
     _stub_db = MagicMock()
     app.dependency_overrides[get_db_session] = lambda: _stub_db
+    app.dependency_overrides[get_export_service] = _stub_dependency
+    app.dependency_overrides[get_patient_repository] = _stub_dependency
     return TestClient(app)
 
 
@@ -143,6 +153,8 @@ class TestTenantExportAuth:
         app.dependency_overrides[get_current_user] = lambda: non_admin_user
         _stub_db = MagicMock()
         app.dependency_overrides[get_db_session] = lambda: _stub_db
+        app.dependency_overrides[get_export_service] = _stub_dependency
+        app.dependency_overrides[get_patient_repository] = _stub_dependency
 
         with patch("app.auth.service.get_settings") as mock_settings:
             mock_settings.return_value = Settings(
@@ -150,7 +162,7 @@ class TestTenantExportAuth:
                 database_url="postgresql://test:test@localhost:5432/test",
             )
             client = TestClient(app)
-            resp = client.post("/api/admin/tenant-export", json={"format": "json"})
+            resp = client.post("/api/admin/tenant-export", json={"raw": True, "format": "json"})
 
         assert resp.status_code == 403
         body = resp.json()
@@ -195,7 +207,7 @@ class TestTenantExportHappyPath:
             client.stream(
                 "POST",
                 "/api/admin/tenant-export",
-                json={"format": "json"},
+                json={"raw": True, "format": "json"},
             ) as resp,
         ):
             assert resp.status_code == 200
@@ -258,7 +270,7 @@ class TestTenantExportHappyPath:
             client.stream(
                 "POST",
                 "/api/admin/tenant-export",
-                json={"format": "csv", "include_audio": True},
+                json={"raw": True, "format": "csv", "include_audio": True},
             ) as resp,
         ):
             assert resp.status_code == 200
@@ -283,7 +295,9 @@ class TestTenantExportHappyPath:
 
         with (
             patch("app.routes.admin.stream_tenant_archive", side_effect=_fake_stream),
-            client.stream("POST", "/api/admin/tenant-export", json={"format": "json"}) as resp,
+            client.stream(
+                "POST", "/api/admin/tenant-export", json={"raw": True, "format": "json"}
+            ) as resp,
         ):
             assert resp.status_code == 200
             for _ in resp.iter_bytes():
@@ -315,7 +329,7 @@ class TestTenantExportHappyPath:
             client.stream(
                 "POST",
                 "/api/admin/tenant-export",
-                json={"format": "json", "include_psychotherapy_notes": True},
+                json={"raw": True, "format": "json", "include_psychotherapy_notes": True},
             ) as resp,
         ):
             assert resp.status_code == 200
@@ -352,7 +366,7 @@ class TestTenantExportHappyPath:
             client.stream(
                 "POST",
                 "/api/admin/tenant-export",
-                json={"format": "json"},
+                json={"raw": True, "format": "json"},
             ) as resp,
         ):
             assert resp.status_code == 200
@@ -398,7 +412,7 @@ class TestTenantExportHappyPath:
             with aborting_client.stream(
                 "POST",
                 "/api/admin/tenant-export",
-                json={"format": "json"},
+                json={"raw": True, "format": "json"},
             ) as resp:
                 # Drain whatever bytes did make it out before the raise.
                 for _ in resp.iter_bytes():

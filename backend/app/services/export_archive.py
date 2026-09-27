@@ -213,7 +213,7 @@ def build_export_document(
     )
 
 
-def _json_bytes(value: object) -> bytes:
+def json_bytes(value: object) -> bytes:
     return (json.dumps(value, indent=2, ensure_ascii=False) + "\n").encode()
 
 
@@ -229,10 +229,8 @@ def build_archive(
     """
     described = [
         ArchiveFile("chart.pdf", "pdf", chart_pdf),
-        ArchiveFile("patient.json", "json", _json_bytes(document.model_dump(mode="json"))),
-        ArchiveFile(
-            "schema.json", "schema", _json_bytes(PatientExportDocument.model_json_schema())
-        ),
+        ArchiveFile("patient.json", "json", json_bytes(document.model_dump(mode="json"))),
+        ArchiveFile("schema.json", "schema", json_bytes(PatientExportDocument.model_json_schema())),
         ArchiveFile("README.txt", "text", README.encode()),
         *files,
     ]
@@ -251,7 +249,7 @@ def build_archive(
     )
     entries = [
         *((f.path, f.data) for f in described),
-        ("manifest.json", _json_bytes(manifest.model_dump(mode="json"))),
+        ("manifest.json", json_bytes(manifest.model_dump(mode="json"))),
     ]
 
     stamp = document.exported_at.timetuple()[:6]

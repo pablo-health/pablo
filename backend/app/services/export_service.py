@@ -235,6 +235,8 @@ class ExportService:
             "content": build_archive(document, chart_pdf, files),
             "content_type": "application/zip",
             "filename": f"{stem}.zip",
+            # The chart as data, for a caller that builds a practice-wide file from many.
+            "document": document,
             # What left beside the chart, for the route's audit rows.
             "documents": [upload for upload, _ in uploads],
             "intake_assignment_ids": [assignment_id for assignment_id, _ in intake_forms],

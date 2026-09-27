@@ -7,6 +7,7 @@ import {
   CalendarClock,
   ClipboardCheck,
   Clock,
+  FileArchive,
   Mic,
   Palette,
   Receipt,
@@ -28,6 +29,7 @@ import { CredentialingPage } from "./pages/CredentialingPage"
 import { CredentialingStartPage } from "./pages/CredentialingStartPage"
 import { InsurancePage } from "./pages/InsurancePage"
 import { PatientPortalPage } from "./pages/PatientPortalPage"
+import { PracticeExportPage } from "./pages/PracticeExportPage"
 import { ProfilePage } from "./pages/ProfilePage"
 import { SchedulingPage } from "./pages/SchedulingPage"
 import { SecurityPage } from "./pages/SecurityPage"
@@ -163,6 +165,13 @@ const baseGroups: SettingsGroup[] = [
         page: PatientPortalPage,
         feature: "patient_portal",
         desc: "Intake forms, self-report measures and patient sign-in.",
+      },
+      {
+        id: "export",
+        label: "Export",
+        icon: FileArchive,
+        page: PracticeExportPage,
+        desc: "Everything in this practice, as one file.",
       },
     ],
   },

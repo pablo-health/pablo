@@ -493,10 +493,16 @@ export async function postForm<T>(
  * payloads, so file downloads need their own path. Error shapes mirror
  * apiClient().
  */
-async function fetchDownload(endpoint: string, token?: string): Promise<Response> {
+async function fetchDownload(
+  endpoint: string,
+  token?: string,
+  body?: unknown,
+): Promise<Response> {
+  const headers = await getAuthHeader(token)
   const response = await fetch(buildApiUrl(endpoint), {
-    method: "GET",
-    headers: await getAuthHeader(token),
+    method: body === undefined ? "GET" : "POST",
+    headers: body === undefined ? headers : { ...headers, "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
   })
   if (!response.ok) {
     let errorData: ApiErrorResponse | null = null
@@ -560,6 +566,24 @@ export function filenameFromDisposition(disposition: string | null): string | nu
  */
 export async function getFile(endpoint: string, token?: string): Promise<DownloadedFile> {
   const response = await fetchDownload(endpoint, token)
+  return {
+    blob: await response.blob(),
+    filename: filenameFromDisposition(response.headers.get("content-disposition")),
+  }
+}
+
+/**
+ * POST a JSON body and receive a file download, named as `getFile` names one.
+ *
+ * For the routes that take their options in a body rather than the query
+ * string, such as the practice export.
+ */
+export async function postFile(
+  endpoint: string,
+  body: unknown,
+  token?: string,
+): Promise<DownloadedFile> {
+  const response = await fetchDownload(endpoint, token, body ?? {})
   return {
     blob: await response.blob(),
     filename: filenameFromDisposition(response.headers.get("content-disposition")),

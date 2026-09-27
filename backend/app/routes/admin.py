@@ -2,9 +2,12 @@
 
 """Admin API routes — user management and allowlist."""
 
+import itertools
 import logging
+import tempfile
+from collections.abc import Iterator
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
@@ -15,27 +18,30 @@ from starlette.background import BackgroundTask
 from ..api_errors import BadRequestError, NotFoundError
 from ..auth.service import TenantContext, get_tenant_context, require_admin_hardware_key
 from ..db import get_db_session
-from ..models import User
+from ..models import Patient, User
 from ..models.audit import AuditAction, ResourceType
+from ..models.export import ExportOptions
 from ..repositories import (
     AllowlistRepository,
     UserRepository,
     get_allowlist_repository,
     get_user_repository,
 )
-from ..services import AuditService, get_audit_service
+from ..repositories.patient import PatientRepository
+from ..services import AuditService, ExportService, get_audit_service
+from ..services.practice_export_service import PracticeExportState, stream_practice_archive
 from ..services.tenant_export_service import (
     TenantExportState,
+    audit_log_csv,
     stream_tenant_archive,
     visible_counts_payload,
 )
+from ..utcnow import utc_now
+from .patients import get_export_service, get_patient_repository, record_exported_files
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["admin"])
-
-
-# --- User Management Models ---
 
 
 class UserListItem(BaseModel):
@@ -191,17 +197,23 @@ def add_to_allowlist(
 class TenantExportRequest(BaseModel):
     """Request body for POST /api/admin/tenant-export.
 
-    ``include_audio`` is accepted for forward compatibility but ignored
-    in v1; audio export is out of scope (see THERAPY-d11). The route
-    will still record ``include_audio=False`` in the manifest regardless
-    of what the client sends.
+    The default is the practice archive: every chart the caller can open,
+    each as the archive the chart's own Export builds, with the practice-wide
+    CSV files beside them. ``include_transcripts`` and
+    ``include_psychotherapy_notes`` are the chart export's two options,
+    applied to every archive; left off, no transcript and no restricted note
+    ships.
 
-    ``include_psychotherapy_notes`` opts the caller's own restricted
-    notes into the archive; left off, no restricted note ships.
+    ``raw`` keeps the earlier table dump (a tar.gz of four tables, in
+    ``format``) for one release, for a caller built against it. It goes
+    after that. ``include_audio`` is accepted on that path and ignored, as
+    it always was.
     """
 
+    raw: bool = False
     format: Literal["json", "csv"] = "json"
     include_audio: bool = False
+    include_transcripts: bool = False
     include_psychotherapy_notes: bool = False
 
 
@@ -212,27 +224,27 @@ def tenant_export(
     admin: User = Depends(require_admin_hardware_key),
     db: Session = Depends(get_db_session),
     audit: AuditService = Depends(get_audit_service),
+    patients: PatientRepository = Depends(get_patient_repository),
+    export_service: ExportService = Depends(get_export_service),
 ) -> StreamingResponse:
-    """Stream a tar.gz of the records visible to this admin under row-level security.
+    """Stream the practice as one ZIP, or with ``raw`` the earlier table dump.
 
-    Practice-admin only. Returns a tar.gz containing one file per
-    row-type (patients, therapy_sessions, notes, audit_logs) plus a
-    manifest. Each table's file holds whatever rows this admin's
-    session can see, not a schema-wide total. Audio export is out of
-    scope in v1; ``include_audio`` is accepted from the client but
-    coerced to False.
+    Admin only. The archive holds ``patients/<id>/`` with each chart's own
+    export archive, ``clients.csv`` and ``appointments.csv`` for the whole
+    practice, ``audit_log.csv``, and ``manifest.json`` with every file's
+    checksum. What is in it is what this admin's session can read: the
+    charts they hold a grant on, and within each, what row-level security
+    lets them see.
 
-    The TENANT_EXPORTED audit row is emitted from a ``BackgroundTask``
-    that Starlette runs after the response body is fully sent. If the
-    client disconnects mid-stream or the serializer raises, the holder
-    stays empty and no audit row is written — successful exports are
+    Audit rows are emitted from a ``BackgroundTask`` that Starlette runs
+    after the response body is fully sent: one TENANT_EXPORTED row for the
+    archive, and for each chart in it the same rows the chart's own export
+    writes. If the client disconnects mid-stream or a build raises, the
+    holder stays empty and nothing is written — successful exports are
     audited; aborted ones are not.
     """
-    # ``include_audio`` is intentionally ignored in v1. We still accept
-    # it on the wire so callers that already include it (e.g. an
-    # offboarding flow in a downstream dashboard) don't get 422'd when
-    # audio support later lands.
-    _ = body.include_audio
+    if not body.raw:
+        return _practice_archive(body, request, admin, db, audit, patients, export_service)
 
     state = TenantExportState()
 
@@ -279,6 +291,151 @@ def tenant_export(
         },
         background=BackgroundTask(_emit_audit),
     )
+
+
+#: How many charts the practice export reads per page while it streams.
+_EXPORT_PAGE_SIZE = 100
+
+
+def _every_patient(patients: PatientRepository, user_id: str) -> Iterator[Patient]:
+    """Each chart the caller holds a grant on, a page at a time, as the list screen orders them."""
+    page = 1
+    seen = 0
+    while True:
+        rows, total = patients.list_by_user(user_id, page=page, page_size=_EXPORT_PAGE_SIZE)
+        yield from rows
+        seen += len(rows)
+        if not rows or seen >= total:
+            return
+        page += 1
+
+
+def _practice_archive(
+    body: TenantExportRequest,
+    request: Request,
+    admin: User,
+    db: Session,
+    audit: AuditService,
+    patients: PatientRepository,
+    export_service: ExportService,
+) -> StreamingResponse:
+    """Build the archive to a temporary file inside the request, then stream the file.
+
+    Every database read happens before the response is returned: the
+    session middleware tears the request's session down as the response
+    starts, so a body that read the database while it streamed would run
+    on a bare pooled connection. ``_archive_file`` builds first and yields
+    only once the file is complete; priming it here with one ``next`` runs
+    the build (and writes the audit rows) on the request's session, and the
+    response then streams a finished file.
+    """
+    options = ExportOptions(
+        include_transcripts=body.include_transcripts,
+        include_psychotherapy_notes=body.include_psychotherapy_notes,
+    )
+    state = PracticeExportState()
+    body_chunks = _archive_file(request, admin, db, audit, patients, export_service, options, state)
+    first = next(body_chunks)
+    summary = state.summary
+    if summary is None:  # pragma: no cover - the generator sets it before its first yield
+        msg = "The practice export did not run to completion."
+        raise RuntimeError(msg)
+    return StreamingResponse(
+        itertools.chain([first], body_chunks),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": 'attachment; filename="practice-export.zip"',
+            "Content-Length": str(summary.size_bytes),
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+def _archive_file(
+    request: Request,
+    admin: User,
+    db: Session,
+    audit: AuditService,
+    patients: PatientRepository,
+    export_service: ExportService,
+    options: ExportOptions,
+    state: PracticeExportState,
+) -> Iterator[bytes]:
+    """Write the archive to a temporary file one chart at a time, record it, then yield it.
+
+    Nothing is yielded until the file is complete, so a caller that primes
+    the generator has done every database read on its own session. The
+    file grows one chart at a time, so memory holds one archive, and it
+    goes with the generator, whether the body is sent or the client leaves.
+    """
+
+    def build(patient_id: str) -> dict[str, Any]:
+        return export_service.get_patient_export_data(
+            patient_id,
+            admin.id,
+            "zip",
+            include_transcripts=options.include_transcripts,
+            include_psychotherapy_notes=options.include_psychotherapy_notes,
+        )
+
+    with tempfile.TemporaryFile() as spool:
+        for chunk in stream_practice_archive(
+            patients=_every_patient(patients, admin.id),
+            build=build,
+            audit_log=lambda: audit_log_csv(db),
+            options=options,
+            exported_at=utc_now(),
+            state=state,
+        ):
+            spool.write(chunk)
+        summary = state.summary
+        if summary is None:  # pragma: no cover - the generator sets it on completion
+            msg = "The practice export did not run to completion."
+            raise RuntimeError(msg)
+
+        # The export happened; it is recorded now, whatever becomes of the download.
+        audit.log(
+            AuditAction.TENANT_EXPORTED,
+            admin,
+            request,
+            resource_type=ResourceType.TENANT_EXPORT,
+            resource_id="archive",
+            changes={
+                "format": "zip",
+                "size_bytes": summary.size_bytes,
+                "patients": summary.patients,
+                "files": summary.files,
+                "partial_possible": True,
+                "include_transcripts": options.include_transcripts,
+                "include_psychotherapy_notes": options.include_psychotherapy_notes,
+            },
+        )
+        for patient, exported in state.exported:
+            audit.log_patient_action(
+                AuditAction.PATIENT_EXPORTED,
+                admin,
+                request,
+                patient,
+                changes={
+                    "export_format": "zip",
+                    "include_transcripts": options.include_transcripts,
+                    "include_psychotherapy_notes": options.include_psychotherapy_notes,
+                },
+            )
+            record_exported_files(audit, admin, request, patient, exported)
+        logger.info(
+            "Practice export built by admin %s: patients=%d size_bytes=%d",
+            admin.id,
+            summary.patients,
+            summary.size_bytes,
+        )
+
+        spool.seek(0)
+        while chunk := spool.read(1 << 16):
+            yield chunk
+
+
+# --- User Management Models ---
 
 
 @router.delete("/api/admin/allowlist/{email}")
