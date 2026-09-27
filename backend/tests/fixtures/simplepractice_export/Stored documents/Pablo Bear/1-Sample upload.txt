@@ -1,0 +1,4 @@
+Stand-in for a client upload. In the captured export this path held a PDF the
+practice had attached to the client ("Stored documents/<client>/<n>-<original
+filename>.pdf", numbered in upload order). The bytes are opaque to the importer,
+which lands each file as a patient document; only the path shape is captured.
