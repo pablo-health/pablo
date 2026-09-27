@@ -305,7 +305,19 @@ class ArchiveApplier:
                 return
             run.report.patients[card_id] = patient.id
             run.report.counts["contact"]["merged"] += 1
-            self._ledger(run, Landed("contact", card_id, "patients", patient.id, card.digest))
+            # Marked merged: the patient was here before this run, so undo
+            # must take back only what the run added to it, never the patient.
+            self._ledger(
+                run,
+                Landed(
+                    "contact",
+                    card_id,
+                    "patients",
+                    patient.id,
+                    card.digest,
+                    previous_payload={"merged": True},
+                ),
+            )
             return
         now = utc_now()
         address = card.address
@@ -714,6 +726,12 @@ class ArchiveApplier:
         rows = records_for_run(self._session, run_id)
         for row in sorted(rows, key=lambda r: _UNDO_ORDER.get(r.record_type, len(_UNDO_ORDER))):
             if row.state == "undone":
+                continue
+            if (row.previous_payload or {}).get("merged"):
+                # Merged into a patient who was already here: keep the
+                # patient; the notes and records the run added go on their own.
+                row.state = "undone"
+                row.updated_at = utc_now()
                 continue
             line = max(row.updated_at, landed_until) if landed_until else row.updated_at
             if not include_edited and edited_since(

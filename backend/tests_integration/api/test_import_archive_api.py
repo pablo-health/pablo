@@ -336,6 +336,15 @@ def test_existing_client_without_birthday_is_merged_on_request(
     # 2 progress, 2 psychotherapy, chart note, treatment plan
     assert _notes_for(engine, schema, existing_id) == 6
 
+    # Undo takes back what the import added to her, never Lulu herself.
+    undone = client.post(f"/api/migration/runs/{run['id']}/undo", json={})
+    assert undone.status_code == 200, undone.text
+    after = _chart(engine, schema)
+    assert after["patients"] == 1
+    assert after["imported_patients"] == 0
+    assert _notes_for(engine, schema, existing_id) == 0
+    assert client.get(f"/api/patients/{existing_id}").status_code == 200
+
 
 def test_same_name_without_birthdays_lands_only_where_assigned(
     client: TestClient, engine: Engine, schema: str
