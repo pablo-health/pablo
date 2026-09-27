@@ -12,7 +12,9 @@ and environment-specific configurations for PHI protection.
 
 import logging
 import re
+import tempfile
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator, model_validator
@@ -429,6 +431,18 @@ class Settings(BaseSettings):
             "none|indirect|direct|enterprise. 'none' (the default) asks for no "
             "attestation; 'direct' requests the authenticator's attestation so "
             "the RP can verify its provenance (e.g. genuine Apple/Microsoft)."
+        ),
+    )
+    import_archive_dir: str = Field(
+        default_factory=lambda: str(Path(tempfile.gettempdir()) / "pablo-imports"),
+        description=(
+            "Directory an uploaded records-system export is unpacked into while "
+            "it is previewed and applied. One subdirectory per practice (a hash "
+            "of the tenant, never its name). Archives are deleted on apply and "
+            "at most 48 hours after upload. Must be storage every backend "
+            "instance that serves the practice can read — a single-instance "
+            "deployment can use local disk; a multi-instance one needs a "
+            "shared volume."
         ),
     )
     webauthn_attestation_roots_dir: str = Field(

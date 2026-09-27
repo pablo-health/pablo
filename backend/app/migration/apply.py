@@ -77,7 +77,7 @@ from ..repositories import (
 from ..scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from ..scheduling_engine.models.appointment_type import AppointmentType
 from ..services.note_service import NoteService
-from ..services.patient_documents_service import PatientDocumentsService
+from ..services.patient_documents_service import PatientDocumentError, PatientDocumentsService
 from ..utcnow import utc_now
 from .attribution import SYSTEM_SENDER
 from .ledger import Landed, record_landed, records_for_run
@@ -644,7 +644,9 @@ class ArchiveApplier:
             finalized = self._documents.finalize_upload(
                 document_id=init.document.id, user_id=self._user_id
             )
-        except (ValueError, RuntimeError, NotImplementedError, OSError):
+        except (PatientDocumentError, ValueError, RuntimeError, NotImplementedError, OSError):
+            # No bucket, an unsupported type, or a storage the stack cannot
+            # write to: the upload is reported, the run carries on.
             return None
         return finalized.id
 
@@ -710,7 +712,9 @@ class ArchiveApplier:
             if row.state == "undone":
                 continue
             line = max(row.updated_at, landed_until) if landed_until else row.updated_at
-            if not include_edited and self._edited_since(row.target_table, row.target_id, line):
+            if not include_edited and edited_since(
+                self._session, row.target_table, row.target_id, line
+            ):
                 kept.append(
                     {"key": _key(row.record_type, row.source_id), "reason": "edited since import"}
                 )
@@ -720,23 +724,6 @@ class ArchiveApplier:
             row.state = "undone"
             row.updated_at = utc_now()
         return {"removed": dict(removed), "kept": kept}
-
-    def _edited_since(self, table: str, target_id: str, line: datetime) -> bool:
-        model = _EDITABLE_TABLES.get(table)
-        if model is None:
-            return False
-        updated: datetime | None = self._session.execute(
-            select(model.updated_at).where(model.id == target_id)
-        ).scalar_one_or_none()
-        if updated is None:
-            return False
-        if updated.tzinfo is None:
-            updated = updated.replace(tzinfo=UTC)
-        if line.tzinfo is None:
-            line = line.replace(tzinfo=UTC)
-        # The run's own last write lands a moment before ``line``; only an
-        # edit beyond this grace counts as the clinician's.
-        return (updated - line).total_seconds() > _EDIT_GRACE_SECONDS
 
     def _remove(self, table: str, target_id: str) -> bool:
         removers = {
@@ -771,9 +758,39 @@ class ArchiveApplier:
         return True
 
 
-#: Seconds after ``imported_at`` within which a row's own ``updated_at`` is the
+#: Seconds after the line within which a row's own ``updated_at`` is the
 #: landing itself, not a later edit.
 _EDIT_GRACE_SECONDS = 5
 
 
-__all__ = ["PATIENT_ORIGIN", "ApplyRefusedError", "ApplyReport", "ArchiveApplier"]
+def edited_since(session: Session, table: str, target_id: str, line: datetime) -> bool:
+    """Whether a landed row was changed here after ``line``.
+
+    Used twice: by undo, to keep what the clinician has since edited, and by
+    the preview, to mark a record that changed in the source *and* here as a
+    conflict rather than overwrite it.
+    """
+    model = _EDITABLE_TABLES.get(table)
+    if model is None:
+        return False
+    updated: datetime | None = session.execute(
+        select(model.updated_at).where(model.id == target_id)
+    ).scalar_one_or_none()
+    if updated is None:
+        return False
+    if updated.tzinfo is None:
+        updated = updated.replace(tzinfo=UTC)
+    if line.tzinfo is None:
+        line = line.replace(tzinfo=UTC)
+    # The landing's own write sits a moment before ``line``; only an edit
+    # beyond this grace counts as the clinician's.
+    return (updated - line).total_seconds() > _EDIT_GRACE_SECONDS
+
+
+__all__ = [
+    "PATIENT_ORIGIN",
+    "ApplyRefusedError",
+    "ApplyReport",
+    "ArchiveApplier",
+    "edited_since",
+]

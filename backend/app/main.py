@@ -72,6 +72,7 @@ from .routes import (
     intake_packets,
     internal_transcription,
     launch,
+    migration,
     note_types,
     notes,
     passkey,
@@ -352,6 +353,7 @@ app.include_router(ehr_routes.route_router)
 app.include_router(ehr_routes.navigate_router)
 app.include_router(ical_sync.router)
 app.include_router(calendar_import.router)
+app.include_router(migration.router)
 app.include_router(note_types.router)
 app.include_router(compliance.router)
 app.include_router(supervision.router)
