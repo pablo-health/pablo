@@ -49,8 +49,10 @@ test("the practice export holds each client's archive and the practice-wide file
   const second = await givePatient(api, { last_name: `Practice-${marker}` })
 
   await page.goto(EXPORT_URL)
+  // The one sentence is on the page twice: under the title, from the nav
+  // registry, and on the card. Either is fine; the heading is the anchor.
   await expect(page.getByRole("heading", { name: "Export practice data" })).toBeVisible()
-  await expect(page.getByText("Everything in this practice, as one file.")).toBeVisible()
+  await expect(page.getByText("Everything in this practice, as one file.").first()).toBeVisible()
   await expect(page.getByRole("checkbox", { name: "Include session transcripts" })).not.toBeChecked()
   await expect(
     page.getByRole("checkbox", { name: "Include psychotherapy notes" }),
