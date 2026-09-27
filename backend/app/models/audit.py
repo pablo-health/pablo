@@ -461,6 +461,16 @@ class AuditAction(StrEnum):
     # granularity as opening one, because it is the same disclosure in bulk.
     PATIENT_MESSAGE_THREAD_EXPORTED = "patient_message_thread_exported"
 
+    # Refill requests. CREATED is the patient asking; VIEWED is a clinician
+    # opening one request; QUEUE_VIEWED is the practice's pending list, one
+    # row per patient on it (the list discloses that the patient asked, and
+    # for what); DECIDED is the prescriber's answer. Payloads carry ids and
+    # the decision — never a medication name, never a note.
+    REFILL_REQUEST_CREATED = "refill_request_created"
+    REFILL_REQUEST_VIEWED = "refill_request_viewed"
+    REFILL_REQUEST_QUEUE_VIEWED = "refill_request_queue_viewed"
+    REFILL_REQUEST_DECIDED = "refill_request_decided"
+
     # Companion audio signed-URL upload (additive to the existing
     # multipart /upload-audio surface — companion app migrates at its
     # own pace). INIT fires when channel signed URLs are minted;
@@ -639,6 +649,7 @@ class ResourceType(StrEnum):
     PATIENT_INTAKE_ASSIGNMENT = "patient_intake_assignment"
     PATIENT_COVERAGE = "patient_coverage"
     PATIENT_MESSAGE_THREAD = "patient_message_thread"
+    REFILL_REQUEST = "refill_request"
     INVITATION = "invitation"
     CLAIM = "claim"
     CLAIM_EXPORT = "claim_export"

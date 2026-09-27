@@ -127,6 +127,9 @@ services:
       - PORTAL_INVITE_DELIVERY=smtp
       - PORTAL_SMS_GATEWAY=capture
       - PORTAL_SMS_CAPTURE_URL=http://fake-sms:8026
+      # The default modules plus refills, which is off by default and which
+      # portal-refills.spec.ts drives end to end.
+      - PORTAL_MODULES=intake,messaging,appointments,refills
       # Every spec in the compose lane redeems through the same client
       # address, so the per-address portal budgets below have to cover a
       # whole suite rather than one household. The engine's own defaults

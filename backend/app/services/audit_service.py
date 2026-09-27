@@ -485,6 +485,37 @@ class AuditService:
         self._persist(entry)
         return entry
 
+    def log_refill_request_action(
+        self,
+        action: AuditAction | str,
+        user: User,
+        request: Request,
+        resource_id: str,
+        patient_id: str,
+        changes: dict[str, Any] | None = None,
+    ) -> AuditLogEntry:
+        """Record a CLINICIAN acting on a refill request.
+
+        The patient asking goes through :meth:`log_patient_principal_action`.
+        Takes ids for the same reason :meth:`log_patient_message_action` does:
+        nothing on this surface loads a ``Patient`` just to write a log line.
+        ``changes`` is ids and the decision, never a medication or a note.
+        """
+        ip_address, user_agent = extract_request_context(request)
+        entry = AuditLogEntry(
+            user_id=user.id,
+            actor_type=ACTOR_TYPE_CLINICIAN,
+            action=_action_value(action),
+            resource_type=ResourceType.REFILL_REQUEST.value,
+            resource_id=resource_id,
+            patient_id=patient_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            changes=changes,
+        )
+        self._persist(entry)
+        return entry
+
     def log_appointment_action(
         self,
         action: AuditAction | str,

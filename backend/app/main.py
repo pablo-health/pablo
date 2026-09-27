@@ -94,6 +94,7 @@ from .routes import (
     practice_balances,
     practice_billing,
     public_booking,
+    refill_requests,
     scheduling,
     sessions,
     superbills,
@@ -310,6 +311,7 @@ def portal_module_routers(modules: Iterable[str]) -> list[APIRouter]:
         "intake": patient_intake.router,
         "messaging": patient_messages.patient_messages_router,
         "appointments": patient_appointments.router,
+        "refills": refill_requests.patient_refills_router,
     }
     return [router for name, router in by_module.items() if name in wanted]
 
@@ -344,6 +346,7 @@ app.include_router(patient_documents.patient_router)
 # The patient's half went up with the portal modules above.
 app.include_router(patient_messages.patient_threads_router)
 app.include_router(patient_messages.message_threads_router)
+app.include_router(refill_requests.refill_requests_router)
 app.include_router(patient_payments.router)
 app.include_router(patient_write_offs.router)
 app.include_router(payment_webhooks.router)

@@ -478,6 +478,36 @@ def reset_patient_message_send_limiter() -> None:
     get_patient_message_send_limiter().reset()
 
 
+# Refill requests: per-patient burst limit. A patient asks for a handful of
+# refills at a time — one per medication they take — so anything past these
+# is a script, and each one lands in a prescriber's queue.
+REFILL_REQUESTS_PER_MINUTE = 5
+REFILL_REQUESTS_PER_HOUR = 20
+_refill_request_limiter: RateLimiter | None = None
+
+
+def get_refill_request_limiter() -> RateLimiter:
+    """Get the per-patient rate limiter for asking for a refill."""
+    global _refill_request_limiter  # noqa: PLW0603
+    if _refill_request_limiter is None:
+        _refill_request_limiter = CompositeLimiter(
+            [
+                _create_windowed_limiter(
+                    "refill-request", max_requests=REFILL_REQUESTS_PER_MINUTE, window_seconds=60
+                ),
+                _create_windowed_limiter(
+                    "refill-request", max_requests=REFILL_REQUESTS_PER_HOUR, window_seconds=3_600
+                ),
+            ]
+        )
+    return _refill_request_limiter
+
+
+def reset_refill_request_limiter() -> None:
+    """Reset the refill request limiter. Used by tests."""
+    get_refill_request_limiter().reset()
+
+
 # Audio upload: per-user burst limit (per-minute + per-hour sliding windows).
 _audio_upload_limiter: RateLimiter | None = None
 

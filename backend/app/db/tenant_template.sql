@@ -1159,6 +1159,24 @@ CREATE TABLE __TENANT_SCHEMA__.prescriptions (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.refill_requests (
+    id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    medication_id uuid,
+    medication_text character varying(200) NOT NULL,
+    pharmacy_text character varying(200),
+    patient_note text,
+    status character varying(16) NOT NULL,
+    decided_by_user_id uuid,
+    decided_at timestamp with time zone,
+    prescriber_note text,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_refill_requests_status CHECK (((status)::text = ANY ((ARRAY['requested'::character varying, 'approved'::character varying, 'needs_visit'::character varying, 'declined'::character varying])::text[])))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.remittance_holds (
     id uuid NOT NULL,
     claim_id uuid NOT NULL,
@@ -1609,6 +1627,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.prescribing_encounters
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.prescriptions
     ADD CONSTRAINT prescriptions_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.refill_requests
+    ADD CONSTRAINT refill_requests_pkey PRIMARY KEY (id);
 
 
 
@@ -2128,6 +2151,14 @@ CREATE INDEX ix_prescriptions_patient_id ON __TENANT_SCHEMA__.prescriptions USIN
 
 
 
+CREATE INDEX ix_refill_requests_patient_id ON __TENANT_SCHEMA__.refill_requests USING btree (patient_id);
+
+
+
+CREATE INDEX ix_refill_requests_status_created ON __TENANT_SCHEMA__.refill_requests USING btree (status, created_at);
+
+
+
 CREATE INDEX ix_remittance_holds_claim_id ON __TENANT_SCHEMA__.remittance_holds USING btree (claim_id);
 
 
@@ -2540,6 +2571,16 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.prescriptions
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.prescriptions
     ADD CONSTRAINT prescriptions_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.refill_requests
+    ADD CONSTRAINT refill_requests_medication_id_fkey FOREIGN KEY (medication_id) REFERENCES __TENANT_SCHEMA__.patient_medications(id) ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.refill_requests
+    ADD CONSTRAINT refill_requests_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
 
 
 

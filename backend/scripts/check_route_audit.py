@@ -84,6 +84,10 @@ PHI_PATH_MARKERS: tuple[str, ...] = (
     "/patient/chat",
     "/patient/messages",
     "/message-threads",
+    # Refill requests, both surfaces: a request names a medication, and the
+    # patient's list names every medication they take. Matches
+    # /api/patient/refills and /api/refill-requests.
+    "/refill",
     # The patient's own intake surface: the form carries their name, their
     # date of birth, why they came and how they have been feeling. Marked
     # PHI so a route added here cannot be classified as ordinary metadata —
@@ -134,6 +138,12 @@ AUDIT_EXEMPT_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # carry forensic weight.
         ("get", "/api/patient/messages/threads"),
         ("get", "/api/patient/messages/threads/{thread_id}"),
+        # refill_requests.py — the patient reading their OWN refill requests
+        # and their own active medications to pick from. Same principle as
+        # the two above. Asking for a refill IS recorded, and so is every
+        # clinician read and decision on the same rows.
+        ("get", "/api/patient/refills"),
+        ("get", "/api/patient/refills/medications"),
         # patient_intake_assignments.py — the patient reading a form they
         # were asked to fill in, and what they have saved against it so
         # far. Same principle as the two above: the audit log records
