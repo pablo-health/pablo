@@ -287,6 +287,14 @@ class ArchiveApplier:
         card_id = card.source_id
         key = _key("contact", card_id)
         existing = client.get("existing_patient_id")
+        if client.get("match_evidence") == "ledger" and existing:
+            # Landed by an earlier run: that run still owns it (undo takes it
+            # back out there), so this run only uses it. A card changed in the
+            # source is not re-applied to the patient in this version.
+            run.report.patients[card_id] = existing
+            bucket = "unchanged" if client.get("state") == "unchanged" else "changed_not_updated"
+            run.report.counts["contact"][bucket] += 1
+            return
         answer = (run.decisions.get("duplicates") or {}).get(card_id)
         if existing is None and client.get("possible_duplicates"):
             if not answer:
