@@ -52,8 +52,21 @@ the email inside, but every other folder is keyed by display name, so both
 clients' notes, psychotherapy notes and uploads land in ONE `Pablo Bear`
 folder. Nothing inside a note names the client beyond the display name, and
 when a client has no date of birth the `DOB:` line is simply absent (see the
-Pablo Bear notes). Both uploads are numbered `1-`. Attribution of those
-records to a client is therefore not possible from the export alone.
+Pablo Bear notes in an earlier capture). Both uploads are numbered `1-`.
+Attribution of those records to a client is therefore not possible from the
+export alone, unless the two clients differ in some field a document carries.
+
+Giving one client a middle initial (captured 2026-09-27, final archive) is
+the cheapest way to make them differ: the folders stay `Pablo Bear`, but the
+`Client:` line of every note for that client, including notes locked before
+the change, renders the current display name `Pablo A. Bear`; the secure
+message file is named `<Provider>-Pablo-A.-Bear.txt` and each sender line
+reads `Pablo A. Bear`; and the contact card is renamed
+`Pablo A. Bear - <id>.vcf`. The card's *contents* do not change: `N` and `FN`
+still read `Pablo Bear`, so the middle initial has to be read from the card's
+file name. Uploads stay ambiguous either way. A date of birth, when set,
+prints as a `DOB:` line on notes and as `BDAY` on the card and separates
+clients the same way.
 
 The Pablo Bear progress note also shows the locked-and-signed variant: a
 `Provider` block with the signer, the signing time and an IP address, and a
