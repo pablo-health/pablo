@@ -199,6 +199,29 @@ class PatientDocumentsService:
             self._storage_provider = file_storage_from_settings(self._settings)
         return self._storage_provider
 
+    def store_uploaded_bytes(
+        self, document: PatientDocument, data: bytes, content_type: str
+    ) -> None:
+        """Write a document's bytes to its reserved object, server side.
+
+        The browser path PUTs to the signed URL ``init_upload`` minted; a
+        server that already holds the bytes (an import landing a client's
+        file) writes them to the same object instead, then runs the same
+        ``finalize_upload`` checks. Same bucket, same object name, same
+        verification — only the writer differs.
+        """
+        bucket = self._settings.patient_documents_gcs_bucket
+        if not bucket:
+            # init_upload already refuses without a bucket; this keeps the
+            # server-side writer from reaching storage on a misconfigured stack.
+            raise RuntimeError("Patient document storage is not configured")
+        self._storage().upload_bytes(
+            bucket=bucket,
+            object_name=document.gcs_path,
+            data=data,
+            content_type=content_type,
+        )
+
     def _bucket(self) -> str:
         bucket = self._settings.patient_documents_gcs_bucket
         if not bucket:
