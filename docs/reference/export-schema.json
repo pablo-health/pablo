@@ -1,5 +1,79 @@
 {
   "$defs": {
+    "ClaimEvent": {
+      "description": "One step in a claim's life, in the order it happened.",
+      "properties": {
+        "from_state": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "From State"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "description": "submitted, ch_accepted, payer_accepted, rejected, and so on.",
+          "title": "Kind",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "to_state": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "To State"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "from_state",
+        "to_state",
+        "occurred_at"
+      ],
+      "title": "ClaimEvent",
+      "type": "object"
+    },
+    "ClaimLineAdjustment": {
+      "description": "One adjustment the payer applied to a line, as its remittance said.",
+      "properties": {
+        "amount_cents": {
+          "title": "Amount Cents",
+          "type": "integer"
+        },
+        "group_code": {
+          "title": "Group Code",
+          "type": "string"
+        },
+        "reason_code": {
+          "title": "Reason Code",
+          "type": "string"
+        }
+      },
+      "required": [
+        "group_code",
+        "reason_code",
+        "amount_cents"
+      ],
+      "title": "ClaimLineAdjustment",
+      "type": "object"
+    },
     "Communication": {
       "description": "One secure message.",
       "properties": {
@@ -128,6 +202,183 @@
         "session_id"
       ],
       "title": "Condition",
+      "type": "object"
+    },
+    "Coverage": {
+      "description": "One insurance plan on the client's chart, current or replaced.",
+      "properties": {
+        "active": {
+          "description": "The plan the practice bills today.",
+          "title": "Active",
+          "type": "boolean"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "group_number": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Group Number"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "member_id": {
+          "title": "Member Id",
+          "type": "string"
+        },
+        "payer_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The payer's electronic id, as printed on the card.",
+          "title": "Payer Id"
+        },
+        "payer_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The payer as the practice lists it.",
+          "title": "Payer Name"
+        },
+        "plan_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Plan Name"
+        },
+        "subscriber": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CoverageSubscriber"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Who holds the plan when the client does not."
+        },
+        "subscriber_relationship": {
+          "description": "self, spouse, child or other.",
+          "title": "Subscriber Relationship",
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "verified_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When eligibility was last checked.",
+          "title": "Verified At"
+        }
+      },
+      "required": [
+        "id",
+        "payer_name",
+        "payer_id",
+        "member_id",
+        "group_number",
+        "plan_name",
+        "subscriber_relationship",
+        "subscriber",
+        "active",
+        "verified_at",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "Coverage",
+      "type": "object"
+    },
+    "CoverageSubscriber": {
+      "description": "The plan holder, when it is not the client.",
+      "properties": {
+        "date_of_birth": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Date Of Birth"
+        },
+        "first_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "First Name"
+        },
+        "last_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Last Name"
+        },
+        "sex": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Sex"
+        }
+      },
+      "required": [
+        "first_name",
+        "last_name",
+        "date_of_birth",
+        "sex"
+      ],
+      "title": "CoverageSubscriber",
       "type": "object"
     },
     "DocumentReference": {
@@ -369,6 +620,426 @@
         "session_id"
       ],
       "title": "ExportAppointment",
+      "type": "object"
+    },
+    "ExportCharge": {
+      "description": "One row of the client's ledger: a charge, a payment, an adjustment.\n\nHow a card payment was taken is a category, never the card: no brand,\nno last four digits and no processor identifier are in any export.",
+      "properties": {
+        "amount_cents": {
+          "description": "Always positive; kind says which way it goes.",
+          "title": "Amount Cents",
+          "type": "integer"
+        },
+        "appointment_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The visit the row is for, in appointments[].",
+          "title": "Appointment Id"
+        },
+        "claim_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The claim the row was posted from, in claims[].",
+          "title": "Claim Id"
+        },
+        "currency": {
+          "title": "Currency",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the practice wrote about the row.",
+          "title": "Description"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "description": "session, copay, payment, patient_resp, contractual_adjustment, write_off or credit.",
+          "title": "Kind",
+          "type": "string"
+        },
+        "method": {
+          "anyOf": [
+            {
+              "enum": [
+                "card",
+                "cash",
+                "check",
+                "other"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How a payment arrived, on rows that collect.",
+          "title": "Method"
+        },
+        "payment_reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A check number or similar.",
+          "title": "Payment Reference"
+        },
+        "recorded_at": {
+          "format": "date-time",
+          "title": "Recorded At",
+          "type": "string"
+        },
+        "settled_by_charge_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The payment that settled this row, in charges[].",
+          "title": "Settled By Charge Id"
+        },
+        "status": {
+          "description": "pending, succeeded, failed, refunded, disputed or dispute_lost.",
+          "title": "Status",
+          "type": "string"
+        },
+        "updated_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Updated At"
+        },
+        "write_off_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Write Off Reason"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "appointment_id",
+        "claim_id",
+        "description",
+        "amount_cents",
+        "currency",
+        "status",
+        "method",
+        "payment_reference",
+        "write_off_reason",
+        "settled_by_charge_id",
+        "recorded_at",
+        "updated_at"
+      ],
+      "title": "ExportCharge",
+      "type": "object"
+    },
+    "ExportClaim": {
+      "description": "One claim filed for the client, with its lines and its timeline.",
+      "properties": {
+        "adjudicated_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Adjudicated At"
+        },
+        "control_number": {
+          "title": "Control Number",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "diagnosis_codes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Diagnosis Codes",
+          "type": "array"
+        },
+        "events": {
+          "description": "Oldest first.",
+          "items": {
+            "$ref": "#/$defs/ClaimEvent"
+          },
+          "title": "Events",
+          "type": "array"
+        },
+        "frequency_code": {
+          "description": "1 original, 7 replacement, 8 void.",
+          "title": "Frequency Code",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "lines": {
+          "items": {
+            "$ref": "#/$defs/ExportClaimLine"
+          },
+          "title": "Lines",
+          "type": "array"
+        },
+        "member_id": {
+          "title": "Member Id",
+          "type": "string"
+        },
+        "parent_claim_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The claim this one corrects or voids.",
+          "title": "Parent Claim Id"
+        },
+        "payer_accepted_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Payer Accepted At"
+        },
+        "payer_claim_number": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Payer Claim Number"
+        },
+        "payer_id": {
+          "description": "The payer's electronic id.",
+          "title": "Payer Id",
+          "type": "string"
+        },
+        "payer_name": {
+          "title": "Payer Name",
+          "type": "string"
+        },
+        "place_of_service": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Place Of Service"
+        },
+        "state": {
+          "title": "State",
+          "type": "string"
+        },
+        "submitted_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Submitted At"
+        },
+        "total_charge_cents": {
+          "title": "Total Charge Cents",
+          "type": "integer"
+        },
+        "total_paid_cents": {
+          "title": "Total Paid Cents",
+          "type": "integer"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "control_number",
+        "state",
+        "frequency_code",
+        "parent_claim_id",
+        "payer_name",
+        "payer_id",
+        "member_id",
+        "place_of_service",
+        "diagnosis_codes",
+        "total_charge_cents",
+        "total_paid_cents",
+        "submitted_at",
+        "payer_accepted_at",
+        "adjudicated_at",
+        "payer_claim_number",
+        "lines",
+        "events",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "ExportClaim",
+      "type": "object"
+    },
+    "ExportClaimLine": {
+      "description": "One service on a claim: a code on a date for an amount.",
+      "properties": {
+        "adjustments": {
+          "items": {
+            "$ref": "#/$defs/ClaimLineAdjustment"
+          },
+          "title": "Adjustments",
+          "type": "array"
+        },
+        "allowed_cents": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Allowed Cents"
+        },
+        "charge_cents": {
+          "title": "Charge Cents",
+          "type": "integer"
+        },
+        "cpt": {
+          "title": "Cpt",
+          "type": "string"
+        },
+        "diagnosis_codes": {
+          "description": "The claim's codes this line points at.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Diagnosis Codes",
+          "type": "array"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "line_number": {
+          "title": "Line Number",
+          "type": "integer"
+        },
+        "modifiers": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Modifiers",
+          "type": "array"
+        },
+        "paid_cents": {
+          "title": "Paid Cents",
+          "type": "integer"
+        },
+        "patient_responsibility_cents": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Patient Responsibility Cents"
+        },
+        "service_date": {
+          "format": "date",
+          "title": "Service Date",
+          "type": "string"
+        },
+        "telehealth": {
+          "title": "Telehealth",
+          "type": "boolean"
+        },
+        "units": {
+          "title": "Units",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "line_number",
+        "service_date",
+        "cpt",
+        "modifiers",
+        "units",
+        "charge_cents",
+        "diagnosis_codes",
+        "telehealth",
+        "allowed_cents",
+        "paid_cents",
+        "patient_responsibility_cents",
+        "adjustments"
+      ],
+      "title": "ExportClaimLine",
       "type": "object"
     },
     "ExportDocument": {
@@ -966,6 +1637,30 @@
       "title": "Appointments",
       "type": "array"
     },
+    "charges": {
+      "description": "The ledger, oldest first.",
+      "items": {
+        "$ref": "#/$defs/ExportCharge"
+      },
+      "title": "Charges",
+      "type": "array"
+    },
+    "claims": {
+      "description": "Every claim filed, oldest first.",
+      "items": {
+        "$ref": "#/$defs/ExportClaim"
+      },
+      "title": "Claims",
+      "type": "array"
+    },
+    "coverage": {
+      "description": "Every plan on the chart, newest first.",
+      "items": {
+        "$ref": "#/$defs/Coverage"
+      },
+      "title": "Coverage",
+      "type": "array"
+    },
     "diagnoses": {
       "description": "Oldest first.",
       "items": {
@@ -1021,8 +1716,8 @@
       "$ref": "#/$defs/Practitioner"
     },
     "schema_version": {
-      "const": "1.2",
-      "default": "1.2",
+      "const": "1.3",
+      "default": "1.3",
       "title": "Schema Version",
       "type": "string"
     },
@@ -1054,7 +1749,10 @@
     "outcome_measures",
     "message_threads",
     "medications",
-    "diagnoses"
+    "diagnoses",
+    "charges",
+    "coverage",
+    "claims"
   ],
   "title": "PatientExportDocument",
   "type": "object"

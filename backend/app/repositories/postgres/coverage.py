@@ -181,6 +181,14 @@ class PostgresPatientCoverageRepository(PatientCoverageRepository):
         ).scalars()
         return {row.patient_id: _to_coverage(row) for row in rows}
 
+    def list_by_patient(self, patient_id: str) -> list[PatientCoverage]:
+        rows = self._session.execute(
+            select(PatientCoverageRow)
+            .where(PatientCoverageRow.patient_id == patient_id)
+            .order_by(PatientCoverageRow.created_at.desc(), PatientCoverageRow.id.desc())
+        ).scalars()
+        return [_to_coverage(row) for row in rows]
+
     def create(self, coverage: PatientCoverage) -> PatientCoverage:
         row = PatientCoverageRow(
             id=coverage.id,

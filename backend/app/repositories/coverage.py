@@ -76,6 +76,10 @@ class PatientCoverageRepository(ABC):
         """
 
     @abstractmethod
+    def list_by_patient(self, patient_id: str) -> list[PatientCoverage]:
+        """Every coverage row on the client's chart, replaced ones included, newest first."""
+
+    @abstractmethod
     def create(self, coverage: PatientCoverage) -> PatientCoverage:
         """Add a coverage row. Flushed, not committed.
 
@@ -141,6 +145,10 @@ class InMemoryPatientCoverageRepository(PatientCoverageRepository):
             for row in self._rows.values()
             if row.patient_id in wanted and row.active
         }
+
+    def list_by_patient(self, patient_id: str) -> list[PatientCoverage]:
+        rows = [row for row in self._rows.values() if row.patient_id == patient_id]
+        return sorted(rows, key=lambda row: (row.created_at, row.id), reverse=True)
 
     def create(self, coverage: PatientCoverage) -> PatientCoverage:
         if coverage.active and self.get_active(coverage.patient_id) is not None:

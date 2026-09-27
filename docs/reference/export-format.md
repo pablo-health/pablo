@@ -36,6 +36,8 @@ are recorded in `options` and on the export's audit log entry.
 | `schema.json` | The JSON Schema that `patient.json` follows. |
 | `documents/<id>__<filename>` | Each file uploaded to the chart, as it was uploaded. |
 | `intake/<assignment_id>.html` | Each submitted intake form, as a document to read or print. |
+| `billing/statement.pdf` | The client's statement: what was charged, paid and owed, by visit. |
+| `billing/superbill.pdf` | The receipt for the visits claims were filed for, when every field an insurer needs is on file. |
 | `manifest.json` | Every other file, with its size and SHA-256 checksum. |
 | `README.txt` | Which file is which, the schema version, and a pointer to this page. |
 
@@ -45,7 +47,14 @@ uploaded it (`clinician` or `patient`) and its path in the archive.
 Psychotherapy-notes documents are included only with
 `include_psychotherapy_notes`. A clinician's private working files are not
 part of the record and are never included. In `manifest.json`, uploaded
-files have kind `document` and intake forms kind `intake_form`.
+files have kind `document`, intake forms kind `intake_form`, the statement
+kind `statement` and the superbill kind `superbill`.
+
+The statement is the one the chart's Balance tab downloads. The superbill is
+the one the superbill endpoint renders, over the first to the last date of
+service on the client's claims, and it is left out for the same reasons that
+endpoint refuses: a visit in that span with no claim, or a provider or line
+field an insurer needs that is not on file.
 
 ## What `patient.json` holds
 
@@ -60,15 +69,22 @@ files have kind `document` and intake forms kind `intake_form`.
 | `message_threads` | Secure messages with the client. An attachment is named by its id in `documents`. |
 | `medications` | The medication list. |
 | `diagnoses` | Each diagnostic assessment, with the ICD-10-CM code the clinician confirmed. |
+| `charges` | The ledger: each charge, payment, adjustment, write-off and credit. |
+| `coverage` | Every insurance plan on the chart, the current one marked `active`. |
+| `claims` | Each claim filed, with its lines, the payer's adjudication and its timeline. |
 
 `chart.pdf` has a section for each of these. Conversations with the
 assistant are not part of the record and are not exported.
 
+How a payment was taken is a category (`card`, `cash`, `check`, `other`).
+The card on file is not part of the record: no card brand, last four digits,
+expiry or processor identifier is in any export.
+
 Object names follow FHIR where that costs nothing: a session is an
 `Encounter`, a note a `DocumentReference`, an instrument result an
 `Observation`, a medication a `MedicationStatement`, a diagnosis a
-`Condition`. Keys are snake_case and every timestamp is ISO 8601 with an
-offset.
+`Condition`, a plan a `Coverage`, a claim a `Claim`. Keys are snake_case
+and every timestamp is ISO 8601 with an offset.
 
 ## The schema
 
@@ -79,10 +95,11 @@ from the export models. CI fails when the two disagree, so it matches the
 ## Versioning
 
 `schema_version` in `patient.json` and `manifest.json` names the version an
-archive was written in. The current version is `1.2`.
+archive was written in. The current version is `1.3`.
 
 | Version | Change |
 | --- | --- |
+| `1.3` | Adds `charges`, `coverage` and `claims`, a Billing section in `chart.pdf`, and the `billing/` folder. |
 | `1.2` | Adds `appointments`, `outcome_measures`, `message_threads`, `medications` and `diagnoses`, and a `chart.pdf` section for each. |
 | `1.1` | Adds `documents` and the `documents/` and `intake/` folders. |
 | `1.0` | The first published version. |
@@ -92,5 +109,5 @@ archive was written in. The current version is `1.2`.
 - **Major** (`1.x` to `2.0`): a rename, a removal or a change of meaning.
   Check the major version before reading anything else.
 
-Billing and CSV files are planned for the archive. Each arrives as a minor
-version that adds fields and files without changing the ones described here.
+CSV files are planned for the archive. They arrive as a minor version that
+adds files without changing the ones described here.

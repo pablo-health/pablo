@@ -20,7 +20,7 @@ from typing import Annotated, Any, Final, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
-SCHEMA_VERSION: Final = "1.2"
+SCHEMA_VERSION: Final = "1.3"
 
 
 def _with_offset(value: datetime) -> datetime:
@@ -226,10 +226,132 @@ class Condition(BaseModel):
     session_id: str | None
 
 
+PaymentMethod = Literal["card", "cash", "check", "other"]
+
+
+class ExportCharge(BaseModel):
+    """One row of the client's ledger: a charge, a payment, an adjustment.
+
+    How a card payment was taken is a category, never the card: no brand,
+    no last four digits and no processor identifier are in any export.
+    """
+
+    id: str
+    kind: str = Field(
+        description="session, copay, payment, patient_resp, contractual_adjustment, "
+        "write_off or credit."
+    )
+    appointment_id: str | None = Field(description="The visit the row is for, in appointments[].")
+    claim_id: str | None = Field(description="The claim the row was posted from, in claims[].")
+    description: str | None = Field(description="What the practice wrote about the row.")
+    amount_cents: int = Field(description="Always positive; kind says which way it goes.")
+    currency: str
+    status: str = Field(
+        description="pending, succeeded, failed, refunded, disputed or dispute_lost."
+    )
+    method: PaymentMethod | None = Field(description="How a payment arrived, on rows that collect.")
+    payment_reference: str | None = Field(description="A check number or similar.")
+    write_off_reason: str | None
+    settled_by_charge_id: str | None = Field(
+        description="The payment that settled this row, in charges[]."
+    )
+    recorded_at: Timestamp
+    updated_at: Timestamp | None
+
+
+class CoverageSubscriber(BaseModel):
+    """The plan holder, when it is not the client."""
+
+    first_name: str | None
+    last_name: str | None
+    date_of_birth: date | None
+    sex: str | None
+
+
+class Coverage(BaseModel):
+    """One insurance plan on the client's chart, current or replaced."""
+
+    id: str
+    payer_name: str | None = Field(description="The payer as the practice lists it.")
+    payer_id: str | None = Field(description="The payer's electronic id, as printed on the card.")
+    member_id: str
+    group_number: str | None
+    plan_name: str | None
+    subscriber_relationship: str = Field(description="self, spouse, child or other.")
+    subscriber: CoverageSubscriber | None = Field(
+        description="Who holds the plan when the client does not."
+    )
+    active: bool = Field(description="The plan the practice bills today.")
+    verified_at: Timestamp | None = Field(description="When eligibility was last checked.")
+    created_at: Timestamp
+    updated_at: Timestamp
+
+
+class ClaimLineAdjustment(BaseModel):
+    """One adjustment the payer applied to a line, as its remittance said."""
+
+    group_code: str
+    reason_code: str
+    amount_cents: int
+
+
+class ExportClaimLine(BaseModel):
+    """One service on a claim: a code on a date for an amount."""
+
+    id: str
+    line_number: int
+    service_date: date
+    cpt: str
+    modifiers: list[str]
+    units: int
+    charge_cents: int
+    diagnosis_codes: list[str] = Field(description="The claim's codes this line points at.")
+    telehealth: bool
+    allowed_cents: int | None
+    paid_cents: int
+    patient_responsibility_cents: int | None
+    adjustments: list[ClaimLineAdjustment]
+
+
+class ClaimEvent(BaseModel):
+    """One step in a claim's life, in the order it happened."""
+
+    id: str
+    kind: str = Field(description="submitted, ch_accepted, payer_accepted, rejected, and so on.")
+    from_state: str | None
+    to_state: str | None
+    occurred_at: Timestamp
+
+
+class ExportClaim(BaseModel):
+    """One claim filed for the client, with its lines and its timeline."""
+
+    id: str
+    control_number: str
+    state: str
+    frequency_code: str = Field(description="1 original, 7 replacement, 8 void.")
+    parent_claim_id: str | None = Field(description="The claim this one corrects or voids.")
+    payer_name: str
+    payer_id: str = Field(description="The payer's electronic id.")
+    member_id: str
+    place_of_service: str | None
+    diagnosis_codes: list[str]
+    total_charge_cents: int
+    total_paid_cents: int
+    submitted_at: Timestamp | None
+    payer_accepted_at: Timestamp | None
+    adjudicated_at: Timestamp | None
+    payer_claim_number: str | None
+    lines: list[ExportClaimLine]
+    events: list[ClaimEvent] = Field(description="Oldest first.")
+    created_at: Timestamp
+    updated_at: Timestamp
+
+
 class PatientExportDocument(BaseModel):
     """One client's chart as structured data (``patient.json``)."""
 
-    schema_version: Literal["1.2"] = SCHEMA_VERSION
+    schema_version: Literal["1.3"] = SCHEMA_VERSION
     exported_at: Timestamp
     options: ExportOptions
     patient: ExportPatient
@@ -246,9 +368,14 @@ class PatientExportDocument(BaseModel):
     message_threads: list[ExportMessageThread] = Field(description="Oldest first.")
     medications: list[MedicationStatement] = Field(description="Active medications first.")
     diagnoses: list[Condition] = Field(description="Oldest first.")
+    charges: list[ExportCharge] = Field(description="The ledger, oldest first.")
+    coverage: list[Coverage] = Field(description="Every plan on the chart, newest first.")
+    claims: list[ExportClaim] = Field(description="Every claim filed, oldest first.")
 
 
-ManifestFileKind = Literal["pdf", "json", "schema", "text", "document", "intake_form"]
+ManifestFileKind = Literal[
+    "pdf", "json", "schema", "text", "document", "intake_form", "statement", "superbill"
+]
 
 
 class ManifestFile(BaseModel):
@@ -261,7 +388,7 @@ class ManifestFile(BaseModel):
 class ExportManifest(BaseModel):
     """``manifest.json``: every other file in the archive, with its checksum."""
 
-    schema_version: Literal["1.2"] = SCHEMA_VERSION
+    schema_version: Literal["1.3"] = SCHEMA_VERSION
     exported_at: Timestamp
     options: ExportOptions
     files: list[ManifestFile]

@@ -261,7 +261,7 @@ def test_the_archive_carries_each_list_and_the_pdf_heads_a_section_for_it(
         document = json.loads(archive.read("patient.json"))
         schema = json.loads(archive.read("schema.json"))
     Draft202012Validator(schema).validate(document)
-    assert document["schema_version"] == "1.2"
+    assert document["schema_version"] == "1.3"
     assert {key: len(document[key]) for key in _LISTS} == {
         "appointments": 2,
         "outcome_measures": 1,
