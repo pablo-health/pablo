@@ -174,39 +174,47 @@ def _upload_answers(run: dict[str, Any], card_id: str) -> dict[str, str]:
     }
 
 
-def _count(engine: Engine, schema: str, sql: str) -> int:
+#: Every count the journeys read, as fixed statements. Each runs with the
+#: clinician's RLS principal armed, so it sees only what they could.
+_COUNTS = {
+    "patients": "SELECT count(*) FROM patients WHERE deleted_at IS NULL",
+    "imported_patients": (
+        "SELECT count(*) FROM patients WHERE deleted_at IS NULL AND origin = 'simplepractice'"
+    ),
+    "notes": "SELECT count(*) FROM notes WHERE deleted_at IS NULL",
+    "restricted": "SELECT count(*) FROM notes WHERE deleted_at IS NULL AND restricted",
+    "finalized": (
+        "SELECT count(*) FROM notes WHERE deleted_at IS NULL AND finalized_at IS NOT NULL"
+    ),
+    "sessions": "SELECT count(*) FROM therapy_sessions WHERE deleted_at IS NULL",
+    "appointments": "SELECT count(*) FROM appointments WHERE status = 'completed'",
+    "measures": "SELECT count(*) FROM outcome_measures WHERE deleted_at IS NULL",
+    "threads": "SELECT count(*) FROM patient_message_threads",
+    "messages": "SELECT count(*) FROM patient_messages",
+    "notes_for_patient": (
+        "SELECT count(*) FROM notes WHERE deleted_at IS NULL AND patient_id = :patient_id"
+    ),
+}
+
+
+def _count(engine: Engine, schema: str, which: str, params: dict[str, str] | None = None) -> int:
     with engine.connect() as conn:
-        conn.execute(text(f'SET search_path = "{schema}", platform, public'))
+        conn.execute(
+            text("SELECT set_config('search_path', :p, false)"),
+            {"p": f"{schema}, platform, public"},
+        )
         conn.execute(text("SELECT set_config('app.current_user_id', :u, false)"), {"u": _USER})
-        value = conn.execute(text(sql)).scalar_one()
+        value = conn.execute(text(_COUNTS[which]), params or {}).scalar_one()
         conn.rollback()
     return int(value)
 
 
 def _chart(engine: Engine, schema: str) -> dict[str, int]:
-    live = "deleted_at IS NULL"
-    return {
-        "patients": _count(engine, schema, f"SELECT count(*) FROM patients WHERE {live}"),
-        "imported_patients": _count(
-            engine,
-            schema,
-            f"SELECT count(*) FROM patients WHERE {live} AND origin = 'simplepractice'",
-        ),
-        "notes": _count(engine, schema, f"SELECT count(*) FROM notes WHERE {live}"),
-        "restricted": _count(
-            engine, schema, f"SELECT count(*) FROM notes WHERE {live} AND restricted"
-        ),
-        "finalized": _count(
-            engine, schema, f"SELECT count(*) FROM notes WHERE {live} AND finalized_at IS NOT NULL"
-        ),
-        "sessions": _count(engine, schema, f"SELECT count(*) FROM therapy_sessions WHERE {live}"),
-        "appointments": _count(
-            engine, schema, "SELECT count(*) FROM appointments WHERE status = 'completed'"
-        ),
-        "measures": _count(engine, schema, f"SELECT count(*) FROM outcome_measures WHERE {live}"),
-        "threads": _count(engine, schema, "SELECT count(*) FROM patient_message_threads"),
-        "messages": _count(engine, schema, "SELECT count(*) FROM patient_messages"),
-    }
+    return {k: _count(engine, schema, k) for k in _COUNTS if k != "notes_for_patient"}
+
+
+def _notes_for(engine: Engine, schema: str, patient_id: str) -> int:
+    return _count(engine, schema, "notes_for_patient", {"patient_id": patient_id})
 
 
 # --------------------------------------------------------------------------- journeys
@@ -256,7 +264,10 @@ def test_main_export_end_to_end(client: TestClient, engine: Engine, schema: str)
 
     # Lulu's first progress note landed verbatim, dated from its visit, with provenance.
     with engine.connect() as conn:
-        conn.execute(text(f'SET search_path = "{schema}", platform, public'))
+        conn.execute(
+            text("SELECT set_config('search_path', :p, false)"),
+            {"p": f"{schema}, platform, public"},
+        )
         conn.execute(text("SELECT set_config('app.current_user_id', :u, false)"), {"u": _USER})
         content = conn.execute(
             text(
@@ -322,10 +333,8 @@ def test_existing_client_without_birthday_is_merged_on_request(
     chart = _chart(engine, schema)
     assert chart["patients"] == 3  # the existing Lulu plus two Pablo Bears
     assert chart["imported_patients"] == 2
-    lulu_notes = _count(
-        engine, schema, f"SELECT count(*) FROM notes WHERE patient_id = '{existing_id}'"
-    )
-    assert lulu_notes == 6  # 2 progress, 2 psychotherapy, chart note, treatment plan
+    # 2 progress, 2 psychotherapy, chart note, treatment plan
+    assert _notes_for(engine, schema, existing_id) == 6
 
 
 def test_same_name_without_birthdays_lands_only_where_assigned(
@@ -372,10 +381,6 @@ def test_same_name_without_birthdays_lands_only_where_assigned(
     )
     assert done["report"]["counts"]["note"] == {"new": 2}
     assert done["report"]["counts"]["upload"] == {"skipped": 2}
-    patient_id = done["report"]["patients"][PABLO]
-    other_id = done["report"]["patients"][PABLO_A]
-    on_pablo = _count(
-        engine, schema, f"SELECT count(*) FROM notes WHERE patient_id = '{patient_id}'"
-    )
-    on_other = _count(engine, schema, f"SELECT count(*) FROM notes WHERE patient_id = '{other_id}'")
+    on_pablo = _notes_for(engine, schema, done["report"]["patients"][PABLO])
+    on_other = _notes_for(engine, schema, done["report"]["patients"][PABLO_A])
     assert (on_pablo, on_other) == (2, 0)
