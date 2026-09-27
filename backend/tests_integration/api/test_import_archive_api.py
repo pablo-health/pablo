@@ -228,7 +228,7 @@ def test_main_export_end_to_end(client: TestClient, engine: Engine, schema: str)
     assert preview["questions"]["providers"] == [{"name": "Avery Provider"}]
     (group,) = preview["questions"]["same_name"]
     assert group["candidates"] == [PABLO_A, PABLO]
-    assert len(group["records"]) == 2
+    assert len(group["records"]) == 1  # the PDF upload; the .txt one cannot land
 
     # Apply refuses while questions are open.
     refused = client.post(f"/api/migration/runs/{run['id']}/apply", json={})
@@ -245,7 +245,7 @@ def test_main_export_end_to_end(client: TestClient, engine: Engine, schema: str)
     assert report["counts"]["questionnaire"] == {"new": 2}
     assert report["counts"]["thread"] == {"new": 1}
     # This stack has no document bucket, so the uploads are reported, not lost.
-    assert report["counts"]["upload"] == {"skipped": 2}
+    assert report["counts"]["upload"] == {"skipped": 1}
     assert done["has_archive"] is False  # deleted once applied
 
     chart = _chart(engine, schema)
@@ -344,7 +344,7 @@ def test_same_name_without_birthdays_lands_only_where_assigned(
     (group,) = run["preview"]["questions"]["same_name"]
     assert group["candidates"] == [PABLO_A, PABLO]
     assert {r["record_type"] for r in group["records"]} == {"note", "upload"}
-    assert len(group["records"]) == 4
+    assert len(group["records"]) == 3  # two notes and the PDF upload
 
     # Viewing a record's source file works while the archive is held.
     note_path = next(
@@ -380,7 +380,7 @@ def test_same_name_without_birthdays_lands_only_where_assigned(
         client, run["id"], {"providers": {"Avery Provider": "me"}, "assignments": answers}
     )
     assert done["report"]["counts"]["note"] == {"new": 2}
-    assert done["report"]["counts"]["upload"] == {"skipped": 2}
+    assert done["report"]["counts"]["upload"] == {"skipped": 1}
     on_pablo = _notes_for(engine, schema, done["report"]["patients"][PABLO])
     on_other = _notes_for(engine, schema, done["report"]["patients"][PABLO_A])
     assert (on_pablo, on_other) == (2, 0)

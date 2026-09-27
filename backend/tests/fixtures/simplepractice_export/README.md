@@ -43,7 +43,10 @@ and "Statement for Insurance Reimbursement" (superbill). Secure messages are a
 plain-text log with `----- <date> -----` day headers and `<Sender> [<time>]`
 lines. Client uploads export under `Stored documents/<client>/<n>-<original
 filename>`, numbered in upload order (captured from a second export on
-2026-09-27; the files here are stand-ins for opaque uploads). The client
+2026-09-27; the files here are stand-ins for opaque uploads, keeping the
+captured file types: `1-Sample upload.pdf` stands in for a PDF, which the
+chart stores, and `1-Another upload.txt` for a Markdown file, which it does
+not). The client
 roster CSV is a separate SimplePractice export and is not in this archive.
 
 Two clients with the same name (captured 2026-09-27): the Contacts folder

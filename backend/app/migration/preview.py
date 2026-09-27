@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .attribution import ArchiveAttribution, attribute_archive
@@ -49,6 +50,16 @@ CANNOT_LAND_REASONS = {
         "Billing codes are kept on each imported note; visits do not carry a service code yet."
     ),
     "unrecognized": "Files that are not part of an export layout this version knows.",
+    "upload_type": "Documents that aren't PDFs or images stay in your old system for now.",
+}
+
+#: Upload file types the chart stores (the patient-documents whitelist), by
+#: extension. Anything else is reported, not landed.
+STORED_UPLOAD_TYPES: dict[str, str] = {
+    ".pdf": "application/pdf",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
 }
 
 
@@ -172,7 +183,13 @@ class _Builder:
         for t in self.archive.threads:
             self.add("thread", t, landable=True, reason=None)
         for u in self.archive.uploads:
-            self.add("upload", u, landable=True, reason=None)
+            stored = Path(u.original_filename).suffix.lower() in STORED_UPLOAD_TYPES
+            self.add(
+                "upload",
+                u,
+                landable=stored,
+                reason=None if stored else CANNOT_LAND_REASONS["upload_type"],
+            )
         for b in self.archive.billing:
             self.add("billing", b, landable=False, reason=CANNOT_LAND_REASONS["billing"])
 
@@ -244,6 +261,11 @@ class _Builder:
         coded = sum(1 for n in archive.notes if n.appointment and n.appointment.billing_code)
         if coded:
             out.append(_cannot("billing_codes", coded))
+        unstored = sum(
+            1 for r in self.records if r["record_type"] == "upload" and not r["landable"]
+        )
+        if unstored:
+            out.append(_cannot("upload_type", unstored))
         out.extend(
             {"what": "unreadable", "count": 1, "reason": f"{rel}: {why}"}
             for rel, why in archive.unreadable
@@ -340,6 +362,7 @@ def decisions_complete(preview: dict[str, Any], decisions: dict[str, Any]) -> li
 __all__ = [
     "CANNOT_LAND_REASONS",
     "LANDABLE",
+    "STORED_UPLOAD_TYPES",
     "ExistingPatient",
     "PreviewInputs",
     "build_preview",

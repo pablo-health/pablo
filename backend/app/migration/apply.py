@@ -81,6 +81,7 @@ from ..services.patient_documents_service import PatientDocumentError, PatientDo
 from ..utcnow import utc_now
 from .attribution import SYSTEM_SENDER
 from .ledger import Landed, record_landed, records_for_run
+from .preview import STORED_UPLOAD_TYPES
 from .readers.simplepractice import SOURCE_SYSTEM
 
 if TYPE_CHECKING:
@@ -100,12 +101,7 @@ if TYPE_CHECKING:
 PATIENT_ORIGIN = "simplepractice"
 _STATE_LEN = 2
 _POSTAL_LEN = 10
-_UPLOAD_MIME = {
-    ".pdf": "application/pdf",
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-}
+_UPLOAD_MIME = STORED_UPLOAD_TYPES
 _SKIP = "skip"
 #: Undo removes children before the patients whose soft delete cascades.
 _UNDO_ORDER = {

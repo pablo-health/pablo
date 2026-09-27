@@ -56,7 +56,7 @@ def test_first_run_is_all_new(archive: SimplePracticeArchive) -> None:
     states = {(r["record_type"], r["state"]) for r in p["records"]}
     assert states == {(t, "new") for t in ("note", "questionnaire", "thread", "upload", "billing")}
     assert p["counts"]["note"] == {"new": 15}
-    assert p["counts"]["upload"] == {"new": 2, "unresolved": 2}
+    assert p["counts"]["upload"] == {"new": 2, "unresolved": 1}  # the .txt stand-in cannot land
     assert p["counts"]["contact"] == {"new": 3}
 
 
@@ -75,7 +75,7 @@ def test_questions_on_a_first_run(archive: SimplePracticeArchive) -> None:
     assert group["folder_name"] == "Pablo Bear"
     assert group["candidates"] == [PABLO_A, PABLO]
     assert {r["record_type"] for r in group["records"]} == {"upload"}
-    assert len(group["records"]) == 2
+    assert len(group["records"]) == 1  # the PDF upload; the .txt one cannot land
 
 
 def test_cannot_land_lists_billing_contacts_and_codes(archive: SimplePracticeArchive) -> None:

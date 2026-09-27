@@ -13,7 +13,8 @@ told apart from the archive at all.
   `DOB:` line at all, which is how the export renders a client without a
   birthday. The progress note is locked and signed.
 - `Stored documents/Pablo Bear/` holds two stand-ins numbered `1-`, one upload
-  from each client.
+  from each client, keeping the captured file types: a PDF (which the chart
+  stores) and a Markdown file (which it does not).
 
 A reader given this folder must put every one of these records in front of
 the practice to assign; nothing here lets it decide.

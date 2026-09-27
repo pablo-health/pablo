@@ -246,7 +246,7 @@ def test_message_thread(archive: SimplePracticeArchive) -> None:
 
 def test_uploads_are_opaque_and_keyed_by_path(archive: SimplePracticeArchive) -> None:
     ups = sorted(archive.uploads, key=lambda u: u.path)
-    assert [u.original_filename for u in ups] == ["Another upload.txt", "Sample upload.txt"]
+    assert [u.original_filename for u in ups] == ["Another upload.txt", "Sample upload.pdf"]
     assert {u.client_folder for u in ups} == {"Pablo Bear"}
     assert {u.ordinal for u in ups} == {1}
 
