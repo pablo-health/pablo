@@ -18,6 +18,7 @@
  * Needs `refills` in the stack's `PORTAL_MODULES` (docker-compose.e2e.yml).
  */
 
+import type { Page } from "@playwright/test"
 import { expect, test } from "../fixtures/auth"
 import { ApiError, signInWithPassword } from "../fixtures/api"
 import {
@@ -217,6 +218,20 @@ test("one patient's request and medications are invisible to another, and each s
   expect([401, 403], "a patient session is refused the clinician queue").toContain(
     patientOnClinician.status(),
   )
+  // The one write on the clinician surface: neither patient can answer a
+  // request, their own included, and the request is untouched afterwards.
+  for (const headers of [headersA, headersB]) {
+    const decided = await request.post(`${BACKEND_URL}${CLINICIAN_REFILLS}/${refillId}/decision`, {
+      headers,
+      data: { status: "approved" },
+      failOnStatusCode: false,
+    })
+    expect([401, 403], "a patient session cannot decide a refill").toContain(decided.status())
+  }
+  const afterAttempts = (await (
+    await request.get(`${BACKEND_URL}${PATIENT_REFILLS}`, { headers: headersA })
+  ).json()) as ListResponse<PatientRefill>
+  expect(afterAttempts.data.find((row) => row.id === refillId)?.status).toBe("requested")
   const clinicianIdToken = await signInWithPassword(onboardedUser.email, onboardedUser.password)
   const clinicianOnPatient = await request.get(`${BACKEND_URL}${PATIENT_REFILLS}`, {
     headers: { Authorization: `Bearer ${clinicianIdToken}` },
@@ -227,10 +242,29 @@ test("one patient's request and medications are invisible to another, and each s
 
 // --- Test 4: the portal, in a browser -------------------------------------
 
-test("a patient asks for a refill from the portal and sees the answer arrive @portal", async ({
-  api,
-  page,
-}) => {
+// One browser pass per answer a prescriber can give, each checking what the
+// patient reads when it arrives.
+const DECISIONS = [
+  { status: "approved", label: "Sent to your pharmacy" },
+  { status: "needs_visit", label: "Let's talk at your next visit" },
+  { status: "declined", label: "Not refilled" },
+] as const
+
+for (const { status, label } of DECISIONS) {
+  test(`a patient asks from the portal and sees "${label}" when the answer is ${status} @portal`, async ({
+    api,
+    page,
+  }) => {
+    await askFromThePortalAndSeeTheAnswer(api, page, status, label)
+  })
+}
+
+async function askFromThePortalAndSeeTheAnswer(
+  api: Parameters<typeof givePatient>[0],
+  page: Page,
+  decision: string,
+  label: string,
+): Promise<void> {
   const { email, phone } = givePortalContactDetails()
   const patient = await givePatient(api, { email, phone })
   const medication = await giveMedication(api, patient.id)
@@ -256,11 +290,13 @@ test("a patient asks for a refill from the portal and sees the answer arrive @po
   const queue = await api.get<ListResponse<ClinicianRefill>>(CLINICIAN_REFILLS)
   const queued = queue.data.find((row) => row.patient_id === patient.id)
   expect(queued, "the browser's request reached the prescriber's queue").toBeTruthy()
-  await api.post(`${CLINICIAN_REFILLS}/${queued?.id}/decision`, { status: "approved" })
+  await api.post(`${CLINICIAN_REFILLS}/${queued?.id}/decision`, {
+    status: decision,
+    prescriber_note: "private to the practice",
+  })
 
   await page.reload()
   await page.getByTestId("portal-shell-nav-refills").click()
-  await expect(page.getByTestId(`portal-refills-status-${queued?.id}`)).toHaveText(
-    "Sent to your pharmacy",
-  )
-})
+  await expect(page.getByTestId(`portal-refills-status-${queued?.id}`)).toHaveText(label)
+  await expect(page.getByTestId("portal-refills")).not.toContainText("private to the practice")
+}

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -39,6 +40,7 @@ from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from app.repositories.postgres.refill_request import PostgresRefillRequestRepository
     from sqlalchemy.engine import Connection, Engine
 
 _DB_URL = os.environ.get("DATABASE_URL", "")
@@ -156,6 +158,60 @@ def _unarmed(engine: Engine, schema: str) -> Connection:
     conn.execute(text("RESET app.current_user_id"))
     conn.execute(text("RESET app.current_patient_id"))
     return conn
+
+
+@contextmanager
+def _clinician_repository(schema: str, user_id: str) -> Iterator[PostgresRefillRequestRepository]:
+    """The repository on the app's own off-request clinician session.
+
+    ``tenant_db_session`` sets the tenant and principal ContextVars, clears
+    the patient one, arms the GUC and restores all three on exit — which is
+    what keeps the ``after_begin`` listener from re-arming a principal some
+    earlier test in the run left behind.
+    """
+    from app.db.tenant_session import tenant_db_session  # noqa: PLC0415
+    from app.repositories.postgres.refill_request import (  # noqa: PLC0415
+        PostgresRefillRequestRepository,
+    )
+
+    with tenant_db_session(schema, user_id) as session:
+        yield PostgresRefillRequestRepository(session)
+
+
+@contextmanager
+def _patient_repository(
+    engine: Engine, schema: str, patient_id: str
+) -> Iterator[PostgresRefillRequestRepository]:
+    """The repository on an ORM session armed for a patient principal.
+
+    There is no patient twin of ``tenant_db_session``, so this does its job
+    by hand: the ambient ContextVars carry this patient and no clinician for
+    the duration, because the ``after_begin`` listener re-arms from them on
+    every transaction.
+    """
+    from app.db import (  # noqa: PLC0415
+        _current_patient_id,
+        _current_tenant_schema,
+        _current_user_id,
+        arm_current_patient_id,
+    )
+    from app.repositories.postgres.refill_request import (  # noqa: PLC0415
+        PostgresRefillRequestRepository,
+    )
+
+    schema_token = _current_tenant_schema.set(schema)
+    user_token = _current_user_id.set(None)
+    patient_token = _current_patient_id.set(patient_id)
+    session = Session(bind=engine)
+    try:
+        session.execute(text(f"SET search_path = {schema}, platform, public"))
+        arm_current_patient_id(session, patient_id)
+        yield PostgresRefillRequestRepository(session)
+    finally:
+        session.close()
+        _current_patient_id.reset(patient_token)
+        _current_user_id.reset(user_token)
+        _current_tenant_schema.reset(schema_token)
 
 
 def _ask(conn: Connection, patient_id: str, *, minutes_ago: int = 0) -> str:
@@ -306,17 +362,9 @@ class TestPatientPrincipal:
     def test_repository_offers_only_their_active_medications(
         self, engine: Engine, tenant_schema: str, two_patients: tuple[str, str]
     ) -> None:
-        from app.repositories.postgres.refill_request import (  # noqa: PLC0415
-            PostgresRefillRequestRepository,
-        )
-
-        conn = _as_patient(engine, tenant_schema, two_patients[0])
-        try:
-            repo = PostgresRefillRequestRepository(Session(bind=conn))
+        with _patient_repository(engine, tenant_schema, two_patients[0]) as repo:
             options = repo.list_medication_options(two_patients[0])
             stranger_options = repo.list_medication_options(two_patients[1])
-        finally:
-            conn.close()
         assert [drug for _, drug, _ in options] == ["Ada-active"]
         assert stranger_options == []
 
@@ -347,24 +395,12 @@ class TestClinicianPrincipal:
             conn.close()
 
     def test_queue_is_oldest_first_and_only_granted_patients(
-        self, engine: Engine, tenant_schema: str, requests: tuple[str, str]
+        self, tenant_schema: str, requests: tuple[str, str]
     ) -> None:
-        from app.repositories.postgres.refill_request import (  # noqa: PLC0415
-            PostgresRefillRequestRepository,
-        )
-
-        treating = _as_clinician(engine, tenant_schema, _TREATING_CLINICIAN)
-        stranger = _as_clinician(engine, tenant_schema, _STRANGER_CLINICIAN)
-        try:
-            queue = PostgresRefillRequestRepository(Session(bind=treating)).list_queue(
-                _TREATING_CLINICIAN, "pending"
-            )
-            stranger_queue = PostgresRefillRequestRepository(Session(bind=stranger)).list_queue(
-                _STRANGER_CLINICIAN, "pending"
-            )
-        finally:
-            treating.close()
-            stranger.close()
+        with _clinician_repository(tenant_schema, _TREATING_CLINICIAN) as repo:
+            queue = repo.list_queue(_TREATING_CLINICIAN, "pending")
+        with _clinician_repository(tenant_schema, _STRANGER_CLINICIAN) as repo:
+            stranger_queue = repo.list_queue(_STRANGER_CLINICIAN, "pending")
         ids = [e.request.id for e in queue]
         assert ids.index(requests[0]) < ids.index(requests[1])
         assert {e.patient_first_name for e in queue} >= {"Ada", "Grace"}
@@ -375,9 +411,6 @@ class TestDecision:
     def test_is_made_once_and_refused_to_a_stranger(
         self, engine: Engine, tenant_schema: str, two_patients: tuple[str, str]
     ) -> None:
-        from app.repositories.postgres.refill_request import (  # noqa: PLC0415
-            PostgresRefillRequestRepository,
-        )
         from app.repositories.refill_request import (  # noqa: PLC0415
             RefillRequestAccessDeniedError,
             RefillRequestAlreadyDecidedError,
@@ -390,23 +423,19 @@ class TestDecision:
         finally:
             writer.close()
 
-        stranger = _as_clinician(engine, tenant_schema, _STRANGER_CLINICIAN)
-        try:
-            with pytest.raises(RefillRequestAccessDeniedError):
-                PostgresRefillRequestRepository(Session(bind=stranger)).decide(
-                    request_id,
-                    _STRANGER_CLINICIAN,
-                    status="approved",
-                    prescriber_note=None,
-                    decided_at=datetime.now(UTC),
-                )
-        finally:
-            stranger.rollback()
-            stranger.close()
+        with (
+            pytest.raises(RefillRequestAccessDeniedError),
+            _clinician_repository(tenant_schema, _STRANGER_CLINICIAN) as repo,
+        ):
+            repo.decide(
+                request_id,
+                _STRANGER_CLINICIAN,
+                status="approved",
+                prescriber_note=None,
+                decided_at=datetime.now(UTC),
+            )
 
-        treating = _as_clinician(engine, tenant_schema, _TREATING_CLINICIAN)
-        try:
-            repo = PostgresRefillRequestRepository(Session(bind=treating))
+        with _clinician_repository(tenant_schema, _TREATING_CLINICIAN) as repo:
             decided = repo.decide(
                 request_id,
                 _TREATING_CLINICIAN,
@@ -424,9 +453,6 @@ class TestDecision:
                     prescriber_note=None,
                     decided_at=datetime.now(UTC),
                 )
-            treating.commit()
-        finally:
-            treating.close()
 
         reader = _as_patient(engine, tenant_schema, two_patients[0])
         try:

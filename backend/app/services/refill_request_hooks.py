@@ -66,7 +66,8 @@ class RefillRequestHook(Protocol):
     context and no open session.
     """
 
-    def __call__(self, event: RefillRequestEvent) -> None: ...
+    def __call__(self, event: RefillRequestEvent) -> None:
+        """Handle one event. Must not assume a request, a tenant context or a session."""
 
 
 class RefillRequestHookRegistry:
