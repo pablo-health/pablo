@@ -1,0 +1,7 @@
+BEGIN:VCARD
+VERSION:3.0
+N:Llama;Lola;;;
+FN:Lola Llama
+TEL;TYPE=mobile:(555) 555-0102
+EMAIL;TYPE=work:lola.llama@example.com
+END:VCARD

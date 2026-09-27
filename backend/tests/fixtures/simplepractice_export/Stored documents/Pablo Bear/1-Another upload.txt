@@ -1,0 +1,3 @@
+Stand-in for a second client upload. Two clients named Pablo Bear each had
+one file attached; the export put both in this one folder, each numbered
+"1-", with nothing in the path saying which client owns which.

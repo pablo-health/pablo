@@ -1,0 +1,9 @@
+BEGIN:VCARD
+VERSION:3.0
+N:Llama;Lulu;;;
+FN:Lulu Llama
+ADR:;;42 Llama Lane;Llamaville;GA;30000;
+TEL;TYPE=mobile:5555550100
+EMAIL;TYPE=work:lulu.llama@example.com
+BDAY:19900314
+END:VCARD

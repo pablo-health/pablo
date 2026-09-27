@@ -1,0 +1,8 @@
+BEGIN:VCARD
+VERSION:3.0
+N:Bear;Pablo;;;
+FN:Pablo Bear
+ADR:;;1 Honey Pot Road;Bearburg;GA;30000-0001;
+EMAIL;TYPE=home:pablo.bear@example.com
+BDAY:20250101
+END:VCARD
