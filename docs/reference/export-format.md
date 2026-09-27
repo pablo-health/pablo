@@ -99,8 +99,8 @@ POST /api/admin/tenant-export
 | `include_transcripts` | `true` or `false` | `false` |
 | `include_psychotherapy_notes` | `true` or `false` | `false` |
 
-For an administrator. One ZIP, streamed as it is built, holding every chart
-the caller can open:
+For an administrator. One ZIP, built one chart at a time and then sent,
+holding every chart the caller can open:
 
 | File | Contents |
 | --- | --- |

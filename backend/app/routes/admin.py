@@ -2,7 +2,9 @@
 
 """Admin API routes — user management and allowlist."""
 
+import itertools
 import logging
+import tempfile
 from collections.abc import Iterator
 from datetime import datetime
 from typing import Any, Literal
@@ -317,11 +319,55 @@ def _practice_archive(
     patients: PatientRepository,
     export_service: ExportService,
 ) -> StreamingResponse:
+    """Build the archive to a temporary file inside the request, then stream the file.
+
+    Every database read happens before the response is returned: the
+    session middleware tears the request's session down as the response
+    starts, so a body that read the database while it streamed would run
+    on a bare pooled connection. ``_archive_file`` builds first and yields
+    only once the file is complete; priming it here with one ``next`` runs
+    the build (and writes the audit rows) on the request's session, and the
+    response then streams a finished file.
+    """
     options = ExportOptions(
         include_transcripts=body.include_transcripts,
         include_psychotherapy_notes=body.include_psychotherapy_notes,
     )
     state = PracticeExportState()
+    body_chunks = _archive_file(request, admin, db, audit, patients, export_service, options, state)
+    first = next(body_chunks)
+    summary = state.summary
+    if summary is None:  # pragma: no cover - the generator sets it before its first yield
+        msg = "The practice export did not run to completion."
+        raise RuntimeError(msg)
+    return StreamingResponse(
+        itertools.chain([first], body_chunks),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": 'attachment; filename="practice-export.zip"',
+            "Content-Length": str(summary.size_bytes),
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+def _archive_file(
+    request: Request,
+    admin: User,
+    db: Session,
+    audit: AuditService,
+    patients: PatientRepository,
+    export_service: ExportService,
+    options: ExportOptions,
+    state: PracticeExportState,
+) -> Iterator[bytes]:
+    """Write the archive to a temporary file one chart at a time, record it, then yield it.
+
+    Nothing is yielded until the file is complete, so a caller that primes
+    the generator has done every database read on its own session. The
+    file grows one chart at a time, so memory holds one archive, and it
+    goes with the generator, whether the body is sent or the client leaves.
+    """
 
     def build(patient_id: str) -> dict[str, Any]:
         return export_service.get_patient_export_data(
@@ -332,9 +378,22 @@ def _practice_archive(
             include_psychotherapy_notes=options.include_psychotherapy_notes,
         )
 
-    def _emit_audit() -> None:
-        if state.summary is None:
-            return
+    with tempfile.TemporaryFile() as spool:
+        for chunk in stream_practice_archive(
+            patients=_every_patient(patients, admin.id),
+            build=build,
+            audit_log=lambda: audit_log_csv(db),
+            options=options,
+            exported_at=utc_now(),
+            state=state,
+        ):
+            spool.write(chunk)
+        summary = state.summary
+        if summary is None:  # pragma: no cover - the generator sets it on completion
+            msg = "The practice export did not run to completion."
+            raise RuntimeError(msg)
+
+        # The export happened; it is recorded now, whatever becomes of the download.
         audit.log(
             AuditAction.TENANT_EXPORTED,
             admin,
@@ -343,9 +402,9 @@ def _practice_archive(
             resource_id="archive",
             changes={
                 "format": "zip",
-                "size_bytes": state.summary.size_bytes,
-                "patients": state.summary.patients,
-                "files": state.summary.files,
+                "size_bytes": summary.size_bytes,
+                "patients": summary.patients,
+                "files": summary.files,
                 "partial_possible": True,
                 "include_transcripts": options.include_transcripts,
                 "include_psychotherapy_notes": options.include_psychotherapy_notes,
@@ -365,29 +424,15 @@ def _practice_archive(
             )
             record_exported_files(audit, admin, request, patient, exported)
         logger.info(
-            "Practice export streamed by admin %s: patients=%d size_bytes=%d",
+            "Practice export built by admin %s: patients=%d size_bytes=%d",
             admin.id,
-            state.summary.patients,
-            state.summary.size_bytes,
+            summary.patients,
+            summary.size_bytes,
         )
 
-    stream = stream_practice_archive(
-        patients=_every_patient(patients, admin.id),
-        build=build,
-        audit_log=lambda: audit_log_csv(db),
-        options=options,
-        exported_at=utc_now(),
-        state=state,
-    )
-    return StreamingResponse(
-        stream,
-        media_type="application/zip",
-        headers={
-            "Content-Disposition": 'attachment; filename="practice-export.zip"',
-            "Cache-Control": "no-store",
-        },
-        background=BackgroundTask(_emit_audit),
-    )
+        spool.seek(0)
+        while chunk := spool.read(1 << 16):
+            yield chunk
 
 
 # --- User Management Models ---
