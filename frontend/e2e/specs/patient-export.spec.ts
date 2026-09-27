@@ -24,6 +24,7 @@ import Ajv2020 from "ajv/dist/2020.js"
 import addFormats from "ajv-formats"
 import JSZip from "jszip"
 import { expect, test } from "../fixtures/auth"
+import { parseCsv } from "../fixtures/csv"
 import { defaultIntakeVersion, fillTheFormIn } from "../fixtures/intake"
 import { givePortalContactDetails, givePortalInvitation, signInToPortal } from "../fixtures/portal"
 import { giveTranscribedSession, givePatient, giveVisitReadyToBill } from "../fixtures/scenarios"
@@ -101,8 +102,10 @@ async function exportFromChart(
 
 const ARCHIVE_FILES = [
   "README.txt",
+  "appointments.csv",
   "billing/statement.pdf",
   "chart.pdf",
+  "clients.csv",
   "manifest.json",
   "patient.json",
   "schema.json",
@@ -294,7 +297,7 @@ test.describe("patient export", () => {
       sha256(records.body),
     )
     expect([...files.keys()].sort()).toEqual([...ARCHIVE_FILES, uploaded.archive_path].sort())
-    expect(document.schema_version).toBe("1.3")
+    expect(document.schema_version).toBe("1.4")
     expect(document.options).toEqual({
       include_transcripts: false,
       include_psychotherapy_notes: false,
@@ -310,7 +313,7 @@ test.describe("patient export", () => {
 
     // The manifest names every other file, with its true size and checksum.
     const manifest = JSON.parse(read("manifest.json").toString("utf8")) as ArchiveManifest
-    expect(manifest.schema_version).toBe("1.3")
+    expect(manifest.schema_version).toBe("1.4")
     expect(manifest.options).toEqual(document.options)
     expect(manifest.files.map((file) => file.path).sort()).toEqual(
       [...files.keys()].filter((name) => name !== "manifest.json").sort(),
@@ -323,6 +326,23 @@ test.describe("patient export", () => {
       expect(file.bytes, file.path).toBe(data.length)
       expect(file.sha256, file.path).toBe(createHash("sha256").update(data).digest("hex"))
     }
+
+    // The flat files another system imports: this client's row, and the
+    // visit that was billed, with its code. Names are read back through the
+    // quoting rules, not split on commas.
+    const [client, ...otherClients] = parseCsv(read("clients.csv").toString("utf8"))
+    expect(otherClients).toEqual([])
+    expect(client).toMatchObject({
+      client_id: patient.id,
+      first_name: patient.first_name,
+      last_name: patient.last_name,
+      status: "active",
+    })
+    expect(Object.keys(client)[0]).toBe("client_id")
+    const appointments = parseCsv(read("appointments.csv").toString("utf8"))
+    const billed = appointments.find((row) => row.appointment_id === visit.appointmentId)
+    expect(billed).toMatchObject({ client_id: patient.id, cpt_codes: VISIT.service_code })
+    expect(manifest.files.find((file) => file.path === "clients.csv")?.kind).toBe("csv")
 
     expect(read("chart.pdf").subarray(0, 4).toString("latin1")).toBe("%PDF")
     expect(read("README.txt").toString("utf8")).toContain("patient.json")
@@ -376,7 +396,7 @@ test.describe("patient export", () => {
       message_threads: ExportedThread[]
     }
     expect(validate(document), JSON.stringify(validate.errors)).toBe(true)
-    expect(document.schema_version).toBe("1.3")
+    expect(document.schema_version).toBe("1.4")
 
     const phq9 = document.outcome_measures.filter((measure) => measure.instrument === "phq9")
     expect(phq9, "the PHQ-9 the client completed").toHaveLength(1)

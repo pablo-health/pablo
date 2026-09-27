@@ -103,7 +103,9 @@ def test_zip_holds_the_five_files(service: ExportService) -> None:
     assert result["filename"].endswith(".zip")
     assert sorted(files) == [
         "README.txt",
+        "appointments.csv",
         "chart.pdf",
+        "clients.csv",
         "manifest.json",
         "patient.json",
         "schema.json",
@@ -150,6 +152,8 @@ def test_manifest_lists_every_other_file_with_a_matching_checksum(service: Expor
         "patient.json": "json",
         "schema.json": "schema",
         "README.txt": "text",
+        "clients.csv": "csv",
+        "appointments.csv": "csv",
     }
 
 

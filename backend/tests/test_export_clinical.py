@@ -209,6 +209,7 @@ def test_each_list_is_read_and_mapped(source: ClinicalRecordSource) -> None:
         "telehealth": False,
         "place_of_service": "11",
         "note_type": "soap",
+        "service_code": None,
         "session_id": "session-1",
     }
     assert later.telehealth is True
@@ -261,7 +262,7 @@ def test_the_archive_carries_each_list_and_the_pdf_heads_a_section_for_it(
         document = json.loads(archive.read("patient.json"))
         schema = json.loads(archive.read("schema.json"))
     Draft202012Validator(schema).validate(document)
-    assert document["schema_version"] == "1.3"
+    assert document["schema_version"] == "1.4"
     assert {key: len(document[key]) for key in _LISTS} == {
         "appointments": 2,
         "outcome_measures": 1,

@@ -192,6 +192,7 @@ def _appointment(
         ),
         place_of_service=appointment.place_of_service,
         note_type=appointment.note_type,
+        service_code=appointment.service_code,
         session_id=appointment.session_id,
     )
 

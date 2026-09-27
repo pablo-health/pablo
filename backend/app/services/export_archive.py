@@ -59,6 +59,8 @@ schema.json    The JSON Schema that patient.json follows.
 documents/     Files uploaded to the chart, as they were uploaded.
 intake/        Each submitted intake form, as a document to read or print.
 billing/       The client's statement, and the superbill for the visits claims were filed for.
+clients.csv    The client's demographics as one row, for another system's importer.
+appointments.csv  The client's appointments, one row each, for the same.
 manifest.json  Every other file in this archive, with its size and SHA-256 checksum.
 README.txt     This file.
 """

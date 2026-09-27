@@ -573,6 +573,19 @@
           "description": "CMS place-of-service code, when recorded.",
           "title": "Place Of Service"
         },
+        "service_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The CPT code the visit bills as.",
+          "title": "Service Code"
+        },
         "session_id": {
           "anyOf": [
             {
@@ -1716,8 +1729,8 @@
       "$ref": "#/$defs/Practitioner"
     },
     "schema_version": {
-      "const": "1.3",
-      "default": "1.3",
+      "const": "1.4",
+      "default": "1.4",
       "title": "Schema Version",
       "type": "string"
     },

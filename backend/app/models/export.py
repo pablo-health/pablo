@@ -20,7 +20,7 @@ from typing import Annotated, Any, Final, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
-SCHEMA_VERSION: Final = "1.3"
+SCHEMA_VERSION: Final = "1.4"
 
 
 def _with_offset(value: datetime) -> datetime:
@@ -144,6 +144,7 @@ class ExportAppointment(BaseModel):
     telehealth: bool = Field(description="Held by video rather than in person.")
     place_of_service: str | None = Field(description="CMS place-of-service code, when recorded.")
     note_type: str = Field(description="The note type a session started from it is written in.")
+    service_code: str | None = Field(default=None, description="The CPT code the visit bills as.")
     session_id: str | None = Field(description="The session held for it, in sessions[].")
 
 
@@ -351,7 +352,7 @@ class ExportClaim(BaseModel):
 class PatientExportDocument(BaseModel):
     """One client's chart as structured data (``patient.json``)."""
 
-    schema_version: Literal["1.3"] = SCHEMA_VERSION
+    schema_version: Literal["1.4"] = SCHEMA_VERSION
     exported_at: Timestamp
     options: ExportOptions
     patient: ExportPatient
@@ -374,7 +375,7 @@ class PatientExportDocument(BaseModel):
 
 
 ManifestFileKind = Literal[
-    "pdf", "json", "schema", "text", "document", "intake_form", "statement", "superbill"
+    "pdf", "json", "schema", "text", "document", "intake_form", "statement", "superbill", "csv"
 ]
 
 
@@ -388,7 +389,7 @@ class ManifestFile(BaseModel):
 class ExportManifest(BaseModel):
     """``manifest.json``: every other file in the archive, with its checksum."""
 
-    schema_version: Literal["1.3"] = SCHEMA_VERSION
+    schema_version: Literal["1.4"] = SCHEMA_VERSION
     exported_at: Timestamp
     options: ExportOptions
     files: list[ManifestFile]

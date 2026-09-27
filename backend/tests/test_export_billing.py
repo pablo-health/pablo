@@ -255,7 +255,7 @@ def test_the_archive_carries_the_lists_and_the_documents(payments: Mock) -> None
 
     document = json.loads(files["patient.json"])
     Draft202012Validator(json.loads(files["schema.json"])).validate(document)
-    assert document["schema_version"] == "1.3"
+    assert document["schema_version"] == "1.4"
     assert {key: len(document[key]) for key in ("charges", "coverage", "claims")} == {
         "charges": 2,
         "coverage": 2,
