@@ -1,0 +1,1 @@
+Stand-in for an opaque client upload; only the path shape is captured.

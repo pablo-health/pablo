@@ -1,0 +1,6 @@
+BEGIN:VCARD
+VERSION:3.0
+N:Bear;Pablo;;;
+FN:Pablo Bear
+EMAIL;TYPE=home:pablo.bear2@example.com
+END:VCARD
