@@ -38,6 +38,8 @@ are recorded in `options` and on the export's audit log entry.
 | `intake/<assignment_id>.html` | Each submitted intake form, as a document to read or print. |
 | `billing/statement.pdf` | The client's statement: what was charged, paid and owed, by visit. |
 | `billing/superbill.pdf` | The receipt for the visits claims were filed for, when every field an insurer needs is on file. |
+| `clients.csv` | The client's demographics as one row, for another system's importer. |
+| `appointments.csv` | The client's appointments, one row each, for the same. |
 | `manifest.json` | Every other file, with its size and SHA-256 checksum. |
 | `README.txt` | Which file is which, the schema version, and a pointer to this page. |
 
@@ -95,10 +97,11 @@ from the export models. CI fails when the two disagree, so it matches the
 ## Versioning
 
 `schema_version` in `patient.json` and `manifest.json` names the version an
-archive was written in. The current version is `1.3`.
+archive was written in. The current version is `1.4`.
 
 | Version | Change |
 | --- | --- |
+| `1.4` | Adds `clients.csv` and `appointments.csv`, and `service_code` on an appointment. |
 | `1.3` | Adds `charges`, `coverage` and `claims`, a Billing section in `chart.pdf`, and the `billing/` folder. |
 | `1.2` | Adds `appointments`, `outcome_measures`, `message_threads`, `medications` and `diagnoses`, and a `chart.pdf` section for each. |
 | `1.1` | Adds `documents` and the `documents/` and `intake/` folders. |
@@ -109,5 +112,19 @@ archive was written in. The current version is `1.3`.
 - **Major** (`1.x` to `2.0`): a rename, a removal or a change of meaning.
   Check the major version before reading anything else.
 
-CSV files are planned for the archive. They arrive as a minor version that
-adds files without changing the ones described here.
+## The CSV files
+
+`clients.csv` and `appointments.csv` are for another system's importer. Both
+are RFC 4180, UTF-8 with a byte-order mark, with a header row always present.
+Several codes in one cell are separated by `;`. Column names and their order
+are a contract: a later version adds columns and never renames or moves one.
+
+`clients.csv`: `client_id`, `first_name`, `last_name`, `date_of_birth`,
+`sex`, `email`, `phone`, `address_line1`, `address_line2`, `city`, `state`,
+`postal_code`, `primary_clinician`, `status`, `created_at`,
+`diagnosis_codes`. `primary_clinician` is the clinician on the most recent
+appointment; `diagnosis_codes` are the confirmed codes from `diagnoses`.
+
+`appointments.csv`: `appointment_id`, `client_id`, `start`, `end`,
+`timezone`, `appointment_type`, `status`, `clinician`, `location`,
+`note_type`, `cpt_codes`. `location` is the CMS place-of-service code.

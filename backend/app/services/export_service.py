@@ -37,6 +37,7 @@ from .export_archive import (
 )
 from .export_billing import STATEMENT_PATH, SUPERBILL_PATH, BillingRecord, BillingRecordReader
 from .export_clinical import ClinicalRecord, ClinicalRecordReader
+from .export_csv import appointments_csv, clients_csv
 from .export_pdf import final_content, render_chart_pdf
 from .record_set import RecordSetSelector
 
@@ -227,6 +228,8 @@ class ExportService:
                 for assignment_id, html in intake_forms
             ),
             *_billing_files(billing),
+            ArchiveFile("clients.csv", "csv", clients_csv([document]).encode()),
+            ArchiveFile("appointments.csv", "csv", appointments_csv([document]).encode()),
         ]
         return {
             "content": build_archive(document, chart_pdf, files),

@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import csv
 import hashlib
 import io
 import json
@@ -407,6 +408,7 @@ def _seed_clinical(
                 provider="zoom",
                 video_link="https://meet.example/room",
                 place_of_service="10",
+                service_code="90837",
                 session_id=ids["session"],
                 created_at=now,
                 updated_at=now,
@@ -734,9 +736,12 @@ def _seed_patient(engine: Engine, tenant_schema: str) -> str:
             text(
                 "INSERT INTO patients (id, first_name, last_name, "
                 "first_name_lower, last_name_lower, status, "
-                "session_count, created_at, updated_at) "
-                "VALUES (CAST(:pid AS uuid), 'Export', 'Patient', "
-                "'export', 'patient', 'active', 1, now(), now())"
+                "session_count, created_at, updated_at, "
+                "email, phone, date_of_birth, sex, address_line1, city, state, postal_code) "
+                "VALUES (CAST(:pid AS uuid), 'Export', 'Patient, Jr.', "
+                "'export', 'patient, jr.', 'active', 1, now(), now(), "
+                "'export@example.test', '555-0100', '1980-01-15', 'F', "
+                "'12 Harbor Rd, Apt 3', 'Chicago', 'IL', '60601')"
             ),
             {"pid": patient_id},
         )
@@ -1122,7 +1127,15 @@ def _unzip(content: bytes) -> dict[str, bytes]:
 def _assert_archive_keeps_its_promises(files: dict[str, bytes]) -> dict[str, Any]:
     """The five files and the carried ones, a document valid against its own
     schema, true checksums."""
-    described = {"README.txt", "chart.pdf", "manifest.json", "patient.json", "schema.json"}
+    described = {
+        "README.txt",
+        "chart.pdf",
+        "manifest.json",
+        "patient.json",
+        "schema.json",
+        "clients.csv",
+        "appointments.csv",
+    }
     assert described <= set(files)
     carried = set(files) - described
     assert all(name.startswith(("documents/", "intake/", "billing/")) for name in carried), carried
@@ -1158,7 +1171,7 @@ class TestZip:
         assert result["content_type"] == "application/zip"
         files = _unzip(result["content"])
         document = _assert_archive_keeps_its_promises(files)
-        assert document["schema_version"] == "1.3"
+        assert document["schema_version"] == "1.4"
         assert document["options"] == {
             "include_transcripts": True,
             "include_psychotherapy_notes": True,
@@ -1320,6 +1333,7 @@ class TestZipClinical:
             "telehealth": True,
             "place_of_service": "10",
             "note_type": "soap",
+            "service_code": "90837",
             "session_id": chart["session"],
         }
 
@@ -1546,3 +1560,75 @@ class TestZipBilling:
             assert -1 not in positions, (export_format, positions)
             assert positions == sorted(positions), "billing follows the clinical lists"
             assert chart["claim:control"] in page_text
+
+
+class TestZipCsv:
+    def test_clients_csv_is_the_seeded_row_read_back_through_the_quoting_rules(
+        self, engine: Engine, tenant_schema: str, chart: dict[str, str]
+    ) -> None:
+        files = _unzip(_export(engine, tenant_schema, chart["patient"], "zip")["content"])
+        _assert_archive_keeps_its_promises(files)
+
+        text = files["clients.csv"].decode()
+        assert text.startswith("\ufeff")
+        [row] = list(csv.DictReader(io.StringIO(text.removeprefix("\ufeff"))))
+        assert list(row) == [
+            "client_id",
+            "first_name",
+            "last_name",
+            "date_of_birth",
+            "sex",
+            "email",
+            "phone",
+            "address_line1",
+            "address_line2",
+            "city",
+            "state",
+            "postal_code",
+            "primary_clinician",
+            "status",
+            "created_at",
+            "diagnosis_codes",
+        ]
+        assert row | {"created_at": None} == {
+            "client_id": chart["patient"],
+            "first_name": "Export",
+            "last_name": "Patient, Jr.",
+            "date_of_birth": "1980-01-15",
+            "sex": "F",
+            "email": "export@example.test",
+            "phone": "555-0100",
+            "address_line1": "12 Harbor Rd, Apt 3",
+            "address_line2": "",
+            "city": "Chicago",
+            "state": "IL",
+            "postal_code": "60601",
+            "primary_clinician": _CLINICIAN_NAME,
+            "status": "active",
+            "created_at": None,
+            "diagnosis_codes": "F41.1",
+        }
+        assert '"Patient, Jr."' in text, "the comma is quoted, not split"
+
+    def test_appointments_csv_is_the_seeded_visit(
+        self, engine: Engine, tenant_schema: str, chart: dict[str, str]
+    ) -> None:
+        files = _unzip(_export(engine, tenant_schema, chart["patient"], "zip")["content"])
+
+        text = files["appointments.csv"].decode().removeprefix("\ufeff")
+        [row] = list(csv.DictReader(io.StringIO(text)))
+        assert row | {"start": None, "end": None} == {
+            "appointment_id": chart["appointment"],
+            "client_id": chart["patient"],
+            "start": None,
+            "end": None,
+            "timezone": _CLINICIAN_TIMEZONE,
+            "appointment_type": "Individual therapy",
+            "status": "completed",
+            "clinician": _CLINICIAN_NAME,
+            "location": "10",
+            "note_type": "soap",
+            "cpt_codes": "90837",
+        }
+        kinds = {f["path"]: f["kind"] for f in json.loads(files["manifest.json"])["files"]}
+        assert (kinds["clients.csv"], kinds["appointments.csv"]) == ("csv", "csv")
