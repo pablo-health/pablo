@@ -7,12 +7,13 @@ and when it was asked. Asked once; a Skip stamps the time and leaves the
 source null, so the wizard never asks again and the import screen knows what
 kind of archive to expect.
 
-``platform.users`` columns are added from this chain like the other
-onboarding stamps (``profile_basics_completed_at``, ``onboarding_state``),
-idempotently, because the ``create_all`` bootstrap creates ORM columns first.
+Platform chain: ``platform.users`` is owned here (see
+``scripts/regen_platform_schema.py``). The older onboarding stamps on this
+table were added from the tenant chain before this chain existed; new
+columns come from here. Idempotent, like every revision in the chain.
 
 Revision ID: a9d3e6f27c15
-Revises: f4b8c2d91a37
+Revises: d1c7b94e3a26
 Create Date: 2026-09-27
 """
 
@@ -26,18 +27,19 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 revision: str = "a9d3e6f27c15"
-down_revision: str | Sequence[str] | None = "f4b8c2d91a37"
+down_revision: str | Sequence[str] | None = "d1c7b94e3a26"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.execute("ALTER TABLE platform.users ADD COLUMN IF NOT EXISTS import_source VARCHAR(32) NULL")
+    op.execute("ALTER TABLE platform.users ADD COLUMN IF NOT EXISTS import_source VARCHAR(32)")
     op.execute(
-        "ALTER TABLE platform.users ADD COLUMN IF NOT EXISTS import_prompted_at TIMESTAMPTZ NULL"
+        "ALTER TABLE platform.users ADD COLUMN IF NOT EXISTS import_prompted_at "
+        "TIMESTAMP WITH TIME ZONE"
     )
 
 
 def downgrade() -> None:
-    op.drop_column("users", "import_prompted_at", schema="platform")
-    op.drop_column("users", "import_source", schema="platform")
+    op.execute("ALTER TABLE platform.users DROP COLUMN IF EXISTS import_prompted_at;")
+    op.execute("ALTER TABLE platform.users DROP COLUMN IF EXISTS import_source;")

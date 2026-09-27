@@ -564,7 +564,9 @@ CREATE TABLE platform.users (
     quality_review_consent_prompted_at timestamp with time zone,
     inbox_quality_review_opt_in boolean DEFAULT false NOT NULL,
     inbox_quality_review_opt_in_at timestamp with time zone,
-    inbox_quality_review_opt_out_at timestamp with time zone
+    inbox_quality_review_opt_out_at timestamp with time zone,
+    import_source character varying(32),
+    import_prompted_at timestamp with time zone
 );
 
 ALTER TABLE ONLY platform.allowed_emails
