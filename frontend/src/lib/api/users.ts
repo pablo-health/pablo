@@ -91,6 +91,14 @@ export interface UserStatusBase {
    * dedicated backend field per step.
    */
   onboarding_state: string | null
+  /**
+   * The onboarding answer to "are you importing from another records
+   * system?" — "simplepractice", "other" or "none" — and when it was asked.
+   * A Skip leaves the source null and stamps the time, so the step is asked
+   * once.
+   */
+  import_source?: ImportSource | null
+  import_prompted_at?: string | null
   /** The clinician's own (type 1) NPI, from their clinician profile. */
   npi_number: string | null
   /** NUCC taxonomy code for the clinician, the specialty a claim's rendering-provider loop carries. */
@@ -119,7 +127,14 @@ export interface UpdateUserRequestBase {
    * so omitting it here made the type narrower than the endpoint it describes.
    */
   onboarding_state?: "in_progress" | "later" | "completed"
+  /** The onboarding import answer; setting it also records the time asked. */
+  import_source?: ImportSource
+  /** Set alone to record a Skip: asked, nothing named. */
+  import_prompted?: boolean
 }
+
+/** Where a practice said its records are coming from. */
+export type ImportSource = "simplepractice" | "other" | "none"
 
 export type UpdateUserRequest = UpdateUserRequestBase & UpdateUserRequestExtensions
 
