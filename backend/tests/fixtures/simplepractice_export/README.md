@@ -43,7 +43,10 @@ and "Statement for Insurance Reimbursement" (superbill). Secure messages are a
 plain-text log with `----- <date> -----` day headers and `<Sender> [<time>]`
 lines. Client uploads export under `Stored documents/<client>/<n>-<original
 filename>`, numbered in upload order (captured from a second export on
-2026-09-27; the files here are stand-ins for opaque uploads). The client
+2026-09-27; the files here are stand-ins for opaque uploads, keeping the
+captured file types: `1-Sample upload.pdf` stands in for a PDF, which the
+chart stores, and `1-Another upload.txt` for a Markdown file, which it does
+not). The client
 roster CSV is a separate SimplePractice export and is not in this archive.
 
 Two clients with the same name (captured 2026-09-27): the Contacts folder
@@ -64,7 +67,11 @@ message file is named `<Provider>-Pablo-A.-Bear.txt` and each sender line
 reads `Pablo A. Bear`; and the contact card is renamed
 `Pablo A. Bear - <id>.vcf`. The card's *contents* do not change: `N` and `FN`
 still read `Pablo Bear`, so the middle initial has to be read from the card's
-file name. Uploads stay ambiguous either way. A date of birth, when set,
+file name. Uploads stay ambiguous either way. **Administrative notes print
+first and last name only** (`Client:   Pablo Bear` on the note that belongs to
+the client whose other notes say `Pablo A. Bear`), so on that class of
+document the name disagrees with the `DOB:` line and the birthday has to
+win; a reader that attributes by name alone would mis-file it. A date of birth, when set,
 prints as a `DOB:` line on notes and as `BDAY` on the card and separates
 clients the same way.
 

@@ -14,6 +14,10 @@ from .validators import validate_phone
 
 ProviderType = Literal["therapist", "prescriber", "both"]
 OnboardingState = Literal["in_progress", "later", "completed"]
+#: Where a practice said its records are coming from, asked once at
+#: onboarding. ``none`` is an answer ("nothing to import"), distinct from
+#: not having been asked, which is ``import_prompted_at`` being unset.
+ImportSource = Literal["simplepractice", "other", "none"]
 ThemeName = Literal["warm-paper", "dark", "high-contrast", "boring-ehr"]
 CalendarDensity = Literal["gentle", "balanced", "compact"]
 
@@ -80,6 +84,11 @@ class UpdateUserRequest(BaseModel):
     onboarding_state: OnboardingState | None = None
     phone: str | None = Field(None, max_length=50)
     profile_basics_completed: bool | None = None
+    #: The onboarding answer to "are you importing from another records
+    #: system?". Setting it also stamps ``import_prompted_at``; ``import_prompted``
+    #: alone records a Skip.
+    import_source: ImportSource | None = None
+    import_prompted: bool | None = None
 
     @field_validator("phone")
     @classmethod
@@ -304,6 +313,8 @@ class User:
     security_guide_version: str | None = None
     onboarding_state: str | None = None
     profile_basics_completed_at: datetime | None = None
+    import_source: str | None = None
+    import_prompted_at: datetime | None = None
     chat_quality_review_opt_in: bool = False
     chat_quality_review_opt_in_at: datetime | None = None
     chat_quality_review_opt_out_at: datetime | None = None
@@ -382,6 +393,8 @@ class User:
                 "session_notes_quality_review_opt_out_at"
             ),
             quality_review_consent_prompted_at=data.get("quality_review_consent_prompted_at"),
+            import_source=data.get("import_source"),
+            import_prompted_at=data.get("import_prompted_at"),
         )
 
     def to_dict(self) -> dict[str, Any]:

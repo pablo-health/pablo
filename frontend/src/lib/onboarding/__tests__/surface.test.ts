@@ -151,19 +151,31 @@ describe("MINIMAL_ONBOARDING_SURFACE (stock surface)", () => {
     }
   })
 
-  it("never blocks the dashboard, but routes to it as the next incomplete step", () => {
-    const status = {
-      mfa_enrolled_at: "2026-07-14",
-      onboarding_state: null,
-    } as UserStatus
-    expect(firstIncompleteRequiredStep(MINIMAL_ONBOARDING_SURFACE, status)).toBeNull()
-    expect(firstIncompleteStep(MINIMAL_ONBOARDING_SURFACE, status)?.id).toBe("schedule")
+  it("asks the optional import question after passkey and before schedule", () => {
+    const { steps } = MINIMAL_ONBOARDING_SURFACE
+    const importIndex = steps.findIndex((s) => s.id === "import-source")
+    expect(importIndex).not.toBe(-1)
+    expect(steps[importIndex].required).toBe(false)
+    expect(steps[importIndex].path).toBe("/onboarding/import-source")
+    expect(importIndex).toBe(steps.findIndex((s) => s.id === "schedule") - 1)
+    // The gate is having been asked, whatever the answer was.
+    expect(steps[importIndex].gate({ import_prompted_at: null } as UserStatus)).toBe(false)
+    expect(steps[importIndex].gate({ import_prompted_at: "2026-09-27" } as UserStatus)).toBe(true)
   })
 
-  it("firstIncompleteStep returns null once onboarding_state is completed", () => {
+  it("never blocks the dashboard, but routes to the optional steps in order", () => {
+    const fresh = { mfa_enrolled_at: "2026-07-14", onboarding_state: null } as UserStatus
+    expect(firstIncompleteRequiredStep(MINIMAL_ONBOARDING_SURFACE, fresh)).toBeNull()
+    expect(firstIncompleteStep(MINIMAL_ONBOARDING_SURFACE, fresh)?.id).toBe("import-source")
+    const asked = { ...fresh, import_prompted_at: "2026-09-27" } as UserStatus
+    expect(firstIncompleteStep(MINIMAL_ONBOARDING_SURFACE, asked)?.id).toBe("schedule")
+  })
+
+  it("firstIncompleteStep returns null once both optional steps are done", () => {
     const status = {
       mfa_enrolled_at: "2026-07-14",
       onboarding_state: "completed",
+      import_prompted_at: "2026-09-27",
     } as UserStatus
     expect(firstIncompleteStep(MINIMAL_ONBOARDING_SURFACE, status)).toBeNull()
   })

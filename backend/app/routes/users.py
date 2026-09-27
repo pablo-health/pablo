@@ -197,6 +197,11 @@ def get_user_status(
         # once answered, independent of the opt-in flags themselves.
         "quality_review_consent_prompted_at": user.quality_review_consent_prompted_at,
         "profile_basics_completed_at": user.profile_basics_completed_at,
+        # The onboarding "importing from another records system?" answer and
+        # when it was asked, so the wizard asks once and the import screen
+        # knows what to expect.
+        "import_source": user.import_source,
+        "import_prompted_at": user.import_prompted_at,
     }
 
     from ..auth.service import _resolve_practice_from_email
@@ -363,6 +368,20 @@ def _iso_utc(value: datetime) -> str:
     return value.isoformat().replace("+00:00", "Z")
 
 
+def _record_import_answer(user: User, request: UpdateUserRequest) -> None:
+    """Record the onboarding answer to "importing from another records system?".
+
+    A named source stamps both the source and the time asked. A bare
+    ``import_prompted`` is a Skip: asked and declined, recorded so the wizard
+    never asks again, with the source left unset.
+    """
+    if request.import_source is not None:
+        user.import_source = request.import_source
+        user.import_prompted_at = utc_now()
+    elif request.import_prompted:
+        user.import_prompted_at = utc_now()
+
+
 @router.patch("/me")
 def update_current_user_profile(
     http_request: Request,
@@ -406,6 +425,7 @@ def update_current_user_profile(
         user.phone = request.phone
     if request.profile_basics_completed:
         user.profile_basics_completed_at = utc_now()
+    _record_import_answer(user, request)
     user_repo.update(user)
 
     if request.onboarding_state is not None:

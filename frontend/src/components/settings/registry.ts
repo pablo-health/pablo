@@ -8,6 +8,7 @@ import {
   ClipboardCheck,
   Clock,
   FileArchive,
+  FileInput,
   Mic,
   Palette,
   Receipt,
@@ -27,6 +28,7 @@ import { BillingProfilePage } from "./pages/BillingProfilePage"
 import { CalendarsPage } from "./pages/CalendarsPage"
 import { CredentialingPage } from "./pages/CredentialingPage"
 import { CredentialingStartPage } from "./pages/CredentialingStartPage"
+import { ImportPage } from "./pages/ImportPage"
 import { InsurancePage } from "./pages/InsurancePage"
 import { PatientPortalPage } from "./pages/PatientPortalPage"
 import { PracticeExportPage } from "./pages/PracticeExportPage"
@@ -165,6 +167,13 @@ const baseGroups: SettingsGroup[] = [
         page: PatientPortalPage,
         feature: "patient_portal",
         desc: "Intake forms, self-report measures and patient sign-in.",
+      },
+      {
+        id: "import",
+        label: "Import",
+        icon: FileInput,
+        page: ImportPage,
+        desc: "Bring clients and notes across from another EHR.",
       },
       {
         id: "export",

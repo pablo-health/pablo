@@ -483,6 +483,44 @@ CREATE TABLE __TENANT_SCHEMA__.ical_sync_configs (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.import_records (
+    source_system character varying(40) NOT NULL,
+    record_type character varying(40) NOT NULL,
+    source_id character varying(200) NOT NULL,
+    target_table character varying(64) NOT NULL,
+    target_id uuid NOT NULL,
+    source_digest character varying(64) NOT NULL,
+    run_id uuid NOT NULL,
+    state character varying(16) NOT NULL,
+    previous_payload jsonb,
+    imported_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_import_records_state CHECK (((state)::text = ANY ((ARRAY['landed'::character varying, 'updated'::character varying, 'undone'::character varying])::text[])))
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.import_runs (
+    id uuid NOT NULL,
+    source_system character varying(40) NOT NULL,
+    scope character varying(16) NOT NULL,
+    state character varying(16) NOT NULL,
+    started_by uuid NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    finished_at timestamp with time zone,
+    archive_ref text,
+    archive_expires_at timestamp with time zone,
+    preview jsonb,
+    decisions jsonb,
+    counts jsonb,
+    report jsonb,
+    error text,
+    CONSTRAINT ck_import_runs_scope CHECK (((scope)::text = ANY ((ARRAY['patients'::character varying, 'practice'::character varying, 'both'::character varying])::text[]))),
+    CONSTRAINT ck_import_runs_state CHECK (((state)::text = ANY ((ARRAY['queued'::character varying, 'previewing'::character varying, 'previewed'::character varying, 'applying'::character varying, 'applied'::character varying, 'undoing'::character varying, 'undone'::character varying, 'failed'::character varying])::text[])))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.instrument_license_attestations (
     id uuid NOT NULL,
     instrument_code character varying(32) NOT NULL,
@@ -1394,6 +1432,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.ical_sync_configs
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.import_runs
+    ADD CONSTRAINT import_runs_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.instrument_license_attestations
     ADD CONSTRAINT instrument_license_attestations_pkey PRIMARY KEY (id);
 
@@ -1521,6 +1564,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patients
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.payers
     ADD CONSTRAINT payers_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.import_records
+    ADD CONSTRAINT pk_import_records PRIMARY KEY (source_system, record_type, source_id);
 
 
 
@@ -1865,6 +1913,18 @@ CREATE INDEX ix_ical_client_mappings_user_id ON __TENANT_SCHEMA__.ical_client_ma
 
 
 CREATE INDEX ix_ical_sync_configs_user_id ON __TENANT_SCHEMA__.ical_sync_configs USING btree (user_id);
+
+
+
+CREATE INDEX ix_import_records_run ON __TENANT_SCHEMA__.import_records USING btree (run_id);
+
+
+
+CREATE INDEX ix_import_records_target ON __TENANT_SCHEMA__.import_records USING btree (target_table, target_id);
+
+
+
+CREATE INDEX ix_import_runs_started_at ON __TENANT_SCHEMA__.import_runs USING btree (started_at DESC);
 
 
 
@@ -2290,6 +2350,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.claims
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.claims
     ADD CONSTRAINT fk_claims_payer_id_payers FOREIGN KEY (payer_id) REFERENCES __TENANT_SCHEMA__.payers(id) ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.import_records
+    ADD CONSTRAINT fk_import_records_run FOREIGN KEY (run_id) REFERENCES __TENANT_SCHEMA__.import_runs(id);
 
 
 

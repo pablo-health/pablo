@@ -24,6 +24,11 @@
  * A downstream build supplies its own richer surface and selects it in
  * a shadowed ./surface.ts.
  *
+ * After the second factor comes an optional import question — "are you
+ * importing from another records system?" — asked once, gated on
+ * `import_prompted_at`, and leading to the import screen for a practice that
+ * names one.
+ *
  * The surface ends with an optional working-hours step: it never blocks
  * the dashboard (`required: false`), and its gate is the generic
  * `onboarding_state` field the backend already exposes, set to
@@ -43,6 +48,17 @@ const PASSKEY_STEP: StepDef = {
   gate: (status) => Boolean(status.mfa_enrolled_at),
 }
 
+// Optional and asked once: "Are you importing from another records system?"
+// Answering (or skipping) stamps import_prompted_at, which is the gate. A
+// downstream surface can reuse this step as it is — its id, path and gate are
+// the contract — and place it wherever its own flow wants it.
+export const IMPORT_SOURCE_STEP: StepDef = {
+  id: "import-source",
+  path: "/onboarding/import-source",
+  gate: (status) => Boolean(status.import_prompted_at),
+  required: false,
+}
+
 const SCHEDULE_STEP: StepDef = {
   id: "schedule",
   path: "/onboarding/schedule",
@@ -51,5 +67,5 @@ const SCHEDULE_STEP: StepDef = {
 }
 
 export const MINIMAL_ONBOARDING_SURFACE: OnboardingSurface = {
-  steps: [...(PASSKEYS_ENABLED ? [PASSKEY_STEP] : []), SCHEDULE_STEP],
+  steps: [...(PASSKEYS_ENABLED ? [PASSKEY_STEP] : []), IMPORT_SOURCE_STEP, SCHEDULE_STEP],
 }

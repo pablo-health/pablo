@@ -42,6 +42,7 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
+    PrimaryKeyConstraint,
     SmallInteger,
     String,
     Text,
@@ -3970,6 +3971,81 @@ class ClaimReminderRow(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ImportRunRow(Base):
+    """One import of a records-system export into this practice.
+
+    Practice data, not patient data: the row names no patient and holds no
+    clinical content. ``preview`` is the parsed archive as the user reviewed
+    it, ``decisions`` what they answered (assignments, merges, provider
+    mapping, confirmed practice fields), ``counts`` and ``report`` what
+    happened — all keyed by source ids and handles. Registered not-row-scoped
+    in :mod:`app.db`; its isolation boundary is the tenant schema.
+
+    ``archive_ref`` points at the uploaded archive while it is still needed
+    (until apply, and at most until ``archive_expires_at``); it is cleared
+    when the archive is deleted.
+    """
+
+    __tablename__ = "import_runs"
+    __table_args__ = (
+        CheckConstraint("scope IN ('patients','practice','both')", name="ck_import_runs_scope"),
+        CheckConstraint(
+            "state IN ('queued','previewing','previewed','applying','applied',"
+            "'undoing','undone','failed')",
+            name="ck_import_runs_state",
+        ),
+        Index("ix_import_runs_started_at", "started_at"),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    source_system: Mapped[str] = mapped_column(String(40), nullable=False)
+    scope: Mapped[str] = mapped_column(String(16), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    started_by: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    archive_ref: Mapped[str | None] = mapped_column(Text)
+    archive_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    preview: Mapped[dict | None] = mapped_column(JSONB)
+    decisions: Mapped[dict | None] = mapped_column(JSONB)
+    counts: Mapped[dict | None] = mapped_column(JSONB)
+    report: Mapped[dict | None] = mapped_column(JSONB)
+    error: Mapped[str | None] = mapped_column(Text)
+
+
+class ImportRecordRow(Base):
+    """The import ledger: one row per source record landed, by source id.
+
+    The primary key is the source system's own identity for the record, so
+    a second run of the same archive can tell new from seen, and undo knows
+    every row a run created. ``previous_payload`` keeps the pre-update
+    snapshot for records a later run changed. No ``id``, ``user_id`` or
+    ``patient_id`` column by design — the RLS pre-flight keys on those, and
+    this table's boundary is the tenant schema like ``import_runs``.
+    """
+
+    __tablename__ = "import_records"
+    __table_args__ = (
+        PrimaryKeyConstraint("source_system", "record_type", "source_id", name="pk_import_records"),
+        CheckConstraint("state IN ('landed','updated','undone')", name="ck_import_records_state"),
+        ForeignKeyConstraint(["run_id"], ["import_runs.id"], name="fk_import_records_run"),
+        Index("ix_import_records_run", "run_id"),
+        Index("ix_import_records_target", "target_table", "target_id"),
+    )
+
+    source_system: Mapped[str] = mapped_column(String(40), nullable=False)
+    record_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    source_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    target_table: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    source_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    run_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    previous_payload: Mapped[dict | None] = mapped_column(JSONB)
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 

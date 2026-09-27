@@ -629,6 +629,7 @@ class ResourceType(StrEnum):
     EHR_ROUTE = "ehr_route"
     SELF = "self"
     TENANT_EXPORT = "tenant_export"
+    IMPORT_RUN = "import_run"
     CHAT_CONVERSATION = "chat_conversation"
     PATIENT_DOCUMENT = "patient_document"
     PATIENT_INTAKE_SUBMISSION = "patient_intake_submission"
