@@ -148,6 +148,88 @@ def get_clinical_record_source(
     )
 
 
+def record_exported_files(
+    audit: AuditService,
+    user: User,
+    request: Request,
+    patient: Patient,
+    export_data: dict[str, Any],
+) -> None:
+    """Record every file and record that left in one patient's export.
+
+    Shared by the chart's export and the practice export, which builds the
+    same archive once per patient: a copy is the same disclosure whichever
+    button produced it. The export itself is the caller's row to write.
+    """
+    # Each file carried beside the chart is a disclosure of that file, so it
+    # is recorded the way its own download route records one: an uploaded
+    # document under its category's download action (restricted apart), a
+    # form under the form export action.
+    for document in export_data.get("documents", []):
+        audit.log_patient_document_action(
+            download_action_for(document.category),
+            user,
+            request,
+            document_id=document.id,
+            patient_id=document.patient_id,
+            mime_type=document.mime_type,
+            size_bytes=document.size_bytes,
+            category=document.category.value,
+        )
+    for assignment_id in export_data.get("intake_assignment_ids", []):
+        audit.log(
+            action=AuditAction.INTAKE_PACKET_EXPORTED,
+            user=user,
+            request=request,
+            resource_type=ResourceType.PATIENT_INTAKE_ASSIGNMENT,
+            resource_id=assignment_id,
+            patient=patient,
+        )
+    # A conversation in the copy is recorded as its own thread export is.
+    for thread_id, message_count in export_data.get("message_threads", []):
+        audit.log_patient_message_action(
+            action=AuditAction.PATIENT_MESSAGE_THREAD_EXPORTED,
+            user=user,
+            request=request,
+            resource_id=thread_id,
+            patient_id=patient.id,
+            changes={"message_count": message_count},
+        )
+    # The billing record in the copy is recorded as its own screens and
+    # documents record a read: identifiers and amounts, nothing clinical.
+    billing_rows: list[tuple[AuditAction, dict[str, Any] | None]] = [
+        (AuditAction.PATIENT_CHARGES_VIEWED, _ids(export_data, "charge_ids")),
+        (AuditAction.PATIENT_COVERAGE_VIEWED, _ids(export_data, "coverage_ids")),
+        (AuditAction.PATIENT_CLAIMS_VIEWED, _ids(export_data, "claim_ids")),
+        (
+            AuditAction.STATEMENT_GENERATED,
+            {
+                "charge_ids": export_data.get("charge_ids", []),
+                "balance_cents": export_data.get("balance_cents", 0),
+            }
+            if export_data.get("statement")
+            else None,
+        ),
+        (
+            AuditAction.SUPERBILL_GENERATED,
+            {"claim_ids": export_data.get("claim_ids", [])}
+            if export_data.get("superbill")
+            else None,
+        ),
+    ]
+    for action, changes in billing_rows:
+        if changes is not None:
+            audit.log(
+                action,
+                user,
+                request,
+                resource_type=ResourceType.PATIENT,
+                resource_id=patient.id,
+                patient=patient,
+                changes=changes,
+            )
+
+
 def _ids(export_data: dict[str, Any], key: str) -> dict[str, Any] | None:
     """``{key: ids}`` when the export carried any, else ``None`` for no audit row."""
     ids = export_data.get(key, [])
@@ -650,73 +732,7 @@ def export_patient_data(
             "include_psychotherapy_notes": include_psychotherapy_notes,
         },
     )
-    # Each file carried beside the chart is a disclosure of that file, so it
-    # is recorded the way its own download route records one: an uploaded
-    # document under its category's download action (restricted apart), a
-    # form under the form export action.
-    for document in export_data.get("documents", []):
-        audit.log_patient_document_action(
-            download_action_for(document.category),
-            user,
-            request,
-            document_id=document.id,
-            patient_id=document.patient_id,
-            mime_type=document.mime_type,
-            size_bytes=document.size_bytes,
-            category=document.category.value,
-        )
-    for assignment_id in export_data.get("intake_assignment_ids", []):
-        audit.log(
-            action=AuditAction.INTAKE_PACKET_EXPORTED,
-            user=user,
-            request=request,
-            resource_type=ResourceType.PATIENT_INTAKE_ASSIGNMENT,
-            resource_id=assignment_id,
-            patient=patient,
-        )
-    # A conversation in the copy is recorded as its own thread export is.
-    for thread_id, message_count in export_data.get("message_threads", []):
-        audit.log_patient_message_action(
-            action=AuditAction.PATIENT_MESSAGE_THREAD_EXPORTED,
-            user=user,
-            request=request,
-            resource_id=thread_id,
-            patient_id=patient.id,
-            changes={"message_count": message_count},
-        )
-    # The billing record in the copy is recorded as its own screens and
-    # documents record a read: identifiers and amounts, nothing clinical.
-    billing_rows: list[tuple[AuditAction, dict[str, Any] | None]] = [
-        (AuditAction.PATIENT_CHARGES_VIEWED, _ids(export_data, "charge_ids")),
-        (AuditAction.PATIENT_COVERAGE_VIEWED, _ids(export_data, "coverage_ids")),
-        (AuditAction.PATIENT_CLAIMS_VIEWED, _ids(export_data, "claim_ids")),
-        (
-            AuditAction.STATEMENT_GENERATED,
-            {
-                "charge_ids": export_data.get("charge_ids", []),
-                "balance_cents": export_data.get("balance_cents", 0),
-            }
-            if export_data.get("statement")
-            else None,
-        ),
-        (
-            AuditAction.SUPERBILL_GENERATED,
-            {"claim_ids": export_data.get("claim_ids", [])}
-            if export_data.get("superbill")
-            else None,
-        ),
-    ]
-    for action, changes in billing_rows:
-        if changes is not None:
-            audit.log(
-                action,
-                user,
-                request,
-                resource_type=ResourceType.PATIENT,
-                resource_id=patient.id,
-                patient=patient,
-                changes=changes,
-            )
+    record_exported_files(audit, user, request, patient, export_data)
 
     # The PDF and the archive are file downloads
     if format in ("pdf", "zip"):

@@ -88,6 +88,35 @@ Object names follow FHIR where that costs nothing: a session is an
 `Condition`, a plan a `Coverage`, a claim a `Claim`. Keys are snake_case
 and every timestamp is ISO 8601 with an offset.
 
+## The practice export
+
+```
+POST /api/admin/tenant-export
+```
+
+| Body field | Values | Default |
+| --- | --- | --- |
+| `include_transcripts` | `true` or `false` | `false` |
+| `include_psychotherapy_notes` | `true` or `false` | `false` |
+
+For an administrator. One ZIP, streamed as it is built, holding every chart
+the caller can open:
+
+| File | Contents |
+| --- | --- |
+| `patients/<patient_id>/<archive>.zip` | Each client's archive, exactly as the chart's own export builds it. |
+| `clients.csv`, `appointments.csv` | The same two files, for every client at once. |
+| `audit_log.csv` | The audit rows the caller can read. |
+| `manifest.json` | Every other file, with its size and SHA-256 checksum. |
+
+The two options apply to every archive in it. What is in the file is what
+the caller's session can read: the charts they hold a grant on, and within
+each, what row-level security lets them see. In `manifest.json` each
+client's archive has kind `archive`.
+
+`raw: true` keeps the earlier table dump (a tar.gz of four tables, in
+`format` `json` or `csv`) for one release, for a caller built against it.
+
 ## The schema
 
 The published schema is [export-schema.json](export-schema.json), generated

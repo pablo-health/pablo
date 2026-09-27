@@ -52,8 +52,7 @@ import zipfile
 import zlib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
-from unittest.mock import Mock
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -62,10 +61,11 @@ from alembic.config import Config
 from jsonschema import Draft202012Validator
 from sqlalchemy import create_engine, text
 
+from tests_integration.database.export_wiring import export_service_for
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from app.models.export import Practitioner
     from sqlalchemy.engine import Engine
     from sqlalchemy.orm import Session
 
@@ -821,58 +821,6 @@ _close_tenant_session = _close_session
 _close_patient_session = _close_session
 
 
-def _billing_source(session: Session, clinician_profiles: Any) -> Any:
-    """The billing record wired as the route wires it, on the same tenant session."""
-    from app.payments.statement import PracticeBlock  # noqa: PLC0415
-    from app.repositories.postgres.appointment import (  # noqa: PLC0415
-        PostgresAppointmentRepository,
-    )
-    from app.repositories.postgres.claim_receipts import (  # noqa: PLC0415
-        PostgresClaimReceiptRepository,
-    )
-    from app.repositories.postgres.claims import PostgresClaimRepository  # noqa: PLC0415
-    from app.repositories.postgres.coverage import (  # noqa: PLC0415
-        PostgresPatientCoverageRepository,
-        PostgresPayerRepository,
-    )
-    from app.repositories.postgres.patient_payment import (  # noqa: PLC0415
-        PostgresPatientPaymentRepository,
-    )
-    from app.repositories.postgres.user import PostgresUserRepository  # noqa: PLC0415
-    from app.services.export_billing import BillingRecordSource  # noqa: PLC0415
-    from app.services.practice_billing_profile import (  # noqa: PLC0415
-        load_billing_profile,
-        load_billing_tax_id,
-    )
-
-    users = PostgresUserRepository(session)
-
-    def practice() -> PracticeBlock:
-        profile = load_billing_profile(session)
-        return PracticeBlock(
-            name=cast("str | None", profile.get("legal_name")),
-            address_line1=cast("str | None", profile.get("address_line1")),
-            address_line2=cast("str | None", profile.get("address_line2")),
-            city=cast("str | None", profile.get("city")),
-            state=cast("str | None", profile.get("state")),
-            postal_code=cast("str | None", profile.get("postal_code")),
-            phone=cast("str | None", profile.get("phone")),
-        )
-
-    return BillingRecordSource(
-        payments=PostgresPatientPaymentRepository(session),
-        coverage=PostgresPatientCoverageRepository(session),
-        payers=PostgresPayerRepository(session),
-        claims=PostgresClaimRepository(session),
-        receipts=PostgresClaimReceiptRepository(session),
-        appointments=PostgresAppointmentRepository(session),
-        practice=practice,
-        tax_id=lambda: load_billing_tax_id(session),
-        license_for=clinician_profiles.get,
-        timezone=lambda user_id: ZoneInfo(users.get_preferences(user_id).timezone),
-    )
-
-
 def _export(
     engine: Engine,
     tenant_schema: str,
@@ -882,125 +830,15 @@ def _export(
 ) -> dict[str, Any]:
     """Run the real service as the clinician; ``options`` are its two flags.
 
-    Wired the way the route wires it: the practitioner comes from the
-    practice's billing profile and the clinician's profile in the same
-    tenant session, notes are labelled by the built-in note types, uploaded
-    files come through the document service and its store, each
-    submitted form is rendered by the intake export's own renderer, and the
-    clinical lists come through their own repositories.
+    Wired the way the route wires it, by ``export_wiring``, on a session
+    armed as the clinician.
     """
-    from app.notes import NoteTypeRegistry, register_builtin_note_types  # noqa: PLC0415
-    from app.repositories.postgres.appointment import (  # noqa: PLC0415
-        PostgresAppointmentRepository,
-    )
-    from app.repositories.postgres.clinician_profile import (  # noqa: PLC0415
-        PostgresClinicianProfileRepository,
-    )
-    from app.repositories.postgres.diagnostic_assessment import (  # noqa: PLC0415
-        PostgresDiagnosticAssessmentRepository,
-    )
-    from app.repositories.postgres.intake_document import (  # noqa: PLC0415
-        PostgresIntakeDocumentRepository,
-    )
-    from app.repositories.postgres.intake_packet import (  # noqa: PLC0415
-        PostgresIntakePacketRepository,
-    )
-    from app.repositories.postgres.medication import (  # noqa: PLC0415
-        PostgresMedicationRepository,
-    )
-    from app.repositories.postgres.note import PostgresNotesRepository  # noqa: PLC0415
-    from app.repositories.postgres.outcome_measure import (  # noqa: PLC0415
-        PostgresOutcomeMeasureRepository,
-    )
-    from app.repositories.postgres.patient import PostgresPatientRepository  # noqa: PLC0415
-    from app.repositories.postgres.patient_document import (  # noqa: PLC0415
-        PostgresPatientDocumentRepository,
-    )
-    from app.repositories.postgres.patient_intake_artifact import (  # noqa: PLC0415
-        PostgresPatientIntakeArtifactRepository,
-    )
-    from app.repositories.postgres.patient_intake_assignment import (  # noqa: PLC0415
-        PostgresPatientIntakeAssignmentRepository,
-    )
-    from app.repositories.postgres.patient_intake_signature import (  # noqa: PLC0415
-        PostgresPatientIntakeSignatureRepository,
-    )
-    from app.repositories.postgres.patient_message import (  # noqa: PLC0415
-        PostgresPatientMessageRepository,
-    )
-    from app.repositories.postgres.session import (  # noqa: PLC0415
-        PostgresTherapySessionRepository,
-    )
-    from app.repositories.postgres.user import PostgresUserRepository  # noqa: PLC0415
-    from app.routes.patient_intake_export import _FormRenderer  # noqa: PLC0415
-    from app.services import ExportService  # noqa: PLC0415
-    from app.services.export_archive import practitioner_from  # noqa: PLC0415
-    from app.services.export_clinical import ClinicalRecordSource  # noqa: PLC0415
-    from app.services.file_storage import LocalFileStorage  # noqa: PLC0415
-    from app.services.patient_documents_service import PatientDocumentsService  # noqa: PLC0415
-    from app.services.patient_intake_assignment_service import (  # noqa: PLC0415
-        IntakeAssignmentService,
-    )
-    from app.services.patient_intake_export_service import IntakeExportService  # noqa: PLC0415
-    from app.services.patient_intake_review_service import IntakeReviewService  # noqa: PLC0415
-    from app.services.practice_billing_profile import load_billing_profile  # noqa: PLC0415
-
-    note_types = NoteTypeRegistry()
-    register_builtin_note_types(note_types)
     session, tokens = _open_tenant_session(engine, tenant_schema)
     try:
-        clinician_profiles = PostgresClinicianProfileRepository(session)
-
-        def practitioner(user_id: str) -> Practitioner:
-            return practitioner_from(load_billing_profile(session), clinician_profiles.get(user_id))
-
-        documents = PatientDocumentsService(
-            repo=PostgresPatientDocumentRepository(session),
-            settings=Mock(patient_documents_gcs_bucket=str(_storage_root(tenant_schema))),
-            storage=LocalFileStorage(),
+        service = export_service_for(
+            session, practice_name=_PRACTICE_NAME, storage_root=_storage_root(tenant_schema)
         )
-        assignment_repo = PostgresPatientIntakeAssignmentRepository(session)
-        packets = PostgresIntakePacketRepository(session)
-        assignments = IntakeAssignmentService(assignment_repo, packets)
-        forms = _FormRenderer(
-            assignments,
-            IntakeExportService(
-                assignments,
-                IntakeReviewService(assignment_repo, packets),
-                PostgresPatientIntakeSignatureRepository(session),
-                PostgresIntakeDocumentRepository(session),
-                PostgresPatientIntakeArtifactRepository(session),
-                PostgresPatientDocumentRepository(session),
-            ),
-            _PRACTICE_NAME,
-            UTC,
-            "https://pablo.example",
-        )
-        clinical = ClinicalRecordSource(
-            appointments=PostgresAppointmentRepository(session),
-            users=PostgresUserRepository(session),
-            outcome_measures=PostgresOutcomeMeasureRepository(session),
-            messages=PostgresPatientMessageRepository(session),
-            medications=PostgresMedicationRepository(session),
-            diagnoses=PostgresDiagnosticAssessmentRepository(session),
-        )
-        service = ExportService(
-            PostgresPatientRepository(session),
-            PostgresTherapySessionRepository(session),
-            PostgresNotesRepository(session),
-            practitioner=practitioner,
-            note_types=note_types,
-            documents=documents,
-            intake_forms=forms.submitted_forms,
-            clinical_record=clinical.read,
-            billing_record=_billing_source(session, clinician_profiles).read,
-        )
-        return service.get_patient_export_data(
-            patient_id,
-            _CLINICIAN,
-            export_format,
-            **options,
-        )
+        return service.get_patient_export_data(patient_id, _CLINICIAN, export_format, **options)
     finally:
         _close_tenant_session(session, tokens)
 

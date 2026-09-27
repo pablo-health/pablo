@@ -201,13 +201,21 @@ def _serialize_csv(rows: Iterable[Any]) -> tuple[bytes, int]:
     return buf.getvalue().encode("utf-8"), len(materialized)
 
 
-class _PipeWriter:
+def audit_log_csv(db: Session) -> bytes:
+    """The audit rows this session can read, as one CSV; empty when there are none."""
+    payload, _count = _serialize_csv(_iter_rows(db, AuditLogRow))
+    return payload
+
+
+class PipeWriter:
     """File-like object that buffers ``write`` calls for a generator.
 
     ``tarfile.open(fileobj=..., mode='w|gz')`` treats its ``fileobj``
-    as a sink: it calls ``write(bytes)`` repeatedly and never seeks.
-    We collect those writes into a list-buffer so the surrounding
-    generator can yield them as the archive is being built.
+    as a sink: it calls ``write(bytes)`` repeatedly and never seeks, and
+    ``zipfile.ZipFile`` writes to one the same way, with data descriptors
+    in place of a seek back to each header. We collect those writes into
+    a list-buffer so the surrounding generator can yield them as the
+    archive is being built.
     """
 
     def __init__(self) -> None:
@@ -229,6 +237,9 @@ class _PipeWriter:
 
     def flush(self) -> None:
         """No-op; tarfile calls flush() between members."""
+
+    def close(self) -> None:
+        """No-op: the generator owns the sink, and neither archiver closes a file it was handed."""
 
     @property
     def total_bytes(self) -> int:
@@ -270,7 +281,7 @@ def stream_tenant_archive(
         raises mid-stream, ``state.summary`` stays ``None`` and no
         audit row is written.
     """
-    pipe = _PipeWriter()
+    pipe = PipeWriter()
     counts: dict[str, int] = {}
     psychotherapy_notes_included = 0
     exported_at = utc_now_iso()
