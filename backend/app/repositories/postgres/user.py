@@ -109,6 +109,8 @@ def _row_to_user(row: PlatformUserRow) -> User:
         inbox_quality_review_opt_in_at=row.inbox_quality_review_opt_in_at,
         inbox_quality_review_opt_out_at=row.inbox_quality_review_opt_out_at,
         profile_basics_completed_at=row.profile_basics_completed_at,
+        import_source=row.import_source,
+        import_prompted_at=row.import_prompted_at,
     )
 
 
@@ -139,3 +141,5 @@ def _user_to_row(user: User, row: PlatformUserRow) -> None:
     row.inbox_quality_review_opt_in_at = user.inbox_quality_review_opt_in_at
     row.inbox_quality_review_opt_out_at = user.inbox_quality_review_opt_out_at
     row.profile_basics_completed_at = user.profile_basics_completed_at
+    row.import_source = user.import_source
+    row.import_prompted_at = user.import_prompted_at

@@ -1006,6 +1006,16 @@ _CORE_NOT_ROW_SCOPED: frozenset[str] = frozenset(
         "intake_blank_forms",
         "companion_auth_challenges",
         "companion_sessions",
+        # ``import_runs`` — one row per archive import a practice ran: source
+        # system, scope, state, counts and a handle-only report. Practice
+        # data, not patient data: it names no patient and carries no content,
+        # so its isolation boundary is the tenant schema. Its ``id`` column
+        # would otherwise trip the force-RLS pre-flight with no policy shape
+        # that fits (no ``user_id`` — several clinicians may read a practice's
+        # history — and no ``patient_id``). ``import_records``, the per-row
+        # ledger beside it, needs no entry: its key is the source system's
+        # record id, so it has none of the columns the pre-flight looks for.
+        "import_runs",
     }
 )
 
