@@ -23,6 +23,13 @@ addresses, email addresses and the signing IP addresses were replaced.
 Amounts, dates of service, billing codes, questionnaire scores, signing
 times and the identifiers in file names are as exported.
 
+Re-capturing: `scrub_export.py` beside this file is the tool that produced
+the fixture. It takes a mapping file of real value to replacement, which is
+deliberately not in this repository, and writes a scrubbed copy of a fresh
+export. Re-capture when the export format may have changed (every six months
+or so, or on a bug report from a migration), then extract the result and
+grep for every real value before committing.
+
 Layout notes: every clinical PDF opens with `Client:` / `DOB:` / `Provider:`,
 notes carry an `Appointment:` line (type, date, time range, "Billing code:")
 and a `Diagnosis:` column of ICD-10 codes, then a centred title naming the
