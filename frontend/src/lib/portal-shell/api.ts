@@ -176,6 +176,18 @@ export interface PortalCapabilities {
   practice: { display_name: string | null }
   modules: Record<string, boolean>
   auth_strength: string
+  /**
+   * The practice's welcome for the home screen, placeholders already filled
+   * in by the server. Optional because a server older than the field does
+   * not send it; the home screen then greets with the practice's name.
+   */
+  welcome?: PortalWelcome
+}
+
+/** Plain text, not markup: rendered as written, line breaks kept. */
+export interface PortalWelcome {
+  heading: string
+  body: string
 }
 
 export type CapabilitiesResult = { ok: true; data: PortalCapabilities } | { ok: false }

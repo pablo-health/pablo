@@ -21,7 +21,12 @@ import type { APIRequestContext } from "@playwright/test"
 import { expect, test } from "../fixtures/auth"
 import { signInWithPassword } from "../fixtures/api"
 import { defaultIntakeVersion, everyItemScoredOne, fillTheFormIn } from "../fixtures/intake"
-import { givePortalContactDetails, givePortalInvitation, signInToPortal } from "../fixtures/portal"
+import {
+  givePortalContactDetails,
+  givePortalInvitation,
+  openPortalSection,
+  signInToPortal,
+} from "../fixtures/portal"
 import { givePatient } from "../fixtures/scenarios"
 
 interface Assignment {
@@ -92,6 +97,7 @@ test.describe("intake export", () => {
 
     // --- the patient fills it in ------------------------------------------
     await signInToPortal(page, await givePortalInvitation(api, patient.id, email, phone))
+    await openPortalSection(page, "forms")
     await fillTheFormIn(page, FIRST_ANSWER)
 
     const submitted = await api.get<Review>(`${chart}/review`)

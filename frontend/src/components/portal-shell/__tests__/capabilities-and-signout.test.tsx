@@ -19,10 +19,16 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import { PortalHome } from "../PortalHome"
 import { PortalShell } from "../PortalShell"
 import { registerPortalSlot, resetPortalSlotsForTests } from "../slots"
+
+vi.mock("next/navigation", () => ({
+  usePathname: () => window.location.pathname,
+  useRouter: () => ({ replace: vi.fn() }),
+}))
 
 const resolvePortalPractice = vi.fn()
 const fetchCapabilities = vi.fn()
@@ -82,7 +88,7 @@ function registerTwoSlots(): void {
 }
 
 async function renderSignedIn(): Promise<void> {
-  render(<PortalShell slug={SLUG} />)
+  render(<PortalShell slug={SLUG}><PortalHome /></PortalShell>)
   await screen.findByTestId("portal-shell-active")
 }
 
@@ -117,8 +123,8 @@ describe("what the shell draws", () => {
 
     await renderSignedIn()
 
-    await screen.findByText("Intake section")
-    await waitFor(() => expect(screen.queryByText("Messaging section")).toBeNull())
+    await screen.findByTestId("portal-home-tile-intake")
+    await waitFor(() => expect(screen.queryByTestId("portal-home-tile-messaging")).toBeNull())
   })
 
   it("shows a navigation entry only for the modules it drew", async () => {
@@ -138,11 +144,13 @@ describe("what the shell draws", () => {
     await renderSignedIn()
 
     await screen.findByTestId("portal-shell-nav-messaging")
-    const labels = screen
+    const nav = within(screen.getByTestId("portal-shell-nav"))
+    const labels = nav.getAllByRole("link").map((link) => link.textContent)
+    expect(labels).toEqual(["Home", "Forms", "Messages"])
+    const tiles = within(screen.getByTestId("portal-home"))
       .getAllByRole("link")
-      .map((link) => link.textContent)
-      .filter((text) => text === "Forms" || text === "Messages")
-    expect(labels).toEqual(["Forms", "Messages"])
+      .map((link) => link.getAttribute("data-testid"))
+    expect(tiles).toEqual(["portal-home-tile-intake", "portal-home-tile-messaging"])
   })
 
   it("falls back to the empty state when no module is enabled", async () => {
@@ -178,8 +186,8 @@ describe("what the shell draws", () => {
 
     await renderSignedIn()
 
-    await screen.findByText("Intake section")
-    expect(screen.getByText("Messaging section")).toBeTruthy()
+    await screen.findByTestId("portal-home-tile-intake")
+    expect(screen.getByTestId("portal-home-tile-messaging")).toBeTruthy()
   })
 
   it("renders a slot with no module whatever the document says", async () => {
@@ -188,13 +196,13 @@ describe("what the shell draws", () => {
 
     await renderSignedIn()
 
-    await screen.findByText("Always here")
+    await screen.findByTestId("portal-home-tile-notice")
   })
 
   it("does not ask for capabilities before a session is live", async () => {
     bootstrapSession.mockResolvedValue({ status: "none" })
 
-    render(<PortalShell slug={SLUG} />)
+    render(<PortalShell slug={SLUG}><PortalHome /></PortalShell>)
     await screen.findByTestId("portal-shell-no-session")
 
     expect(fetchCapabilities).not.toHaveBeenCalled()
@@ -232,7 +240,7 @@ describe("signing out", () => {
   it("offers Sign out only once a session is live", async () => {
     bootstrapSession.mockResolvedValue({ status: "none" })
 
-    render(<PortalShell slug={SLUG} />)
+    render(<PortalShell slug={SLUG}><PortalHome /></PortalShell>)
     await screen.findByTestId("portal-shell-no-session")
 
     expect(screen.queryByTestId("portal-shell-sign-out")).toBeNull()
@@ -288,7 +296,7 @@ describe("signing out", () => {
      */
     bootstrapSession.mockResolvedValue({ status: "expired" })
 
-    render(<PortalShell slug={SLUG} />)
+    render(<PortalShell slug={SLUG}><PortalHome /></PortalShell>)
 
     const link = await screen.findByTestId("portal-shell-recover-link")
     expect(link.getAttribute("href")).toBe(`/portal/${SLUG}/recover`)
@@ -319,7 +327,18 @@ describe("signing out", () => {
     await renderSignedIn()
 
     const entry = await screen.findByTestId("portal-shell-nav-messaging")
-    expect(entry.getAttribute("href")).toBe("#portal-section-messaging")
-    expect(document.getElementById("portal-section-messaging")).toBeTruthy()
+    expect(entry.getAttribute("href")).toBe(`/portal/${SLUG}/messaging`)
+    expect(screen.getByTestId("portal-shell-nav-home").getAttribute("href")).toBe(`/portal/${SLUG}`)
+  })
+
+  it("marks Home as the current page on Home", async () => {
+    registerTwoSlots()
+    fetchCapabilities.mockResolvedValue(capabilities({ intake: true, messaging: true }))
+
+    await renderSignedIn()
+
+    const home = await screen.findByTestId("portal-shell-nav-home")
+    expect(home.getAttribute("aria-current")).toBe("page")
+    expect(screen.getByTestId("portal-shell-nav-messaging").getAttribute("aria-current")).toBeNull()
   })
 })

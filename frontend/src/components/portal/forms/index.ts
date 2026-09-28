@@ -9,3 +9,4 @@
 
 export { PortalForms } from "./PortalForms"
 export type { PortalFormsProps } from "./PortalForms"
+export { FormsSummary } from "./FormsSummary"

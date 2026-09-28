@@ -24,6 +24,7 @@ import {
   givePortalInvitation,
   givePortalSession,
   redeemPortalInvitation,
+  openPortalSection,
   signInToPortal,
 } from "../fixtures/portal"
 import { givePatient } from "../fixtures/scenarios"
@@ -286,6 +287,7 @@ test("the messaging module renders, warns about 988, and the composer's send rea
   const invitation = await givePortalInvitation(api, patient.id, email, phone)
 
   await signInToPortal(page, invitation)
+  await openPortalSection(page, "messaging")
 
   const notice = page.getByTestId("portal-messaging-expectation-notice")
   await expect(notice).toBeVisible()

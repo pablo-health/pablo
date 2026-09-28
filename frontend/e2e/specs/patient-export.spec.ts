@@ -26,7 +26,12 @@ import JSZip from "jszip"
 import { expect, test } from "../fixtures/auth"
 import { parseCsv } from "../fixtures/csv"
 import { defaultIntakeVersion, fillTheFormIn } from "../fixtures/intake"
-import { givePortalContactDetails, givePortalInvitation, signInToPortal } from "../fixtures/portal"
+import {
+  givePortalContactDetails,
+  givePortalInvitation,
+  openPortalSection,
+  signInToPortal,
+} from "../fixtures/portal"
 import { giveTranscribedSession, givePatient, giveVisitReadyToBill } from "../fixtures/scenarios"
 import { fixtureFile, sha256, toInputFile } from "../fixtures/upload"
 
@@ -368,7 +373,11 @@ test.describe("patient export", () => {
     // The seeded form's third question is the PHQ-9; fillTheFormIn answers
     // it on screen and hands the form in.
     await signInToPortal(page, await givePortalInvitation(api, patient.id, email, phone))
+    await openPortalSection(page, "forms")
     await fillTheFormIn(page, `Trouble sleeping ${marker}`)
+    // Messages are a section of their own, back through Home.
+    await page.getByTestId("portal-shell-nav-home").click()
+    await openPortalSection(page, "messaging")
 
     await page.getByTestId("portal-messaging-start-thread").click()
     await page.getByTestId("portal-messaging-new-thread-subject").fill("Next week")

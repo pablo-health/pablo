@@ -5,7 +5,9 @@
  *
  * A feature that belongs on the portal registers a component here instead
  * of editing the shell body, so the shell stays one file that two features
- * never have to edit at once. Order is registration order.
+ * never have to edit at once. Order is registration order: it is the order
+ * of the tiles on the home screen and of the links in the navigation, and
+ * each slot is also the page at `/portal/{slug}/{id}`.
  *
  * Every slot is handed the practice slug and the live patient session
  * token: the shell already holds both, and a slot that had to rediscover
@@ -39,6 +41,16 @@ export interface PortalSlot {
   module?: string
   /** What the navigation calls this slot. Omitted means no nav entry. */
   label?: string
+  /**
+   * One line of where this section stands, for its tile on the home screen.
+   *
+   * The module owns it, so the home screen never imports a module's API.
+   * A summary reads through the module's own query key, which is what lets
+   * the section open on data the tile already fetched. It renders nothing
+   * while loading or when its fetch fails: the tile then shows the label
+   * alone, and Home never carries a section's error.
+   */
+  Summary?: ComponentType<PortalSlotProps>
 }
 
 const slots: PortalSlot[] = []

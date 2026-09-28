@@ -21,7 +21,7 @@ import { expect, test } from "../fixtures/auth"
 import type { Page } from "@playwright/test"
 import type { ApiClient } from "../fixtures/api"
 import { firstLink, mail } from "../fixtures/mail"
-import { requestStepUpCode, signInFromLink } from "../fixtures/portal"
+import { openPortalSection, requestStepUpCode, signInFromLink } from "../fixtures/portal"
 import { givePatient } from "../fixtures/scenarios"
 import { BACKEND_URL } from "../fixtures/stack"
 
@@ -150,6 +150,9 @@ async function signIn(
   const link = firstLink(await mail.waitFor(email))
 
   await signInFromLink(page, link, phone)
+  // The code lands on Home; the forms are a tap away, on a page of their
+  // own that a reload stays on.
+  await openPortalSection(page, "forms")
 }
 
 test.describe("portal consent signatures", () => {

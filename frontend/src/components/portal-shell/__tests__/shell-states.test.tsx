@@ -18,8 +18,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import { PortalHome } from "../PortalHome"
+import { PortalSection } from "../PortalSection"
 import { PortalShell } from "../PortalShell"
 import { resetPortalSlotsForTests, registerPortalSlot, type PortalSlotProps } from "../slots"
+
+const replace = vi.fn()
+
+// The shell reads which page it is on from the router; here the address bar
+// is the router, so a test moves between pages with `history.replaceState`.
+vi.mock("next/navigation", () => ({
+  usePathname: () => window.location.pathname,
+  useRouter: () => ({ replace }),
+}))
 
 const resolvePortalPractice = vi.fn()
 const fetchCapabilities = vi.fn()
@@ -73,7 +84,7 @@ describe("PortalShell", () => {
   it("renders a skeleton while resolving", () => {
     resolvePortalPractice.mockReturnValue(new Promise(() => {}))
 
-    render(<PortalShell slug="example-therapy" />)
+    render(<PortalShell slug="example-therapy"><PortalHome /></PortalShell>)
 
     expect(screen.getByTestId("portal-shell-skeleton")).toBeTruthy()
   })
@@ -81,7 +92,7 @@ describe("PortalShell", () => {
   it("renders the generic unknown-practice state for an unresolvable slug", async () => {
     resolvePortalPractice.mockResolvedValue({ ok: false })
 
-    render(<PortalShell slug="never-existed" />)
+    render(<PortalShell slug="never-existed"><PortalHome /></PortalShell>)
 
     expect(await screen.findByTestId("portal-shell-unknown")).toBeTruthy()
   })
@@ -93,7 +104,7 @@ describe("PortalShell", () => {
     })
     bootstrapSession.mockResolvedValue({ status: "none" })
 
-    render(<PortalShell slug="example-therapy" />)
+    render(<PortalShell slug="example-therapy"><PortalHome /></PortalShell>)
 
     expect(await screen.findByText("Example Therapy")).toBeTruthy()
   })
@@ -105,7 +116,7 @@ describe("PortalShell", () => {
     })
     bootstrapSession.mockResolvedValue({ status: "none" })
 
-    render(<PortalShell slug="example-therapy" />)
+    render(<PortalShell slug="example-therapy"><PortalHome /></PortalShell>)
 
     expect(await screen.findByTestId("portal-shell-no-session")).toBeTruthy()
     expect(screen.queryByTestId("portal-shell-expired-note")).toBeNull()
@@ -119,7 +130,7 @@ describe("PortalShell", () => {
     })
     bootstrapSession.mockResolvedValue({ status: "none" })
 
-    render(<PortalShell slug="example-therapy" />)
+    render(<PortalShell slug="example-therapy"><PortalHome /></PortalShell>)
 
     expect(await screen.findByTestId("portal-shell-otp")).toBeTruthy()
   })
@@ -223,13 +234,13 @@ describe("PortalShell", () => {
     })
     bootstrapSession.mockResolvedValue({ status: "active", sessionToken: "session-1" })
 
-    render(<PortalShell slug="example-therapy" />)
+    render(<PortalShell slug="example-therapy"><PortalHome /></PortalShell>)
 
     expect(await screen.findByTestId("portal-shell-active")).toBeTruthy()
-    expect(screen.getByTestId("portal-shell-empty")).toBeTruthy()
+    expect(await screen.findByTestId("portal-shell-empty")).toBeTruthy()
   })
 
-  it("renders a registered slot inside the active shell", async () => {
+  it("shows a registered slot as a tile on Home, not its content", async () => {
     registerPortalSlot({ id: "fake-slot", Component: () => <div>Fake slot content</div> })
     resolvePortalPractice.mockResolvedValue({
       ok: true,
@@ -237,10 +248,29 @@ describe("PortalShell", () => {
     })
     bootstrapSession.mockResolvedValue({ status: "active", sessionToken: "session-1" })
 
-    render(<PortalShell slug="example-therapy" />)
+    render(<PortalShell slug="example-therapy"><PortalHome /></PortalShell>)
+
+    expect(await screen.findByTestId("portal-home-tile-fake-slot")).toBeTruthy()
+    expect(screen.queryByText("Fake slot content")).toBeNull()
+    expect(screen.queryByTestId("portal-shell-empty")).toBeNull()
+  })
+
+  it("renders a registered slot on its own page", async () => {
+    registerPortalSlot({ id: "fake-slot", Component: () => <div>Fake slot content</div> })
+    window.history.replaceState(null, "", "/portal/example-therapy/fake-slot")
+    resolvePortalPractice.mockResolvedValue({
+      ok: true,
+      data: { slug: "example-therapy", display_name: "Example Therapy" },
+    })
+    bootstrapSession.mockResolvedValue({ status: "active", sessionToken: "session-1" })
+
+    render(
+      <PortalShell slug="example-therapy">
+        <PortalSection id="fake-slot" />
+      </PortalShell>,
+    )
 
     expect(await screen.findByText("Fake slot content")).toBeTruthy()
-    expect(screen.queryByTestId("portal-shell-empty")).toBeNull()
   })
 
   it("hands a mounted slot the slug and the live session token", async () => {
@@ -257,20 +287,28 @@ describe("PortalShell", () => {
       data: { slug: "example-therapy", display_name: "Example Therapy" },
     })
     bootstrapSession.mockResolvedValue({ status: "active", sessionToken: "rotated-token" })
+    window.history.replaceState(null, "", "/portal/example-therapy/fake-slot")
 
-    render(<PortalShell slug="example-therapy" />)
+    render(
+      <PortalShell slug="example-therapy">
+        <PortalSection id="fake-slot" />
+      </PortalShell>,
+    )
     await screen.findByText("Fake slot content")
 
     expect(seen[0]).toEqual({ slug: "example-therapy", sessionToken: "rotated-token" })
   })
 
   it("hands a slot the token minted by a redeem, not a stale one", async () => {
+    // A redeem lands on Home, so what a slot first meets there is its tile's
+    // summary.
     const seen: PortalSlotProps[] = []
     registerPortalSlot({
       id: "fake-slot",
-      Component: (props: PortalSlotProps) => {
+      Component: () => <div>Fake slot content</div>,
+      Summary: (props: PortalSlotProps) => {
         seen.push(props)
-        return <div>Fake slot content</div>
+        return <>Fake slot content</>
       },
     })
     arriveWithInvitation("tok-1")
@@ -282,7 +320,7 @@ describe("PortalShell", () => {
     redeemAndStore.mockResolvedValue({ ok: true, sessionToken: "minted-token" })
     const user = userEvent.setup()
 
-    render(<PortalShell slug="example-therapy" />)
+    render(<PortalShell slug="example-therapy"><PortalHome /></PortalShell>)
     await askForACodeAndEnterIt(user)
 
     await screen.findByText("Fake slot content")
@@ -296,7 +334,7 @@ describe("PortalShell", () => {
     })
     bootstrapSession.mockResolvedValue({ status: "expired" })
 
-    render(<PortalShell slug="example-therapy" />)
+    render(<PortalShell slug="example-therapy"><PortalHome /></PortalShell>)
 
     expect(await screen.findByTestId("portal-shell-no-session")).toBeTruthy()
     expect(screen.getByTestId("portal-shell-expired-note")).toBeTruthy()
@@ -317,7 +355,7 @@ describe("PortalShell", () => {
     redeemAndStore.mockResolvedValue(failure)
     const user = userEvent.setup()
 
-    render(<PortalShell slug="example-therapy" />)
+    render(<PortalShell slug="example-therapy"><PortalHome /></PortalShell>)
     await askForACodeAndEnterIt(user)
 
     await waitFor(() => {
@@ -341,7 +379,7 @@ describe("PortalShell", () => {
     redeemAndStore.mockResolvedValue(REDEEMED)
     const user = userEvent.setup()
 
-    render(<PortalShell slug="example-therapy" />)
+    render(<PortalShell slug="example-therapy"><PortalHome /></PortalShell>)
     await askForACodeAndEnterIt(user)
 
     expect(await screen.findByTestId("portal-shell-active")).toBeTruthy()
@@ -373,7 +411,7 @@ describe("arriving with an invitation", () => {
     bootstrapSession.mockResolvedValue({ status: "none" })
     redeemAndStore.mockResolvedValue(REDEEMED)
 
-    render(<PortalShell slug="example-therapy" />)
+    render(<PortalShell slug="example-therapy"><PortalHome /></PortalShell>)
     await enterTheCode()
 
     await screen.findByTestId("portal-shell-active")
@@ -390,7 +428,7 @@ describe("arriving with an invitation", () => {
     bootstrapSession.mockResolvedValue({ status: "none" })
     redeemAndStore.mockResolvedValue(REDEEMED)
 
-    render(<PortalShell slug="example-therapy" />)
+    render(<PortalShell slug="example-therapy"><PortalHome /></PortalShell>)
     await enterTheCode()
 
     await screen.findByTestId("portal-shell-active")
@@ -402,7 +440,7 @@ describe("arriving with an invitation", () => {
     arriveWithInvitation("tok-1", "/portal/never-existed")
     resolvePortalPractice.mockResolvedValue({ ok: false })
 
-    render(<PortalShell slug="never-existed" />)
+    render(<PortalShell slug="never-existed"><PortalHome /></PortalShell>)
 
     expect(await screen.findByTestId("portal-shell-unknown")).toBeTruthy()
     expect(screen.queryByTestId("portal-shell-otp")).toBeNull()
@@ -417,7 +455,7 @@ describe("arriving with an invitation", () => {
     })
     bootstrapSession.mockResolvedValue({ status: "none" })
 
-    render(<PortalShell slug="example-therapy" />)
+    render(<PortalShell slug="example-therapy"><PortalHome /></PortalShell>)
 
     expect(await screen.findByTestId("portal-shell-no-session")).toBeTruthy()
   })

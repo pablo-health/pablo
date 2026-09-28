@@ -25,6 +25,7 @@ import type { ApiClient } from "../fixtures/api"
 import {
   givePortalContactDetails,
   givePortalInvitation,
+  openPortalSection,
   signInToPortal,
 } from "../fixtures/portal"
 import {
@@ -167,6 +168,7 @@ test.describe("portal appointments", () => {
 
     const { patient, email, phone } = await givePortalPatient(api)
     await signInToPortal(page, await givePortalInvitation(api, patient.id, email, phone))
+    await openPortalSection(page, "appointments")
 
     // --- nothing yet --------------------------------------------------------
     await expect(page.getByTestId("appointments-none-upcoming")).toBeVisible()
@@ -289,6 +291,7 @@ test.describe("portal appointments", () => {
     })
 
     await signInToPortal(page, await givePortalInvitation(api, patient.id, email, phone))
+    await openPortalSection(page, "appointments")
 
     // The list is there and it is theirs.
     await expect(page.getByTestId("appointments-row")).toHaveCount(1)

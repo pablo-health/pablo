@@ -48,7 +48,7 @@ import {
   callToBook,
 } from "./appointmentsCopy"
 
-const keys = {
+export const keys = {
   appointments: (token: string) => ["patient-appointments", "list", token] as const,
   options: (token: string) => ["patient-appointments", "options", token] as const,
 }
