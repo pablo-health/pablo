@@ -194,7 +194,11 @@ test("a patient signs in from the link in their email @portal", async ({ api, pa
   await expect(page.getByTestId("portal-shell-practice-name")).toBeVisible()
 
   // The address bar still names the practice and no longer holds the
-  // invitation: a reloaded tab or a shared screen is not a credential.
+  // invitation: a reloaded tab or a shared screen is not a credential. Which
+  // address depends on the deployment: `/portal/{slug}` where the portal
+  // shares the app's host, `/{slug}` where it has a host of its own (this
+  // stack, whose link is redirected there with its fragment intact).
   expect(page.url()).not.toContain("invite")
-  await expect(page).toHaveURL(/\/portal\/[^/#?]+$/)
+  const slug = new URL(invitation.link).pathname.split("/").pop()
+  await expect(page).toHaveURL(new RegExp(`/(portal/)?${slug}$`))
 })

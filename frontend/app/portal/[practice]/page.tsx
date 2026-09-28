@@ -16,6 +16,10 @@
  * (`src/lib/auth/public-paths.ts`), so the auth middleware lets an
  * unauthenticated patient through instead of redirecting to `/login`. The
  * person on this page holds a portal session, never a clinician one.
+ *
+ * On a deployment that serves the portal on a host of its own (PORTAL_HOSTS),
+ * this route is also reached there as `/{slug}`: the proxy rewrites it here,
+ * so `params` carries the same slug either way.
  */
 
 import { PortalShell } from "@/components/portal-shell/PortalShell"
