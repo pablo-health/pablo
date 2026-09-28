@@ -38,8 +38,8 @@ import {
   fillTheFormIn,
 } from "../fixtures/intake"
 import { firstLink, mail } from "../fixtures/mail"
+import { askForCodeInPage } from "../fixtures/portal"
 import { givePatient } from "../fixtures/scenarios"
-import { sms, stepUpCode } from "../fixtures/sms"
 
 interface Assignment {
   id: string
@@ -84,9 +84,9 @@ async function signIn(
   await api.post(`/api/patients/${patientId}/portal-invite`)
 
   const link = firstLink(await mail.waitFor(email))
-  const otp = stepUpCode(await sms.waitFor(phone))
 
   await page.goto(link)
+  const otp = await askForCodeInPage(page, phone)
   await page.getByTestId("portal-shell-otp-input").fill(otp)
   await page.getByTestId("portal-shell-otp-submit").click()
   await expect(page.getByTestId("portal-shell-active")).toBeVisible()

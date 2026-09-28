@@ -296,6 +296,11 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # redemption that carries the forensic weight.
         ("post", "/api/patient/auth/redeem"),  # audited in the tenant gateway
         ("post", "/api/patient/auth/refresh"),  # rotation of an already-recorded session
+        # Asking for a code answers 202 with no body: the code goes to the
+        # number on the chart and nothing comes back to the caller, so there
+        # is no disclosure to attribute. The redemption it leads to is the
+        # recorded event.
+        ("post", "/api/patient/auth/request-code"),  # texts the chart's number, discloses nothing
         # portal/practice_routes.py — the public practice directory. A slug in,
         # a practice's own display name out; no chart is opened and no patient
         # is named, so there is no access to attribute to anybody.

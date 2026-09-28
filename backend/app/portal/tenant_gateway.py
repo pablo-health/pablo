@@ -8,10 +8,10 @@ one resolvable. Both therefore have to open their own tenant-scoped session
 from the SIGNATURE-VERIFIED token's tenant claim, commit it, and close it —
 which, inlined twice, buries the auth logic under transaction plumbing.
 
-This module is that plumbing, named once: a gateway that yields the three
-things those routes need inside one practice (the challenge store, the
-session store, and somewhere to record the redemption), and owns the
-transaction around them.
+This module is that plumbing, named once: a gateway that yields what those
+routes need inside one practice (the challenge store, the session store,
+somewhere to record the redemption, and the chart's number to text a code
+to), and owns the transaction around them.
 
 The seam is also what lets the route tests exercise the real handlers —
 uniform 401s, rotation, revocation — against in-memory stores, while the
@@ -26,10 +26,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated, Protocol
 
 from fastapi import Depends, HTTPException, Request, status
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from ..auth.service import TenantContext, get_tenant_context
 from ..db import arm_current_patient_id, create_standalone_session, get_db_session
+from ..db.models import PatientRow
 from ..models.audit import AuditAction, ResourceType
 from ..repositories.postgres.audit import PostgresAuditRepository
 from ..services.audit_service import AuditService
@@ -57,6 +59,9 @@ class PortalTenantWork:
     #: the attempt counter a wrong code just bumped is the whole point of
     #: the attempt cap, and rolling it back would make guesses free.
     commit: Callable[[], None]
+    #: The mobile number on this patient's chart, or ``None``. Where a
+    #: requested code is texted; it goes to the SMS gateway and nowhere else.
+    step_up_phone: Callable[[str], str | None]
 
 
 class PortalTenantGateway(Protocol):
@@ -98,12 +103,40 @@ class DbPortalTenantGateway:
                 changes={"session_jti": session_jti},
             )
 
+        def _step_up_phone(patient_id: str) -> str | None:
+            # ``patients`` is row-scoped and nobody is signed in yet, so an
+            # unarmed read sees no rows. Arming the patient principal for the
+            # rest of the request was rejected for the challenge tables (see
+            # ``_CORE_NOT_ROW_SCOPED``) because it would scope the session to
+            # a patient who has not completed step-up. So the patient GUC is
+            # set transaction-locally INSIDE a savepoint and the savepoint is
+            # rolled back after one read of one column: Postgres reverts a
+            # ``set_config(..., true)`` with the savepoint, and nothing is
+            # stashed on the session or the ContextVar for a later statement
+            # to inherit. The number read goes to the SMS gateway only.
+            savepoint = session.begin_nested()
+            try:
+                session.execute(
+                    text("SELECT set_config('app.current_patient_id', :pid, true)"),
+                    {"pid": patient_id},
+                )
+                phone = session.execute(
+                    select(PatientRow.phone).where(
+                        PatientRow.id == patient_id,
+                        PatientRow.deleted_at.is_(None),
+                    )
+                ).scalar_one_or_none()
+            finally:
+                savepoint.rollback()
+            return phone
+
         try:
             yield PortalTenantWork(
                 challenges=DbPortalAuthStore(session, tenant=tenant),
                 sessions=DbPortalSessionStore(session),
                 record_redemption=_record_redemption,
                 commit=session.commit,
+                step_up_phone=_step_up_phone,
             )
         except Exception:
             session.rollback()

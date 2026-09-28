@@ -26,8 +26,8 @@ import { PortalMessaging } from "@/components/portal/messaging/PortalMessaging"
 import { PortalRefills } from "@/components/portal/refills/PortalRefills"
 import { registerPortalSlot, type PortalSlotProps } from "./slots"
 
-function FormsSlot({ sessionToken }: PortalSlotProps) {
-  return <PortalForms sessionToken={sessionToken} />
+function FormsSlot({ slug, sessionToken }: PortalSlotProps) {
+  return <PortalForms slug={slug} sessionToken={sessionToken} />
 }
 
 function MessagingSlot({ sessionToken }: PortalSlotProps) {

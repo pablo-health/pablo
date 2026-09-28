@@ -17,9 +17,15 @@
  *   unknown     -> the slug doesn't resolve to a practice this deployment
  *                  serves a portal for
  *   no-session  -> no stored session and no invitation
- *   otp         -> no stored session, invitation present: enter the code
+ *   otp         -> no stored session, invitation present: ask for a code,
+ *                  then enter it
  *   active      -> a live (or freshly redeemed) session; renders slots
  *   expired     -> a stored session's `/refresh` came back 401
+ *
+ * The code is texted when the patient asks for it here, not when the
+ * invitation was sent, so the link can be days old and the code still
+ * fresh. Asking again replaces the code; the server keeps the attempt count
+ * per invitation, so a resend buys no extra guesses.
  *
  * The invitation is only consulted when there is NO stored session to
  * bootstrap: an expired or revoked session always lands on `expired`, never
@@ -41,7 +47,11 @@ import { Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { fetchCapabilities, resolvePortalPractice } from "@/lib/portal-shell/api"
+import {
+  fetchCapabilities,
+  requestSignInCode,
+  resolvePortalPractice,
+} from "@/lib/portal-shell/api"
 import { bootstrapSession, redeemAndStore, signOutAndForget } from "@/lib/portal-shell/session"
 import { visiblePortalSlots, type PortalSlot, type PortalSlotProps } from "./slots"
 // Side-effect import: fills the slot registry in the BROWSER's module graph.
@@ -72,6 +82,13 @@ export function PortalShell({ slug }: { slug: string }) {
   const [otp, setOtp] = useState("")
   const [otpError, setOtpError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [codeSent, setCodeSent] = useState(false)
+  const [requestingCode, setRequestingCode] = useState(false)
+  const [codeNotice, setCodeNotice] = useState<string | null>(null)
+  const [redeemFailed, setRedeemFailed] = useState(false)
+  // The server refused to text a code for this link. It never says why, and
+  // neither does this screen: the only way on is a new link.
+  const [linkRefused, setLinkRefused] = useState(false)
   // `null` until the capability document arrives, and `null` again if it
   // never does — which keeps every slot rendered. See `visiblePortalSlots`.
   const [modules, setModules] = useState<Record<string, boolean> | null>(null)
@@ -137,10 +154,30 @@ export function PortalShell({ slug }: { slug: string }) {
     }
   }, [phase, sessionToken])
 
+  async function handleRequestCode() {
+    if (!invitation || requestingCode) return
+    setRequestingCode(true)
+    setOtpError(null)
+    setRedeemFailed(false)
+    setCodeNotice(null)
+    const result = await requestSignInCode(invitation)
+    setRequestingCode(false)
+    if (result.ok) {
+      if (codeSent) setCodeNotice("We sent a new code.")
+      setCodeSent(true)
+      setOtp("")
+    } else if (result.reason === "refused") {
+      setLinkRefused(true)
+    } else {
+      setOtpError("We couldn't send a code. Try again in a moment.")
+    }
+  }
+
   async function handleRedeem() {
     if (!invitation || !otp.trim() || submitting) return
     setSubmitting(true)
     setOtpError(null)
+    setCodeNotice(null)
     const result = await redeemAndStore(slug, invitation, otp.trim())
     setSubmitting(false)
     if (result.ok) {
@@ -148,9 +185,8 @@ export function PortalShell({ slug }: { slug: string }) {
       forgetInvitationInUrl()
       setPhase("active")
     } else {
-      setOtpError(
-        "That code didn't work. Check it and try again, or ask your practice for a new invite link.",
-      )
+      setRedeemFailed(true)
+      setOtpError("That code didn't work. Check it and try again, or send a new code.")
     }
   }
 
@@ -184,13 +220,20 @@ export function PortalShell({ slug }: { slug: string }) {
           {phase === "unknown" && <UnknownPracticeCard />}
           {phase === "no-session" && <NoSessionCard slug={slug} />}
           {phase === "expired" && <NoSessionCard slug={slug} revoked />}
-          {phase === "otp" && (
+          {phase === "otp" && linkRefused && <LinkEndedCard slug={slug} />}
+          {phase === "otp" && !linkRefused && (
             <OtpCard
+              slug={slug}
+              codeSent={codeSent}
+              onRequestCode={handleRequestCode}
+              requestingCode={requestingCode}
               otp={otp}
               onOtpChange={setOtp}
               onSubmit={handleRedeem}
               submitting={submitting}
               error={otpError}
+              notice={codeNotice}
+              redeemFailed={redeemFailed}
             />
           )}
           {signedIn && sessionToken !== null && (
@@ -346,26 +389,101 @@ function NoSessionCard({ slug, revoked = false }: { slug: string; revoked?: bool
   )
 }
 
-function OtpCard({
-  otp,
-  onOtpChange,
-  onSubmit,
-  submitting,
-  error,
-}: {
+/** Where a patient whose link no longer works gets a new one. */
+function RecoverLink({ slug, testId }: { slug: string; testId: string }) {
+  return (
+    <Link
+      href={`/portal/${encodeURIComponent(slug)}/recover`}
+      data-testid={testId}
+      className="text-sm text-neutral-600 underline underline-offset-4"
+    >
+      Get a new sign-in link
+    </Link>
+  )
+}
+
+/**
+ * The server would not text a code for this link. Spent, expired and
+ * withdrawn all look like this, on purpose — the answer is the same either
+ * way.
+ */
+function LinkEndedCard({ slug }: { slug: string }) {
+  return (
+    <CardShell testId="portal-shell-link-ended">
+      <div className="flex flex-col items-center gap-2 py-4 text-center">
+        <h2 className="text-base font-semibold text-neutral-900">This link has expired</h2>
+        <RecoverLink slug={slug} testId="portal-shell-link-ended-recover" />
+      </div>
+    </CardShell>
+  )
+}
+
+interface OtpCardProps {
+  slug: string
+  codeSent: boolean
+  onRequestCode: () => void
+  requestingCode: boolean
   otp: string
   onOtpChange: (value: string) => void
   onSubmit: () => void
   submitting: boolean
   error: string | null
-}) {
+  notice: string | null
+  redeemFailed: boolean
+}
+
+function OtpCard({
+  slug,
+  codeSent,
+  onRequestCode,
+  requestingCode,
+  otp,
+  onOtpChange,
+  onSubmit,
+  submitting,
+  error,
+  notice,
+  redeemFailed,
+}: OtpCardProps) {
+  const errorLine = error && (
+    <p data-testid="portal-shell-otp-error" className="mt-3 text-sm text-red-600">
+      {error}
+    </p>
+  )
+
+  if (!codeSent) {
+    return (
+      <CardShell testId="portal-shell-otp">
+        <h2 className="text-base font-semibold text-neutral-900">Get a sign-in code</h2>
+        <p className="mt-1 text-sm text-neutral-600">
+          We&apos;ll text a code to the mobile number your practice has for you.
+        </p>
+        {errorLine}
+        <Button
+          data-testid="portal-shell-request-code"
+          onClick={onRequestCode}
+          disabled={requestingCode}
+          className="mt-4 w-full"
+          size="lg"
+        >
+          {requestingCode ? "Sending…" : "Text me a code"}
+        </Button>
+      </CardShell>
+    )
+  }
+
   const canSubmit = otp.trim().length > 0 && !submitting
   return (
     <CardShell testId="portal-shell-otp">
       <h2 className="text-base font-semibold text-neutral-900">Enter your code</h2>
       <p className="mt-1 text-sm text-neutral-600">
-        We sent a code by text message. Enter it below to continue.
+        We texted you a code. It works for 15 minutes.
       </p>
+      {notice && (
+        <p data-testid="portal-shell-code-notice" className="mt-2 text-sm text-neutral-600">
+          {notice}
+        </p>
+      )}
       <div className="mt-4">
         <Label htmlFor="portal-otp">Code</Label>
         <Input
@@ -378,10 +496,11 @@ function OtpCard({
           className="mt-1"
         />
       </div>
-      {error && (
-        <p data-testid="portal-shell-otp-error" className="mt-3 text-sm text-red-600">
-          {error}
-        </p>
+      {errorLine}
+      {redeemFailed && (
+        <div className="mt-2">
+          <RecoverLink slug={slug} testId="portal-shell-otp-recover" />
+        </div>
       )}
       <Button
         data-testid="portal-shell-otp-submit"
@@ -391,6 +510,15 @@ function OtpCard({
         size="lg"
       >
         {submitting ? "Checking…" : "Continue"}
+      </Button>
+      <Button
+        data-testid="portal-shell-resend-code"
+        onClick={onRequestCode}
+        disabled={requestingCode}
+        variant="link"
+        className="mt-2 w-full"
+      >
+        {requestingCode ? "Sending…" : "Send a new code"}
       </Button>
     </CardShell>
   )

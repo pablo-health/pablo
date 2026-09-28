@@ -64,6 +64,11 @@ class DbPortalAuthStore:
                 otp_hash=challenge.otp_hash,
                 created_at=datetime.now(tz=UTC),
                 expires_at=_from_epoch(challenge.expires_at),
+                code_expires_at=(
+                    None
+                    if challenge.code_expires_at is None
+                    else _from_epoch(challenge.code_expires_at)
+                ),
                 attempts=challenge.attempts,
                 consumed=challenge.consumed,
             )
@@ -83,7 +88,24 @@ class DbPortalAuthStore:
             expires_at=_to_epoch(row.expires_at),
             attempts=row.attempts,
             consumed=row.consumed,
+            code_expires_at=(
+                None if row.code_expires_at is None else _to_epoch(row.code_expires_at)
+            ),
         )
+
+    def set_code(self, jti: str, *, otp_hash: str, code_expires_at: int) -> None:
+        """Store a newly texted code, retiring whichever one came before.
+
+        One UPDATE of the hash and its window together, and nothing else:
+        ``attempts`` is deliberately untouched, so a resend never buys more
+        guesses.
+        """
+        self._session.execute(
+            update(PortalInviteChallengeRow)
+            .where(PortalInviteChallengeRow.jti == jti)
+            .values(otp_hash=otp_hash, code_expires_at=_from_epoch(code_expires_at))
+        )
+        self._session.flush()
 
     def increment_attempts(self, jti: str) -> int:
         """Bump the attempt counter; return the new total.

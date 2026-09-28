@@ -10,7 +10,6 @@ are covered in ``test_portal_auth_routes.py`` and in the integration suite.
 from __future__ import annotations
 
 import time
-import uuid
 from dataclasses import replace
 
 import jwt
@@ -18,6 +17,7 @@ import pytest
 from app.portal import tokens
 from app.portal.delivery import FakeSmsGateway
 from app.portal.errors import (
+    ExpiredCodeError,
     ExpiredInviteError,
     InvalidInviteError,
     InvalidSessionError,
@@ -25,6 +25,7 @@ from app.portal.errors import (
     InviteAlreadyRedeemedError,
     SessionLifetimeExceededError,
     SessionRevokedError,
+    StepUpChannelMissingError,
     TooManyAttemptsError,
 )
 from app.portal.otp import generate_otp, hash_otp, verify_otp
@@ -32,6 +33,7 @@ from app.portal.service import PortalAuthConfig, PortalAuthService
 from app.portal.store import (
     InMemoryPortalAuthStore,
     InMemoryPortalSessionStore,
+    InviteChallenge,
 )
 
 KEY = "test-signing-key-not-a-real-secret"
@@ -215,55 +217,107 @@ def test_service_refuses_empty_signing_key() -> None:
         )
 
 
-def test_issue_invite_texts_code_and_returns_token() -> None:
+PHONE = "+15005550006"
+
+
+def _chart_phone(_patient_id: str) -> str | None:
+    return PHONE
+
+
+def _texted_code(sms: FakeSmsGateway) -> str:
+    """The code out of the last (fake) message the patient got."""
+    digits = "".join(c for c in sms.sent[-1].body if c.isdigit())
+    return digits[:6]
+
+
+def test_issue_invite_texts_nothing_and_stores_no_code() -> None:
+    """The invitation is the link and nothing else: the code waits until the
+    patient opens the link and asks for it."""
     sms, store = FakeSmsGateway(), InMemoryPortalAuthStore()
     svc = _service(sms, store)
 
-    issued = svc.issue_invite(patient_id="pat-1", tenant="tenant-a", phone="+15005550006")
+    issued = svc.issue_invite(patient_id="pat-1", tenant="tenant-a")
 
     assert issued.token
+    assert sms.sent == []
+    challenge = store.get_challenge(issued.jti)
+    assert challenge is not None
+    assert challenge.otp_hash is None
+    assert challenge.code_expires_at is None
+
+
+def test_invite_lives_seven_days_by_default() -> None:
+    sms, store = FakeSmsGateway(), InMemoryPortalAuthStore()
+    svc = _service(sms, store)
+
+    issued = svc.issue_invite(patient_id="pat-1", tenant="tenant-a")
+
+    assert issued.expires_at == T0 + 7 * 86_400
+
+
+def test_request_code_texts_the_chart_number() -> None:
+    sms, store = FakeSmsGateway(), InMemoryPortalAuthStore()
+    svc = _service(sms, store)
+    issued = svc.issue_invite(patient_id="pat-1", tenant="tenant-a")
+    asked_for: list[str] = []
+
+    def phone_for(patient_id: str) -> str | None:
+        asked_for.append(patient_id)
+        return PHONE
+
+    svc.request_code(token=issued.token, phone_for=phone_for)
+
+    assert asked_for == ["pat-1"]
     assert len(sms.sent) == 1
-    assert sms.sent[0].to == "+15005550006"
+    assert sms.sent[0].to == PHONE
     # The body carries a six-digit code and no patient identifier.
     assert "verification code" in sms.sent[0].body
     assert "pat-1" not in sms.sent[0].body
+    challenge = store.get_challenge(issued.jti)
+    assert challenge is not None
+    assert challenge.otp_hash is not None
+    assert challenge.code_expires_at == T0 + 900
 
 
-def test_issue_invite_delivery_failure_leaves_no_orphaned_challenge(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """If the send raises, ``issue_invite`` must not have persisted a
-    challenge the caller has no way to redeem — they never got the matching
-    token back."""
-    fixed_uuid = uuid.UUID(int=0)
-    monkeypatch.setattr("app.portal.service.uuid4", lambda: fixed_uuid)
+def test_request_code_send_failure_leaves_the_earlier_code_working() -> None:
+    """The text goes out before the new hash is stored, so a failed resend
+    changes nothing: the code the patient already holds still redeems."""
 
-    class RaisingSmsGateway:
-        def check_ready(self) -> None:
-            return None
+    class FlakySmsGateway(FakeSmsGateway):
+        fail = False
 
         def send(self, *, to: str, body: str) -> None:
-            raise RuntimeError("delivery failed")
+            if self.fail:
+                raise RuntimeError("delivery failed")
+            super().send(to=to, body=body)
 
-    store = InMemoryPortalAuthStore()
-    svc = PortalAuthService(
-        config=PortalAuthConfig(signing_key=KEY),
-        store=store,
-        sms=RaisingSmsGateway(),
-        now=lambda: T0,
-    )
+    sms, store = FlakySmsGateway(), InMemoryPortalAuthStore()
+    svc = _service(sms, store)
+    issued = svc.issue_invite(patient_id="pat-1", tenant="tenant-a")
+    svc.request_code(token=issued.token, phone_for=_chart_phone)
+    first = _texted_code(sms)
 
+    sms.fail = True
     with pytest.raises(RuntimeError):
-        svc.issue_invite(patient_id="pat-1", tenant="tenant-a", phone="+15005550006")
+        svc.request_code(token=issued.token, phone_for=_chart_phone)
 
-    assert store.get_challenge(fixed_uuid.hex) is None
+    assert svc.redeem(token=issued.token, otp=first).patient_id == "pat-1"
+
+
+def test_request_code_refuses_a_chart_with_no_number() -> None:
+    sms, store = FakeSmsGateway(), InMemoryPortalAuthStore()
+    svc = _service(sms, store)
+    issued = svc.issue_invite(patient_id="pat-1", tenant="tenant-a")
+
+    with pytest.raises(StepUpChannelMissingError):
+        svc.request_code(token=issued.token, phone_for=lambda _pid: None)
+    assert sms.sent == []
 
 
 def _issue_and_extract_otp(svc: PortalAuthService, sms: FakeSmsGateway) -> tuple[str, str]:
-    issued = svc.issue_invite(patient_id="pat-1", tenant="tenant-a", phone="+15005550006")
-    # Pull the code back out of the (fake) message the patient would have got.
-    digits = "".join(c for c in sms.sent[-1].body if c.isdigit())
-    return issued.token, digits[:6]
+    issued = svc.issue_invite(patient_id="pat-1", tenant="tenant-a")
+    svc.request_code(token=issued.token, phone_for=_chart_phone)
+    return issued.token, _texted_code(sms)
 
 
 def test_redeem_happy_path_mints_session() -> None:
@@ -349,6 +403,201 @@ def test_redeem_unknown_token_raises() -> None:
     orphan = _invite_token(jti="ghost")
     with pytest.raises(InvalidInviteError):
         svc.redeem(token=orphan, otp="123456")
+
+
+# ── the code is asked for, not sent with the invitation ─────────────────
+
+DAY = 86_400
+
+
+def test_an_invitation_redeems_days_after_it_was_sent() -> None:
+    """Issued three days ago; the patient opens it now, asks for a code and
+    signs in.
+
+    Issued in the past rather than redeemed in the future: PyJWT checks a
+    token's ``iat`` and ``exp`` against the REAL clock, so the injected clock
+    is wound back for the issue and brought to now for the rest.
+    """
+    sms, store = FakeSmsGateway(), InMemoryPortalAuthStore()
+    clock = _Clock(T0 - 3 * DAY)
+    svc = PortalAuthService(
+        config=PortalAuthConfig(signing_key=KEY), store=store, sms=sms, now=clock
+    )
+    issued = svc.issue_invite(patient_id="pat-1", tenant="tenant-a")
+
+    clock.now = T0
+    svc.request_code(token=issued.token, phone_for=_chart_phone)
+    session = svc.redeem(token=issued.token, otp=_texted_code(sms))
+
+    assert session.patient_id == "pat-1"
+
+
+def test_redeem_without_requesting_a_code_is_refused() -> None:
+    sms, store = FakeSmsGateway(), InMemoryPortalAuthStore()
+    svc = _service(sms, store)
+    issued = svc.issue_invite(patient_id="pat-1", tenant="tenant-a")
+
+    with pytest.raises(ExpiredCodeError):
+        svc.redeem(token=issued.token, otp="123456")
+
+
+def test_a_code_expires_fifteen_minutes_after_it_was_asked_for() -> None:
+    """Sixteen minutes after the request the code is refused; asking again
+    gives one that works."""
+    sms, store = FakeSmsGateway(), InMemoryPortalAuthStore()
+    clock = _Clock(T0 - 2 * 3600)
+    svc = PortalAuthService(
+        config=PortalAuthConfig(signing_key=KEY), store=store, sms=sms, now=clock
+    )
+    issued = svc.issue_invite(patient_id="pat-1", tenant="tenant-a")
+    clock.now = T0 - 16 * 60
+    svc.request_code(token=issued.token, phone_for=_chart_phone)
+    stale = _texted_code(sms)
+
+    clock.now = T0
+    with pytest.raises(ExpiredCodeError):
+        svc.redeem(token=issued.token, otp=stale)
+
+    svc.request_code(token=issued.token, phone_for=_chart_phone)
+    assert svc.redeem(token=issued.token, otp=_texted_code(sms)).patient_id == "pat-1"
+
+
+def test_a_new_code_retires_the_one_before_it() -> None:
+    sms, store = FakeSmsGateway(), InMemoryPortalAuthStore()
+    svc = _service(sms, store)
+    issued = svc.issue_invite(patient_id="pat-1", tenant="tenant-a")
+    svc.request_code(token=issued.token, phone_for=_chart_phone)
+    first = _texted_code(sms)
+    # Six random digits can repeat; ask until the second code differs so the
+    # assertion below is about retirement, not about a coincidence.
+    second = first
+    while second == first:
+        svc.request_code(token=issued.token, phone_for=_chart_phone)
+        second = _texted_code(sms)
+
+    with pytest.raises(InvalidStepUpError):
+        svc.redeem(token=issued.token, otp=first)
+    assert svc.redeem(token=issued.token, otp=second).patient_id == "pat-1"
+
+
+def test_a_capped_invitation_cannot_request_a_code() -> None:
+    """Once the guesses are spent, the correct code is refused and so is a
+    request for a fresh one."""
+    sms, store = FakeSmsGateway(), InMemoryPortalAuthStore()
+    svc = PortalAuthService(
+        config=PortalAuthConfig(signing_key=KEY, max_otp_attempts=3),
+        store=store,
+        sms=sms,
+        now=lambda: T0,
+    )
+    issued = svc.issue_invite(patient_id="pat-1", tenant="tenant-a")
+    svc.request_code(token=issued.token, phone_for=_chart_phone)
+    code = _texted_code(sms)
+    wrong = "000000" if code != "000000" else "111111"
+
+    for _ in range(3):
+        with pytest.raises(InvalidStepUpError):
+            svc.redeem(token=issued.token, otp=wrong)
+
+    with pytest.raises(TooManyAttemptsError):
+        svc.request_code(token=issued.token, phone_for=_chart_phone)
+    with pytest.raises(TooManyAttemptsError):
+        svc.redeem(token=issued.token, otp=code)
+
+
+def test_the_attempt_cap_holds_across_resends() -> None:
+    """A new code does not buy new guesses: the cap is per invitation."""
+    sms, store = FakeSmsGateway(), InMemoryPortalAuthStore()
+    svc = PortalAuthService(
+        config=PortalAuthConfig(signing_key=KEY, max_otp_attempts=3),
+        store=store,
+        sms=sms,
+        now=lambda: T0,
+    )
+    issued = svc.issue_invite(patient_id="pat-1", tenant="tenant-a")
+
+    for _ in range(3):
+        svc.request_code(token=issued.token, phone_for=_chart_phone)
+        wrong = "000000" if _texted_code(sms) != "000000" else "111111"
+        with pytest.raises(InvalidStepUpError):
+            svc.redeem(token=issued.token, otp=wrong)
+
+    with pytest.raises(TooManyAttemptsError):
+        svc.request_code(token=issued.token, phone_for=_chart_phone)
+
+
+def test_a_spent_invitation_cannot_request_a_code() -> None:
+    sms, store = FakeSmsGateway(), InMemoryPortalAuthStore()
+    svc = _service(sms, store)
+    token, otp = _issue_and_extract_otp(svc, sms)
+    svc.redeem(token=token, otp=otp)
+    sent_before = len(sms.sent)
+
+    with pytest.raises(InviteAlreadyRedeemedError):
+        svc.request_code(token=token, phone_for=_chart_phone)
+    assert len(sms.sent) == sent_before
+
+
+def test_a_revoked_invitation_cannot_request_a_code() -> None:
+    """The clinician's kill switch consumes outstanding invitations; one it
+    consumed must not text anybody anything."""
+    sms, store = FakeSmsGateway(), InMemoryPortalAuthStore()
+    svc = _service(sms, store)
+    issued = svc.issue_invite(patient_id="pat-1", tenant="tenant-a")
+    store.consume_outstanding("pat-1")
+
+    with pytest.raises(InviteAlreadyRedeemedError):
+        svc.request_code(token=issued.token, phone_for=_chart_phone)
+    assert sms.sent == []
+
+
+def test_an_invitation_older_than_seven_days_cannot_request_a_code() -> None:
+    sms, store = FakeSmsGateway(), InMemoryPortalAuthStore()
+    clock = _Clock(T0 - 8 * DAY)
+    svc = PortalAuthService(
+        config=PortalAuthConfig(signing_key=KEY), store=store, sms=sms, now=clock
+    )
+    issued = svc.issue_invite(patient_id="pat-1", tenant="tenant-a")
+
+    clock.now = T0
+    with pytest.raises(ExpiredInviteError):
+        svc.request_code(token=issued.token, phone_for=_chart_phone)
+    assert sms.sent == []
+
+
+def test_a_challenge_past_its_expiry_cannot_request_a_code() -> None:
+    """The row's own expiry, independent of the token's: a shortened
+    lifetime or a clock skew is decided by the row."""
+    sms, store = FakeSmsGateway(), InMemoryPortalAuthStore()
+    svc = _service(sms, store)
+    issued = svc.issue_invite(patient_id="pat-1", tenant="tenant-a")
+    challenge = store.get_challenge(issued.jti)
+    assert challenge is not None
+    store.put_challenge(replace(challenge, expires_at=T0))
+
+    with pytest.raises(ExpiredInviteError):
+        svc.request_code(token=issued.token, phone_for=_chart_phone)
+    assert sms.sent == []
+
+
+def test_an_invitation_issued_with_its_code_still_redeems() -> None:
+    """A row written before codes were requested separately: a hash, and no
+    code window of its own. It redeems under the invitation's expiry, as it
+    always did."""
+    sms, store = FakeSmsGateway(), InMemoryPortalAuthStore()
+    svc = _service(sms, store)
+    token = _invite_token(jti="legacy")
+    store.put_challenge(
+        InviteChallenge(
+            jti="legacy",
+            patient_id="pat-1",
+            tenant="tenant-a",
+            otp_hash=hash_otp("123456", pepper=KEY),
+            expires_at=T0 + 900,
+        )
+    )
+
+    assert svc.redeem(token=token, otp="123456").patient_id == "pat-1"
 
 
 # ── sessions: recording, rotation, revocation ───────────────────────────

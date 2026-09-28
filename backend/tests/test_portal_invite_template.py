@@ -152,6 +152,10 @@ def test_describe_duration() -> None:
     assert describe_duration(3600) == "1 hour"
     assert describe_duration(7200) == "2 hours"
     assert describe_duration(60) == "1 minute"
+    assert describe_duration(86_400) == "1 day"
+    assert describe_duration(604_800) == "7 days"
+    # Not a whole number of days: stays in hours rather than rounding.
+    assert describe_duration(129_600) == "36 hours"
 
 
 # ── the routes ──────────────────────────────────────────────────────────

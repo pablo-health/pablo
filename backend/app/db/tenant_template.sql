@@ -342,11 +342,12 @@ CREATE TABLE __TENANT_SCHEMA__.clinician_profiles (
 CREATE TABLE __TENANT_SCHEMA__.companion_auth_challenges (
     jti character varying(36) NOT NULL,
     patient_id uuid NOT NULL,
-    otp_hash text NOT NULL,
+    otp_hash text,
     created_at timestamp with time zone NOT NULL,
     expires_at timestamp with time zone NOT NULL,
     attempts smallint DEFAULT 0 NOT NULL,
-    consumed boolean DEFAULT false NOT NULL
+    consumed boolean DEFAULT false NOT NULL,
+    code_expires_at timestamp with time zone
 );
 
 

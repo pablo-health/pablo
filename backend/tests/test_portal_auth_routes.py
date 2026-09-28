@@ -146,11 +146,16 @@ class _FakeTenantGateway:
                 changes={"session_jti": session_jti},
             )
 
+        def _phone(patient_id: str) -> str | None:
+            patient = _PATIENTS.get(patient_id)
+            return None if patient is None else patient.phone
+
         yield PortalTenantWork(
             challenges=self._stores.challenges,
             sessions=self._stores.sessions,
             record_redemption=_record,
             commit=_commit,
+            step_up_phone=_phone,
         )
 
 
@@ -320,7 +325,8 @@ def test_invite_returns_202_and_no_credential(
     raw = response.text
     token = _link_token(delivery)
     assert token not in raw
-    assert _otp_from(sms) not in raw
+    # And nothing is texted until the patient opens the link and asks.
+    assert sms.sent == []
 
 
 def test_invite_emails_only_the_link(client: TestClient, delivery: CapturingInviteDelivery) -> None:
@@ -335,15 +341,10 @@ def test_invite_emails_only_the_link(client: TestClient, delivery: CapturingInvi
     assert "?invite=" not in sent.link
 
 
-def test_invite_texts_only_the_code(client: TestClient, sms: FakeSmsGateway) -> None:
+def test_invite_texts_nothing(client: TestClient, sms: FakeSmsGateway) -> None:
     _issue(client)
 
-    assert len(sms.sent) == 1
-    body = sms.sent[0].body
-    assert _otp_from(sms) in body
-    # No patient identifier, no name, nothing clinical.
-    assert PATIENT_ID not in body
-    assert "patient@example.test" not in body
+    assert sms.sent == []
 
 
 def test_invite_audits_with_a_token_handle_and_nothing_else(
@@ -443,17 +444,162 @@ def test_invite_503s_when_no_portal_origin_is_configured(
 
 REDEEM_URL = "/api/patient/auth/redeem"
 REFRESH_URL = "/api/patient/auth/refresh"
+REQUEST_CODE_URL = "/api/patient/auth/request-code"
 
 
 def _redeem(client: TestClient, token: str, otp: str) -> Any:
     return client.post(REDEEM_URL, json={"token": token, "otp": otp})
 
 
+def _request_code(client: TestClient, token: str) -> Any:
+    return client.post(REQUEST_CODE_URL, json={"token": token})
+
+
 def _issue_and_capture(
     client: TestClient, delivery: CapturingInviteDelivery, sms: FakeSmsGateway
 ) -> tuple[str, str]:
+    """Invite, open the link and ask for a code: what a patient does."""
     _issue(client)
-    return _link_token(delivery), _otp_from(sms)
+    token = _link_token(delivery)
+    assert _request_code(client, token).status_code == 202
+    return token, _otp_from(sms)
+
+
+# ---------------------------------------------------------------------------
+# Asking for a code
+# ---------------------------------------------------------------------------
+
+
+def test_request_code_texts_the_chart_number_and_answers_with_nothing(
+    client: TestClient, delivery: CapturingInviteDelivery, sms: FakeSmsGateway
+) -> None:
+    _issue(client)
+    token = _link_token(delivery)
+
+    response = _request_code(client, token)
+
+    assert response.status_code == 202
+    assert response.content == b""
+    assert len(sms.sent) == 1
+    assert sms.sent[0].to == _PATIENTS[PATIENT_ID].phone
+    body = sms.sent[0].body
+    assert _otp_from(sms) in body
+    # No patient identifier, no name, nothing clinical.
+    assert PATIENT_ID not in body
+    assert "patient@example.test" not in body
+
+
+def test_request_code_ignores_a_number_in_the_body(
+    client: TestClient, delivery: CapturingInviteDelivery, sms: FakeSmsGateway
+) -> None:
+    """The code goes where the chart says. A caller holding the link does
+    not get to name a phone."""
+    _issue(client)
+    token = _link_token(delivery)
+
+    response = client.post(REQUEST_CODE_URL, json={"token": token, "phone": "+15559990000"})
+
+    assert response.status_code == 202
+    assert [sent.to for sent in sms.sent] == [_PATIENTS[PATIENT_ID].phone]
+
+
+def test_request_code_refuses_like_redeem(
+    client: TestClient, delivery: CapturingInviteDelivery, sms: FakeSmsGateway
+) -> None:
+    """Unknown, forged and spent invitations get the redeem 401, and nobody
+    is texted."""
+    refusals = [_request_code(client, "not-a-token")]
+    refusals.append(
+        _request_code(
+            client,
+            tokens.mint_invite_token(
+                signing_key=SIGNING_KEY,
+                claims=tokens.InviteClaims(
+                    jti="ghost", patient_id=PATIENT_ID, tenant=TENANT, purpose="intake"
+                ),
+                lifetime=tokens.TokenLifetime(issued_at=int(time.time()), ttl_seconds=900),
+            ),
+        )
+    )
+    token, otp = _issue_and_capture(client, delivery, sms)
+    assert _redeem(client, token, otp).status_code == 200
+    sent_before = len(sms.sent)
+    refusals.append(_request_code(client, token))
+
+    assert all(_uniform_401(r) for r in refusals)
+    assert len(sms.sent) == sent_before
+
+
+def test_request_code_is_limited_per_invitation(
+    client: TestClient, delivery: CapturingInviteDelivery, sms: FakeSmsGateway
+) -> None:
+    _issue(client)
+    token = _link_token(delivery)
+
+    answers = [_request_code(client, token).status_code for _ in range(6)]
+
+    assert answers == [202, 202, 202, 202, 202, 429]
+    assert len(sms.sent) == 5
+
+
+def test_request_code_is_limited_per_address(
+    client: TestClient,
+    delivery: CapturingInviteDelivery,
+    sms: FakeSmsGateway,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Many invitations from one address share one window."""
+    monkeypatch.setenv("PORTAL_REQUEST_CODE_IP_RATE_PER_MIN", "2")
+    get_settings.cache_clear()
+    reset_portal_limiters()
+    monkeypatch.setattr("app.rate_limit._portal_request_code_ip_limiter", None)
+
+    answers = []
+    for _ in range(3):
+        _issue(client)
+        answers.append(_request_code(client, _link_token(delivery)).status_code)
+
+    assert answers == [202, 202, 429]
+
+
+def test_request_code_503s_when_texting_is_unconfigured(
+    app: FastAPI, client: TestClient, delivery: CapturingInviteDelivery
+) -> None:
+    _issue(client)
+    token = _link_token(delivery)
+    app.dependency_overrides[get_sms_gateway] = lambda: DeliveryNotConfigured("SMS")
+
+    assert _request_code(client, token).status_code == 503
+
+
+def test_a_failed_send_is_a_503_and_logs_no_number(
+    app: FastAPI,
+    client: TestClient,
+    delivery: CapturingInviteDelivery,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A provider's error message is the likeliest place for the number to
+    turn up, so the route logs the failure without it."""
+
+    class _NoisyGateway:
+        def check_ready(self) -> None:
+            return None
+
+        def send(self, *, to: str, body: str) -> None:
+            raise RuntimeError(f"could not reach {to}: {body}")
+
+    _issue(client)
+    token = _link_token(delivery)
+    app.dependency_overrides[get_sms_gateway] = _NoisyGateway
+
+    with caplog.at_level(logging.DEBUG):
+        response = _request_code(client, token)
+
+    assert response.status_code == 503
+    logged = "\n".join([record.getMessage() for record in caplog.records] + [caplog.text])
+    assert "+15005550006" not in logged
+    assert "verification code" not in logged
+    assert token not in logged
 
 
 def test_redeem_mints_a_session_carrying_a_token_handle(
@@ -531,7 +677,8 @@ def test_redeem_enters_the_practice_from_the_token_claim(
     token, otp = _issue_and_capture(client, delivery, sms)
     _redeem(client, token, otp)
 
-    assert gateway.opened == [TENANT]
+    # Once to ask for the code, once to redeem it — both from the claim.
+    assert gateway.opened == [TENANT, TENANT]
 
 
 def test_redeem_audits_the_authentication(

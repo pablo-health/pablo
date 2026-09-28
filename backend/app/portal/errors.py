@@ -25,6 +25,16 @@ class ExpiredInviteError(PortalAuthError):
     """Token (or its server-side challenge) is past its TTL."""
 
 
+class ExpiredCodeError(PortalAuthError):
+    """No code has been requested for this invitation, or the last one is
+    past its window. The invitation itself may still be good: asking for a
+    new code is the way on."""
+
+
+class StepUpChannelMissingError(PortalAuthError):
+    """The patient's chart has no number to text the code to."""
+
+
 class InviteAlreadyRedeemedError(PortalAuthError):
     """Single-use invite has already minted a session."""
 

@@ -9,10 +9,12 @@
  * say is how to get a working link.
  */
 
+import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import {
   ALREADY_SENT_BODY,
   ALREADY_SENT_HEADING,
+  EXPIRED_ACTION,
   EXPIRED_BODY,
   EXPIRED_HEADING,
   LOADING,
@@ -22,11 +24,18 @@ import {
   RETRY_HEADING,
 } from "./formsCopy"
 
-export function FormsExpired() {
+export function FormsExpired({ slug }: { slug: string }) {
   return (
     <section data-testid="forms-expired" className="py-4 text-center">
       <h2 className="text-base font-semibold text-neutral-900">{EXPIRED_HEADING}</h2>
       <p className="mt-2 text-sm text-neutral-600">{EXPIRED_BODY}</p>
+      <Link
+        href={`/portal/${encodeURIComponent(slug)}/recover`}
+        data-testid="forms-expired-recover"
+        className="mt-3 inline-block text-sm text-neutral-600 underline underline-offset-4"
+      >
+        {EXPIRED_ACTION}
+      </Link>
     </section>
   )
 }

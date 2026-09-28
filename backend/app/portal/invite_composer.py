@@ -27,6 +27,7 @@ from ..repositories import (
 )
 from ..repositories.patient_intake_assignment import WRITABLE_STATUSES
 from ..services.patient_intake_assignment_service import IntakeAssignmentService
+from ..settings import get_settings
 from .invite_email import (
     DEFAULT_TEMPLATE,
     InviteContext,
@@ -35,7 +36,6 @@ from .invite_email import (
     describe_duration,
     render,
 )
-from .service import PortalAuthConfig
 
 #: (patient_id, user_id, version ids about to be sent) -> form names, in order.
 FormNames = Callable[[str, str, Iterable[str]], list[str]]
@@ -80,7 +80,8 @@ class InviteFacts:
 
 
 def link_expiry() -> str:
-    return describe_duration(PortalAuthConfig(signing_key="").invite_ttl_seconds)
+    """How long the link works, from the same setting the token is minted with."""
+    return describe_duration(get_settings().portal_invite_ttl_seconds)
 
 
 def compose(template: InviteTemplate | None, facts: InviteFacts, link: str) -> RenderedInvite:
