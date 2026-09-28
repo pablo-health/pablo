@@ -31,6 +31,7 @@ import {
 } from "@/lib/api/patientRefills"
 import { CRISIS_LINE } from "../messaging/ExpectationNotice"
 import {
+  CANCEL,
   FORM_HEADING,
   MEDICATION_LEGEND,
   MEDICATION_NAME_LABEL,
@@ -49,6 +50,8 @@ export interface RefillRequestFormProps {
   onSubmit: (input: CreateRefillRequestInput) => Promise<unknown>
   submitting: boolean
   error?: string | null
+  /** When given, a Cancel button closes the form without sending. */
+  onCancel?: () => void
 }
 
 function orNull(value: string): string | null {
@@ -61,6 +64,7 @@ export function RefillRequestForm({
   onSubmit,
   submitting,
   error,
+  onCancel,
 }: RefillRequestFormProps) {
   const hasList = medications.length > 0
   const [choice, setChoice] = useState<string | null>(null)
@@ -212,10 +216,21 @@ export function RefillRequestForm({
         </p>
       )}
 
-      <div>
+      <div className="flex gap-2">
         <Button type="submit" data-testid="portal-refills-submit" disabled={!canSubmit}>
           {submitting ? SUBMITTING : SUBMIT}
         </Button>
+        {onCancel && (
+          <Button
+            type="button"
+            variant="ghost"
+            data-testid="portal-refills-cancel"
+            onClick={onCancel}
+            disabled={submitting}
+          >
+            {CANCEL}
+          </Button>
+        )}
       </div>
     </form>
   )

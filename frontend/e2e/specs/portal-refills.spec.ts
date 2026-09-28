@@ -11,14 +11,17 @@
  * placed to make are made here over real HTTP: a second patient cannot see
  * the first one's request, and neither surface accepts the other's principal.
  *
- * The last test drives the portal in a browser, the way a patient does:
- * sign in from the invitation, pick a medication, send, and watch the status
- * change after the prescriber answers.
+ * The browser tests drive the portal the way a patient does: sign in from
+ * the invitation, find the form open because there is nothing else yet,
+ * send, see the confirmation and the new row, and — after the prescriber
+ * answers — the status, the date it was decided and what to do next.
  *
- * Needs `refills` in the stack's `PORTAL_MODULES` (docker-compose.e2e.yml).
+ * Needs `refills` and `messaging` in the stack's `PORTAL_MODULES`
+ * (docker-compose.e2e.yml); the declined row's next-step line points at
+ * messaging and is shown only when it is on.
  */
 
-import type { Page } from "@playwright/test"
+import type { Browser, Page } from "@playwright/test"
 import { expect, test } from "../fixtures/auth"
 import { ApiError, signInWithPassword } from "../fixtures/api"
 import {
@@ -28,10 +31,28 @@ import {
   signInToPortal,
 } from "../fixtures/portal"
 import { givePatient } from "../fixtures/scenarios"
-import { BACKEND_URL } from "../fixtures/stack"
+import { BACKEND_URL, BASE_URL } from "../fixtures/stack"
+
+/**
+ * Open the refills section of a signed-in portal. The one place that knows
+ * where refills live in the portal, so a move is a change here only.
+ */
+async function openRefills(page: Page): Promise<void> {
+  await page.getByTestId("portal-shell-nav-refills").click()
+  await expect(page.getByTestId("portal-refills")).toBeVisible()
+}
 
 const PATIENT_REFILLS = "/api/patient/refills"
 const CLINICIAN_REFILLS = "/api/refill-requests"
+
+/** A date as the portal shows it on a request row. */
+function shownDate(value: string | Date): string {
+  return new Date(value).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  })
+}
 
 interface Medication {
   id: string
@@ -44,6 +65,7 @@ interface PatientRefill {
   medication_id: string | null
   medication_text: string
   status: string
+  created_at: string
   decided_at: string | null
 }
 
@@ -242,63 +264,158 @@ test("one patient's request and medications are invisible to another, and each s
 
 // --- Test 4: the portal, in a browser -------------------------------------
 
-// One browser pass per answer a prescriber can give, each checking what the
-// patient reads when it arrives.
-const DECISIONS = [
-  { status: "approved", label: "Sent to your pharmacy" },
-  { status: "needs_visit", label: "Let's talk at your next visit" },
-  { status: "declined", label: "Not refilled" },
-] as const
-
-for (const { status, label } of DECISIONS) {
-  test(`a patient asks from the portal and sees "${label}" when the answer is ${status} @portal`, async ({
-    api,
-    page,
-  }) => {
-    await askFromThePortalAndSeeTheAnswer(api, page, status, label)
-  })
-}
-
-async function askFromThePortalAndSeeTheAnswer(
+/**
+ * Sign a new patient into the portal, open refills with nothing asked for
+ * yet, and send one request from the browser. Checks what the patient
+ * sees on the way — the form open because there is nothing else, then
+ * the confirmation, the form closed behind its button, and the new row
+ * marked as received today — and returns the stored request.
+ */
+async function askFromThePortal(
   api: Parameters<typeof givePatient>[0],
   page: Page,
-  decision: string,
-  label: string,
-): Promise<void> {
+): Promise<{ refill: ClinicianRefill; drugName: string }> {
   const { email, phone } = givePortalContactDetails()
   const patient = await givePatient(api, { email, phone })
   const medication = await giveMedication(api, patient.id)
   const invitation = await givePortalInvitation(api, patient.id, email, phone)
 
   await signInToPortal(page, invitation)
-  await page.getByTestId("portal-shell-nav-refills").click()
+  await openRefills(page)
 
-  const section = page.getByTestId("portal-refills")
-  await expect(section).toBeVisible()
-  await expect(page.getByTestId("portal-refills-crisis-line")).toContainText("988")
+  // Nothing asked for yet: the form is the whole page, open without a press.
   await expect(page.getByTestId("portal-refills-list-empty")).toBeVisible()
+  await expect(page.getByTestId("portal-refills-form")).toBeVisible()
+  await expect(page.getByTestId("portal-refills-open-form")).toHaveCount(0)
+  await expect(page.getByTestId("portal-refills-crisis-line")).toContainText("988")
 
   await expect(page.getByTestId("portal-refills-submit")).toBeDisabled()
   await page.getByTestId(`portal-refills-medication-${medication.id}`).check()
   await page.getByTestId("portal-refills-pharmacy").fill("Main St pharmacy")
   await page.getByTestId("portal-refills-submit").click()
 
-  const list = page.getByTestId("portal-refills-list")
-  await expect(list).toContainText(medication.drug_name)
-  await expect(list).toContainText("Received")
+  await expect(page.getByTestId("portal-refills-sent")).toHaveText(
+    /^Sent to .+\. You'll see the answer here\.$/,
+  )
+  await expect(page.getByTestId("portal-refills-form")).toHaveCount(0)
+  await expect(page.getByTestId("portal-refills-open-form")).toBeVisible()
 
   const queue = await api.get<ListResponse<ClinicianRefill>>(CLINICIAN_REFILLS)
   const queued = queue.data.find((row) => row.patient_id === patient.id)
   expect(queued, "the browser's request reached the prescriber's queue").toBeTruthy()
-  await api.post(`${CLINICIAN_REFILLS}/${queued?.id}/decision`, {
-    status: decision,
-    prescriber_note: "private to the practice",
-  })
+  const refill = queued as ClinicianRefill
 
+  const row = page.getByTestId(`portal-refills-request-${refill.id}`)
+  await expect(row).toHaveAttribute("data-highlighted", "true")
+  await expect(row).toContainText(medication.drug_name)
+  await expect(page.getByTestId(`portal-refills-status-${refill.id}`)).toHaveText("Received")
+  await expect(page.getByTestId(`portal-refills-date-${refill.id}`)).toHaveText(
+    shownDate(new Date()),
+  )
+  await expect(page.getByTestId(`portal-refills-next-${refill.id}`)).toHaveText(
+    "Your prescriber will look at this.",
+  )
+
+  // With a request on file, a fresh visit shows the list and keeps the
+  // form behind its button until it is asked for.
   await page.reload()
-  await page.getByTestId("portal-shell-nav-refills").click()
-  await expect(page.getByTestId(`portal-refills-status-${queued?.id}`)).toHaveText(label)
+  await openRefills(page)
+  await expect(page.getByTestId(`portal-refills-request-${refill.id}`)).toBeVisible()
+  await expect(page.getByTestId("portal-refills-form")).toHaveCount(0)
+  await page.getByTestId("portal-refills-open-form").click()
+  await expect(page.getByTestId("portal-refills-form")).toBeVisible()
+  await page.getByTestId("portal-refills-cancel").click()
+  await expect(page.getByTestId("portal-refills-form")).toHaveCount(0)
+
+  return { refill, drugName: medication.drug_name }
+}
+
+/** Reload the portal and check the row reads as a decided request. */
+async function expectAnswered(
+  page: Page,
+  refillId: string,
+  decidedAt: string,
+  label: string,
+  nextStep: string,
+): Promise<void> {
+  await page.reload()
+  await openRefills(page)
+  await expect(page.getByTestId(`portal-refills-status-${refillId}`)).toHaveText(label)
+  await expect(page.getByTestId(`portal-refills-date-${refillId}`)).toHaveText(
+    shownDate(decidedAt),
+  )
+  await expect(page.getByTestId(`portal-refills-next-${refillId}`)).toHaveText(nextStep)
   await expect(page.getByTestId("portal-refills")).not.toContainText("private to the practice")
+}
+
+/** A browser with nothing saved in it, for the patient beside a signed-in clinician. */
+async function patientPage(browser: Browser): Promise<Page> {
+  const context = await browser.newContext({ baseURL: BASE_URL, storageState: undefined })
+  return context.newPage()
+}
+
+test("a patient asks from the portal, the prescriber approves on the Refills page, and the patient sees what to do next @portal", async ({
+  api,
+  browser,
+  signedInPage: clinician,
+}) => {
+  const patient = await patientPage(browser)
+  try {
+    const { refill, drugName } = await askFromThePortal(api, patient)
+
+    await clinician.goto("/dashboard/refills")
+    const row = clinician.getByTestId(`refill-row-${refill.id}`)
+    await expect(row).toContainText(drugName)
+    await row.getByTestId("refill-decide-approved").click()
+    await row.getByTestId("refill-note").fill("private to the practice")
+    await row.getByTestId("refill-confirm-submit").click()
+    await expect(row, "an answered request leaves the queue").toHaveCount(0)
+
+    const decided = await api.get<ClinicianRefill>(`${CLINICIAN_REFILLS}/${refill.id}`)
+    expect(decided.status).toBe("approved")
+    expect(decided.decided_at, "the decision is timestamped").toBeTruthy()
+
+    await expectAnswered(
+      patient,
+      refill.id,
+      decided.decided_at as string,
+      "Sent to your pharmacy",
+      "Check with your pharmacy before you go.",
+    )
+  } finally {
+    await patient.context().close()
+  }
+})
+
+// The other two answers, each checking what the patient reads when it
+// arrives. The declined line points at messaging, which this stack serves.
+const OTHER_DECISIONS = [
+  {
+    status: "needs_visit",
+    label: "Let's talk at your next visit",
+    next: "Bring this up at your next appointment.",
+  },
+  {
+    status: "declined",
+    label: "Not refilled",
+    next: "Message your practice if you have questions.",
+  },
+] as const
+
+for (const { status, label, next } of OTHER_DECISIONS) {
+  test(`a patient asks from the portal and sees "${label}" when the answer is ${status} @portal`, async ({
+    api,
+    page,
+  }) => {
+    const { refill } = await askFromThePortal(api, page)
+
+    const decided = await api.post<ClinicianRefill>(`${CLINICIAN_REFILLS}/${refill.id}/decision`, {
+      status,
+      prescriber_note: "private to the practice",
+    })
+
+    await expectAnswered(page, refill.id, decided.decided_at as string, label, next)
+  })
 }
 
 // --- Test: the prescriber answers from the clinician page -----------------
