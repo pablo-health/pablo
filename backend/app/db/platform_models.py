@@ -344,6 +344,26 @@ class PortalInviteTemplateRow(PlatformBase):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class PortalWelcomeRow(PlatformBase):
+    """A practice's own welcome on the portal's home screen.
+
+    Platform-scoped beside the practice's invitation wording, and for the same
+    reason: it belongs to the practice rather than to anybody's chart. No row
+    means the engine's default welcome.
+
+    No PHI: a heading and a message the practice wrote about itself, with one
+    placeholder — the practice's own name (see ``app.portal.welcome``).
+    """
+
+    __tablename__ = "portal_welcome_messages"
+    __table_args__ = {"schema": PLATFORM_SCHEMA}
+
+    practice_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    heading: Mapped[str] = mapped_column(Text, nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class SetupTokenRow(PlatformBase):
     """Short-lived token to pass email from marketing signup to login page.
 

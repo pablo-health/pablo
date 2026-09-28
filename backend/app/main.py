@@ -44,6 +44,7 @@ from .portal import invite_template_routes as portal_invite_template_routes
 from .portal import practice_routes as portal_practice_routes
 from .portal import recovery as portal_recovery
 from .portal import routes as portal_routes
+from .portal import welcome_routes as portal_welcome_routes
 from .portal.resolver import register_portal_resolver
 from .repositories import get_practice_note_type_repository
 from .routes import (
@@ -437,6 +438,8 @@ if settings.enable_patient_portal:
     app.include_router(portal_practice_routes.router)
     # The practice's invitation wording, and one client's invitation previewed.
     app.include_router(portal_invite_template_routes.router)
+    # The welcome a practice's clients read on the portal's home screen.
+    app.include_router(portal_welcome_routes.router)
     # Sign-out, the capability document, and recovery. Same flag: all three
     # are the portal's own account surface, and recovery in particular mints
     # a credential for a caller who has none, which is exactly the decision

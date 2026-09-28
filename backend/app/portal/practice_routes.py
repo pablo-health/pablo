@@ -233,6 +233,21 @@ def practice_address_for_schema(schema: str) -> PracticeAddress | None:
         session.close()
 
 
+def practice_id_for_schema(schema: str) -> str | None:
+    """The id of whichever practice lives in *schema*, or ``None``.
+
+    For patient-facing routes that need a practice's own settings, which are
+    keyed on the practice rather than on where its charts live.
+    """
+    session = create_standalone_session()
+    try:
+        return session.execute(
+            select(PracticeRow.id).where(PracticeRow.schema_name == schema)
+        ).scalar_one_or_none()
+    finally:
+        session.close()
+
+
 def practice_schema_for_slug(slug: str) -> str | None:
     """The schema a practice's patients live in, from its public address.
 

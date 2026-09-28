@@ -1,8 +1,9 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 /**
- * PortalRefills: the whole surface over a mocked client — ask for a
- * refill and see it land at the top of the list, and fail plainly.
+ * PortalRefills: the whole surface over a mocked client — the requests
+ * first with the form behind a button, ask for a refill and see it land
+ * at the top of the list with a confirmation, and fail plainly.
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest"
@@ -11,6 +12,7 @@ import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { RefillRequest } from "@/lib/api/patientRefills"
 import * as api from "@/lib/api/patientRefills"
+import * as shellApi from "@/lib/portal-shell/api"
 import { PortalRefills } from "../PortalRefills"
 
 vi.mock("@/lib/api/patientRefills", async (importOriginal) => {
@@ -21,6 +23,11 @@ vi.mock("@/lib/api/patientRefills", async (importOriginal) => {
     listRefillRequests: vi.fn(),
     createRefillRequest: vi.fn(),
   }
+})
+
+vi.mock("@/lib/portal-shell/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/portal-shell/api")>()
+  return { ...actual, fetchCapabilities: vi.fn() }
 })
 
 const TOKEN = "session-token"
@@ -66,17 +73,49 @@ beforeEach(() => {
   })
   vi.mocked(api.listRefillRequests).mockResolvedValue({ data: [older], total: 1 })
   vi.mocked(api.createRefillRequest).mockResolvedValue(created)
+  vi.mocked(shellApi.fetchCapabilities).mockResolvedValue({
+    ok: true,
+    data: {
+      practice: { display_name: "Maple Street Therapy" },
+      modules: { refills: true, messaging: true },
+      auth_strength: "session",
+    },
+  })
 })
 
 describe("PortalRefills", () => {
-  it("sends a request and puts it at the top of the list", async () => {
+  it("shows the requests first, with the form behind a button", async () => {
+    const user = userEvent.setup()
+    renderSurface()
+
+    await screen.findByTestId("portal-refills-request-r-old")
+    expect(screen.queryByTestId("portal-refills-form")).toBeNull()
+
+    await user.click(screen.getByTestId("portal-refills-open-form"))
+    expect(screen.getByTestId("portal-refills-form")).toBeTruthy()
+
+    await user.click(screen.getByTestId("portal-refills-cancel"))
+    expect(screen.queryByTestId("portal-refills-form")).toBeNull()
+  })
+
+  it("starts with the form open when there are no requests yet", async () => {
+    vi.mocked(api.listRefillRequests).mockResolvedValue({ data: [], total: 0 })
+
+    renderSurface()
+
+    expect(await screen.findByTestId("portal-refills-form")).toBeTruthy()
+    expect(screen.queryByTestId("portal-refills-open-form")).toBeNull()
+    expect(screen.queryByTestId("portal-refills-cancel")).toBeNull()
+  })
+
+  it("sends a request, closes the form, confirms, and marks the new row", async () => {
     vi.mocked(api.listRefillRequests)
       .mockResolvedValueOnce({ data: [older], total: 1 })
       .mockResolvedValue({ data: [created, older], total: 2 })
     const user = userEvent.setup()
     renderSurface()
 
-    await screen.findByTestId("portal-refills-request-r-old")
+    await user.click(await screen.findByTestId("portal-refills-open-form"))
     await user.click(screen.getByLabelText("Something else"))
     await user.type(screen.getByLabelText("Medication name"), "Lamotrigine")
     await user.click(screen.getByTestId("portal-refills-submit"))
@@ -94,8 +133,61 @@ describe("PortalRefills", () => {
       .map((item) => item.getAttribute("data-testid"))
     expect(ids).toEqual(["portal-refills-request-r-new", "portal-refills-request-r-old"])
     expect(screen.getByTestId("portal-refills-status-r-new").textContent).toBe("Received")
-    // The form is ready for the next one.
-    expect(screen.queryByTestId("portal-refills-medication-text")).toBeNull()
+    expect(
+      screen.getByTestId("portal-refills-request-r-new").getAttribute("data-highlighted"),
+    ).toBe("true")
+    expect(
+      screen.getByTestId("portal-refills-request-r-old").getAttribute("data-highlighted"),
+    ).toBeNull()
+    expect(screen.getByTestId("portal-refills-sent").textContent).toBe(
+      "Sent to Maple Street Therapy. You'll see the answer here.",
+    )
+    expect(screen.queryByTestId("portal-refills-form")).toBeNull()
+    expect(screen.getByTestId("portal-refills-open-form")).toBeTruthy()
+  })
+
+  it("says your practice when the practice's name is not available", async () => {
+    vi.mocked(shellApi.fetchCapabilities).mockResolvedValue({ ok: false })
+    const user = userEvent.setup()
+    renderSurface()
+
+    await user.click(await screen.findByTestId("portal-refills-open-form"))
+    await user.click(screen.getByLabelText("Sertraline 50 mg"))
+    await user.click(screen.getByTestId("portal-refills-submit"))
+
+    expect((await screen.findByTestId("portal-refills-sent")).textContent).toBe(
+      "Sent to your practice. You'll see the answer here.",
+    )
+  })
+
+  it("points a declined request at messaging when messaging is on", async () => {
+    const declined: RefillRequest = { ...older, id: "r-declined", status: "declined" }
+    vi.mocked(api.listRefillRequests).mockResolvedValue({ data: [declined], total: 1 })
+
+    renderSurface()
+
+    expect((await screen.findByTestId("portal-refills-next-r-declined")).textContent).toBe(
+      "Message your practice if you have questions.",
+    )
+  })
+
+  it("leaves the messaging line off a declined request when messaging is off", async () => {
+    const declined: RefillRequest = { ...older, id: "r-declined", status: "declined" }
+    vi.mocked(api.listRefillRequests).mockResolvedValue({ data: [declined], total: 1 })
+    vi.mocked(shellApi.fetchCapabilities).mockResolvedValue({
+      ok: true,
+      data: {
+        practice: { display_name: "Maple Street Therapy" },
+        modules: { refills: true, messaging: false },
+        auth_strength: "session",
+      },
+    })
+
+    renderSurface()
+
+    await screen.findByTestId("portal-refills-request-r-declined")
+    await waitFor(() => expect(shellApi.fetchCapabilities).toHaveBeenCalled())
+    expect(screen.queryByTestId("portal-refills-next-r-declined")).toBeNull()
   })
 
   it("shows a short error and keeps the choice when the send fails", async () => {
@@ -103,7 +195,8 @@ describe("PortalRefills", () => {
     const user = userEvent.setup()
     renderSurface()
 
-    await user.click(await screen.findByLabelText("Sertraline 50 mg"))
+    await user.click(await screen.findByTestId("portal-refills-open-form"))
+    await user.click(screen.getByLabelText("Sertraline 50 mg"))
     await user.click(screen.getByTestId("portal-refills-submit"))
 
     expect((await screen.findByTestId("portal-refills-error")).textContent).toBe(
@@ -114,10 +207,11 @@ describe("PortalRefills", () => {
 
   it("still offers the name field when the medication list cannot be loaded", async () => {
     vi.mocked(api.listRefillMedications).mockRejectedValue(new api.PatientRefillsError(500))
-
+    const user = userEvent.setup()
     renderSurface()
 
-    expect(await screen.findByLabelText("Medication name")).toBeTruthy()
+    await user.click(await screen.findByTestId("portal-refills-open-form"))
+    expect(screen.getByLabelText("Medication name")).toBeTruthy()
     expect(screen.queryAllByRole("radio")).toHaveLength(0)
   })
 
@@ -131,5 +225,7 @@ describe("PortalRefills", () => {
         "Refills aren't loading",
       ),
     )
+    // Asking still works, so the form is there without a button press.
+    expect(screen.getByTestId("portal-refills-form")).toBeTruthy()
   })
 })
