@@ -38,7 +38,7 @@ import {
   fillTheFormIn,
 } from "../fixtures/intake"
 import { firstLink, mail } from "../fixtures/mail"
-import { signInFromLink } from "../fixtures/portal"
+import { openPortalSection, signInFromLink } from "../fixtures/portal"
 import { givePatient } from "../fixtures/scenarios"
 
 interface Assignment {
@@ -86,6 +86,7 @@ async function signIn(
   const link = firstLink(await mail.waitFor(email))
 
   await signInFromLink(page, link, phone)
+  await openPortalSection(page, "forms")
 }
 
 /**
