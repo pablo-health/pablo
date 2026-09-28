@@ -21,7 +21,7 @@ import { expect, test } from "../fixtures/auth"
 import type { Page } from "@playwright/test"
 import type { ApiClient } from "../fixtures/api"
 import { firstLink, mail } from "../fixtures/mail"
-import { askForCodeInPage } from "../fixtures/portal"
+import { signInFromLink } from "../fixtures/portal"
 import { givePatient } from "../fixtures/scenarios"
 
 interface IntakeVersion {
@@ -175,11 +175,7 @@ async function signIn(
 
   const link = firstLink(await mail.waitFor(email))
 
-  await page.goto(link)
-  const otp = await askForCodeInPage(page, phone)
-  await page.getByTestId("portal-shell-otp-input").fill(otp)
-  await page.getByTestId("portal-shell-otp-submit").click()
-  await expect(page.getByTestId("portal-shell-active")).toBeVisible()
+  await signInFromLink(page, link, phone)
 }
 
 /** Answer every item of the measure on screen with its first anchor. */

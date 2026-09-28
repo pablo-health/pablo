@@ -24,12 +24,13 @@
  * backend/tests/test_portal_auth_routes.py and a round trip here.
  */
 
+import type { APIRequestContext, APIResponse } from "@playwright/test"
 import { test, expect } from "../fixtures/auth"
 import type { ApiClient } from "../fixtures/api"
 import { firstLink, mail } from "../fixtures/mail"
-import { askForCodeInPage, requestStepUpCode } from "../fixtures/portal"
+import { askForCodeInPage, requestStepUpCode, signInFromLink } from "../fixtures/portal"
 import { givePatient } from "../fixtures/scenarios"
-import { sms } from "../fixtures/sms"
+import { sms, stepUpCode } from "../fixtures/sms"
 import { BACKEND_URL } from "../fixtures/stack"
 
 const REDEEM_PATH = "/api/patient/auth/redeem"
@@ -51,6 +52,7 @@ interface Invitation {
   link: string
   token: string
   phone: string
+  email: string
 }
 
 /**
@@ -70,7 +72,32 @@ async function givePortalInvitation(api: ApiClient): Promise<Invitation> {
   const token = new URLSearchParams(new URL(link).hash.slice(1)).get("invite")
   expect(token, `the invitation email carries a token: ${link}`).toBeTruthy()
 
-  return { patientId: patient.id, link, token: token as string, phone }
+  return { patientId: patient.id, link, token: token as string, phone, email }
+}
+
+/**
+ * Long enough for a text sent on the request thread to reach the capture
+ * gateway. Asserting "nothing arrived" straight after the request would pass
+ * even if a text were on its way.
+ */
+async function settle(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 1_500))
+}
+
+async function redeem(
+  request: APIRequestContext,
+  invitation: Invitation,
+  otp: string,
+): Promise<APIResponse> {
+  return request.post(`${BACKEND_URL}${REDEEM_PATH}`, {
+    data: { token: invitation.token, otp },
+    failOnStatusCode: false,
+  })
+}
+
+/** A six-digit code that is certainly not `code`. */
+function notThe(code: string): string {
+  return code === "000000" ? "111111" : "000000"
 }
 
 test("an invitation texts nothing until the patient asks for a code @portal", async ({
@@ -79,6 +106,7 @@ test("an invitation texts nothing until the patient asks for a code @portal", as
 }) => {
   const invitation = await givePortalInvitation(api)
 
+  await settle()
   expect(await sms.countFor(invitation.phone), "nothing is texted at invite time").toBe(0)
 
   // Without a code there is nothing to redeem with.
@@ -118,13 +146,119 @@ test("a new code retires the one before it @portal", async ({ api, request }) =>
 
 test("asking for a code answers with nothing @portal", async ({ api, request }) => {
   const invitation = await givePortalInvitation(api)
+  const before = await sms.countFor(invitation.phone)
 
   const asked = await request.post(`${BACKEND_URL}${REQUEST_CODE_PATH}`, {
     data: { token: invitation.token },
   })
 
   expect(asked.status()).toBe(202)
-  expect(await asked.text()).toBe("")
+  const body = await asked.text()
+  expect(body).toBe("")
+  // The code went to the phone, and neither it nor the number came back.
+  const code = stepUpCode(await sms.waitFor(invitation.phone, 10_000, before))
+  expect(body).not.toContain(code)
+  expect(body).not.toContain(invitation.phone)
+})
+
+test("the attempt cap still holds after a new code is sent @portal", async ({
+  api,
+  request,
+}) => {
+  const invitation = await givePortalInvitation(api)
+
+  // Three wrong guesses against the first code, a resend, then two more
+  // against the second: five in all, the engine's cap.
+  const first = await requestStepUpCode(invitation)
+  for (let i = 0; i < 3; i++) {
+    expect((await redeem(request, invitation, notThe(first))).status()).toBe(401)
+  }
+  const second = await requestStepUpCode(invitation)
+  for (let i = 0; i < 2; i++) {
+    expect((await redeem(request, invitation, notThe(second))).status()).toBe(401)
+  }
+
+  // A resend did not buy more guesses: the right code is now refused, and
+  // so is a request for another one.
+  expect((await redeem(request, invitation, second)).status(), "capped").toBe(401)
+  const again = await request.post(`${BACKEND_URL}${REQUEST_CODE_PATH}`, {
+    data: { token: invitation.token },
+    failOnStatusCode: false,
+  })
+  expect(again.status(), "a capped invitation cannot ask for a code").toBe(401)
+})
+
+test("recovery emails a link, texts nothing, and the link signs in @portal", async ({
+  api,
+  page,
+  request,
+}) => {
+  // A patient who has been invited, so the practice has granted access.
+  const invitation = await givePortalInvitation(api)
+  const slug = new URL(invitation.link).pathname.split("/").pop() as string
+  const letters = async () =>
+    (await mail.received()).filter((m) => m.to.includes(invitation.email)).length
+  const lettersBefore = await letters()
+  const textsBefore = await sms.countFor(invitation.phone)
+
+  const asked = await request.post(`${BACKEND_URL}/api/portal/practices/${slug}/recover`, {
+    data: { email: invitation.email },
+  })
+  expect(asked.status(), "recovery always accepts").toBe(202)
+
+  // A new email, and no text.
+  await expect.poll(letters, { timeout: 10_000 }).toBeGreaterThan(lettersBefore)
+  await settle()
+  expect(await sms.countFor(invitation.phone), "nothing is texted at recover time").toBe(
+    textsBefore,
+  )
+
+  const recovered = firstLink(await mail.waitFor(invitation.email))
+  expect(recovered).not.toBe(invitation.link)
+  await signInFromLink(page, recovered, invitation.phone)
+})
+
+test("a link that can no longer be used offers a new one @portal", async ({
+  api,
+  page,
+  request,
+}) => {
+  const invitation = await givePortalInvitation(api)
+  const slug = new URL(invitation.link).pathname.split("/").pop() as string
+
+  // Spend it at the API first, so the browser arrives with a used link.
+  const otp = await requestStepUpCode(invitation)
+  expect((await redeem(request, invitation, otp)).status()).toBe(200)
+  const textsAfterRedeem = await sms.countFor(invitation.phone)
+
+  await page.goto(invitation.link)
+  await page.getByTestId("portal-shell-request-code").click()
+
+  await expect(page.getByTestId("portal-shell-link-ended")).toBeVisible()
+  await expect(page.getByTestId("portal-shell-link-ended-recover")).toHaveAttribute(
+    "href",
+    new RegExp(`/${slug}/recover$`),
+  )
+  await settle()
+  expect(await sms.countFor(invitation.phone), "a spent link texts nobody").toBe(
+    textsAfterRedeem,
+  )
+})
+
+test("a wrong code offers the way to a new link @portal", async ({ api, page }) => {
+  const invitation = await givePortalInvitation(api)
+  const slug = new URL(invitation.link).pathname.split("/").pop() as string
+
+  await page.goto(invitation.link)
+  const otp = await askForCodeInPage(page, invitation.phone)
+  await page.getByTestId("portal-shell-otp-input").fill(notThe(otp))
+  await page.getByTestId("portal-shell-otp-submit").click()
+
+  await expect(page.getByTestId("portal-shell-otp-error")).toBeVisible()
+  await expect(page.getByTestId("portal-shell-otp-recover")).toHaveAttribute(
+    "href",
+    new RegExp(`/${slug}/recover$`),
+  )
 })
 
 test("a single-use invitation cannot be redeemed twice @portal", async ({ api, request }) => {

@@ -32,7 +32,7 @@
 import { test, expect } from "../fixtures/auth"
 import type { ApiClient } from "../fixtures/api"
 import { firstLink, mail } from "../fixtures/mail"
-import { askForCodeInPage, requestStepUpCode } from "../fixtures/portal"
+import { requestStepUpCode, signInFromLink } from "../fixtures/portal"
 import { givePatient } from "../fixtures/scenarios"
 import { sms } from "../fixtures/sms"
 import { BACKEND_URL } from "../fixtures/stack"
@@ -146,12 +146,7 @@ test("recovery sends a link that really signs the patient in @portal", async ({
   expect(link).toContain(`/portal/${patient.slug}`)
   expect(link).toContain("#invite=")
 
-  await page.goto(link)
-  const otp = await askForCodeInPage(page, patient.phone)
-  await page.getByTestId("portal-shell-otp-input").fill(otp)
-  await page.getByTestId("portal-shell-otp-submit").click()
-
-  await expect(page.getByTestId("portal-shell-active")).toBeVisible()
+  await signInFromLink(page, link, patient.phone)
   expect(page.url(), "the address bar holds no credential").not.toContain("invite")
 })
 

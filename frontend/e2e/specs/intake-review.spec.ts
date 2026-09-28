@@ -38,7 +38,7 @@ import {
   fillTheFormIn,
 } from "../fixtures/intake"
 import { firstLink, mail } from "../fixtures/mail"
-import { askForCodeInPage } from "../fixtures/portal"
+import { signInFromLink } from "../fixtures/portal"
 import { givePatient } from "../fixtures/scenarios"
 
 interface Assignment {
@@ -85,11 +85,7 @@ async function signIn(
 
   const link = firstLink(await mail.waitFor(email))
 
-  await page.goto(link)
-  const otp = await askForCodeInPage(page, phone)
-  await page.getByTestId("portal-shell-otp-input").fill(otp)
-  await page.getByTestId("portal-shell-otp-submit").click()
-  await expect(page.getByTestId("portal-shell-active")).toBeVisible()
+  await signInFromLink(page, link, phone)
 }
 
 /**

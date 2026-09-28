@@ -110,8 +110,18 @@ export async function givePortalSession(
  * for a code, type it.
  */
 export async function signInToPortal(page: Page, invitation: PortalInvitation): Promise<void> {
-  await page.goto(invitation.link)
-  const otp = await askForCodeInPage(page, invitation.phone)
+  await signInFromLink(page, invitation.link, invitation.phone)
+}
+
+/**
+ * The one place a spec walks the shell's sign-in: open `link`, tap "Text me
+ * a code", read the text sent to `phone`, type it, and arrive signed in.
+ * Specs that already hold a link (an invite they read themselves, a recovery
+ * email) call this rather than repeating the steps.
+ */
+export async function signInFromLink(page: Page, link: string, phone: string): Promise<void> {
+  await page.goto(link)
+  const otp = await askForCodeInPage(page, phone)
   await page.getByTestId("portal-shell-otp-input").fill(otp)
   await page.getByTestId("portal-shell-otp-submit").click()
   await expect(page.getByTestId("portal-shell-active")).toBeVisible()
