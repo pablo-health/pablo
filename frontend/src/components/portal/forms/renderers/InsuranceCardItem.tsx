@@ -44,8 +44,9 @@ import {
   filesSent,
 } from "../formsCopy"
 import { QuestionFrame, labelOf } from "./QuestionFrame"
+import { SentFile } from "./SentFile"
 import { acceptOf, UploadSlot } from "./UploadSlot"
-import type { AnswerValue, ItemRenderer, ItemRendererProps } from "./types"
+import type { AnswerValue, ItemRenderer, ItemRendererProps, LiveItemProps } from "./types"
 
 /** Which sides this question asked for. `"front"` narrows it to one. */
 function sidesOf(config: Record<string, unknown>): string[] {
@@ -60,15 +61,44 @@ function sideLabel(side: string): string {
   return side === "back" ? CARD_BACK : CARD_FRONT
 }
 
-function InsuranceCardItem({
+/**
+ * The card screen, or the read-only copy of it.
+ *
+ * Chosen before anything reaches for the session. Read-only, each side the
+ * question asked for shows what arrived; the typed plan details are not
+ * drawn, because they were never this question's answer — they went to the
+ * coverage record, which is where the chart already shows them.
+ */
+function InsuranceCardItem(props: ItemRendererProps) {
+  if (!props.readOnly) return <InsuranceCardLive {...props} />
+  const { item, artifacts, readOnly } = props
+  return (
+    <QuestionFrame item={item}>
+      {() => (
+        <div data-testid="forms-insurance-card" className="space-y-4">
+          {sidesOf(item.config).map((side) => (
+            <SentFile
+              key={side}
+              label={sideLabel(side)}
+              side={side}
+              artifact={artifacts.find((row) => row.side === side) ?? null}
+              readOnly={readOnly}
+            />
+          ))}
+        </div>
+      )}
+    </QuestionFrame>
+  )
+}
+
+function InsuranceCardLive({
   item,
   artifacts,
   assignmentId,
   sessionToken,
   onWrote,
   onSessionLost,
-  readOnly,
-}: ItemRendererProps) {
+}: LiveItemProps) {
   const sides = sidesOf(item.config)
   const accept = acceptOf(item.config)
 
@@ -90,12 +120,11 @@ function InsuranceCardItem({
                 camera
                 onWrote={onWrote}
                 onSessionLost={onSessionLost}
-                readOnly={readOnly}
               />
             ))}
           </div>
 
-          {collectsFields(item.config) && readOnly === undefined && (
+          {collectsFields(item.config) && (
             <CoverageFields
               assignmentId={assignmentId}
               sessionToken={sessionToken}

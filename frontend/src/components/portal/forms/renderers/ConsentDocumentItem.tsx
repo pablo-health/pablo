@@ -55,7 +55,7 @@ import {
 } from "../formsCopy"
 import { ConsentDocumentRead, SignedRow } from "./ConsentDocumentRead"
 import { Unavailable } from "./DisplayItem"
-import type { AnswerValue, ItemRenderer, ItemRendererProps } from "./types"
+import type { AnswerValue, ItemRenderer, ItemRendererProps, LiveItemProps } from "./types"
 
 const NAME_MAX = 160
 
@@ -76,8 +76,9 @@ function roleLabel(role: string): string {
  * against the patient's session.
  */
 function ConsentDocumentItem(props: ItemRendererProps) {
-  const pinned = pinnedVersionOf(props.item.config)
-  if (pinned !== null && props.readOnly) {
+  if (props.readOnly) {
+    const pinned = pinnedVersionOf(props.item.config)
+    if (pinned === null) return <Unavailable />
     return <ConsentDocumentRead item={props.item} pinned={pinned} readOnly={props.readOnly} />
   }
   return <SignableConsent {...props} />
@@ -89,7 +90,7 @@ function SignableConsent({
   sessionToken,
   onWrote,
   onSessionLost,
-}: ItemRendererProps) {
+}: LiveItemProps) {
   const pinned = pinnedVersionOf(item.config)
   const [ticked, setTicked] = useState(false)
   const [typedName, setTypedName] = useState("")

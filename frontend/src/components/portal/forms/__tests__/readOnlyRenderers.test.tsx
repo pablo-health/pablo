@@ -5,10 +5,11 @@
  *
  * Three things must hold for each type. The recorded answer is on screen,
  * marked where the patient marked it. Nothing on screen changes it — every
- * control is disabled or read-only, and `onChange` never fires however much
- * of the screen is clicked. And nothing reaches a patient route: a clinician
- * drawing the form has no patient session, so the two renderers that read
- * through one read what `readOnly` hands them instead.
+ * control is disabled or read-only, and a read-only draw is handed no
+ * `onChange` or session at all, which the props type enforces; clicking the
+ * whole screen must still not throw. And nothing reaches a patient route: a
+ * clinician drawing the form has no patient session, so the two renderers
+ * that read through one read what `readOnly` hands them instead.
  *
  * The first test walks the registry, so a new item type is drawn read-only
  * here before it can be drawn anywhere else.
@@ -17,6 +18,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import * as patientApi from "@/lib/api/patientIntake"
 import type { IntakeArtifact, IntakeAssignmentItem, IntakeSignature } from "@/lib/api/patientIntake"
 import { renderWithProviders } from "@/test/renderWithProviders"
 import { RENDERED_ITEM_TYPES, rendererFor } from "../renderers/registry"
@@ -71,9 +73,25 @@ function artifact(overrides: Partial<IntakeArtifact>): IntakeArtifact {
   }
 }
 
+const PATIENT_ROUTES = [
+  "fetchConsentDocument",
+  "listSignatures",
+  "signConsentDocument",
+  "startUpload",
+  "removeArtifact",
+  "uploadPreviewUrl",
+  "blankFormUrl",
+  "saveIntakeCoverage",
+] as const
+
 let source: ReadOnlySource
+let fetchSpy: ReturnType<typeof vi.fn>
 
 beforeEach(() => {
+  vi.clearAllMocks()
+  // Anything that reaches the network at all, by any client, lands here.
+  fetchSpy = vi.fn(() => Promise.reject(new Error("a read-only renderer fetched")))
+  globalThis.fetch = fetchSpy as unknown as typeof fetch
   source = {
     signatures: [SIGNATURE],
     loadDocument: vi.fn(async () => ({ title: "Consent to treatment", rendered_html: "<p>We keep records private.</p>" })),
@@ -97,14 +115,11 @@ function item(itemType: string, config: Record<string, unknown> = {}, label: str
 }
 
 function draw(shown: IntakeAssignmentItem, value: AnswerValue | null, artifacts: IntakeArtifact[] = []) {
-  const onChange = vi.fn()
-  const onWrote = vi.fn()
   const Renderer = rendererFor(shown.item_type).Component
   const view = renderWithProviders(
-    <Renderer item={shown} value={value} onChange={onChange} form={INTAKE_FORM} assignmentId="assign-1"
-      sessionToken="" artifacts={artifacts} onWrote={onWrote} onSessionLost={vi.fn()} readOnly={source} />,
+    <Renderer item={shown} value={value} form={INTAKE_FORM} artifacts={artifacts} readOnly={source} />,
   )
-  return { onChange, onWrote, container: view.container }
+  return { container: view.container }
 }
 
 /** Click everything a person could click, and prove none of it wrote. */
@@ -235,6 +250,10 @@ const CASES: Record<string, { item: IntakeAssignmentItem; value: AnswerValue | n
       expect(screen.getByRole("heading", { name: "Consent to treatment" })).toBeInTheDocument()
       expect(screen.getByRole("checkbox", { name: "I have read this document and agree to it." })).toBeChecked()
       expect(screen.getByTestId("forms-consent-signed")).toHaveTextContent("Dana Okonkwo")
+      expect(screen.getByTestId("forms-consent-signed")).toHaveTextContent(
+        new Date("2026-03-14T12:00:00Z").toLocaleString(),
+      )
+      expect(screen.getByTestId("forms-consent-signer-role")).toHaveTextContent("Signed by the patient")
       expect(screen.queryByTestId("forms-consent-sign")).not.toBeInTheDocument()
       expect(source.loadDocument).toHaveBeenCalledWith("docv-1")
     },
@@ -271,12 +290,12 @@ describe("read-only renderers", () => {
 
   it.each(Object.keys(CASES))("draws %s with its answer, locked, and never writes", async (type) => {
     const shown = CASES[type]
-    const { onChange, onWrote, container } = draw(shown.item, shown.value, shown.artifacts)
+    const { container } = draw(shown.item, shown.value, shown.artifacts)
     await shown.expect()
     expectLocked(container)
     await clickEverything(container)
-    expect(onChange).not.toHaveBeenCalled()
-    expect(onWrote).not.toHaveBeenCalled()
+    for (const route of PATIENT_ROUTES) expect(vi.mocked(patientApi[route])).not.toHaveBeenCalled()
+    expect(fetchSpy).not.toHaveBeenCalled()
   })
 
   it("says a document with no files sent had none", () => {

@@ -22,6 +22,7 @@ import {
   CONSENT_NOT_SIGNED,
   CONSENT_SIGNED_BADGE,
   consentSignedBy,
+  consentSignerRole,
 } from "../formsCopy"
 import type { ItemRendererProps, ReadOnlySource } from "./types"
 
@@ -100,6 +101,9 @@ export function ConsentDocumentRead({
               <ul>
                 <SignedRow signature={signature} />
               </ul>
+              <p data-testid="forms-consent-signer-role" className="text-xs text-neutral-600">
+                {consentSignerRole(signature.signer_role)}
+              </p>
             </li>
           ))}
         </ul>

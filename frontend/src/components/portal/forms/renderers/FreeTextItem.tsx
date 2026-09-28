@@ -39,7 +39,7 @@ function FreeTextItem({ item, value, onChange, readOnly }: ItemRendererProps) {
             className="min-h-[7rem]"
             value={text}
             maxLength={max}
-            onChange={(e) => onChange({ text: e.target.value })}
+            onChange={(e) => onChange?.({ text: e.target.value })}
           />
           <p data-testid="forms-free-text-counter" className="text-right text-xs text-neutral-500">
             {text.length} / {max}

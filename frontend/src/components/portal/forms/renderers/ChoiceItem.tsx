@@ -67,7 +67,7 @@ function SingleChoiceItem({ item, value, onChange, readOnly }: ItemRendererProps
               itemId={item.id}
               active={chosen === option.key}
               disabled={readOnly !== undefined}
-              onPick={() => onChange({ key: option.key })}
+              onPick={() => onChange?.({ key: option.key })}
             />
           ))}
         </div>
@@ -81,7 +81,7 @@ function MultiChoiceItem({ item, value, onChange, readOnly }: ItemRendererProps)
   const chosen = chosenMany(value)
 
   const toggle = (key: string) =>
-    onChange({
+    onChange?.({
       keys: chosen.includes(key) ? chosen.filter((k) => k !== key) : [...chosen, key],
     })
 

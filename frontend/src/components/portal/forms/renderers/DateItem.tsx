@@ -51,7 +51,7 @@ function DateItem({ item, value, onChange, readOnly }: ItemRendererProps) {
           max={latestAllowed(item.config)}
           value={valueIn(value)}
           readOnly={readOnly !== undefined}
-          onChange={(e) => onChange(e.target.value === "" ? {} : { value: e.target.value })}
+          onChange={(e) => onChange?.(e.target.value === "" ? {} : { value: e.target.value })}
         />
       )}
     </QuestionFrame>

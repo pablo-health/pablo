@@ -37,7 +37,7 @@ function YesNoItem({ item, value, onChange, readOnly }: ItemRendererProps) {
   const followUp = followUpIn(value)
 
   const answer = (next: boolean) =>
-    onChange(followUp === "" ? { yes: next } : { yes: next, follow_up: followUp })
+    onChange?.(followUp === "" ? { yes: next } : { yes: next, follow_up: followUp })
 
   return (
     <QuestionFrame item={item}>
@@ -68,7 +68,7 @@ function YesNoItem({ item, value, onChange, readOnly }: ItemRendererProps) {
                 data-testid="forms-yes-no-follow-up"
                 value={followUp}
                 maxLength={FOLLOW_UP_MAX}
-                onChange={(e) => onChange({ yes: true, follow_up: e.target.value })}
+                onChange={(e) => onChange?.({ yes: true, follow_up: e.target.value })}
               />
             </div>
           )}

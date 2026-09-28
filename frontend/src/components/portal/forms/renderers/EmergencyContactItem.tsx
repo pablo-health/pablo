@@ -94,7 +94,7 @@ function EmergencyContactItem({ item, value, onChange, readOnly }: ItemRendererP
                   maxLength={CONTACT_MAX}
                   value={fieldIn(value, field.key)}
                   readOnly={readOnly !== undefined}
-                  onChange={(e) => onChange(answerWith(field.key, e.target.value))}
+                  onChange={(e) => onChange?.(answerWith(field.key, e.target.value))}
                 />
               </div>
             )

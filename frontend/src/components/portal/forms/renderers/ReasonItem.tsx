@@ -47,7 +47,7 @@ function ReasonItem({ value, onChange, form, readOnly }: ItemRendererProps) {
           className="min-h-[9rem]"
           value={text}
           maxLength={REASON_MAX}
-          onChange={(e) => onChange({ text: e.target.value })}
+          onChange={(e) => onChange?.({ text: e.target.value })}
         />
         <p data-testid="forms-reason-counter" className="text-right text-xs text-neutral-500">
           {text.length} / {REASON_MAX}

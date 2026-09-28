@@ -21,7 +21,7 @@ import type { Locator, Page } from "@playwright/test"
 import { expect, test } from "../fixtures/auth"
 import { atQuestion, defaultIntakeVersion } from "../fixtures/intake"
 import { firstLink, mail } from "../fixtures/mail"
-import { signInFromLink } from "../fixtures/portal"
+import { openPortalSection, signInFromLink } from "../fixtures/portal"
 import { givePatient } from "../fixtures/scenarios"
 
 const REASON = "Trouble sleeping since the move."
@@ -75,6 +75,7 @@ test.describe("intake review, read as the patient saw it", () => {
     // --- the patient fills it in -------------------------------------------
     await api.post(`/api/patients/${patient.id}/portal-invite`)
     await signInFromLink(page, firstLink(await mail.waitFor(email)), phone)
+    await openPortalSection(page, "forms")
     await expect(page.getByTestId("forms-list")).toBeVisible()
     await page.getByTestId("forms-list-open").click()
 

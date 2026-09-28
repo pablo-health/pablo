@@ -65,7 +65,7 @@ function InstrumentItem({ item, value, onChange, form, readOnly }: ItemRendererP
   }
 
   const answer = (itemKey: string, score: number) =>
-    onChange({ item_scores: { ...scores, [itemKey]: score } })
+    onChange?.({ item_scores: { ...scores, [itemKey]: score } })
 
   return (
     <section aria-labelledby={`forms-instrument-heading-${item.id}`}>

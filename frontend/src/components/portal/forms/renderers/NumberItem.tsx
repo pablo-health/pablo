@@ -49,7 +49,7 @@ function NumberItem({ item, value, onChange, readOnly }: ItemRendererProps) {
             value={current === null ? "" : String(current)}
             readOnly={readOnly !== undefined}
             onChange={(e) =>
-              onChange(e.target.value === "" ? {} : { value: Number(e.target.value) })
+              onChange?.(e.target.value === "" ? {} : { value: Number(e.target.value) })
             }
           />
           {unit && (

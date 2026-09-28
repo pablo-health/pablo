@@ -25,8 +25,9 @@ import { useState } from "react"
 import { blankFormUrl, PatientIntakeError } from "@/lib/api/patientIntake"
 import { BLANK_FORM_DOWNLOAD, BLANK_FORM_NOTE, filesSent } from "../formsCopy"
 import { QuestionFrame, labelOf } from "./QuestionFrame"
+import { SentFile } from "./SentFile"
 import { acceptOf, UploadSlot } from "./UploadSlot"
-import type { AnswerValue, ItemRenderer, ItemRendererProps } from "./types"
+import type { AnswerValue, ItemRenderer, ItemRendererProps, LiveItemProps } from "./types"
 
 /** The practice's own form this question offers, when it names one. */
 function blankFormIdOf(config: Record<string, unknown>): string | null {
@@ -34,26 +35,49 @@ function blankFormIdOf(config: Record<string, unknown>): string | null {
   return typeof id === "string" && id !== "" ? id : null
 }
 
-function DocumentRequestItem({
+/**
+ * The upload screen, or the read-only copy of it.
+ *
+ * Chosen before anything reaches for the session: read-only, the page shows
+ * what arrived and how to open it, and the blank form and the empty slot —
+ * the two ways of sending more — are not there to press.
+ */
+function DocumentRequestItem(props: ItemRendererProps) {
+  if (!props.readOnly) return <DocumentRequestLive {...props} />
+  const { item, artifacts, readOnly } = props
+  return (
+    <QuestionFrame item={item}>
+      {() => (
+        <div data-testid="forms-document-request" className="space-y-3">
+          {artifacts.length === 0 ? (
+            <SentFile label={null} artifact={null} readOnly={readOnly} />
+          ) : (
+            artifacts.map((artifact) => (
+              <SentFile key={artifact.id} label={null} artifact={artifact} readOnly={readOnly} />
+            ))
+          )}
+        </div>
+      )}
+    </QuestionFrame>
+  )
+}
+
+function DocumentRequestLive({
   item,
   artifacts,
   assignmentId,
   sessionToken,
   onWrote,
   onSessionLost,
-  readOnly,
-}: ItemRendererProps) {
+}: LiveItemProps) {
   const accept = acceptOf(item.config)
   const blankFormId = blankFormIdOf(item.config)
-  // Read-only, the page shows what arrived; the blank form and the empty
-  // slot are ways of sending more, and nothing more can be sent from here.
-  const showEmpty = readOnly === undefined || artifacts.length === 0
 
   return (
     <QuestionFrame item={item}>
       {() => (
         <div className="space-y-4">
-          {blankFormId !== null && readOnly === undefined && (
+          {blankFormId !== null && (
             <BlankForm
               blankFormId={blankFormId}
               sessionToken={sessionToken}
@@ -73,11 +97,10 @@ function DocumentRequestItem({
                 accept={accept}
                 onWrote={onWrote}
                 onSessionLost={onSessionLost}
-                readOnly={readOnly}
               />
             ))}
             {/* One empty slot, always: there is no fixed number of these. */}
-            {showEmpty && <UploadSlot
+            <UploadSlot
               assignmentId={assignmentId}
               sessionToken={sessionToken}
               itemId={item.id}
@@ -86,8 +109,7 @@ function DocumentRequestItem({
               accept={accept}
               onWrote={onWrote}
               onSessionLost={onSessionLost}
-              readOnly={readOnly}
-            />}
+            />
           </div>
         </div>
       )}

@@ -150,6 +150,13 @@ export const CONSENT_SIGNING = "Signing…"
 export const CONSENT_SIGNED_BADGE = "Signed"
 /** A consent document drawn read-only with no signature on it. */
 export const CONSENT_NOT_SIGNED = "Not signed."
+
+/** Who a recorded signature was given as, on a read-only copy. */
+export function consentSignerRole(role: string): string {
+  return role === "guardian"
+    ? "Signed by an adult completing it for the patient"
+    : "Signed by the patient"
+}
 export const CONSENT_SIGN_FAILED = "We couldn't record that. Try again in a moment."
 
 /** Who is signing, on a document that asks for more than one signature. */

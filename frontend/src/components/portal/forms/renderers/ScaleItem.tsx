@@ -75,7 +75,7 @@ function ScaleItem({ item, value, onChange, readOnly }: ItemRendererProps) {
                       name={`forms-scale-${item.id}`}
                       checked={active}
                       disabled={readOnly !== undefined}
-                      onChange={() => onChange({ value: point })}
+                      onChange={() => onChange?.({ value: point })}
                       className="sr-only"
                     />
                     {point}

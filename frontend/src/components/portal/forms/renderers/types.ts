@@ -52,21 +52,17 @@ export interface ReadOnlySource {
   openFile: (documentId: string) => Promise<void>
 }
 
-export interface ItemRendererProps {
+/** What every renderer is handed, whoever is drawing it. */
+interface SharedItemProps {
   item: IntakeAssignmentItem
   /** What is saved or typed so far; null until the patient touches it. */
   value: AnswerValue | null
-  onChange: (value: AnswerValue) => void
   /**
    * The wording the engine owns — the patient's own identity fields, the
    * reason prompt, each measure's items and anchors. Null while it is still
    * loading, or on a deployment whose route did not answer.
    */
   form: IntakeForm | null
-  /** The assignment being filled in, for a renderer that calls a route. */
-  assignmentId: string
-  /** The portal session, for a renderer that calls a route. */
-  sessionToken: string
   /**
    * What has already arrived for THIS question, oldest first.
    *
@@ -76,6 +72,15 @@ export interface ItemRendererProps {
    * type, which ignores it.
    */
   artifacts: IntakeArtifact[]
+}
+
+/** The patient's walk: a live question that saves, signs and uploads. */
+export interface LiveItemProps extends SharedItemProps {
+  onChange: (value: AnswerValue) => void
+  /** The assignment being filled in, for a renderer that calls a route. */
+  assignmentId: string
+  /** The portal session, for a renderer that calls a route. */
+  sessionToken: string
   /**
    * Raised by a renderer that wrote something itself, so the walk re-reads
    * the assignment. What comes back carries the server's answer about
@@ -88,12 +93,24 @@ export interface ItemRendererProps {
    * from inside a form.
    */
   onSessionLost: () => void
-  /**
-   * Set to draw the recorded answer and nothing else. See the note above:
-   * controls are disabled, no route is called and `onChange` never fires.
-   */
-  readOnly?: ReadOnlySource
+  readOnly?: undefined
 }
+
+/**
+ * A handed-in form drawn back, read-only. See the note above: controls are
+ * disabled, no route is called, and there is nothing to change, so none of
+ * the live question's callbacks or session exist here to be called.
+ */
+export interface ReadOnlyItemProps extends SharedItemProps {
+  readOnly: ReadOnlySource
+  onChange?: undefined
+  assignmentId?: undefined
+  sessionToken?: undefined
+  onWrote?: undefined
+  onSessionLost?: undefined
+}
+
+export type ItemRendererProps = LiveItemProps | ReadOnlyItemProps
 
 export interface ItemRenderer {
   Component: ComponentType<ItemRendererProps>

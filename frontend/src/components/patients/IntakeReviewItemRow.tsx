@@ -23,7 +23,6 @@ const COPY = {
 
 const LINK = "text-xs font-medium text-primary-600 hover:text-primary-700"
 const CHIP = "inline-block rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600"
-const NOOP = () => {}
 
 /**
  * The answer to a question the portal has no renderer for, as a line of
@@ -97,8 +96,7 @@ export function IntakeReviewItemRow(props: IntakeReviewItemRowProps) {
             </div>
           ) : shown ? (
             <>
-              <Renderer item={item} value={item.value} onChange={NOOP} form={form} assignmentId=""
-                sessionToken="" artifacts={artifacts} onWrote={NOOP} onSessionLost={NOOP} readOnly={readOnly} />
+              <Renderer item={item} value={item.value} form={form} artifacts={artifacts} readOnly={readOnly} />
               {renderer.answerable && item.value === null && (
                 <p className="mt-2 text-sm text-neutral-500">{COPY.noAnswer}</p>
               )}

@@ -93,7 +93,7 @@ function DemographicsItem({ value, onChange, form, readOnly }: ItemRendererProps
           testId="forms-identity-confirm"
           selected={confirmed === true}
           disabled={locked}
-          onClick={() => onChange(answer(true, corrections))}
+          onClick={() => onChange?.(answer(true, corrections))}
         >
           {IDENTITY_CONFIRM}
         </ChoiceButton>
@@ -101,7 +101,7 @@ function DemographicsItem({ value, onChange, form, readOnly }: ItemRendererProps
           testId="forms-identity-deny"
           selected={confirmed === false}
           disabled={locked}
-          onClick={() => onChange(answer(false, corrections))}
+          onClick={() => onChange?.(answer(false, corrections))}
         >
           {IDENTITY_DENY}
         </ChoiceButton>
@@ -122,7 +122,7 @@ function DemographicsItem({ value, onChange, form, readOnly }: ItemRendererProps
             data-testid="forms-corrections"
             value={corrections}
             maxLength={CORRECTIONS_MAX}
-            onChange={(e) => onChange(answer(false, e.target.value))}
+            onChange={(e) => onChange?.(answer(false, e.target.value))}
           />
           <p className="text-xs text-neutral-500">{IDENTITY_CORRECTIONS_NOTE}</p>
         </div>
