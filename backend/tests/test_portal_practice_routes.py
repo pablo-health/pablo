@@ -330,6 +330,29 @@ def test_mint_never_hands_out_a_reserved_word_bare(fake_db: _FakeSession, mock_u
     assert response.json()["slug"] == "redeem-2"
 
 
+def test_a_practice_named_like_a_web_app_route_gets_a_suffixed_address(
+    fake_db: _FakeSession, mock_user: User
+) -> None:
+    """A practice called "Dashboard" is not handed ``dashboard``: on a portal
+    host of its own that path answers 404, not the practice."""
+    fake_db.practices[PRACTICE_ID] = _practice(name="Dashboard")
+    application = FastAPI()
+    application.include_router(router)
+    application.dependency_overrides[require_active_subscription] = lambda: mock_user
+
+    with (
+        patch("app.portal.practice_routes.create_standalone_session", lambda: fake_db),
+        patch(
+            "app.portal.practice_routes._resolve_practice_from_email",
+            lambda _email: (PRACTICE_ID, f"practice_{PRACTICE_ID}"),
+        ),
+    ):
+        response = TestClient(application).post(MINT_URL)
+
+    assert response.status_code == 200
+    assert response.json()["slug"] == "dashboard-2"
+
+
 def test_a_minted_address_is_somewhere_a_magic_link_can_point(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -356,3 +379,27 @@ def test_no_reserved_word_can_become_an_address() -> None:
     practice holding one would shadow it."""
     assert "redeem" in _RESERVED_SLUGS
     assert "api" in _RESERVED_SLUGS
+
+
+@pytest.mark.parametrize(
+    "route",
+    [
+        "portal",
+        "auth",
+        "book",
+        "dashboard",
+        "fbauth-proxy",
+        "launch",
+        "login",
+        "mfa-enrollment",
+        "mfa-step-up",
+        "native-auth",
+        "onboarding",
+    ],
+)
+def test_no_web_app_route_can_become_an_address(route: str) -> None:
+    """Where the portal has a host of its own, a practice is ``/{slug}`` there
+    and the web app's own top-level routes answer 404 on it, so a practice
+    holding one of those names would have an address that goes nowhere. The
+    frontend's routing test checks this set covers its route list too."""
+    assert route in _RESERVED_SLUGS

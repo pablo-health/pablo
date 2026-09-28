@@ -9,6 +9,12 @@
 const port = (name: string, fallback: string): string => process.env[name] || fallback
 
 export const BASE_URL = process.env.E2E_BASE_URL || `http://localhost:${port("E2E_FRONTEND_PORT", "3000")}`
+/**
+ * The portal's own host: the same frontend server under another name, which
+ * docker-compose.e2e.yml names in the frontend's PORTAL_HOSTS.
+ */
+export const PORTAL_URL =
+  process.env.E2E_PORTAL_URL || `http://127.0.0.1:${port("E2E_FRONTEND_PORT", "3000")}`
 export const BACKEND_URL =
   process.env.E2E_BACKEND_URL || `http://localhost:${port("E2E_BACKEND_PORT", "8000")}`
 export const AUTH_EMULATOR_URL =

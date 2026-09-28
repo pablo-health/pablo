@@ -50,7 +50,10 @@ services:
       - DEBUG=true
       - LOG_LEVEL=INFO
       - ENVIRONMENT=development
-      - CORS_ORIGINS=http://localhost:${E2E_FRONTEND_PORT:-3000}
+      # The second origin is the portal's own host on this stack (the
+      # frontend's PORTAL_HOSTS): the same server, reached by another name,
+      # and a portal page there calls this API cross-origin.
+      - CORS_ORIGINS=http://localhost:${E2E_FRONTEND_PORT:-3000},http://127.0.0.1:${E2E_FRONTEND_PORT:-3000}
       - CORS_ALLOW_CREDENTIALS=true
       - DATABASE_BACKEND=postgres
       - DATABASE_URL=postgresql://pablo:pablo_dev@postgres:5432/pablo
@@ -258,8 +261,9 @@ services:
       ]
     environment:
       - FAKE_GCS_CREDENTIALS_DIR=/srv/gcs-credentials
-      # A document upload from the page is a cross-origin PUT.
-      - FAKE_GCS_CORS_ORIGINS=http://localhost:${E2E_FRONTEND_PORT:-3000}
+      # A document upload from the page is a cross-origin PUT, from the
+      # clinician app or from a portal page on the portal's own host.
+      - FAKE_GCS_CORS_ORIGINS=http://localhost:${E2E_FRONTEND_PORT:-3000},http://127.0.0.1:${E2E_FRONTEND_PORT:-3000}
     volumes:
       - e2e-gcs-credentials:/srv/gcs-credentials:ro
     healthcheck:
@@ -388,6 +392,14 @@ services:
       # REPLACES the list in .env.e2e rather than adding to it, so it has to
       # carry everything that file turns on too: keep the two in step.
       - FEATURES_ENABLED=patient_portal,refill_requests
+      # The portal is served on a host of its own. One server answers both
+      # names: localhost is the clinician app, 127.0.0.1 the portal, whose
+      # `/{slug}` addresses are rewritten to the portal route and where
+      # nothing of the clinician app is served. A portal link to localhost
+      # is redirected here, so the portal specs that open one walk it too.
+      # The backend's CORS_ORIGINS and fake-gcs's allowed origins name this
+      # host as well; change the three together.
+      - PORTAL_HOSTS=127.0.0.1:${E2E_FRONTEND_PORT:-3000}
     healthcheck:
       # Distroless runtime: no shell, node at a fixed path.
       test:

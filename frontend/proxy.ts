@@ -1,8 +1,10 @@
-import { NextResponse, type NextRequest } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
 import { authProviderMiddleware } from "@/lib/auth/middleware"
+import { portalHostsFromEnv, routePortalHost } from "@/lib/portal-host/routing"
 
 const BUILD_ASSET_PREFIX = "/_next/static"
 const BUILD_ASSET_METHODS = ["GET", "HEAD"]
+const FIREBASE_HELPER_PREFIX = "/__/"
 
 // Route protection is delegated to the active auth provider
 // (NEXT_PUBLIC_AUTH_PROVIDER, default "firebase"). See
@@ -14,23 +16,78 @@ const BUILD_ASSET_METHODS = ["GET", "HEAD"]
 // unrecognized action id with a 500. Reads are passed through untouched —
 // routing them through the auth provider would send asset loads to the
 // login redirect.
+//
+// A deployment can serve the patient portal on a host of its own
+// (PORTAL_HOSTS; see src/lib/portal-host/routing.ts). On that host the
+// clinician app is not served at all. Unset, every request below takes the
+// "default" branch, which is the behaviour from before portal hosts existed.
 export default function proxy(request: NextRequest) {
-  if (request.nextUrl.pathname.startsWith(BUILD_ASSET_PREFIX)) {
+  const { pathname, search, protocol } = request.nextUrl
+  if (pathname.startsWith(BUILD_ASSET_PREFIX)) {
     return BUILD_ASSET_METHODS.includes(request.method)
       ? NextResponse.next()
       : new NextResponse(null, { status: 405, headers: { Allow: BUILD_ASSET_METHODS.join(", ") } })
   }
-  return authProviderMiddleware(request)
+
+  const decision = routePortalHost(
+    { host: request.headers.get("host"), pathname, search, protocol },
+    portalHostsFromEnv(),
+  )
+  switch (decision.kind) {
+    case "pass":
+      return NextResponse.next()
+    case "not-found":
+      return new NextResponse("Not Found", {
+        status: 404,
+        headers: { "Content-Type": "text/plain; charset=utf-8", "X-Content-Type-Options": "nosniff" },
+      })
+    case "redirect":
+      return NextResponse.redirect(decision.location, 301)
+    case "rewrite":
+      return servePortalAt(request, decision.pathname)
+    case "portal":
+      return authProviderMiddleware(request)
+    case "default":
+      // The Firebase helper is matched only so a portal host can refuse it;
+      // everywhere else it passes through untouched, exactly as when the
+      // matcher left it out.
+      if (pathname.startsWith(FIREBASE_HELPER_PREFIX)) return NextResponse.next()
+      return authProviderMiddleware(request)
+  }
+}
+
+/**
+ * Serve the portal route at `pathname` for a request that arrived at a
+ * shorter address on the portal host.
+ *
+ * The portal route is a public path, so the auth provider passes it through
+ * — but it is also what sets the Content-Security-Policy, its nonce and the
+ * other security headers, and the portal needs those as much as any page. So
+ * the provider sees the request as the portal route it will be served as, and
+ * its pass-through becomes a rewrite carrying the same headers.
+ */
+async function servePortalAt(request: NextRequest, pathname: string) {
+  const target = new URL(`${pathname}${request.nextUrl.search}`, request.url)
+  const served = await authProviderMiddleware(
+    new NextRequest(target, { method: request.method, headers: request.headers }),
+  )
+  // A public path is never sent anywhere; if the provider ever does, obey it
+  // rather than serve a page it refused.
+  if (served.headers.has("location")) return served
+  return NextResponse.rewrite(target, { headers: served.headers })
 }
 
 export const config = {
   matcher: [
     // `__/` is reserved for the Firebase auth helper (/__/auth/*, /__/firebase/*),
     // proxied to the Firebase auth domain in next.config.ts. It must bypass
-    // route protection or the OAuth handler 307s to /login and sign-in breaks.
+    // route protection or the OAuth handler 307s to /login and sign-in breaks,
+    // so the proxy only ever passes it through — except on a portal host,
+    // where it answers 404 (the "/__/:path*" entry below is how it gets here).
     "/((?!_next/static|_next/image|favicon.ico|__/|.*\\.).*)",
     "/api/login",
     "/api/logout",
     "/_next/static/:path*",
+    "/__/:path*",
   ],
 }
