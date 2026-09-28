@@ -11,6 +11,7 @@ You need a BAA with every vendor that handles PHI on your behalf.
 | Cloud provider BAA | You sign directly with Google Cloud | We cover it |
 | AI model provider BAA | You sign with Google (Gemini) or Anthropic (Claude) | We cover it |
 | Transcription provider BAA | Depends on provider — see below | We cover it |
+| Email provider BAA | You sign with your email provider — see below | We cover it |
 | Pablo BAA | Not needed — you host it yourself | Included |
 
 **How to sign the Google Cloud BAA:**
@@ -50,6 +51,10 @@ On a re-run, if `pablo-assemblyai-api-key` already exists in Secret Manager, the
 4. **A dedicated transcription-worker service account**, least-privilege and scoped to the audio/transcript bucket and Cloud Batch — separate from the app service account.
 
 Until that provisioning ships in `setup-solo.sh`, AssemblyAI (with a signed BAA) is the supported path. Once it lands, `whisper` becomes the default, since it keeps audio in your project and needs no third-party BAA.
+
+**Your email provider needs a BAA too.** When you turn on patient portal invitations (`PORTAL_INVITE_DELIVERY=smtp`), Pablo sends them through the mail server in your `SMTP_*` settings. The default invitation names the client's clinician and your practice, for example "Jane Smith has invited you to the patient portal for Riverside Counseling." A message like that says someone is your client, which makes it PHI, and anything you write in the invitation editor is too.
+
+Before you send invitations to real clients, use an email provider that will sign a BAA with you, and sign it. Many consumer and marketing email services won't. Check before you configure one.
 
 ## 2. Access Control
 
@@ -159,6 +164,7 @@ We will never spam you or share your information. This is solely for your protec
 
 - [ ] Signed BAA with Google Cloud
 - [ ] Signed BAA with AI provider (if using Anthropic Claude)
+- [ ] Signed BAA with your email provider (if sending portal invitations)
 - [ ] Configured authentication (MFA or IAP)
 - [ ] Verified HTTPS enforcement is active
 - [ ] Generated and stored encryption keys in Secret Manager
