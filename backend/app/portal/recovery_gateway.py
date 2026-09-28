@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from sqlalchemy import func, select
 
-from ..db import arm_current_patient_id, create_standalone_session
+from ..db import arm_current_patient_id, create_standalone_session, read_once_as
 from ..db.models import PatientRow
 from ..db.platform_models import EmailTenantMappingRow, PlatformUserRow, PracticeRow
 from ..models.audit import AuditAction, ResourceType
@@ -42,7 +42,6 @@ from ..repositories.postgres.audit import PostgresAuditRepository
 from ..services.audit_service import AuditService
 from .db_store import DbPortalAuthStore, DbPortalSessionStore
 from .practice_routes import practice_schema_for_slug
-from .scoped_read import read_as
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -135,7 +134,7 @@ class DbRecoveryGateway:
             # nothing. The address is all there is, so there is no patient
             # to read as; instead the read is made as each clinician of
             # this practice in turn, one statement each (see
-            # ``app.portal.scoped_read``). A chart is created together with
+            # ``app.db.read_once_as``). A chart is created together with
             # its primary clinician's grant, so between them they see every
             # chart — including a second chart on a shared address that was
             # never invited, which is what keeps the two-charts rule honest.
@@ -150,7 +149,7 @@ class DbRecoveryGateway:
             )
             found: dict[str, RecoveryTarget] = {}
             for clinician_id in _practice_clinicians(session, schema):
-                for row in read_as(
+                for row in read_once_as(
                     session,
                     principal="app.current_user_id",
                     value=clinician_id,

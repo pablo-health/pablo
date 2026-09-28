@@ -30,13 +30,17 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..auth.service import TenantContext, get_tenant_context
-from ..db import arm_current_patient_id, create_standalone_session, get_db_session
+from ..db import (
+    arm_current_patient_id,
+    create_standalone_session,
+    get_db_session,
+    read_once_as,
+)
 from ..db.models import PatientRow
 from ..models.audit import AuditAction, ResourceType
 from ..repositories.postgres.audit import PostgresAuditRepository
 from ..services.audit_service import AuditService
 from .db_store import DbPortalAuthStore, DbPortalSessionStore
-from .scoped_read import read_as
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -106,9 +110,9 @@ class DbPortalTenantGateway:
 
         def _step_up_phone(patient_id: str) -> str | None:
             # Nobody is signed in yet, so the chart is read as this patient
-            # for one statement and no longer — see ``app.portal.scoped_read``.
-            # The number goes to the SMS gateway only.
-            rows = read_as(
+            # for one statement and no longer — see ``read_once_as``. The
+            # number goes to the SMS gateway only.
+            rows = read_once_as(
                 session,
                 principal="app.current_patient_id",
                 value=patient_id,
