@@ -27,7 +27,7 @@ import {
 } from "./formsCopy"
 
 /** The statuses a patient can still write to. Mirrors `WRITABLE_STATUSES`. */
-const OPEN_STATUSES = new Set(["assigned", "in_progress", "needs_correction"])
+export const OPEN_STATUSES = new Set(["assigned", "in_progress", "needs_correction"])
 
 interface AssignmentListProps {
   assignments: IntakeAssignment[]

@@ -20,10 +20,12 @@
 
 "use client"
 
-import { PortalAppointments } from "@/components/portal/appointments"
-import { PortalForms } from "@/components/portal/forms"
+import { AppointmentsSummary, PortalAppointments } from "@/components/portal/appointments"
+import { FormsSummary, PortalForms } from "@/components/portal/forms"
+import { MessagingSummary } from "@/components/portal/messaging/MessagingSummary"
 import { PortalMessaging } from "@/components/portal/messaging/PortalMessaging"
 import { PortalRefills } from "@/components/portal/refills/PortalRefills"
+import { RefillsSummary } from "@/components/portal/refills/RefillsSummary"
 import { registerPortalSlot, type PortalSlotProps } from "./slots"
 
 function FormsSlot({ slug, sessionToken }: PortalSlotProps) {
@@ -46,17 +48,26 @@ function RefillsSlot({ sessionToken }: PortalSlotProps) {
 // this slot to render, and ``label`` is what the navigation calls it. Both
 // are presentation: the routes behind an unnamed module are not mounted, so
 // what this decides is whether a patient is shown a section their practice
-// does not have — not whether they could reach one.
+// does not have — not whether they could reach one. ``Summary`` is the
+// line on the slot's home-screen tile; each module owns its own, reading
+// through the same query key as its section.
 //
 // The slot is called ``forms`` and its module is ``intake``, which is not a
 // slip. The module is the deployment-facing name — it is what
 // ``PORTAL_MODULES`` is configured with and what the engine mounts under
 // ``/api/patient/intake`` — while the slot id and the label are what the
 // patient meets. A person filling in a form has not heard the word intake.
-registerPortalSlot({ id: "forms", Component: FormsSlot, module: "intake", label: "Forms" })
+registerPortalSlot({
+  id: "forms",
+  Component: FormsSlot,
+  Summary: FormsSummary,
+  module: "intake",
+  label: "Forms",
+})
 registerPortalSlot({
   id: "messaging",
   Component: MessagingSlot,
+  Summary: MessagingSummary,
   module: "messaging",
   label: "Messages",
 })
@@ -69,6 +80,7 @@ registerPortalSlot({
 registerPortalSlot({
   id: "appointments",
   Component: AppointmentsSlot,
+  Summary: AppointmentsSummary,
   module: "appointments",
   label: "Appointments",
 })
@@ -78,6 +90,7 @@ registerPortalSlot({
 registerPortalSlot({
   id: "refills",
   Component: RefillsSlot,
+  Summary: RefillsSummary,
   module: "refills",
   label: "Refills",
 })

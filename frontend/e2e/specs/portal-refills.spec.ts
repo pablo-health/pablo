@@ -28,6 +28,7 @@ import {
   givePortalContactDetails,
   givePortalInvitation,
   givePortalSession,
+  openPortalSection,
   signInToPortal,
 } from "../fixtures/portal"
 import { givePatient } from "../fixtures/scenarios"
@@ -36,9 +37,14 @@ import { BACKEND_URL, BASE_URL } from "../fixtures/stack"
 /**
  * Open the refills section of a signed-in portal. The one place that knows
  * where refills live in the portal, so a move is a change here only.
+ *
+ * Refills is a page of its own: from Home it is the tile, and a reload of
+ * that page stays on it — so after one there is nothing to tap.
  */
 async function openRefills(page: Page): Promise<void> {
-  await page.getByTestId("portal-shell-nav-refills").click()
+  if (!/\/refills$/.test(new URL(page.url()).pathname)) {
+    await openPortalSection(page, "refills")
+  }
   await expect(page.getByTestId("portal-refills")).toBeVisible()
 }
 

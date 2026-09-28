@@ -47,6 +47,7 @@ import { firstLink, mail } from "../fixtures/mail"
 import {
   givePortalContactDetails,
   givePortalSession,
+  openPortalSection,
   signInToPortal,
   type PortalInvitation,
 } from "../fixtures/portal"
@@ -425,6 +426,7 @@ async function nextInvitation(
 async function signInAgain(page: Page, invitation: PortalInvitation): Promise<void> {
   await page.goto("about:blank")
   await signInToPortal(page, invitation)
+  await openPortalSection(page, "forms")
 }
 
 // --- reading the file back -------------------------------------------------
@@ -768,6 +770,7 @@ test.describe("intake, assignment through accepted export", () => {
     // --- the invitation arrives, and is met on a phone ----------------------
     await page.setViewportSize(PHONE)
     await signInToPortal(page, invitation)
+    await openPortalSection(page, "forms")
 
     await expect(page.getByTestId("forms-list-state")).toContainText("8 questions left")
     await page.getByTestId("forms-list-open").click()
@@ -1198,6 +1201,7 @@ test.describe("intake, assignment through accepted export", () => {
     const invitation = await nextInvitation(api, patient.id, email, phone)
     await page.setViewportSize(PHONE)
     await signInToPortal(page, invitation)
+    await openPortalSection(page, "forms")
 
     // The session the shell is holding, so the route below is met by the
     // only principal that could ever have made this upload.
@@ -1279,6 +1283,7 @@ test.describe("intake, assignment through accepted export", () => {
 
     await page.setViewportSize(PHONE)
     await signInToPortal(page, await nextInvitation(api, patient.id, email, phone))
+    await openPortalSection(page, "forms")
 
     // --- control: nothing has been revised, so it signs ---------------------
     await page.getByTestId(`forms-list-row-${first.id}`).getByTestId("forms-list-open").click()

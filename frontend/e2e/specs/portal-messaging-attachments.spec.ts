@@ -25,6 +25,7 @@ import {
   givePortalContactDetails,
   givePortalInvitation,
   givePortalSession,
+  openPortalSection,
   signInToPortal,
 } from "../fixtures/portal"
 import { givePatient } from "../fixtures/scenarios"
@@ -307,6 +308,7 @@ test("the portal composer attaches a file and the clinician receives it @portal"
   const invitation = await givePortalInvitation(api, patient.id, email, phone)
 
   await signInToPortal(page, invitation)
+  await openPortalSection(page, "messaging")
 
   await page.getByTestId("portal-messaging-start-thread").click()
   await page.getByTestId("portal-messaging-new-thread-subject").fill("With a file")

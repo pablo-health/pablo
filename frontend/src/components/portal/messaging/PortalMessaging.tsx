@@ -42,7 +42,7 @@ import { ThreadView } from "./ThreadView"
 const SEND_FAILED = "That didn't send. Try again."
 const LOAD_FAILED = "Messages aren't loading right now. Try again in a moment."
 
-const keys = {
+export const keys = {
   threads: (token: string) => ["patient-messages", "threads", token] as const,
   thread: (token: string, id: string) =>
     ["patient-messages", "thread", token, id] as const,

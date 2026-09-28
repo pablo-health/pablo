@@ -24,10 +24,17 @@ const REQUEST_CODE_PATH = "/api/patient/auth/request-code"
 
 let sequence = 0
 
+// Numbers count up from the moment this module loaded. Playwright replaces
+// the worker after a failed test, and a counter starting from zero again
+// would hand the next test a number that already has codes waiting for it
+// in the capture — so a later test would read an earlier one's text.
+const PHONE_BASE = Date.now() % 10_000_000
+
 /** A fresh address and number per invitation, so one test never reads another's. */
 export function givePortalContactDetails(): { email: string; phone: string } {
   const stamp = `${Date.now().toString(36)}${(sequence++).toString(36)}`
-  return { email: `portal-msg-${stamp}@example.com`, phone: `+1502555${String(sequence).padStart(4, "0")}` }
+  const line = (PHONE_BASE + sequence) % 10_000_000
+  return { email: `portal-msg-${stamp}@example.com`, phone: `+1502${String(line).padStart(7, "0")}` }
 }
 
 export interface PortalInvitation {
@@ -107,7 +114,8 @@ export async function givePortalSession(
 
 /**
  * Sign in through the shell exactly as the patient does: open the link, ask
- * for a code, type it.
+ * for a code, type it. The patient lands on Home; a spec about one section
+ * goes on with {@link openPortalSection}.
  */
 export async function signInToPortal(page: Page, invitation: PortalInvitation): Promise<void> {
   await signInFromLink(page, invitation.link, invitation.phone)
@@ -125,4 +133,15 @@ export async function signInFromLink(page: Page, link: string, phone: string): P
   await page.getByTestId("portal-shell-otp-input").fill(otp)
   await page.getByTestId("portal-shell-otp-submit").click()
   await expect(page.getByTestId("portal-shell-active")).toBeVisible()
+}
+
+/**
+ * Open one section from Home the way a patient does: tap its tile. The
+ * section is a page of its own (`/portal/{slug}/{section}`, or `/{slug}/{section}`
+ * on a portal host), so a reload after this stays on it.
+ */
+export async function openPortalSection(page: Page, section: string): Promise<void> {
+  await page.getByTestId(`portal-home-tile-${section}`).click()
+  await expect(page).toHaveURL(new RegExp(`/${section}$`))
+  await expect(page.getByTestId(`portal-section-${section}`)).toBeVisible()
 }
