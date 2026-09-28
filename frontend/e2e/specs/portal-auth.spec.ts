@@ -346,6 +346,83 @@ test("a patient session opens patient routes and no clinician one @portal", asyn
   ).toContain(roster.status())
 })
 
+/**
+ * The default invitation says who it is from: the client's own clinician,
+ * and the practice. Run on the engine's default wording (a sibling spec saves
+ * a practice's own), with the clinician given a known name for the duration
+ * and their own restored afterwards.
+ */
+async function withDefaultWordingAndName(
+  api: ApiClient,
+  name: string,
+  run: (practiceName: string) => Promise<void>,
+): Promise<void> {
+  await api.delete("/api/portal/invite-template")
+  const before = await api.get<{ name: string | null }>("/api/users/me")
+  await api.patch("/api/users/me", { name })
+  try {
+    const { slug } = await api.post<{ slug: string }>("/api/portal/practice-slug")
+    const practice = await (
+      await fetch(`${BACKEND_URL}/api/portal/practices/${encodeURIComponent(slug)}`)
+    ).json()
+    await run(practice.display_name as string)
+  } finally {
+    if (before.name) await api.patch("/api/users/me", { name: before.name })
+  }
+}
+
+test("the default invitation names the client's clinician @portal", async ({ api }) => {
+  const clinician = "Dr. Jane Smith"
+  await withDefaultWordingAndName(api, clinician, async (practiceName) => {
+    const { email, phone } = contactDetails()
+    const patient = await givePatient(api, { email, phone })
+
+    await api.post(`/api/patients/${patient.id}/portal-invite`)
+
+    const message = await mail.waitFor(email)
+    expect(message.subject).toBe(`${clinician} invited you to your patient portal`)
+    const text = message.text.replace(/\r\n/g, "\n")
+    expect(text).toContain(
+      `${clinician} has invited you to the patient portal for ${practiceName}.`,
+    )
+    expect(text).not.toContain("{{")
+  })
+})
+
+/**
+ * A client who asked for a new link was not invited by anyone just now, so
+ * the recovery email says what did happen and names the practice. The
+ * clinician is given a known name so the test can show it is left out.
+ */
+test("a recovery email names the practice and invites nobody @portal", async ({ api }) => {
+  const clinician = "Dr. Jane Smith"
+  await withDefaultWordingAndName(api, clinician, async (practiceName) => {
+    const invitation = await givePortalInvitation(api)
+    const slug = new URL(invitation.link).pathname.split("/").pop() as string
+    const received = async () =>
+      (await mail.received()).filter((m) => m.to.includes(invitation.email)).length
+    const before = await received()
+
+    const asked = await fetch(`${BACKEND_URL}/api/portal/practices/${slug}/recover`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: invitation.email }),
+    })
+    expect(asked.status).toBe(202)
+    await expect.poll(received, { timeout: 10_000 }).toBeGreaterThan(before)
+
+    const message = await mail.waitFor(invitation.email)
+    expect(message.subject).toBe(`Your sign-in link for ${practiceName}`)
+    const text = message.text.replace(/\r\n/g, "\n")
+    expect(text).toContain(
+      `Here's a new link to sign in to the patient portal for ${practiceName}.`,
+    )
+    expect(text).not.toContain("invited")
+    expect(text).not.toContain(clinician)
+    expect(text).not.toContain("{{")
+  })
+})
+
 test("the invite route never returns a credential @portal", async ({ api }) => {
   const { email, phone } = contactDetails()
   const patient = await givePatient(api, { email, phone })

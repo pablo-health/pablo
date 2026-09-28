@@ -29,18 +29,28 @@ import httpx
 
 from ..services.email_sender import EmailSender, OutboundEmail
 from .delivery import DeliveryNotConfiguredError
-from .invite_email import DEFAULT_TEMPLATE, InviteContext, describe_duration, render
+from .invite_email import InviteContext, InviteTemplate, describe_duration, render
 from .service import PortalAuthConfig
 
 logger = logging.getLogger(__name__)
 
-#: What the patient reads when the practice has not worded its own: the
-#: engine's default template (``app.portal.invite_email``) with the link in.
-#: It names neither the practice nor the client — anyone who reaches the
-#: inbox would learn the recipient is in care somewhere, which is not this
-#: email's to disclose.
+#: The wording ``send_invite`` uses: a link and nothing else to go on, so it
+#: names nobody. The engine's default template names the client's clinician
+#: and the practice, and goes out through ``send_rendered_invite`` wherever
+#: those are known; this is only for a caller with the link alone, and
+#: rendering the named default here would leave "invited you ... for ." with
+#: the names blank.
+_FIXED_WORDING = InviteTemplate(
+    subject="Your sign-in link",
+    body=(
+        "Use this link to sign in:\n\n"
+        "{{portal_link}}\n\n"
+        "When you open the link, we'll text a code to your phone. "
+        "The link works for {{link_expiry}}."
+    ),
+)
 _DEFAULT_INVITE = render(
-    DEFAULT_TEMPLATE,
+    _FIXED_WORDING,
     InviteContext(
         portal_link="{link}",
         client_first_name="",

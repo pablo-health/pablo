@@ -34,6 +34,7 @@ from app.auth.patient_context import patient_not_authenticated_detail
 from app.auth.service import get_current_user, require_active_subscription
 from app.models.audit import AuditAction
 from app.portal import tokens
+from app.portal.clinicians import get_primary_clinician_name
 from app.portal.delivery import CapturingInviteDelivery, DeliveryNotConfigured, FakeSmsGateway
 from app.portal.factory import get_invite_delivery, get_sms_gateway
 from app.portal.invite_composer import get_invite_form_names
@@ -264,11 +265,17 @@ def app(
     application.dependency_overrides[get_sms_gateway] = lambda: sms
     application.dependency_overrides[get_invite_template_store] = lambda: templates
     application.dependency_overrides[get_invite_form_names] = lambda: _no_forms
+    application.dependency_overrides[get_primary_clinician_name] = lambda: _no_clinician
     return application
 
 
 def _no_forms(_patient_id: str, _user_id: str, _upcoming: Any) -> list[str]:
     return []
+
+
+def _no_clinician(_patient_id: str) -> str | None:
+    """No primary clinician on the chart: the practice's name stands in."""
+    return None
 
 
 @pytest.fixture

@@ -31,6 +31,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, text
+from sqlalchemy.orm import Session
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -54,6 +55,8 @@ _OWNER = str(uuid.uuid4())
 _MEMBER = str(uuid.uuid4())
 _OWNER_EMAIL = f"owner-{_SUFFIX}@example.test"
 _MEMBER_EMAIL = f"member-{_SUFFIX}@example.test"
+_OWNER_NAME = "Dana Whitfield"
+_MEMBER_NAME = "Dr. Sam Okafor"
 _SIGNING_KEY = "portal-recovery-signing-key-not-a-real-secret"
 _PORTAL_ORIGIN = "https://portal.example.test"
 
@@ -151,8 +154,11 @@ def slug(engine: Engine) -> Iterator[str]:
 
     now = datetime.now(UTC)
     with OrmSession(bind=engine) as session:
-        for user_id, email in ((_OWNER, _OWNER_EMAIL), (_MEMBER, _MEMBER_EMAIL)):
-            session.add(PlatformUserRow(id=user_id, email=email, name="Clinician", created_at=now))
+        for user_id, email, name in (
+            (_OWNER, _OWNER_EMAIL, _OWNER_NAME),
+            (_MEMBER, _MEMBER_EMAIL, _MEMBER_NAME),
+        ):
+            session.add(PlatformUserRow(id=user_id, email=email, name=name, created_at=now))
         session.flush()
         session.add(
             PracticeRow(
@@ -265,6 +271,20 @@ def _chart(engine: Engine, *, email: str, clinician: str, invited: bool) -> str:
                 },
             )
     return patient_id
+
+
+def _co_treat(engine: Engine, *, patient_id: str, clinician: str) -> None:
+    """Add *clinician* to a chart as a co-treater — a grant, but not primary."""
+    with engine.begin() as conn:
+        conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
+        conn.execute(text("SELECT set_config('app.current_user_id', :u, true)"), {"u": clinician})
+        conn.execute(
+            text(
+                "INSERT INTO patient_clinicians (patient_id, user_id, role, granted_by) "
+                "VALUES (CAST(:p AS uuid), :u, 'co_treating', :u)"
+            ),
+            {"p": patient_id, "u": clinician},
+        )
 
 
 def _address(label: str) -> str:
@@ -386,3 +406,76 @@ def test_the_lookup_leaves_no_clinician_scope_behind(engine: Engine, slug: str) 
             text("SELECT count(*) FROM patients WHERE id = CAST(:p AS uuid)"), {"p": patient_id}
         ).scalar_one()
         assert visible == 0
+
+
+# ---------------------------------------------------------------------------
+# The invitation names the client's own clinician
+# ---------------------------------------------------------------------------
+
+
+def test_the_recovery_email_names_the_practice_and_invites_nobody(
+    engine: Engine, slug: str, self_hosted: None
+) -> None:
+    """The client asked for this link, so the email says so — through the
+    real route, practice lookup and mail sender."""
+    from app.portal.practice_routes import practice_address_for_schema  # noqa: PLC0415
+
+    address = practice_address_for_schema(_SCHEMA)
+    assert address is not None
+    email = _address("recovered")
+    _chart(engine, email=email, clinician=_MEMBER, invited=True)
+
+    assert _recover(slug, email).status_code == 202
+
+    [sent] = _mail_to(email)
+    assert sent["Subject"] == f"Your sign-in link for {address.display_name}"
+    body = sent.get_content()
+    assert body.startswith(
+        f"Here's a new link to sign in to the patient portal for {address.display_name}."
+    )
+    assert "invited" not in body
+    assert _MEMBER_NAME not in body
+    assert "{{" not in body
+
+
+def test_the_primary_clinician_is_named_not_a_co_treater(engine: Engine, slug: str) -> None:
+    from app.portal.clinicians import primary_clinician_name  # noqa: PLC0415
+
+    patient_id = _chart(engine, email=_address("co-treated"), clinician=_OWNER, invited=False)
+    _co_treat(engine, patient_id=patient_id, clinician=_MEMBER)
+
+    with Session(engine) as session:
+        session.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
+        assert primary_clinician_name(session, _SCHEMA, patient_id) == _OWNER_NAME
+
+
+def test_a_sender_who_is_not_the_primary_still_gets_the_primarys_name(
+    engine: Engine, slug: str
+) -> None:
+    """Front-desk staff send invitations for clients who are not theirs. The
+    lookup finds the primary anyway, and leaves the sender reading as
+    themselves afterwards."""
+    from app.db import arm_current_user_id, set_tenant_schema  # noqa: PLC0415
+    from app.portal.clinicians import primary_clinician_name  # noqa: PLC0415
+
+    patient_id = _chart(engine, email=_address("front-desk"), clinician=_OWNER, invited=False)
+
+    with Session(engine) as session:
+        set_tenant_schema(session, _SCHEMA)
+        arm_current_user_id(session, _MEMBER)
+
+        assert primary_clinician_name(session, _SCHEMA, patient_id) == _OWNER_NAME
+
+        still = session.execute(
+            text("SELECT current_setting('app.current_user_id', true)")
+        ).scalar_one()
+        assert still == _MEMBER, "the lookup changed who the sender reads as"
+        session.rollback()
+
+
+def test_a_chart_with_no_primary_clinician_has_no_name(engine: Engine, slug: str) -> None:
+    from app.portal.clinicians import primary_clinician_name  # noqa: PLC0415
+
+    with Session(engine) as session:
+        session.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
+        assert primary_clinician_name(session, _SCHEMA, str(uuid.uuid4())) is None

@@ -36,10 +36,10 @@ from sqlalchemy import func, select
 
 from ..db import arm_current_patient_id, create_standalone_session, read_once_as
 from ..db.models import PatientRow
-from ..db.platform_models import EmailTenantMappingRow, PlatformUserRow, PracticeRow
 from ..models.audit import AuditAction, ResourceType
 from ..repositories.postgres.audit import PostgresAuditRepository
 from ..services.audit_service import AuditService
+from .clinicians import practice_clinicians
 from .db_store import DbPortalAuthStore, DbPortalSessionStore
 from .practice_routes import practice_schema_for_slug
 
@@ -48,7 +48,6 @@ if TYPE_CHECKING:
     from contextlib import AbstractContextManager
 
     from fastapi import Request
-    from sqlalchemy.orm import Session
 
     from .store import PortalAuthStore, PortalSessionStore
 
@@ -148,7 +147,7 @@ class DbRecoveryGateway:
                 .limit(2)
             )
             found: dict[str, RecoveryTarget] = {}
-            for clinician_id in _practice_clinicians(session, schema):
+            for clinician_id in practice_clinicians(session, schema):
                 for row in read_once_as(
                     session,
                     principal="app.current_user_id",
@@ -195,31 +194,6 @@ class DbRecoveryGateway:
             raise
         finally:
             session.close()
-
-
-def _practice_clinicians(session: Session, schema: str) -> list[str]:
-    """Every clinician user id this practice has: its members and its owner.
-
-    From the platform schema, which is where practice membership lives and
-    which carries no row-level security of its own. Membership is the
-    address-to-practice mapping every clinician signs in through.
-    """
-    members = session.execute(
-        select(PlatformUserRow.id)
-        .join(
-            EmailTenantMappingRow,
-            func.lower(EmailTenantMappingRow.email) == func.lower(PlatformUserRow.email),
-        )
-        .join(PracticeRow, PracticeRow.id == EmailTenantMappingRow.practice_id)
-        .where(PracticeRow.schema_name == schema)
-    ).scalars()
-    owner = session.execute(
-        select(PracticeRow.owner_user_id).where(PracticeRow.schema_name == schema)
-    ).scalar_one_or_none()
-    ids = {str(member) for member in members}
-    if owner is not None:
-        ids.add(str(owner))
-    return sorted(ids)
 
 
 def get_recovery_gateway() -> RecoveryGateway:
