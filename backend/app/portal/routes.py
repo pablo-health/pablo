@@ -73,6 +73,7 @@ from ..services.audit_service import AuditService, get_audit_service
 from ..settings import get_settings
 from ..utcnow import utc_now
 from . import tokens
+from .clinicians import ClinicianName, get_primary_clinician_name
 from .delivery import (
     DeliveryNotConfigured,
     DeliveryNotConfiguredError,
@@ -272,6 +273,7 @@ def issue_portal_invite(  # noqa: PLR0913 — FastAPI Depends-injected params ar
     audit: Annotated[AuditService, Depends(get_audit_service)],
     templates: Annotated[InviteTemplateStore, Depends(get_invite_template_store)],
     form_names: Annotated[FormNames, Depends(get_invite_form_names)],
+    clinician_name: Annotated[ClinicianName, Depends(get_primary_clinician_name)],
 ) -> PortalInviteAccepted:
     """Invite one patient to the portal: email the link.
 
@@ -322,6 +324,7 @@ def issue_portal_invite(  # noqa: PLR0913 — FastAPI Depends-injected params ar
                     client_first_name=patient.first_name or "",
                     practice_name=address.display_name,
                     forms=form_names(patient_id, user.id, ()),
+                    clinician_name=clinician_name(patient_id),
                 ),
                 link,
             )

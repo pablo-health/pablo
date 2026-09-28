@@ -19,15 +19,18 @@ from app.api_errors import register_exception_handlers
 from app.auth.service import get_current_user, require_active_subscription
 from app.models.audit import AuditAction
 from app.portal import invite_template_routes, routes
+from app.portal.adapters import INVITE_BODY, INVITE_SUBJECT
+from app.portal.clinicians import get_primary_clinician_name
 from app.portal.delivery import (
     CapturingInviteDelivery,
     CapturingRenderedInviteDelivery,
     FakeSmsGateway,
 )
 from app.portal.factory import get_invite_delivery, get_sms_gateway
-from app.portal.invite_composer import get_invite_form_names
+from app.portal.invite_composer import InviteFacts, compose, get_invite_form_names
 from app.portal.invite_email import (
     DEFAULT_TEMPLATE,
+    PLACEHOLDERS,
     PREVIEW_LINK,
     InviteContext,
     InviteTemplate,
@@ -101,10 +104,80 @@ def _forms(_patient_id: str, _user_id: str, upcoming: Any) -> list[str]:
 # ── rendering and checking a template ───────────────────────────────────
 
 
-def test_the_default_template_is_valid_and_names_nobody() -> None:
+def test_the_default_template_is_valid_and_worded_as_designed() -> None:
     assert template_problems(DEFAULT_TEMPLATE) == []
-    assert "{{practice_name}}" not in DEFAULT_TEMPLATE.body
+    assert DEFAULT_TEMPLATE.subject == "{{clinician_name}} invited you to your patient portal"
+    assert DEFAULT_TEMPLATE.body == (
+        "{{clinician_name}} has invited you to the patient portal for {{practice_name}}.\n\n"
+        "Use this link to sign in:\n\n"
+        "{{portal_link}}\n\n"
+        "When you open the link, we'll text a code to your phone. "
+        "The link works for {{link_expiry}}."
+    )
+    # No greeting by default: a practice adds one if it wants it.
     assert "{{client_first_name}}" not in DEFAULT_TEMPLATE.body
+
+
+def test_the_clinicians_name_is_a_placeholder_the_editor_offers() -> None:
+    assert PLACEHOLDERS["clinician_name"] == "Your name"
+    greeting = InviteTemplate(
+        subject="A note from {{clinician_name}}",
+        body="Hi {{client_first_name}},\n\n{{clinician_name}} here.\n\n{{portal_link}}",
+    )
+    assert template_problems(greeting) == []
+
+
+def _default_for(clinician_name: str | None) -> tuple[str, str]:
+    rendered = compose(
+        None,
+        InviteFacts(
+            client_first_name="Robin",
+            practice_name=PRACTICE_NAME,
+            forms=[],
+            clinician_name=clinician_name,
+        ),
+        "https://portal.example.test/portal/example-therapy#invite=t",
+    )
+    return rendered.subject, rendered.text
+
+
+def test_the_default_names_the_clients_clinician() -> None:
+    subject, text = _default_for("Dr. Jane Smith")
+
+    assert subject == "Dr. Jane Smith invited you to your patient portal"
+    assert text.startswith(
+        "Dr. Jane Smith has invited you to the patient portal for Example Therapy.\n\n"
+    )
+
+
+@pytest.mark.parametrize("missing", [None, "", "   "], ids=["none", "empty", "blank"])
+def test_with_no_clinicians_name_the_practice_stands_in(missing: str | None) -> None:
+    subject, text = _default_for(missing)
+
+    assert subject == "Example Therapy invited you to your patient portal"
+    assert text.startswith(
+        "Example Therapy has invited you to the patient portal for Example Therapy."
+    )
+
+
+@pytest.mark.parametrize("clinician", ["Jane Smith", None])
+def test_the_default_never_leaves_a_placeholder_or_an_empty_name(clinician: str | None) -> None:
+    subject, text = _default_for(clinician)
+
+    for rendered in (subject, text):
+        assert "{{" not in rendered
+        assert "}}" not in rendered
+        assert not rendered.startswith(" ")
+    assert " invited you" in subject
+    assert "for ." not in text
+
+
+def test_the_fixed_wording_names_nobody_and_leaves_nothing_unfilled() -> None:
+    """``send_invite`` has only the link to go on, so its wording names no
+    one — and never an empty name where the default would put one."""
+    for fixed in (INVITE_SUBJECT, INVITE_BODY.format(link="https://portal.example.test/x")):
+        assert "{{" not in fixed
+        assert "invited you" not in fixed
 
 
 def test_render_fills_every_placeholder() -> None:
@@ -231,7 +304,23 @@ def _app(
     overrides[get_sms_gateway] = FakeSmsGateway
     overrides[get_invite_template_store] = lambda: templates
     overrides[get_invite_form_names] = lambda: _forms
+    overrides[get_primary_clinician_name] = lambda: _primary_clinician
     return TestClient(application)
+
+
+#: The chart's primary clinician, by patient id. Anyone not here has none.
+PRIMARY_CLINICIANS: dict[str, str] = {}
+
+
+def _primary_clinician(patient_id: str) -> str | None:
+    return PRIMARY_CLINICIANS.get(patient_id)
+
+
+@pytest.fixture(autouse=True)
+def _patient_has_a_primary_clinician() -> Iterator[None]:
+    PRIMARY_CLINICIANS[PATIENT_ID] = "Jane Smith"
+    yield
+    PRIMARY_CLINICIANS.clear()
 
 
 @pytest.fixture
@@ -310,6 +399,67 @@ def test_the_editor_preview_uses_an_example_client(client: TestClient) -> None:
     assert body["subject"] == "Example Therapy: your forms"
     assert "Hi Alex," in body["text"]
     assert PREVIEW_LINK in body["text"]
+
+
+def test_the_editor_preview_fills_the_clinicians_name_with_an_example(
+    client: TestClient,
+) -> None:
+    body = client.post(
+        "/api/portal/invite-template/preview",
+        json={"subject": DEFAULT_TEMPLATE.subject, "body": DEFAULT_TEMPLATE.body},
+    ).json()
+
+    assert body["problems"] == []
+    assert body["subject"] == "Jordan Rivera invited you to your patient portal"
+    assert body["text"].startswith(
+        "Jordan Rivera has invited you to the patient portal for Example Therapy."
+    )
+
+
+def test_the_editor_lists_the_clinicians_name(client: TestClient) -> None:
+    placeholders = client.get("/api/portal/invite-template").json()["placeholders"]
+
+    assert {"name": "clinician_name", "label": "Your name", "required": False} in placeholders
+
+
+def test_the_default_invitation_names_the_primary_clinician(
+    client: TestClient, rendered_delivery: CapturingRenderedInviteDelivery
+) -> None:
+    assert client.post(f"/api/patients/{PATIENT_ID}/portal-invite").status_code == 202
+
+    [email] = rendered_delivery.sent
+    assert email.subject == "Jane Smith invited you to your patient portal"
+    assert email.text is not None
+    assert email.text.startswith(
+        "Jane Smith has invited you to the patient portal for Example Therapy."
+    )
+
+
+def test_with_no_primary_clinician_the_invitation_names_the_practice(
+    client: TestClient, rendered_delivery: CapturingRenderedInviteDelivery
+) -> None:
+    PRIMARY_CLINICIANS.clear()
+
+    assert client.post(f"/api/patients/{PATIENT_ID}/portal-invite").status_code == 202
+
+    [email] = rendered_delivery.sent
+    assert email.subject == "Example Therapy invited you to your patient portal"
+    assert email.text is not None
+    assert "{{" not in email.text
+
+
+def test_a_saved_custom_template_is_sent_as_the_practice_wrote_it(
+    client: TestClient, rendered_delivery: CapturingRenderedInviteDelivery
+) -> None:
+    client.put("/api/portal/invite-template", json={"subject": CUSTOM.subject, "body": CUSTOM.body})
+
+    assert client.post(f"/api/patients/{PATIENT_ID}/portal-invite").status_code == 202
+
+    [email] = rendered_delivery.sent
+    assert email.subject == "Example Therapy: your forms"
+    assert email.text is not None
+    assert email.text.startswith("Hi Robin,\n\nPlease fill in:")
+    assert "invited you" not in email.text
 
 
 def test_the_client_preview_is_the_email_that_is_sent_with_the_link_withheld(

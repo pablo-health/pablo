@@ -15,10 +15,16 @@ types is what the client reads, in every mail client.
 an invitation, and a subject line is shown in notification previews on a lock
 screen, which is no place for a credential.
 
-**The default says nothing about who sent it.** It names neither the practice
-nor the client, because an inbox can be shared. A practice can choose to add
-either with a placeholder; that is its decision to make about its own clients,
-and the default does not make it for them.
+**The default says who it is from.** An invitation from nobody reads like
+spam, and a client is far more likely to open one from their own clinician. So
+the default names the client's clinician and the practice. It does not greet
+the client by name: a practice that wants a greeting adds one with
+``{{client_first_name}}``.
+
+``{{clinician_name}}`` is the client's primary clinician on the chart, not
+whoever pressed Send, since front-desk staff send invitations too. Where there
+is no primary clinician, or no name on file for them, the practice's name
+stands in, so an email never carries an empty name.
 
 Whether a deployment's email channel can send practice-written text at all is
 the adapter's to say — see :class:`app.portal.delivery.RenderedInviteDelivery`.
@@ -34,6 +40,8 @@ from dataclasses import dataclass
 PLACEHOLDERS: dict[str, str] = {
     "portal_link": "Sign-in link",
     "client_first_name": "Client's first name",
+    #: Labelled for the clinician reading the editor, whose name it usually is.
+    "clinician_name": "Your name",
     "practice_name": "Practice name",
     "forms": "Forms to fill in",
     "link_expiry": "How long the link works",
@@ -44,8 +52,9 @@ REQUIRED_PLACEHOLDER = "portal_link"
 MAX_SUBJECT_LENGTH = 200
 MAX_BODY_LENGTH = 5000
 
-DEFAULT_SUBJECT = "Your sign-in link"
+DEFAULT_SUBJECT = "{{clinician_name}} invited you to your patient portal"
 DEFAULT_BODY = (
+    "{{clinician_name}} has invited you to the patient portal for {{practice_name}}.\n\n"
     "Use this link to sign in:\n\n"
     "{{portal_link}}\n\n"
     "When you open the link, we'll text a code to your phone. "
@@ -78,6 +87,8 @@ class InviteContext:
     practice_name: str
     forms: list[str]
     link_expiry: str
+    #: Already resolved, fallback included — see the module docstring.
+    clinician_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -123,6 +134,7 @@ def render(template: InviteTemplate, context: InviteContext) -> RenderedInvite:
     values = {
         "portal_link": context.portal_link,
         "client_first_name": context.client_first_name,
+        "clinician_name": context.clinician_name,
         "practice_name": context.practice_name,
         "forms": _form_list(context.forms),
         "link_expiry": context.link_expiry,

@@ -6,8 +6,9 @@ The preview a clinician reads before pressing Send and the email the invite
 route actually sends are both built here, from the same template and the same
 facts, so the preview is the email with only the link withheld.
 
-The facts are the client's first name, the practice's name, the forms still
-waiting for them, and how long the link works. The forms are the ones the
+The facts are the client's first name, their primary clinician's name, the
+practice's name, the forms still waiting for them, and how long the link
+works. The forms are the ones the
 client has been asked for and can still write to, plus — for a preview taken
 before anything is sent — the ones about to be asked for.
 """
@@ -77,6 +78,9 @@ class InviteFacts:
     client_first_name: str
     practice_name: str
     forms: list[str]
+    #: The client's primary clinician, or ``None`` to name the practice
+    #: instead (see ``app.portal.clinicians``).
+    clinician_name: str | None = None
 
 
 def link_expiry() -> str:
@@ -85,6 +89,12 @@ def link_expiry() -> str:
 
 
 def compose(template: InviteTemplate | None, facts: InviteFacts, link: str) -> RenderedInvite:
+    """Fill the template in for one client.
+
+    With no clinician's name to give, the practice's name stands in, so the
+    email never says "has invited you" with nobody in front of it.
+    """
+    clinician_name = (facts.clinician_name or "").strip() or facts.practice_name
     return render(
         template or DEFAULT_TEMPLATE,
         InviteContext(
@@ -93,5 +103,6 @@ def compose(template: InviteTemplate | None, facts: InviteFacts, link: str) -> R
             practice_name=facts.practice_name,
             forms=facts.forms,
             link_expiry=link_expiry(),
+            clinician_name=clinician_name,
         ),
     )

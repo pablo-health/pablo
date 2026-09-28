@@ -96,6 +96,7 @@ from ..settings import get_settings
 from .delivery import (
     DeliveryNotConfiguredError,
     PortalInviteDelivery,
+    RenderedInviteDelivery,
     SmsGateway,
 )
 from .factory import (
@@ -104,6 +105,9 @@ from .factory import (
     get_invite_delivery,
     get_sms_gateway,
 )
+from .invite_composer import InviteFacts, compose
+from .invite_email import DEFAULT_TEMPLATE
+from .practice_routes import practice_address_for_schema
 from .recovery_gateway import RecoveryGateway, get_recovery_gateway
 
 logger = logging.getLogger(__name__)
@@ -263,15 +267,39 @@ def _attempt_recovery(  # noqa: PLR0913 — one parameter per injected collabora
             # found — and sending to the stored value means the recipient is
             # the practice's record of this person rather than a string a
             # stranger supplied.
-            delivery.send_invite(
-                to_email=target.email or email,
-                # The same link shape the clinician's invite produces, built
-                # by the same function: the practice's own address in the
-                # path, the credential in the fragment. The slug is the one
-                # out of this request's own URL, which is how the caller
-                # reached this practice in the first place.
-                link=build_invite_link(slug=slug, token=issued.token),
+            to_email = target.email or email
+            # The same link shape the clinician's invite produces, built by
+            # the same function: the practice's own address in the path, the
+            # credential in the fragment. The slug is the one out of this
+            # request's own URL, which is how the caller reached this
+            # practice in the first place.
+            link = build_invite_link(slug=slug, token=issued.token)
+            address = (
+                practice_address_for_schema(schema)
+                if isinstance(delivery, RenderedInviteDelivery)
+                else None
             )
+            if isinstance(delivery, RenderedInviteDelivery) and address is not None:
+                # The engine's default wording, filled in the way the
+                # clinician's invite fills it: the client's own clinician
+                # by name, or the practice where there is none. Without the
+                # practice's name there is nothing to fall back on, so the
+                # adapter's own wording, which names nobody, goes instead.
+                rendered = compose(
+                    DEFAULT_TEMPLATE,
+                    InviteFacts(
+                        client_first_name=target.first_name or "",
+                        practice_name=address.display_name,
+                        forms=[],
+                        clinician_name=work.clinician_name(target.patient_id),
+                    ),
+                    link,
+                )
+                delivery.send_rendered_invite(
+                    to_email=to_email, subject=rendered.subject, text=rendered.text
+                )
+            else:
+                delivery.send_invite(to_email=to_email, link=link)
         except DeliveryNotConfiguredError:
             # A deployment with no channels wired cannot recover anyone. The
             # clinician's invite route says so with a 503; this one cannot,

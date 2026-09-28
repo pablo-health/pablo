@@ -36,6 +36,7 @@ from ..models.audit import AuditAction, ResourceType
 from ..repositories import get_patient_repository
 from ..repositories.patient import PatientRepository  # noqa: TC001
 from ..services.audit_service import AuditService, get_audit_service
+from .clinicians import ClinicianName, get_primary_clinician_name
 from .delivery import PortalInviteDelivery, RenderedInviteDelivery
 from .factory import get_invite_delivery
 from .invite_composer import FormNames, InviteFacts, compose, get_invite_form_names
@@ -52,8 +53,9 @@ from .practice_routes import ensure_practice_slug
 
 router = APIRouter(tags=["patient-portal"])
 
-#: Who the editor's live preview is addressed to. Obviously an example.
+#: Who the editor's live preview is addressed to, and from. Obviously examples.
 EXAMPLE_FACTS_CLIENT = "Alex"
+EXAMPLE_CLINICIAN = "Jordan Rivera"
 EXAMPLE_FORMS = ["Intake questionnaire"]
 
 
@@ -188,6 +190,7 @@ def preview_invite_template(
             client_first_name=EXAMPLE_FACTS_CLIENT,
             practice_name=address.display_name,
             forms=EXAMPLE_FORMS,
+            clinician_name=EXAMPLE_CLINICIAN,
         ),
         PREVIEW_LINK,
     )
@@ -211,6 +214,7 @@ def preview_client_invite(  # noqa: PLR0913 — FastAPI Depends-injected params 
     delivery: Annotated[PortalInviteDelivery, Depends(get_invite_delivery)],
     form_names: Annotated[FormNames, Depends(get_invite_form_names)],
     audit: Annotated[AuditService, Depends(get_audit_service)],
+    clinician_name: Annotated[ClinicianName, Depends(get_primary_clinician_name)],
 ) -> ClientInvitePreview:
     """This client's invitation as it would be sent now, link withheld.
 
@@ -230,6 +234,7 @@ def preview_client_invite(  # noqa: PLR0913 — FastAPI Depends-injected params 
             client_first_name=patient.first_name or "",
             practice_name=ensure_practice_slug(practice_id).display_name,
             forms=form_names(patient_id, user.id, body.version_ids),
+            clinician_name=clinician_name(patient_id),
         ),
         PREVIEW_LINK,
     )

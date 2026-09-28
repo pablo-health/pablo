@@ -33,8 +33,14 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from app.api_errors import register_exception_handlers
-from app.portal.delivery import CapturingInviteDelivery, DeliveryNotConfigured, FakeSmsGateway
+from app.portal.delivery import (
+    CapturingInviteDelivery,
+    CapturingRenderedInviteDelivery,
+    DeliveryNotConfigured,
+    FakeSmsGateway,
+)
 from app.portal.factory import get_invite_delivery, get_sms_gateway
+from app.portal.practice_routes import PracticeAddress
 from app.portal.recovery import router
 from app.portal.recovery_gateway import RecoveryTarget, RecoveryWork, get_recovery_gateway
 from app.portal.store import (
@@ -92,6 +98,8 @@ class _FakeGateway:
         self.opened: list[str] = []
         self.commits = 0
         self.recorded: list[tuple[str, str]] = []
+        #: patient_id -> primary clinician's name; absent means none on file.
+        self.clinician_names: dict[str, str] = {ACTIVE.patient_id: "Jane Smith"}
 
     def resolve(self, slug: str) -> str | None:
         return TENANT if slug == SLUG else None
@@ -119,6 +127,7 @@ class _FakeGateway:
             sessions=self.sessions,
             record_request=_record,
             commit=_commit,
+            clinician_name=self.clinician_names.get,
         )
 
 
@@ -638,3 +647,65 @@ def test_the_minted_invitation_redeems_like_any_other(
     assert challenge.expires_at > int(time.time())
     # No code until the patient asks for one, as with any invitation.
     assert challenge.otp_hash is None
+
+
+# ---------------------------------------------------------------------------
+# The recovery email says who it is from
+# ---------------------------------------------------------------------------
+
+PRACTICE_NAME = "Meadowlark Counseling"
+
+
+@pytest.fixture
+def rendered_delivery() -> CapturingRenderedInviteDelivery:
+    return CapturingRenderedInviteDelivery()
+
+
+@pytest.fixture
+def rendered_client(
+    app: FastAPI,
+    rendered_delivery: CapturingRenderedInviteDelivery,
+    monkeypatch: pytest.MonkeyPatch,
+) -> TestClient:
+    """The same route, on a channel that sends the engine's own wording."""
+    app.dependency_overrides[get_invite_delivery] = lambda: rendered_delivery
+    monkeypatch.setattr(
+        "app.portal.recovery.practice_address_for_schema",
+        lambda schema: (
+            PracticeAddress(slug=SLUG, display_name=PRACTICE_NAME, enabled=True)
+            if schema == TENANT
+            else None
+        ),
+    )
+    return TestClient(app)
+
+
+def test_a_recovery_email_names_the_clients_clinician(
+    rendered_client: TestClient, rendered_delivery: CapturingRenderedInviteDelivery
+) -> None:
+    assert _recover(rendered_client, ACTIVE.email or "").status_code == 202
+
+    [email] = rendered_delivery.sent
+    assert email.to_email == ACTIVE.email
+    assert email.subject == "Jane Smith invited you to your patient portal"
+    assert email.text is not None
+    assert email.text.startswith(
+        f"Jane Smith has invited you to the patient portal for {PRACTICE_NAME}."
+    )
+    assert f"/portal/{SLUG}#invite=" in email.text
+
+
+def test_a_recovery_email_with_no_clinician_names_the_practice(
+    rendered_client: TestClient,
+    rendered_delivery: CapturingRenderedInviteDelivery,
+    gateway: _FakeGateway,
+) -> None:
+    gateway.clinician_names.clear()
+
+    assert _recover(rendered_client, ACTIVE.email or "").status_code == 202
+
+    [email] = rendered_delivery.sent
+    assert email.subject == f"{PRACTICE_NAME} invited you to your patient portal"
+    assert email.text is not None
+    assert "{{" not in email.text
+    assert "for ." not in email.text
