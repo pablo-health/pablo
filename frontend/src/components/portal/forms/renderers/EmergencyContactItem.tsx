@@ -69,7 +69,7 @@ function fieldIn(value: AnswerValue | null, key: string): string {
   return typeof held === "string" ? held : ""
 }
 
-function EmergencyContactItem({ item, value, onChange }: ItemRendererProps) {
+function EmergencyContactItem({ item, value, onChange, readOnly }: ItemRendererProps) {
   const answerWith = (key: string, next: string): AnswerValue => ({
     name: fieldIn(value, "name"),
     relationship: fieldIn(value, "relationship"),
@@ -93,7 +93,8 @@ function EmergencyContactItem({ item, value, onChange }: ItemRendererProps) {
                   autoComplete={field.autoComplete}
                   maxLength={CONTACT_MAX}
                   value={fieldIn(value, field.key)}
-                  onChange={(e) => onChange(answerWith(field.key, e.target.value))}
+                  readOnly={readOnly !== undefined}
+                  onChange={(e) => onChange?.(answerWith(field.key, e.target.value))}
                 />
               </div>
             )

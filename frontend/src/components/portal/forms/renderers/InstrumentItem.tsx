@@ -52,7 +52,7 @@ function scoresIn(value: AnswerValue | null): Record<string, number> {
   )
 }
 
-function InstrumentItem({ item, value, onChange, form }: ItemRendererProps) {
+function InstrumentItem({ item, value, onChange, form, readOnly }: ItemRendererProps) {
   const instrument = instrumentFor(item.config, form)
   const scores = scoresIn(value)
 
@@ -65,11 +65,11 @@ function InstrumentItem({ item, value, onChange, form }: ItemRendererProps) {
   }
 
   const answer = (itemKey: string, score: number) =>
-    onChange({ item_scores: { ...scores, [itemKey]: score } })
+    onChange?.({ item_scores: { ...scores, [itemKey]: score } })
 
   return (
-    <section aria-labelledby="forms-instrument-heading">
-      <h2 id="forms-instrument-heading" className="text-lg font-semibold text-neutral-900">
+    <section aria-labelledby={`forms-instrument-heading-${item.id}`}>
+      <h2 id={`forms-instrument-heading-${item.id}`} className="text-lg font-semibold text-neutral-900">
         {instrument.display_name}
       </h2>
       <p className="mt-2 text-sm text-neutral-600">{instrument.prompt}</p>
@@ -84,6 +84,7 @@ function InstrumentItem({ item, value, onChange, form }: ItemRendererProps) {
             options={instrument.response_options}
             selected={scores[itemKey]}
             onAnswer={answer}
+            disabled={readOnly !== undefined}
           />
         ))}
       </div>
@@ -98,6 +99,7 @@ function InstrumentQuestion({
   options,
   selected,
   onAnswer,
+  disabled,
 }: {
   code: string
   itemKey: string
@@ -105,6 +107,7 @@ function InstrumentQuestion({
   options: IntakeInstrument["response_options"]
   selected: number | undefined
   onAnswer: (itemKey: string, score: number) => void
+  disabled: boolean
 }) {
   const groupName = `${code}-${itemKey}`
   return (
@@ -130,6 +133,7 @@ function InstrumentQuestion({
                 name={groupName}
                 value={option.value}
                 checked={active}
+                disabled={disabled}
                 onChange={() => onAnswer(itemKey, option.value)}
                 className="h-4 w-4"
               />

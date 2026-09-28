@@ -11,8 +11,16 @@ import {
   intakeExportFilename,
   MAX_CORRECTION_NOTE_LENGTH,
 } from "@/lib/api/intakeReview"
-import type { IntakeAssignmentStatus, IntakeReviewEvent, IntakeReviewItem, IntakeReviewSignature } from "@/lib/api/intakeReview"
+import type {
+  IntakeAssignmentStatus,
+  IntakeReview,
+  IntakeReviewEvent,
+  IntakeReviewSignature,
+} from "@/lib/api/intakeReview"
+import { useIntakeAssignmentArtifacts } from "@/hooks/useIntakeArtifacts"
 import { useAcceptIntakeAssignment, useEnterIntakeAnswer, useIntakeReview, useRequestIntakeCorrection } from "@/hooks/useIntakeReview"
+import { IntakeReviewItemRow } from "./IntakeReviewItemRow"
+import { artifactsFor, readOnlySource, shownKeys } from "./intakeReadOnly"
 
 /**
  * What each status the server sends means, in a sentence.
@@ -38,27 +46,20 @@ export const INTAKE_STATUS_TEXT = {
  * is finished, so nothing here computes that.
  */
 const COPY = {
-  heading: "Intake review",
   loading: "Loading this form…",
   loadError: "We couldn't load this form. Try again in a moment.",
   actionError: "That didn't go through. Try again.",
   status: INTAKE_STATUS_TEXT,
   progressComplete: "Every question has an answer.",
   outstanding: (n: number) => (n === 1 ? "1 question has no answer." : `${n} questions have no answer.`),
-  provenance: { patient: "Patient", clinician: "Entered by practice" },
-  noAnswer: "No answer",
-  earlier: (n: number) => (n === 1 ? "1 earlier answer" : `${n} earlier answers`),
-  earlierDetail: (n: number) => (n === 1 ? "One earlier answer was replaced." : `${n} earlier answers were replaced.`),
-  enter: "Enter for patient",
-  entryLabel: "Answer",
-  entrySave: "Save",
-  entryCancel: "Cancel",
   correctionsHeading: "Request corrections",
   correctionsSelect: "Choose the questions to send back.",
   noteLabel: "What should the patient redo?",
   send: "Send back",
   accept: "Accept",
   exportLabel: "Export",
+  print: "Print / Save as PDF",
+  submitted: (day: string) => `Submitted ${day}`,
   exporting: "Preparing…",
   eventsHeading: "History",
   eventKind: {
@@ -76,109 +77,21 @@ const ENTRY_STATUSES: IntakeAssignmentStatus[] = ["assigned", "in_progress", "su
 
 const LINK = "text-xs font-medium text-primary-600 hover:text-primary-700"
 const HEADING = "text-sm font-semibold text-neutral-900"
-const CHIP = "mt-1 inline-block rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600"
 
 function formatMoment(iso: string): string {
   const parsed = new Date(iso)
   return Number.isNaN(parsed.getTime()) ? iso : parsed.toLocaleString()
 }
 
-/**
- * The answer as a line of text. Answers arrive as an open mapping, so a `text`
- * field is used when there is one and the mapping is spelled out otherwise.
- * Null means the caller renders "no answer" instead.
- */
-function formatValue(value: Record<string, unknown> | null): string | null {
-  if (!value) return null
-  if (typeof value.text === "string" && value.text !== "") return value.text
-  const parts = Object.entries(value)
-    .filter(([, v]) => v !== null && v !== undefined && v !== "")
-    .map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : String(v)}`)
-  return parts.length > 0 ? parts.join(" · ") : null
+function formatDay(iso: string): string {
+  const parsed = new Date(iso)
+  return Number.isNaN(parsed.getTime()) ? iso : parsed.toLocaleDateString()
 }
 
 /** The server's own sentence when it wrote one, else a short one of ours. */
 function errorMessage(error: Error | null): string | null {
   if (!error) return null
   return error instanceof ApiError && error.message ? error.message : COPY.actionError
-}
-
-interface ReviewItemRowProps {
-  item: IntakeReviewItem
-  selectable: boolean
-  selected: boolean
-  onSelect: (itemId: string, checked: boolean) => void
-  canEnter: boolean
-  saving: boolean
-  onSaveEntry: (itemId: string, text: string) => void
-}
-
-function ReviewItemRow(props: ReviewItemRowProps) {
-  const { item, selectable, selected, onSelect, canEnter, saving, onSaveEntry } = props
-  const [showEarlier, setShowEarlier] = useState(false)
-  const [entryOpen, setEntryOpen] = useState(false)
-  const [entryText, setEntryText] = useState("")
-  const id = item.id
-  const answer = formatValue(item.value)
-  const question = item.label ?? item.key
-
-  return (
-    <li className="border-t border-border py-3 first:border-t-0" data-testid={`intake-review-item-${id}`}>
-      <div className="flex items-start gap-3">
-        {selectable && (
-          <input type="checkbox" className="mt-1" checked={selected} aria-label={question}
-            onChange={(e) => onSelect(id, e.target.checked)} data-testid={`intake-review-select-${id}`} />
-        )}
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium text-neutral-700">{question}</p>
-          <p className="mt-1 whitespace-pre-wrap text-sm text-neutral-900" data-testid={`intake-review-value-${id}`}>
-            {answer ?? COPY.noAnswer}
-          </p>
-          {item.provenance && (
-            <span className={CHIP} data-testid={`intake-review-provenance-${id}`}>
-              {COPY.provenance[item.provenance]}
-            </span>
-          )}
-          {item.superseded_count > 0 && (
-            <div className="mt-2">
-              <button type="button" className={LINK} aria-expanded={showEarlier}
-                onClick={() => setShowEarlier((open) => !open)}
-                data-testid={`intake-review-earlier-toggle-${id}`}>
-                {COPY.earlier(item.superseded_count)}
-              </button>
-              {showEarlier && (
-                <p className="mt-1 text-xs text-neutral-500" data-testid={`intake-review-earlier-detail-${id}`}>
-                  {COPY.earlierDetail(item.superseded_count)}
-                </p>
-              )}
-            </div>
-          )}
-          {canEnter && !entryOpen && (
-            <button type="button" className={`mt-2 ${LINK}`} onClick={() => setEntryOpen(true)}
-              data-testid={`intake-review-enter-${id}`}>
-              {COPY.enter}
-            </button>
-          )}
-          {canEnter && entryOpen && (
-            <div className="mt-2 flex items-center gap-2">
-              <input type="text" className="input flex-1" value={entryText} aria-label={COPY.entryLabel}
-                onChange={(e) => setEntryText(e.target.value)}
-                data-testid={`intake-review-entry-input-${id}`} />
-              <button type="button" className="btn-primary text-xs" disabled={saving || entryText.trim() === ""}
-                onClick={() => onSaveEntry(id, entryText.trim())}
-                data-testid={`intake-review-entry-save-${id}`}>
-                {COPY.entrySave}
-              </button>
-              <button type="button" className="text-xs text-neutral-500" onClick={() => setEntryOpen(false)}
-                data-testid={`intake-review-entry-cancel-${id}`}>
-                {COPY.entryCancel}
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-    </li>
-  )
 }
 
 /** Absent when nothing has been signed — there is no section for an empty list. */
@@ -220,11 +133,44 @@ function EventSection({ events }: { events: IntakeReviewEvent[] }) {
 }
 
 /**
- * The clinician reading a handed-in form back. Everything on screen comes from
- * the server's view of the form: the status sentence, whether every question
- * has an answer, where each answer came from, and which actions are offered. A
- * 409 from any of the three writes means the form has already moved on, and the
- * hook re-reads it rather than leaving a stale screen.
+ * Who the printed copy is about, above the form. Printed, unlike the review
+ * chrome around it, because a page that leaves the chart has to say whose it
+ * is, which practice asked, and when it was handed in.
+ */
+function FormHeading({ review }: { review: IntakeReview }) {
+  const { identity } = review.form
+  return (
+    <header className="mb-4 border-b border-border pb-3" data-testid="intake-review-print-heading">
+      {review.practice_name && <p className="text-sm text-neutral-500">{review.practice_name}</p>}
+      <h2 className="text-lg font-semibold text-neutral-900">
+        {identity.first_name} {identity.last_name}
+      </h2>
+      <p className="text-sm text-neutral-600">
+        {review.packet_name} v{review.version}
+        {review.submitted_at && ` · ${COPY.submitted(formatDay(review.submitted_at))}`}
+      </p>
+    </header>
+  )
+}
+
+/**
+ * The clinician reading a handed-in form back. Each question is drawn by the
+ * portal renderer the patient answered on, read-only, so the chart shows what
+ * was on the patient's screen; around it sit the review's own facts and
+ * actions, none of which print.
+ *
+ * Everything on screen comes from the server's view of the form: the status
+ * sentence, whether every question has an answer, where each answer came
+ * from, and which actions are offered. A 409 from any of the three writes
+ * means the form has already moved on, and the hook re-reads it rather than
+ * leaving a stale screen.
+ *
+ * Two ways out of the chart, for two different jobs. Print draws this page
+ * — the form as the patient saw it — through the browser, which is also how
+ * it becomes a PDF. Export is the filed record: one self-contained document
+ * with measure totals, every replaced answer and each moment in the
+ * practice's timezone, which is what a release of information or a referral
+ * needs and a copy of a screen is not.
  */
 export function IntakeReviewPanel(props: { patientId: string; assignmentId: string }) {
   const { patientId, assignmentId } = props
@@ -232,6 +178,7 @@ export function IntakeReviewPanel(props: { patientId: string; assignmentId: stri
   const correction = useRequestIntakeCorrection(patientId, assignmentId)
   const accept = useAcceptIntakeAssignment(patientId, assignmentId)
   const entry = useEnterIntakeAnswer(patientId, assignmentId)
+  const { data: files } = useIntakeAssignmentArtifacts(patientId, assignmentId)
   const [selected, setSelected] = useState<string[]>([])
   const [note, setNote] = useState("")
   const [exporting, setExporting] = useState(false)
@@ -243,6 +190,8 @@ export function IntakeReviewPanel(props: { patientId: string; assignmentId: stri
   const isSubmitted = data.status === "submitted"
   const canEnter = ENTRY_STATUSES.includes(data.status)
   const items = [...data.items].sort((a, b) => a.position - b.position)
+  const shown = shownKeys(data, items)
+  const source = readOnlySource(data, files ?? [])
   const actionError =
     errorMessage(correction.error ?? accept.error ?? entry.error) ?? exportError
   const pending = correction.isPending || accept.isPending || entry.isPending
@@ -272,43 +221,49 @@ export function IntakeReviewPanel(props: { patientId: string; assignmentId: stri
     })
 
   return (
-    <div className="card" data-testid="intake-review-panel">
-      <div className="mb-3 flex items-baseline justify-between gap-4">
-        <h2 className="text-lg font-semibold text-neutral-900">{COPY.heading}</h2>
-        <div className="flex items-baseline gap-3">
-          <p className="text-sm text-neutral-500">
-            {data.packet_name} v{data.version}
-          </p>
-          <button type="button" className={LINK} disabled={exporting}
-            onClick={() => void exportForm()} data-testid="intake-review-export">
-            {exporting ? COPY.exporting : COPY.exportLabel}
-          </button>
+    <div data-testid="intake-review-panel" data-intake-print="">
+      <FormHeading review={data} />
+
+      <div className="print:hidden">
+        <div className="flex flex-wrap items-baseline justify-between gap-3">
+          <div>
+            <p className="text-sm text-neutral-700" data-testid="intake-review-status">
+              {COPY.status[data.status] ?? data.status}
+            </p>
+            <p className="text-sm text-neutral-500" data-testid="intake-review-progress">
+              {data.progress.complete ? COPY.progressComplete : COPY.outstanding(data.progress.missing.length)}
+            </p>
+          </div>
+          <div className="flex items-baseline gap-3">
+            <button type="button" className={LINK} onClick={() => window.print()}
+              data-testid="intake-review-print">
+              {COPY.print}
+            </button>
+            <button type="button" className={LINK} disabled={exporting}
+              onClick={() => void exportForm()} data-testid="intake-review-export">
+              {exporting ? COPY.exporting : COPY.exportLabel}
+            </button>
+          </div>
         </div>
+        {actionError && (
+          <p role="alert" className="mt-3 text-sm text-red-700" data-testid="intake-review-error">
+            {actionError}
+          </p>
+        )}
       </div>
 
-      <p className="text-sm text-neutral-700" data-testid="intake-review-status">
-        {COPY.status[data.status] ?? data.status}
-      </p>
-      <p className="text-sm text-neutral-500" data-testid="intake-review-progress">
-        {data.progress.complete ? COPY.progressComplete : COPY.outstanding(data.progress.missing.length)}
-      </p>
-      {actionError && (
-        <p role="alert" className="mt-3 text-sm text-red-700" data-testid="intake-review-error">
-          {actionError}
-        </p>
-      )}
-
-      <ul className="mt-4" data-testid="intake-review-items">
+      <ul className="mt-2" data-testid="intake-review-items">
         {items.map((item) => (
-          <ReviewItemRow key={item.id} item={item} selectable={isSubmitted}
-            selected={selected.includes(item.id)} onSelect={onSelect} saving={entry.isPending}
-            canEnter={canEnter && item.item_type !== "consent_document"}
+          <IntakeReviewItemRow key={item.id} item={item} form={data.form} readOnly={source}
+            artifacts={artifactsFor(item.id, assignmentId, files ?? [])} shown={shown[item.key] !== false}
+            selectable={isSubmitted} selected={selected.includes(item.id)} onSelect={onSelect}
+            saving={entry.isPending} canEnter={canEnter}
             onSaveEntry={(itemId, text) => entry.mutate({ itemId, value: { text } })} />
         ))}
       </ul>
 
       {isSubmitted && (
-        <section className="mt-4 border-t border-border pt-4" data-testid="intake-review-corrections">
+        <section className="mt-4 border-t border-border pt-4 print:hidden" data-testid="intake-review-corrections">
           <h3 className={HEADING}>{COPY.correctionsHeading}</h3>
           <p className="mt-1 text-sm text-neutral-500">{COPY.correctionsSelect}</p>
           <label className="mt-2 block text-sm font-medium text-neutral-700" htmlFor="intake-review-note">
@@ -331,8 +286,10 @@ export function IntakeReviewPanel(props: { patientId: string; assignmentId: stri
         </section>
       )}
 
-      <SignatureSection signatures={data.signatures} />
-      <EventSection events={data.events} />
+      <div className="print:hidden">
+        <SignatureSection signatures={data.signatures} />
+        <EventSection events={data.events} />
+      </div>
     </div>
   )
 }

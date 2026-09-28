@@ -148,6 +148,15 @@ export const CONSENT_NAME_LABEL = "Type your full name"
 export const CONSENT_SIGN = "Sign"
 export const CONSENT_SIGNING = "Signing…"
 export const CONSENT_SIGNED_BADGE = "Signed"
+/** A consent document drawn read-only with no signature on it. */
+export const CONSENT_NOT_SIGNED = "Not signed."
+
+/** Who a recorded signature was given as, on a read-only copy. */
+export function consentSignerRole(role: string): string {
+  return role === "guardian"
+    ? "Signed by an adult completing it for the patient"
+    : "Signed by the patient"
+}
 export const CONSENT_SIGN_FAILED = "We couldn't record that. Try again in a moment."
 
 /** Who is signing, on a document that asks for more than one signature. */
@@ -200,6 +209,10 @@ export const UPLOAD_TAKE_PHOTO = "Take a photo"
 export const UPLOAD_SENDING = "Sending…"
 export const UPLOAD_REMOVE = "Remove"
 export const UPLOAD_SENT = "Sent"
+export const UPLOAD_VIEW = "View"
+/** A file slot drawn read-only with nothing in it. */
+export const UPLOAD_NOT_SENT = "Not sent."
+export const UPLOAD_FAILED_OPEN = "That file didn't open. Try again in a moment."
 export const UPLOAD_FAILED = "We couldn't send that. Try again in a moment."
 export const UPLOAD_WRONG_TYPE = "Send a PDF or a photo."
 export const UPLOAD_TOO_LARGE = "That file is too big. Try a smaller one."

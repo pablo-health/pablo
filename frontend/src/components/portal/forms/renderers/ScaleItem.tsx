@@ -37,7 +37,7 @@ function valueIn(value: AnswerValue | null): number | null {
   return typeof value?.value === "number" ? value.value : null
 }
 
-function ScaleItem({ item, value, onChange }: ItemRendererProps) {
+function ScaleItem({ item, value, onChange, readOnly }: ItemRendererProps) {
   const bounds = boundsOf(item.config)
   const chosen = valueIn(value)
 
@@ -74,7 +74,8 @@ function ScaleItem({ item, value, onChange }: ItemRendererProps) {
                       id={inputId}
                       name={`forms-scale-${item.id}`}
                       checked={active}
-                      onChange={() => onChange({ value: point })}
+                      disabled={readOnly !== undefined}
+                      onChange={() => onChange?.({ value: point })}
                       className="sr-only"
                     />
                     {point}

@@ -30,7 +30,7 @@ function valueIn(value: AnswerValue | null): number | null {
   return typeof value?.value === "number" ? value.value : null
 }
 
-function NumberItem({ item, value, onChange }: ItemRendererProps) {
+function NumberItem({ item, value, onChange, readOnly }: ItemRendererProps) {
   const current = valueIn(value)
   const unit = unitOf(item.config)
 
@@ -47,8 +47,9 @@ function NumberItem({ item, value, onChange }: ItemRendererProps) {
             min={boundOf(item.config, "min")}
             max={boundOf(item.config, "max")}
             value={current === null ? "" : String(current)}
+            readOnly={readOnly !== undefined}
             onChange={(e) =>
-              onChange(e.target.value === "" ? {} : { value: Number(e.target.value) })
+              onChange?.(e.target.value === "" ? {} : { value: Number(e.target.value) })
             }
           />
           {unit && (

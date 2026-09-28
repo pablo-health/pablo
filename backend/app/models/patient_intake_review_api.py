@@ -8,14 +8,16 @@ room, and accepting.
 
 Three things about what is here and what deliberately is not.
 
-**The review view carries provenance, not scores.** Every answer comes back
-with who put it there and how many earlier answers it replaced, because a
-reader who cannot tell "the patient wrote this" from "we wrote this down
-for them" is being shown the stronger claim. Instrument totals and bands
-are NOT here, for the same reason they are absent from the submission read
-beside it: they were scored onto outcome-measure rows when the form
-arrived, and the chart already trends and bands those. A second copy would
-be the same instrument on screen twice, from two sources free to disagree.
+**The review view carries provenance and the answers, not scores.** Every
+answer comes back with who put it there and how many earlier answers it
+replaced, because a reader who cannot tell "the patient wrote this" from
+"we wrote this down for them" is being shown the stronger claim. A
+measure's answers come back item by item, with the wording they were asked
+in, so the clinician can read the form the way the patient filled it in.
+Totals and bands are NOT here: they were scored onto outcome-measure rows
+when the form arrived, and the chart already trends and bands those. A
+second total would be the same score on screen twice, from two sources
+free to disagree.
 
 **A request names questions and nothing else.** ``item_ids`` on a
 correction request is a list of ids; which patient, which form and who is
@@ -33,6 +35,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .patient_intake_api import IntakeFormResponse  # noqa: TC001 — pydantic resolves it at runtime
 from .patient_intake_assignment_api import (
     ClinicianIntakeAnswerResponse,
     IntakeAssignmentResponse,
@@ -116,6 +119,15 @@ class IntakeReviewResponse(IntakeAssignmentResponse):
     items: list[IntakeReviewItemResponse]
     signatures: list[IntakeSignatureResponse]
     events: list[IntakeReviewEventResponse]
+    #: The wording the engine owns, in the shape the portal renders it from:
+    #: the name and date of birth the patient was asked to confirm, the
+    #: reason prompt, and each measure on this form with its items and
+    #: anchors. Served here rather than copied into the chart's front end,
+    #: so both sides of the room read one source.
+    form: IntakeFormResponse
+    #: The practice's name for the top of a printed copy, from the same
+    #: billing profile the export reads. ``None`` when it was never filled in.
+    practice_name: str | None = None
 
 
 __all__ = [

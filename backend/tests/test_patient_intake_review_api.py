@@ -65,6 +65,7 @@ from app.routes.patient_intake_assignments import (
 from app.routes.patient_intake_review import (
     get_clinician_signature_repository,
     get_intake_review_service,
+    get_practice_name,
 )
 from app.services.audit_service import AuditService, get_audit_service
 from app.services.intake_packet_service import IntakePacketService
@@ -82,6 +83,7 @@ _PATIENT_A = "11111111-1111-4111-8111-111111111111"
 _PATIENT_B = "22222222-2222-4222-8222-222222222222"
 _TOKEN_A = "credential-of-patient-a"
 _CLINICIAN = "clinician-1"
+_PRACTICE = "Riverside Counseling"
 
 ASSIGNMENTS = "/api/patient/intake/assignments"
 
@@ -286,6 +288,7 @@ def chart(
     real_app.dependency_overrides[get_intake_review_service] = lambda: reviews
     real_app.dependency_overrides[get_clinician_signature_repository] = lambda: signatures_repo
     real_app.dependency_overrides[get_notice_delivery] = lambda: notices
+    real_app.dependency_overrides[get_practice_name] = lambda: _PRACTICE
     return client
 
 
@@ -818,6 +821,82 @@ class TestReviewView:
         assignment = _submitted(portal, service, published_version)
         response = chart.get(f"{_base(_PATIENT_B, str(assignment['id']))}/review")
         assert response.status_code == 404
+
+
+def _measure_version(packets: InMemoryIntakePacketRepository) -> str:
+    """A published form asking the PHQ-9 and then the GAD-7."""
+    from app.intake.items import ItemDraft  # noqa: PLC0415 — one caller
+
+    service = IntakePacketService(packets)
+    template = service.create_template("Screeners", _CLINICIAN)
+    version_id = str(service.list_versions(str(template["id"]))[0]["id"])
+    service.replace_items(
+        version_id,
+        [
+            ItemDraft(key="phq", item_type="instrument", config={"code": "phq9"}, label=None),
+            ItemDraft(key="gad", item_type="instrument", config={"code": "gad7"}, label=None),
+        ],
+    )
+    service.publish(version_id, _CLINICIAN)
+    return version_id
+
+
+class TestReviewWording:
+    """The words a form was filled in against come back with the answers."""
+
+    def test_each_measure_comes_back_with_the_wording_it_was_asked_in(
+        self,
+        chart: TestClient,
+        portal: TestClient,
+        service: IntakeAssignmentService,
+        packets: InMemoryIntakePacketRepository,
+    ) -> None:
+        from app.outcome_measures.item_text import (  # noqa: PLC0415 — one caller
+            FREQUENCY_OPTIONS,
+            FREQUENCY_PROMPT,
+            ITEM_TEXT,
+        )
+
+        version_id = _measure_version(packets)
+        assignment, _ = service.assign(_PATIENT_A, version_id, _CLINICIAN)
+        scores = {str(i): i % 4 for i in range(1, 10)}
+        saved = portal.put(
+            f"{ASSIGNMENTS}/{assignment['id']}/items/{_item_id(service, version_id, 'phq')}",
+            json={"value": {"item_scores": scores}},
+            headers=_auth(),
+        )
+        assert saved.status_code == 200, saved.text
+
+        review = chart.get(f"{_base(_PATIENT_A, str(assignment['id']))}/review").json()
+        instruments = review["form"]["instruments"]
+        assert [m["code"] for m in instruments] == ["phq9", "gad7"]
+        phq = instruments[0]
+        assert phq["prompt"] == FREQUENCY_PROMPT
+        assert list(phq["items"].values()) == list(ITEM_TEXT["phq9"])
+        assert [o["value"] for o in phq["response_options"]] == [o.value for o in FREQUENCY_OPTIONS]
+        by_key = {item["key"]: item for item in review["items"]}
+        assert by_key["phq"]["value"] == {"item_scores": scores}
+
+    def test_a_form_with_no_measure_carries_none(
+        self, chart: TestClient, service: IntakeAssignmentService, published_version: str
+    ) -> None:
+        assignment, _ = service.assign(_PATIENT_A, published_version, _CLINICIAN)
+        form = chart.get(f"{_base(_PATIENT_A, str(assignment['id']))}/review").json()["form"]
+        assert form["instruments"] == []
+        assert form["reason_prompt"] == "What brings you in?"
+
+    def test_the_identity_is_the_one_the_patient_was_asked_to_confirm(
+        self, chart: TestClient, service: IntakeAssignmentService, published_version: str
+    ) -> None:
+        assignment, _ = service.assign(_PATIENT_A, published_version, _CLINICIAN)
+        review = chart.get(f"{_base(_PATIENT_A, str(assignment['id']))}/review").json()
+        assert review["practice_name"] == _PRACTICE
+        form = review["form"]
+        assert form["identity"] == {
+            "first_name": "Ada",
+            "last_name": "Lovelace",
+            "date_of_birth": "1990-03-14",
+        }
 
 
 # ---------------------------------------------------------------------------

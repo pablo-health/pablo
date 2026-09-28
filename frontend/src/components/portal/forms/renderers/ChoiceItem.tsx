@@ -51,7 +51,7 @@ function chosenMany(value: AnswerValue | null): string[] {
   return value.keys.filter((key): key is string => typeof key === "string")
 }
 
-function SingleChoiceItem({ item, value, onChange }: ItemRendererProps) {
+function SingleChoiceItem({ item, value, onChange, readOnly }: ItemRendererProps) {
   const options = optionsOf(item.config)
   const chosen = chosenOne(value)
   return (
@@ -66,7 +66,8 @@ function SingleChoiceItem({ item, value, onChange }: ItemRendererProps) {
               option={option}
               itemId={item.id}
               active={chosen === option.key}
-              onPick={() => onChange({ key: option.key })}
+              disabled={readOnly !== undefined}
+              onPick={() => onChange?.({ key: option.key })}
             />
           ))}
         </div>
@@ -75,12 +76,12 @@ function SingleChoiceItem({ item, value, onChange }: ItemRendererProps) {
   )
 }
 
-function MultiChoiceItem({ item, value, onChange }: ItemRendererProps) {
+function MultiChoiceItem({ item, value, onChange, readOnly }: ItemRendererProps) {
   const options = optionsOf(item.config)
   const chosen = chosenMany(value)
 
   const toggle = (key: string) =>
-    onChange({
+    onChange?.({
       keys: chosen.includes(key) ? chosen.filter((k) => k !== key) : [...chosen, key],
     })
 
@@ -96,6 +97,7 @@ function MultiChoiceItem({ item, value, onChange }: ItemRendererProps) {
               option={option}
               itemId={item.id}
               active={chosen.includes(option.key)}
+              disabled={readOnly !== undefined}
               onPick={() => toggle(option.key)}
             />
           ))}
@@ -111,6 +113,7 @@ function OptionRow({
   option,
   itemId,
   active,
+  disabled,
   onPick,
 }: {
   kind: "radio" | "checkbox"
@@ -118,6 +121,7 @@ function OptionRow({
   option: Option
   itemId: string
   active: boolean
+  disabled: boolean
   onPick: () => void
 }) {
   const inputId = `forms-choice-${itemId}-${option.key}`
@@ -135,6 +139,7 @@ function OptionRow({
         id={inputId}
         name={name}
         checked={active}
+        disabled={disabled}
         onChange={onPick}
         className="h-4 w-4"
       />

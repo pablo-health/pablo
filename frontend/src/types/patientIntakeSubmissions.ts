@@ -5,8 +5,9 @@
  *
  * Mirrors `ClinicianIntakeSubmissionResponse` in `app.routes.patient_intake`.
  * The stored form also holds every PHQ-9 and GAD-7 answer; none of that is
- * here, because scores reach the chart as outcome measures and the same
- * instrument should not render from two sources.
+ * on this read. Totals reach the chart as outcome measures, and a form's
+ * item-by-item answers are read back from its review, beside the wording
+ * they were given against.
  */
 
 /** One completed intake form. */

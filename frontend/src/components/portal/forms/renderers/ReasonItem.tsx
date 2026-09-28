@@ -13,6 +13,7 @@
  */
 
 import { Textarea } from "@/components/ui/textarea"
+import { ReadOnlyText } from "./QuestionFrame"
 import type { AnswerValue, ItemRenderer, ItemRendererProps } from "./types"
 
 /** Matches `REASON_MAX_LEN` in `backend/app/intake/answers.py`. */
@@ -26,13 +27,18 @@ function textIn(value: AnswerValue | null): string {
   return typeof text === "string" ? text : ""
 }
 
-function ReasonItem({ value, onChange, form }: ItemRendererProps) {
+function ReasonItem({ value, onChange, form, readOnly }: ItemRendererProps) {
   const text = textIn(value)
   return (
     <section aria-labelledby="forms-reason-heading">
       <h2 id="forms-reason-heading" className="text-lg font-semibold text-neutral-900">
         {form?.reason_prompt ?? FALLBACK_PROMPT}
       </h2>
+      {readOnly ? (
+        <div className="mt-4">
+          <ReadOnlyText text={text} testId="forms-reason" />
+        </div>
+      ) : (
       <div className="mt-4 space-y-1.5">
         <Textarea
           id="forms-reason"
@@ -41,12 +47,13 @@ function ReasonItem({ value, onChange, form }: ItemRendererProps) {
           className="min-h-[9rem]"
           value={text}
           maxLength={REASON_MAX}
-          onChange={(e) => onChange({ text: e.target.value })}
+          onChange={(e) => onChange?.({ text: e.target.value })}
         />
         <p data-testid="forms-reason-counter" className="text-right text-xs text-neutral-500">
           {text.length} / {REASON_MAX}
         </p>
       </div>
+      )}
     </section>
   )
 }

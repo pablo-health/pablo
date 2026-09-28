@@ -35,7 +35,6 @@ import {
   listSignatures,
   PatientIntakeError,
   signConsentDocument,
-  type IntakeSignature,
 } from "@/lib/api/patientIntake"
 import {
   CONSENT_AWAITING_GUARDIAN,
@@ -53,10 +52,10 @@ import {
   CONSENT_SIGNED_BADGE,
   CONSENT_SIGN_FAILED,
   CONSENT_SIGNING,
-  consentSignedBy,
 } from "../formsCopy"
+import { ConsentDocumentRead, SignedRow } from "./ConsentDocumentRead"
 import { Unavailable } from "./DisplayItem"
-import type { AnswerValue, ItemRenderer, ItemRendererProps } from "./types"
+import type { AnswerValue, ItemRenderer, ItemRendererProps, LiveItemProps } from "./types"
 
 const NAME_MAX = 160
 
@@ -70,19 +69,28 @@ function roleLabel(role: string): string {
   return role === "guardian" ? CONSENT_ROLE_GUARDIAN : CONSENT_ROLE_PATIENT
 }
 
-/** A signature's timestamp, in the reader's own locale. */
-function signedAtLabel(signedAt: string): string {
-  const when = new Date(signedAt)
-  return Number.isNaN(when.getTime()) ? signedAt : when.toLocaleString()
+/**
+ * The signing screen, or the read-only copy of it.
+ *
+ * Chosen before any hook runs, so a read-only draw never opens a query
+ * against the patient's session.
+ */
+function ConsentDocumentItem(props: ItemRendererProps) {
+  if (props.readOnly) {
+    const pinned = pinnedVersionOf(props.item.config)
+    if (pinned === null) return <Unavailable />
+    return <ConsentDocumentRead item={props.item} pinned={pinned} readOnly={props.readOnly} />
+  }
+  return <SignableConsent {...props} />
 }
 
-function ConsentDocumentItem({
+function SignableConsent({
   item,
   assignmentId,
   sessionToken,
   onWrote,
   onSessionLost,
-}: ItemRendererProps) {
+}: LiveItemProps) {
   const pinned = pinnedVersionOf(item.config)
   const [ticked, setTicked] = useState(false)
   const [typedName, setTypedName] = useState("")
@@ -290,17 +298,6 @@ function ConsentDocumentItem({
         </p>
       )}
     </section>
-  )
-}
-
-function SignedRow({ signature }: { signature: IntakeSignature }) {
-  return (
-    <li className="flex flex-wrap items-center gap-2 text-sm text-neutral-800">
-      <span className="rounded-full bg-primary-50 px-2 py-0.5 text-xs font-medium text-primary-800">
-        {CONSENT_SIGNED_BADGE}
-      </span>
-      <span>{consentSignedBy(signature.signer_typed_name, signedAtLabel(signature.signed_at))}</span>
-    </li>
   )
 }
 

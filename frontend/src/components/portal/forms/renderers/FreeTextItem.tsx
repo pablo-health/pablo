@@ -10,7 +10,7 @@
  */
 
 import { Textarea } from "@/components/ui/textarea"
-import { QuestionFrame, labelOf } from "./QuestionFrame"
+import { QuestionFrame, ReadOnlyText, labelOf } from "./QuestionFrame"
 import type { AnswerValue, ItemRenderer, ItemRendererProps } from "./types"
 
 /** Matches `FreeTextConfig.max_len`'s default in `backend/app/intake/items.py`. */
@@ -24,12 +24,14 @@ function textIn(value: AnswerValue | null): string {
   return typeof value?.text === "string" ? value.text : ""
 }
 
-function FreeTextItem({ item, value, onChange }: ItemRendererProps) {
+function FreeTextItem({ item, value, onChange, readOnly }: ItemRendererProps) {
   const text = textIn(value)
   const max = maxLenOf(item.config)
   return (
     <QuestionFrame item={item}>
-      {(headingId) => (
+      {(headingId) => readOnly ? (
+        <ReadOnlyText text={text} testId="forms-free-text" />
+      ) : (
         <div className="space-y-1.5">
           <Textarea
             data-testid="forms-free-text"
@@ -37,7 +39,7 @@ function FreeTextItem({ item, value, onChange }: ItemRendererProps) {
             className="min-h-[7rem]"
             value={text}
             maxLength={max}
-            onChange={(e) => onChange({ text: e.target.value })}
+            onChange={(e) => onChange?.({ text: e.target.value })}
           />
           <p data-testid="forms-free-text-counter" className="text-right text-xs text-neutral-500">
             {text.length} / {max}
