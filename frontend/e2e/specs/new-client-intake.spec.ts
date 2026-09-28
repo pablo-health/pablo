@@ -36,7 +36,7 @@ const WORDING = {
     "{{forms}}",
     "",
     "Sign in here: {{portal_link}}",
-    "We will text you a code. The link works for {{link_expiry}}.",
+    "When you open the link, we'll text a code to your phone. The link works for {{link_expiry}}.",
   ].join("\n"),
 }
 
@@ -104,7 +104,7 @@ test.describe("A new client's intake", () => {
     expect(previewText).toContain("Hi Robin,")
     expect(previewText).toContain(`- ${SEEDED_FORM}`)
     expect(previewText).toContain(PREVIEW_LINK)
-    expect(previewText).toContain("The link works for 15 minutes.")
+    expect(previewText).toContain("The link works for 7 days.")
 
     // Nothing has gone anywhere yet.
     expect((await mail.received()).filter((m) => m.to.includes(email))).toEqual([])
