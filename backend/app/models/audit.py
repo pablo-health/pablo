@@ -244,6 +244,10 @@ class AuditAction(StrEnum):
     # details that belong in exactly one place each.
     PATIENT_PORTAL_INVITE_ISSUED = "patient_portal_invite_issued"
     PATIENT_PORTAL_INVITE_REVOKED = "patient_portal_invite_revoked"
+    # The invitation as it would be sent — the client's first name and email
+    # address rendered into the practice's wording — shown to the clinician
+    # before sending. A read of contact details, so it goes on the record.
+    PATIENT_PORTAL_INVITE_PREVIEWED = "patient_portal_invite_previewed"
     PATIENT_PORTAL_SESSION_REDEEMED = "patient_portal_session_redeemed"
 
     # A patient signed themselves out. The mirror image of

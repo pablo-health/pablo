@@ -157,7 +157,7 @@ test.describe("intake review", () => {
     // A second page in the same context: this one is signed in as the
     // practice, which is what the saved state this context starts from is.
     const chartPage = await page.context().newPage()
-    await chartPage.goto(`/dashboard/patients/${patient.id}`)
+    await chartPage.goto(`/dashboard/patients/${patient.id}?tab=intake`)
 
     const review = await openReviewOnChart(chartPage, assigned.id)
     await expect(review.getByTestId("intake-review-status")).toContainText("Handed in.")

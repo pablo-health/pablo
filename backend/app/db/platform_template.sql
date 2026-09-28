@@ -470,6 +470,13 @@ CREATE TABLE platform.platform_audit_logs (
     details jsonb
 );
 
+CREATE TABLE platform.portal_invite_templates (
+    practice_id character varying(128) NOT NULL,
+    subject character varying(200) NOT NULL,
+    body text NOT NULL,
+    updated_at timestamp with time zone NOT NULL
+);
+
 CREATE TABLE platform.practices (
     id character varying(128) NOT NULL,
     name character varying(255) NOT NULL,
@@ -664,6 +671,9 @@ ALTER TABLE ONLY platform.payer_participations
 
 ALTER TABLE ONLY platform.platform_audit_logs
     ADD CONSTRAINT platform_audit_logs_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY platform.portal_invite_templates
+    ADD CONSTRAINT portal_invite_templates_pkey PRIMARY KEY (practice_id);
 
 ALTER TABLE ONLY platform.practices
     ADD CONSTRAINT practices_pkey PRIMARY KEY (id);

@@ -36,6 +36,11 @@ from app.models.audit import AuditAction
 from app.portal import tokens
 from app.portal.delivery import CapturingInviteDelivery, DeliveryNotConfigured, FakeSmsGateway
 from app.portal.factory import get_invite_delivery, get_sms_gateway
+from app.portal.invite_composer import get_invite_form_names
+from app.portal.invite_template_store import (
+    InMemoryInviteTemplateStore,
+    get_invite_template_store,
+)
 from app.portal.practice_routes import PracticeAddress
 from app.portal.routes import router
 from app.portal.store import InMemoryPortalAuthStore, InMemoryPortalSessionStore
@@ -73,6 +78,7 @@ UNKNOWN_PATIENT_ID = "44444444-4444-4444-8444-444444444444"
 class _FakePatient:
     def __init__(self, patient_id: str, email: str | None, phone: str | None) -> None:
         self.id = patient_id
+        self.first_name = "Robin"
         self.email = email
         self.phone = phone
 
@@ -238,6 +244,7 @@ def app(
     sms: FakeSmsGateway,
     delivery: CapturingInviteDelivery,
     gateway: _FakeTenantGateway,
+    templates: InMemoryInviteTemplateStore,
 ) -> FastAPI:
     application = FastAPI()
     register_exception_handlers(application)
@@ -250,7 +257,18 @@ def app(
     application.dependency_overrides[get_audit_service] = lambda: audit
     application.dependency_overrides[get_invite_delivery] = lambda: delivery
     application.dependency_overrides[get_sms_gateway] = lambda: sms
+    application.dependency_overrides[get_invite_template_store] = lambda: templates
+    application.dependency_overrides[get_invite_form_names] = lambda: _no_forms
     return application
+
+
+def _no_forms(_patient_id: str, _user_id: str, _upcoming: Any) -> list[str]:
+    return []
+
+
+@pytest.fixture
+def templates() -> InMemoryInviteTemplateStore:
+    return InMemoryInviteTemplateStore()
 
 
 @pytest.fixture

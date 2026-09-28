@@ -23,6 +23,7 @@ vi.mock("next/navigation", () => ({
 }))
 
 vi.mock("@/lib/api/patients")
+vi.mock("@/lib/featureGates", () => ({ useFeature: () => false }))
 
 const createWrapper = () => {
   const queryClient = new QueryClient({

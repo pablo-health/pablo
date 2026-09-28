@@ -5,6 +5,7 @@
 import Link from "next/link"
 import {
   Activity,
+  ClipboardList,
   CreditCard,
   FileText,
   Folder,
@@ -24,6 +25,7 @@ import { MedicationsTab } from "@/components/medications/MedicationsTab"
 import { PaymentsTab } from "@/components/payments/PaymentsTab"
 import { BalanceTab } from "@/components/payments/BalanceTab"
 import { InsuranceCard } from "@/components/insurance/InsuranceCard"
+import { IntakeCard } from "@/components/patients/IntakeCard"
 import { usePatientNotes } from "@/hooks/useNotes"
 import { useNoteTypeLabel } from "@/hooks/useNoteTypes"
 import { usePatientDocuments } from "@/hooks/usePatientDocuments"
@@ -37,7 +39,21 @@ const PREVIEW_LIMIT = 3
 
 interface PatientChartTabsProps {
   patientId: string
+  /** Which tab to open on; anything that is not a tab here opens Notes. */
+  initialTab?: string
 }
+
+const TABS = [
+  "notes",
+  "intake",
+  "documents",
+  "measures",
+  "diagnoses",
+  "medications",
+  "payments",
+  "balance",
+  "insurance",
+] as const
 
 function CountBadge({ count }: { count: number }) {
   if (count === 0) return null
@@ -131,7 +147,8 @@ function NotesTab({ patientId }: { patientId: string }) {
   )
 }
 
-export function PatientChartTabs({ patientId }: PatientChartTabsProps) {
+export function PatientChartTabs({ patientId, initialTab }: PatientChartTabsProps) {
+  const openOn = TABS.find((tab) => tab === initialTab) ?? "notes"
   const { data: notes } = usePatientNotes(patientId)
   const { data: documents } = usePatientDocuments(patientId)
   const { data: measures } = usePatientOutcomeMeasures(patientId)
@@ -152,12 +169,16 @@ export function PatientChartTabs({ patientId }: PatientChartTabsProps) {
       <h2 className="mb-4 text-xl font-display font-bold text-neutral-900">
         Chart
       </h2>
-      <Tabs defaultValue="notes">
+      <Tabs defaultValue={openOn}>
         <TabsList>
           <TabsTrigger value="notes">
             <FileText className="h-4 w-4" />
             Notes
             <CountBadge count={noteCount} />
+          </TabsTrigger>
+          <TabsTrigger value="intake">
+            <ClipboardList className="h-4 w-4" />
+            Intake
           </TabsTrigger>
           <TabsTrigger value="documents">
             <Folder className="h-4 w-4" />
@@ -195,6 +216,9 @@ export function PatientChartTabs({ patientId }: PatientChartTabsProps) {
         </TabsList>
         <TabsContent value="notes" className="pt-4">
           <NotesTab patientId={patientId} />
+        </TabsContent>
+        <TabsContent value="intake" className="pt-4">
+          <IntakeCard patientId={patientId} />
         </TabsContent>
         <TabsContent value="documents" className="pt-4">
           <PatientDocuments patientId={patientId} />

@@ -2,7 +2,7 @@
 
 "use client"
 
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
@@ -25,6 +25,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { useCreatePatient, useUpdatePatient } from "@/hooks/usePatients"
+import { useFeature } from "@/lib/featureGates"
+import { NewClientNextStep } from "./intakeSend/NewClientNextStep"
 import type { PatientResponse } from "@/types/patients"
 
 const patientFormSchema = z.object({
@@ -81,6 +83,8 @@ export function PatientForm({ mode, patient, open, onOpenChange }: PatientFormPr
   })
 
   const status = watch("status")
+  const portalOn = useFeature("patient_portal")
+  const [created, setCreated] = useState<PatientResponse | null>(null)
 
   // Reset form when dialog opens/closes or patient changes
   useEffect(() => {
@@ -136,7 +140,14 @@ export function PatientForm({ mode, patient, open, onOpenChange }: PatientFormPr
       }
 
       if (mode === "create") {
-        await createPatient.mutateAsync(payload)
+        const created = await createPatient.mutateAsync(payload)
+        // Where there is a portal, adding a client runs straight on to what
+        // they should do; the dialog stays open on that step.
+        if (portalOn) {
+          setCreated(created)
+          reset()
+          return
+        }
       } else if (patient) {
         await updatePatient.mutateAsync({ patientId: patient.id, data: payload })
       }
@@ -148,6 +159,20 @@ export function PatientForm({ mode, patient, open, onOpenChange }: PatientFormPr
       // Error handling is done by the mutation hooks
       console.error("Patient form submission failed")
     }
+  }
+
+  if (created) {
+    const finish = () => {
+      setCreated(null)
+      onOpenChange(false)
+    }
+    return (
+      <Dialog open={open} onOpenChange={(next) => !next && finish()}>
+        <DialogContent className="sm:max-w-[520px]">
+          <NewClientNextStep patient={created} onDone={finish} />
+        </DialogContent>
+      </Dialog>
+    )
   }
 
   return (

@@ -29,19 +29,27 @@ import httpx
 
 from ..services.email_sender import EmailSender, OutboundEmail
 from .delivery import DeliveryNotConfiguredError
+from .invite_email import DEFAULT_TEMPLATE, InviteContext, render
 
 logger = logging.getLogger(__name__)
 
-#: What the patient reads. The link, the fact that a code is coming, and how
-#: long they have. Naming the practice would tell anyone who reaches the
-#: inbox that the recipient is in care somewhere, which is not this email's
-#: to disclose.
-INVITE_SUBJECT = "Your sign-in link"
-INVITE_BODY = (
-    "Use this link to sign in:\n\n"
-    "{link}\n\n"
-    "You will be asked for the code we texted you. The link works for 15 minutes."
+#: What the patient reads when the practice has not worded its own: the
+#: engine's default template (``app.portal.invite_email``) with the link in.
+#: It names neither the practice nor the client — anyone who reaches the
+#: inbox would learn the recipient is in care somewhere, which is not this
+#: email's to disclose.
+_DEFAULT_INVITE = render(
+    DEFAULT_TEMPLATE,
+    InviteContext(
+        portal_link="{link}",
+        client_first_name="",
+        practice_name="",
+        forms=[],
+        link_expiry="15 minutes",
+    ),
 )
+INVITE_SUBJECT = _DEFAULT_INVITE.subject
+INVITE_BODY = _DEFAULT_INVITE.text
 
 
 @dataclass
@@ -62,14 +70,17 @@ class SmtpInviteDelivery:
             )
 
     def send_invite(self, *, to_email: str, link: str) -> None:
+        self.send_rendered_invite(
+            to_email=to_email, subject=INVITE_SUBJECT, text=INVITE_BODY.format(link=link)
+        )
+
+    def send_rendered_invite(self, *, to_email: str, subject: str, text: str) -> None:
+        """Send practice-written wording. SMTP carries whatever the
+        deployment's own mail server is trusted with, so this adapter
+        offers the editor (see ``RenderedInviteDelivery``)."""
         self.check_ready()
         self.sender.send(
-            OutboundEmail(
-                to=to_email,
-                subject=INVITE_SUBJECT,
-                text=INVITE_BODY.format(link=link),
-                kind="portal_invite",
-            )
+            OutboundEmail(to=to_email, subject=subject, text=text, kind="portal_invite")
         )
 
 

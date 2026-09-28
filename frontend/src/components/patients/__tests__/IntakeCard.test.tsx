@@ -7,7 +7,8 @@
  * `enabled` guard and the no-retry posture are all exercised on the way
  * through. What the card must get right: show what the patient wrote, raise
  * a flag when they said the chart has them wrong, render no score of any
- * kind, and disappear entirely when there is nothing to show.
+ * kind, and — as the chart's Intake tab — say plainly when nothing has been
+ * sent yet, but only once it has checked.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest"
@@ -193,24 +194,33 @@ describe("IntakeCard", () => {
     expect(screen.queryByRole("note")).not.toBeInTheDocument()
   })
 
-  it("renders nothing when the patient has no submissions", async () => {
+  it("says nothing has been sent, and offers to send, when there is nothing yet", async () => {
     mockList.mockResolvedValue([])
 
-    const { container } = renderCard()
+    renderCard()
 
-    await waitFor(() => expect(mockList).toHaveBeenCalled())
-    expect(screen.queryByTestId("intake-card")).not.toBeInTheDocument()
-    expect(container).toBeEmptyDOMElement()
+    expect(await screen.findByTestId("intake-empty")).toHaveTextContent(
+      "No forms have been sent to this client yet.",
+    )
+    expect(screen.getByTestId("send-intake-form-button")).toBeInTheDocument()
   })
 
-  it("renders nothing when the read fails", async () => {
+  it("does not say nothing was sent before the reads have answered", async () => {
+    mockList.mockReturnValue(new Promise(() => {}))
+
+    renderCard()
+
+    expect(await screen.findByTestId("intake-card")).toBeInTheDocument()
+    expect(screen.queryByTestId("intake-empty")).not.toBeInTheDocument()
+  })
+
+  it("treats a failed read as nothing to show rather than an error on the chart", async () => {
     mockList.mockRejectedValue(new Error("boom"))
 
-    const { container } = renderCard()
+    renderCard()
 
     await waitFor(() => expect(mockList).toHaveBeenCalled())
-    expect(screen.queryByTestId("intake-card")).not.toBeInTheDocument()
-    expect(container).toBeEmptyDOMElement()
+    expect(await screen.findByTestId("intake-empty")).toBeInTheDocument()
   })
 
   it("carries no score and no severity band", async () => {
@@ -293,9 +303,9 @@ describe("IntakeCard", () => {
 
     renderCard()
 
-    expect(await screen.findByTestId("intake-card")).toBeInTheDocument()
-    expect(screen.getByTestId("intake-artifacts")).toBeInTheDocument()
+    expect(await screen.findByTestId("intake-artifacts")).toBeInTheDocument()
     expect(screen.queryByText(/^Submitted /)).not.toBeInTheDocument()
+    expect(screen.queryByTestId("intake-empty")).not.toBeInTheDocument()
   })
 
   it("appears for a form that collected nothing, so it can still be read back", async () => {
@@ -305,8 +315,7 @@ describe("IntakeCard", () => {
 
     renderCard()
 
-    expect(await screen.findByTestId("intake-card")).toBeInTheDocument()
-    expect(screen.getByTestId("intake-assignments")).toBeInTheDocument()
+    expect(await screen.findByTestId("intake-assignments")).toBeInTheDocument()
     expect(screen.queryByTestId("intake-artifacts")).not.toBeInTheDocument()
   })
 
