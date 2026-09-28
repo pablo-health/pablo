@@ -477,6 +477,13 @@ CREATE TABLE platform.portal_invite_templates (
     updated_at timestamp with time zone NOT NULL
 );
 
+CREATE TABLE platform.portal_welcome_messages (
+    practice_id character varying(128) NOT NULL,
+    heading text NOT NULL,
+    body text NOT NULL,
+    updated_at timestamp with time zone NOT NULL
+);
+
 CREATE TABLE platform.practices (
     id character varying(128) NOT NULL,
     name character varying(255) NOT NULL,
@@ -674,6 +681,9 @@ ALTER TABLE ONLY platform.platform_audit_logs
 
 ALTER TABLE ONLY platform.portal_invite_templates
     ADD CONSTRAINT portal_invite_templates_pkey PRIMARY KEY (practice_id);
+
+ALTER TABLE ONLY platform.portal_welcome_messages
+    ADD CONSTRAINT portal_welcome_messages_pkey PRIMARY KEY (practice_id);
 
 ALTER TABLE ONLY platform.practices
     ADD CONSTRAINT practices_pkey PRIMARY KEY (id);

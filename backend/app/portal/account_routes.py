@@ -13,9 +13,9 @@ run before or across a principal:
   has. Step-up required, because it is a security action taken on devices
   that are not in the room, and the one thing a person does with a borrowed
   link should not be to lock the real patient out.
-* ``GET /api/patient/capabilities`` — the practice's name and which portal
-  modules exist here, so the shell can render a navigation that matches the
-  deployment instead of guessing.
+* ``GET /api/patient/capabilities`` — the practice's name, its welcome, and
+  which portal modules exist here, so the shell can render a home screen and
+  a navigation that match the practice instead of guessing.
 
 **Sign-out is a server-side event, not a cleared browser.** The whole point
 of the session row is that a token stops working when the row says so, and a
@@ -55,7 +55,9 @@ from ..settings import get_settings
 from .db_store import DbPortalSessionStore
 from .factory import build_portal_auth_service
 from .modules import mounted_modules_on, portal_capabilities
-from .practice_routes import practice_address_for_schema
+from .practice_routes import practice_address_for_schema, practice_id_for_schema
+from .welcome import DEFAULT_WELCOME, render_welcome
+from .welcome_store import PortalWelcomeStore, get_portal_welcome_store
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +86,17 @@ class PortalPracticeSummary(BaseModel):
     display_name: str | None = None
 
 
+class PortalWelcomeSummary(BaseModel):
+    """The welcome on the home screen, with the practice's name filled in.
+
+    Always the text to show: the practice's own when it wrote one, otherwise
+    the default. The client never decides which.
+    """
+
+    heading: str
+    body: str
+
+
 class PortalCapabilitiesResponse(BaseModel):
     """What this portal can do for the patient asking.
 
@@ -93,6 +106,7 @@ class PortalCapabilitiesResponse(BaseModel):
     """
 
     practice: PortalPracticeSummary
+    welcome: PortalWelcomeSummary
     modules: dict[str, bool]
     #: How strongly the caller proved who they are. Reported so the shell can
     #: tell a step-up refusal from a failure before it makes the request;
@@ -219,6 +233,7 @@ def sign_out_everywhere(
 def get_capabilities(
     request: Request,
     patient: CurrentPatient,
+    welcomes: Annotated[PortalWelcomeStore, Depends(get_portal_welcome_store)],
 ) -> PortalCapabilitiesResponse:
     """What this portal serves, for the shell to render a navigation from.
 
@@ -240,10 +255,16 @@ def get_capabilities(
     # load-bearing half of this document is the module map, and it came from
     # the route table.
     address = practice_address_for_schema(patient.practice_schema)
+    display_name = None if address is None else address.display_name
+    # Keyed on the practice the signed token names, so one practice's welcome
+    # cannot reach another's clients. Text the practice wrote, identical for
+    # every patient of it: nothing here is about the caller.
+    practice_id = practice_id_for_schema(patient.practice_schema)
+    stored = None if practice_id is None else welcomes.get(practice_id)
+    welcome = render_welcome(stored or DEFAULT_WELCOME, display_name)
     return PortalCapabilitiesResponse(
-        practice=PortalPracticeSummary(
-            display_name=None if address is None else address.display_name
-        ),
+        practice=PortalPracticeSummary(display_name=display_name),
+        welcome=PortalWelcomeSummary(heading=welcome.heading, body=welcome.body),
         modules=portal_capabilities(configured=configured, mounted=mounted),
         auth_strength=patient.auth_strength,
     )
