@@ -13,9 +13,9 @@
  *
  *   - on a portal host, `/{slug}/...` is rewritten to the portal route
  *     `/portal/{slug}/...`, `/portal/...` itself is still served (the links
- *     the shell renders use it), build assets and the frontend's own `/api/*`
- *     pass through, and everything else answers 404 — the clinician app is
- *     not reachable there at all;
+ *     the shell renders use it), build assets, files and the few frontend
+ *     API routes the portal page itself calls pass through, and everything
+ *     else answers 404 — the clinician app is not reachable there at all;
  *   - on any other host, `/portal/...` is permanently redirected to the first
  *     portal host, so links already sent keep working.
  *
@@ -30,7 +30,7 @@
 export type PortalHostDecision =
   /** Not a portal-host concern — the request is handled exactly as it always was. */
   | { kind: "default" }
-  /** On a portal host: let it through untouched (build assets, `/api/*`, files). */
+  /** On a portal host: let it through untouched (build assets, files, the portal's frontend API routes). */
   | { kind: "pass" }
   /** On a portal host: serve the portal route at `pathname` in place of the requested one. */
   | { kind: "rewrite"; pathname: string }
@@ -64,6 +64,10 @@ const PORTAL_PREFIX = "/portal"
  * as a slug and served by the portal route, never by a clinician page; the
  * list only decides whether the answer is a 404 or the portal's own
  * "no such practice" state.
+ *
+ * The backend never mints one of these as a practice slug: its
+ * `_RESERVED_SLUGS` (backend/app/portal/practice_routes.py) carries the same
+ * names, and a unit test here fails when one is missing there.
  */
 export const CLINICIAN_ROUTE_SEGMENTS: ReadonlySet<string> = new Set([
   "auth",
@@ -78,7 +82,24 @@ export const CLINICIAN_ROUTE_SEGMENTS: ReadonlySet<string> = new Set([
   "onboarding",
 ])
 
-const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"])
+/**
+ * The frontend's own API routes (`frontend/app/api`) a portal page calls.
+ * Only these answer on a portal host; every other one — the clinician
+ * sign-in routes under `/api/auth`, the `/api/login` / `/api/logout` cookie
+ * endpoints, anything added later — answers 404 there. A unit test fails
+ * when a route is added under `frontend/app/api` without a decision here.
+ *
+ * `/api/config` is how the page learns where the API is. Everything else the
+ * portal calls goes to that API origin, not to this server.
+ *
+ * This concerns the frontend server only. The backend's `/api` routes are
+ * not affected: a page dials them at the configured API origin, and where a
+ * deployment shares one host between the two, the load balancer sends
+ * backend `/api` paths to the backend before this proxy ever sees them.
+ */
+export const PORTAL_FRONTEND_API_ROUTES: ReadonlySet<string> = new Set(["/api/config"])
+
+const LOOPBACK_HOSTNAMES =new Set(["localhost", "127.0.0.1", "[::1]"])
 
 /**
  * The portal hosts a deployment names in `PORTAL_HOSTS`, normalized:
@@ -159,7 +180,10 @@ function routeOnPortalHost(pathname: string): PortalHostDecision {
   // anyone in through it, so on the portal host it does not exist. Checked
   // first: `/__/firebase/init.json` would otherwise pass as a file.
   if (isUnder(pathname, "/__")) return { kind: "not-found" }
-  if (isUnder(pathname, "/_next") || isUnder(pathname, "/api")) return { kind: "pass" }
+  if (isUnder(pathname, "/api")) {
+    return PORTAL_FRONTEND_API_ROUTES.has(pathname) ? { kind: "pass" } : { kind: "not-found" }
+  }
+  if (isUnder(pathname, "/_next")) return { kind: "pass" }
   if (pathname === "/favicon.ico" || hasFileExtension(pathname)) return { kind: "pass" }
   if (isUnder(pathname, PORTAL_PREFIX)) return { kind: "portal" }
 

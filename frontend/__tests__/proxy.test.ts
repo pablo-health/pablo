@@ -142,7 +142,7 @@ describe("frontend/proxy.ts portal host", () => {
     expect(authProviderMiddleware).toHaveBeenCalledTimes(1)
   })
 
-  it.each(["/", "/dashboard", "/login", "/dashboard/patients", "/__/auth/handler"])(
+  it.each(["/", "/dashboard", "/login", "/dashboard/patients", "/__/auth/handler", "/api/logout", "/api/auth/session"])(
     "answers %s on the portal host with a 404 and never a sign-in redirect",
     async (path) => {
       vi.stubEnv("PORTAL_HOSTS", PORTAL)

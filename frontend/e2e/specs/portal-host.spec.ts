@@ -12,8 +12,9 @@
  *      practice and a patient signs in there from an invitation link.
  *   2. The session lands in the portal origin's storage, not the clinician
  *      app's. That separation is the reason the portal host exists.
- *   3. The clinician app is not served on the portal host at all: its routes
- *      answer 404, not a sign-in redirect.
+ *   3. The clinician app is not served on the portal host at all: its pages
+ *      and its frontend API routes answer 404, not a sign-in redirect —
+ *      while nothing the portal page itself calls is refused.
  *   4. A `/portal/...` link on the clinician host — every link already sent —
  *      is permanently redirected to the portal host, query and all.
  *
@@ -57,7 +58,24 @@ test("a patient signs in on the portal host, and the session stays there @portal
   const link = onPortalHost(invitation.link)
   expect(link, "the rewritten link keeps its invitation fragment").toContain("#")
 
+  // The portal host refuses the frontend's other API routes, so a page that
+  // quietly relied on one would break there. Nothing the portal calls may.
+  //
+  // One refusal is expected and harmless: the app-wide clinician auth
+  // provider, finding no clinician signed in, clears its session cookie with a
+  // best-effort `/api/logout`. There is no such cookie on the portal's origin
+  // to clear, and the provider ignores the answer.
+  const EXPECTED_REFUSALS = new Set([`${PORTAL_URL}/api/logout`])
+  const refused: string[] = []
+  page.on("response", (response) => {
+    const url = response.url()
+    if (url.startsWith(`${PORTAL_URL}/api/`) && response.status() === 404 && !EXPECTED_REFUSALS.has(url)) {
+      refused.push(url)
+    }
+  })
+
   await signInToPortal(page, { ...invitation, link })
+  expect(refused, "no frontend API call from the portal page is refused").toEqual([])
 
   // The shell spends the fragment and takes it back out of the address bar,
   // leaving the portal host's own short address.
@@ -73,7 +91,7 @@ test("a patient signs in on the portal host, and the session stays there @portal
 })
 
 test("the clinician app is not served on the portal host @portal", async ({ request }) => {
-  for (const path of ["/dashboard", "/login", "/"]) {
+  for (const path of ["/dashboard", "/login", "/", "/api/login", "/api/auth/exchange-setup-token"]) {
     const response = await request.get(`${PORTAL_URL}${path}`, { maxRedirects: 0, failOnStatusCode: false })
     expect(response.status(), `${path} on the portal host`).toBe(404)
     expect(response.headers()["location"], `${path} is not a redirect`).toBeUndefined()

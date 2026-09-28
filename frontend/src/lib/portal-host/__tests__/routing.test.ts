@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-import { readdirSync } from "fs"
+import { readdirSync, readFileSync } from "fs"
 import { join } from "path"
 import { describe, expect, it } from "vitest"
 
@@ -8,6 +8,7 @@ import {
   CLINICIAN_ROUTE_SEGMENTS,
   isPortalHost,
   parsePortalHosts,
+  PORTAL_FRONTEND_API_ROUTES,
   portalHostsFromEnv,
   routePortalHost,
   type PortalHostRequest,
@@ -121,13 +122,25 @@ describe("routePortalHost on a portal host", () => {
     "/_next/image",
     "/_next/data/build/x.json",
     "/api/config",
-    "/api",
     "/favicon.ico",
     "/robots.txt",
     "/icon.png",
     "/acme/logo.svg",
   ])("passes %s through", (path) => {
     expect(on(path)).toEqual({ kind: "pass" })
+  })
+
+  it.each([
+    "/api",
+    "/api/login",
+    "/api/logout",
+    "/api/auth/session",
+    "/api/auth/exchange-setup-token",
+    "/api/auth/native/exchange",
+    "/api/config/extra",
+    "/api/patients",
+  ])("answers 404 for the frontend API route %s", (path) => {
+    expect(on(path)).toEqual({ kind: "not-found" })
   })
 
   it("has nothing at the root", () => {
@@ -231,5 +244,58 @@ describe("CLINICIAN_ROUTE_SEGMENTS", () => {
     const appDir = join(__dirname, "..", "..", "..", "..", "app")
     const served = topLevelSegments(appDir).filter((s) => s !== "portal" && s !== "api")
     expect([...served].sort()).toEqual([...CLINICIAN_ROUTE_SEGMENTS].sort())
+  })
+
+  it("is reserved by the backend, so no practice is ever given one as its slug", () => {
+    // Two lists in two languages, one here and one where slugs are minted.
+    // Read the backend's literal rather than trust a copy of it.
+    const source = readFileSync(
+      join(__dirname, "..", "..", "..", "..", "..", "backend", "app", "portal", "practice_routes.py"),
+      "utf8",
+    )
+    const block = source.match(/_RESERVED_SLUGS = frozenset\(\s*\{([\s\S]*?)\}\s*\)/)
+    expect(block, "backend/app/portal/practice_routes.py defines _RESERVED_SLUGS").toBeTruthy()
+    const reserved = new Set([...(block as RegExpMatchArray)[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]))
+
+    for (const name of [...CLINICIAN_ROUTE_SEGMENTS, "portal", "api"]) {
+      expect(reserved.has(name), `backend reserves "${name}"`).toBe(true)
+    }
+  })
+})
+
+describe("PORTAL_FRONTEND_API_ROUTES", () => {
+  // Every route handler under frontend/app/api, as the URL it serves. Dynamic
+  // segments are kept as written ("[...nextauth]") — they only ever need to be
+  // denied, and any concrete path under them is denied with them.
+  function apiRoutes(dir: string, prefix: string): string[] {
+    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      if (entry.isDirectory()) {
+        if (entry.name === "__tests__") return []
+        return apiRoutes(join(dir, entry.name), `${prefix}/${entry.name}`)
+      }
+      return /^route\.(ts|tsx|js)$/.test(entry.name) ? [prefix] : []
+    })
+  }
+
+  const appApi = join(__dirname, "..", "..", "..", "..", "app", "api")
+  const routes = apiRoutes(appApi, "/api")
+
+  it("finds the frontend's API routes at all", () => {
+    expect(routes).toContain("/api/config")
+  })
+
+  it.each(routes)("decides %s on a portal host: allowed only if listed", (route) => {
+    const decision = routePortalHost(req(PORTAL, route), HOSTS)
+    expect(decision).toEqual(PORTAL_FRONTEND_API_ROUTES.has(route) ? { kind: "pass" } : { kind: "not-found" })
+  })
+
+  it("lists only routes that exist", () => {
+    for (const allowed of PORTAL_FRONTEND_API_ROUTES) expect(routes).toContain(allowed)
+  })
+
+  it("is the whole of the allow-list the portal needs today", () => {
+    // Deliberately exact: widening what the portal host serves is a decision,
+    // so it should show up as a change to this line.
+    expect([...PORTAL_FRONTEND_API_ROUTES]).toEqual(["/api/config"])
   })
 })

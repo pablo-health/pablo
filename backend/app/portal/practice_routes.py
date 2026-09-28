@@ -66,6 +66,14 @@ _UNIQUE_VIOLATION = "23505"
 # shell's own routing already gives meaning to, or that read as platform
 # surface rather than as a practice. ``redeem`` is the load-bearing one: it is
 # the segment a magic link lands on (see ``app.portal.factory``).
+#
+# The second group is every top-level route the web app serves outside the
+# portal. Where the portal has a host of its own it is addressed as ``/{slug}``
+# there, and those paths answer 404 rather than reach a practice, so a
+# practice holding one would have an address that goes nowhere. The web app
+# keeps the same names in ``CLINICIAN_ROUTE_SEGMENTS``
+# (frontend/src/lib/portal-host/routing.ts); a frontend unit test reads this
+# set and fails when a name there is missing here.
 _RESERVED_SLUGS = frozenset(
     {
         "api",
@@ -79,6 +87,17 @@ _RESERVED_SLUGS = frozenset(
         "www",
         "static",
         "assets",
+        # Top-level web app routes (see above).
+        "portal",
+        "book",
+        "dashboard",
+        "fbauth-proxy",
+        "launch",
+        "login",
+        "mfa-enrollment",
+        "mfa-step-up",
+        "native-auth",
+        "onboarding",
     }
 )
 
