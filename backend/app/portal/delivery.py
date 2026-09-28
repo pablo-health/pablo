@@ -82,7 +82,6 @@ class RenderedInviteDelivery(Protocol):
 
     def send_rendered_invite(self, *, to_email: str, subject: str, text: str) -> None:
         """Email one rendered invitation. Raises on delivery failure."""
-        ...
 
 
 class SmsGateway(Protocol):

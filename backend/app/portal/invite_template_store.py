@@ -22,13 +22,12 @@ from .invite_email import InviteTemplate
 class InviteTemplateStore(Protocol):
     def get(self, practice_id: str) -> InviteTemplate | None:
         """The practice's own wording, or None for the default."""
-        ...
 
-    def save(self, practice_id: str, template: InviteTemplate) -> None: ...
+    def save(self, practice_id: str, template: InviteTemplate) -> None:
+        """Keep this wording as the practice's own."""
 
     def reset(self, practice_id: str) -> None:
         """Go back to the default wording."""
-        ...
 
 
 class PlatformInviteTemplateStore:
