@@ -7,6 +7,11 @@
  * already files with and falls back to free text — typing a payer off the
  * card adds it to the practice's list on the way through. Subscriber
  * details only appear when the subscriber is somebody other than the client.
+ *
+ * The client's sex is asked here rather than on the client form because
+ * only a claim or an eligibility check reads it (X12 DMG03), and a claim
+ * needs it whoever the subscriber is. It is stored on the client, so it is
+ * saved through the patient endpoint alongside the coverage.
  */
 
 "use client"
@@ -35,11 +40,47 @@ import {
 } from "@/components/ui/select"
 import { centsToDollars, dollarsToCents } from "@/lib/money"
 import { useCreateCoverage, usePayers, useUpdateCoverage } from "@/hooks/useCoverage"
+import { usePatient, useUpdatePatient } from "@/hooks/usePatients"
 import type { CoverageResponse, CreateCoverageRequest } from "@/types/coverage"
 
 /** Radix `Select.Item` rejects an empty value, so "type a new payer" needs a
  * sentinel distinct from every payer row id. */
 const NEW_PAYER = "__new__"
+
+type SexCode = "M" | "F" | "U" | ""
+
+const asSex = (value: string | null | undefined): SexCode =>
+  value === "M" || value === "F" || value === "U" ? value : ""
+
+/** The claim code set is M, F and U. U covers someone who declines to answer
+ * or is neither male nor female, which is also where a card showing X goes. */
+function SexSelect({
+  id,
+  label,
+  value,
+  onChange,
+}: {
+  id: string
+  label: string
+  value: SexCode
+  onChange: (value: SexCode) => void
+}) {
+  return (
+    <div className="form-group">
+      <Label htmlFor={id}>{label}</Label>
+      <Select value={value} onValueChange={(v) => onChange(v as SexCode)}>
+        <SelectTrigger id={id} aria-label={label}>
+          <SelectValue placeholder="Not set" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="M">Male</SelectItem>
+          <SelectItem value="F">Female</SelectItem>
+          <SelectItem value="U">X or unspecified</SelectItem>
+        </SelectContent>
+      </Select>
+    </div>
+  )
+}
 
 const schema = z
   .object({
@@ -51,6 +92,7 @@ const schema = z
     plan_name: z.string().max(255),
     copay: z.string(),
     subscriber_relationship: z.enum(["self", "spouse", "child", "other"]),
+    client_sex: z.enum(["M", "F", "U", ""]),
     subscriber_first_name: z.string().max(255),
     subscriber_last_name: z.string().max(255),
     subscriber_date_of_birth: z.string(),
@@ -83,6 +125,7 @@ const EMPTY: FormData = {
   plan_name: "",
   copay: "",
   subscriber_relationship: "self",
+  client_sex: "",
   subscriber_first_name: "",
   subscriber_last_name: "",
   subscriber_date_of_birth: "",
@@ -130,6 +173,9 @@ export function CoverageDialog({ patientId, coverage, open, onOpenChange }: Cove
   const { data: payers } = usePayers()
   const create = useCreateCoverage()
   const update = useUpdateCoverage()
+  const { data: patient } = usePatient(patientId)
+  const updatePatient = useUpdatePatient()
+  const patientSex = asSex(patient?.sex)
   const {
     register,
     handleSubmit,
@@ -140,12 +186,13 @@ export function CoverageDialog({ patientId, coverage, open, onOpenChange }: Cove
   } = useForm<FormData>({ resolver: zodResolver(schema), defaultValues: EMPTY })
 
   useEffect(() => {
-    if (open) reset(coverage ? fromCoverage(coverage) : EMPTY)
-  }, [open, coverage, reset])
+    if (open) reset({ ...(coverage ? fromCoverage(coverage) : EMPTY), client_sex: patientSex })
+  }, [open, coverage, patientSex, reset])
 
   const payerChoice = watch("payer_choice")
   const relationship = watch("subscriber_relationship")
   const subscriberSex = watch("subscriber_sex")
+  const clientSex = watch("client_sex")
   const isSelf = relationship === "self"
 
   async function onSubmit(data: FormData) {
@@ -187,6 +234,9 @@ export function CoverageDialog({ patientId, coverage, open, onOpenChange }: Cove
               }
             : { ...plan, payer_id: data.payer_choice }
         await create.mutateAsync({ patientId, data: payload })
+      }
+      if (data.client_sex && data.client_sex !== patientSex) {
+        await updatePatient.mutateAsync({ patientId, data: { sex: data.client_sex } })
       }
       onOpenChange(false)
     } catch {
@@ -288,6 +338,13 @@ export function CoverageDialog({ patientId, coverage, open, onOpenChange }: Cove
             </Select>
           </div>
 
+          <SexSelect
+            id="client_sex"
+            label={isSelf ? "Sex on insurance card" : "Client's sex"}
+            value={clientSex}
+            onChange={(v) => setValue("client_sex", v)}
+          />
+
           {!isSelf && (
             <fieldset className="space-y-4 rounded-lg border border-neutral-100 p-3">
               <legend className="px-1 text-xs font-medium text-neutral-600">Subscriber</legend>
@@ -308,22 +365,12 @@ export function CoverageDialog({ patientId, coverage, open, onOpenChange }: Cove
                     {...register("subscriber_date_of_birth")}
                   />
                 </div>
-                <div className="form-group">
-                  <Label htmlFor="subscriber_sex">Sex on insurance card</Label>
-                  <Select
-                    value={subscriberSex}
-                    onValueChange={(v) => setValue("subscriber_sex", v as FormData["subscriber_sex"])}
-                  >
-                    <SelectTrigger id="subscriber_sex" aria-label="Subscriber sex">
-                      <SelectValue placeholder="Not set" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="M">Male</SelectItem>
-                      <SelectItem value="F">Female</SelectItem>
-                      <SelectItem value="U">Unknown</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+                <SexSelect
+                  id="subscriber_sex"
+                  label="Sex on insurance card"
+                  value={subscriberSex}
+                  onChange={(v) => setValue("subscriber_sex", v)}
+                />
               </div>
               <div className="form-group">
                 <Label htmlFor="subscriber_address_line1">Address</Label>
@@ -346,7 +393,7 @@ export function CoverageDialog({ patientId, coverage, open, onOpenChange }: Cove
             </fieldset>
           )}
 
-          {(create.isError || update.isError) && (
+          {(create.isError || update.isError || updatePatient.isError) && (
             <p className="text-sm text-red-500">Could not save the coverage. Please try again.</p>
           )}
 

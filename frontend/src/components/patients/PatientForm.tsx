@@ -40,7 +40,6 @@ const patientFormSchema = z.object({
   city: z.string().max(100).optional().or(z.literal("")),
   state: z.string().max(2).optional().or(z.literal("")),
   postal_code: z.string().max(10).optional().or(z.literal("")),
-  sex: z.enum(["M", "F", "U"]).optional().or(z.literal("")),
 })
 
 type PatientFormData = z.infer<typeof patientFormSchema>
@@ -78,12 +77,10 @@ export function PatientForm({ mode, patient, open, onOpenChange }: PatientFormPr
       city: "",
       state: "",
       postal_code: "",
-      sex: "",
     },
   })
 
   const status = watch("status")
-  const sex = watch("sex")
 
   // Reset form when dialog opens/closes or patient changes
   useEffect(() => {
@@ -101,7 +98,6 @@ export function PatientForm({ mode, patient, open, onOpenChange }: PatientFormPr
         city: patient.city || "",
         state: patient.state || "",
         postal_code: patient.postal_code || "",
-        sex: (patient.sex as "M" | "F" | "U") || "",
       })
     } else if (open && mode === "create") {
       reset({
@@ -117,7 +113,6 @@ export function PatientForm({ mode, patient, open, onOpenChange }: PatientFormPr
         city: "",
         state: "",
         postal_code: "",
-        sex: "",
       })
     }
   }, [open, mode, patient, reset])
@@ -138,7 +133,6 @@ export function PatientForm({ mode, patient, open, onOpenChange }: PatientFormPr
         city: data.city || undefined,
         state: data.state || undefined,
         postal_code: data.postal_code || undefined,
-        sex: data.sex || undefined,
       }
 
       if (mode === "create") {
@@ -301,24 +295,6 @@ export function PatientForm({ mode, patient, open, onOpenChange }: PatientFormPr
               <Label htmlFor="postal_code">ZIP</Label>
               <Input id="postal_code" {...register("postal_code")} />
             </div>
-          </div>
-
-          {/* Sex on insurance card */}
-          <div className="form-group">
-            <Label htmlFor="sex">Sex on insurance card</Label>
-            <Select
-              value={sex}
-              onValueChange={(value) => setValue("sex", value as "M" | "F" | "U")}
-            >
-              <SelectTrigger id="sex">
-                <SelectValue placeholder="Not set" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="M">Male</SelectItem>
-                <SelectItem value="F">Female</SelectItem>
-                <SelectItem value="U">Unknown</SelectItem>
-              </SelectContent>
-            </Select>
           </div>
 
           <DialogFooter>
