@@ -6,6 +6,7 @@ import { IntakeDocumentsCard } from "../intake/IntakeDocumentsCard"
 import { IntakeFormsCard } from "../intake/IntakeFormsCard"
 import { InviteEmailCard } from "../intake/InviteEmailCard"
 import { LicensedInstrumentsCard } from "../intake/LicensedInstrumentsCard"
+import { PortalWelcomeCard } from "../intake/PortalWelcomeCard"
 import { SettingsCard } from "../ui"
 
 /**
@@ -26,6 +27,7 @@ export function PatientPortalPage() {
   return (
     <>
       <IntakeFormsCard />
+      <PortalWelcomeCard />
       <InviteEmailCard />
       <IntakeDocumentsCard />
       <LicensedInstrumentsCard />

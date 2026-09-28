@@ -42,6 +42,8 @@ from app.models.audit import AuditAction
 from app.portal.account_routes import router
 from app.portal.practice_routes import PracticeAddress
 from app.portal.store import InMemoryPortalSessionStore, PortalSessionRecord
+from app.portal.welcome import PortalWelcome
+from app.portal.welcome_store import InMemoryPortalWelcomeStore, get_portal_welcome_store
 from app.services.audit_service import get_audit_service
 from app.settings import get_settings
 from fastapi import FastAPI
@@ -52,6 +54,7 @@ if TYPE_CHECKING:
 
 TENANT = "practice_abc123"
 PRACTICE_NAME = "Meadowlark Counseling"
+OTHER_PRACTICE_NAME = "Juniper Therapy"
 SIGNING_KEY = "account-route-test-key-not-a-real-secret"
 
 PATIENT_A = "patient-a"
@@ -62,6 +65,13 @@ TOKEN_A1 = "token-a-phone"
 TOKEN_A2 = "token-a-laptop"
 TOKEN_A1_WEAK = "token-a-phone-single-factor"
 TOKEN_B1 = "token-b-phone"
+#: A client of a DIFFERENT practice, for the welcome's isolation.
+TOKEN_OTHER_PRACTICE = "token-other-practice"
+
+PRACTICE_ID = "practice-1"
+OTHER_TENANT = "practice_def456"
+OTHER_PRACTICE_ID = "practice-2"
+_PRACTICE_IDS = {TENANT: PRACTICE_ID, OTHER_TENANT: OTHER_PRACTICE_ID}
 
 JTI_A1 = "session-a1"
 JTI_A2 = "session-a2"
@@ -74,7 +84,9 @@ _PRINCIPALS: dict[str, tuple[str, str, AuthStrength]] = {
     TOKEN_A2: (PATIENT_A, JTI_A2, AuthStrength.STEPPED_UP),
     TOKEN_A1_WEAK: (PATIENT_A, JTI_A1, AuthStrength.SINGLE_FACTOR),
     TOKEN_B1: (PATIENT_B, JTI_B1, AuthStrength.STEPPED_UP),
+    TOKEN_OTHER_PRACTICE: ("patient-other", "session-other", AuthStrength.STEPPED_UP),
 }
+_SCHEMAS: dict[str, str] = {TOKEN_OTHER_PRACTICE: OTHER_TENANT}
 
 
 class _StubResolver:
@@ -94,7 +106,7 @@ class _StubResolver:
         patient_id, jti, strength = found
         return PatientContext(
             patient_id=patient_id,
-            practice_schema=TENANT,
+            practice_schema=_SCHEMAS.get(credential.value, TENANT),
             credential_kind="portal_session",
             auth_strength=strength,
             session_id=jti,
@@ -146,9 +158,15 @@ def audit() -> _RecordingAudit:
 
 
 @pytest.fixture
+def welcomes() -> InMemoryPortalWelcomeStore:
+    return InMemoryPortalWelcomeStore()
+
+
+@pytest.fixture
 def app(
     sessions: InMemoryPortalSessionStore,
     audit: _RecordingAudit,
+    welcomes: InMemoryPortalWelcomeStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> FastAPI:
     application = FastAPI()
@@ -182,11 +200,15 @@ def app(
     # standalone session these tests have no database for. The capability
     # document's load-bearing half is the module map; this is decoration,
     # and it is pinned to a constant so a change to it fails visibly.
+    names = {TENANT: PRACTICE_NAME, OTHER_TENANT: OTHER_PRACTICE_NAME}
     monkeypatch.setattr(
         account_routes,
         "practice_address_for_schema",
-        lambda _schema: PracticeAddress(slug="example", display_name=PRACTICE_NAME, enabled=True),
+        lambda schema: PracticeAddress(slug="example", display_name=names[schema], enabled=True),
     )
+    # The welcome is keyed on the practice, found through the same directory.
+    monkeypatch.setattr(account_routes, "practice_id_for_schema", _PRACTICE_IDS.get)
+    application.dependency_overrides[get_portal_welcome_store] = lambda: welcomes
     return application
 
 
@@ -410,3 +432,55 @@ class TestTheCapabilityDocument:
         client.get("/api/patient/capabilities", headers=_auth(TOKEN_A1))
 
         assert audit.actions == []
+
+
+class TestTheWelcome:
+    def test_a_practice_that_wrote_none_gets_the_default_with_its_name(
+        self, client: TestClient
+    ) -> None:
+        body = client.get("/api/patient/capabilities", headers=_auth(TOKEN_A1)).json()
+
+        assert body["welcome"]["heading"] == f"Welcome to {PRACTICE_NAME}"
+        assert body["welcome"]["body"].startswith(
+            f"This is where you'll find what {PRACTICE_NAME} has asked you to do"
+        )
+        assert set(body["welcome"]) == {"heading", "body"}
+
+    def test_a_practices_own_welcome_is_filled_in(
+        self, client: TestClient, welcomes: InMemoryPortalWelcomeStore
+    ) -> None:
+        welcomes.save(
+            PRACTICE_ID,
+            PortalWelcome(heading="Hello from {practice_name}", body="Line one\n<b>x</b>"),
+        )
+
+        body = client.get("/api/patient/capabilities", headers=_auth(TOKEN_A1_WEAK)).json()
+
+        assert body["welcome"] == {
+            "heading": f"Hello from {PRACTICE_NAME}",
+            # Plain text, passed through as typed: nothing is interpreted.
+            "body": "Line one\n<b>x</b>",
+        }
+
+    def test_one_practices_welcome_never_reaches_another_practices_clients(
+        self, client: TestClient, welcomes: InMemoryPortalWelcomeStore
+    ) -> None:
+        welcomes.save(PRACTICE_ID, PortalWelcome(heading="Ours", body="Only ours."))
+
+        ours = client.get("/api/patient/capabilities", headers=_auth(TOKEN_A1)).json()
+        theirs = client.get("/api/patient/capabilities", headers=_auth(TOKEN_OTHER_PRACTICE)).json()
+
+        assert ours["welcome"]["heading"] == "Ours"
+        assert theirs["welcome"]["heading"] == f"Welcome to {OTHER_PRACTICE_NAME}"
+        assert "Only ours." not in str(theirs)
+
+    def test_a_practice_with_no_address_yet_is_called_your_practice(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from app.portal import account_routes  # noqa: PLC0415
+
+        monkeypatch.setattr(account_routes, "practice_address_for_schema", lambda _schema: None)
+
+        body = client.get("/api/patient/capabilities", headers=_auth(TOKEN_A1)).json()
+
+        assert body["welcome"]["heading"] == "Welcome to your practice"
