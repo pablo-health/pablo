@@ -18,6 +18,7 @@
  */
 
 import { get, getBlob, post } from "./client"
+import type { IntakeForm } from "./patientIntake"
 
 /** What a form can be doing, as the server reports it. */
 export type IntakeAssignmentStatus =
@@ -113,6 +114,13 @@ export interface IntakeReview extends IntakeAssignment {
   items: IntakeReviewItem[]
   signatures: IntakeReviewSignature[]
   events: IntakeReviewEvent[]
+  /**
+   * The wording the engine owns, in the same shape the portal draws the
+   * form from: each measure's items and anchors, the reason prompt, and the
+   * name and date of birth the patient was asked to confirm. The server
+   * sends it with the answers so the chart never carries its own copy.
+   */
+  form: IntakeForm
 }
 
 /**

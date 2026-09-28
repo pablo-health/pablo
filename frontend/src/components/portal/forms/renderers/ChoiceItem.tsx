@@ -42,11 +42,11 @@ function labelsFor(config: Record<string, unknown>, keys: string[]): string[] {
   return keys.map((key) => options.find((option) => option.key === key)?.label ?? key)
 }
 
-function chosenOne(value: AnswerValue | null): string | null {
+export function chosenOne(value: AnswerValue | null): string | null {
   return typeof value?.key === "string" ? value.key : null
 }
 
-function chosenMany(value: AnswerValue | null): string[] {
+export function chosenMany(value: AnswerValue | null): string[] {
   if (!Array.isArray(value?.keys)) return []
   return value.keys.filter((key): key is string => typeof key === "string")
 }

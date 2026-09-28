@@ -12,10 +12,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { screen } from "@testing-library/react"
+import { screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 
 import { IntakeReviewPanel } from "../IntakeReviewPanel"
+import { INTAKE_FORM } from "@/components/portal/forms/__tests__/formFixtures"
 import { renderWithProviders } from "@/test/renderWithProviders"
 import type {
   IntakeAssignment,
@@ -30,6 +31,7 @@ const mockRequest = vi.fn()
 const mockAccept = vi.fn()
 const mockEnter = vi.fn()
 const mockExport = vi.fn()
+const mockArtifacts = vi.fn()
 
 vi.mock("@/lib/api/intakeReview", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api/intakeReview")>()
@@ -40,6 +42,7 @@ vi.mock("@/lib/api/intakeReview", async (importOriginal) => {
     acceptIntakeAssignment: (...args: unknown[]) => mockAccept(...args),
     enterIntakeAnswerForPatient: (...args: unknown[]) => mockEnter(...args),
     downloadIntakeExport: (...args: unknown[]) => mockExport(...args),
+    listIntakeArtifacts: (...args: unknown[]) => mockArtifacts(...args),
   }
 })
 
@@ -106,6 +109,7 @@ function review(overrides: Partial<IntakeReview> = {}): IntakeReview {
     items: [item()],
     signatures: [],
     events: [],
+    form: INTAKE_FORM,
     ...overrides,
   }
 }
@@ -128,6 +132,7 @@ describe("IntakeReviewPanel", () => {
     mockRequest.mockResolvedValue(assignment())
     mockAccept.mockResolvedValue(assignment())
     mockEnter.mockResolvedValue(assignment())
+    mockArtifacts.mockResolvedValue([])
     saved.length = 0
     URL.createObjectURL = vi.fn(() => "blob:intake")
     URL.revokeObjectURL = vi.fn()
@@ -370,5 +375,74 @@ describe("IntakeReviewPanel", () => {
     expect(await screen.findByTestId("intake-review-progress")).toHaveTextContent(
       "2 questions have no answer.",
     )
+  })
+  it("draws a measure the way the patient answered it", async () => {
+    mockGet.mockResolvedValue(
+      review({
+        items: [
+          item({
+            id: "item-phq",
+            key: "phq9",
+            item_type: "instrument",
+            label: null,
+            config: { code: "phq9" },
+            value: { item_scores: { "1": 0, "2": 2, "3": 1, "4": 0, "5": 0, "6": 0, "7": 0, "8": 0, "9": 0 } },
+          }),
+        ],
+      }),
+    )
+
+    renderPanel()
+
+    const second = await screen.findByRole("group", { name: "Feeling down, depressed, or hopeless" })
+    expect(within(second).getByRole("radio", { name: "More than half the days" })).toBeChecked()
+    expect(within(second).getByRole("radio", { name: "Not at all" })).not.toBeChecked()
+    expect(within(second).getByRole("radio", { name: "More than half the days" })).toBeDisabled()
+    expect(screen.queryByText(/item_scores/)).not.toBeInTheDocument()
+  })
+
+  it("offers nothing to send back or write down on a heading", async () => {
+    mockGet.mockResolvedValue(
+      review({
+        items: [
+          item(),
+          item({ id: "item-2", key: "about", position: 2, item_type: "section",
+            label: null, config: { title: "About you" }, value: null, provenance: null }),
+        ],
+      }),
+    )
+
+    renderPanel()
+
+    expect(await screen.findByText("About you")).toBeInTheDocument()
+    expect(screen.getByTestId("intake-review-select-item-1")).toBeInTheDocument()
+    expect(screen.queryByTestId("intake-review-select-item-2")).not.toBeInTheDocument()
+    expect(screen.queryByTestId("intake-review-enter-item-2")).not.toBeInTheDocument()
+    expect(screen.getByTestId("intake-review-value-item-2")).not.toHaveTextContent("No answer")
+  })
+
+  it("lists a question's files under the question they answer", async () => {
+    mockGet.mockResolvedValue(
+      review({
+        items: [
+          item({ id: "item-card", key: "card", item_type: "insurance_card", label: "Your insurance card",
+            config: { sides: "both" }, value: { documents: ["doc-front"] } }),
+        ],
+      }),
+    )
+    mockArtifacts.mockResolvedValue([
+      { id: "art-1", item_id: "item-card", item_label: "Your insurance card", side: "front",
+        document_id: "doc-front", filename: "card-front.jpg", content_type: "image/jpeg",
+        size_bytes: 2048, scan_status: null, created_at: SIGNED_AT },
+      { id: "art-2", item_id: "item-other", item_label: "Other", side: null,
+        document_id: "doc-other", filename: "letter.pdf", content_type: "application/pdf",
+        size_bytes: 2048, scan_status: null, created_at: SIGNED_AT },
+    ])
+
+    renderPanel()
+
+    const value = await screen.findByTestId("intake-review-value-item-card")
+    expect(await within(value).findByText("card-front.jpg")).toBeInTheDocument()
+    expect(within(value).queryByText("letter.pdf")).not.toBeInTheDocument()
   })
 })

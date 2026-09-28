@@ -18,22 +18,22 @@ import { QuestionFrame, labelOf } from "./QuestionFrame"
 import type { AnswerValue, ItemRenderer, ItemRendererProps } from "./types"
 
 /** The scale's ends, or null when the item was stored without them. */
-function boundsOf(config: Record<string, unknown>): { min: number; max: number } | null {
+export function boundsOf(config: Record<string, unknown>): { min: number; max: number } | null {
   const { min, max } = config
   if (typeof min !== "number" || typeof max !== "number" || max <= min) return null
   return { min, max }
 }
 
-function anchorOf(config: Record<string, unknown>, key: "min_label" | "max_label"): string | null {
+export function anchorOf(config: Record<string, unknown>, key: "min_label" | "max_label"): string | null {
   const value = config[key]
   return typeof value === "string" && value.trim() !== "" ? value.trim() : null
 }
 
-function pointsOf(bounds: { min: number; max: number }): number[] {
+export function pointsOf(bounds: { min: number; max: number }): number[] {
   return Array.from({ length: bounds.max - bounds.min + 1 }, (_, i) => bounds.min + i)
 }
 
-function valueIn(value: AnswerValue | null): number | null {
+export function valueIn(value: AnswerValue | null): number | null {
   return typeof value?.value === "number" ? value.value : null
 }
 

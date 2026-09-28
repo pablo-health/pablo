@@ -16,6 +16,7 @@ import { screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 
 import { IntakeCard } from "../IntakeCard"
+import { INTAKE_FORM } from "@/components/portal/forms/__tests__/formFixtures"
 import { renderWithProviders } from "@/test/renderWithProviders"
 import type { PatientIntakeSubmission } from "@/types/patientIntakeSubmissions"
 
@@ -82,6 +83,7 @@ const REVIEW = {
   ],
   signatures: [],
   events: [],
+  form: INTAKE_FORM,
 }
 
 const ARTIFACT = {

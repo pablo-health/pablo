@@ -61,7 +61,7 @@ import type { AnswerValue, ItemRenderer, ItemRendererProps } from "./types"
 const NAME_MAX = 160
 
 /** What the practice pinned when it published the form. */
-function pinnedVersionOf(config: Record<string, unknown>): string | null {
+export function pinnedVersionOf(config: Record<string, unknown>): string | null {
   const pinned = config.document_version_id
   return typeof pinned === "string" && pinned !== "" ? pinned : null
 }

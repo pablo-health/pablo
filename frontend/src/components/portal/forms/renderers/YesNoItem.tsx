@@ -17,16 +17,16 @@ import type { AnswerValue, ItemRenderer, ItemRendererProps } from "./types"
 /** Matches `REASON_MAX_LEN`, which is what the route caps a follow-up at. */
 const FOLLOW_UP_MAX = 4_000
 
-function followUpLabelOf(config: Record<string, unknown>): string | null {
+export function followUpLabelOf(config: Record<string, unknown>): string | null {
   const label = typeof config.follow_up_label === "string" ? config.follow_up_label.trim() : ""
   return label === "" ? null : label
 }
 
-function yesIn(value: AnswerValue | null): boolean | null {
+export function yesIn(value: AnswerValue | null): boolean | null {
   return typeof value?.yes === "boolean" ? value.yes : null
 }
 
-function followUpIn(value: AnswerValue | null): string {
+export function followUpIn(value: AnswerValue | null): string {
   return typeof value?.follow_up === "string" ? value.follow_up : ""
 }
 

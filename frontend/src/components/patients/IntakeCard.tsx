@@ -142,13 +142,15 @@ function AssignmentRow({
 }
 
 /**
- * The intake form on the chart: what the patient wrote, and nothing they scored.
+ * The intake form on the chart: what the patient wrote and chose.
  *
- * PHQ-9 and GAD-7 answers arrive as outcome measures and the chart already
- * trends and bands them, so this card carries no number and no severity
- * word. What it adds is the part of the form that has nowhere else to go —
- * the reason for the visit, anything the patient said is wrong about their
- * own record, and the files they sent in.
+ * PHQ-9 and GAD-7 totals arrive as outcome measures and the chart already
+ * trends and bands them, so this card carries no total and no severity word.
+ * Opening a form shows it the way the patient filled it in, each measure
+ * item with the answer that was chosen — the one thing the trend does not
+ * show. The card itself adds what has nowhere else to go: the reason for the
+ * visit, anything the patient said is wrong about their own record, and the
+ * files they sent in.
  *
  * It is the chart's Intake tab, so it always renders: the tab is where an
  * intake is started, and a practice that has not set up forms finds that out

@@ -48,7 +48,7 @@ import { acceptOf, UploadSlot } from "./UploadSlot"
 import type { AnswerValue, ItemRenderer, ItemRendererProps } from "./types"
 
 /** Which sides this question asked for. `"front"` narrows it to one. */
-function sidesOf(config: Record<string, unknown>): string[] {
+export function sidesOf(config: Record<string, unknown>): string[] {
   return config.sides === "front" ? ["front"] : ["front", "back"]
 }
 
@@ -56,7 +56,7 @@ function collectsFields(config: Record<string, unknown>): boolean {
   return config.collect_fields === true
 }
 
-function sideLabel(side: string): string {
+export function sideLabel(side: string): string {
   return side === "back" ? CARD_BACK : CARD_FRONT
 }
 

@@ -820,6 +820,80 @@ class TestReviewView:
         assert response.status_code == 404
 
 
+def _measure_version(packets: InMemoryIntakePacketRepository) -> str:
+    """A published form asking the PHQ-9 and then the GAD-7."""
+    from app.intake.items import ItemDraft  # noqa: PLC0415 — one caller
+
+    service = IntakePacketService(packets)
+    template = service.create_template("Screeners", _CLINICIAN)
+    version_id = str(service.list_versions(str(template["id"]))[0]["id"])
+    service.replace_items(
+        version_id,
+        [
+            ItemDraft(key="phq", item_type="instrument", config={"code": "phq9"}, label=None),
+            ItemDraft(key="gad", item_type="instrument", config={"code": "gad7"}, label=None),
+        ],
+    )
+    service.publish(version_id, _CLINICIAN)
+    return version_id
+
+
+class TestReviewWording:
+    """The words a form was filled in against come back with the answers."""
+
+    def test_each_measure_comes_back_with_the_wording_it_was_asked_in(
+        self,
+        chart: TestClient,
+        portal: TestClient,
+        service: IntakeAssignmentService,
+        packets: InMemoryIntakePacketRepository,
+    ) -> None:
+        from app.outcome_measures.item_text import (  # noqa: PLC0415 — one caller
+            FREQUENCY_OPTIONS,
+            FREQUENCY_PROMPT,
+            ITEM_TEXT,
+        )
+
+        version_id = _measure_version(packets)
+        assignment, _ = service.assign(_PATIENT_A, version_id, _CLINICIAN)
+        scores = {str(i): i % 4 for i in range(1, 10)}
+        saved = portal.put(
+            f"{ASSIGNMENTS}/{assignment['id']}/items/{_item_id(service, version_id, 'phq')}",
+            json={"value": {"item_scores": scores}},
+            headers=_auth(),
+        )
+        assert saved.status_code == 200, saved.text
+
+        review = chart.get(f"{_base(_PATIENT_A, str(assignment['id']))}/review").json()
+        instruments = review["form"]["instruments"]
+        assert [m["code"] for m in instruments] == ["phq9", "gad7"]
+        phq = instruments[0]
+        assert phq["prompt"] == FREQUENCY_PROMPT
+        assert list(phq["items"].values()) == list(ITEM_TEXT["phq9"])
+        assert [o["value"] for o in phq["response_options"]] == [o.value for o in FREQUENCY_OPTIONS]
+        by_key = {item["key"]: item for item in review["items"]}
+        assert by_key["phq"]["value"] == {"item_scores": scores}
+
+    def test_a_form_with_no_measure_carries_none(
+        self, chart: TestClient, service: IntakeAssignmentService, published_version: str
+    ) -> None:
+        assignment, _ = service.assign(_PATIENT_A, published_version, _CLINICIAN)
+        form = chart.get(f"{_base(_PATIENT_A, str(assignment['id']))}/review").json()["form"]
+        assert form["instruments"] == []
+        assert form["reason_prompt"] == "What brings you in?"
+
+    def test_the_identity_is_the_one_the_patient_was_asked_to_confirm(
+        self, chart: TestClient, service: IntakeAssignmentService, published_version: str
+    ) -> None:
+        assignment, _ = service.assign(_PATIENT_A, published_version, _CLINICIAN)
+        form = chart.get(f"{_base(_PATIENT_A, str(assignment['id']))}/review").json()["form"]
+        assert form["identity"] == {
+            "first_name": "Ada",
+            "last_name": "Lovelace",
+            "date_of_birth": "1990-03-14",
+        }
+
+
 # ---------------------------------------------------------------------------
 # Telling the patient
 # ---------------------------------------------------------------------------

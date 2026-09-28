@@ -11,8 +11,10 @@ import {
   intakeExportFilename,
   MAX_CORRECTION_NOTE_LENGTH,
 } from "@/lib/api/intakeReview"
-import type { IntakeAssignmentStatus, IntakeReviewEvent, IntakeReviewItem, IntakeReviewSignature } from "@/lib/api/intakeReview"
+import type { IntakeAssignmentStatus, IntakeReviewEvent, IntakeReviewSignature } from "@/lib/api/intakeReview"
+import { useIntakeAssignmentArtifacts } from "@/hooks/useIntakeArtifacts"
 import { useAcceptIntakeAssignment, useEnterIntakeAnswer, useIntakeReview, useRequestIntakeCorrection } from "@/hooks/useIntakeReview"
+import { ReviewItemRow } from "./intakeReview/ReviewItemRow"
 
 /**
  * What each status the server sends means, in a sentence.
@@ -45,14 +47,6 @@ const COPY = {
   status: INTAKE_STATUS_TEXT,
   progressComplete: "Every question has an answer.",
   outstanding: (n: number) => (n === 1 ? "1 question has no answer." : `${n} questions have no answer.`),
-  provenance: { patient: "Patient", clinician: "Entered by practice" },
-  noAnswer: "No answer",
-  earlier: (n: number) => (n === 1 ? "1 earlier answer" : `${n} earlier answers`),
-  earlierDetail: (n: number) => (n === 1 ? "One earlier answer was replaced." : `${n} earlier answers were replaced.`),
-  enter: "Enter for patient",
-  entryLabel: "Answer",
-  entrySave: "Save",
-  entryCancel: "Cancel",
   correctionsHeading: "Request corrections",
   correctionsSelect: "Choose the questions to send back.",
   noteLabel: "What should the patient redo?",
@@ -76,109 +70,16 @@ const ENTRY_STATUSES: IntakeAssignmentStatus[] = ["assigned", "in_progress", "su
 
 const LINK = "text-xs font-medium text-primary-600 hover:text-primary-700"
 const HEADING = "text-sm font-semibold text-neutral-900"
-const CHIP = "mt-1 inline-block rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600"
 
 function formatMoment(iso: string): string {
   const parsed = new Date(iso)
   return Number.isNaN(parsed.getTime()) ? iso : parsed.toLocaleString()
 }
 
-/**
- * The answer as a line of text. Answers arrive as an open mapping, so a `text`
- * field is used when there is one and the mapping is spelled out otherwise.
- * Null means the caller renders "no answer" instead.
- */
-function formatValue(value: Record<string, unknown> | null): string | null {
-  if (!value) return null
-  if (typeof value.text === "string" && value.text !== "") return value.text
-  const parts = Object.entries(value)
-    .filter(([, v]) => v !== null && v !== undefined && v !== "")
-    .map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : String(v)}`)
-  return parts.length > 0 ? parts.join(" · ") : null
-}
-
 /** The server's own sentence when it wrote one, else a short one of ours. */
 function errorMessage(error: Error | null): string | null {
   if (!error) return null
   return error instanceof ApiError && error.message ? error.message : COPY.actionError
-}
-
-interface ReviewItemRowProps {
-  item: IntakeReviewItem
-  selectable: boolean
-  selected: boolean
-  onSelect: (itemId: string, checked: boolean) => void
-  canEnter: boolean
-  saving: boolean
-  onSaveEntry: (itemId: string, text: string) => void
-}
-
-function ReviewItemRow(props: ReviewItemRowProps) {
-  const { item, selectable, selected, onSelect, canEnter, saving, onSaveEntry } = props
-  const [showEarlier, setShowEarlier] = useState(false)
-  const [entryOpen, setEntryOpen] = useState(false)
-  const [entryText, setEntryText] = useState("")
-  const id = item.id
-  const answer = formatValue(item.value)
-  const question = item.label ?? item.key
-
-  return (
-    <li className="border-t border-border py-3 first:border-t-0" data-testid={`intake-review-item-${id}`}>
-      <div className="flex items-start gap-3">
-        {selectable && (
-          <input type="checkbox" className="mt-1" checked={selected} aria-label={question}
-            onChange={(e) => onSelect(id, e.target.checked)} data-testid={`intake-review-select-${id}`} />
-        )}
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium text-neutral-700">{question}</p>
-          <p className="mt-1 whitespace-pre-wrap text-sm text-neutral-900" data-testid={`intake-review-value-${id}`}>
-            {answer ?? COPY.noAnswer}
-          </p>
-          {item.provenance && (
-            <span className={CHIP} data-testid={`intake-review-provenance-${id}`}>
-              {COPY.provenance[item.provenance]}
-            </span>
-          )}
-          {item.superseded_count > 0 && (
-            <div className="mt-2">
-              <button type="button" className={LINK} aria-expanded={showEarlier}
-                onClick={() => setShowEarlier((open) => !open)}
-                data-testid={`intake-review-earlier-toggle-${id}`}>
-                {COPY.earlier(item.superseded_count)}
-              </button>
-              {showEarlier && (
-                <p className="mt-1 text-xs text-neutral-500" data-testid={`intake-review-earlier-detail-${id}`}>
-                  {COPY.earlierDetail(item.superseded_count)}
-                </p>
-              )}
-            </div>
-          )}
-          {canEnter && !entryOpen && (
-            <button type="button" className={`mt-2 ${LINK}`} onClick={() => setEntryOpen(true)}
-              data-testid={`intake-review-enter-${id}`}>
-              {COPY.enter}
-            </button>
-          )}
-          {canEnter && entryOpen && (
-            <div className="mt-2 flex items-center gap-2">
-              <input type="text" className="input flex-1" value={entryText} aria-label={COPY.entryLabel}
-                onChange={(e) => setEntryText(e.target.value)}
-                data-testid={`intake-review-entry-input-${id}`} />
-              <button type="button" className="btn-primary text-xs" disabled={saving || entryText.trim() === ""}
-                onClick={() => onSaveEntry(id, entryText.trim())}
-                data-testid={`intake-review-entry-save-${id}`}>
-                {COPY.entrySave}
-              </button>
-              <button type="button" className="text-xs text-neutral-500" onClick={() => setEntryOpen(false)}
-                data-testid={`intake-review-entry-cancel-${id}`}>
-                {COPY.entryCancel}
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-    </li>
-  )
 }
 
 /** Absent when nothing has been signed — there is no section for an empty list. */
@@ -220,7 +121,9 @@ function EventSection({ events }: { events: IntakeReviewEvent[] }) {
 }
 
 /**
- * The clinician reading a handed-in form back. Everything on screen comes from
+ * The clinician reading a handed-in form back, each question drawn the way the
+ * patient saw it with the recorded answer marked (see `./intakeReview/`).
+ * Everything on screen comes from
  * the server's view of the form: the status sentence, whether every question
  * has an answer, where each answer came from, and which actions are offered. A
  * 409 from any of the three writes means the form has already moved on, and the
@@ -232,6 +135,7 @@ export function IntakeReviewPanel(props: { patientId: string; assignmentId: stri
   const correction = useRequestIntakeCorrection(patientId, assignmentId)
   const accept = useAcceptIntakeAssignment(patientId, assignmentId)
   const entry = useEnterIntakeAnswer(patientId, assignmentId)
+  const { data: artifacts } = useIntakeAssignmentArtifacts(patientId, assignmentId)
   const [selected, setSelected] = useState<string[]>([])
   const [note, setNote] = useState("")
   const [exporting, setExporting] = useState(false)
@@ -300,7 +204,9 @@ export function IntakeReviewPanel(props: { patientId: string; assignmentId: stri
 
       <ul className="mt-4" data-testid="intake-review-items">
         {items.map((item) => (
-          <ReviewItemRow key={item.id} item={item} selectable={isSubmitted}
+          <ReviewItemRow key={item.id} item={item} form={data.form} selectable={isSubmitted}
+            signatures={data.signatures.filter((s) => s.item_id === item.id)}
+            artifacts={(artifacts ?? []).filter((a) => a.item_id === item.id)}
             selected={selected.includes(item.id)} onSelect={onSelect} saving={entry.isPending}
             canEnter={canEnter && item.item_type !== "consent_document"}
             onSaveEntry={(itemId, text) => entry.mutate({ itemId, value: { text } })} />

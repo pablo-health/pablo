@@ -76,6 +76,7 @@ from ..services.patient_intake_review_service import (
     ReviewStateError,
     UnknownItemError,
 )
+from .patient_intake import intake_form
 from .patient_intake_assignments import (
     assignment_response,
     get_clinician_intake_assignment_service,
@@ -145,9 +146,12 @@ def get_intake_review(
     """The whole form as the clinician reviews it.
 
     Every question with what it currently holds, who put it there, and how
-    many earlier answers it replaced; what has been signed; and the log of
-    what has been asked for and done. Wider than the plain chart read beside
-    it, which is why it is audited under an action of its own.
+    many earlier answers it replaced; what has been signed; the log of what
+    has been asked for and done; and the wording the engine owns — each
+    measure's items and anchors, the reason prompt, the name and date of
+    birth the patient was asked to confirm — so the form can be drawn back
+    the way the patient saw it. Wider than the plain chart read beside it,
+    which is why it is audited under an action of its own.
 
     Signatures come back by presence: a form with no consent document on it
     hands back an empty list rather than a section explaining its own
@@ -164,6 +168,7 @@ def get_intake_review(
     saved = assignments.answers_for_clinician(assignment_id, user.id)
     replaced = reviews.superseded_counts(assignment_id, user.id)
     base = assignment_response(assignments, assignment, patient_id)
+    rows = assignments.items(str(assignment["version_id"]))
 
     audit.log(
         action=AuditAction.INTAKE_REVIEW_VIEWED,
@@ -192,13 +197,14 @@ def get_intake_review(
                 provenance=_provenance(assignments, assignment_id, user.id, str(row["id"])),
                 superseded_count=replaced.get(str(row["id"]), 0),
             )
-            for row in assignments.items(str(assignment["version_id"]))
+            for row in rows
         ],
         signatures=[
             signature_response(row)
             for row in signatures.list_live_for_assignment(assignment_id, patient_id)
         ],
         events=[_event_response(row) for row in reviews.events(assignment_id, user.id)],
+        form=intake_form(patient, _instrument_codes(rows)),
     )
 
 
@@ -441,6 +447,18 @@ def _validate_entry(
         validate_answer(config, value)
     except AnswerError as exc:
         raise UnprocessableEntityError(str(exc), {"item_id": item_id}) from exc
+
+
+def _instrument_codes(rows: list[dict[str, object]]) -> list[str]:
+    """The measures this form asks, in the order it asks them."""
+    codes: list[str] = []
+    for row in rows:
+        if row["item_type"] != "instrument":
+            continue
+        code = stored_config(row["config"]).get("code")
+        if isinstance(code, str):
+            codes.append(code)
+    return codes
 
 
 def _provenance(

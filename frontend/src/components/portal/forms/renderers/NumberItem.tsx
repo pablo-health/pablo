@@ -21,12 +21,12 @@ function boundOf(config: Record<string, unknown>, key: "min" | "max"): number | 
   return typeof config[key] === "number" ? (config[key] as number) : undefined
 }
 
-function unitOf(config: Record<string, unknown>): string | null {
+export function unitOf(config: Record<string, unknown>): string | null {
   const unit = typeof config.unit === "string" ? config.unit.trim() : ""
   return unit === "" ? null : unit
 }
 
-function valueIn(value: AnswerValue | null): number | null {
+export function valueIn(value: AnswerValue | null): number | null {
   return typeof value?.value === "number" ? value.value : null
 }
 

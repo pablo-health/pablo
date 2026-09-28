@@ -103,6 +103,25 @@ export function useIntakeArtifacts(patientId: string | undefined, token?: string
 }
 
 /**
+ * The files one form collected, for the review that draws them in place.
+ *
+ * The same key the grouping above reads under, so a chart that has already
+ * listed the files answers this from the cache instead of making a second
+ * audited read.
+ */
+export function useIntakeAssignmentArtifacts(
+  patientId: string,
+  assignmentId: string,
+  token?: string,
+) {
+  return useAuthQuery<IntakeChartArtifact[]>({
+    queryKey: intakeArtifactKeys.forAssignment(patientId, assignmentId),
+    queryFn: () => listIntakeArtifacts(patientId, assignmentId, token),
+    retry: false,
+  })
+}
+
+/**
  * Send a published version of a form to this patient.
  *
  * Invalidates the assignments list, which is what the chart reads to show

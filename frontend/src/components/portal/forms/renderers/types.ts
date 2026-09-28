@@ -4,8 +4,10 @@
  * What a renderer is, and what the walk gives it.
  *
  * One renderer per item type, looked up in the registry. A new item type is
- * a renderer added there and nothing else: the walk, the review screen and
- * the save path have no list of types between them.
+ * a renderer added there, plus the read-only view the chart draws it with
+ * (`components/patients/intakeReview/registry.ts`, whose test fails on a
+ * type with no view): the walk, the review screen and the save path have no
+ * list of types between them.
  *
  * **Most renderers only collect a value.** They call `onChange`, the walk
  * saves it on Continue, and they never touch the network. A consent document

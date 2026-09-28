@@ -34,12 +34,12 @@ import type { AnswerValue, ItemRenderer, ItemRendererProps } from "./types"
 /** Matches the route's own cap on a correction. */
 const CORRECTIONS_MAX = 4_000
 
-function confirmedIn(value: AnswerValue | null): boolean | null {
+export function confirmedIn(value: AnswerValue | null): boolean | null {
   const flag = value?.name_confirmed
   return typeof flag === "boolean" ? flag : null
 }
 
-function correctionsIn(value: AnswerValue | null): string {
+export function correctionsIn(value: AnswerValue | null): string {
   const text = value?.corrections
   return typeof text === "string" ? text : ""
 }

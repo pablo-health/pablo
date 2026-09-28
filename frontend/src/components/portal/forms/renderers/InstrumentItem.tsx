@@ -33,7 +33,7 @@ function codeOf(config: Record<string, unknown>): string | null {
   return typeof config.code === "string" ? config.code : null
 }
 
-function instrumentFor(
+export function instrumentFor(
   config: Record<string, unknown>,
   form: IntakeForm | null,
 ): IntakeInstrument | null {
@@ -42,7 +42,7 @@ function instrumentFor(
   return form.instruments.find((candidate) => candidate.code === code) ?? null
 }
 
-function scoresIn(value: AnswerValue | null): Record<string, number> {
+export function scoresIn(value: AnswerValue | null): Record<string, number> {
   const scores = value?.item_scores
   if (typeof scores !== "object" || scores === null) return {}
   return Object.fromEntries(

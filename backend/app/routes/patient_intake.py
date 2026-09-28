@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Protocol
 
 from fastapi import APIRouter, Depends, Request, status
 from pydantic import BaseModel
@@ -79,6 +79,8 @@ from ..services.audit_service import AuditService, get_audit_service
 from ..utcnow import utc_now
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from ..repositories.outcome_measure import OutcomeMeasureRepository
     from ..repositories.patient import PatientRepository
     from ..repositories.patient_intake_submission import PatientIntakeSubmissionRepository
@@ -148,6 +150,44 @@ def _instrument_form(code: str) -> IntakeInstrumentResponse:
     )
 
 
+class _Identified(Protocol):
+    """The three chart fields the form asks a patient to confirm."""
+
+    @property
+    def first_name(self) -> str: ...
+    @property
+    def last_name(self) -> str: ...
+    @property
+    def date_of_birth(self) -> str | None: ...
+
+
+def intake_form(own: _Identified, instrument_codes: Iterable[str]) -> IntakeFormResponse:
+    """The wording a patient filled a form in against, for *own*'s chart.
+
+    One builder for both sides of the room: the portal hands it to the
+    patient before they answer, and the clinician's review hands the same
+    thing back beside the answers, so a question and the answer read against
+    it can never come from two different copies of the words.
+
+    A code with no wording in the registry is left out rather than guessed
+    at. The renderer on either side reads a missing measure as a step it
+    cannot draw.
+    """
+    return IntakeFormResponse(
+        identity=IntakeIdentityResponse(
+            first_name=own.first_name,
+            last_name=own.last_name,
+            date_of_birth=own.date_of_birth,
+        ),
+        reason_prompt=_REASON_PROMPT,
+        instruments=[
+            _instrument_form(code)
+            for code in dict.fromkeys(instrument_codes)
+            if code in INSTRUMENT_REGISTRY and code in ITEM_TEXT
+        ],
+    )
+
+
 @router.get("/form", response_model=IntakeFormResponse)
 def get_intake_form(
     request: Request,
@@ -177,15 +217,7 @@ def get_intake_form(
         resource_id=patient.patient_id,
     )
 
-    return IntakeFormResponse(
-        identity=IntakeIdentityResponse(
-            first_name=own.first_name,
-            last_name=own.last_name,
-            date_of_birth=own.date_of_birth,
-        ),
-        reason_prompt=_REASON_PROMPT,
-        instruments=[_instrument_form(code) for code in _FORM_INSTRUMENTS],
-    )
+    return intake_form(own, _FORM_INSTRUMENTS)
 
 
 @router.post(

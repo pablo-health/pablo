@@ -33,6 +33,21 @@ export async function listIntakeDocuments(
   return get<IntakeDocument[]>(`${ENDPOINT}${query}`, token)
 }
 
+/**
+ * One version of a document, by its id.
+ *
+ * What the chart reads to show a signed consent item with the words that
+ * were on the screen: a form pins the exact version it asks for, so this is
+ * the text the patient signed against. Not a disclosure — the words are the
+ * practice's own and the same for everybody.
+ */
+export async function getIntakeDocument(
+  documentId: string,
+  token?: string
+): Promise<IntakeDocument> {
+  return get<IntakeDocument>(`${ENDPOINT}/${documentId}`, token)
+}
+
 export async function createIntakeDocument(
   input: CreateDocumentInput,
   token?: string
