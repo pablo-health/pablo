@@ -280,8 +280,8 @@ describe("PatientForm", () => {
     })
   })
 
-  describe("Address and sex on insurance card", () => {
-    it("submits address and sex fields", async () => {
+  describe("Address", () => {
+    it("submits address fields", async () => {
       const user = userEvent.setup()
       const { Wrapper } = createWrapper()
       const onOpenChange = vi.fn()
@@ -299,8 +299,6 @@ describe("PatientForm", () => {
       await user.type(screen.getByLabelText(/city/i), "Springfield")
       await user.type(screen.getByLabelText(/state/i), "IL")
       await user.type(screen.getByLabelText(/zip/i), "62704")
-      await user.click(screen.getByRole("combobox", { name: /sex on insurance card/i }))
-      await user.click(screen.getByRole("option", { name: "Female" }))
 
       await user.click(screen.getByRole("button", { name: /create patient/i }))
 
@@ -311,14 +309,13 @@ describe("PatientForm", () => {
             city: "Springfield",
             state: "IL",
             postal_code: "62704",
-            sex: "F",
           }),
           undefined
         )
       })
     })
 
-    it("pre-fills address and sex in edit mode", () => {
+    it("pre-fills address in edit mode", () => {
       const { Wrapper } = createWrapper()
 
       render(
@@ -340,9 +337,43 @@ describe("PatientForm", () => {
 
       expect(screen.getByLabelText(/address line 1/i)).toHaveValue("456 Oak Ave")
       expect(screen.getByLabelText(/city/i)).toHaveValue("Shelbyville")
-      expect(screen.getByRole("combobox", { name: /sex on insurance card/i })).toHaveTextContent(
-        "Male"
+    })
+  })
+
+  describe("Sex on insurance card", () => {
+    // Only a claim reads it, so the coverage dialog asks for it instead.
+    it("is not asked for on the client form", () => {
+      const { Wrapper } = createWrapper()
+
+      render(<PatientForm mode="create" open={true} onOpenChange={vi.fn()} />, {
+        wrapper: Wrapper,
+      })
+
+      expect(screen.queryByText(/sex/i)).not.toBeInTheDocument()
+    })
+
+    it("leaves a value already on file alone when the client is edited", async () => {
+      const user = userEvent.setup()
+      const { Wrapper } = createWrapper()
+
+      vi.mocked(patientsApi.updatePatient).mockResolvedValue({ ...mockPatient, sex: "F" })
+
+      render(
+        <PatientForm
+          mode="edit"
+          patient={{ ...mockPatient, sex: "F" }}
+          open={true}
+          onOpenChange={vi.fn()}
+        />,
+        { wrapper: Wrapper }
       )
+
+      await user.click(screen.getByRole("button", { name: /update patient/i }))
+
+      await waitFor(() => {
+        expect(patientsApi.updatePatient).toHaveBeenCalled()
+      })
+      expect(vi.mocked(patientsApi.updatePatient).mock.calls[0][1]).not.toHaveProperty("sex")
     })
   })
 
