@@ -48,7 +48,8 @@ DEFAULT_SUBJECT = "Your sign-in link"
 DEFAULT_BODY = (
     "Use this link to sign in:\n\n"
     "{{portal_link}}\n\n"
-    "You will be asked for the code we texted you. The link works for {{link_expiry}}."
+    "When you open the link, we'll text a code to your phone. "
+    "The link works for {{link_expiry}}."
 )
 
 #: Stands in for the link wherever a template is rendered to be looked at
@@ -136,6 +137,9 @@ def render(template: InviteTemplate, context: InviteContext) -> RenderedInvite:
 def describe_duration(seconds: int) -> str:
     """``900`` -> ``15 minutes``: the link lifetime as a client reads it."""
     minutes = max(1, round(seconds / 60))
+    if minutes % 1440 == 0:
+        days = minutes // 1440
+        return "1 day" if days == 1 else f"{days} days"
     if minutes % 60 == 0:
         hours = minutes // 60
         return "1 hour" if hours == 1 else f"{hours} hours"

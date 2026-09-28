@@ -299,7 +299,9 @@ class TestOnlyAMatchMints:
         _recover(client, ACTIVE.email or "")
 
         assert len(delivery.sent) == 1
-        assert len(sms.sent) == 1
+        # Nothing is texted at recover time: the code goes to the chart's
+        # number when the patient opens the link and asks for it.
+        assert sms.sent == []
 
     def test_the_link_goes_to_the_address_on_the_chart(
         self, client: TestClient, delivery: CapturingInviteDelivery
@@ -312,14 +314,6 @@ class TestOnlyAMatchMints:
         _recover(client, (ACTIVE.email or "").upper())
 
         assert delivery.sent[0].to_email == ACTIVE.email
-
-    def test_the_code_goes_to_the_phone_on_the_chart(
-        self, client: TestClient, sms: FakeSmsGateway
-    ) -> None:
-        """The second factor, and the reason a mailed link is not enough."""
-        _recover(client, ACTIVE.email or "")
-
-        assert sms.sent[0].to == ACTIVE.phone
 
     def test_the_response_carries_no_token_and_no_link(self, client: TestClient) -> None:
         response = _recover(client, ACTIVE.email or "")
@@ -642,4 +636,5 @@ def test_the_minted_invitation_redeems_like_any_other(
     assert challenge.consumed is False
     assert challenge.attempts == 0
     assert challenge.expires_at > int(time.time())
-    assert challenge.otp_hash
+    # No code until the patient asks for one, as with any invitation.
+    assert challenge.otp_hash is None

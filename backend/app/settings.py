@@ -1162,6 +1162,16 @@ class Settings(BaseSettings):
             "emailing a dead one."
         ),
     )
+    portal_invite_ttl_seconds: int = Field(
+        default=604_800,
+        ge=60,
+        description=(
+            "How long a portal invitation link keeps working. The link alone "
+            "never signs anyone in — the patient still has to ask for a "
+            "texted code from the page it opens, and that code lasts 15 "
+            "minutes — so this can be days. Default 7 days."
+        ),
+    )
     portal_session_max_lifetime_seconds: int = Field(
         default=2_592_000,
         ge=60,
@@ -1213,6 +1223,11 @@ class Settings(BaseSettings):
         default=20,
         ge=1,
         description="Max portal invitation redemptions per source address per minute.",
+    )
+    portal_request_code_ip_rate_per_min: int = Field(
+        default=20,
+        ge=1,
+        description="Max portal sign-in code requests per source address per minute.",
     )
     portal_refresh_ip_rate_per_min: int = Field(
         default=60,

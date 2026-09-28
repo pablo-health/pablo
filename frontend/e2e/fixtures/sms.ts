@@ -12,11 +12,14 @@
  *
  * - the magic link arrives as email, so it comes from the mail fixture:
  *   `firstLink(await mail.waitFor(patientEmail))` (see `mail.ts`);
- * - the step-up code arrives as a text, so it comes from here:
- *   `stepUpCode(await sms.waitFor(patientPhone))`.
+ * - the step-up code is texted when the patient asks for it — "Text me a
+ *   code" on the page the link opens, or `/api/patient/auth/request-code`
+ *   with the link's token — so it comes from here after that:
+ *   `stepUpCode(await sms.waitFor(patientPhone))`. Nothing is texted when the
+ *   invitation is sent.
  *
- * Post both to `/api/patient/auth/redeem` (or open the link and type the code
- * into the page) and the response carries the patient's session token.
+ * Post both to `/api/patient/auth/redeem` (or type the code into the page)
+ * and the response carries the patient's session token.
  *
  * The compose stack wires this up with `PORTAL_SMS_GATEWAY=capture` and
  * `PORTAL_SMS_CAPTURE_URL`; the backend gateway that posts here refuses to
@@ -51,16 +54,25 @@ export const sms = {
     await call("POST", "/_fake/reset")
   },
 
+  /** How many messages `number` has received so far. */
+  async countFor(number: string): Promise<number> {
+    return (await this.received()).filter((m) => m.to === number).length
+  },
+
   /**
    * The newest message to `number`, waited for — the send happens on the
    * request thread, but the capture is a second process away.
+   *
+   * `after` is how many messages that number had already received; the wait
+   * is for one beyond them, so a resend is not answered with the code it
+   * replaced.
    */
-  async waitFor(number: string, timeoutMs = 10_000): Promise<CapturedSms> {
+  async waitFor(number: string, timeoutMs = 10_000, after = 0): Promise<CapturedSms> {
     const deadline = Date.now() + timeoutMs
     for (;;) {
       const matching = (await this.received()).filter((m) => m.to === number)
       const newest = matching.at(-1)
-      if (newest !== undefined) return newest
+      if (newest !== undefined && matching.length > after) return newest
       if (Date.now() >= deadline) {
         throw new Error(`no message for ${number} within ${timeoutMs}ms`)
       }

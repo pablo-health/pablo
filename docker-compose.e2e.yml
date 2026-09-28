@@ -138,6 +138,7 @@ services:
       # whole suite rather than one household. The engine's own defaults
       # (app.settings) are unchanged; this lane alone runs generous.
       - PORTAL_REDEEM_IP_RATE_PER_MIN=200
+      - PORTAL_REQUEST_CODE_IP_RATE_PER_MIN=200
       - PORTAL_REFRESH_IP_RATE_PER_MIN=600
       - PORTAL_PRACTICE_RESOLVE_IP_RATE_PER_MIN=300
       - PORTAL_RECOVER_IP_RATE_PER_HOUR=200

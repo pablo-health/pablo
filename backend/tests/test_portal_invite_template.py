@@ -147,11 +147,33 @@ def test_a_template_that_cannot_be_sent_says_why(template: InviteTemplate, probl
     assert any(problem in p for p in template_problems(template))
 
 
+def test_the_default_wording_says_when_the_code_arrives() -> None:
+    """The code is texted when the link is opened, so the email must not say
+    it has already been sent."""
+    rendered = render(
+        DEFAULT_TEMPLATE,
+        InviteContext(
+            portal_link="https://portal.example.test/x#invite=t",
+            client_first_name="",
+            practice_name="",
+            forms=[],
+            link_expiry="7 days",
+        ),
+    )
+    assert "When you open the link, we'll text a code to your phone." in rendered.text
+    assert "texted you" not in rendered.text
+    assert "The link works for 7 days." in rendered.text
+
+
 def test_describe_duration() -> None:
     assert describe_duration(900) == "15 minutes"
     assert describe_duration(3600) == "1 hour"
     assert describe_duration(7200) == "2 hours"
     assert describe_duration(60) == "1 minute"
+    assert describe_duration(86_400) == "1 day"
+    assert describe_duration(604_800) == "7 days"
+    # Not a whole number of days: stays in hours rather than rounding.
+    assert describe_duration(129_600) == "36 hours"
 
 
 # ── the routes ──────────────────────────────────────────────────────────

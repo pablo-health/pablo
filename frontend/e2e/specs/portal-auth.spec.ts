@@ -24,14 +24,17 @@
  * backend/tests/test_portal_auth_routes.py and a round trip here.
  */
 
+import type { APIRequestContext, APIResponse } from "@playwright/test"
 import { test, expect } from "../fixtures/auth"
 import type { ApiClient } from "../fixtures/api"
 import { firstLink, mail } from "../fixtures/mail"
+import { askForCodeInPage, requestStepUpCode, signInFromLink } from "../fixtures/portal"
 import { givePatient } from "../fixtures/scenarios"
 import { sms, stepUpCode } from "../fixtures/sms"
 import { BACKEND_URL } from "../fixtures/stack"
 
 const REDEEM_PATH = "/api/patient/auth/redeem"
+const REQUEST_CODE_PATH = "/api/patient/auth/request-code"
 const PATIENT_ROUTE = "/api/patient/intake/form"
 const CLINICIAN_ROUTE = "/api/patients"
 
@@ -48,14 +51,16 @@ interface Invitation {
   /** The whole link, exactly as the email carried it. */
   link: string
   token: string
-  otp: string
+  phone: string
+  email: string
 }
 
 /**
- * Invite a patient, then read back both factors the way the patient does.
+ * Invite a patient, then read back the link the way the patient does.
  *
  * The link arrives with its token in the URL fragment — a fragment is never
- * sent to a server, which is why the token travels in one.
+ * sent to a server, which is why the token travels in one. The code does not
+ * exist yet: it is texted when the patient asks for it.
  */
 async function givePortalInvitation(api: ApiClient): Promise<Invitation> {
   const { email, phone } = contactDetails()
@@ -67,35 +72,225 @@ async function givePortalInvitation(api: ApiClient): Promise<Invitation> {
   const token = new URLSearchParams(new URL(link).hash.slice(1)).get("invite")
   expect(token, `the invitation email carries a token: ${link}`).toBeTruthy()
 
-  return {
-    patientId: patient.id,
-    link,
-    token: token as string,
-    otp: stepUpCode(await sms.waitFor(phone)),
-  }
+  return { patientId: patient.id, link, token: token as string, phone, email }
 }
+
+/**
+ * Long enough for a text sent on the request thread to reach the capture
+ * gateway. Asserting "nothing arrived" straight after the request would pass
+ * even if a text were on its way.
+ */
+async function settle(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 1_500))
+}
+
+async function redeem(
+  request: APIRequestContext,
+  invitation: Invitation,
+  otp: string,
+): Promise<APIResponse> {
+  return request.post(`${BACKEND_URL}${REDEEM_PATH}`, {
+    data: { token: invitation.token, otp },
+    failOnStatusCode: false,
+  })
+}
+
+/** A six-digit code that is certainly not `code`. */
+function notThe(code: string): string {
+  return code === "000000" ? "111111" : "000000"
+}
+
+test("an invitation texts nothing until the patient asks for a code @portal", async ({
+  api,
+  request,
+}) => {
+  const invitation = await givePortalInvitation(api)
+
+  await settle()
+  expect(await sms.countFor(invitation.phone), "nothing is texted at invite time").toBe(0)
+
+  // Without a code there is nothing to redeem with.
+  const early = await request.post(`${BACKEND_URL}${REDEEM_PATH}`, {
+    data: { token: invitation.token, otp: "123456" },
+    failOnStatusCode: false,
+  })
+  expect(early.status()).toBe(401)
+
+  const otp = await requestStepUpCode(invitation)
+  const redeemed = await request.post(`${BACKEND_URL}${REDEEM_PATH}`, {
+    data: { token: invitation.token, otp },
+  })
+  expect(redeemed.status(), "the requested code redeems").toBe(200)
+})
+
+test("a new code retires the one before it @portal", async ({ api, request }) => {
+  const invitation = await givePortalInvitation(api)
+
+  const first = await requestStepUpCode(invitation)
+  let second = first
+  // Six random digits can repeat; ask until they differ, so what is asserted
+  // below is retirement rather than a coincidence.
+  while (second === first) second = await requestStepUpCode(invitation)
+
+  const stale = await request.post(`${BACKEND_URL}${REDEEM_PATH}`, {
+    data: { token: invitation.token, otp: first },
+    failOnStatusCode: false,
+  })
+  expect(stale.status(), "the earlier code no longer works").toBe(401)
+
+  const fresh = await request.post(`${BACKEND_URL}${REDEEM_PATH}`, {
+    data: { token: invitation.token, otp: second },
+  })
+  expect(fresh.status(), "the newest code redeems").toBe(200)
+})
+
+test("asking for a code answers with nothing @portal", async ({ api, request }) => {
+  const invitation = await givePortalInvitation(api)
+  const before = await sms.countFor(invitation.phone)
+
+  const asked = await request.post(`${BACKEND_URL}${REQUEST_CODE_PATH}`, {
+    data: { token: invitation.token },
+  })
+
+  expect(asked.status()).toBe(202)
+  const body = await asked.text()
+  expect(body).toBe("")
+  // The code went to the phone, and neither it nor the number came back.
+  const code = stepUpCode(await sms.waitFor(invitation.phone, 10_000, before))
+  expect(body).not.toContain(code)
+  expect(body).not.toContain(invitation.phone)
+})
+
+test("the attempt cap still holds after a new code is sent @portal", async ({
+  api,
+  request,
+}) => {
+  const invitation = await givePortalInvitation(api)
+
+  // Three wrong guesses against the first code, a resend, then two more
+  // against the second: five in all, the engine's cap.
+  const first = await requestStepUpCode(invitation)
+  for (let i = 0; i < 3; i++) {
+    expect((await redeem(request, invitation, notThe(first))).status()).toBe(401)
+  }
+  const second = await requestStepUpCode(invitation)
+  for (let i = 0; i < 2; i++) {
+    expect((await redeem(request, invitation, notThe(second))).status()).toBe(401)
+  }
+
+  // A resend did not buy more guesses: the right code is now refused, and
+  // so is a request for another one.
+  expect((await redeem(request, invitation, second)).status(), "capped").toBe(401)
+  const again = await request.post(`${BACKEND_URL}${REQUEST_CODE_PATH}`, {
+    data: { token: invitation.token },
+    failOnStatusCode: false,
+  })
+  expect(again.status(), "a capped invitation cannot ask for a code").toBe(401)
+})
+
+test("recovery emails a link, texts nothing, and the link signs in @portal", async ({
+  api,
+  page,
+  request,
+}) => {
+  // A patient who has been invited, so the practice has granted access.
+  const invitation = await givePortalInvitation(api)
+  const slug = new URL(invitation.link).pathname.split("/").pop() as string
+  const letters = async () =>
+    (await mail.received()).filter((m) => m.to.includes(invitation.email)).length
+  const lettersBefore = await letters()
+  const textsBefore = await sms.countFor(invitation.phone)
+
+  const asked = await request.post(`${BACKEND_URL}/api/portal/practices/${slug}/recover`, {
+    data: { email: invitation.email },
+  })
+  expect(asked.status(), "recovery always accepts").toBe(202)
+
+  // A new email, and no text.
+  await expect.poll(letters, { timeout: 10_000 }).toBeGreaterThan(lettersBefore)
+  await settle()
+  expect(await sms.countFor(invitation.phone), "nothing is texted at recover time").toBe(
+    textsBefore,
+  )
+
+  const recovered = firstLink(await mail.waitFor(invitation.email))
+  expect(recovered).not.toBe(invitation.link)
+  await signInFromLink(page, recovered, invitation.phone)
+})
+
+test("a link that can no longer be used offers a new one @portal", async ({
+  api,
+  page,
+  request,
+}) => {
+  const invitation = await givePortalInvitation(api)
+  const slug = new URL(invitation.link).pathname.split("/").pop() as string
+
+  // Spend it at the API first, so the browser arrives with a used link.
+  const otp = await requestStepUpCode(invitation)
+  expect((await redeem(request, invitation, otp)).status()).toBe(200)
+  const textsAfterRedeem = await sms.countFor(invitation.phone)
+
+  await page.goto(invitation.link)
+  await page.getByTestId("portal-shell-request-code").click()
+
+  await expect(page.getByTestId("portal-shell-link-ended")).toBeVisible()
+  await expect(page.getByTestId("portal-shell-link-ended-recover")).toHaveAttribute(
+    "href",
+    new RegExp(`/${slug}/recover$`),
+  )
+  await settle()
+  expect(await sms.countFor(invitation.phone), "a spent link texts nobody").toBe(
+    textsAfterRedeem,
+  )
+})
+
+test("a wrong code offers the way to a new link @portal", async ({ api, page }) => {
+  const invitation = await givePortalInvitation(api)
+  const slug = new URL(invitation.link).pathname.split("/").pop() as string
+
+  await page.goto(invitation.link)
+  const otp = await askForCodeInPage(page, invitation.phone)
+  await page.getByTestId("portal-shell-otp-input").fill(notThe(otp))
+  await page.getByTestId("portal-shell-otp-submit").click()
+
+  await expect(page.getByTestId("portal-shell-otp-error")).toBeVisible()
+  await expect(page.getByTestId("portal-shell-otp-recover")).toHaveAttribute(
+    "href",
+    new RegExp(`/${slug}/recover$`),
+  )
+})
 
 test("a single-use invitation cannot be redeemed twice @portal", async ({ api, request }) => {
   const invitation = await givePortalInvitation(api)
+  const otp = await requestStepUpCode(invitation)
 
   const first = await request.post(`${BACKEND_URL}${REDEEM_PATH}`, {
-    data: { token: invitation.token, otp: invitation.otp },
+    data: { token: invitation.token, otp },
   })
   expect(first.status(), "first redemption mints a session").toBe(200)
   expect((await first.json()).session_token).toBeTruthy()
 
   const replay = await request.post(`${BACKEND_URL}${REDEEM_PATH}`, {
-    data: { token: invitation.token, otp: invitation.otp },
+    data: { token: invitation.token, otp },
     failOnStatusCode: false,
   })
   expect(replay.status(), "the same invitation cannot be spent twice").toBe(401)
+
+  // And a spent invitation texts nobody anything.
+  const again = await request.post(`${BACKEND_URL}${REQUEST_CODE_PATH}`, {
+    data: { token: invitation.token },
+    failOnStatusCode: false,
+  })
+  expect(again.status(), "a spent link cannot ask for a code").toBe(401)
 })
 
 test("a leaked link without the step-up code mints nothing @portal", async ({ api, request }) => {
   const invitation = await givePortalInvitation(api)
+  const otp = await requestStepUpCode(invitation)
 
   // The §164.312(d) point: possession of the link is one factor.
-  const wrongCode = invitation.otp === "000000" ? "111111" : "000000"
+  const wrongCode = otp === "000000" ? "111111" : "000000"
   const wrong = await request.post(`${BACKEND_URL}${REDEEM_PATH}`, {
     data: { token: invitation.token, otp: wrongCode },
     failOnStatusCode: false,
@@ -117,7 +312,7 @@ test("a leaked link without the step-up code mints nothing @portal", async ({ ap
   // And the patient, who has both factors, is not locked out by someone
   // else's wrong guess — the attempt cap is several, not one.
   const legitimate = await request.post(`${BACKEND_URL}${REDEEM_PATH}`, {
-    data: { token: invitation.token, otp: invitation.otp },
+    data: { token: invitation.token, otp },
   })
   expect((await legitimate.json()).session_token, "the real code still redeems").toBeTruthy()
 })
@@ -128,7 +323,7 @@ test("a patient session opens patient routes and no clinician one @portal", asyn
 }) => {
   const invitation = await givePortalInvitation(api)
   const redeemed = await request.post(`${BACKEND_URL}${REDEEM_PATH}`, {
-    data: { token: invitation.token, otp: invitation.otp },
+    data: { token: invitation.token, otp: await requestStepUpCode(invitation) },
   })
   const sessionToken = (await redeemed.json()).session_token as string
   const headers = { Authorization: `Bearer ${sessionToken}` }
@@ -176,7 +371,8 @@ test("the invite route never returns a credential @portal", async ({ api }) => {
 
 /**
  * The whole sign-in, as the patient performs it: open the link the email
- * carried, type the code the text carried, and arrive in the portal.
+ * carried, ask for a code, type the code the text carried, and arrive in the
+ * portal.
  *
  * The other tests in this file post to the redeem route directly, which
  * proves the credential rules but not that the link goes anywhere. This one
@@ -187,7 +383,10 @@ test("a patient signs in from the link in their email @portal", async ({ api, pa
 
   await page.goto(invitation.link)
 
-  await page.getByTestId("portal-shell-otp-input").fill(invitation.otp)
+  // The page offers to text a code; it does not arrive by itself.
+  await expect(page.getByTestId("portal-shell-request-code")).toHaveText("Text me a code")
+  const otp = await askForCodeInPage(page, invitation.phone)
+  await page.getByTestId("portal-shell-otp-input").fill(otp)
   await page.getByTestId("portal-shell-otp-submit").click()
 
   await expect(page.getByTestId("portal-shell-active")).toBeVisible()

@@ -126,6 +126,7 @@ DPOP_UNCOVERABLE: dict[str, str] = {
     # same footing. Both are two-factor in their own right — a magic link
     # plus a texted code — and neither is reached by a companion device. ---
     "POST /api/patient/auth/redeem": "pre-auth: exchanges a magic link + code for a session",
+    "POST /api/patient/auth/request-code": "pre-auth: texts a sign-in code for a magic link",
     "POST /api/patient/auth/refresh": "pre-auth: rotates a patient session, no user JWT",
     # --- The portal shell's first call, made before any session exists: a
     # slug in, a practice's own display name out. ---

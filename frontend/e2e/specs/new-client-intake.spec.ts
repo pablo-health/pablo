@@ -20,9 +20,9 @@ import type { Page } from "@playwright/test"
 import { test, expect } from "../fixtures/auth"
 import type { ApiClient } from "../fixtures/api"
 import { firstLink, mail } from "../fixtures/mail"
-import { givePortalContactDetails } from "../fixtures/portal"
+import { givePortalContactDetails, requestStepUpCode } from "../fixtures/portal"
 import { givePatient } from "../fixtures/scenarios"
-import { sms, stepUpCode } from "../fixtures/sms"
+import { sms } from "../fixtures/sms"
 
 const PREVIEW_LINK = "[personal sign-in link]"
 const SEEDED_FORM = "Intake"
@@ -36,7 +36,7 @@ const WORDING = {
     "{{forms}}",
     "",
     "Sign in here: {{portal_link}}",
-    "We will text you a code. The link works for {{link_expiry}}.",
+    "When you open the link, we'll text a code to your phone. The link works for {{link_expiry}}.",
   ].join("\n"),
 }
 
@@ -104,7 +104,7 @@ test.describe("A new client's intake", () => {
     expect(previewText).toContain("Hi Robin,")
     expect(previewText).toContain(`- ${SEEDED_FORM}`)
     expect(previewText).toContain(PREVIEW_LINK)
-    expect(previewText).toContain("The link works for 15 minutes.")
+    expect(previewText).toContain("The link works for 7 days.")
 
     // Nothing has gone anywhere yet.
     expect((await mail.received()).filter((m) => m.to.includes(email))).toEqual([])
@@ -122,8 +122,11 @@ test.describe("A new client's intake", () => {
     // SMTP carries lines as CRLF; that is the transport, not the wording.
     const received = arrived.text.replace(/\r\n/g, "\n").trim()
     expect(received).toBe(previewText.replace(PREVIEW_LINK, link).trim())
-    // And it is a working invitation: the code for it went by text.
-    expect(stepUpCode(await sms.waitFor(phone))).toMatch(/^\d{6}$/)
+    // And it is a working invitation: nothing was texted yet, and the link
+    // gets a code the moment one is asked for.
+    expect(await sms.countFor(phone)).toBe(0)
+    const token = new URLSearchParams(new URL(link).hash.slice(1)).get("invite")
+    expect(await requestStepUpCode({ token: token as string, phone })).toMatch(/^\d{6}$/)
 
     await page.getByRole("button", { name: "Done" }).click()
     await expect(page.getByRole("dialog")).not.toBeVisible()

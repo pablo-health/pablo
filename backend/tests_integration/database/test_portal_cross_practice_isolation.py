@@ -232,8 +232,12 @@ def _issue_and_redeem(
             sessions=DbPortalSessionStore(session),
             sms=sms,
         )
-        issued = service.issue_invite(patient_id=patient_id, tenant=schema, phone=phone)
+        issued = service.issue_invite(patient_id=patient_id, tenant=schema)
         delivery.send_invite(to_email=email, link=f"{_PORTAL_ORIGIN}/portal#invite={issued.token}")
+        # The patient opens the link and asks for the code. Asked of the
+        # service directly, with the number this helper was given, because
+        # the route's chart read is not what this module is about.
+        service.request_code(token=issued.token, phone_for=lambda _patient_id: phone)
         session.commit()
     finally:
         session.close()

@@ -8,10 +8,10 @@ one resolvable. Both therefore have to open their own tenant-scoped session
 from the SIGNATURE-VERIFIED token's tenant claim, commit it, and close it —
 which, inlined twice, buries the auth logic under transaction plumbing.
 
-This module is that plumbing, named once: a gateway that yields the three
-things those routes need inside one practice (the challenge store, the
-session store, and somewhere to record the redemption), and owns the
-transaction around them.
+This module is that plumbing, named once: a gateway that yields what those
+routes need inside one practice (the challenge store, the session store,
+somewhere to record the redemption, and the chart's number to text a code
+to), and owns the transaction around them.
 
 The seam is also what lets the route tests exercise the real handlers —
 uniform 401s, rotation, revocation — against in-memory stores, while the
@@ -26,10 +26,17 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated, Protocol
 
 from fastapi import Depends, HTTPException, Request, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..auth.service import TenantContext, get_tenant_context
-from ..db import arm_current_patient_id, create_standalone_session, get_db_session
+from ..db import (
+    arm_current_patient_id,
+    create_standalone_session,
+    get_db_session,
+    read_once_as,
+)
+from ..db.models import PatientRow
 from ..models.audit import AuditAction, ResourceType
 from ..repositories.postgres.audit import PostgresAuditRepository
 from ..services.audit_service import AuditService
@@ -57,6 +64,9 @@ class PortalTenantWork:
     #: the attempt counter a wrong code just bumped is the whole point of
     #: the attempt cap, and rolling it back would make guesses free.
     commit: Callable[[], None]
+    #: The mobile number on this patient's chart, or ``None``. Where a
+    #: requested code is texted; it goes to the SMS gateway and nowhere else.
+    step_up_phone: Callable[[str], str | None]
 
 
 class PortalTenantGateway(Protocol):
@@ -98,12 +108,28 @@ class DbPortalTenantGateway:
                 changes={"session_jti": session_jti},
             )
 
+        def _step_up_phone(patient_id: str) -> str | None:
+            # Nobody is signed in yet, so the chart is read as this patient
+            # for one statement and no longer — see ``read_once_as``. The
+            # number goes to the SMS gateway only.
+            rows = read_once_as(
+                session,
+                principal="app.current_patient_id",
+                value=patient_id,
+                statement=select(PatientRow.phone).where(
+                    PatientRow.id == patient_id,
+                    PatientRow.deleted_at.is_(None),
+                ),
+            )
+            return rows[0].phone if rows else None
+
         try:
             yield PortalTenantWork(
                 challenges=DbPortalAuthStore(session, tenant=tenant),
                 sessions=DbPortalSessionStore(session),
                 record_redemption=_record_redemption,
                 commit=session.commit,
+                step_up_phone=_step_up_phone,
             )
         except Exception:
             session.rollback()

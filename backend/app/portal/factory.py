@@ -129,6 +129,7 @@ def portal_config_from_settings() -> PortalAuthConfig:
     settings = get_settings()
     return PortalAuthConfig(
         signing_key=settings.portal_token_signing_key.get_secret_value(),
+        invite_ttl_seconds=settings.portal_invite_ttl_seconds,
         session_max_lifetime_seconds=settings.portal_session_max_lifetime_seconds,
     )
 

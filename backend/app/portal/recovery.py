@@ -4,8 +4,10 @@
 
 ``POST /api/portal/practices/{slug}/recover`` takes an email address and,
 if it belongs to someone this practice has given portal access to, sends
-them a fresh invitation — the same magic link plus texted code the clinician
-sends, minted through the same path with the same lifetime.
+them a fresh invitation — the same magic link the clinician sends, minted
+through the same path with the same lifetime. Nothing is texted here: as
+with any invitation, the code goes to the phone on the chart when the
+patient opens the link and asks for it.
 
 It is the second unauthenticated route on this surface (redemption is the
 first) and the only one whose request body is a piece of personal data the
@@ -22,9 +24,9 @@ person in treatment" is not a fact a stranger gets to test for.
 are the last four digits". A knowledge check would give the caller a second
 answer to read — a different error, a different shape, a different delay —
 and would gate the recovery on something an acquaintance usually knows.
-Possession of the email address is the first factor, and the texted code
-minted alongside the link is the second, which is exactly the pair the
-original invitation used.
+Possession of the email address is the first factor, and the code texted
+to the chart's number when the link is opened is the second, which is
+exactly the pair the original invitation used.
 
 **Only an active grant mints.** Access withdrawn by the practice is not
 recoverable by the person it was withdrawn from — a clinician re-invite is
@@ -45,7 +47,7 @@ nothing, so the remaining attacks are on volume and on the mailbox:
   invitation itself is inert without the code, which goes to a phone the
   caller does not have.
 * *Timing.* A match does more work than a miss — a tenant session, a
-  lookup, an SMS, an email. The windows above are the mitigation rather
+  lookup, an email. The windows above are the mitigation rather
   than constant-time execution: five requests an hour per address is not
   enough samples to time anything, and padding a route that sends real mail
   to a fixed duration would mean either delaying every legitimate recovery
@@ -251,12 +253,11 @@ def _attempt_recovery(  # noqa: PLR0913 — one parameter per injected collabora
         try:
             # Both channels, and somewhere for the link to point, before the
             # first side effect — the same order the clinician's invite
-            # route checks them in.
+            # route checks them in. Nothing is texted here, but a link
+            # whose code can never be sent is no use to anyone.
             delivery.check_ready()
             sms.check_ready()
-            issued = service.issue_invite(
-                patient_id=target.patient_id, tenant=schema, phone=target.phone
-            )
+            issued = service.issue_invite(patient_id=target.patient_id, tenant=schema)
             # To the address ON THE CHART, not the one the caller typed.
             # The two match case-insensitively — that is how the row was
             # found — and sending to the stored value means the recipient is

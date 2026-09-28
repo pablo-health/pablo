@@ -29,7 +29,8 @@ import httpx
 
 from ..services.email_sender import EmailSender, OutboundEmail
 from .delivery import DeliveryNotConfiguredError
-from .invite_email import DEFAULT_TEMPLATE, InviteContext, render
+from .invite_email import DEFAULT_TEMPLATE, InviteContext, describe_duration, render
+from .service import PortalAuthConfig
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,10 @@ _DEFAULT_INVITE = render(
         client_first_name="",
         practice_name="",
         forms=[],
-        link_expiry="15 minutes",
+        # The engine's default lifetime. Built once at import, so it cannot
+        # read settings; a deployment that changes the lifetime and wants it
+        # stated sends practice wording through ``send_rendered_invite``.
+        link_expiry=describe_duration(PortalAuthConfig(signing_key="").invite_ttl_seconds),
     ),
 )
 INVITE_SUBJECT = _DEFAULT_INVITE.subject

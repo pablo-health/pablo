@@ -27,6 +27,7 @@ import {
   signInToPortal,
 } from "../fixtures/portal"
 import { givePatient } from "../fixtures/scenarios"
+import { sms, stepUpCode } from "../fixtures/sms"
 import { BACKEND_URL } from "../fixtures/stack"
 
 const PATIENT_THREADS = "/api/patient/messages/threads"
@@ -238,6 +239,8 @@ test("neither the invite token nor the step-up code ever comes back in a message
   const patient = await givePatient(api, { email, phone })
   const invitation = await givePortalInvitation(api, patient.id, email, phone)
   const sessionToken = await redeemPortalInvitation(request, invitation)
+  // The code that redeemed it: the newest text to this number.
+  const otp = stepUpCode(await sms.waitFor(phone))
   const headers = { Authorization: `Bearer ${sessionToken}` }
 
   const started = await request.post(`${BACKEND_URL}${PATIENT_THREADS}`, {
@@ -268,7 +271,7 @@ test("neither the invite token nor the step-up code ever comes back in a message
   ]
   for (const body of bodies) {
     expect(body).not.toContain(invitation.token)
-    expect(body).not.toContain(invitation.otp)
+    expect(body).not.toContain(otp)
   }
 })
 

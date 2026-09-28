@@ -1419,7 +1419,11 @@ class PortalInviteChallengeRow(Base):
 
     ``otp_hash`` is an HMAC of the one-time code, peppered with the portal
     signing key. The code itself is never stored, so this table on its own
-    yields nothing: a leaked magic link still cannot redeem.
+    yields nothing: a leaked magic link still cannot redeem. It is NULL until
+    the patient opens the link and asks for a code, and each request replaces
+    it; ``code_expires_at`` is that code's window. Rows issued when the code
+    was texted with the invitation carry a hash and no ``code_expires_at``,
+    and their window is ``expires_at``.
 
     Tenant scope is the schema location, as everywhere else here, so there
     is no ``practice_id`` column. No column holds a name, a message or
@@ -1439,9 +1443,10 @@ class PortalInviteChallengeRow(Base):
 
     jti: Mapped[str] = mapped_column(String(36), primary_key=True)
     patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
-    otp_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    otp_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    code_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     attempts: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
     consumed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 

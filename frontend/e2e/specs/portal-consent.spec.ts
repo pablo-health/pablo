@@ -21,8 +21,8 @@ import { expect, test } from "../fixtures/auth"
 import type { Page } from "@playwright/test"
 import type { ApiClient } from "../fixtures/api"
 import { firstLink, mail } from "../fixtures/mail"
+import { requestStepUpCode, signInFromLink } from "../fixtures/portal"
 import { givePatient } from "../fixtures/scenarios"
-import { sms, stepUpCode } from "../fixtures/sms"
 import { BACKEND_URL } from "../fixtures/stack"
 
 const REDEEM_PATH = "/api/patient/auth/redeem"
@@ -148,12 +148,8 @@ async function signIn(
   await api.post(`/api/patients/${patientId}/portal-invite`)
 
   const link = firstLink(await mail.waitFor(email))
-  const otp = stepUpCode(await sms.waitFor(phone))
 
-  await page.goto(link)
-  await page.getByTestId("portal-shell-otp-input").fill(otp)
-  await page.getByTestId("portal-shell-otp-submit").click()
-  await expect(page.getByTestId("portal-shell-active")).toBeVisible()
+  await signInFromLink(page, link, phone)
 }
 
 test.describe("portal consent signatures", () => {
@@ -368,7 +364,7 @@ async function portalSession(
 
   const link = firstLink(await mail.waitFor(email))
   const token = new URLSearchParams(new URL(link).hash.slice(1)).get("invite")
-  const otp = stepUpCode(await sms.waitFor(phone))
+  const otp = await requestStepUpCode({ token: token as string, phone })
 
   const redeemed = await request.post(`${BACKEND_URL}${REDEEM_PATH}`, {
     data: { token, otp },

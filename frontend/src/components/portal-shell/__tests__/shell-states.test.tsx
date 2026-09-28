@@ -26,10 +26,12 @@ const fetchCapabilities = vi.fn()
 const bootstrapSession = vi.fn()
 const redeemAndStore = vi.fn()
 const signOutAndForget = vi.fn()
+const requestSignInCode = vi.fn()
 
 vi.mock("@/lib/portal-shell/api", () => ({
   resolvePortalPractice: (...args: unknown[]) => resolvePortalPractice(...args),
   fetchCapabilities: (...args: unknown[]) => fetchCapabilities(...args),
+  requestSignInCode: (...args: unknown[]) => requestSignInCode(...args),
 }))
 
 vi.mock("@/lib/portal-shell/session", () => ({
@@ -45,8 +47,16 @@ function arriveWithInvitation(token: string, path = "/portal/example-therapy"): 
 
 const REDEEMED = { ok: true, sessionToken: "session-1" }
 
+/** Tap "Text me a code", then type the code that arrived and continue. */
+async function askForACodeAndEnterIt(user: ReturnType<typeof userEvent.setup>, code = "123456") {
+  await user.click(await screen.findByTestId("portal-shell-request-code"))
+  await user.type(await screen.findByTestId("portal-shell-otp-input"), code)
+  await user.click(screen.getByTestId("portal-shell-otp-submit"))
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
+  requestSignInCode.mockResolvedValue({ ok: true })
   window.history.replaceState(null, "", "/portal/example-therapy")
   // The shell registers the engine's own modules when it is imported. A
   // spec about the shell's states drives its own slots instead.
@@ -112,6 +122,98 @@ describe("PortalShell", () => {
     render(<PortalShell slug="example-therapy" />)
 
     expect(await screen.findByTestId("portal-shell-otp")).toBeTruthy()
+  })
+
+  it("offers to text a code before asking for one, and texts nothing on arrival", async () => {
+    arriveWithInvitation("tok-1")
+    resolvePortalPractice.mockResolvedValue({
+      ok: true,
+      data: { slug: "example-therapy", display_name: "Example Therapy" },
+    })
+    bootstrapSession.mockResolvedValue({ status: "none" })
+
+    render(<PortalShell slug="example-therapy" />)
+
+    const ask = await screen.findByTestId("portal-shell-request-code")
+    expect(ask.textContent).toBe("Text me a code")
+    expect(screen.queryByTestId("portal-shell-otp-input")).toBeNull()
+    expect(requestSignInCode).not.toHaveBeenCalled()
+  })
+
+  it("asks for a code with the invitation, then shows the code field", async () => {
+    arriveWithInvitation("tok-1")
+    resolvePortalPractice.mockResolvedValue({
+      ok: true,
+      data: { slug: "example-therapy", display_name: "Example Therapy" },
+    })
+    bootstrapSession.mockResolvedValue({ status: "none" })
+    const user = userEvent.setup()
+
+    render(<PortalShell slug="example-therapy" />)
+    await user.click(await screen.findByTestId("portal-shell-request-code"))
+
+    expect(await screen.findByTestId("portal-shell-otp-input")).toBeTruthy()
+    expect(requestSignInCode).toHaveBeenCalledWith("tok-1")
+    expect(screen.getByTestId("portal-shell-resend-code").textContent).toBe("Send a new code")
+  })
+
+  it("sends a new code on request and says so", async () => {
+    arriveWithInvitation("tok-1")
+    resolvePortalPractice.mockResolvedValue({
+      ok: true,
+      data: { slug: "example-therapy", display_name: "Example Therapy" },
+    })
+    bootstrapSession.mockResolvedValue({ status: "none" })
+    const user = userEvent.setup()
+
+    render(<PortalShell slug="example-therapy" />)
+    await user.click(await screen.findByTestId("portal-shell-request-code"))
+    await user.click(await screen.findByTestId("portal-shell-resend-code"))
+
+    expect((await screen.findByTestId("portal-shell-code-notice")).textContent).toBe(
+      "We sent a new code.",
+    )
+    expect(requestSignInCode).toHaveBeenCalledTimes(2)
+  })
+
+  it("sends a link the server will not text a code for to get a new one", async () => {
+    arriveWithInvitation("tok-1")
+    resolvePortalPractice.mockResolvedValue({
+      ok: true,
+      data: { slug: "example-therapy", display_name: "Example Therapy" },
+    })
+    bootstrapSession.mockResolvedValue({ status: "none" })
+    requestSignInCode.mockResolvedValue({ ok: false, reason: "refused" })
+    const user = userEvent.setup()
+
+    render(<PortalShell slug="example-therapy" />)
+    await user.click(await screen.findByTestId("portal-shell-request-code"))
+
+    expect(await screen.findByTestId("portal-shell-link-ended")).toBeTruthy()
+    expect(screen.getByTestId("portal-shell-link-ended-recover")).toHaveAttribute(
+      "href",
+      "/portal/example-therapy/recover",
+    )
+  })
+
+  it("keeps the patient on the first step when a code could not be sent", async () => {
+    arriveWithInvitation("tok-1")
+    resolvePortalPractice.mockResolvedValue({
+      ok: true,
+      data: { slug: "example-therapy", display_name: "Example Therapy" },
+    })
+    bootstrapSession.mockResolvedValue({ status: "none" })
+    requestSignInCode.mockResolvedValue({ ok: false, reason: "unavailable" })
+    const user = userEvent.setup()
+
+    render(<PortalShell slug="example-therapy" />)
+    await user.click(await screen.findByTestId("portal-shell-request-code"))
+
+    expect((await screen.findByTestId("portal-shell-otp-error")).textContent).toBe(
+      "We couldn't send a code. Try again in a moment.",
+    )
+    expect(screen.getByTestId("portal-shell-request-code")).toBeTruthy()
+    expect(screen.queryByTestId("portal-shell-otp-input")).toBeNull()
   })
 
   it("renders the active shell's empty card when no slots are registered", async () => {
@@ -181,9 +283,7 @@ describe("PortalShell", () => {
     const user = userEvent.setup()
 
     render(<PortalShell slug="example-therapy" />)
-    await screen.findByTestId("portal-shell-otp")
-    await user.type(screen.getByTestId("portal-shell-otp-input"), "123456")
-    await user.click(screen.getByTestId("portal-shell-otp-submit"))
+    await askForACodeAndEnterIt(user)
 
     await screen.findByText("Fake slot content")
     expect(seen[0]).toEqual({ slug: "example-therapy", sessionToken: "minted-token" })
@@ -218,16 +318,17 @@ describe("PortalShell", () => {
     const user = userEvent.setup()
 
     render(<PortalShell slug="example-therapy" />)
-    await screen.findByTestId("portal-shell-otp")
-
-    await user.type(screen.getByTestId("portal-shell-otp-input"), "123456")
-    await user.click(screen.getByTestId("portal-shell-otp-submit"))
+    await askForACodeAndEnterIt(user)
 
     await waitFor(() => {
       expect(screen.getByTestId("portal-shell-otp-error").textContent).toBe(
-        "That code didn't work. Check it and try again, or ask your practice for a new invite link.",
+        "That code didn't work. Check it and try again, or send a new code.",
       )
     })
+    expect(screen.getByTestId("portal-shell-otp-recover")).toHaveAttribute(
+      "href",
+      "/portal/example-therapy/recover",
+    )
   })
 
   it("a successful redeem moves the shell to the active state", async () => {
@@ -241,10 +342,7 @@ describe("PortalShell", () => {
     const user = userEvent.setup()
 
     render(<PortalShell slug="example-therapy" />)
-    await screen.findByTestId("portal-shell-otp")
-
-    await user.type(screen.getByTestId("portal-shell-otp-input"), "123456")
-    await user.click(screen.getByTestId("portal-shell-otp-submit"))
+    await askForACodeAndEnterIt(user)
 
     expect(await screen.findByTestId("portal-shell-active")).toBeTruthy()
     expect(redeemAndStore).toHaveBeenCalledWith("example-therapy", "tok-1", "123456")
@@ -263,10 +361,7 @@ describe("arriving with an invitation", () => {
   const user = () => userEvent.setup()
 
   async function enterTheCode() {
-    const typing = user()
-    await screen.findByTestId("portal-shell-otp")
-    await typing.type(screen.getByTestId("portal-shell-otp-input"), "123456")
-    await typing.click(screen.getByTestId("portal-shell-otp-submit"))
+    await askForACodeAndEnterIt(user())
   }
 
   it("takes the invitation out of the URL once it is spent", async () => {

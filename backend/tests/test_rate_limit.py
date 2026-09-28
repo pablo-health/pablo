@@ -26,6 +26,7 @@ from app.rate_limit import (
     _get_portal_recover_ip_limiter,
     _get_portal_redeem_ip_limiter,
     _get_portal_refresh_ip_limiter,
+    _get_portal_request_code_ip_limiter,
     _get_preauth_limiter,
     _get_public_booking_browse_limiter,
     _get_public_booking_write_limiter,
@@ -349,6 +350,9 @@ def _settings_stub(**overrides: int) -> MagicMock:
     settings.ehr_navigate_daily_limit = overrides.get("ehr_navigate_daily_limit", 100)
     settings.portal_redeem_ip_rate_per_min = overrides.get("portal_redeem_ip_rate_per_min", 100)
     settings.portal_refresh_ip_rate_per_min = overrides.get("portal_refresh_ip_rate_per_min", 100)
+    settings.portal_request_code_ip_rate_per_min = overrides.get(
+        "portal_request_code_ip_rate_per_min", 100
+    )
     settings.portal_practice_resolve_ip_rate_per_min = overrides.get(
         "portal_practice_resolve_ip_rate_per_min", 100
     )
@@ -364,6 +368,7 @@ def _reset_limiter_singletons():
     rate_limit._ehr_navigate_limiter = None
     rate_limit._portal_redeem_ip_limiter = None
     rate_limit._portal_refresh_ip_limiter = None
+    rate_limit._portal_request_code_ip_limiter = None
     rate_limit._portal_practice_resolve_ip_limiter = None
     rate_limit._portal_recover_ip_limiter = None
     yield
@@ -372,6 +377,7 @@ def _reset_limiter_singletons():
     rate_limit._ehr_navigate_limiter = None
     rate_limit._portal_redeem_ip_limiter = None
     rate_limit._portal_refresh_ip_limiter = None
+    rate_limit._portal_request_code_ip_limiter = None
     rate_limit._portal_practice_resolve_ip_limiter = None
     rate_limit._portal_recover_ip_limiter = None
 
@@ -443,6 +449,7 @@ def test_chat_audio_ehr_limiter_budgets_are_independent() -> None:
     [
         (_get_portal_redeem_ip_limiter, "portal_redeem_ip_rate_per_min", 2),
         (_get_portal_refresh_ip_limiter, "portal_refresh_ip_rate_per_min", 2),
+        (_get_portal_request_code_ip_limiter, "portal_request_code_ip_rate_per_min", 2),
         (
             _get_portal_practice_resolve_ip_limiter,
             "portal_practice_resolve_ip_rate_per_min",

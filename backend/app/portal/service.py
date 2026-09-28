@@ -1,12 +1,17 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""The credential lifecycle: issue, redeem, refresh, revoke.
+"""The credential lifecycle: issue, request a code, redeem, refresh, revoke.
 
 Two factors, two channels. The clinician's invitation emails a magic link
 (possession of the invite token) and Pablo texts a one-time code (possession
 of the phone). Redemption requires BOTH, so a leaked link alone never mints
 a session — which is what § 164.312(d) is asking for. Single-use and
 attempt-limiting come from the challenge keyed on the token's ``jti``.
+
+The code is texted when the patient asks for it from the page the link
+opens, not when the invitation is sent. So the link can live for days while
+the code still lives for minutes: the window a code is good for starts when
+the patient is there to use it, rather than when the invitation went out.
 
 The clock is injected so callers control time and TTL assertions stay exact.
 """
@@ -19,12 +24,14 @@ from uuid import uuid4
 
 from . import tokens
 from .errors import (
+    ExpiredCodeError,
     ExpiredInviteError,
     InvalidInviteError,
     InvalidStepUpError,
     InviteAlreadyRedeemedError,
     SessionLifetimeExceededError,
     SessionRevokedError,
+    StepUpChannelMissingError,
     TooManyAttemptsError,
 )
 from .otp import generate_otp, hash_otp, verify_otp
@@ -48,7 +55,13 @@ OTP_MESSAGE = "Your Pablo verification code is {otp}. It expires in 15 minutes."
 @dataclass(frozen=True)
 class PortalAuthConfig:
     signing_key: str
-    invite_ttl_seconds: int = 900  # 15 min
+    #: How long the emailed link keeps working. Days rather than minutes:
+    #: the link alone never mints a session, and most patients do not open
+    #: an invitation the moment it arrives.
+    invite_ttl_seconds: int = 604_800  # 7 days
+    #: How long a texted code keeps working, counted from the request that
+    #: texted it. :data:`OTP_MESSAGE` says fifteen minutes; keep them equal.
+    otp_ttl_seconds: int = 900  # 15 min
     session_ttl_seconds: int = 3600  # 1 h
     otp_length: int = 6
     max_otp_attempts: int = 5
@@ -61,9 +74,9 @@ class PortalAuthConfig:
 
 @dataclass(frozen=True)
 class InviteIssued:
-    """``token`` goes into the magic link; the code was delivered
-    out-of-band. ``jti`` is the challenge handle — it carries no secret, so
-    it is what a log or an audit row may name."""
+    """``token`` goes into the magic link; the code is texted later, when
+    the patient asks for it. ``jti`` is the challenge handle — it carries no
+    secret, so it is what a log or an audit row may name."""
 
     token: str
     jti: str
@@ -169,21 +182,19 @@ class PortalAuthService:
         *,
         patient_id: str,
         tenant: str,
-        phone: str,
         purpose: str = "intake",
     ) -> InviteIssued:
-        """Mint a single-use invite token and text the step-up code. The
+        """Mint a single-use invite token and record its challenge. The
         caller emails the returned token as a magic link.
 
-        The text is sent before the challenge is persisted: if the send
-        raises, no challenge was ever stored for this jti, so nothing
-        orphaned is left behind and the token in hand can never be redeemed.
+        Nothing is texted here. The challenge starts with no code at all, so
+        the invitation cannot be redeemed until the patient opens the link
+        and asks for one (:meth:`request_code`).
         """
         cfg = self._config
         issued_at = self._now()
         expires_at = issued_at + cfg.invite_ttl_seconds
         jti = uuid4().hex
-        otp = generate_otp(cfg.otp_length)
 
         token = tokens.mint_invite_token(
             signing_key=cfg.signing_key,
@@ -192,21 +203,24 @@ class PortalAuthService:
             ),
             lifetime=tokens.TokenLifetime(issued_at=issued_at, ttl_seconds=cfg.invite_ttl_seconds),
         )
-        self._sms.send(to=phone, body=OTP_MESSAGE.format(otp=otp))
         self._require_store().put_challenge(
             InviteChallenge(
                 jti=jti,
                 patient_id=patient_id,
                 tenant=tenant,
-                otp_hash=hash_otp(otp, pepper=cfg.signing_key),
+                otp_hash=None,
                 expires_at=expires_at,
             )
         )
         return InviteIssued(token=token, jti=jti, expires_at=expires_at)
 
-    def redeem(self, *, token: str, otp: str) -> PatientSession:
-        """Verify link possession AND the texted code, then mint a
-        patient-session token. Single-use and attempt-limited."""
+    def _open_challenge(self, token: str) -> tuple[tokens.InviteClaims, InviteChallenge, int]:
+        """The invitation behind *token*, and the time it was checked at.
+
+        The refusals :meth:`request_code` and :meth:`redeem` share: unknown,
+        spent, expired, attempt-capped. A code is never texted for an
+        invitation that could not then be redeemed with it.
+        """
         cfg = self._config
         claims = tokens.verify_invite_token(signing_key=cfg.signing_key, token=token)
 
@@ -220,6 +234,51 @@ class PortalAuthService:
             raise ExpiredInviteError(claims.jti)
         if challenge.attempts >= cfg.max_otp_attempts:
             raise TooManyAttemptsError(claims.jti)
+        return claims, challenge, now
+
+    def request_code(self, *, token: str, phone_for: Callable[[str], str | None]) -> None:
+        """Text a fresh code for this invitation, replacing any earlier one.
+
+        ``phone_for`` reads the number off the patient's chart. The caller
+        never supplies a number: the second factor goes where the practice
+        recorded it, not wherever a holder of the link would like.
+
+        A resend restarts the code window and retires the previous code, but
+        leaves the attempt counter alone — the cap is per invitation, so
+        asking for a new code does not buy more guesses.
+
+        The text is sent before the new hash is stored: if the send raises,
+        the stored state is exactly what it was, and a code the patient
+        already holds still works.
+        """
+        cfg = self._config
+        claims, _challenge, now = self._open_challenge(token)
+        phone = phone_for(claims.patient_id)
+        if not phone:
+            raise StepUpChannelMissingError(claims.jti)
+
+        otp = generate_otp(cfg.otp_length)
+        self._sms.send(to=phone, body=OTP_MESSAGE.format(otp=otp))
+        self._require_store().set_code(
+            claims.jti,
+            otp_hash=hash_otp(otp, pepper=cfg.signing_key),
+            code_expires_at=now + cfg.otp_ttl_seconds,
+        )
+
+    def redeem(self, *, token: str, otp: str) -> PatientSession:
+        """Verify link possession AND the texted code, then mint a
+        patient-session token. Single-use and attempt-limited."""
+        cfg = self._config
+        claims, challenge, now = self._open_challenge(token)
+
+        if challenge.otp_hash is None:
+            # No code has been requested, so there is nothing to match.
+            raise ExpiredCodeError(claims.jti)
+        # An invitation issued before codes were requested separately has a
+        # hash and no code window of its own; its own expiry, checked above,
+        # is the window.
+        if challenge.code_expires_at is not None and now >= challenge.code_expires_at:
+            raise ExpiredCodeError(claims.jti)
 
         if not verify_otp(otp, otp_hash=challenge.otp_hash, pepper=cfg.signing_key):
             self._require_store().increment_attempts(claims.jti)

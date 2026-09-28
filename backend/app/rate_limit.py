@@ -626,6 +626,8 @@ def get_patient_document_init_limiter() -> RateLimiter:
 # the signature first and pass the id from verified claims.
 _portal_redeem_ip_limiter: RateLimiter | None = None
 _portal_redeem_invite_limiter: RateLimiter | None = None
+_portal_request_code_ip_limiter: RateLimiter | None = None
+_portal_request_code_invite_limiter: RateLimiter | None = None
 _portal_refresh_ip_limiter: RateLimiter | None = None
 _portal_practice_resolve_ip_limiter: RateLimiter | None = None
 _portal_recover_ip_limiter: RateLimiter | None = None
@@ -665,6 +667,49 @@ def _get_portal_redeem_invite_limiter() -> RateLimiter:
             type(_portal_redeem_invite_limiter).__name__,
         )
     return _portal_redeem_invite_limiter
+
+
+def _get_portal_request_code_ip_limiter() -> RateLimiter:
+    """Per address, defaulting to 20/min — the redeem window's size, for the
+    same household-versus-sweep reason. Asking for a code sends a text
+    message, so this is also what stops one client running up a practice's
+    SMS bill across many invitations. Configurable
+    (``portal_request_code_ip_rate_per_min``); see the redeem limiter above
+    for why."""
+    global _portal_request_code_ip_limiter  # noqa: PLW0603
+    if _portal_request_code_ip_limiter is None:
+        from .settings import get_settings  # noqa: PLC0415
+
+        settings = get_settings()
+        _portal_request_code_ip_limiter = NamespacedLimiter(
+            _create_limiter(
+                max_requests=settings.portal_request_code_ip_rate_per_min, window_seconds=60
+            ),
+            "portal-request-code-ip:",
+        )
+        logger.info(
+            "Portal request-code IP rate limiter: %s",
+            type(_portal_request_code_ip_limiter).__name__,
+        )
+    return _portal_request_code_ip_limiter
+
+
+def _get_portal_request_code_invite_limiter() -> RateLimiter:
+    """5/hour against one invitation. A patient whose text is slow asks
+    again once or twice; nobody needs five codes in an hour. Each one is a
+    message to the patient's phone, so the bound is on what a holder of the
+    link can make that phone receive, not only on guessing — the attempt
+    cap already bounds guessing, and holds across resends."""
+    global _portal_request_code_invite_limiter  # noqa: PLW0603
+    if _portal_request_code_invite_limiter is None:
+        _portal_request_code_invite_limiter = NamespacedLimiter(
+            _create_limiter(max_requests=5, window_seconds=3_600), "portal-request-code-invite:"
+        )
+        logger.info(
+            "Portal request-code per-invitation rate limiter: %s",
+            type(_portal_request_code_invite_limiter).__name__,
+        )
+    return _portal_request_code_invite_limiter
 
 
 def _get_portal_refresh_ip_limiter() -> RateLimiter:
@@ -791,6 +836,18 @@ def check_portal_redeem_invite_limit(jti: str) -> None:
     _get_portal_redeem_invite_limiter().check(jti)
 
 
+def require_portal_request_code_rate_limit(request: Request) -> None:
+    """Per-address window on asking for a sign-in code. A route dependency,
+    so it runs first."""
+    _get_portal_request_code_ip_limiter().check(get_client_ip(request))
+
+
+def check_portal_request_code_invite_limit(jti: str) -> None:
+    """Per-invitation window on asking for a code. Call only with an id from
+    VERIFIED claims."""
+    _get_portal_request_code_invite_limiter().check(jti)
+
+
 def require_portal_refresh_rate_limit(request: Request) -> None:
     """Per-address window on session rotation."""
     _get_portal_refresh_ip_limiter().check(get_client_ip(request))
@@ -802,6 +859,8 @@ def reset_portal_limiters() -> None:
     for limiter in (
         _portal_redeem_ip_limiter,
         _portal_redeem_invite_limiter,
+        _portal_request_code_ip_limiter,
+        _portal_request_code_invite_limiter,
         _portal_refresh_ip_limiter,
         _portal_practice_resolve_ip_limiter,
         _portal_recover_ip_limiter,

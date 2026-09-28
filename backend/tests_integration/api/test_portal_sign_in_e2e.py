@@ -66,6 +66,7 @@ _PORTAL_ORIGIN = "https://portal.example.test"
 
 REDEEM_URL = "/api/patient/auth/redeem"
 REFRESH_URL = "/api/patient/auth/refresh"
+REQUEST_CODE_URL = "/api/patient/auth/request-code"
 PATIENT_ROUTE = "/api/patient/intake/form"
 
 
@@ -267,9 +268,7 @@ def _issue_invitation(practice_schema: str, patient_id: str) -> None:
             sessions=DbPortalSessionStore(session),
             sms=sms,
         )
-        issued = service.issue_invite(
-            patient_id=patient_id, tenant=practice_schema, phone=_PATIENT_PHONE
-        )
+        issued = service.issue_invite(patient_id=patient_id, tenant=practice_schema)
         delivery.send_invite(
             to_email=_PATIENT_EMAIL,
             link=build_invite_link(slug=slug, token=issued.token),
@@ -299,25 +298,51 @@ def _code_from_the_log(caplog: pytest.LogCaptureFixture) -> str:
     return digits[:6]
 
 
+def _ask_for_a_code(client: Any, token: str, caplog: pytest.LogCaptureFixture) -> str:
+    """Tap "Text me a code" on the page the link opened, and read the text.
+
+    Over HTTP, so the number comes off the chart through the real gateway —
+    the read a patient who has not stepped up yet has to be able to make.
+    """
+    with caplog.at_level(logging.INFO, logger="app.portal.adapters"):
+        asked = client.post(REQUEST_CODE_URL, json={"token": token})
+    assert asked.status_code == 202, asked.text
+    assert asked.content == b""
+    return _code_from_the_log(caplog)
+
+
+def test_the_invitation_texts_nothing_until_the_patient_asks(
+    engine: Engine,
+    practice: str,
+    self_hosted: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    patient_id = practice
+
+    with caplog.at_level(logging.INFO, logger="app.portal.adapters"):
+        _issue_invitation(_SCHEMA, patient_id)
+
+    assert [r for r in caplog.records if r.name == "app.portal.adapters"] == []
+    assert _stored_hash(engine, _token_from_the_email()) is None
+
+
 def test_a_self_hosted_deployment_can_sign_a_patient_in(
     engine: Engine,
     practice: str,
     self_hosted: None,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Invite, redeem, rotate, and read a chart — on shipped adapters only."""
+    """Invite, ask for a code, redeem, rotate, and read a chart — on shipped
+    adapters only."""
     from app.main import app  # noqa: PLC0415
     from fastapi.testclient import TestClient  # noqa: PLC0415
 
     patient_id = practice
-
-    with caplog.at_level(logging.INFO, logger="app.portal.adapters"):
-        _issue_invitation(_SCHEMA, patient_id)
-
-    token = _token_from_the_email()
-    code = _code_from_the_log(caplog)
+    _issue_invitation(_SCHEMA, patient_id)
 
     client = TestClient(app)
+    token = _token_from_the_email()
+    code = _ask_for_a_code(client, token, caplog)
 
     redeemed = client.post(REDEEM_URL, json={"token": token, "otp": code})
     assert redeemed.status_code == 200, redeemed.text
@@ -352,17 +377,15 @@ def test_the_invitation_is_single_use_against_a_real_database(
     has to survive the commit that the failure path makes.
     """
     patient_id = practice
-
-    with caplog.at_level(logging.INFO, logger="app.portal.adapters"):
-        _issue_invitation(_SCHEMA, patient_id)
+    _issue_invitation(_SCHEMA, patient_id)
 
     from app.main import app  # noqa: PLC0415
     from fastapi.testclient import TestClient  # noqa: PLC0415
 
-    token = _token_from_the_email()
-    code = _code_from_the_log(caplog)
-    wrong = "000000" if code != "000000" else "111111"
     client = TestClient(app)
+    token = _token_from_the_email()
+    code = _ask_for_a_code(client, token, caplog)
+    wrong = "000000" if code != "000000" else "111111"
 
     # A wrong code costs an attempt, and the cost is durable.
     assert client.post(REDEEM_URL, json={"token": token, "otp": wrong}).status_code == 401
@@ -388,13 +411,11 @@ def test_the_kill_switch_stops_a_live_session_immediately(
     from fastapi.testclient import TestClient  # noqa: PLC0415
 
     patient_id = practice
-
-    with caplog.at_level(logging.INFO, logger="app.portal.adapters"):
-        _issue_invitation(_SCHEMA, patient_id)
+    _issue_invitation(_SCHEMA, patient_id)
 
     client = TestClient(app)
     token = _token_from_the_email()
-    code = _code_from_the_log(caplog)
+    code = _ask_for_a_code(client, token, caplog)
     session_token = client.post(REDEEM_URL, json={"token": token, "otp": code}).json()[
         "session_token"
     ]
@@ -412,6 +433,80 @@ def test_the_kill_switch_stops_a_live_session_immediately(
         session.close()
 
     assert client.get(PATIENT_ROUTE, headers=headers).status_code == 401
+
+
+def test_reading_the_number_leaves_no_patient_scope_behind(
+    engine: Engine, practice: str, self_hosted: None
+) -> None:
+    """The chart read that finds where to text a code runs before anybody
+    has stepped up, so the patient scope it needs must not outlive it.
+
+    Asserted as the non-superuser role the app runs as, where an unarmed read
+    of ``patients`` sees nothing: the number comes back, and afterwards the
+    session is as unscoped as it was before.
+    """
+    from app.db import (  # noqa: PLC0415
+        _current_patient_id,
+        _current_tenant_schema,
+        _current_user_id,
+        get_engine,
+    )
+    from app.portal.db_store import DbPortalAuthStore  # noqa: PLC0415
+    from app.portal.tenant_gateway import DbPortalTenantGateway  # noqa: PLC0415
+
+    # Other tests in the suite leave a principal behind — in the ContextVars
+    # (``arm_current_user_id`` called in the pytest thread) or on the app's
+    # pooled connections (a session-level ``set_config``, which the pool's
+    # checkin does not reset). Start from fresh connections and clear
+    # ContextVars, so what is measured below is the read's own effect.
+    get_engine().dispose()
+    tokens = [
+        (var, var.set(None))
+        for var in (_current_user_id, _current_patient_id, _current_tenant_schema)
+    ]
+    try:
+        with DbPortalTenantGateway().open(_SCHEMA, None) as work:
+            assert isinstance(work.challenges, DbPortalAuthStore)
+            session = work.challenges._session
+            before = session.execute(
+                text("SELECT current_setting('app.current_patient_id', true)")
+            ).scalar_one()
+            assert not before, f"the session started armed as {before!r}"
+
+            assert work.step_up_phone(practice) == _PATIENT_PHONE
+            assert work.step_up_phone(str(uuid.uuid4())) is None
+
+            # Same session, next statements: no patient is armed, so the
+            # chart is invisible again.
+            armed = session.execute(
+                text("SELECT current_setting('app.current_patient_id', true)")
+            ).scalar_one()
+            # NULL before (never set on this connection) and '' after (set in
+            # the savepoint, then reverted) both mean no principal.
+            assert (armed or "") == (before or ""), "the read changed who the session reads as"
+            assert not armed
+            visible = session.execute(
+                text("SELECT count(*) FROM patients WHERE id = CAST(:p AS uuid)"),
+                {"p": practice},
+            ).scalar_one()
+            assert visible == 0
+    finally:
+        for var, token in reversed(tokens):
+            var.reset(token)
+
+
+def _stored_hash(engine: Engine, token: str) -> str | None:
+    """The stored code hash for the challenge this token names."""
+    from app.portal import tokens  # noqa: PLC0415
+
+    jti = tokens.verify_invite_token(signing_key=_SIGNING_KEY, token=token).jti
+    with engine.connect() as conn:
+        value = conn.execute(
+            # The only interpolation is this module's own schema name.
+            text(f"SELECT otp_hash FROM {_SCHEMA}.companion_auth_challenges WHERE jti = :j"),  # noqa: S608
+            {"j": jti},
+        ).scalar_one()
+    return None if value is None else str(value)
 
 
 def _attempts(engine: Engine, token: str) -> int:
