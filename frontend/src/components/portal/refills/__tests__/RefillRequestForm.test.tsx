@@ -175,4 +175,27 @@ describe("RefillRequestForm", () => {
     expect(submitButton().disabled).toBe(true)
     expect(submitButton().textContent).toBe("Sending…")
   })
+
+  it("offers Cancel only when the caller can close the form, and sends nothing", async () => {
+    const onSubmit = vi.fn()
+    const onCancel = vi.fn()
+    const user = userEvent.setup()
+    const { rerender } = render(
+      <RefillRequestForm medications={MEDS} onSubmit={onSubmit} submitting={false} />,
+    )
+    expect(screen.queryByTestId("portal-refills-cancel")).toBeNull()
+
+    rerender(
+      <RefillRequestForm
+        medications={MEDS}
+        onSubmit={onSubmit}
+        submitting={false}
+        onCancel={onCancel}
+      />,
+    )
+    await user.click(screen.getByTestId("portal-refills-cancel"))
+
+    expect(onCancel).toHaveBeenCalledTimes(1)
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
 })
