@@ -61,6 +61,18 @@ DEFAULT_BODY = (
     "The link works for {{link_expiry}}."
 )
 
+#: What a client gets when they asked for a new link themselves. The engine's
+#: own wording, not the practice's editable invitation: nobody invited them
+#: just now, so it says what did happen, and names no clinician.
+RECOVERY_SUBJECT = "Your sign-in link for {{practice_name}}"
+RECOVERY_BODY = (
+    "Here's a new link to sign in to the patient portal for {{practice_name}}.\n\n"
+    "{{portal_link}}\n\n"
+    "When you open the link, we'll text a code to your phone. "
+    "The link works for {{link_expiry}}.\n\n"
+    "If you didn't ask for this, you can ignore this email."
+)
+
 #: Stands in for the link wherever a template is rendered to be looked at
 #: rather than sent. The real link is a credential and is never rendered
 #: anywhere a clinician can read it.
@@ -76,6 +88,7 @@ class InviteTemplate:
 
 
 DEFAULT_TEMPLATE = InviteTemplate(subject=DEFAULT_SUBJECT, body=DEFAULT_BODY)
+RECOVERY_TEMPLATE = InviteTemplate(subject=RECOVERY_SUBJECT, body=RECOVERY_BODY)
 
 
 @dataclass(frozen=True)

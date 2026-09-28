@@ -32,6 +32,7 @@ from app.portal.invite_email import (
     DEFAULT_TEMPLATE,
     PLACEHOLDERS,
     PREVIEW_LINK,
+    RECOVERY_TEMPLATE,
     InviteContext,
     InviteTemplate,
     describe_duration,
@@ -116,6 +117,36 @@ def test_the_default_template_is_valid_and_worded_as_designed() -> None:
     )
     # No greeting by default: a practice adds one if it wants it.
     assert "{{client_first_name}}" not in DEFAULT_TEMPLATE.body
+
+
+def test_the_recovery_wording_is_valid_and_worded_as_designed() -> None:
+    assert template_problems(RECOVERY_TEMPLATE) == []
+    assert RECOVERY_TEMPLATE.subject == "Your sign-in link for {{practice_name}}"
+    assert RECOVERY_TEMPLATE.body == (
+        "Here's a new link to sign in to the patient portal for {{practice_name}}.\n\n"
+        "{{portal_link}}\n\n"
+        "When you open the link, we'll text a code to your phone. "
+        "The link works for {{link_expiry}}.\n\n"
+        "If you didn't ask for this, you can ignore this email."
+    )
+    # The client asked for this link: it names no clinician and invites nobody.
+    assert "{{clinician_name}}" not in RECOVERY_TEMPLATE.subject + RECOVERY_TEMPLATE.body
+    assert "invite" not in (RECOVERY_TEMPLATE.subject + RECOVERY_TEMPLATE.body).lower()
+
+
+def test_the_recovery_wording_renders_with_nothing_left_unfilled() -> None:
+    rendered = compose(
+        RECOVERY_TEMPLATE,
+        InviteFacts(client_first_name="", practice_name=PRACTICE_NAME, forms=[]),
+        "https://portal.example.test/portal/example-therapy#invite=t",
+    )
+
+    assert rendered.subject == "Your sign-in link for Example Therapy"
+    assert rendered.text.startswith(
+        "Here's a new link to sign in to the patient portal for Example Therapy.\n\n"
+        "https://portal.example.test/portal/example-therapy#invite=t\n\n"
+    )
+    assert "{{" not in rendered.subject + rendered.text
 
 
 def test_the_clinicians_name_is_a_placeholder_the_editor_offers() -> None:

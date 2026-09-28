@@ -98,8 +98,6 @@ class _FakeGateway:
         self.opened: list[str] = []
         self.commits = 0
         self.recorded: list[tuple[str, str]] = []
-        #: patient_id -> primary clinician's name; absent means none on file.
-        self.clinician_names: dict[str, str] = {ACTIVE.patient_id: "Jane Smith"}
 
     def resolve(self, slug: str) -> str | None:
         return TENANT if slug == SLUG else None
@@ -127,7 +125,6 @@ class _FakeGateway:
             sessions=self.sessions,
             record_request=_record,
             commit=_commit,
-            clinician_name=self.clinician_names.get,
         )
 
 
@@ -650,10 +647,11 @@ def test_the_minted_invitation_redeems_like_any_other(
 
 
 # ---------------------------------------------------------------------------
-# The recovery email says who it is from
+# The recovery email says what happened
 # ---------------------------------------------------------------------------
 
 PRACTICE_NAME = "Meadowlark Counseling"
+_PRACTICE_NAME_FOR_SCHEMA: dict[str, str] = {}
 
 
 @pytest.fixture
@@ -669,43 +667,51 @@ def rendered_client(
 ) -> TestClient:
     """The same route, on a channel that sends the engine's own wording."""
     app.dependency_overrides[get_invite_delivery] = lambda: rendered_delivery
+    _PRACTICE_NAME_FOR_SCHEMA[TENANT] = PRACTICE_NAME
     monkeypatch.setattr(
         "app.portal.recovery.practice_address_for_schema",
         lambda schema: (
-            PracticeAddress(slug=SLUG, display_name=PRACTICE_NAME, enabled=True)
-            if schema == TENANT
+            PracticeAddress(slug=SLUG, display_name=_PRACTICE_NAME_FOR_SCHEMA[schema], enabled=True)
+            if schema in _PRACTICE_NAME_FOR_SCHEMA
             else None
         ),
     )
     return TestClient(app)
 
 
-def test_a_recovery_email_names_the_clients_clinician(
+def test_a_recovery_email_names_the_practice_and_invites_nobody(
     rendered_client: TestClient, rendered_delivery: CapturingRenderedInviteDelivery
 ) -> None:
+    """The client asked for this link; nobody invited them just now."""
     assert _recover(rendered_client, ACTIVE.email or "").status_code == 202
 
     [email] = rendered_delivery.sent
     assert email.to_email == ACTIVE.email
-    assert email.subject == "Jane Smith invited you to your patient portal"
+    assert email.subject == f"Your sign-in link for {PRACTICE_NAME}"
     assert email.text is not None
     assert email.text.startswith(
-        f"Jane Smith has invited you to the patient portal for {PRACTICE_NAME}."
+        f"Here's a new link to sign in to the patient portal for {PRACTICE_NAME}.\n\n"
     )
     assert f"/portal/{SLUG}#invite=" in email.text
+    assert email.text.endswith("If you didn't ask for this, you can ignore this email.")
+    assert "invited" not in email.text
+    assert "{{" not in email.text
 
 
-def test_a_recovery_email_with_no_clinician_names_the_practice(
+@pytest.mark.parametrize("practice_name", [None, "", "   "], ids=["no-address", "empty", "blank"])
+def test_with_no_practice_name_recovery_sends_the_wording_that_names_nobody(
     rendered_client: TestClient,
     rendered_delivery: CapturingRenderedInviteDelivery,
-    gateway: _FakeGateway,
+    practice_name: str | None,
 ) -> None:
-    gateway.clinician_names.clear()
+    """Never an empty name in "for ." — the adapter's own wording instead."""
+    if practice_name is None:
+        _PRACTICE_NAME_FOR_SCHEMA.clear()
+    else:
+        _PRACTICE_NAME_FOR_SCHEMA[TENANT] = practice_name
 
     assert _recover(rendered_client, ACTIVE.email or "").status_code == 202
 
     [email] = rendered_delivery.sent
-    assert email.subject == f"{PRACTICE_NAME} invited you to your patient portal"
-    assert email.text is not None
-    assert "{{" not in email.text
-    assert "for ." not in email.text
+    assert email.subject is None, "sent as the adapter's fixed wording"
+    assert email.link.startswith("http")

@@ -39,7 +39,7 @@ from ..db.models import PatientRow
 from ..models.audit import AuditAction, ResourceType
 from ..repositories.postgres.audit import PostgresAuditRepository
 from ..services.audit_service import AuditService
-from .clinicians import practice_clinicians, primary_clinician_name
+from .clinicians import practice_clinicians
 from .db_store import DbPortalAuthStore, DbPortalSessionStore
 from .practice_routes import practice_schema_for_slug
 
@@ -54,19 +54,17 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class RecoveryTarget:
-    """The fields minting and wording an invitation need, and nothing else.
+    """The three fields minting an invitation needs, and nothing else.
 
     A chart row read on an unauthenticated path is exactly where a whole ORM
     object should not be carried around: the row has a diagnosis on it. This
-    carries an id, the two delivery channels and the first name an
-    invitation may greet the client by, so nothing else can be reached by
-    accident from anywhere downstream.
+    carries an id and the two delivery channels, so nothing else can be
+    reached by accident from anywhere downstream.
     """
 
     patient_id: str
     email: str | None
     phone: str | None
-    first_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -84,10 +82,6 @@ class RecoveryWork:
     #: own — see :meth:`DbRecoveryGateway.open`.
     record_request: Callable[[str, str], None]
     commit: Callable[[], None]
-    #: The patient's primary clinician's name, for the invitation to name
-    #: (see ``app.portal.clinicians``). Asked before ``record_request``,
-    #: which arms the patient principal for the rest of the transaction.
-    clinician_name: Callable[[str], str | None]
 
 
 class RecoveryGateway(Protocol):
@@ -144,7 +138,7 @@ class DbRecoveryGateway:
             # chart — including a second chart on a shared address that was
             # never invited, which is what keeps the two-charts rule honest.
             statement = (
-                select(PatientRow.id, PatientRow.email, PatientRow.phone, PatientRow.first_name)
+                select(PatientRow.id, PatientRow.email, PatientRow.phone)
                 .where(
                     func.lower(PatientRow.email) == email.lower(),
                     PatientRow.deleted_at.is_(None),
@@ -161,10 +155,7 @@ class DbRecoveryGateway:
                     statement=statement,
                 ):
                     found[str(row.id)] = RecoveryTarget(
-                        patient_id=str(row.id),
-                        email=row.email,
-                        phone=row.phone,
-                        first_name=row.first_name,
+                        patient_id=str(row.id), email=row.email, phone=row.phone
                     )
                 if len(found) > 1:
                     return None
@@ -197,9 +188,6 @@ class DbRecoveryGateway:
                 sessions=DbPortalSessionStore(session),
                 record_request=_record_request,
                 commit=session.commit,
-                clinician_name=lambda patient_id: primary_clinician_name(
-                    session, schema, patient_id
-                ),
             )
         except Exception:
             session.rollback()

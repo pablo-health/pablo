@@ -389,7 +389,12 @@ test("the default invitation names the client's clinician @portal", async ({ api
   })
 })
 
-test("a recovery email names the client's clinician too @portal", async ({ api }) => {
+/**
+ * A client who asked for a new link was not invited by anyone just now, so
+ * the recovery email says what did happen and names the practice. The
+ * clinician is given a known name so the test can show it is left out.
+ */
+test("a recovery email names the practice and invites nobody @portal", async ({ api }) => {
   const clinician = "Dr. Jane Smith"
   await withDefaultWordingAndName(api, clinician, async (practiceName) => {
     const invitation = await givePortalInvitation(api)
@@ -407,10 +412,14 @@ test("a recovery email names the client's clinician too @portal", async ({ api }
     await expect.poll(received, { timeout: 10_000 }).toBeGreaterThan(before)
 
     const message = await mail.waitFor(invitation.email)
-    expect(message.subject).toBe(`${clinician} invited you to your patient portal`)
-    expect(message.text.replace(/\r\n/g, "\n")).toContain(
-      `${clinician} has invited you to the patient portal for ${practiceName}.`,
+    expect(message.subject).toBe(`Your sign-in link for ${practiceName}`)
+    const text = message.text.replace(/\r\n/g, "\n")
+    expect(text).toContain(
+      `Here's a new link to sign in to the patient portal for ${practiceName}.`,
     )
+    expect(text).not.toContain("invited")
+    expect(text).not.toContain(clinician)
+    expect(text).not.toContain("{{")
   })
 })
 

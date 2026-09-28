@@ -413,20 +413,28 @@ def test_the_lookup_leaves_no_clinician_scope_behind(engine: Engine, slug: str) 
 # ---------------------------------------------------------------------------
 
 
-def test_the_recovery_email_names_the_clients_own_clinician(
+def test_the_recovery_email_names_the_practice_and_invites_nobody(
     engine: Engine, slug: str, self_hosted: None
 ) -> None:
-    """The member's client hears from the member, not from the owner who
-    happens to own the practice."""
-    email = _address("named")
+    """The client asked for this link, so the email says so — through the
+    real route, practice lookup and mail sender."""
+    from app.portal.practice_routes import practice_address_for_schema  # noqa: PLC0415
+
+    address = practice_address_for_schema(_SCHEMA)
+    assert address is not None
+    email = _address("recovered")
     _chart(engine, email=email, clinician=_MEMBER, invited=True)
 
     assert _recover(slug, email).status_code == 202
 
     [sent] = _mail_to(email)
-    assert sent["Subject"] == f"{_MEMBER_NAME} invited you to your patient portal"
+    assert sent["Subject"] == f"Your sign-in link for {address.display_name}"
     body = sent.get_content()
-    assert body.startswith(f"{_MEMBER_NAME} has invited you to the patient portal for ")
+    assert body.startswith(
+        f"Here's a new link to sign in to the patient portal for {address.display_name}."
+    )
+    assert "invited" not in body
+    assert _MEMBER_NAME not in body
     assert "{{" not in body
 
 
