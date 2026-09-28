@@ -24,10 +24,17 @@ const REQUEST_CODE_PATH = "/api/patient/auth/request-code"
 
 let sequence = 0
 
+// Numbers count up from the moment this module loaded. Playwright replaces
+// the worker after a failed test, and a counter starting from zero again
+// would hand the next test a number that already has codes waiting for it
+// in the capture — so a later test would read an earlier one's text.
+const PHONE_BASE = Date.now() % 10_000_000
+
 /** A fresh address and number per invitation, so one test never reads another's. */
 export function givePortalContactDetails(): { email: string; phone: string } {
   const stamp = `${Date.now().toString(36)}${(sequence++).toString(36)}`
-  return { email: `portal-msg-${stamp}@example.com`, phone: `+1502555${String(sequence).padStart(4, "0")}` }
+  const line = (PHONE_BASE + sequence) % 10_000_000
+  return { email: `portal-msg-${stamp}@example.com`, phone: `+1502${String(line).padStart(7, "0")}` }
 }
 
 export interface PortalInvitation {

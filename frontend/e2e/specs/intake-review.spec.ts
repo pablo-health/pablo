@@ -92,16 +92,17 @@ async function signIn(
 /**
  * The live portal session token, read off the shell's own store.
  *
- * The key is the shell's (`pablo-portal-session:{slug}`) and the slug is in
- * the URL the invitation link opened, so this reads what the running app
- * wrote rather than minting a second session beside it.
+ * The key is the shell's (`pablo-portal-session:{slug}`), one per practice,
+ * so this reads what the running app wrote rather than minting a second
+ * session beside it — whichever section the page is on.
  */
 async function portalSessionToken(page: Page): Promise<string> {
-  const slug = new URL(page.url()).pathname.split("/").filter(Boolean).pop()
-  const raw = await page.evaluate(
-    (key) => window.localStorage.getItem(key),
-    `pablo-portal-session:${slug}`,
-  )
+  const raw = await page.evaluate(() => {
+    const key = Object.keys(window.localStorage).find((name) =>
+      name.startsWith("pablo-portal-session:"),
+    )
+    return key === undefined ? null : window.localStorage.getItem(key)
+  })
   expect(raw, "the shell stores the session the page signed in with").toBeTruthy()
   return (JSON.parse(raw as string) as { sessionToken: string }).sessionToken
 }
