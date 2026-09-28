@@ -26,7 +26,7 @@
 import { expect, test } from "../fixtures/auth"
 import { ApiClient, ApiError } from "../fixtures/api"
 import { firstLink, mail } from "../fixtures/mail"
-import { sms, stepUpCode } from "../fixtures/sms"
+import { requestStepUpCode } from "../fixtures/portal"
 import { givePatient } from "../fixtures/scenarios"
 import { BACKEND_URL } from "../fixtures/stack"
 
@@ -100,7 +100,7 @@ async function signInAsPatient(
   const token = new URLSearchParams(new URL(link).hash.slice(1)).get("invite")
   expect(token, `no invite token in ${link}`).toBeTruthy()
 
-  const otp = stepUpCode(await sms.waitFor(phone))
+  const otp = await requestStepUpCode({ token: token as string, phone })
   const response = await fetch(`${BACKEND_URL}/api/patient/auth/redeem`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

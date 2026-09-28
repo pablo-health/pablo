@@ -296,6 +296,11 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # redemption that carries the forensic weight.
         ("post", "/api/patient/auth/redeem"),  # audited in the tenant gateway
         ("post", "/api/patient/auth/refresh"),  # rotation of an already-recorded session
+        # Asking for a code answers 202 with no body: the code goes to the
+        # number on the chart and nothing comes back to the caller, so there
+        # is no disclosure to attribute. The redemption it leads to is the
+        # recorded event.
+        ("post", "/api/patient/auth/request-code"),  # texts the chart's number, discloses nothing
         # portal/practice_routes.py — the public practice directory. A slug in,
         # a practice's own display name out; no chart is opened and no patient
         # is named, so there is no access to attribute to anybody.
@@ -308,6 +313,11 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("put", "/api/portal/invite-template"),  # saves the practice's wording
         ("delete", "/api/portal/invite-template"),  # back to the default wording
         ("post", "/api/portal/invite-template/preview"),  # renders for an example client
+        # welcome_routes.py — the practice's own portal welcome. Text the
+        # practice wrote about itself; no chart is opened and no client named.
+        ("get", "/api/portal/welcome"),  # the practice's welcome, no PHI
+        ("put", "/api/portal/welcome"),  # saves the practice's welcome
+        ("delete", "/api/portal/welcome"),  # back to the default welcome
         # portal/recovery.py — account recovery. It answers 202 to everybody
         # and discloses nothing: no name, no chart, no hint that the address
         # matched. The MATCHING path IS audited, as

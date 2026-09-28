@@ -34,11 +34,12 @@ from typing import TYPE_CHECKING, Protocol
 
 from sqlalchemy import func, select
 
-from ..db import arm_current_patient_id, create_standalone_session
+from ..db import arm_current_patient_id, create_standalone_session, read_once_as
 from ..db.models import PatientRow
 from ..models.audit import AuditAction, ResourceType
 from ..repositories.postgres.audit import PostgresAuditRepository
 from ..services.audit_service import AuditService
+from .clinicians import practice_clinicians
 from .db_store import DbPortalAuthStore, DbPortalSessionStore
 from .practice_routes import practice_schema_for_slug
 
@@ -122,12 +123,21 @@ class DbRecoveryGateway:
             # cannot be written as a ``LIMIT 1``.
             #
             # Read directly rather than through
-            # ``PatientRepository.find_by_email``: that one joins
-            # ``patient_clinicians`` to bound the read to one clinician's
-            # caseload, which is right for a caller who IS a clinician and
-            # wrong here, where the caller is nobody and the bound is the
-            # practice schema itself.
-            rows = session.execute(
+            # ``PatientRepository.find_by_email``: that one binds the read
+            # to one clinician's caseload, which is right for a caller who
+            # IS a clinician and wrong here, where the caller is nobody and
+            # the bound is the practice schema itself.
+            #
+            # ``patients`` is row-scoped and nobody is signed in, so an
+            # unarmed read sees nothing and recovery would quietly send
+            # nothing. The address is all there is, so there is no patient
+            # to read as; instead the read is made as each clinician of
+            # this practice in turn, one statement each (see
+            # ``app.db.read_once_as``). A chart is created together with
+            # its primary clinician's grant, so between them they see every
+            # chart — including a second chart on a shared address that was
+            # never invited, which is what keeps the two-charts rule honest.
+            statement = (
                 select(PatientRow.id, PatientRow.email, PatientRow.phone)
                 .where(
                     func.lower(PatientRow.email) == email.lower(),
@@ -135,11 +145,23 @@ class DbRecoveryGateway:
                     PatientRow.status != "pending",
                 )
                 .limit(2)
-            ).all()
-            if len(rows) != 1:
+            )
+            found: dict[str, RecoveryTarget] = {}
+            for clinician_id in practice_clinicians(session, schema):
+                for row in read_once_as(
+                    session,
+                    principal="app.current_user_id",
+                    value=clinician_id,
+                    statement=statement,
+                ):
+                    found[str(row.id)] = RecoveryTarget(
+                        patient_id=str(row.id), email=row.email, phone=row.phone
+                    )
+                if len(found) > 1:
+                    return None
+            if len(found) != 1:
                 return None
-            row = rows[0]
-            return RecoveryTarget(patient_id=row.id, email=row.email, phone=row.phone)
+            return next(iter(found.values()))
 
         def _record_request(patient_id: str, invite_jti: str) -> None:
             # The patient is the actor, so the GUC the audit table's patient

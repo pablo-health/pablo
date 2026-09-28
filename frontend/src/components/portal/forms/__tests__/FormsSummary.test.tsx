@@ -79,7 +79,7 @@ describe("FormsSummary", () => {
     const { unmount } = renderWithClient(<FormsSummary sessionToken={TOKEN} />, client)
     await screen.findByText("1 form to complete")
     unmount()
-    renderWithClient(<PortalForms sessionToken={TOKEN} />, client)
+    renderWithClient(<PortalForms slug="example-therapy" sessionToken={TOKEN} />, client)
     await screen.findByTestId("forms-list")
 
     expect(api.listAssignments).toHaveBeenCalledTimes(1)

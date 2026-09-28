@@ -41,7 +41,9 @@ function renderModule() {
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
   )
   Wrapper.displayName = "PortalFormsWrapper"
-  return render(<PortalForms sessionToken={TOKEN} />, { wrapper: Wrapper })
+  return render(<PortalForms slug="example-therapy" sessionToken={TOKEN} />, {
+    wrapper: Wrapper,
+  })
 }
 
 beforeEach(() => {
@@ -115,6 +117,10 @@ describe("PortalForms", () => {
     renderModule()
 
     expect(await screen.findByTestId("forms-expired")).toBeInTheDocument()
+    expect(screen.getByTestId("forms-expired-recover")).toHaveAttribute(
+      "href",
+      "/portal/example-therapy/recover",
+    )
   })
 
   it("offers a retry when the list will not load", async () => {

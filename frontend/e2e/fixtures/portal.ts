@@ -6,9 +6,10 @@
  * the same capture seam rather than a second one.
  *
  * The link arrives with its token in the URL fragment, which is never sent
- * to a server; the step-up code arrives on a separate channel. Both are
- * read from the stand-in their channel is wired to on this stack — the
- * mail server and the fake text-message gateway — never invented here.
+ * to a server; the step-up code arrives on a separate channel, texted when
+ * the patient asks for it from the page the link opens. Both are read from
+ * the stand-in their channel is wired to on this stack — the mail server and
+ * the fake text-message gateway — never invented here.
  */
 
 import type { APIRequestContext, Page } from "@playwright/test"
@@ -19,6 +20,7 @@ import { sms, stepUpCode } from "./sms"
 import { BACKEND_URL } from "./stack"
 
 const REDEEM_PATH = "/api/patient/auth/redeem"
+const REQUEST_CODE_PATH = "/api/patient/auth/request-code"
 
 let sequence = 0
 
@@ -32,10 +34,11 @@ export interface PortalInvitation {
   /** The whole link, exactly as the email carried it. */
   link: string
   token: string
-  otp: string
+  /** Where the code goes once it is asked for. */
+  phone: string
 }
 
-/** Invite the patient and read both factors back, without spending either. */
+/** Invite the patient and read the link back. No code exists until one is asked for. */
 export async function givePortalInvitation(
   api: ApiClient,
   patientId: string,
@@ -48,16 +51,43 @@ export async function givePortalInvitation(
   const token = new URLSearchParams(new URL(link).hash.slice(1)).get("invite")
   expect(token, `the invitation email carries a token: ${link}`).toBeTruthy()
 
-  return { link, token: token as string, otp: stepUpCode(await sms.waitFor(phone)) }
+  return { link, token: token as string, phone }
 }
 
-/** Redeem an invitation at the API and return the patient's session token. */
+/**
+ * Ask for a code for this link at the API — what "Text me a code" does — and
+ * read the text that arrives. Waits for a message beyond the ones the number
+ * already had, so a resend is never answered with the code it replaced.
+ */
+export async function requestStepUpCode(
+  invitation: Pick<PortalInvitation, "token" | "phone">,
+): Promise<string> {
+  const before = await sms.countFor(invitation.phone)
+  const asked = await fetch(`${BACKEND_URL}${REQUEST_CODE_PATH}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: invitation.token }),
+  })
+  expect(asked.status, "the code is sent").toBe(202)
+  return stepUpCode(await sms.waitFor(invitation.phone, 10_000, before))
+}
+
+/** Tap "Text me a code" on the page the link opened, and read the text. */
+export async function askForCodeInPage(page: Page, phone: string): Promise<string> {
+  const before = await sms.countFor(phone)
+  await page.getByTestId("portal-shell-request-code").click()
+  await expect(page.getByTestId("portal-shell-otp-input")).toBeVisible()
+  return stepUpCode(await sms.waitFor(phone, 10_000, before))
+}
+
+/** Ask for a code, redeem at the API and return the patient's session token. */
 export async function redeemPortalInvitation(
   request: APIRequestContext,
   invitation: PortalInvitation,
 ): Promise<string> {
+  const otp = await requestStepUpCode(invitation)
   const redeemed = await request.post(`${BACKEND_URL}${REDEEM_PATH}`, {
-    data: { token: invitation.token, otp: invitation.otp },
+    data: { token: invitation.token, otp },
   })
   expect(redeemed.status(), "the invitation redeems").toBe(200)
   return (await redeemed.json()).session_token as string
@@ -76,13 +106,24 @@ export async function givePortalSession(
 }
 
 /**
- * Sign in through the shell exactly as the patient does: open the link, type
- * the code. The patient lands on Home; a spec about one section goes on with
- * {@link openPortalSection}.
+ * Sign in through the shell exactly as the patient does: open the link, ask
+ * for a code, type it. The patient lands on Home; a spec about one section
+ * goes on with {@link openPortalSection}.
  */
 export async function signInToPortal(page: Page, invitation: PortalInvitation): Promise<void> {
-  await page.goto(invitation.link)
-  await page.getByTestId("portal-shell-otp-input").fill(invitation.otp)
+  await signInFromLink(page, invitation.link, invitation.phone)
+}
+
+/**
+ * The one place a spec walks the shell's sign-in: open `link`, tap "Text me
+ * a code", read the text sent to `phone`, type it, and arrive signed in.
+ * Specs that already hold a link (an invite they read themselves, a recovery
+ * email) call this rather than repeating the steps.
+ */
+export async function signInFromLink(page: Page, link: string, phone: string): Promise<void> {
+  await page.goto(link)
+  const otp = await askForCodeInPage(page, phone)
+  await page.getByTestId("portal-shell-otp-input").fill(otp)
   await page.getByTestId("portal-shell-otp-submit").click()
   await expect(page.getByTestId("portal-shell-active")).toBeVisible()
 }

@@ -28,15 +28,27 @@ class InviteChallenge:
     jti: str
     patient_id: str
     tenant: str
-    otp_hash: str
+    #: ``None`` until the patient asks for a code; replaced by each request.
+    otp_hash: str | None
     expires_at: int  # unix seconds
     attempts: int = 0
     consumed: bool = False
+    #: When the current code stops working (unix seconds). ``None`` with no
+    #: code, and ``None`` on an invitation whose code was texted when it was
+    #: issued — that one's window is the invitation's own ``expires_at``.
+    code_expires_at: int | None = None
 
 
 class PortalAuthStore(Protocol):
     def put_challenge(self, challenge: InviteChallenge) -> None: ...
     def get_challenge(self, jti: str) -> InviteChallenge | None: ...
+    def set_code(self, jti: str, *, otp_hash: str, code_expires_at: int) -> None:
+        """Store a newly texted code, retiring whichever one came before.
+
+        Leaves ``attempts`` alone: the cap is per invitation, not per code.
+        """
+        ...
+
     def increment_attempts(self, jti: str) -> int:
         """Bump the attempt counter; return the new total."""
         ...
@@ -80,6 +92,10 @@ class InMemoryPortalAuthStore:
 
     def get_challenge(self, jti: str) -> InviteChallenge | None:
         return self._by_jti.get(jti)
+
+    def set_code(self, jti: str, *, otp_hash: str, code_expires_at: int) -> None:
+        current = self._by_jti[jti]
+        self._by_jti[jti] = replace(current, otp_hash=otp_hash, code_expires_at=code_expires_at)
 
     def increment_attempts(self, jti: str) -> int:
         current = self._by_jti[jti]

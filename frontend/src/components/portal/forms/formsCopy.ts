@@ -38,7 +38,8 @@ export function questionsLeft(outstanding: number): string {
 
 /** Both dead ends a portal session can hand a form. */
 export const EXPIRED_HEADING = "This link has expired"
-export const EXPIRED_BODY = "Ask your clinician for a new invite link, then start again."
+export const EXPIRED_BODY = "You'll need a new sign-in link to carry on."
+export const EXPIRED_ACTION = "Get a new sign-in link"
 
 /** Everything else: worth another try. */
 export const RETRY_HEADING = "Something went wrong"

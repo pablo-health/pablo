@@ -7,7 +7,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { redeemInvite, resolvePortalPractice } from "../api"
+import { redeemInvite, requestSignInCode, resolvePortalPractice } from "../api"
 
 vi.mock("@/lib/api/client", () => ({
   buildApiUrl: (endpoint: string) => `https://api.example.test${endpoint}`,
@@ -72,5 +72,37 @@ describe("redeemInvite", () => {
     const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit]
     expect(url).toContain("/api/patient/auth/redeem")
     expect(JSON.parse(init.body as string)).toEqual({ token: "invite-token", otp: "123456" })
+  })
+})
+
+describe("requestSignInCode", () => {
+  it("posts the link token and nothing else", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(new Response(null, { status: 202 }))
+    vi.stubGlobal("fetch", fetchSpy)
+
+    const result = await requestSignInCode("invite-token")
+
+    expect(result).toEqual({ ok: true })
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain("/api/patient/auth/request-code")
+    expect(init.method).toBe("POST")
+    expect(JSON.parse(init.body as string)).toEqual({ token: "invite-token" })
+  })
+
+  it("reads a 401 as a link that cannot be used", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({}, { status: 401 })))
+
+    expect(await requestSignInCode("invite-token")).toEqual({ ok: false, reason: "refused" })
+  })
+
+  it("reads anything else as worth another try", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({}, { status: 503 })))
+    expect(await requestSignInCode("invite-token")).toEqual({ ok: false, reason: "unavailable" })
+
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({}, { status: 429 })))
+    expect(await requestSignInCode("invite-token")).toEqual({ ok: false, reason: "unavailable" })
+
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")))
+    expect(await requestSignInCode("invite-token")).toEqual({ ok: false, reason: "unavailable" })
   })
 })

@@ -2,12 +2,14 @@
 
 """The portal credential lifecycle over HTTP.
 
-Five routes, and they do not share a principal:
+Six routes, and they do not share a principal:
 
 * ``POST /api/patients/{id}/portal-invite`` — CLINICIAN. Mints a single-use
-  invitation, texts the step-up code, emails the magic link.
+  invitation and emails the magic link.
 * ``GET``/``DELETE /api/patients/{id}/portal-access`` — CLINICIAN. The state
   of one patient's portal access, and the kill switch.
+* ``POST /api/patient/auth/request-code`` — UNAUTHENTICATED. Link in, a code
+  texted to the number on the chart, nothing back.
 * ``POST /api/patient/auth/redeem`` — UNAUTHENTICATED. Link plus code in,
   patient-session token out. The only route in the engine that mints a
   credential for someone who had none.
@@ -42,7 +44,7 @@ import logging
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 
 from ..api_errors import (
@@ -60,8 +62,10 @@ from ..models import User
 from ..models.audit import AuditAction, ResourceType
 from ..rate_limit import (
     check_portal_redeem_invite_limit,
+    check_portal_request_code_invite_limit,
     require_portal_redeem_rate_limit,
     require_portal_refresh_rate_limit,
+    require_portal_request_code_rate_limit,
 )
 from ..repositories import get_patient_repository
 from ..repositories.patient import PatientRepository
@@ -69,6 +73,7 @@ from ..services.audit_service import AuditService, get_audit_service
 from ..settings import get_settings
 from ..utcnow import utc_now
 from . import tokens
+from .clinicians import ClinicianName, get_primary_clinician_name
 from .delivery import (
     DeliveryNotConfigured,
     DeliveryNotConfiguredError,
@@ -230,7 +235,7 @@ class PortalInviteAccepted(BaseModel):
 
     patient_id: str
     #: When the magic link stops working (unix seconds), so the clinician
-    #: can say "within fifteen minutes" without seeing the link itself.
+    #: can say how long the patient has without seeing the link itself.
     invite_expires_at: int
 
 
@@ -268,8 +273,13 @@ def issue_portal_invite(  # noqa: PLR0913 — FastAPI Depends-injected params ar
     audit: Annotated[AuditService, Depends(get_audit_service)],
     templates: Annotated[InviteTemplateStore, Depends(get_invite_template_store)],
     form_names: Annotated[FormNames, Depends(get_invite_form_names)],
+    clinician_name: Annotated[ClinicianName, Depends(get_primary_clinician_name)],
 ) -> PortalInviteAccepted:
-    """Invite one patient to the portal: text the code, email the link.
+    """Invite one patient to the portal: email the link.
+
+    The code is not texted here. The patient asks for it from the page the
+    link opens (``request-code``), so the code's window starts when they are
+    there to use it.
 
     Where the email channel can send practice-written text, the email is the
     practice's own wording (or the default) filled in for this patient — the
@@ -281,8 +291,9 @@ def issue_portal_invite(  # noqa: PLR0913 — FastAPI Depends-injected params ar
     factor wearing a two-factor shape.
 
     503 when either channel is not configured, checked BEFORE anything is
-    minted or sent, so an unconfigured deployment never leaves a patient
-    holding a code for a link that will not arrive.
+    minted or sent — the text channel too, although nothing is texted yet,
+    because a link whose code can never be sent is an invitation nobody can
+    use.
 
     The link opens the practice's own portal page, so the practice's address
     is resolved here — minted on the first invitation rather than made into a
@@ -304,9 +315,7 @@ def issue_portal_invite(  # noqa: PLR0913 — FastAPI Depends-injected params ar
         service = build_portal_auth_service(
             store=stores.challenges, sessions=stores.sessions, sms=sms
         )
-        issued = service.issue_invite(
-            patient_id=patient_id, tenant=stores.tenant, phone=patient.phone
-        )
+        issued = service.issue_invite(patient_id=patient_id, tenant=stores.tenant)
         link = build_invite_link(slug=address.slug, token=issued.token)
         if isinstance(delivery, RenderedInviteDelivery):
             rendered = compose(
@@ -315,6 +324,7 @@ def issue_portal_invite(  # noqa: PLR0913 — FastAPI Depends-injected params ar
                     client_first_name=patient.first_name or "",
                     practice_name=address.display_name,
                     forms=form_names(patient_id, user.id, ()),
+                    clinician_name=clinician_name(patient_id),
                 ),
                 link,
             )
@@ -419,7 +429,14 @@ def revoke_portal_access(  # noqa: PLR0913 — FastAPI Depends-injected params a
     )
 
 
-# ── patient: redeem + refresh ───────────────────────────────────────────
+# ── patient: request a code, redeem, refresh ────────────────────────────
+
+
+class RequestCodeRequest(BaseModel):
+    """The link, and nothing else. In particular, no phone number: the code
+    goes to the number on the chart, never to one a caller names."""
+
+    token: str = Field(min_length=1, max_length=4096)
 
 
 class RedeemRequest(BaseModel):
@@ -462,6 +479,72 @@ class PatientSessionResponse(BaseModel):
     expires_at: int
     practice_slug: str | None = None
     practice_display_name: str | None = None
+
+
+@router.post(
+    "/api/patient/auth/request-code",
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[
+        Depends(truly_public),
+        Depends(require_portal_request_code_rate_limit),
+        _SUBSCRIPTION_EXEMPT,
+    ],
+)
+def request_portal_code(
+    body: RequestCodeRequest,
+    request: Request,
+    gateway: Annotated[PortalTenantGateway, Depends(get_portal_tenant_gateway)],
+    sms: Annotated[SmsGateway, Depends(get_sms_gateway)],
+) -> Response:
+    """Text a sign-in code for this invitation to the number on the chart.
+
+    The same order of operations as redeem, for the same reasons: signature
+    first, then the per-invitation window, then the practice schema, then
+    the challenge row. Asking again replaces the previous code and restarts
+    its window; the attempt cap is per invitation and a new code does not
+    reset it.
+
+    ``202`` with an empty body on success, and the same 401 redeem gives for
+    every refusal — an unknown, spent, expired or attempt-capped invitation,
+    or a chart with no number on it. The response never carries the code or
+    the number, and nothing here logs either.
+
+    ``503`` when the text could not be sent. That says something about the
+    deployment and nothing about the invitation, and the patient can do
+    something with it: try again.
+    """
+    claims = _verified_invite_claims(body.token)
+    check_portal_request_code_invite_limit(claims.jti)
+
+    # Raised after the tenant work closes: ``_tenant_work`` turns anything
+    # that is not an HTTPException into the uniform 401, and this is not a
+    # refusal of the invitation.
+    unsent: ServiceUnavailableError | None = None
+    with _tenant_work(gateway, claims.tenant, request) as work:
+        service = build_portal_auth_service(store=work.challenges, sessions=work.sessions, sms=sms)
+        try:
+            service.request_code(token=body.token, phone_for=work.step_up_phone)
+        except PortalAuthError:
+            raise _unauthenticated() from None
+        except DeliveryNotConfiguredError:
+            unsent = _delivery_unavailable()
+        except Exception as exc:
+            # A provider's own error message can quote the number it failed
+            # to reach, so only the exception's type is logged.
+            logger.warning(
+                "Portal sign-in code could not be sent",
+                extra={"error_type": type(exc).__name__},
+            )
+            unsent = ServiceUnavailableError(
+                "The code could not be sent. Try again in a moment.",
+                code="PORTAL_CODE_NOT_SENT",
+            )
+        else:
+            work.commit()
+
+    if unsent is not None:
+        raise unsent
+    return Response(status_code=status.HTTP_202_ACCEPTED)
 
 
 @router.post(

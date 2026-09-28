@@ -249,6 +249,40 @@ def test_has_outstanding_ignores_consumed_and_expired(
     assert challenges.has_outstanding(_PATIENT_A) is False
 
 
+def test_an_invitation_is_stored_with_no_code(challenges: DbPortalAuthStore) -> None:
+    challenges.put_challenge(
+        InviteChallenge(
+            jti="jti-no-code",
+            patient_id=_PATIENT_A,
+            tenant="practice",
+            otp_hash=None,
+            expires_at=_NOW + 7 * 86_400,
+        )
+    )
+
+    stored = challenges.get_challenge("jti-no-code")
+    assert stored is not None
+    assert stored.otp_hash is None
+    assert stored.code_expires_at is None
+
+
+def test_set_code_replaces_the_code_and_keeps_the_attempts(
+    challenges: DbPortalAuthStore,
+) -> None:
+    """A resend is a new hash and a new window, and never a fresh count."""
+    challenges.put_challenge(_challenge("jti-resend"))
+    challenges.increment_attempts("jti-resend")
+
+    challenges.set_code("jti-resend", otp_hash="first", code_expires_at=_NOW + 900)
+    challenges.set_code("jti-resend", otp_hash="second", code_expires_at=_NOW + 1_000)
+
+    stored = challenges.get_challenge("jti-resend")
+    assert stored is not None
+    assert stored.otp_hash == "second"
+    assert stored.code_expires_at == _NOW + 1_000
+    assert stored.attempts == 1
+
+
 # ---------------------------------------------------------------------------
 # Sessions
 # ---------------------------------------------------------------------------
@@ -554,3 +588,72 @@ class TestFreshAndMigratedAgree:
         _rebuild_through_the_chain(engine, migrated_schema)
         _reapply_policies(engine, migrated_schema)
         assert _shape(engine, migrated_schema, _SESSIONS) == before
+
+
+# ---------------------------------------------------------------------------
+# Codes asked for rather than sent with the invitation
+# ---------------------------------------------------------------------------
+
+# The revision before the code moved to the patient's request, and the one
+# that moved it.
+_BEFORE_CODE_ON_REQUEST = "b8e4d2a7c931"
+
+
+def test_an_invitation_in_flight_redeems_after_the_migration(engine: Engine) -> None:
+    """A row written when the code went out with the invitation — a hash, no
+    code window — crosses the migration and still redeems, on the
+    invitation's own expiry."""
+    from app.db.migrate_tenants import upgrade_tenant_schema  # noqa: PLC0415
+    from app.portal import tokens  # noqa: PLC0415
+    from app.portal.delivery import FakeSmsGateway  # noqa: PLC0415
+    from app.portal.otp import hash_otp  # noqa: PLC0415
+    from app.portal.service import PortalAuthConfig, PortalAuthService  # noqa: PLC0415
+
+    key = "migration-test-signing-key-not-a-real-secret"
+    schema = _new_schema(engine, "portal_in_flight")
+    try:
+        # Put the schema back where it was before this change, with a row in
+        # the shape that revision wrote.
+        with engine.begin() as conn:
+            conn.execute(text(f"SET search_path = {schema}, platform, public"))
+            conn.execute(text(f"ALTER TABLE {schema}.{_CHALLENGES} DROP COLUMN code_expires_at"))
+            conn.execute(
+                text(f"ALTER TABLE {schema}.{_CHALLENGES} ALTER COLUMN otp_hash SET NOT NULL")
+            )
+            conn.execute(
+                text(f"UPDATE {schema}.alembic_version SET version_num = :r"),  # noqa: S608
+                {"r": _BEFORE_CODE_ON_REQUEST},
+            )
+            conn.execute(
+                text(
+                    f"INSERT INTO {schema}.{_CHALLENGES} "  # noqa: S608
+                    "(jti, patient_id, otp_hash, created_at, expires_at, attempts, consumed) "
+                    "VALUES ('jti-in-flight', CAST(:p AS uuid), :h, now(), "
+                    "now() + interval '10 minutes', 0, false)"
+                ),
+                {"p": _PATIENT_A, "h": hash_otp("123456", pepper=key)},
+            )
+
+        result = upgrade_tenant_schema(engine, schema)
+        assert result.status.value == "success", result.detail
+
+        token = tokens.mint_invite_token(
+            signing_key=key,
+            claims=tokens.InviteClaims(
+                jti="jti-in-flight", patient_id=_PATIENT_A, tenant=schema, purpose="intake"
+            ),
+            lifetime=tokens.TokenLifetime(issued_at=int(time.time()), ttl_seconds=900),
+        )
+        with _scoped(engine, schema) as session:
+            service = PortalAuthService(
+                config=PortalAuthConfig(signing_key=key),
+                store=DbPortalAuthStore(session, tenant=schema),
+                sessions=DbPortalSessionStore(session),
+                sms=FakeSmsGateway(),
+                now=lambda: int(time.time()),
+            )
+            redeemed = service.redeem(token=token, otp="123456")
+            assert redeemed.patient_id == _PATIENT_A
+            session.rollback()
+    finally:
+        _drop_schema(engine, schema)

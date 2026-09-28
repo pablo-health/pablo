@@ -40,8 +40,8 @@ import { expect, test } from "../fixtures/auth"
 import type { Page } from "@playwright/test"
 import type { ApiClient } from "../fixtures/api"
 import { firstLink, mail } from "../fixtures/mail"
+import { signInFromLink } from "../fixtures/portal"
 import { givePatient } from "../fixtures/scenarios"
-import { sms, stepUpCode } from "../fixtures/sms"
 import { fixtureFile, sha256, toInputFile } from "../fixtures/upload"
 
 interface IntakeVersion {
@@ -131,12 +131,8 @@ async function signIn(
   await api.post(`/api/patients/${patientId}/portal-invite`)
 
   const link = firstLink(await mail.waitFor(email))
-  const otp = stepUpCode(await sms.waitFor(phone))
 
-  await page.goto(link)
-  await page.getByTestId("portal-shell-otp-input").fill(otp)
-  await page.getByTestId("portal-shell-otp-submit").click()
-  await expect(page.getByTestId("portal-shell-active")).toBeVisible()
+  await signInFromLink(page, link, phone)
 }
 
 test.describe("intake artifacts", () => {

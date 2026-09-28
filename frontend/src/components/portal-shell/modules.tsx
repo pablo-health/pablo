@@ -28,8 +28,8 @@ import { PortalRefills } from "@/components/portal/refills/PortalRefills"
 import { RefillsSummary } from "@/components/portal/refills/RefillsSummary"
 import { registerPortalSlot, type PortalSlotProps } from "./slots"
 
-function FormsSlot({ sessionToken }: PortalSlotProps) {
-  return <PortalForms sessionToken={sessionToken} />
+function FormsSlot({ slug, sessionToken }: PortalSlotProps) {
+  return <PortalForms slug={slug} sessionToken={sessionToken} />
 }
 
 function MessagingSlot({ sessionToken }: PortalSlotProps) {

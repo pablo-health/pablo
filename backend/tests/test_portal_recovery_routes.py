@@ -33,8 +33,14 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from app.api_errors import register_exception_handlers
-from app.portal.delivery import CapturingInviteDelivery, DeliveryNotConfigured, FakeSmsGateway
+from app.portal.delivery import (
+    CapturingInviteDelivery,
+    CapturingRenderedInviteDelivery,
+    DeliveryNotConfigured,
+    FakeSmsGateway,
+)
 from app.portal.factory import get_invite_delivery, get_sms_gateway
+from app.portal.practice_routes import PracticeAddress
 from app.portal.recovery import router
 from app.portal.recovery_gateway import RecoveryTarget, RecoveryWork, get_recovery_gateway
 from app.portal.store import (
@@ -299,7 +305,9 @@ class TestOnlyAMatchMints:
         _recover(client, ACTIVE.email or "")
 
         assert len(delivery.sent) == 1
-        assert len(sms.sent) == 1
+        # Nothing is texted at recover time: the code goes to the chart's
+        # number when the patient opens the link and asks for it.
+        assert sms.sent == []
 
     def test_the_link_goes_to_the_address_on_the_chart(
         self, client: TestClient, delivery: CapturingInviteDelivery
@@ -312,14 +320,6 @@ class TestOnlyAMatchMints:
         _recover(client, (ACTIVE.email or "").upper())
 
         assert delivery.sent[0].to_email == ACTIVE.email
-
-    def test_the_code_goes_to_the_phone_on_the_chart(
-        self, client: TestClient, sms: FakeSmsGateway
-    ) -> None:
-        """The second factor, and the reason a mailed link is not enough."""
-        _recover(client, ACTIVE.email or "")
-
-        assert sms.sent[0].to == ACTIVE.phone
 
     def test_the_response_carries_no_token_and_no_link(self, client: TestClient) -> None:
         response = _recover(client, ACTIVE.email or "")
@@ -642,4 +642,76 @@ def test_the_minted_invitation_redeems_like_any_other(
     assert challenge.consumed is False
     assert challenge.attempts == 0
     assert challenge.expires_at > int(time.time())
-    assert challenge.otp_hash
+    # No code until the patient asks for one, as with any invitation.
+    assert challenge.otp_hash is None
+
+
+# ---------------------------------------------------------------------------
+# The recovery email says what happened
+# ---------------------------------------------------------------------------
+
+PRACTICE_NAME = "Meadowlark Counseling"
+_PRACTICE_NAME_FOR_SCHEMA: dict[str, str] = {}
+
+
+@pytest.fixture
+def rendered_delivery() -> CapturingRenderedInviteDelivery:
+    return CapturingRenderedInviteDelivery()
+
+
+@pytest.fixture
+def rendered_client(
+    app: FastAPI,
+    rendered_delivery: CapturingRenderedInviteDelivery,
+    monkeypatch: pytest.MonkeyPatch,
+) -> TestClient:
+    """The same route, on a channel that sends the engine's own wording."""
+    app.dependency_overrides[get_invite_delivery] = lambda: rendered_delivery
+    _PRACTICE_NAME_FOR_SCHEMA[TENANT] = PRACTICE_NAME
+    monkeypatch.setattr(
+        "app.portal.recovery.practice_address_for_schema",
+        lambda schema: (
+            PracticeAddress(slug=SLUG, display_name=_PRACTICE_NAME_FOR_SCHEMA[schema], enabled=True)
+            if schema in _PRACTICE_NAME_FOR_SCHEMA
+            else None
+        ),
+    )
+    return TestClient(app)
+
+
+def test_a_recovery_email_names_the_practice_and_invites_nobody(
+    rendered_client: TestClient, rendered_delivery: CapturingRenderedInviteDelivery
+) -> None:
+    """The client asked for this link; nobody invited them just now."""
+    assert _recover(rendered_client, ACTIVE.email or "").status_code == 202
+
+    [email] = rendered_delivery.sent
+    assert email.to_email == ACTIVE.email
+    assert email.subject == f"Your sign-in link for {PRACTICE_NAME}"
+    assert email.text is not None
+    assert email.text.startswith(
+        f"Here's a new link to sign in to the patient portal for {PRACTICE_NAME}.\n\n"
+    )
+    assert f"/portal/{SLUG}#invite=" in email.text
+    assert email.text.endswith("If you didn't ask for this, you can ignore this email.")
+    assert "invited" not in email.text
+    assert "{{" not in email.text
+
+
+@pytest.mark.parametrize("practice_name", [None, "", "   "], ids=["no-address", "empty", "blank"])
+def test_with_no_practice_name_recovery_sends_the_wording_that_names_nobody(
+    rendered_client: TestClient,
+    rendered_delivery: CapturingRenderedInviteDelivery,
+    practice_name: str | None,
+) -> None:
+    """Never an empty name in "for ." — the adapter's own wording instead."""
+    if practice_name is None:
+        _PRACTICE_NAME_FOR_SCHEMA.clear()
+    else:
+        _PRACTICE_NAME_FOR_SCHEMA[TENANT] = practice_name
+
+    assert _recover(rendered_client, ACTIVE.email or "").status_code == 202
+
+    [email] = rendered_delivery.sent
+    assert email.subject is None, "sent as the adapter's fixed wording"
+    assert email.link.startswith("http")

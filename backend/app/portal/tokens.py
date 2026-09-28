@@ -6,8 +6,9 @@ Two token types, both scoped to a single patient AND a single practice:
 
 * **invite** — carried in the magic link the clinician sends. Possession of
   this is ONE factor; redemption additionally requires the texted code (the
-  step-up). Short TTL (~15 min), single-use, enforced by the server-side
-  challenge keyed on ``jti`` (see :mod:`app.portal.store`).
+  step-up). Days-long TTL (7 by default) because the link alone signs
+  nobody in; the texted code is what is short-lived. Single-use, enforced by
+  the server-side challenge keyed on ``jti`` (see :mod:`app.portal.store`).
 * **session** — minted on successful redemption; the patient's bearer
   credential for every patient-facing route. Refreshable, ~1 h TTL.
 

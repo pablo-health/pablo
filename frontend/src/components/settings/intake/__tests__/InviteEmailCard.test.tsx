@@ -31,6 +31,7 @@ vi.mock("@/lib/api/inviteTemplate", async (importOriginal) => ({
 const PLACEHOLDERS = [
   { name: "portal_link", label: "Sign-in link", required: true },
   { name: "client_first_name", label: "Client's first name", required: false },
+  { name: "clinician_name", label: "Your name", required: false },
 ]
 
 const DEFAULT = {
@@ -48,7 +49,10 @@ describe("InviteEmailCard", () => {
     mockPreview.mockImplementation((draft: { subject: string; body: string }) =>
       Promise.resolve({
         subject: draft.subject,
-        text: draft.body.replace("{{portal_link}}", "[personal sign-in link]").replace("{{client_first_name}}", "Alex"),
+        text: draft.body
+          .replace("{{portal_link}}", "[personal sign-in link]")
+          .replace("{{client_first_name}}", "Alex")
+          .replace("{{clinician_name}}", "Jordan Rivera"),
         problems: draft.body.includes("{{portal_link}}")
           ? []
           : ["Include {{portal_link}} in the message, so the client can sign in."],
@@ -66,6 +70,19 @@ describe("InviteEmailCard", () => {
     const { container } = renderWithProviders(<InviteEmailCard />)
     await waitFor(() => expect(mockGet).toHaveBeenCalled())
     expect(container).toBeEmptyDOMElement()
+  })
+
+  it("offers the clinician's name to insert, and previews it filled in", async () => {
+    const user = userEvent.setup()
+    renderWithProviders(<InviteEmailCard />)
+    const body = (await screen.findByLabelText("Message")) as HTMLTextAreaElement
+
+    body.setSelectionRange(0, 0)
+    await user.click(screen.getByRole("button", { name: "Your name" }))
+
+    await waitFor(() => expect(body.value.startsWith("{{clinician_name}}")).toBe(true))
+    const preview = await screen.findByTestId("invite-email-card-preview")
+    await waitFor(() => expect(preview).toHaveTextContent("Jordan Rivera"))
   })
 
   it("previews the wording for an example client", async () => {

@@ -32,8 +32,9 @@
 import { test, expect } from "../fixtures/auth"
 import type { ApiClient } from "../fixtures/api"
 import { firstLink, mail } from "../fixtures/mail"
+import { requestStepUpCode, signInFromLink } from "../fixtures/portal"
 import { givePatient } from "../fixtures/scenarios"
-import { sms, stepUpCode } from "../fixtures/sms"
+import { sms } from "../fixtures/sms"
 import { BACKEND_URL } from "../fixtures/stack"
 
 const REDEEM_PATH = "/api/patient/auth/redeem"
@@ -81,7 +82,7 @@ async function signInAPatient(
   await api.post(`/api/patients/${patient.id}/portal-invite`)
   const link = firstLink(await mail.waitFor(email))
   const token = new URLSearchParams(new URL(link).hash.slice(1)).get("invite")
-  const otp = stepUpCode(await sms.waitFor(phone))
+  const otp = await requestStepUpCode({ token: token as string, phone })
 
   const redeemed = await request.post(`${BACKEND_URL}${REDEEM_PATH}`, {
     data: { token, otp },
@@ -123,6 +124,7 @@ test("recovery sends a link that really signs the patient in @portal", async ({
   page,
 }) => {
   const patient = await signInAPatient(api, request)
+  const textsBefore = await sms.countFor(patient.phone)
 
   // Ask for a new link as somebody who has lost theirs, with no session.
   const asked = await request.post(
@@ -134,7 +136,9 @@ test("recovery sends a link that really signs the patient in @portal", async ({
   // Both factors arrive on the patient's own channels, not in the response.
   expect(await asked.text()).not.toContain("invite")
   const link = firstLink(await mail.waitFor(patient.email))
-  const otp = stepUpCode(await sms.waitFor(patient.phone))
+  // Recovery sends the link and nothing else: the code waits until the
+  // patient opens it and asks.
+  expect(await sms.countFor(patient.phone), "nothing is texted at recover time").toBe(textsBefore)
 
   // The recovery link has the same shape the clinician's invite produces —
   // it names the practice in the path and carries the credential in the
@@ -142,11 +146,7 @@ test("recovery sends a link that really signs the patient in @portal", async ({
   expect(link).toContain(`/portal/${patient.slug}`)
   expect(link).toContain("#invite=")
 
-  await page.goto(link)
-  await page.getByTestId("portal-shell-otp-input").fill(otp)
-  await page.getByTestId("portal-shell-otp-submit").click()
-
-  await expect(page.getByTestId("portal-shell-active")).toBeVisible()
+  await signInFromLink(page, link, patient.phone)
   expect(page.url(), "the address bar holds no credential").not.toContain("invite")
 })
 
@@ -210,7 +210,7 @@ test("the profile carries the patient's own details and no staff notes @portal",
   const link = firstLink(await mail.waitFor(email))
   const token = new URLSearchParams(new URL(link).hash.slice(1)).get("invite")
   const redeemed = await request.post(`${BACKEND_URL}${REDEEM_PATH}`, {
-    data: { token, otp: stepUpCode(await sms.waitFor(phone)) },
+    data: { token, otp: await requestStepUpCode({ token: token as string, phone }) },
   })
   const headers = { Authorization: `Bearer ${(await redeemed.json()).session_token}` }
 

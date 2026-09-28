@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 /**
- * The patient portal shell's fetch layer: resolve a practice, redeem an
- * invitation, rotate a session.
+ * The patient portal shell's fetch layer: resolve a practice, ask for a
+ * sign-in code, redeem an invitation, rotate a session.
  *
  * Deliberately does NOT use `get`/`post` from `@/lib/api/client`. Those fall
  * back to the signed-in clinician's Firebase ID token when no token is
@@ -71,6 +71,37 @@ async function postPortalAuth(
     return { ok: true, data: (await response.json()) as PortalSessionPayload }
   } catch {
     return { ok: false }
+  }
+}
+
+/**
+ * What asking for a code came to.
+ *
+ * `refused` is the backend's uniform 401: this link cannot be used any more
+ * (spent, expired, withdrawn — it never says which). `unavailable` is
+ * everything else — a text that could not be sent, a closed rate-limit
+ * window, a network failure — and is worth another try.
+ */
+export type RequestCodeResult = { ok: true } | { ok: false; reason: "refused" | "unavailable" }
+
+/**
+ * Ask for a sign-in code to be texted for this invitation.
+ *
+ * Sends the link token and nothing else. The number the code goes to is the
+ * one on the patient's chart, read by the server; it is never sent from here
+ * and never comes back.
+ */
+export async function requestSignInCode(token: string): Promise<RequestCodeResult> {
+  try {
+    const response = await fetch(buildApiUrl("/api/patient/auth/request-code"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ token }),
+    })
+    if (response.ok) return { ok: true }
+    return { ok: false, reason: response.status === 401 ? "refused" : "unavailable" }
+  } catch {
+    return { ok: false, reason: "unavailable" }
   }
 }
 

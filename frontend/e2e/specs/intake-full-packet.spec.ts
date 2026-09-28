@@ -51,7 +51,6 @@ import {
   type PortalInvitation,
 } from "../fixtures/portal"
 import { givePatient } from "../fixtures/scenarios"
-import { sms, stepUpCode } from "../fixtures/sms"
 import { BACKEND_URL } from "../fixtures/stack"
 import {
   fixtureFile,
@@ -376,11 +375,12 @@ async function templateName(api: ApiClient, templateId: string): Promise<string>
 }
 
 /**
- * Read back the two factors of whichever invitation `send` causes.
+ * Read back the link of whichever invitation `send` causes.
  *
- * Counted before and after rather than drained, because the mail server and
- * the text gateway are shared: what makes this invitation THIS one is that
- * it arrived after the send, not that the box was empty first.
+ * Counted before and after rather than drained, because the mail server is
+ * shared: what makes this invitation THIS one is that it arrived after the
+ * send, not that the box was empty first. The code is not read here — it is
+ * texted when the patient asks for it, which `signInToPortal` does.
  *
  * Taking the send as an argument is what lets a screen prove it: the route
  * and the button reach the same place, and a test that always POSTs cannot
@@ -392,17 +392,14 @@ async function invitationFrom(
   send: () => Promise<void>,
 ): Promise<PortalInvitation> {
   const letters = async () => (await mail.received()).filter((m) => m.to.includes(email))
-  const texts = async () => (await sms.received()).filter((m) => m.to === phone)
   const sentLetters = (await letters()).length
-  const sentTexts = (await texts()).length
 
   await send()
 
   const link = firstLink(await oneMore(letters, sentLetters, `mail for ${email}`))
   const token = new URLSearchParams(new URL(link).hash.slice(1)).get("invite")
   expect(token, `the invitation email carries a token: ${link}`).toBeTruthy()
-  const otp = stepUpCode(await oneMore(texts, sentTexts, `text for ${phone}`))
-  return { link, token: token as string, otp }
+  return { link, token: token as string, phone }
 }
 
 /** Invite the patient through the route, and read back what it sent. */

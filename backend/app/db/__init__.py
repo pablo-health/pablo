@@ -25,11 +25,12 @@ Off-request tenant context (background tasks, workers):
 
 import re
 import urllib.parse
+from collections.abc import Sequence
 from contextvars import ContextVar, Token
 from functools import lru_cache
-from typing import NamedTuple
+from typing import Any, Literal, NamedTuple
 
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import Executable, Row, create_engine, event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -672,6 +673,51 @@ def arm_current_patient_id(session: Session, patient_id: str) -> None:
         {"pid": patient_id},
     )
     _disarm_other_principal(session, _RLS_USER_ID_KEY, "app.current_user_id", _current_user_id)
+
+
+#: The two principals an RLS policy reads. A literal, so :func:`read_once_as`
+#: can never be pointed at some other setting.
+type RlsPrincipal = Literal["app.current_patient_id", "app.current_user_id"]
+
+
+def read_once_as(
+    session: Session, *, principal: RlsPrincipal, value: str, statement: Executable
+) -> Sequence[Row[Any]]:
+    """Run ONE statement as *principal*, and leave nothing armed after it.
+
+    For the few unauthenticated paths that must read a row-scoped table
+    before anybody holds a session: texting a sign-in code (where to send
+    it) and account recovery (whose chart an address belongs to). An
+    unarmed read there sees no rows, because the runtime role does not
+    bypass row-level security.
+
+    Why not :func:`arm_current_patient_id` / :func:`arm_current_user_id`:
+    those arm the principal for the REST of the request — ``session.info``
+    and the ContextVars carry it into every later transaction through the
+    ``after_begin`` listener. On a path where nobody has proved who they are,
+    that would scope everything after the read to someone who has not
+    stepped up, which is exactly what ``_CORE_NOT_ROW_SCOPED`` rejects for
+    the sign-in tables.
+
+    Why the savepoint: ``set_config(..., true)`` is transaction-local, and
+    Postgres reverts a setting made inside a savepoint when that savepoint
+    is rolled back. So the setting lives for exactly the one statement run
+    inside it, and the enclosing transaction — and whatever the caller runs
+    next in it — is as unscoped as before. Nothing is written to
+    ``session.info`` or a ContextVar, so no listener can re-arm it later,
+    and nothing survives into the pool when the connection is returned.
+    ``backend/tests_integration/database/test_scoped_read_pool.py`` pins
+    all three.
+    """
+    savepoint = session.begin_nested()
+    try:
+        session.execute(
+            text("SELECT set_config(:setting, :value, true)"),
+            {"setting": principal, "value": value},
+        )
+        return session.execute(statement).all()
+    finally:
+        savepoint.rollback()
 
 
 @event.listens_for(Session, "after_begin")

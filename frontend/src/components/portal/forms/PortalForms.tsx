@@ -38,11 +38,13 @@ export const keys = {
 }
 
 export interface PortalFormsProps {
+  /** The practice's portal address, for the way back in when a session ends. */
+  slug: string
   /** The live portal session token. This module never goes looking for one. */
   sessionToken: string
 }
 
-export function PortalForms({ sessionToken }: PortalFormsProps) {
+export function PortalForms({ slug, sessionToken }: PortalFormsProps) {
   const queryClient = useQueryClient()
   const [openId, setOpenId] = useState<string | null>(null)
   const [sessionLost, setSessionLost] = useState(false)
@@ -67,7 +69,7 @@ export function PortalForms({ sessionToken }: PortalFormsProps) {
     sessionLost ||
     (assignments.error instanceof PatientIntakeError && assignments.error.kind === "expired")
 
-  if (expired) return <FormsExpired />
+  if (expired) return <FormsExpired slug={slug} />
   if (assignments.isPending) return <FormsLoading />
   if (assignments.isError) {
     return <FormsLoadFailed onRetry={() => void assignments.refetch()} />

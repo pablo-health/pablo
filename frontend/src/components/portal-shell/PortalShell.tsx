@@ -21,9 +21,15 @@
  *   unknown     -> the slug doesn't resolve to a practice this deployment
  *                  serves a portal for
  *   no-session  -> no stored session and no invitation
- *   otp         -> no stored session, invitation present: enter the code
+ *   otp         -> no stored session, invitation present: ask for a code,
+ *                  then enter it
  *   active      -> a live (or freshly redeemed) session; renders the page
  *   expired     -> a stored session's `/refresh` came back 401
+ *
+ * The code is texted when the patient asks for it here, not when the
+ * invitation was sent, so the link can be days old and the code still
+ * fresh. Asking again replaces the code; the server keeps the attempt count
+ * per invitation, so a resend buys no extra guesses.
  *
  * The invitation is only consulted when there is NO stored session to
  * bootstrap: an expired or revoked session always lands on `expired`, never
@@ -41,11 +47,16 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { usePathname } from "next/navigation"
-import { fetchCapabilities, resolvePortalPractice } from "@/lib/portal-shell/api"
+import {
+  fetchCapabilities,
+  requestSignInCode,
+  resolvePortalPractice,
+} from "@/lib/portal-shell/api"
 import { portalLocation } from "@/lib/portal-shell/paths"
 import { bootstrapSession, redeemAndStore, signOutAndForget } from "@/lib/portal-shell/session"
 import { type CapabilitiesState, type PortalView, PortalViewProvider } from "./context"
 import {
+  LinkEndedCard,
   NoSessionCard,
   OtpCard,
   ResolvingCard,
@@ -84,6 +95,13 @@ export function PortalShell({ slug, children }: { slug: string; children?: React
   const [otp, setOtp] = useState("")
   const [otpError, setOtpError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [codeSent, setCodeSent] = useState(false)
+  const [requestingCode, setRequestingCode] = useState(false)
+  const [codeNotice, setCodeNotice] = useState<string | null>(null)
+  const [redeemFailed, setRedeemFailed] = useState(false)
+  // The server refused to text a code for this link. It never says why, and
+  // neither does this screen: the only way on is a new link.
+  const [linkRefused, setLinkRefused] = useState(false)
   const [capabilities, setCapabilities] = useState<CapabilitiesState>({ status: "loading" })
   const [signingOut, setSigningOut] = useState(false)
 
@@ -151,10 +169,30 @@ export function PortalShell({ slug, children }: { slug: string; children?: React
     }
   }, [phase, sessionToken])
 
+  async function handleRequestCode() {
+    if (!invitation || requestingCode) return
+    setRequestingCode(true)
+    setOtpError(null)
+    setRedeemFailed(false)
+    setCodeNotice(null)
+    const result = await requestSignInCode(invitation)
+    setRequestingCode(false)
+    if (result.ok) {
+      if (codeSent) setCodeNotice("We sent a new code.")
+      setCodeSent(true)
+      setOtp("")
+    } else if (result.reason === "refused") {
+      setLinkRefused(true)
+    } else {
+      setOtpError("We couldn't send a code. Try again in a moment.")
+    }
+  }
+
   async function handleRedeem() {
     if (!invitation || !otp.trim() || submitting) return
     setSubmitting(true)
     setOtpError(null)
+    setCodeNotice(null)
     const result = await redeemAndStore(slug, invitation, otp.trim())
     setSubmitting(false)
     if (result.ok) {
@@ -162,9 +200,8 @@ export function PortalShell({ slug, children }: { slug: string; children?: React
       forgetInvitationInUrl()
       setPhase("active")
     } else {
-      setOtpError(
-        "That code didn't work. Check it and try again, or ask your practice for a new invite link.",
-      )
+      setRedeemFailed(true)
+      setOtpError("That code didn't work. Check it and try again, or send a new code.")
     }
   }
 
@@ -208,13 +245,20 @@ export function PortalShell({ slug, children }: { slug: string; children?: React
           {phase === "unknown" && <UnknownPracticeCard />}
           {phase === "no-session" && <NoSessionCard slug={slug} />}
           {phase === "expired" && <NoSessionCard slug={slug} revoked />}
-          {phase === "otp" && (
+          {phase === "otp" && linkRefused && <LinkEndedCard slug={slug} />}
+          {phase === "otp" && !linkRefused && (
             <OtpCard
+              slug={slug}
+              codeSent={codeSent}
+              onRequestCode={handleRequestCode}
+              requestingCode={requestingCode}
               otp={otp}
               onOtpChange={setOtp}
               onSubmit={handleRedeem}
               submitting={submitting}
               error={otpError}
+              notice={codeNotice}
+              redeemFailed={redeemFailed}
             />
           )}
           {view !== null && (
