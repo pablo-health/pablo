@@ -30,7 +30,7 @@
 import { expect, test } from "../fixtures/auth"
 import type { Page } from "@playwright/test"
 import type { ApiClient } from "../fixtures/api"
-import { givePortalInvitation, signInToPortal } from "../fixtures/portal"
+import { givePortalInvitation, openPortalSection, signInToPortal } from "../fixtures/portal"
 import { givePatient } from "../fixtures/scenarios"
 
 interface IntakeVersion {
@@ -157,6 +157,7 @@ test("a question is asked only of the people it applies to", async ({ api, page 
   expect(saidNo.progress.complete).toBe(false)
 
   await signInToPortal(page, await givePortalInvitation(api, patient.id, email, phone))
+  await openPortalSection(page, "forms")
   await expect(page.getByTestId("forms-list")).toBeVisible()
 
   await test.step("answering no never asks the follow-up, and the form still goes in", async () => {

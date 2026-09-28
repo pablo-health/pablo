@@ -2,3 +2,4 @@
 
 export { PortalAppointments } from "./PortalAppointments"
 export type { PortalAppointmentsProps } from "./PortalAppointments"
+export { AppointmentsSummary } from "./AppointmentsSummary"

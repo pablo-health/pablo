@@ -75,10 +75,25 @@ export async function givePortalSession(
   return redeemPortalInvitation(request, invitation)
 }
 
-/** Sign in through the shell exactly as the patient does: open the link, type the code. */
+/**
+ * Sign in through the shell exactly as the patient does: open the link, type
+ * the code. The patient lands on Home; a spec about one section goes on with
+ * {@link openPortalSection}.
+ */
 export async function signInToPortal(page: Page, invitation: PortalInvitation): Promise<void> {
   await page.goto(invitation.link)
   await page.getByTestId("portal-shell-otp-input").fill(invitation.otp)
   await page.getByTestId("portal-shell-otp-submit").click()
   await expect(page.getByTestId("portal-shell-active")).toBeVisible()
+}
+
+/**
+ * Open one section from Home the way a patient does: tap its tile. The
+ * section is a page of its own (`/portal/{slug}/{section}`, or `/{slug}/{section}`
+ * on a portal host), so a reload after this stays on it.
+ */
+export async function openPortalSection(page: Page, section: string): Promise<void> {
+  await page.getByTestId(`portal-home-tile-${section}`).click()
+  await expect(page).toHaveURL(new RegExp(`/${section}$`))
+  await expect(page.getByTestId(`portal-section-${section}`)).toBeVisible()
 }

@@ -84,7 +84,7 @@ function isVideoAppointment(appointment: PatientAppointment): boolean {
  * there two minutes ago, and keying on the start takes it away at exactly
  * the moment they reach for it.
  */
-function isOver(appointment: PatientAppointment, now: Date): boolean {
+export function isOver(appointment: PatientAppointment, now: Date): boolean {
   if (appointment.status === "cancelled") return true
   if (appointment.status === "completed" || appointment.status === "no_show") return true
   const end = new Date(appointment.end_at).getTime()

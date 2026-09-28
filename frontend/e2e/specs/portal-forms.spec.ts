@@ -21,6 +21,7 @@ import { expect, test } from "../fixtures/auth"
 import type { Page } from "@playwright/test"
 import type { ApiClient } from "../fixtures/api"
 import { firstLink, mail } from "../fixtures/mail"
+import { openPortalSection } from "../fixtures/portal"
 import { givePatient } from "../fixtures/scenarios"
 import { sms, stepUpCode } from "../fixtures/sms"
 
@@ -180,6 +181,9 @@ async function signIn(
   await page.getByTestId("portal-shell-otp-input").fill(otp)
   await page.getByTestId("portal-shell-otp-submit").click()
   await expect(page.getByTestId("portal-shell-active")).toBeVisible()
+  // The code lands on Home; the forms are a tap away, on a page of their
+  // own that a reload stays on.
+  await openPortalSection(page, "forms")
 }
 
 /** Answer every item of the measure on screen with its first anchor. */

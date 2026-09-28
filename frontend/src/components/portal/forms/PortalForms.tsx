@@ -32,7 +32,7 @@ import { AssignmentList } from "./AssignmentList"
 import { FormsExpired, FormsLoadFailed, FormsLoading } from "./FormsNotice"
 import { PacketFlow } from "./PacketFlow"
 
-const keys = {
+export const keys = {
   assignments: (token: string) => ["patient-intake", "assignments", token] as const,
   form: (token: string) => ["patient-intake", "form", token] as const,
 }

@@ -21,6 +21,7 @@ import type { ApiClient } from "../fixtures/api"
 import {
   givePortalContactDetails,
   givePortalInvitation,
+  openPortalSection,
   signInToPortal,
 } from "../fixtures/portal"
 import { givePatient, type Patient } from "../fixtures/scenarios"
@@ -102,6 +103,7 @@ test.describe("portal telehealth", () => {
     expect(soon.video_link).toBeTruthy()
 
     await signInToPortal(page, await givePortalInvitation(api, patient.id, email, phone))
+    await openPortalSection(page, "appointments")
 
     await expect(page.getByTestId("appointments-row")).toHaveCount(2)
 
