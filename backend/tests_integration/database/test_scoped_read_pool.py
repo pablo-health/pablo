@@ -9,7 +9,9 @@ non-superuser, RLS-enforced role the app runs as:
 1. Inside the transaction: the statement after the helper returns cannot
    read what the helper could. That is the savepoint rollback itself.
 2. Across the pool: the physical connection handed to the next request
-   carries no principal, no tenant ``search_path``, and cannot read the row.
+   carries no principal, no tenant ``search_path``, and cannot read the row
+   — after the sign-in phone read (as the patient) and after the recovery
+   lookup (as each clinician of the practice in turn).
 3. The same pooled hand-off after an ordinary clinician-armed transaction,
    as a baseline for what "clean" means on this pool.
 
@@ -53,7 +55,9 @@ pytestmark = pytest.mark.skipif(
     ),
 )
 
-_SCHEMA = f"practice_test_scoped_{uuid.uuid4().hex[:8]}"
+_SUFFIX = uuid.uuid4().hex[:8]
+_SCHEMA = f"practice_test_scoped_{_SUFFIX}"
+_PRACTICE_ID = f"practice-scoped-{_SUFFIX}"
 _CLINICIAN = str(uuid.uuid4())
 _PATIENT_A = str(uuid.uuid4())
 _NEUTRAL_SEARCH_PATH = "platform, public"
@@ -77,13 +81,39 @@ def setup_engine() -> Iterator[Engine]:
 
 @pytest.fixture(scope="module")
 def practice(setup_engine: Engine) -> Iterator[str]:
-    """A provisioned practice holding patient A, on the clinician's caseload."""
+    """A provisioned practice holding patient A, on the clinician's caseload.
+
+    The clinician owns the practice in the platform schema, which is how the
+    recovery lookup finds whom to read as.
+    """
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    from app.db.platform_models import PlatformUserRow, PracticeRow  # noqa: PLC0415
     from app.db.provisioning import create_practice_schema  # noqa: PLC0415
 
     with setup_engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
         conn.commit()
     create_practice_schema(setup_engine, _SCHEMA)
+    now = datetime.now(UTC)
+    with Session(bind=setup_engine) as session:
+        session.add(
+            PlatformUserRow(
+                id=_CLINICIAN, email=f"{_PRACTICE_ID}@example.test", name="Owner", created_at=now
+            )
+        )
+        session.flush()
+        session.add(
+            PracticeRow(
+                id=_PRACTICE_ID,
+                name="Scoped Read Practice",
+                schema_name=_SCHEMA,
+                owner_email=f"{_PRACTICE_ID}@example.test",
+                owner_user_id=_CLINICIAN,
+                created_at=now,
+            )
+        )
+        session.commit()
     with setup_engine.begin() as conn:
         conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
         conn.execute(text("SELECT set_config('app.current_user_id', :u, true)"), {"u": _CLINICIAN})
@@ -107,6 +137,10 @@ def practice(setup_engine: Engine) -> Iterator[str]:
     yield _SCHEMA
     with setup_engine.begin() as conn:
         conn.execute(text(f'DROP SCHEMA IF EXISTS "{_SCHEMA}" CASCADE'))
+        conn.execute(text("DELETE FROM platform.practices WHERE id = :i"), {"i": _PRACTICE_ID})
+        conn.execute(
+            text("DELETE FROM platform.users WHERE id = CAST(:i AS uuid)"), {"i": _CLINICIAN}
+        )
 
 
 @pytest.fixture
@@ -186,6 +220,39 @@ def test_a_scoped_read_leaves_nothing_on_the_pooled_connection(
             assert [row.phone for row in rows] == ["+15005550006"], "the helper read nothing"
             session.commit()
             return pid
+
+    first_pid = _in_a_new_request(request)
+    _assert_clean(_next_request_sees(pooled), first_pid)
+
+
+def test_the_recovery_lookup_leaves_nothing_on_the_pooled_connection(
+    practice: str, pooled: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real ``find_patient``, reading as each clinician of the practice
+    in turn, on the one pooled connection."""
+    from app.db import set_tenant_schema  # noqa: PLC0415
+    from app.portal import recovery_gateway  # noqa: PLC0415
+
+    def pooled_session(schema: str | None = None) -> Session:
+        session = Session(bind=pooled)
+        if schema:
+            set_tenant_schema(session, schema)
+        return session
+
+    # The gateway opens its own standalone session; point it at the pool
+    # under test rather than the app's engine.
+    monkeypatch.setattr(recovery_gateway, "create_standalone_session", pooled_session)
+
+    def request() -> int:
+        with recovery_gateway.DbRecoveryGateway().open(practice, None) as work:
+            target = work.find_patient("a@example.test")
+            assert target is not None, "the lookup found nothing to prove a leak against"
+            assert target.patient_id == _PATIENT_A
+            from app.portal.db_store import DbPortalAuthStore  # noqa: PLC0415
+
+            assert isinstance(work.challenges, DbPortalAuthStore)
+            session = work.challenges._session
+            return int(session.execute(text("SELECT pg_backend_pid()")).scalar_one())
 
     first_pid = _in_a_new_request(request)
     _assert_clean(_next_request_sees(pooled), first_pid)
