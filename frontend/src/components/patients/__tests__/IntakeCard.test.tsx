@@ -84,6 +84,7 @@ const REVIEW = {
   signatures: [],
   events: [],
   form: INTAKE_FORM,
+  practice_name: null,
 }
 
 const ARTIFACT = {
@@ -353,6 +354,9 @@ describe("IntakeCard", () => {
     )
 
     expect(await screen.findByTestId("intake-review-panel")).toBeInTheDocument()
+    // Over the chart, not inside it, with the print button that prints it.
+    expect(screen.getByRole("dialog")).toContainElement(screen.getByTestId("intake-review-panel"))
+    expect(screen.getByTestId("intake-review-print")).toHaveTextContent("Print / Save as PDF")
     expect(mockReview).toHaveBeenCalledWith("patient-a", "assignment-1", undefined)
     // The clinician's three actions have a screen: reading each answer back,
     // sending named questions back, and accepting the form.

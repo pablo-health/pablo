@@ -8,6 +8,7 @@ import { AlertTriangle } from "lucide-react"
 import { IntakeArtifacts } from "@/components/patients/IntakeArtifacts"
 import { INTAKE_STATUS_TEXT, IntakeReviewPanel } from "@/components/patients/IntakeReviewPanel"
 import { SendIntakeForm } from "@/components/patients/SendIntakeForm"
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { useIntakeArtifacts, useIntakeAssignments } from "@/hooks/useIntakeArtifacts"
 import { usePatientIntakeSubmissions } from "@/hooks/usePatientIntakeSubmissions"
 import type { IntakeAssignment } from "@/lib/api/intakeReview"
@@ -95,10 +96,11 @@ function SubmissionBody({
 /**
  * One form on the list, and the review it opens.
  *
- * Collapsed until asked. The row carries the form's name and the server's
- * own sentence about where it has got to; opening it reads the form back
- * question by question, which is a second audited read and so waits for
- * somebody to want it.
+ * The row carries the form's name and the server's own sentence about where
+ * it has got to. Clicking it opens the whole form over the chart, drawn the
+ * way the patient filled it in, with the review's actions beside it and a
+ * print button that prints the form alone. Reading it is a second audited
+ * read, so it waits for somebody to open it.
  *
  * Every status opens, not only a handed-in one. The panel is what decides
  * which actions a status offers — corrections and acceptance appear on a
@@ -119,8 +121,8 @@ function AssignmentRow({
     <div data-testid={`intake-assignment-${assignment.id}`}>
       <button
         type="button"
-        onClick={() => setOpen((shown) => !shown)}
-        aria-expanded={open}
+        onClick={() => setOpen(true)}
+        aria-haspopup="dialog"
         data-testid={`intake-assignment-open-${assignment.id}`}
         className="flex w-full items-baseline justify-between gap-4 rounded-lg border border-border px-3 py-2 text-left hover:border-neutral-300"
       >
@@ -132,11 +134,14 @@ function AssignmentRow({
         </span>
       </button>
 
-      {open && (
-        <div className="mt-2">
-          <IntakeReviewPanel patientId={patientId} assignmentId={assignment.id} />
-        </div>
-      )}
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-3xl" data-testid="intake-review-dialog">
+          <DialogTitle className="sr-only">
+            {assignment.packet_name} v{assignment.version}
+          </DialogTitle>
+          {open && <IntakeReviewPanel patientId={patientId} assignmentId={assignment.id} />}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

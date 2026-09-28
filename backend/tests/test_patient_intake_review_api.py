@@ -65,6 +65,7 @@ from app.routes.patient_intake_assignments import (
 from app.routes.patient_intake_review import (
     get_clinician_signature_repository,
     get_intake_review_service,
+    get_practice_name,
 )
 from app.services.audit_service import AuditService, get_audit_service
 from app.services.intake_packet_service import IntakePacketService
@@ -82,6 +83,7 @@ _PATIENT_A = "11111111-1111-4111-8111-111111111111"
 _PATIENT_B = "22222222-2222-4222-8222-222222222222"
 _TOKEN_A = "credential-of-patient-a"
 _CLINICIAN = "clinician-1"
+_PRACTICE = "Riverside Counseling"
 
 ASSIGNMENTS = "/api/patient/intake/assignments"
 
@@ -286,6 +288,7 @@ def chart(
     real_app.dependency_overrides[get_intake_review_service] = lambda: reviews
     real_app.dependency_overrides[get_clinician_signature_repository] = lambda: signatures_repo
     real_app.dependency_overrides[get_notice_delivery] = lambda: notices
+    real_app.dependency_overrides[get_practice_name] = lambda: _PRACTICE
     return client
 
 
@@ -886,7 +889,9 @@ class TestReviewWording:
         self, chart: TestClient, service: IntakeAssignmentService, published_version: str
     ) -> None:
         assignment, _ = service.assign(_PATIENT_A, published_version, _CLINICIAN)
-        form = chart.get(f"{_base(_PATIENT_A, str(assignment['id']))}/review").json()["form"]
+        review = chart.get(f"{_base(_PATIENT_A, str(assignment['id']))}/review").json()
+        assert review["practice_name"] == _PRACTICE
+        form = review["form"]
         assert form["identity"] == {
             "first_name": "Ada",
             "last_name": "Lovelace",

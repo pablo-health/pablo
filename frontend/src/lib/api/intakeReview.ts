@@ -121,6 +121,11 @@ export interface IntakeReview extends IntakeAssignment {
    * sends it with the answers so the chart never carries its own copy.
    */
   form: IntakeForm
+  /**
+   * The practice's name for the top of a printed copy — the same billing
+   * profile field the export prints. Null when it was never filled in.
+   */
+  practice_name: string | null
 }
 
 /**

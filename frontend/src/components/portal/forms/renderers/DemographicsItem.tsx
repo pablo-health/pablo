@@ -29,22 +29,24 @@ import {
   IDENTITY_SUMMARY_CONFIRMED,
   IDENTITY_SUMMARY_FLAGGED,
 } from "../formsCopy"
+import { ReadOnlyText } from "./QuestionFrame"
 import type { AnswerValue, ItemRenderer, ItemRendererProps } from "./types"
 
 /** Matches the route's own cap on a correction. */
 const CORRECTIONS_MAX = 4_000
 
-export function confirmedIn(value: AnswerValue | null): boolean | null {
+function confirmedIn(value: AnswerValue | null): boolean | null {
   const flag = value?.name_confirmed
   return typeof flag === "boolean" ? flag : null
 }
 
-export function correctionsIn(value: AnswerValue | null): string {
+function correctionsIn(value: AnswerValue | null): string {
   const text = value?.corrections
   return typeof text === "string" ? text : ""
 }
 
-function DemographicsItem({ value, onChange, form }: ItemRendererProps) {
+function DemographicsItem({ value, onChange, form, readOnly }: ItemRendererProps) {
+  const locked = readOnly !== undefined
   const confirmed = confirmedIn(value)
   const corrections = correctionsIn(value)
   const identity = form?.identity ?? null
@@ -90,6 +92,7 @@ function DemographicsItem({ value, onChange, form }: ItemRendererProps) {
         <ChoiceButton
           testId="forms-identity-confirm"
           selected={confirmed === true}
+          disabled={locked}
           onClick={() => onChange(answer(true, corrections))}
         >
           {IDENTITY_CONFIRM}
@@ -97,13 +100,21 @@ function DemographicsItem({ value, onChange, form }: ItemRendererProps) {
         <ChoiceButton
           testId="forms-identity-deny"
           selected={confirmed === false}
+          disabled={locked}
           onClick={() => onChange(answer(false, corrections))}
         >
           {IDENTITY_DENY}
         </ChoiceButton>
       </div>
 
-      {confirmed === false && (
+      {locked && confirmed === false && corrections.trim() !== "" && (
+        <div className="mt-4 space-y-1.5">
+          <p className="text-sm font-medium text-neutral-800">{IDENTITY_CORRECTIONS_LABEL}</p>
+          <ReadOnlyText text={corrections} testId="forms-corrections" />
+        </div>
+      )}
+
+      {!locked && confirmed === false && (
         <div className="mt-4 space-y-1.5">
           <Label htmlFor="forms-corrections">{IDENTITY_CORRECTIONS_LABEL}</Label>
           <Textarea
@@ -123,11 +134,13 @@ function DemographicsItem({ value, onChange, form }: ItemRendererProps) {
 function ChoiceButton({
   children,
   selected,
+  disabled,
   onClick,
   testId,
 }: {
   children: React.ReactNode
   selected: boolean
+  disabled: boolean
   onClick: () => void
   testId: string
 }) {
@@ -136,6 +149,7 @@ function ChoiceButton({
       type="button"
       data-testid={testId}
       aria-pressed={selected}
+      disabled={disabled}
       onClick={onClick}
       className={
         selected

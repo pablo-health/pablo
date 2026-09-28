@@ -21,16 +21,16 @@ function boundOf(config: Record<string, unknown>, key: "min" | "max"): number | 
   return typeof config[key] === "number" ? (config[key] as number) : undefined
 }
 
-export function unitOf(config: Record<string, unknown>): string | null {
+function unitOf(config: Record<string, unknown>): string | null {
   const unit = typeof config.unit === "string" ? config.unit.trim() : ""
   return unit === "" ? null : unit
 }
 
-export function valueIn(value: AnswerValue | null): number | null {
+function valueIn(value: AnswerValue | null): number | null {
   return typeof value?.value === "number" ? value.value : null
 }
 
-function NumberItem({ item, value, onChange }: ItemRendererProps) {
+function NumberItem({ item, value, onChange, readOnly }: ItemRendererProps) {
   const current = valueIn(value)
   const unit = unitOf(item.config)
 
@@ -47,6 +47,7 @@ function NumberItem({ item, value, onChange }: ItemRendererProps) {
             min={boundOf(item.config, "min")}
             max={boundOf(item.config, "max")}
             value={current === null ? "" : String(current)}
+            readOnly={readOnly !== undefined}
             onChange={(e) =>
               onChange(e.target.value === "" ? {} : { value: Number(e.target.value) })
             }

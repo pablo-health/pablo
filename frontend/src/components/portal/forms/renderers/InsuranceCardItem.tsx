@@ -48,7 +48,7 @@ import { acceptOf, UploadSlot } from "./UploadSlot"
 import type { AnswerValue, ItemRenderer, ItemRendererProps } from "./types"
 
 /** Which sides this question asked for. `"front"` narrows it to one. */
-export function sidesOf(config: Record<string, unknown>): string[] {
+function sidesOf(config: Record<string, unknown>): string[] {
   return config.sides === "front" ? ["front"] : ["front", "back"]
 }
 
@@ -56,7 +56,7 @@ function collectsFields(config: Record<string, unknown>): boolean {
   return config.collect_fields === true
 }
 
-export function sideLabel(side: string): string {
+function sideLabel(side: string): string {
   return side === "back" ? CARD_BACK : CARD_FRONT
 }
 
@@ -67,6 +67,7 @@ function InsuranceCardItem({
   sessionToken,
   onWrote,
   onSessionLost,
+  readOnly,
 }: ItemRendererProps) {
   const sides = sidesOf(item.config)
   const accept = acceptOf(item.config)
@@ -89,11 +90,12 @@ function InsuranceCardItem({
                 camera
                 onWrote={onWrote}
                 onSessionLost={onSessionLost}
+                readOnly={readOnly}
               />
             ))}
           </div>
 
-          {collectsFields(item.config) && (
+          {collectsFields(item.config) && readOnly === undefined && (
             <CoverageFields
               assignmentId={assignmentId}
               sessionToken={sessionToken}

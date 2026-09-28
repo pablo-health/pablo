@@ -11,26 +11,27 @@
  */
 
 import { Textarea } from "@/components/ui/textarea"
-import { QuestionFrame, labelOf } from "./QuestionFrame"
+import { QuestionFrame, ReadOnlyText, labelOf } from "./QuestionFrame"
 import type { AnswerValue, ItemRenderer, ItemRendererProps } from "./types"
 
 /** Matches `REASON_MAX_LEN`, which is what the route caps a follow-up at. */
 const FOLLOW_UP_MAX = 4_000
 
-export function followUpLabelOf(config: Record<string, unknown>): string | null {
+function followUpLabelOf(config: Record<string, unknown>): string | null {
   const label = typeof config.follow_up_label === "string" ? config.follow_up_label.trim() : ""
   return label === "" ? null : label
 }
 
-export function yesIn(value: AnswerValue | null): boolean | null {
+function yesIn(value: AnswerValue | null): boolean | null {
   return typeof value?.yes === "boolean" ? value.yes : null
 }
 
-export function followUpIn(value: AnswerValue | null): string {
+function followUpIn(value: AnswerValue | null): string {
   return typeof value?.follow_up === "string" ? value.follow_up : ""
 }
 
-function YesNoItem({ item, value, onChange }: ItemRendererProps) {
+function YesNoItem({ item, value, onChange, readOnly }: ItemRendererProps) {
+  const locked = readOnly !== undefined
   const yes = yesIn(value)
   const followUpLabel = followUpLabelOf(item.config)
   const followUp = followUpIn(value)
@@ -43,11 +44,18 @@ function YesNoItem({ item, value, onChange }: ItemRendererProps) {
       {() => (
         <div className="space-y-3">
           <div role="radiogroup" data-testid="forms-yes-no" className="flex flex-col gap-1.5">
-            <Choice itemId={item.id} label="Yes" active={yes === true} onPick={() => answer(true)} />
-            <Choice itemId={item.id} label="No" active={yes === false} onPick={() => answer(false)} />
+            <Choice itemId={item.id} label="Yes" active={yes === true} disabled={locked} onPick={() => answer(true)} />
+            <Choice itemId={item.id} label="No" active={yes === false} disabled={locked} onPick={() => answer(false)} />
           </div>
 
-          {yes === true && followUpLabel !== null && (
+          {locked && yes === true && followUpLabel !== null && followUp.trim() !== "" && (
+            <div className="space-y-1.5">
+              <p className="text-sm text-neutral-800">{followUpLabel}</p>
+              <ReadOnlyText text={followUp} testId="forms-yes-no-follow-up" />
+            </div>
+          )}
+
+          {!locked && yes === true && followUpLabel !== null && (
             <div className="space-y-1.5">
               <label
                 htmlFor={`forms-follow-up-${item.id}`}
@@ -74,11 +82,13 @@ function Choice({
   itemId,
   label,
   active,
+  disabled,
   onPick,
 }: {
   itemId: string
   label: string
   active: boolean
+  disabled: boolean
   onPick: () => void
 }) {
   const inputId = `forms-yes-no-${itemId}-${label.toLowerCase()}`
@@ -96,6 +106,7 @@ function Choice({
         id={inputId}
         name={`forms-yes-no-${itemId}`}
         checked={active}
+        disabled={disabled}
         onChange={onPick}
         className="h-4 w-4"
       />

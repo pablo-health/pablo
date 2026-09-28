@@ -484,3 +484,52 @@
     background: var(--auth-action-bg-hover);
   }
 }
+
+/*
+ * Printing a handed-in form from the chart.
+ *
+ * The form opens in a dialog over the chart, and the browser's print is the
+ * whole of the PDF path. So when a page holds a form marked for print, print
+ * that and nothing else: the app behind the dialog, the backdrop and the
+ * close button go, and the dialog's frame is unwound — it is a fixed,
+ * scrolling box on screen, and a fixed box prints one screenful. The review's
+ * own controls are hidden where they are drawn (`print:hidden`).
+ */
+@media print {
+  body:has([data-intake-print]) > *:not(:has([data-intake-print])) {
+    display: none !important;
+  }
+  html:has([data-intake-print]),
+  body:has([data-intake-print]) {
+    overflow: visible !important;
+    height: auto !important;
+  }
+  body:has([data-intake-print]) [data-slot="dialog-overlay"],
+  [data-slot="dialog-content"]:has([data-intake-print]) > [data-slot="dialog-close"] {
+    display: none !important;
+  }
+  [data-slot="dialog-content"]:has([data-intake-print]) {
+    position: static !important;
+    transform: none !important;
+    animation: none !important;
+    display: block !important;
+    max-height: none !important;
+    max-width: none !important;
+    width: auto !important;
+    border: 0 !important;
+    box-shadow: none !important;
+  }
+  [data-slot="dialog-content"]:has([data-intake-print]) > div {
+    display: block !important;
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+  /* A question stays on one page; a measure may run on, one item at a time. */
+  [data-intake-print] [data-print-keep],
+  [data-intake-print] fieldset {
+    break-inside: avoid;
+  }
+  [data-intake-print] h2 {
+    break-after: avoid;
+  }
+}

@@ -18,26 +18,26 @@ import { QuestionFrame, labelOf } from "./QuestionFrame"
 import type { AnswerValue, ItemRenderer, ItemRendererProps } from "./types"
 
 /** The scale's ends, or null when the item was stored without them. */
-export function boundsOf(config: Record<string, unknown>): { min: number; max: number } | null {
+function boundsOf(config: Record<string, unknown>): { min: number; max: number } | null {
   const { min, max } = config
   if (typeof min !== "number" || typeof max !== "number" || max <= min) return null
   return { min, max }
 }
 
-export function anchorOf(config: Record<string, unknown>, key: "min_label" | "max_label"): string | null {
+function anchorOf(config: Record<string, unknown>, key: "min_label" | "max_label"): string | null {
   const value = config[key]
   return typeof value === "string" && value.trim() !== "" ? value.trim() : null
 }
 
-export function pointsOf(bounds: { min: number; max: number }): number[] {
+function pointsOf(bounds: { min: number; max: number }): number[] {
   return Array.from({ length: bounds.max - bounds.min + 1 }, (_, i) => bounds.min + i)
 }
 
-export function valueIn(value: AnswerValue | null): number | null {
+function valueIn(value: AnswerValue | null): number | null {
   return typeof value?.value === "number" ? value.value : null
 }
 
-function ScaleItem({ item, value, onChange }: ItemRendererProps) {
+function ScaleItem({ item, value, onChange, readOnly }: ItemRendererProps) {
   const bounds = boundsOf(item.config)
   const chosen = valueIn(value)
 
@@ -74,6 +74,7 @@ function ScaleItem({ item, value, onChange }: ItemRendererProps) {
                       id={inputId}
                       name={`forms-scale-${item.id}`}
                       checked={active}
+                      disabled={readOnly !== undefined}
                       onChange={() => onChange({ value: point })}
                       className="sr-only"
                     />

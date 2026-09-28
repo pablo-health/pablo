@@ -366,7 +366,7 @@ export function PacketFlow({
  * because a rule about a score cannot be settled without knowing when the
  * score is finished, and a measure nobody can be shown will never finish.
  */
-function measureSize(item: IntakeAssignmentItem, form: IntakeForm | null): number | null {
+export function measureSize(item: IntakeAssignmentItem, form: IntakeForm | null): number | null {
   if (item.item_type !== "instrument" || form === null) return null
   const code = item.config.code
   if (typeof code !== "string") return null

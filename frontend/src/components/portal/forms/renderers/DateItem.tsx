@@ -38,7 +38,7 @@ function valueIn(value: AnswerValue | null): string {
   return typeof value?.value === "string" ? value.value : ""
 }
 
-function DateItem({ item, value, onChange }: ItemRendererProps) {
+function DateItem({ item, value, onChange, readOnly }: ItemRendererProps) {
   return (
     <QuestionFrame item={item}>
       {(headingId) => (
@@ -50,6 +50,7 @@ function DateItem({ item, value, onChange }: ItemRendererProps) {
           min={isoDate(item.config, "min")}
           max={latestAllowed(item.config)}
           value={valueIn(value)}
+          readOnly={readOnly !== undefined}
           onChange={(e) => onChange(e.target.value === "" ? {} : { value: e.target.value })}
         />
       )}

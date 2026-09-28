@@ -43,6 +43,8 @@ import {
   UPLOAD_TAKE_PHOTO,
   UPLOAD_WRONG_TYPE,
 } from "../formsCopy"
+import { SentFile } from "./SentFile"
+import type { ReadOnlySource } from "./types"
 
 /** What the file picker offers, and what the server will accept. */
 export const DEFAULT_ACCEPT = ["application/pdf", "image/jpeg", "image/png"]
@@ -64,9 +66,32 @@ export interface UploadSlotProps {
   /** Raised after a write, so the walk re-reads the server's answer. */
   onWrote: () => void
   onSessionLost: () => void
+  /** Set to show what arrived and nothing else. See `ReadOnlySource`. */
+  readOnly?: ReadOnlySource
 }
 
-export function UploadSlot({
+/**
+ * The slot, or the read-only copy of it.
+ *
+ * Chosen before any hook runs, so a read-only draw holds no picker and
+ * reaches no patient route: it names the file and opens it through whatever
+ * the caller handed in.
+ */
+export function UploadSlot(props: UploadSlotProps) {
+  if (props.readOnly) {
+    return (
+      <SentFile
+        label={props.label}
+        side={props.side}
+        artifact={props.artifact}
+        readOnly={props.readOnly}
+      />
+    )
+  }
+  return <LiveUploadSlot {...props} />
+}
+
+function LiveUploadSlot({
   assignmentId,
   sessionToken,
   itemId,

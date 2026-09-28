@@ -125,6 +125,9 @@ class IntakeReviewResponse(IntakeAssignmentResponse):
     #: anchors. Served here rather than copied into the chart's front end,
     #: so both sides of the room read one source.
     form: IntakeFormResponse
+    #: The practice's name for the top of a printed copy, from the same
+    #: billing profile the export reads. ``None`` when it was never filled in.
+    practice_name: str | None = None
 
 
 __all__ = [

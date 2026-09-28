@@ -110,6 +110,7 @@ function review(overrides: Partial<IntakeReview> = {}): IntakeReview {
     signatures: [],
     events: [],
     form: INTAKE_FORM,
+    practice_name: "Riverside Counseling",
     ...overrides,
   }
 }
@@ -444,5 +445,50 @@ describe("IntakeReviewPanel", () => {
     const value = await screen.findByTestId("intake-review-value-item-card")
     expect(await within(value).findByText("card-front.jpg")).toBeInTheDocument()
     expect(within(value).queryByText("letter.pdf")).not.toBeInTheDocument()
+  })
+
+  it("heads the form with the practice, the patient and the day it came in", async () => {
+    mockGet.mockResolvedValue(review())
+
+    renderPanel()
+
+    const heading = await screen.findByTestId("intake-review-print-heading")
+    expect(heading).toHaveTextContent("Riverside Counseling")
+    expect(heading).toHaveTextContent("Dana Okonkwo")
+    expect(heading).toHaveTextContent("New patient intake v2")
+    expect(heading).toHaveTextContent(`Submitted ${new Date(SIGNED_AT).toLocaleDateString()}`)
+  })
+
+  it("prints through the browser", async () => {
+    // jsdom has no print dialog, so the call is what is checked.
+    const print = vi.fn()
+    window.print = print
+    mockGet.mockResolvedValue(review())
+
+    renderPanel()
+    await userEvent.click(await screen.findByTestId("intake-review-print"))
+
+    expect(print).toHaveBeenCalledTimes(1)
+  })
+
+  it("says a question a rule kept off the patient's screen was not asked", async () => {
+    mockGet.mockResolvedValue(
+      review({
+        items: [
+          item({ id: "item-yn", key: "sleep", item_type: "yes_no", label: "Trouble sleeping?",
+            value: { yes: false } }),
+          item({ id: "item-more", key: "more", position: 2, item_type: "free_text", label: "Tell us more",
+            config: { visible_when: { item_key: "sleep", op: "eq", value: true } },
+            value: null, provenance: null }),
+        ],
+      }),
+    )
+
+    renderPanel()
+
+    const hidden = await screen.findByTestId("intake-review-value-item-more")
+    expect(hidden).toHaveTextContent("Tell us more")
+    expect(hidden).toHaveTextContent("Not asked.")
+    expect(screen.getByRole("radio", { name: "No" })).toBeChecked()
   })
 })

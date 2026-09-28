@@ -40,7 +40,6 @@ from fastapi import APIRouter, Depends, Request, Response
 
 from ..api_errors import NotFoundError
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
-from ..db import get_db_session
 from ..intake.export import render
 from ..models import User  # noqa: TC001 — fastapi resolves the annotation at runtime
 from ..models.audit import AuditAction, ResourceType
@@ -53,7 +52,6 @@ from ..repositories import (
 from ..services.audit_service import AuditService, get_audit_service
 from ..services.patient_intake_assignment_service import IntakeAssignmentService
 from ..services.patient_intake_export_service import IntakeExportService
-from ..services.practice_billing_profile import load_billing_profile
 from ..settings import get_settings
 from ..utcnow import utc_now
 from .claims import _practice_timezone
@@ -66,6 +64,7 @@ from .patient_intake_assignments import (
 from .patient_intake_review import (
     get_clinician_signature_repository,
     get_intake_review_service,
+    get_practice_name,
 )
 
 if TYPE_CHECKING:
@@ -109,18 +108,6 @@ def get_clinician_intake_document_repository(
     signature that points at it, which the caller has already been through.
     """
     return get_intake_document_repository()
-
-
-def get_practice_name(_ctx: TenantContext = Depends(get_tenant_context)) -> str | None:
-    """The practice's own name, as the billing profile holds it.
-
-    Read from the profile the claims and statement surfaces already keep, so
-    a practice fills its identity in once. ``None`` when nothing has been
-    filled in: the document then prints no practice line, rather than a
-    blank one or a guess.
-    """
-    legal_name = load_billing_profile(get_db_session()).get("legal_name")
-    return legal_name if isinstance(legal_name, str) and legal_name.strip() else None
 
 
 def get_clinician_intake_artifact_repository(

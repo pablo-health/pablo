@@ -55,6 +55,24 @@ export function QuestionFrame({
   )
 }
 
+/**
+ * Typed text, drawn read-only.
+ *
+ * A paragraph in the box's own shape rather than a disabled textarea: a
+ * textarea clips what does not fit and prints only what is scrolled into
+ * view, and the whole of what somebody wrote is the point of reading it back.
+ */
+export function ReadOnlyText({ text, testId }: { text: string; testId?: string }) {
+  return (
+    <p
+      data-testid={testId}
+      className="min-h-[2.5rem] whitespace-pre-wrap rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-900"
+    >
+      {text}
+    </p>
+  )
+}
+
 /** What the review screen calls this question: the same words it was asked in. */
 export function labelOf(item: ItemRendererProps["item"]): string {
   return wordingOf(item)?.label ?? ""

@@ -41,15 +41,19 @@ function DocumentRequestItem({
   sessionToken,
   onWrote,
   onSessionLost,
+  readOnly,
 }: ItemRendererProps) {
   const accept = acceptOf(item.config)
   const blankFormId = blankFormIdOf(item.config)
+  // Read-only, the page shows what arrived; the blank form and the empty
+  // slot are ways of sending more, and nothing more can be sent from here.
+  const showEmpty = readOnly === undefined || artifacts.length === 0
 
   return (
     <QuestionFrame item={item}>
       {() => (
         <div className="space-y-4">
-          {blankFormId !== null && (
+          {blankFormId !== null && readOnly === undefined && (
             <BlankForm
               blankFormId={blankFormId}
               sessionToken={sessionToken}
@@ -69,10 +73,11 @@ function DocumentRequestItem({
                 accept={accept}
                 onWrote={onWrote}
                 onSessionLost={onSessionLost}
+                readOnly={readOnly}
               />
             ))}
             {/* One empty slot, always: there is no fixed number of these. */}
-            <UploadSlot
+            {showEmpty && <UploadSlot
               assignmentId={assignmentId}
               sessionToken={sessionToken}
               itemId={item.id}
@@ -81,7 +86,8 @@ function DocumentRequestItem({
               accept={accept}
               onWrote={onWrote}
               onSessionLost={onSessionLost}
-            />
+              readOnly={readOnly}
+            />}
           </div>
         </div>
       )}

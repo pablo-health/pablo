@@ -45,6 +45,7 @@ from fastapi import APIRouter, Depends, Request
 
 from ..api_errors import ConflictError, NotFoundError, UnprocessableEntityError
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
+from ..db import get_db_session
 from ..intake.answers import AnswerError, validate_answer
 from ..intake.items import stored_config
 from ..models import User  # noqa: TC001 — fastapi resolves the annotation at runtime
@@ -76,6 +77,7 @@ from ..services.patient_intake_review_service import (
     ReviewStateError,
     UnknownItemError,
 )
+from ..services.practice_billing_profile import load_billing_profile
 from .patient_intake import intake_form
 from .patient_intake_assignments import (
     assignment_response,
@@ -122,6 +124,20 @@ def get_clinician_signature_repository(
     return get_patient_intake_signature_repository()
 
 
+def get_practice_name(_ctx: TenantContext = Depends(get_tenant_context)) -> str | None:
+    """The practice's own name, as the billing profile holds it.
+
+    Read from the profile the claims and statement surfaces already keep, so
+    a practice fills its identity in once. ``None`` when nothing has been
+    filled in: a printed form or an export then carries no practice line,
+    rather than a blank one or a guess. The review and the export read it
+    through this one dependency, so the two copies of a form name the
+    practice the same way.
+    """
+    legal_name = load_billing_profile(get_db_session()).get("legal_name")
+    return legal_name if isinstance(legal_name, str) and legal_name.strip() else None
+
+
 ClinicianAssignments = Annotated[
     IntakeAssignmentService, Depends(get_clinician_intake_assignment_service)
 ]
@@ -141,6 +157,7 @@ def get_intake_review(
     user: User = Depends(require_baa_acceptance),
     patients: PatientRepository = Depends(get_clinician_patient_repository),
     signatures: PatientIntakeSignatureRepository = Depends(get_clinician_signature_repository),
+    practice_name: str | None = Depends(get_practice_name),
     audit: AuditService = Depends(get_audit_service),
 ) -> IntakeReviewResponse:
     """The whole form as the clinician reviews it.
@@ -205,6 +222,7 @@ def get_intake_review(
         ],
         events=[_event_response(row) for row in reviews.events(assignment_id, user.id)],
         form=intake_form(patient, _instrument_codes(rows)),
+        practice_name=practice_name,
     )
 
 
@@ -485,4 +503,5 @@ __all__ = [
     "clinician_router",
     "get_clinician_signature_repository",
     "get_intake_review_service",
+    "get_practice_name",
 ]

@@ -4,10 +4,15 @@
  * What a renderer is, and what the walk gives it.
  *
  * One renderer per item type, looked up in the registry. A new item type is
- * a renderer added there, plus the read-only view the chart draws it with
- * (`components/patients/intakeReview/registry.ts`, whose test fails on a
- * type with no view): the walk, the review screen and the save path have no
- * list of types between them.
+ * a renderer added there and nothing else: the walk, the review screen, the
+ * save path and the chart's read-only copy of a handed-in form have no list
+ * of types between them.
+ *
+ * **The chart draws a handed-in form with these same renderers.** It passes
+ * `readOnly`, and a renderer given one shows the answer it was handed with
+ * every control disabled, calls no route and never raises `onChange`. So a
+ * clinician reads the form the patient filled in, drawn by the code that
+ * drew it for the patient, rather than a second copy that could drift.
  *
  * **Most renderers only collect a value.** They call `onChange`, the walk
  * saves it on Continue, and they never touch the network. A consent document
@@ -18,10 +23,34 @@
  */
 
 import type { ComponentType } from "react"
-import type { IntakeArtifact, IntakeAssignmentItem, IntakeForm } from "@/lib/api/patientIntake"
+import type {
+  IntakeArtifact,
+  IntakeAssignmentItem,
+  IntakeForm,
+  IntakeSignature,
+} from "@/lib/api/patientIntake"
 
 /** An answer in flight, in the shape the save route stores. */
 export type AnswerValue = Record<string, unknown>
+
+/**
+ * What a read-only renderer reads instead of calling the portal's routes.
+ *
+ * The two renderers that write for themselves read their state through a
+ * patient session. Whoever draws a form read-only has no such session, so
+ * it hands the same facts in here: the signatures already taken, a way to
+ * read a consent document's words, and a way to name and open a file.
+ */
+export interface ReadOnlySource {
+  /** Every signature on the form, as the reader was given them. */
+  signatures: IntakeSignature[]
+  /** A consent document's words, by the version the form pinned. */
+  loadDocument: (versionId: string) => Promise<{ title: string; rendered_html: string }>
+  /** What each file was called, by artifact id. */
+  filenames: Record<string, string>
+  /** Open one file the form collected. */
+  openFile: (documentId: string) => Promise<void>
+}
 
 export interface ItemRendererProps {
   item: IntakeAssignmentItem
@@ -59,6 +88,11 @@ export interface ItemRendererProps {
    * from inside a form.
    */
   onSessionLost: () => void
+  /**
+   * Set to draw the recorded answer and nothing else. See the note above:
+   * controls are disabled, no route is called and `onChange` never fires.
+   */
+  readOnly?: ReadOnlySource
 }
 
 export interface ItemRenderer {

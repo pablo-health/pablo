@@ -5,10 +5,12 @@
  *
  * The patient walks the seeded form in the portal and answers each measure
  * item differently, so a mark in the right place on the chart cannot be a
- * coincidence of every item sharing one answer. The clinician then opens the
- * form from the chart's intake card and reads it back: each question in the
- * wording it was asked, the chosen answer marked and every other one not,
- * nothing on it that can change an answer, and no raw stored values.
+ * coincidence of every item sharing one answer. The clinician then clicks the
+ * form on the chart's intake card, and it opens over the chart the way the
+ * patient filled it in: each question in the wording it was asked, drawn by
+ * the portal's own renderer, the chosen answer marked and every other one
+ * not, nothing on it that can change an answer, and no raw stored values.
+ * The print button is there; what the browser does with it is the browser's.
  *
  * What only a browser proves here is the seam: the wording the chart shows
  * beside an answer is the wording the server sent with the review, and the
@@ -44,7 +46,7 @@ async function answerVaried(page: Page): Promise<number> {
 /** Every item group of a measure on the chart, with the anchor it should show. */
 async function expectMeasureMarked(panel: Locator, code: string, items: number): Promise<void> {
   for (let index = 0; index < items; index += 1) {
-    const group = panel.getByTestId(`intake-view-instrument-${code}-${index + 1}`)
+    const group = panel.getByTestId(`forms-item-${code}-${index + 1}`)
     const chosen = group.getByRole("radio", { name: anchorFor(index), exact: true })
     await expect(chosen, `${code} item ${index + 1} is marked`).toBeChecked()
     await expect(chosen).toBeDisabled()
@@ -100,17 +102,21 @@ test.describe("intake review, read as the patient saw it", () => {
     const chartPage = await page.context().newPage()
     await chartPage.goto(`/dashboard/patients/${patient.id}?tab=intake`)
     await chartPage.getByTestId(`intake-assignment-open-${assigned.id}`).click()
-    const panel = chartPage.getByTestId("intake-review-panel")
+    const dialog = chartPage.getByRole("dialog")
+    await expect(dialog).toBeVisible()
+    const panel = dialog.getByTestId("intake-review-panel")
     await expect(panel).toBeVisible()
+    await expect(panel.getByTestId("intake-review-print")).toBeVisible()
 
     // The identity check, with the name it asked about and the answer given.
     await expect(panel).toContainText("Is this you?")
-    await expect(panel.getByRole("radio", { name: "Yes, that's me" })).toBeChecked()
-    await expect(panel.getByRole("radio", { name: "Something's not right" })).not.toBeChecked()
+    await expect(panel.getByTestId("forms-identity-confirm")).toHaveAttribute("aria-pressed", "true")
+    await expect(panel.getByTestId("forms-identity-deny")).toHaveAttribute("aria-pressed", "false")
+    await expect(panel.getByTestId("forms-identity-confirm")).toBeDisabled()
 
     // The reason, under the prompt it answered.
     await expect(panel).toContainText("What brings you in?")
-    await expect(panel).toContainText(REASON)
+    await expect(panel.getByTestId("forms-reason")).toContainText(REASON)
 
     // Each measure item in its own words, the chosen anchor marked.
     await expect(
