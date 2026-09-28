@@ -384,8 +384,10 @@ services:
       # auth middleware unions this into its own allowlist.
       - EXTRA_PUBLIC_PATHS=/book
       # The backend serves the portal's refills module on this stack, so the
-      # clinician nav shows the page that answers those requests.
-      - FEATURES_ENABLED=refill_requests
+      # clinician nav shows the page that answers those requests. This
+      # REPLACES the list in .env.e2e rather than adding to it, so it has to
+      # carry everything that file turns on too: keep the two in step.
+      - FEATURES_ENABLED=patient_portal,refill_requests
     healthcheck:
       # Distroless runtime: no shell, node at a fixed path.
       test:
