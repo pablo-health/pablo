@@ -86,6 +86,41 @@ def _app_imported() -> None:
     import app.main  # noqa: PLC0415, F401
 
 
+@pytest.fixture(autouse=True)
+def _no_principal_from_earlier_tests() -> Iterator[None]:
+    """Start and end every test with no principal armed from elsewhere.
+
+    Earlier tests in the suite leave one behind in two ways, and the
+    ``after_begin`` listener or the connection itself hands it to the next
+    session this module opens — including the recovery gateway's:
+
+    * some call ``arm_current_user_id`` directly in the pytest thread, which
+      sets the process's ``_current_user_id`` ContextVar and never resets it;
+    * some issue a session-level ``set_config(..., false)`` on the app's own
+      pooled connections, which survives the pool's checkin (that resets
+      only ``search_path``).
+
+    What is under test here is what the lookup itself arms, so each test
+    runs with the ContextVars cleared and on fresh connections from the
+    app's pool, and hands nothing on.
+    """
+    from app.db import (  # noqa: PLC0415
+        _current_patient_id,
+        _current_tenant_schema,
+        _current_user_id,
+        get_engine,
+    )
+
+    get_engine().dispose()
+    tokens = [
+        (var, var.set(None))
+        for var in (_current_user_id, _current_patient_id, _current_tenant_schema)
+    ]
+    yield
+    for var, token in reversed(tokens):
+        var.reset(token)
+
+
 @pytest.fixture(scope="module")
 def engine() -> Iterator[Engine]:
     backend_dir = Path(__file__).resolve().parents[2]
@@ -326,16 +361,27 @@ def test_the_lookup_leaves_no_clinician_scope_behind(engine: Engine, slug: str) 
     patient_id = _chart(engine, email=email, clinician=_OWNER, invited=True)
 
     with DbRecoveryGateway().open(_SCHEMA, None) as work:
+        assert isinstance(work.challenges, DbPortalAuthStore)
+        session = work.challenges._session
+        before = session.execute(
+            text("SELECT current_setting('app.current_user_id', true)")
+        ).scalar_one()
+        # Measured from a clean start, so the assertion below is about the
+        # lookup and not about whatever an earlier test left armed.
+        assert not before, f"the session started armed as {before!r}"
+
         target = work.find_patient(email)
         assert target is not None
         assert target.patient_id == patient_id
 
-        assert isinstance(work.challenges, DbPortalAuthStore)
-        session = work.challenges._session
-        armed = session.execute(
+        after = session.execute(
             text("SELECT current_setting('app.current_user_id', true)")
         ).scalar_one()
-        assert not armed
+        # NULL before (never set on this connection) and '' after (set inside
+        # the savepoint, then reverted) are the same thing to every policy:
+        # no principal. Anything else is the lookup's doing.
+        assert (after or "") == (before or ""), "the lookup changed who the session reads as"
+        assert not after
         visible = session.execute(
             text("SELECT count(*) FROM patients WHERE id = CAST(:p AS uuid)"), {"p": patient_id}
         ).scalar_one()
