@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-import { Calendar, ClipboardCheck, CreditCard, Home, Settings, Users } from "lucide-react"
+import { Calendar, ClipboardCheck, CreditCard, Home, Pill, Settings, Users } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { navExtensions } from "./sidebarExtensions.extensions"
 
@@ -57,6 +57,9 @@ const baseClinicianNavigation: NavItem[] = [
   { name: "Calendar", href: "/dashboard/calendar", icon: Calendar },
   { name: "Patients", href: "/dashboard/patients", icon: Users },
   { name: "Review", href: "/dashboard/sessions", icon: ClipboardCheck },
+  // Only a deployment that serves the portal's refills module has requests
+  // to answer, so the item is dark until FEATURES_ENABLED names it.
+  { name: "Refills", href: "/dashboard/refills", icon: Pill, requiresFlag: "refill_requests" },
   // Getting paid is one job whether the money comes from a client's card or an
   // insurer's remittance, so it is one item. Credentialing lives under here
   // rather than beside it: splitting them would ask a therapist to know which

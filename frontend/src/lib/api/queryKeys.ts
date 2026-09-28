@@ -372,6 +372,12 @@ const baseQueryKeys = {
       [...baseQueryKeys.coverage.all, "byPatient", patientId] as const,
   },
 
+  // Refill requests (the prescriber's queue) query keys
+  refills: {
+    all: ["refills"] as const,
+    queue: (view: "pending" | "recent") => [...baseQueryKeys.refills.all, "queue", view] as const,
+  },
+
   // Billing (unbilled-sessions queue) query keys
   billing: {
     all: ["billing"] as const,

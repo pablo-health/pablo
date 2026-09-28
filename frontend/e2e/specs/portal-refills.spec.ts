@@ -300,3 +300,46 @@ async function askFromThePortalAndSeeTheAnswer(
   await expect(page.getByTestId(`portal-refills-status-${queued?.id}`)).toHaveText(label)
   await expect(page.getByTestId("portal-refills")).not.toContainText("private to the practice")
 }
+
+// --- Test: the prescriber answers from the clinician page -----------------
+
+test("a prescriber answers a portal refill request from the Refills page @portal", async ({
+  api,
+  request,
+  signedInPage: page,
+}) => {
+  const { email, phone } = givePortalContactDetails()
+  const patient = await givePatient(api, { email, phone })
+  const medication = await giveMedication(api, patient.id)
+  const headers = {
+    Authorization: `Bearer ${await givePortalSession(api, request, patient.id, email, phone)}`,
+  }
+  const asked = await request.post(`${BACKEND_URL}${PATIENT_REFILLS}`, {
+    headers,
+    data: { medication_id: medication.id, patient_note: "Out on Friday" },
+  })
+  const refillId = ((await asked.json()) as PatientRefill).id
+
+  await page.goto("/dashboard")
+  await page.getByRole("link", { name: "Refills" }).click()
+  await expect(page).toHaveURL(/\/dashboard\/refills$/)
+
+  const row = page.getByTestId(`refill-row-${refillId}`)
+  await expect(row).toContainText(medication.drug_name)
+  await expect(row).toContainText("Out on Friday")
+
+  await row.getByTestId("refill-decide-approved").click()
+  await row.getByTestId("refill-note").fill("private to the practice")
+  await row.getByTestId("refill-confirm-submit").click()
+
+  await expect(row, "an answered request leaves the queue").toHaveCount(0)
+  await page.getByTestId("refill-recent").locator("summary").click()
+  await expect(page.getByTestId(`refill-recent-${refillId}`)).toContainText("Sent to pharmacy")
+
+  const mine = (await (
+    await request.get(`${BACKEND_URL}${PATIENT_REFILLS}`, { headers })
+  ).json()) as ListResponse<PatientRefill>
+  const seen = mine.data.find((entry) => entry.id === refillId)
+  expect(seen?.status).toBe("approved")
+  expect(JSON.stringify(seen)).not.toContain("private to the practice")
+})
