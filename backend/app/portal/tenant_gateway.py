@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated, Protocol
 
 from fastapi import Depends, HTTPException, Request, status
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..auth.service import TenantContext, get_tenant_context
@@ -36,6 +36,7 @@ from ..models.audit import AuditAction, ResourceType
 from ..repositories.postgres.audit import PostgresAuditRepository
 from ..services.audit_service import AuditService
 from .db_store import DbPortalAuthStore, DbPortalSessionStore
+from .scoped_read import read_as
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -104,31 +105,19 @@ class DbPortalTenantGateway:
             )
 
         def _step_up_phone(patient_id: str) -> str | None:
-            # ``patients`` is row-scoped and nobody is signed in yet, so an
-            # unarmed read sees no rows. Arming the patient principal for the
-            # rest of the request was rejected for the challenge tables (see
-            # ``_CORE_NOT_ROW_SCOPED``) because it would scope the session to
-            # a patient who has not completed step-up. So the patient GUC is
-            # set transaction-locally INSIDE a savepoint and the savepoint is
-            # rolled back after one read of one column: Postgres reverts a
-            # ``set_config(..., true)`` with the savepoint, and nothing is
-            # stashed on the session or the ContextVar for a later statement
-            # to inherit. The number read goes to the SMS gateway only.
-            savepoint = session.begin_nested()
-            try:
-                session.execute(
-                    text("SELECT set_config('app.current_patient_id', :pid, true)"),
-                    {"pid": patient_id},
-                )
-                phone = session.execute(
-                    select(PatientRow.phone).where(
-                        PatientRow.id == patient_id,
-                        PatientRow.deleted_at.is_(None),
-                    )
-                ).scalar_one_or_none()
-            finally:
-                savepoint.rollback()
-            return phone
+            # Nobody is signed in yet, so the chart is read as this patient
+            # for one statement and no longer — see ``app.portal.scoped_read``.
+            # The number goes to the SMS gateway only.
+            rows = read_as(
+                session,
+                principal="app.current_patient_id",
+                value=patient_id,
+                statement=select(PatientRow.phone).where(
+                    PatientRow.id == patient_id,
+                    PatientRow.deleted_at.is_(None),
+                ),
+            )
+            return rows[0].phone if rows else None
 
         try:
             yield PortalTenantWork(
