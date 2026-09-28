@@ -7,9 +7,8 @@ import { AlertTriangle } from "lucide-react"
 
 import { IntakeArtifacts } from "@/components/patients/IntakeArtifacts"
 import { INTAKE_STATUS_TEXT, IntakeReviewPanel } from "@/components/patients/IntakeReviewPanel"
-import { SendIntakeForm, sendableForms } from "@/components/patients/SendIntakeForm"
+import { SendIntakeForm } from "@/components/patients/SendIntakeForm"
 import { useIntakeArtifacts, useIntakeAssignments } from "@/hooks/useIntakeArtifacts"
-import { useIntakeTemplates } from "@/hooks/useIntakePackets"
 import { usePatientIntakeSubmissions } from "@/hooks/usePatientIntakeSubmissions"
 import type { IntakeAssignment } from "@/lib/api/intakeReview"
 import type { PatientIntakeSubmission } from "@/types/patientIntakeSubmissions"
@@ -151,12 +150,9 @@ function AssignmentRow({
  * the reason for the visit, anything the patient said is wrong about their
  * own record, and the files they sent in.
  *
- * The card removes itself when there is nothing to show AND nothing to send,
- * including on an error. The second half of that is new: this is where an
- * intake is started, so a chart with no form on it is no longer an empty box
- * explaining its own absence — it is the one screen where somebody can ask
- * for one. A practice with no published form is still the old case and still
- * renders nothing, because there is no ask to make.
+ * It is the chart's Intake tab, so it always renders: the tab is where an
+ * intake is started, and a practice that has not set up forms finds that out
+ * here, from the send flow, rather than from a card that is not there.
  *
  * A form counts as something to show whether or not it has been handed in or
  * collected a file — one that asked for a photograph of an insurance card and
@@ -168,33 +164,37 @@ export function IntakeCard({ patientId }: IntakeCardProps) {
   const { data, error } = usePatientIntakeSubmissions(patientId)
   const { groups } = useIntakeArtifacts(patientId)
   const { data: assignmentRows } = useIntakeAssignments(patientId)
-  const { data: templates } = useIntakeTemplates()
   const [showEarlier, setShowEarlier] = useState(false)
 
   const submissions = error ? [] : (data ?? [])
   const assignments = assignmentRows ?? []
-  const canSend = sendableForms(templates ?? []).length > 0
-  if (
-    submissions.length === 0 &&
-    groups.length === 0 &&
-    assignments.length === 0 &&
-    !canSend
-  ) {
-    return null
-  }
+  // Said only once both reads have answered: "nothing has been sent" while
+  // they are in flight would be a claim nobody checked. Files hang off
+  // assignments, so no assignments means no files to wait for.
+  const settled = (data !== undefined || !!error) && assignmentRows !== undefined
+  const empty =
+    settled && submissions.length === 0 && groups.length === 0 && assignments.length === 0
 
   const [latest, ...earlier] = submissions
 
   return (
-    <div className="card" data-testid="intake-card">
-      <div className="mb-4 flex items-baseline justify-between gap-4">
-        <h2 className="text-lg font-semibold text-neutral-900">Intake</h2>
-        {latest && (
+    <div data-testid="intake-card">
+      <div className="mb-4 flex items-center justify-between gap-4">
+        {latest ? (
           <p className="text-sm text-neutral-500">
             Submitted {formatDate(latest.submitted_at)}
           </p>
+        ) : (
+          <span />
         )}
+        <SendIntakeForm patientId={patientId} />
       </div>
+
+      {empty && (
+        <p className="text-sm text-neutral-600" data-testid="intake-empty">
+          No forms have been sent to this client yet.
+        </p>
+      )}
 
       {latest && <SubmissionBody submission={latest} />}
 
@@ -228,7 +228,7 @@ export function IntakeCard({ patientId }: IntakeCardProps) {
         </div>
       )}
 
-      {(assignments.length > 0 || canSend) && (
+      {assignments.length > 0 && (
         <div
           className="mt-4 space-y-3 border-t border-border pt-4"
           data-testid="intake-assignments"
@@ -241,7 +241,6 @@ export function IntakeCard({ patientId }: IntakeCardProps) {
               assignment={assignment}
             />
           ))}
-          <SendIntakeForm patientId={patientId} />
         </div>
       )}
 

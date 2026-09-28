@@ -40,6 +40,7 @@ from .outcome_measures.router import (
     patient_outcome_measures_router,
 )
 from .portal import account_routes as portal_account_routes
+from .portal import invite_template_routes as portal_invite_template_routes
 from .portal import practice_routes as portal_practice_routes
 from .portal import recovery as portal_recovery
 from .portal import routes as portal_routes
@@ -434,6 +435,8 @@ if settings.public_booking_enabled:
 if settings.enable_patient_portal:
     app.include_router(portal_routes.router)
     app.include_router(portal_practice_routes.router)
+    # The practice's invitation wording, and one client's invitation previewed.
+    app.include_router(portal_invite_template_routes.router)
     # Sign-out, the capability document, and recovery. Same flag: all three
     # are the portal's own account surface, and recovery in particular mints
     # a credential for a caller who has none, which is exactly the decision

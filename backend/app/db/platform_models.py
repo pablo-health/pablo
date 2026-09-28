@@ -324,6 +324,26 @@ class PortalPracticeSlugRow(PlatformBase):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class PortalInviteTemplateRow(PlatformBase):
+    """A practice's own wording for its portal invitation email.
+
+    Beside the practice's portal address for the same reason that row is
+    platform-scoped: it belongs to the practice rather than to anybody's
+    chart. No row means the engine's default wording.
+
+    No PHI: text a practice wrote about itself, with named placeholders that
+    are only filled in at send time (see ``app.portal.invite_email``).
+    """
+
+    __tablename__ = "portal_invite_templates"
+    __table_args__ = {"schema": PLATFORM_SCHEMA}
+
+    practice_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    subject: Mapped[str] = mapped_column(String(200), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class SetupTokenRow(PlatformBase):
     """Short-lived token to pass email from marketing signup to login page.
 

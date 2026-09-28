@@ -16,6 +16,33 @@ import type { PatientResponse } from "@/types/patients"
 
 vi.mock("@/lib/api/patients")
 
+// The portal is off unless a test turns it on: most of this file is about
+// the form itself, which closes on save when there is no next step.
+const mockFeature = vi.fn((_name: string) => false)
+vi.mock("@/lib/featureGates", () => ({
+  useFeature: (name: string) => mockFeature(name),
+}))
+
+// What the next step reads. Its own behaviour is covered in
+// intakeSend/__tests__/SendFormsFlow.test.tsx; here it only has to appear.
+vi.mock("@/lib/api/intakePackets", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api/intakePackets")>()),
+  listIntakeTemplates: vi.fn().mockResolvedValue([]),
+}))
+vi.mock("@/lib/api/portalAccess", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api/portalAccess")>()),
+  getPortalAccess: vi.fn().mockResolvedValue({
+    patient_id: "patient-new",
+    invite_outstanding: false,
+    live_sessions: 0,
+    revoked_at: null,
+  }),
+}))
+vi.mock("@/lib/api/inviteTemplate", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api/inviteTemplate")>()),
+  getInviteTemplate: vi.fn().mockResolvedValue({ editable: false }),
+}))
+
 const createWrapper = () => {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -58,6 +85,7 @@ const mockPatient: PatientResponse = {
 describe("PatientForm", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockFeature.mockImplementation(() => false)
   })
 
   describe("Create Mode", () => {
@@ -343,6 +371,55 @@ describe("PatientForm", () => {
       expect(screen.getByRole("combobox", { name: /sex on insurance card/i })).toHaveTextContent(
         "Male"
       )
+    })
+  })
+
+  describe("After adding a client, where there is a portal", () => {
+    beforeEach(() => {
+      mockFeature.mockImplementation((name) => name === "patient_portal")
+    })
+
+    it("runs on to what they should do instead of closing", async () => {
+      const user = userEvent.setup()
+      const { Wrapper } = createWrapper()
+      const onOpenChange = vi.fn()
+      vi.mocked(patientsApi.createPatient).mockResolvedValue({
+        ...mockPatient,
+        id: "patient-new",
+        first_name: "Robin",
+        last_name: "Reyes",
+      })
+      vi.mocked(patientsApi.getPatient).mockResolvedValue({ ...mockPatient, id: "patient-new" })
+
+      render(<PatientForm mode="create" open={true} onOpenChange={onOpenChange} />, {
+        wrapper: Wrapper,
+      })
+      await user.type(screen.getByLabelText(/first name/i), "Robin")
+      await user.type(screen.getByLabelText(/last name/i), "Reyes")
+      await user.click(screen.getByRole("button", { name: /create patient/i }))
+
+      expect(await screen.findByTestId("new-client-next-step")).toBeInTheDocument()
+      expect(screen.getByText("What should Robin do next?")).toBeInTheDocument()
+      expect(onOpenChange).not.toHaveBeenCalled()
+
+      await user.click(await screen.findByRole("button", { name: "Not now" }))
+      expect(onOpenChange).toHaveBeenCalledWith(false)
+    })
+
+    it("still just saves when editing", async () => {
+      const user = userEvent.setup()
+      const { Wrapper } = createWrapper()
+      const onOpenChange = vi.fn()
+      vi.mocked(patientsApi.updatePatient).mockResolvedValue(mockPatient)
+
+      render(
+        <PatientForm mode="edit" patient={mockPatient} open={true} onOpenChange={onOpenChange} />,
+        { wrapper: Wrapper },
+      )
+      await user.click(screen.getByRole("button", { name: /update patient/i }))
+
+      await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false))
+      expect(screen.queryByTestId("new-client-next-step")).not.toBeInTheDocument()
     })
   })
 

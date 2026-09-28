@@ -73,6 +73,7 @@ from .delivery import (
     DeliveryNotConfigured,
     DeliveryNotConfiguredError,
     PortalInviteDelivery,
+    RenderedInviteDelivery,
     SmsGateway,
 )
 from .errors import PortalAuthError
@@ -82,7 +83,9 @@ from .factory import (
     get_invite_delivery,
     get_sms_gateway,
 )
-from .practice_routes import ensure_practice_slug, practice_address_for_schema
+from .invite_composer import FormNames, InviteFacts, compose, get_invite_form_names
+from .invite_template_store import InviteTemplateStore, get_invite_template_store
+from .practice_routes import PracticeAddress, ensure_practice_slug, practice_address_for_schema
 from .tenant_gateway import (
     PortalStores,
     PortalTenantGateway,
@@ -158,8 +161,9 @@ def _signing_key() -> str:
     return get_settings().portal_token_signing_key.get_secret_value()
 
 
-def _practice_slug_for(user: User) -> str:
-    """The caller's practice's portal address, minted if it has none yet.
+def _practice_address_for(user: User) -> tuple[str, PracticeAddress]:
+    """The caller's practice id and its portal address, minted if it has
+    none yet.
 
     Resolved from the caller rather than taken as a parameter: a clinician
     cannot invite a patient into somebody else's practice, and there is no
@@ -180,7 +184,7 @@ def _practice_slug_for(user: User) -> str:
             "nowhere for an invitation to lead.",
             code="PORTAL_DISABLED_FOR_PRACTICE",
         )
-    return address.slug
+    return practice_id, address
 
 
 def _session_response(minted: PatientSession) -> PatientSessionResponse:
@@ -262,8 +266,14 @@ def issue_portal_invite(  # noqa: PLR0913 — FastAPI Depends-injected params ar
     delivery: Annotated[PortalInviteDelivery, Depends(get_invite_delivery)],
     sms: Annotated[SmsGateway, Depends(get_sms_gateway)],
     audit: Annotated[AuditService, Depends(get_audit_service)],
+    templates: Annotated[InviteTemplateStore, Depends(get_invite_template_store)],
+    form_names: Annotated[FormNames, Depends(get_invite_form_names)],
 ) -> PortalInviteAccepted:
     """Invite one patient to the portal: text the code, email the link.
+
+    Where the email channel can send practice-written text, the email is the
+    practice's own wording (or the default) filled in for this patient — the
+    same composition the preview route shows, with the real link in it.
 
     422 when the patient has no email address or no phone number. Both are
     required and neither is a formality — they are the two channels the two
@@ -284,7 +294,7 @@ def issue_portal_invite(  # noqa: PLR0913 — FastAPI Depends-injected params ar
             "Add an email address and a mobile number to this chart first.",
             code="PATIENT_CONTACT_INCOMPLETE",
         )
-    slug = _practice_slug_for(user)
+    practice_id, address = _practice_address_for(user)
 
     try:
         # Both channels, and somewhere for the link to point, before the
@@ -297,10 +307,22 @@ def issue_portal_invite(  # noqa: PLR0913 — FastAPI Depends-injected params ar
         issued = service.issue_invite(
             patient_id=patient_id, tenant=stores.tenant, phone=patient.phone
         )
-        delivery.send_invite(
-            to_email=patient.email,
-            link=build_invite_link(slug=slug, token=issued.token),
-        )
+        link = build_invite_link(slug=address.slug, token=issued.token)
+        if isinstance(delivery, RenderedInviteDelivery):
+            rendered = compose(
+                templates.get(practice_id),
+                InviteFacts(
+                    client_first_name=patient.first_name or "",
+                    practice_name=address.display_name,
+                    forms=form_names(patient_id, user.id, ()),
+                ),
+                link,
+            )
+            delivery.send_rendered_invite(
+                to_email=patient.email, subject=rendered.subject, text=rendered.text
+            )
+        else:
+            delivery.send_invite(to_email=patient.email, link=link)
     except DeliveryNotConfiguredError:
         raise _delivery_unavailable() from None
 

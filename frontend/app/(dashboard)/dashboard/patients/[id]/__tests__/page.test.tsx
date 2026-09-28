@@ -149,20 +149,15 @@ describe("PatientChartPage composition", () => {
    * wrapper cannot prove what the page composes, and the extension slot is
    * a component that renders nothing, so there is no DOM order to compare
    * either. Reading the file is what is left, and it is what the claim is
-   * about: the order the page puts them in.
+   * about: what the page hands the chart.
    */
   const source = readFileSync(join(__dirname, "..", "page.tsx"), "utf8")
 
-  it("renders the intake card above the extension slot", () => {
-    const intakeAt = source.indexOf("<IntakeCard")
-    const extrasAt = source.indexOf("<PatientChartExtras")
-
-    expect(intakeAt).toBeGreaterThan(-1)
-    expect(extrasAt).toBeGreaterThan(-1)
-    expect(intakeAt).toBeLessThan(extrasAt)
+  it("opens the chart on the tab the URL names", () => {
+    expect(source).toContain("<PatientChartTabs patientId={patient.id} initialTab={tab} />")
   })
 
-  it("passes the patient's id to the intake card", () => {
-    expect(source).toContain("<IntakeCard patientId={patient.id} />")
+  it("keeps intake inside the chart's tabs rather than below them", () => {
+    expect(source).not.toContain("<IntakeCard")
   })
 })

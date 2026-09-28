@@ -10,7 +10,6 @@ import { PatientSummary } from "@/components/patients/PatientSummary"
 import { PatientChartTabs } from "@/components/patients/PatientChartTabs"
 import { PatientChatDialog } from "@/components/patients/PatientChatDialog"
 import { PatientChartExtras } from "@/components/patients/PatientChartExtras"
-import { IntakeCard } from "@/components/patients/IntakeCard"
 import { NewNoteButton } from "@/components/notes/NewNoteButton"
 import { usePatient } from "@/hooks/usePatients"
 
@@ -18,10 +17,16 @@ interface PatientDetailPageProps {
   params: Promise<{
     id: string
   }>
+  /** `?tab=intake` opens the chart on that tab — a link from elsewhere in
+   * the app can land somebody on the part of the chart it is about. */
+  searchParams?: Promise<{ tab?: string }>
 }
 
-export default function PatientDetailPage({ params }: PatientDetailPageProps) {
+const NO_SEARCH = Promise.resolve({})
+
+export default function PatientDetailPage({ params, searchParams }: PatientDetailPageProps) {
   const { id } = use(params)
+  const { tab } = use<{ tab?: string }>(searchParams ?? NO_SEARCH)
   const { data: patient, isLoading, error } = usePatient(id)
 
   if (isLoading) {
@@ -87,12 +92,7 @@ export default function PatientDetailPage({ params }: PatientDetailPageProps) {
 
       <PatientSummary patient={patient} />
 
-      <PatientChartTabs patientId={patient.id} />
-
-      {/* Clinical content the patient wrote, above the extension slot:
-          what the chart holds comes before what a deployment adds to it.
-          The card renders nothing when there is no intake form. */}
-      <IntakeCard patientId={patient.id} />
+      <PatientChartTabs patientId={patient.id} initialTab={tab} />
 
       <PatientChartExtras patientId={patient.id} />
     </div>

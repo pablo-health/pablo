@@ -732,16 +732,18 @@ test.describe("intake, assignment through accepted export", () => {
     // proven either way, and what a clinician cannot do is POST.
     const packetName = await templateName(api, version.template_id)
 
-    await page.goto(`/dashboard/patients/${patient.id}`)
-    await page.getByRole("combobox", { name: "Form" }).click()
-    await page.getByRole("option", { name: packetName }).click()
+    await page.goto(`/dashboard/patients/${patient.id}?tab=intake`)
+    await page.getByTestId("send-intake-form-button").click()
+    await page.getByRole("checkbox", { name: packetName, exact: true }).check()
+    await page.getByRole("button", { name: "Review" }).click()
 
     const invitation = await invitationFrom(email, phone, async () => {
-      await page.getByTestId("send-intake-form-button").click()
-      await expect(page.getByTestId("send-intake-form-sent")).toContainText(
+      await page.getByTestId("send-forms-send").click()
+      await expect(page.getByTestId("send-forms-outcome")).toContainText(
         "link by email and a code by text",
       )
     })
+    await page.getByRole("button", { name: "Done" }).click()
 
     // The form the press sent is on the chart, named, before anybody answers it.
     await expect(page.getByTestId("intake-assignments")).toContainText(packetName)
@@ -992,7 +994,7 @@ test.describe("intake, assignment through accepted export", () => {
 
     // --- the chart, as a clinician reads it ----------------------------------
     await page.setViewportSize(DESK)
-    await page.goto(`/dashboard/patients/${patient.id}`)
+    await page.goto(`/dashboard/patients/${patient.id}?tab=intake`)
     await expect(page.getByTestId("intake-card")).toBeVisible()
     await expect(page.getByTestId("intake-artifacts")).toBeVisible()
     await expect(page.getByTestId("intake-artifact")).toHaveCount(3)

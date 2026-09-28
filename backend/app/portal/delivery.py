@@ -41,7 +41,7 @@ whether or not there is a mail server to mention it to.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 
 class DeliveryNotConfiguredError(RuntimeError):
@@ -64,6 +64,25 @@ class PortalInviteDelivery(Protocol):
         channel leaves the patient holding a code for a link that never
         arrives — a dead-end invitation rather than an honest 503.
         """
+
+
+@runtime_checkable
+class RenderedInviteDelivery(Protocol):
+    """An invite channel that can send wording the practice wrote.
+
+    Optional, and deliberately a separate port. An adapter that implements
+    it is saying its provider may carry whatever a practice typed — which is
+    a statement about that provider's agreement to handle it, not about
+    code. An adapter that does not keeps sending its own fixed wording, and
+    the practice is not offered an editor whose text would never be used.
+
+    ``text`` is plain text rendered by :mod:`app.portal.invite_email`, and
+    carries the magic link: it is a credential, and is never logged.
+    """
+
+    def send_rendered_invite(self, *, to_email: str, subject: str, text: str) -> None:
+        """Email one rendered invitation. Raises on delivery failure."""
+        ...
 
 
 class SmsGateway(Protocol):
@@ -123,6 +142,9 @@ class SentNotice:
 class SentInviteEmail:
     to_email: str
     link: str
+    #: Set when the invitation went through the rendered path.
+    subject: str | None = None
+    text: str | None = None
 
 
 @dataclass
@@ -147,6 +169,18 @@ class CapturingInviteDelivery:
 
     def check_ready(self) -> None:
         return None
+
+
+class CapturingRenderedInviteDelivery(CapturingInviteDelivery):
+    """Records invitations sent as practice-written text. For tests.
+
+    ``link`` on each record is read back out of the text, so a test can
+    redeem it the same way as one from the fixed-wording double.
+    """
+
+    def send_rendered_invite(self, *, to_email: str, subject: str, text: str) -> None:
+        link = next((word for word in text.split() if word.startswith("http")), "")
+        self.sent.append(SentInviteEmail(to_email=to_email, link=link, subject=subject, text=text))
 
 
 class CapturingNoticeDelivery:

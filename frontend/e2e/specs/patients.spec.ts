@@ -15,12 +15,22 @@ async function openPatients(page: Page): Promise<void> {
   await expect(page.getByRole("heading", { name: /patients/i })).toBeVisible()
 }
 
+/**
+ * With the portal on (as it is on this stack), saving a new client runs on
+ * to what they should do next. These specs are about the record itself, so
+ * they answer "not now"; new-client-intake.spec.ts walks the step.
+ */
+async function skipNextStep(page: Page): Promise<void> {
+  await page.getByTestId("new-client-next-step").getByRole("button", { name: "Not now" }).click()
+  await expect(page.getByRole("dialog")).not.toBeVisible({ timeout: 5000 })
+}
+
 async function createPatientViaDialog(page: Page, firstName: string, lastName: string): Promise<void> {
   await page.getByRole("button", { name: /add patient/i }).click()
   await page.getByLabel(/first name/i).fill(firstName)
   await page.getByLabel(/last name/i).fill(lastName)
   await page.getByRole("button", { name: /create patient/i }).click()
-  await expect(page.getByRole("dialog")).not.toBeVisible({ timeout: 5000 })
+  await skipNextStep(page)
 }
 
 test.describe("Patient Management", () => {
@@ -117,7 +127,7 @@ test.describe("Patient Management", () => {
       await page.getByRole("option", { name: "Active", exact: true }).click()
 
       await page.getByRole("button", { name: /create patient/i }).click()
-      await expect(page.getByRole("dialog")).not.toBeVisible({ timeout: 5000 })
+      await skipNextStep(page)
 
       await expect(page.getByText(`John-${timestamp} Doe`)).toBeVisible()
       await expect(page.getByText(`john${timestamp}@example.com`)).toBeVisible()
@@ -291,7 +301,7 @@ test.describe("Patient Management", () => {
         await page.getByRole("option", { name: label, exact: true }).click()
 
         await page.getByRole("button", { name: /create patient/i }).click()
-        await expect(page.getByRole("dialog")).not.toBeVisible({ timeout: 5000 })
+        await skipNextStep(page)
 
         const row = page.locator("tr", { hasText: `Status-${status}-${timestamp}` })
         await expect(row.getByText(status.replace("_", " "), { exact: true })).toBeVisible()
