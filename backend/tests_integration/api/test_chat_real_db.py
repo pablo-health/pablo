@@ -179,7 +179,7 @@ def e2e_client(  # noqa: PLR0913 — fixture composition mirrors the FastAPI dep
         require_active_subscription,
         require_baa_acceptance,
     )
-    from app.db import get_db_session  # noqa: PLC0415
+    from app.db import arm_current_user_id, get_db_session  # noqa: PLC0415
     from app.routes.chat import get_chat_llm_gateway  # noqa: PLC0415
     from fastapi.testclient import TestClient  # noqa: PLC0415
 
@@ -197,17 +197,15 @@ def e2e_client(  # noqa: PLR0913 — fixture composition mirrors the FastAPI dep
     monkeypatch.setattr("app.db.middleware._verify_and_stash_clinician_identity", _stash_identity)
 
     def _tenant_context() -> TenantContext:
-        session = get_db_session()
-        # ``is_local=false`` (session-level) makes the GUC outlive any
-        # autobegin/savepoint cycle the chat turn service may trip
-        # between the route-handler-scoped DB session and the eager-
-        # drained turn events. The DatabaseSessionMiddleware closes the
-        # connection at request end, so the GUC doesn't leak into the
-        # next request's pool checkout.
-        session.execute(
-            text("SELECT set_config('app.current_user_id', :uid, false)"),
-            {"uid": e2e_user_id},
-        )
+        # Armed the way the app arms a request: transaction-locally, with the
+        # id stashed on the session so the ``after_begin`` listener re-arms it
+        # after every commit or autobegin the chat turn service trips between
+        # the route-handler-scoped session and the eager-drained turn events.
+        # A session-level ``set_config(..., false)`` here used to do that job,
+        # and outlived the request: closing the session returns its connection
+        # to the pool rather than closing it, so later modules drew a
+        # connection already reading as this user.
+        arm_current_user_id(get_db_session(), e2e_user_id)
         return TenantContext(
             user_id=e2e_user_id,
             practice_id="test-tenant",
@@ -350,7 +348,7 @@ class TestEmptyAssistantOutputRealDB:
         with engine.begin() as conn:
             conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
             conn.execute(
-                text("SELECT set_config('app.current_user_id', :uid, false)"),
+                text("SELECT set_config('app.current_user_id', :uid, true)"),
                 {"uid": "267106ae-bb9e-5584-8725-fc0e77e2d53e"},
             )
             rows = (
@@ -418,7 +416,7 @@ class TestEmptyChartFirstTurnRealDB:
         with engine.begin() as conn:
             conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
             conn.execute(
-                text("SELECT set_config('app.current_user_id', :uid, false)"),
+                text("SELECT set_config('app.current_user_id', :uid, true)"),
                 {"uid": "267106ae-bb9e-5584-8725-fc0e77e2d53e"},
             )
             row = (
@@ -496,7 +494,7 @@ class TestMultiTurnRealDB:
         with engine.begin() as conn:
             conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
             conn.execute(
-                text("SELECT set_config('app.current_user_id', :uid, false)"),
+                text("SELECT set_config('app.current_user_id', :uid, true)"),
                 {"uid": "267106ae-bb9e-5584-8725-fc0e77e2d53e"},
             )
             rows = (
@@ -769,7 +767,7 @@ class TestPriorTurnWindowRealDB:
         with engine.begin() as conn:
             conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
             conn.execute(
-                text("SELECT set_config('app.current_user_id', :uid, false)"),
+                text("SELECT set_config('app.current_user_id', :uid, true)"),
                 {"uid": e2e_user_id},
             )
             for i in range(total):

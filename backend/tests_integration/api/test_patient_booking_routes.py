@@ -255,7 +255,7 @@ def practice(engine: Engine) -> Iterator[dict[str, Any]]:
     type_id = str(uuid.uuid4())
     with engine.begin() as conn:
         conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
-        conn.execute(text("SELECT set_config('app.current_user_id', :u, false)"), {"u": _CLINICIAN})
+        conn.execute(text("SELECT set_config('app.current_user_id', :u, true)"), {"u": _CLINICIAN})
         for pid, first in ((patient_a, "Ada"), (patient_b, "Grace")):
             conn.execute(
                 text(
@@ -305,7 +305,7 @@ def _set_policy(engine: Engine, **fields: Any) -> None:
 
     with OrmSession(bind=engine) as s:
         s.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
-        s.execute(text("SELECT set_config('app.current_user_id', :u, false)"), {"u": _CLINICIAN})
+        s.execute(text("SELECT set_config('app.current_user_id', :u, true)"), {"u": _CLINICIAN})
         update_policy(s, fields)
         s.commit()
 
@@ -437,8 +437,16 @@ def _starts(response: Any) -> set[datetime]:
 
 
 def _clear_appointments(engine: Engine) -> None:
+    """Delete every appointment, as the clinician whose diary they are in.
+
+    Armed here, in the delete's own transaction. Unarmed, row-level security
+    lets the DELETE match nothing, silently; this helper once only worked
+    because an earlier helper's session-level setting was still riding the
+    pooled connection.
+    """
     with engine.begin() as conn:
         conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
+        conn.execute(text("SELECT set_config('app.current_user_id', :u, true)"), {"u": _CLINICIAN})
         conn.execute(text("DELETE FROM appointments"))
 
 
@@ -843,7 +851,7 @@ def test_a_smuggled_patient_id_books_for_the_caller(
 
     with engine.begin() as conn:
         conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
-        conn.execute(text("SELECT set_config('app.current_user_id', :u, false)"), {"u": _CLINICIAN})
+        conn.execute(text("SELECT set_config('app.current_user_id', :u, true)"), {"u": _CLINICIAN})
         owner = conn.execute(
             text("SELECT patient_id FROM appointments WHERE id = CAST(:i AS uuid)"),
             {"i": appointment_id},
@@ -885,7 +893,7 @@ def test_a_booking_is_audited_as_the_patient(
         # patient. Arming the patient GUC instead would read nothing, which is
         # exactly what the policy intends for a patient principal at runtime.
         conn.execute(
-            text("SELECT set_config('app.current_user_id', :p, false)"),
+            text("SELECT set_config('app.current_user_id', :p, true)"),
             {"p": practice["a"]},
         )
         rows = conn.execute(
@@ -913,7 +921,7 @@ def _supersede_of(engine: Engine, appointment_id: str) -> str | None:
     """The replacement this appointment was superseded by, if any."""
     with engine.begin() as conn:
         conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
-        conn.execute(text("SELECT set_config('app.current_user_id', :u, false)"), {"u": _CLINICIAN})
+        conn.execute(text("SELECT set_config('app.current_user_id', :u, true)"), {"u": _CLINICIAN})
         value = conn.execute(
             text("SELECT superseded_by_id FROM appointments WHERE id = CAST(:i AS uuid)"),
             {"i": appointment_id},
@@ -930,7 +938,7 @@ def _cancellation_of(engine: Engine, appointment_id: str) -> dict[str, Any]:
     """
     with engine.begin() as conn:
         conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
-        conn.execute(text("SELECT set_config('app.current_user_id', :u, false)"), {"u": _CLINICIAN})
+        conn.execute(text("SELECT set_config('app.current_user_id', :u, true)"), {"u": _CLINICIAN})
         row = conn.execute(
             text(
                 "SELECT cancelled_at, cancelled_by, cancelled_by_id, late_cancellation, "
@@ -951,7 +959,7 @@ def _status_of(engine: Engine, appointment_id: str) -> str:
     """Read one appointment's status out of band, as the clinician."""
     with engine.begin() as conn:
         conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
-        conn.execute(text("SELECT set_config('app.current_user_id', :u, false)"), {"u": _CLINICIAN})
+        conn.execute(text("SELECT set_config('app.current_user_id', :u, true)"), {"u": _CLINICIAN})
         return conn.execute(
             text("SELECT status FROM appointments WHERE id = CAST(:i AS uuid)"),
             {"i": appointment_id},
@@ -962,7 +970,7 @@ def _start_of(engine: Engine, appointment_id: str) -> datetime:
     """Read one appointment's start instant out of band, as the clinician."""
     with engine.begin() as conn:
         conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
-        conn.execute(text("SELECT set_config('app.current_user_id', :u, false)"), {"u": _CLINICIAN})
+        conn.execute(text("SELECT set_config('app.current_user_id', :u, true)"), {"u": _CLINICIAN})
         value = conn.execute(
             text("SELECT start_at FROM appointments WHERE id = CAST(:i AS uuid)"),
             {"i": appointment_id},
@@ -1192,7 +1200,7 @@ def test_cancelling_is_audited_as_the_patient(
         # Read as the patient, matching the booking-audit test above:
         # audit_logs is row-scoped, and a patient-actor row is the patient's.
         conn.execute(
-            text("SELECT set_config('app.current_user_id', :p, false)"), {"p": practice["a"]}
+            text("SELECT set_config('app.current_user_id', :p, true)"), {"p": practice["a"]}
         )
         rows = conn.execute(
             text(
@@ -1589,7 +1597,7 @@ def test_the_options_document_lists_only_types_the_practice_opted_in(
     closed_type = str(uuid.uuid4())
     with engine.begin() as conn:
         conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
-        conn.execute(text("SELECT set_config('app.current_user_id', :u, false)"), {"u": _CLINICIAN})
+        conn.execute(text("SELECT set_config('app.current_user_id', :u, true)"), {"u": _CLINICIAN})
         conn.execute(
             text(
                 "INSERT INTO appointment_types (id, user_id, name, duration_minutes, "

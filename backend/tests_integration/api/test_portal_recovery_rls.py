@@ -91,30 +91,25 @@ def _app_imported() -> None:
 
 @pytest.fixture(autouse=True)
 def _no_principal_from_earlier_tests() -> Iterator[None]:
-    """Start and end every test with no principal armed from elsewhere.
+    """Start and end every test with no principal in the ContextVars.
 
-    Earlier tests in the suite leave one behind in two ways, and the
-    ``after_begin`` listener or the connection itself hands it to the next
-    session this module opens — including the recovery gateway's:
+    Tests elsewhere in the suite call ``arm_current_user_id`` directly in the
+    pytest thread, which sets the process's ``_current_user_id`` ContextVar
+    and never resets it; the ``after_begin`` listener then re-arms that user
+    on every new session this module opens, including the recovery
+    gateway's. What is under test here is what the lookup itself arms, so
+    each test starts from nothing and hands nothing on.
 
-    * some call ``arm_current_user_id`` directly in the pytest thread, which
-      sets the process's ``_current_user_id`` ContextVar and never resets it;
-    * some issue a session-level ``set_config(..., false)`` on the app's own
-      pooled connections, which survives the pool's checkin (that resets
-      only ``search_path``).
-
-    What is under test here is what the lookup itself arms, so each test
-    runs with the ContextVars cleared and on fresh connections from the
-    app's pool, and hands nothing on.
+    Pooled connections need no such care: the pool's checkin resets both
+    principal settings, so a session-level ``set_config`` from an earlier
+    module no longer survives into this one.
     """
     from app.db import (  # noqa: PLC0415
         _current_patient_id,
         _current_tenant_schema,
         _current_user_id,
-        get_engine,
     )
 
-    get_engine().dispose()
     tokens = [
         (var, var.set(None))
         for var in (_current_user_id, _current_patient_id, _current_tenant_schema)

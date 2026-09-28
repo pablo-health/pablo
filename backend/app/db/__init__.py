@@ -98,6 +98,10 @@ _current_patient_id: ContextVar[str | None] = ContextVar("_current_patient_id", 
 # threadpool-worker hop that discards a sync dependency's ContextVar set.
 _RLS_PATIENT_ID_KEY = "rls_current_patient_id"
 
+# The settings every row-level policy reads to decide who is asking. Reset
+# on pool checkin so no principal outlives the request that armed it.
+_PRINCIPAL_SETTINGS = ("app.current_user_id", "app.current_patient_id")
+
 # The provisioning TEMPLATE schema. Every practice schema is built from
 # this one; no practice's data ever lives in it. ``enable_rls_on_schema``
 # skips it deliberately, which is only safe because it holds no rows —
@@ -869,7 +873,8 @@ def _reapply_search_path_on_checkout(dbapi_conn, _conn_record, _conn_proxy) -> N
 
 @event.listens_for(Engine, "checkin")
 def _reset_search_path_on_checkin(dbapi_conn, _conn_record) -> None:  # type: ignore[no-untyped-def]
-    """Return the connection to a neutral ``search_path`` on pool checkin.
+    """Return the connection to a neutral ``search_path``, with no principal
+    armed, on pool checkin.
 
     PostgreSQL's ``SET search_path`` is session-level and persists across
     transactions, so a connection that was scoped to ``practice_abc`` during
@@ -889,17 +894,26 @@ def _reset_search_path_on_checkin(dbapi_conn, _conn_record) -> None:  # type: ig
     ``autocommit = True`` for the duration of the ``SET`` (see inline
     comments in the body below).
 
-    ``SET search_path = public`` is used rather than ``DISCARD ALL`` for two
-    reasons:
+    It also ``RESET``\\ s ``app.current_user_id`` and ``app.current_patient_id``.
+    Application code arms both transaction-locally (``is_local=true``), so on
+    the ordinary path they have already gone with the transaction. The reset
+    is defense in depth for the path that is not ordinary: a session-level
+    ``set_config(..., false)`` would otherwise ride the connection into the
+    next checkout, and that checkout would start out reading as somebody.
+    The integration suite has done exactly that. Resetting a principal that
+    was never set is harmless — it simply reads empty afterwards.
+
+    A narrow ``SET`` plus two ``RESET``\\ s are used rather than ``DISCARD
+    ALL`` for two reasons:
     1. ``DISCARD ALL`` also clears session-level GUCs set via
        ``connect_args={'options': '-c lock_timeout=... -c statement_timeout=...'}``
        at physical connection open time.  Those timeouts are defense-in-depth
        and must survive across pool cycles.
-    2. The narrow ``SET search_path`` is sufficient: the only session state
-       that this codebase legitimately stamps onto pooled connections is the
-       tenant ``search_path``; everything else is either transaction-local
-       (``app.current_user_id`` via ``is_local=true``) or connection-level
-       GUCs that should not be cleared.
+    2. The narrow reset is sufficient: the only session state this codebase
+       stamps onto pooled connections is the tenant ``search_path``, and the
+       only per-request state that must never outlive a request is the two
+       principal settings; everything else is connection-level GUCs that
+       should not be cleared.
 
     Pair with the ``checkout`` listener above (checkin neutral → checkout
     re-stamps the correct tenant schema from the ContextVar): a connection
@@ -948,6 +962,13 @@ def _reset_search_path_on_checkin(dbapi_conn, _conn_record) -> None:  # type: ig
             # to bare ``public`` would also hide platform tables and break every
             # platform-level write on a re-pooled connection.
             cursor.execute(f"SET search_path = {PLATFORM_SCHEMA}, public")
+            # The two principal settings, for the same reason. Application
+            # code arms them transaction-locally, so they are normally gone
+            # already; this is what makes that true of a session-level
+            # ``set_config(..., false)`` too, wherever it came from, instead of
+            # letting it ride the connection into the next checkout.
+            for setting in _PRINCIPAL_SETTINGS:
+                cursor.execute(f"RESET {setting}")
         finally:
             cursor.close()
     finally:
