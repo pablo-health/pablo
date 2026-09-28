@@ -23,6 +23,13 @@ vi.mock("@/lib/api/patientRefills", async (importOriginal) => {
   }
 })
 
+// The refills section reads the capability document for the practice's name;
+// this file is about the request list, so the section gets its fallback.
+vi.mock("@/lib/portal-shell/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/portal-shell/api")>()
+  return { ...actual, fetchCapabilities: vi.fn().mockResolvedValue({ ok: false }) }
+})
+
 const TOKEN = "session-token"
 
 function request(overrides: Partial<RefillRequest>): RefillRequest {
