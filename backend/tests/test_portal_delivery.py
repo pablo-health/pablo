@@ -305,6 +305,76 @@ def test_no_origin_means_no_link_to_mint(monkeypatch: pytest.MonkeyPatch) -> Non
         factory.build_invite_link(slug="example-therapy", token=_STAND_IN_TOKEN)
 
 
+# ---------------------------------------------------------------------------
+# Where the portal lives
+# ---------------------------------------------------------------------------
+
+
+def test_the_portal_page_defaults_to_the_origin_and_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    _configured(monkeypatch, {"PORTAL_WEB_BASE_URL": "https://portal.example.test/"})
+
+    assert factory.portal_page_url("example-therapy") == (
+        "https://portal.example.test/portal/example-therapy"
+    )
+    assert factory.build_portal_link(slug="example-therapy") == (
+        "https://portal.example.test/portal/example-therapy"
+    )
+
+
+def test_a_registered_resolver_decides_both_links(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A deployment serving the portal on a host of its own moves every link at once."""
+    _configured(monkeypatch, {"PORTAL_WEB_BASE_URL": "https://app.example.test"})
+    asked: list[str] = []
+
+    def resolver(slug: str) -> str:
+        asked.append(slug)
+        return f"https://clients.example.test/{slug}"
+
+    factory.register_portal_address_resolver(resolver)
+
+    assert factory.build_portal_link(slug="example-therapy") == (
+        "https://clients.example.test/example-therapy"
+    )
+    assert factory.build_invite_link(slug="example-therapy", token=_STAND_IN_TOKEN) == (
+        "https://clients.example.test/example-therapy#invite=abc.def.ghi"
+    )
+    assert asked == ["example-therapy", "example-therapy"]
+
+
+def test_a_resolver_does_not_need_the_default_origin(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A practice on a host of its own has no slug in the path and needs no base URL."""
+    _configured(monkeypatch, {"PORTAL_WEB_BASE_URL": ""})
+    factory.register_portal_address_resolver(lambda _slug: "https://portal.practice.test")
+
+    assert factory.build_invite_link(slug="example-therapy", token=_STAND_IN_TOKEN) == (
+        "https://portal.practice.test#invite=abc.def.ghi"
+    )
+
+
+def test_a_resolver_that_raises_is_not_papered_over(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A link to the wrong place is worse than no link, so there is no fallback."""
+    _configured(monkeypatch, {"PORTAL_WEB_BASE_URL": "https://app.example.test"})
+
+    def unknown(slug: str) -> str:
+        raise LookupError(slug)
+
+    factory.register_portal_address_resolver(unknown)
+
+    with pytest.raises(LookupError):
+        factory.build_invite_link(slug="example-therapy", token=_STAND_IN_TOKEN)
+
+
+def test_resetting_the_registrations_drops_the_resolver(monkeypatch: pytest.MonkeyPatch) -> None:
+    _configured(monkeypatch, {"PORTAL_WEB_BASE_URL": "https://app.example.test"})
+    factory.register_portal_address_resolver(lambda slug: f"https://elsewhere.test/{slug}")
+
+    factory.reset_delivery_registrations()
+
+    assert factory.portal_page_url("example-therapy") == (
+        "https://app.example.test/portal/example-therapy"
+    )
+
+
 def test_the_service_factory_threads_settings_into_the_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

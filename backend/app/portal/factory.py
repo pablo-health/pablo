@@ -55,9 +55,17 @@ if TYPE_CHECKING:
 PORTAL_PRACTICE_PATH = "/portal/{slug}"
 INVITE_FRAGMENT_KEY = "invite"
 
+#: slug -> the absolute URL of that practice's portal page, with no trailing
+#: slash and no fragment. The default is ``PORTAL_WEB_BASE_URL`` plus
+#: :data:`PORTAL_PRACTICE_PATH`; a deployment that serves the portal somewhere
+#: else — a host of its own, or a host per practice with no slug in the path —
+#: registers one through :func:`register_portal_address_resolver`.
+type PortalAddressResolver = Callable[[str], str]
+
 _invite_delivery_factory: Callable[[], PortalInviteDelivery] | None = None
 _sms_gateway_factory: Callable[[], SmsGateway] | None = None
 _notice_delivery_factory: Callable[[], PortalNoticeDelivery] | None = None
+_portal_address_resolver: PortalAddressResolver | None = None
 
 
 def register_invite_delivery(factory: Callable[[], PortalInviteDelivery]) -> None:
@@ -87,6 +95,18 @@ def register_notice_delivery(factory: Callable[[], PortalNoticeDelivery]) -> Non
     _notice_delivery_factory = factory
 
 
+def register_portal_address_resolver(resolver: PortalAddressResolver) -> None:
+    """Decide where each practice's portal lives, replacing the default.
+
+    The resolver takes the practice's slug and returns the absolute URL of its
+    portal page. It is asked every time a link is minted, so a deployment that
+    looks the address up does it inside the resolver. A resolver that raises
+    is not papered over: a link to the wrong place is worse than no link.
+    """
+    global _portal_address_resolver  # noqa: PLW0603
+    _portal_address_resolver = resolver
+
+
 def reset_delivery_registrations() -> None:
     """Drop every registration, restoring the settings-driven defaults.
 
@@ -94,9 +114,11 @@ def reset_delivery_registrations() -> None:
     case into every case after it through these module-level slots.
     """
     global _invite_delivery_factory, _sms_gateway_factory, _notice_delivery_factory  # noqa: PLW0603
+    global _portal_address_resolver  # noqa: PLW0603
     _invite_delivery_factory = None
     _sms_gateway_factory = None
     _notice_delivery_factory = None
+    _portal_address_resolver = None
 
 
 def _default_now() -> int:
@@ -156,6 +178,27 @@ def notice_delivery_from_settings() -> PortalNoticeDelivery:
     return NoticesNotConfigured()
 
 
+def _default_portal_page_url(slug: str) -> str:
+    base = get_settings().portal_web_base_url.rstrip("/")
+    if not base:
+        raise DeliveryNotConfiguredError(
+            "No portal web origin is configured; there is no link to mint."
+        )
+    return f"{base}{PORTAL_PRACTICE_PATH.format(slug=quote(slug, safe=''))}"
+
+
+def portal_page_url(slug: str) -> str:
+    """The practice's portal page: the registered resolver's answer, or the default.
+
+    The one place a portal address is decided. Both link builders below go
+    through it, so a deployment that moves the portal changes every link at
+    once.
+    """
+    if _portal_address_resolver is not None:
+        return _portal_address_resolver(slug)
+    return _default_portal_page_url(slug)
+
+
 def build_portal_link(*, slug: str) -> str:
     """The practice's own portal page, with no credential on it.
 
@@ -163,12 +206,7 @@ def build_portal_link(*, slug: str) -> str:
     this link is safe in an inbox precisely because it opens a page that
     asks who you are, rather than carrying an answer to that question.
     """
-    base = get_settings().portal_web_base_url.rstrip("/")
-    if not base:
-        raise DeliveryNotConfiguredError(
-            "No portal web origin is configured; there is no link to mint."
-        )
-    return f"{base}{PORTAL_PRACTICE_PATH.format(slug=quote(slug, safe=''))}"
+    return portal_page_url(slug)
 
 
 def build_invite_link(*, slug: str, token: str) -> str:
@@ -179,13 +217,7 @@ def build_invite_link(*, slug: str, token: str) -> str:
     before it asks anything. See :data:`PORTAL_PRACTICE_PATH` for why the
     token is in the fragment rather than the query string.
     """
-    base = get_settings().portal_web_base_url.rstrip("/")
-    if not base:
-        raise DeliveryNotConfiguredError(
-            "No portal web origin is configured; there is no link to mint."
-        )
-    path = PORTAL_PRACTICE_PATH.format(slug=quote(slug, safe=""))
-    return f"{base}{path}#{INVITE_FRAGMENT_KEY}={quote(token, safe='')}"
+    return f"{portal_page_url(slug)}#{INVITE_FRAGMENT_KEY}={quote(token, safe='')}"
 
 
 def build_portal_auth_service(
