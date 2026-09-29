@@ -33,13 +33,15 @@ from ..models.patient_message import (
     SENDER_PATIENT,
     THREAD_STATUS_CLOSED,
     THREAD_STATUS_OPEN,
+    InboxMessage,
+    InboxThread,
 )
 
 if TYPE_CHECKING:
     from datetime import datetime
 
     from ..models import MessageAttachment, PatientMessage, PatientMessageThread
-    from ..models.patient_message import ThreadAssignmentFilter
+    from ..models.patient_message import ThreadAssignmentFilter, ThreadStatusFilter
 
 
 class PatientMessageAccessDeniedError(Exception):
@@ -76,6 +78,39 @@ class PatientMessageRepository(ABC):
         ``clinician_last_read_at``. A thread nobody at the practice has
         opened counts all of them.
         """
+
+    @abstractmethod
+    def list_inbox_threads(
+        self,
+        user_id: str,
+        *,
+        status: ThreadStatusFilter = "open",
+        assigned: ThreadAssignmentFilter = "all",
+        limit: int = 100,
+    ) -> list[InboxThread]:
+        """Every thread the clinician may see, across all their patients.
+
+        Threads with something unread come first, then newest activity first.
+        Scoped by the same grant as every other clinician verb, so a thread
+        whose patient the caller has no grant on is simply absent. A deleted
+        patient's threads are left out. At most ``limit`` rows.
+        """
+
+    @abstractmethod
+    def list_inbox_messages(
+        self, user_id: str, *, unread_only: bool = False, limit: int = 100
+    ) -> list[InboxMessage]:
+        """Every message a client sent, one row each, across all their threads.
+
+        Newest first; scoped exactly as :meth:`list_inbox_threads` is. Only
+        the client's own messages — the practice's replies are not new to the
+        practice. ``unread_only`` keeps the ones sent since the practice last
+        marked their thread read. At most ``limit`` rows.
+        """
+
+    @abstractmethod
+    def count_unread_threads(self, user_id: str) -> int:
+        """How many threads the clinician may see have something unread."""
 
     @abstractmethod
     def get_thread(self, thread_id: str, user_id: str) -> PatientMessageThread | None:
@@ -280,6 +315,8 @@ class InMemoryPatientMessageRepository(PatientMessageRepository):
         # because that is the real table's unique constraint: a file rides
         # on one message or none.
         self._attachments: dict[str, tuple[str, str]] = {}
+        self._patient_names: dict[str, str] = {}
+        self._deleted_patients: set[str] = set()
 
     # --- test setup helpers (mirror has_patient_access semantics) ---
 
@@ -294,6 +331,12 @@ class InMemoryPatientMessageRepository(PatientMessageRepository):
 
     def revoke_access(self, patient_id: str, user_id: str) -> None:
         self._access.discard((patient_id, user_id))
+
+    def name_patient(self, patient_id: str, name: str, *, deleted: bool = False) -> None:
+        """Stand in for the ``patients`` row the real inbox joins for a name."""
+        self._patient_names[patient_id] = name
+        if deleted:
+            self._deleted_patients.add(patient_id)
 
     def _can_access(self, patient_id: str, user_id: str) -> bool:
         return (patient_id, user_id) in self._access
@@ -324,6 +367,64 @@ class InMemoryPatientMessageRepository(PatientMessageRepository):
             rows = [t for t in rows if t.assigned_user_id is None]
         rows.sort(key=lambda t: t.last_message_at, reverse=True)
         return [(t, self._clinician_unread_count(t)) for t in rows]
+
+    def _inbox_candidates(self, user_id: str) -> list[PatientMessageThread]:
+        return [
+            t
+            for t in self._threads.values()
+            if self._can_access(t.patient_id, user_id)
+            and t.patient_id not in self._deleted_patients
+        ]
+
+    def list_inbox_threads(
+        self,
+        user_id: str,
+        *,
+        status: ThreadStatusFilter = "open",
+        assigned: ThreadAssignmentFilter = "all",
+        limit: int = 100,
+    ) -> list[InboxThread]:
+        rows = self._inbox_candidates(user_id)
+        if status != "all":
+            rows = [t for t in rows if t.status == status]
+        if assigned == "me":
+            rows = [t for t in rows if t.assigned_user_id == user_id]
+        elif assigned == "unassigned":
+            rows = [t for t in rows if t.assigned_user_id is None]
+        counted = [(t, self._clinician_unread_count(t)) for t in rows]
+        counted.sort(key=lambda pair: (pair[1] > 0, pair[0].last_message_at), reverse=True)
+        return [
+            InboxThread(
+                thread=t, patient_name=self._patient_names.get(t.patient_id, ""), unread_count=n
+            )
+            for t, n in counted[:limit]
+        ]
+
+    def list_inbox_messages(
+        self, user_id: str, *, unread_only: bool = False, limit: int = 100
+    ) -> list[InboxMessage]:
+        found: list[InboxMessage] = []
+        for thread in self._inbox_candidates(user_id):
+            since = thread.clinician_last_read_at
+            for message in self._messages.get(thread.id, []):
+                if message.sender != SENDER_PATIENT:
+                    continue
+                unread = since is None or message.created_at > since
+                if unread_only and not unread:
+                    continue
+                found.append(
+                    InboxMessage(
+                        message=message,
+                        thread=thread,
+                        patient_name=self._patient_names.get(thread.patient_id, ""),
+                        unread=unread,
+                    )
+                )
+        found.sort(key=lambda row: row.message.created_at, reverse=True)
+        return found[:limit]
+
+    def count_unread_threads(self, user_id: str) -> int:
+        return sum(1 for t in self._inbox_candidates(user_id) if self._clinician_unread_count(t))
 
     def _clinician_unread_count(self, thread: PatientMessageThread) -> int:
         since = thread.clinician_last_read_at
