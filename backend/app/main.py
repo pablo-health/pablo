@@ -46,6 +46,7 @@ from .portal import recovery as portal_recovery
 from .portal import routes as portal_routes
 from .portal import settings_routes as portal_settings_routes
 from .portal import welcome_routes as portal_welcome_routes
+from .portal.module_gate import require_portal_module
 from .portal.resolver import register_portal_resolver
 from .repositories import get_practice_note_type_repository
 from .routes import (
@@ -309,6 +310,11 @@ def portal_module_routers(modules: Iterable[str]) -> list[APIRouter]:
     ``PORTAL_MODULES`` decides whether the portal offers it, which is the
     narrower question the capability document answers.
     """
+    return [router for _name, router in _portal_module_router_pairs(modules)]
+
+
+def _portal_module_router_pairs(modules: Iterable[str]) -> list[tuple[str, APIRouter]]:
+    """:func:`portal_module_routers`, with the module each router belongs to."""
     wanted = frozenset(modules)
     by_module: dict[str, APIRouter] = {
         "intake": patient_intake.router,
@@ -316,19 +322,21 @@ def portal_module_routers(modules: Iterable[str]) -> list[APIRouter]:
         "appointments": patient_appointments.router,
         "refills": refill_requests.patient_refills_router,
     }
-    return [router for name, router in by_module.items() if name in wanted]
+    return [(name, router) for name, router in by_module.items() if name in wanted]
 
-
-_portal_module_routers = portal_module_routers(settings.portal_module_names)
 
 # Same principal as the clinician routes above, and not a clinician — see
-# each module's docstring. Mounted only when the module list names them.
-for _router in _portal_module_routers:
-    app.include_router(_router)
+# each module's docstring. Mounted only when the module list names them, and
+# refused (404) to the clients of a practice that has turned the module off.
+for _name, _router in _portal_module_router_pairs(settings.portal_module_names):
+    app.include_router(_router, dependencies=[Depends(require_portal_module(_name))])
 
 # Same principal, and the one place a patient WRITES. Two sessions per request,
-# each single-principal — see the module docstring.
-app.include_router(patient_booking.router)
+# each single-principal — see the module docstring. Booking is part of
+# appointments, so a practice that turns appointments off turns it off too.
+app.include_router(
+    patient_booking.router, dependencies=[Depends(require_portal_module("appointments"))]
+)
 app.include_router(sessions.router)
 app.include_router(internal_transcription.router)
 app.include_router(dashboard.router)
@@ -397,18 +405,26 @@ app.include_router(instrument_licenses.router)
 # clinician half is ordinary practice paperwork behind the ordinary door,
 # and the patient half answers 401 with no resolver registered.
 app.include_router(intake_documents.router)
-app.include_router(intake_documents.patient_router)
+# The patient half is part of intake, so a practice that turns intake off
+# turns it off too; the same for the two patient routers below.
+app.include_router(
+    intake_documents.patient_router, dependencies=[Depends(require_portal_module("intake"))]
+)
 # The practice's own empty paperwork, and the portal's download of one.
 # Same shape and same reasons as the pair above: practice-level rows on the
 # clinician side, and a patient half that answers 401 with no resolver
 # registered.
 app.include_router(intake_blank_forms.router)
-app.include_router(intake_blank_forms.patient_router)
+app.include_router(
+    intake_blank_forms.patient_router, dependencies=[Depends(require_portal_module("intake"))]
+)
 # Sending a form to a patient and them filling it in. Both routers are
 # unconditional for the reasons above: the patient half answers 401 with no
 # resolver registered, and the clinician half sits behind the ordinary
 # clinician door.
-app.include_router(patient_intake_assignments.router)
+app.include_router(
+    patient_intake_assignments.router, dependencies=[Depends(require_portal_module("intake"))]
+)
 app.include_router(patient_intake_assignments.clinician_router)
 # Reading a form that came back and answering it: corrections, acceptance,
 # and a value entered for somebody in the room. Clinician-only, so it is

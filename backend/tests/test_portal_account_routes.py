@@ -40,6 +40,7 @@ from app.auth.patient_context import (
 from app.db import get_db_session
 from app.models.audit import AuditAction
 from app.portal.account_routes import router
+from app.portal.portal_settings import InMemoryPortalSettingsStore, get_portal_settings_store
 from app.portal.practice_routes import PracticeAddress
 from app.portal.store import InMemoryPortalSessionStore, PortalSessionRecord
 from app.portal.welcome import PortalWelcome
@@ -163,10 +164,16 @@ def welcomes() -> InMemoryPortalWelcomeStore:
 
 
 @pytest.fixture
+def portal_settings() -> InMemoryPortalSettingsStore:
+    return InMemoryPortalSettingsStore()
+
+
+@pytest.fixture
 def app(
     sessions: InMemoryPortalSessionStore,
     audit: _RecordingAudit,
     welcomes: InMemoryPortalWelcomeStore,
+    portal_settings: InMemoryPortalSettingsStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> FastAPI:
     application = FastAPI()
@@ -209,6 +216,7 @@ def app(
     # The welcome is keyed on the practice, found through the same directory.
     monkeypatch.setattr(account_routes, "practice_id_for_schema", _PRACTICE_IDS.get)
     application.dependency_overrides[get_portal_welcome_store] = lambda: welcomes
+    application.dependency_overrides[get_portal_settings_store] = lambda: portal_settings
     return application
 
 
@@ -383,6 +391,33 @@ class TestTheCapabilityDocument:
             "billing": False,
             "chat": False,
         }
+
+    def test_the_practice_narrows_it_and_cannot_widen_it(
+        self,
+        client: TestClient,
+        portal_settings: InMemoryPortalSettingsStore,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Configured is intake+messaging and both are mounted here. The
+        practice keeps messaging and names refills, which the deployment is
+        not configured for: messaging stays on, intake goes off, and refills
+        stays off whatever the practice says."""
+        from app.portal import account_routes  # noqa: PLC0415
+
+        monkeypatch.setattr(
+            account_routes,
+            "mounted_modules_on",
+            lambda _app: frozenset({"intake", "messaging", "refills"}),
+        )
+        portal_settings.set_modules(
+            _PRACTICE_IDS[TENANT], modules=("messaging", "refills"), by="clinician-1"
+        )
+
+        body = client.get("/api/patient/capabilities", headers=_auth(TOKEN_A1)).json()
+
+        assert body["modules"]["messaging"] is True
+        assert body["modules"]["intake"] is False
+        assert body["modules"]["refills"] is False
 
     def test_a_single_factor_caller_may_read_it(self, client: TestClient) -> None:
         """It says nothing about the person asking.
