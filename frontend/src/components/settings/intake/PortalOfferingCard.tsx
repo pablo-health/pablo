@@ -17,16 +17,7 @@ import {
 } from "@/components/ui/dialog"
 import { usePortalSettings, useSavePortalSettings } from "@/hooks/usePortalSettings"
 import { useSchedulingPolicy } from "@/hooks/useSchedulingPolicy"
-
-/** What each part is called where a practice chooses it. */
-const MODULE_LABELS: Record<string, string> = {
-  intake: "Forms",
-  messaging: "Messages",
-  documents: "Documents",
-  appointments: "Appointments",
-  refills: "Refill requests",
-  billing: "Billing",
-}
+import { portalModuleLabel } from "@/lib/portalModules"
 
 /**
  * Whether the practice offers its clients the portal, and what clients can
@@ -82,13 +73,13 @@ export function PortalOfferingCard() {
               <SettingsRow
                 key={name}
                 nested
-                label={MODULE_LABELS[name] ?? name}
+                label={portalModuleLabel(name)}
                 description={name === "appointments" ? <BookingLine /> : undefined}
               >
                 <Toggle
                   checked={on}
                   onChange={(next) => save.mutate({ modules: { [name]: next } })}
-                  label={MODULE_LABELS[name] ?? name}
+                  label={portalModuleLabel(name)}
                   // The last part on stays on: a portal with nothing in it
                   // is the portal switched off, and that has its own switch.
                   disabled={!settings.enabled || save.isPending || (on && onCount === 1)}

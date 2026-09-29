@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Give the end-to-end stack a SECOND practice, so isolation can be tested.
+"""Give the end-to-end stack practices beyond the shared one.
 
 Every account in the e2e stack used to land in the same practice, because
 every account gets there the same way: signing up with no invite takes the
@@ -11,6 +11,15 @@ against a NOBYPASSRLS role, which is the real boundary, but no browser spec
 had ever asked whether one practice can read another's patients. That is the
 claim the product rests on, and the layer a real user actually goes through
 was the one layer not covered.
+
+Two more practices exist for a different reason: some behaviour only happens
+to a practice that has never answered a question, and the shared practice
+answered it long ago. The first-client portal prompt is asked once, of a
+practice that has never said whether it offers the portal; every worker
+shares the default practice and the fixtures turn its portal on, so it can
+never be asked there. ``e2e-fresh-yes`` and ``e2e-fresh-no`` are kept
+unanswered — their portal answer is cleared on every run of this script — so
+the spec for each path starts where a brand-new practice does.
 
 THE LEVER is that the auto-provision mapping is idempotent and never
 overwrites: an email that already resolves keeps whatever practice it resolves
@@ -23,7 +32,7 @@ and by nothing else, so there is no test-only branch sitting in the request
 path waiting to be reached in production by accident.
 
 Idempotent: the stack can be restarted without dropping its volume, so this
-must be safe to run against a database that already has the second practice.
+must be safe to run against a database that already has these practices.
 
 Usage (from the e2e compose stack, after migrations have run)::
 
@@ -34,6 +43,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 # Same shape as the other scripts here (clearinghouse_smoke, chat_gateway_smoke):
@@ -45,37 +55,81 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("e2e-seed-second-practice")
 
-# Fixed rather than random, because two processes need to agree on it without
-# talking: this script writes the mapping, and frontend/e2e/fixtures/auth.ts
-# signs a user in with it. The suite runs workers: 1 and `make e2e-down` drops
-# the volume, so a fixed address cannot collide across runs.
-SECOND_PRACTICE_ID = "e2e-second"
-SECOND_PRACTICE_SCHEMA = "practice_e2e_second"
-SECOND_PRACTICE_EMAIL = "e2e-second-practice@example.com"
+
+@dataclass(frozen=True)
+class SeededPractice:
+    """A practice this script provisions, and the one address that signs into it.
+
+    Fixed rather than random, because two processes need to agree on them
+    without talking: this script writes the mapping, and the e2e fixtures
+    (``frontend/e2e/fixtures/auth.ts``, ``fixtures/freshPractice.ts``) sign a
+    user in with it. ``make e2e-down`` drops the volume, so a fixed address
+    cannot collide across runs.
+    """
+
+    id: str
+    schema: str
+    email: str
+    name: str
+    #: Clear the practice's portal answer on every run, so it is always a
+    #: practice that has never been asked.
+    unanswered: bool = False
 
 
-def main() -> int:
-    from app.db import create_standalone_session, get_engine
+SECOND_PRACTICE = SeededPractice(
+    id="e2e-second",
+    schema="practice_e2e_second",
+    email="e2e-second-practice@example.com",
+    name="Second Practice",
+)
+FRESH_YES = SeededPractice(
+    id="e2e-fresh-yes",
+    schema="practice_e2e_fresh_yes",
+    email="e2e-fresh-yes@example.com",
+    name="Fresh Practice Yes",
+    unanswered=True,
+)
+FRESH_NO = SeededPractice(
+    id="e2e-fresh-no",
+    schema="practice_e2e_fresh_no",
+    email="e2e-fresh-no@example.com",
+    name="Fresh Practice No",
+    unanswered=True,
+)
+SEEDED = (SECOND_PRACTICE, FRESH_YES, FRESH_NO)
+
+# Kept for anything that still reads the second practice by its old names.
+SECOND_PRACTICE_ID = SECOND_PRACTICE.id
+SECOND_PRACTICE_SCHEMA = SECOND_PRACTICE.schema
+SECOND_PRACTICE_EMAIL = SECOND_PRACTICE.email
+
+
+def _seed(practice: SeededPractice) -> bool:
+    """Register *practice*, map its address onto it, allow the address.
+
+    Returns False when the address already resolves somewhere else — the
+    specs that use it would then run in the wrong practice and prove nothing.
+    """
+    from app.db import create_standalone_session
     from app.db.platform_models import (
         EmailTenantMappingRow,
         PlatformAllowedEmailRow,
+        PracticePortalSettingsRow,
         PracticeRow,
     )
-    from app.db.provisioning import create_practice_schema
     from app.utcnow import utc_now
 
     now = utc_now()
-
     session = create_standalone_session()
     try:
-        if session.get(PracticeRow, SECOND_PRACTICE_ID) is None:
+        if session.get(PracticeRow, practice.id) is None:
             session.add(
                 PracticeRow(
-                    id=SECOND_PRACTICE_ID,
-                    name="Second Practice",
-                    schema_name=SECOND_PRACTICE_SCHEMA,
-                    tenant_id=SECOND_PRACTICE_ID,
-                    owner_email=SECOND_PRACTICE_EMAIL,
+                    id=practice.id,
+                    name=practice.name,
+                    schema_name=practice.schema,
+                    tenant_id=practice.id,
+                    owner_email=practice.email,
                     owner_user_id=None,
                     product="pablo",
                     status="active",
@@ -83,54 +137,70 @@ def main() -> int:
                     created_at=now,
                 )
             )
-            logger.info("registered practice %s", SECOND_PRACTICE_ID)
+            logger.info("registered practice %s", practice.id)
 
-        existing = session.get(EmailTenantMappingRow, SECOND_PRACTICE_EMAIL)
+        existing = session.get(EmailTenantMappingRow, practice.email)
         if existing is None:
             session.add(
                 EmailTenantMappingRow(
-                    email=SECOND_PRACTICE_EMAIL,
-                    tenant_id=SECOND_PRACTICE_ID,
-                    practice_id=SECOND_PRACTICE_ID,
+                    email=practice.email,
+                    tenant_id=practice.id,
+                    practice_id=practice.id,
                     created_at=now,
                 )
             )
-            logger.info("mapped %s onto %s", SECOND_PRACTICE_EMAIL, SECOND_PRACTICE_ID)
-        elif existing.practice_id != SECOND_PRACTICE_ID:
+            logger.info("mapped %s onto %s", practice.email, practice.id)
+        elif existing.practice_id != practice.id:
             # Loud, because the alternative is a suite that silently proves
             # nothing: the isolation spec would sign both users into the same
             # practice and its "cannot reach" assertions would pass vacuously.
             logger.error(
-                "%s already resolves to %s, not %s -- the isolation specs would "
-                "run both users in one practice and pass without proving anything",
-                SECOND_PRACTICE_EMAIL,
+                "%s already resolves to %s, not %s -- the specs using it would "
+                "run in the wrong practice and pass without proving anything",
+                practice.email,
                 existing.practice_id,
-                SECOND_PRACTICE_ID,
+                practice.id,
             )
-            return 1
+            return False
 
-        if session.get(PlatformAllowedEmailRow, SECOND_PRACTICE_EMAIL) is None:
+        if session.get(PlatformAllowedEmailRow, practice.email) is None:
             # Without this the address passes the sign-up gate and is then
             # refused on every API call, which is a confusing way to discover
             # the same fact.
             session.add(
                 PlatformAllowedEmailRow(
-                    email=SECOND_PRACTICE_EMAIL,
-                    practice_id=SECOND_PRACTICE_ID,
+                    email=practice.email,
+                    practice_id=practice.id,
                     added_by="e2e-seed",
                     added_at=now,
                 )
             )
 
+        if practice.unanswered:
+            answered = session.get(PracticePortalSettingsRow, practice.id)
+            if answered is not None:
+                session.delete(answered)
+                logger.info("cleared the portal answer of %s", practice.id)
+
         session.commit()
     finally:
         session.close()
+    return True
 
-    # Commits on its own connection, so the rows above are committed first: a
-    # consistency check that looks sees a matching pair rather than a schema
-    # with no practice behind it. Reconciling, so safe to call on every boot.
-    create_practice_schema(get_engine(), SECOND_PRACTICE_SCHEMA)
-    logger.info("second practice ready: schema %s", SECOND_PRACTICE_SCHEMA)
+
+def main() -> int:
+    from app.db import get_engine
+    from app.db.provisioning import create_practice_schema
+
+    for practice in SEEDED:
+        if not _seed(practice):
+            return 1
+        # Commits on its own connection, so the rows above are committed
+        # first: a consistency check that looks sees a matching pair rather
+        # than a schema with no practice behind it. Reconciling, so safe to
+        # call on every boot.
+        create_practice_schema(get_engine(), practice.schema)
+        logger.info("practice %s ready: schema %s", practice.id, practice.schema)
     return 0
 
 

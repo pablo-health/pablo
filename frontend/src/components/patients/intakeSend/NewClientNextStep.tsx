@@ -17,9 +17,12 @@ import { SendFormsFlow } from "./SendFormsFlow"
 export function NewClientNextStep({
   patient,
   onDone,
+  portalNote,
 }: {
   patient: PatientResponse
   onDone: () => void
+  /** Said in place of the portal invitation, when the practice just chose not to offer one. */
+  portalNote?: string
 }) {
   return (
     <div data-testid="new-client-next-step">
@@ -32,8 +35,8 @@ export function NewClientNextStep({
           <DialogHeader>
             <DialogTitle>What should {patient.first_name} do next?</DialogTitle>
             <DialogDescription>
-              {patient.first_name} {patient.last_name} is added. Choose forms to send and whether
-              to invite them to the portal.
+              {patient.first_name} {patient.last_name} is added.{" "}
+              {portalNote ?? "Choose forms to send and whether to invite them to the portal."}
             </DialogDescription>
           </DialogHeader>
         }
