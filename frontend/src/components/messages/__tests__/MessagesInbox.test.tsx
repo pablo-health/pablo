@@ -137,7 +137,7 @@ describe("MessagesInbox", () => {
   it("lists every client message on its own row in the Messages view", async () => {
     renderWithProviders(<MessagesInbox />)
 
-    await userEvent.click(screen.getByRole("tab", { name: "Messages" }))
+    await userEvent.click(await screen.findByRole("tab", { name: "Messages" }))
 
     const rows = await screen.findAllByTestId("message-row")
     expect(rows.map((row) => row.textContent)).toEqual([
@@ -153,7 +153,7 @@ describe("MessagesInbox", () => {
 
   it("opens a message's conversation and marks it read once it has loaded", async () => {
     renderWithProviders(<MessagesInbox />)
-    await userEvent.click(screen.getByRole("tab", { name: "Messages" }))
+    await userEvent.click(await screen.findByRole("tab", { name: "Messages" }))
 
     await userEvent.click((await screen.findAllByTestId("message-row"))[0])
 
@@ -200,6 +200,27 @@ describe("MessagesInbox", () => {
       "href",
       "/dashboard/settings/portal",
     )
+  })
+
+  it("says so, and loads nothing, when the practice turned Messages off", async () => {
+    mockPortal.mockResolvedValue({
+      enabled: true,
+      decided: true,
+      modules: { intake: true, messaging: false },
+    })
+    renderWithProviders(<MessagesInbox />)
+
+    expect(await screen.findByTestId("messages-portal-off")).toHaveTextContent(
+      "Messages are turned off in your client portal.",
+    )
+    expect(api.listInboxThreads).not.toHaveBeenCalled()
+  })
+
+  it("works as usual where the deployment does not list Messages as a choice", async () => {
+    mockPortal.mockResolvedValue({ enabled: true, decided: true, modules: { intake: true } })
+    renderWithProviders(<MessagesInbox />)
+
+    expect(await screen.findAllByTestId("conversation-row")).toHaveLength(2)
   })
 
   it("says so when there is nothing to read", async () => {
