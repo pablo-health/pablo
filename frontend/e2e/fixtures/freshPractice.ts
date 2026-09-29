@@ -1,0 +1,53 @@
+// Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+
+/**
+ * A practice that has never answered whether it offers the client portal.
+ *
+ * Some of the product only happens once, to a practice meeting a question for
+ * the first time — the first-client portal prompt is the case this exists
+ * for. The shared practice every worker signs into answered that long ago (the
+ * worker fixture turns its portal on), so a spec that needs the first time
+ * signs into one of these instead.
+ *
+ * The practices and their addresses are seeded at stack bring-up by
+ * backend/scripts/e2e_seed_second_practice.py, which also clears their
+ * portal answer on every bring-up. Each spec uses its own: the answer is
+ * given once per run, so two specs sharing one would race for it.
+ */
+
+import type { Browser, BrowserContext, Page } from "@playwright/test"
+import { ApiClient, ensureEmulatorUser } from "./api"
+import { BASE_URL } from "./stack"
+
+export type FreshPracticeName = "yes" | "no"
+
+const PASSWORD = "E2e-fresh-practice-password-long-enough"
+
+function addressOf(name: FreshPracticeName): string {
+  return `e2e-fresh-${name}@example.com`
+}
+
+export interface FreshPractice {
+  page: Page
+  context: BrowserContext
+  api: ApiClient
+}
+
+/** Sign into the fresh practice *name* in a browser context of its own. */
+export async function signInToFreshPractice(
+  browser: Browser,
+  name: FreshPracticeName,
+): Promise<FreshPractice> {
+  const email = addressOf(name)
+  await ensureEmulatorUser(email, PASSWORD)
+
+  const context = await browser.newContext({ baseURL: BASE_URL })
+  const page = await context.newPage()
+  await page.goto("/login")
+  await page.getByLabel("Email").fill(email)
+  await page.getByLabel("Password", { exact: true }).fill(PASSWORD)
+  await page.getByRole("button", { name: "Sign In", exact: true }).click()
+  await page.waitForURL(/\/dashboard/)
+
+  return { page, context, api: await ApiClient.forUser(email, PASSWORD) }
+}
