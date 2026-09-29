@@ -1,12 +1,17 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Tests for the pool-checkout listener that re-applies search_path
-from the request-scoped ContextVar (``app.db._reapply_search_path_on_checkout``).
+"""Tests for the pool listeners around a connection's ``search_path``.
 
-The listener is a belt-and-braces companion to the explicit
-``set_tenant_schema`` call middleware makes per request — useful when
-a pooled connection's server-side ``search_path`` would otherwise
-carry over from a previous tenant.
+The checkout listener (``app.db._reapply_search_path_on_checkout``)
+re-applies search_path from the request-scoped ContextVar — a
+belt-and-braces companion to the explicit ``set_tenant_schema`` call
+middleware makes per request, useful when a pooled connection's
+server-side ``search_path`` would otherwise carry over from a previous
+tenant.
+
+The checkin listener (``app.db._reset_search_path_on_checkin``) sends the
+connection back to the pool neutral: no tenant schema, and neither
+principal setting armed.
 """
 
 from __future__ import annotations
@@ -17,6 +22,7 @@ import pytest
 from app.db import (
     _current_tenant_schema,
     _reapply_search_path_on_checkout,
+    _reset_search_path_on_checkin,
 )
 
 
@@ -71,3 +77,52 @@ def test_cursor_closed_even_if_execute_raises() -> None:
     with pytest.raises(RuntimeError):
         _reapply_search_path_on_checkout(conn, None, None)
     conn.cursor.return_value.close.assert_called_once()
+
+
+# --- checkin: the connection goes back to the pool neutral ------------------
+
+
+def test_checkin_neutralises_search_path_and_both_principals() -> None:
+    """The next checkout gets no tenant and nobody to read as."""
+    conn = _fake_dbapi_conn()
+    conn.autocommit = False
+
+    _reset_search_path_on_checkin(conn, None)
+
+    executed = [call.args[0] for call in conn.cursor.return_value.execute.call_args_list]
+    assert executed == [
+        "SET search_path = platform, public",
+        "RESET app.current_user_id",
+        "RESET app.current_patient_id",
+    ]
+    conn.cursor.return_value.close.assert_called_once()
+
+
+def test_checkin_runs_outside_a_transaction_and_restores_autocommit() -> None:
+    """The resets run in autocommit, so none of them opens a transaction the
+    next checkout's pre-ping would trip over; the prior mode comes back."""
+    conn = _fake_dbapi_conn()
+    conn.autocommit = False
+    seen: list[bool] = []
+    conn.cursor.return_value.execute.side_effect = lambda _sql: seen.append(conn.autocommit)
+
+    _reset_search_path_on_checkin(conn, None)
+
+    assert seen == [True, True, True]
+    assert conn.autocommit is False
+
+
+def test_checkin_restores_autocommit_even_if_a_reset_raises() -> None:
+    conn = _fake_dbapi_conn()
+    conn.autocommit = False
+    conn.cursor.return_value.execute.side_effect = RuntimeError("simulated")
+
+    with pytest.raises(RuntimeError):
+        _reset_search_path_on_checkin(conn, None)
+
+    conn.cursor.return_value.close.assert_called_once()
+    assert conn.autocommit is False
+
+
+def test_checkin_of_an_invalidated_connection_is_a_no_op() -> None:
+    _reset_search_path_on_checkin(None, None)
