@@ -235,6 +235,10 @@ UNATTESTED_FALLBACK_TITLING = EventTitleStyle.INITIALS
 # contractual — ask for a size we've sized the page loop around.
 _SYNC_PAGE_SIZE = 250
 
+# The calendar an import scan reads. Google resolves "primary" to the
+# account's own calendar, which is what the IMPORT grant reaches.
+_IMPORT_CALENDAR_ID = "primary"
+
 # Google answers a syncToken it no longer honours with 410 Gone.
 _HTTP_GONE = 410
 _HTTP_FORBIDDEN = 403
@@ -932,15 +936,20 @@ class GoogleCalendarService:
         start: datetime,
         end: datetime,
     ) -> tuple[list[ImportCandidate], bool]:
-        """Read every occurrence in the window. Returns (occurrences, truncated)."""
+        """Read every occurrence in the window. Returns (occurrences, truncated).
+
+        Reads the therapist's own calendar, not the one PUSH writes to. The
+        practice being imported lives where the therapist already keeps it;
+        a calendar Pablo made holds only what Pablo put there, so scanning
+        it proposes nothing.
+        """
         credentials = self._get_credentials(user_id)
-        token_doc = self._token_repo.get(user_id)
-        if not credentials or not token_doc or not token_doc.calendar_id:
+        if not credentials:
             return [], False
 
         service = _build_calendar_service(credentials)
         kwargs: dict[str, Any] = {
-            "calendarId": token_doc.calendar_id,
+            "calendarId": _IMPORT_CALENDAR_ID,
             "singleEvents": True,
             "showDeleted": False,
             "orderBy": "startTime",
@@ -990,15 +999,14 @@ class GoogleCalendarService:
         therapist's own statement that the series finished.
         """
         credentials = self._get_credentials(user_id)
-        token_doc = self._token_repo.get(user_id)
-        if not credentials or not token_doc or not token_doc.calendar_id:
+        if not credentials:
             return {}
 
         service = _build_calendar_service(credentials)
         rules: dict[str, list[str]] = {}
         for series_id in series_ids:
             try:
-                master = _read_event(service, token_doc.calendar_id, series_id)
+                master = _read_event(service, _IMPORT_CALENDAR_ID, series_id)
             except Exception:
                 # A series whose master can't be read still gets proposed,
                 # with a rule built from its observed cadence.
