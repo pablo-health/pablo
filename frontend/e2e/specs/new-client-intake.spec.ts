@@ -111,9 +111,13 @@ test.describe("A new client's intake", () => {
 
     // --- send ----------------------------------------------------------
     await page.getByTestId("send-forms-send").click()
-    await expect(page.getByTestId("send-forms-outcome")).toHaveText(
-      "Sent. They will get a link by email and a code by text.",
-    )
+    // The acknowledgment replaces the whole dialog: its heading says what
+    // went, and the question the dialog opened with is gone.
+    await expect(page.getByTestId("send-forms-heading")).toHaveText("Forms and invitation sent")
+    await expect(page.getByTestId("send-forms-outcome")).toContainText(`link by email at ${email}`)
+    await expect(page.getByTestId("send-forms-sent-list")).toHaveText(SEEDED_FORM)
+    await expect(next).not.toContainText("What should Robin do next?")
+    await expect(next.getByRole("link", { name: "Open client’s chart" })).toBeVisible()
 
     // --- the email that arrived is the one that was previewed ----------
     const arrived = await mail.waitFor(email)

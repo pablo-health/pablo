@@ -3,10 +3,12 @@
 "use client"
 
 import Link from "next/link"
-import { useState } from "react"
+import { useState, type ReactNode } from "react"
+import { AlertCircle, CheckCircle2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import { DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { useAssignIntakePacket } from "@/hooks/useIntakeArtifacts"
 import { useIntakeTemplates } from "@/hooks/useIntakePackets"
@@ -14,7 +16,12 @@ import { useInviteTemplate } from "@/hooks/useInviteTemplate"
 import { usePatient } from "@/hooks/usePatients"
 import { useIssuePortalInvite, usePortalAccess } from "@/hooks/usePortalAccess"
 import { InviteEmailPreview } from "./InviteEmailPreview"
-import { assignErrorMessage, deliverySentence, sendableForms } from "./sendable"
+import {
+  assignErrorMessage,
+  deliveryOutcome,
+  sendableForms,
+  type DeliveryOutcome,
+} from "./sendable"
 
 type Step = "choose" | "review" | "sent"
 
@@ -24,6 +31,15 @@ interface SendFormsFlowProps {
   onDone: () => void
   /** What the way out of the first step says — "Not now" for a new client. */
   dismissLabel?: string
+  /**
+   * The dialog's own title, shown while choosing and reviewing. Passed in
+   * rather than drawn by the dialog, so the acknowledgment can replace it: a
+   * question like "What should Robin do next?" still sitting above "Invitation
+   * sent" reads as the screen having half-updated.
+   */
+  header?: ReactNode
+  /** Offer a way to the client's chart from the acknowledgment. */
+  chartHref?: string
 }
 
 /**
@@ -38,7 +54,13 @@ interface SendFormsFlowProps {
  * A deployment with no portal answers 404 on the access read. Then there is
  * no access to offer, and the forms go on their own.
  */
-export function SendFormsFlow({ patientId, onDone, dismissLabel = "Cancel" }: SendFormsFlowProps) {
+export function SendFormsFlow({
+  patientId,
+  onDone,
+  dismissLabel = "Cancel",
+  header,
+  chartHref,
+}: SendFormsFlowProps) {
   const { data: templates, isLoading: templatesLoading } = useIntakeTemplates()
   const { data: patient } = usePatient(patientId)
   const { data: access, isError: noPortal } = usePortalAccess(patientId)
@@ -56,7 +78,8 @@ export function SendFormsFlow({ patientId, onDone, dismissLabel = "Cancel" }: Se
   const [selected, setSelected] = useState<string[]>([])
   const [inviteChoice, setInviteChoice] = useState<boolean | null>(null)
   const [showEmail, setShowEmail] = useState(false)
-  const [outcome, setOutcome] = useState<string | null>(null)
+  const [outcome, setOutcome] = useState<DeliveryOutcome | null>(null)
+  const [sentForms, setSentForms] = useState<string[]>([])
   const [failure, setFailure] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -100,18 +123,62 @@ export function SendFormsFlow({ patientId, onDone, dismissLabel = "Cancel" }: Se
         inviteError = error
       }
     }
-    setOutcome(deliverySentence(chosen.length, invited, inviteError, hasWayIn))
+    setOutcome(
+      deliveryOutcome({
+        formCount: chosen.length,
+        invited,
+        inviteError,
+        hadAccess: hasWayIn,
+        email: patient?.email,
+        phone: patient?.phone,
+      }),
+    )
+    setSentForms(chosen.map((form) => form.name))
     setStep("sent")
     setBusy(false)
   }
 
-  if (step === "sent") {
+  if (step === "sent" && outcome) {
+    const Icon = outcome.complete ? CheckCircle2 : AlertCircle
     return (
       <div className="space-y-4" data-testid="send-forms-sent">
-        <p className="text-sm text-neutral-800" data-testid="send-forms-outcome">
-          {outcome}
-        </p>
-        <div className="flex justify-end">
+        <DialogHeader>
+          <div className="flex items-center gap-2">
+            <Icon
+              className={`h-6 w-6 shrink-0 ${outcome.complete ? "text-green-600" : "text-amber-600"}`}
+              aria-hidden="true"
+            />
+            <DialogTitle data-testid="send-forms-heading">{outcome.heading}</DialogTitle>
+          </div>
+          {patient && (
+            <p className="text-sm text-neutral-600">
+              For {patient.first_name} {patient.last_name}
+            </p>
+          )}
+        </DialogHeader>
+        {outcome.lines.length > 0 && (
+          <div className="space-y-1 text-sm text-neutral-800" data-testid="send-forms-outcome">
+            {outcome.lines.map((line) => (
+              <p key={line}>{line}</p>
+            ))}
+          </div>
+        )}
+        {sentForms.length > 0 && (
+          <section className="space-y-1">
+            <h3 className="text-sm font-semibold text-neutral-900">Forms sent</h3>
+            <ul className="list-disc pl-5 text-sm text-neutral-800" data-testid="send-forms-sent-list">
+              {sentForms.map((name) => (
+                <li key={name}>{name}</li>
+              ))}
+            </ul>
+          </section>
+        )}
+        <div className="flex justify-end gap-2">
+          {chartHref && (
+            <Button asChild variant="outline">
+              <Link href={chartHref}>Open client&rsquo;s chart</Link>
+            </Button>
+          )}
           <Button onClick={onDone}>Done</Button>
         </div>
       </div>
@@ -121,6 +188,7 @@ export function SendFormsFlow({ patientId, onDone, dismissLabel = "Cancel" }: Se
   if (step === "review") {
     return (
       <div className="space-y-4" data-testid="send-forms-review">
+        {header}
         <section className="space-y-1">
           <h3 className="text-sm font-semibold text-neutral-900">Forms</h3>
           {chosen.length > 0 ? (
@@ -182,6 +250,7 @@ export function SendFormsFlow({ patientId, onDone, dismissLabel = "Cancel" }: Se
 
   return (
     <div className="space-y-4" data-testid="send-forms-choose">
+      {header}
       <section className="space-y-2">
         <h3 className="text-sm font-semibold text-neutral-900">Forms to fill in</h3>
         {templatesLoading ? (
