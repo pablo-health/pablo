@@ -59,7 +59,7 @@ export function RatesStep() {
         title="What you charge"
         lede="Your session types and their fees. These set what a client owes and what appears on a superbill."
       />
-      <AppointmentTypesCard />
+      <AppointmentTypesCard purpose="billing" />
     </div>
   )
 }

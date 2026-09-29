@@ -61,6 +61,12 @@ test("an already-paneled practice reaches the payer screen and finishes", async 
   await page.getByRole("button", { name: "Continue" }).click()
 
   await expect(page.getByRole("heading", { name: "What you charge" })).toBeVisible()
+  // Rates, not scheduling: the types carry their fees here and nothing about
+  // when Pablo may offer them or whether clients may book them.
+  await expect(page.getByText("Add a type")).toBeVisible()
+  await expect(page.getByTestId("appointment-type-offering")).toHaveCount(0)
+  await expect(page.getByRole("switch", { name: /self-book/i })).toHaveCount(0)
+  await expect(page.getByText("Defaults for all types")).toHaveCount(0)
   await page.getByRole("button", { name: "Continue" }).click()
 
   // The payer screen, and the real one: the card Settings mounts, carrying the

@@ -52,7 +52,8 @@ function renderRow(overrides: Partial<AppointmentTypeResponse> = {}) {
         onToggle={vi.fn()}
         onChange={onChange}
         onDelete={vi.fn()}
-        selfBookOn={false}
+        showSelfBook={false}
+        showOffering
         defaultNoticeHours={24}
       />
     </ul>
