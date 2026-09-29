@@ -738,9 +738,7 @@ test.describe("intake, assignment through accepted export", () => {
 
     const invitation = await invitationFrom(email, phone, async () => {
       await page.getByTestId("send-forms-send").click()
-      await expect(page.getByTestId("send-forms-outcome")).toContainText(
-        "link by email and a code by text",
-      )
+      await expect(page.getByTestId("send-forms-heading")).toHaveText("Forms and invitation sent")
     })
     await page.getByRole("button", { name: "Done" }).click()
 

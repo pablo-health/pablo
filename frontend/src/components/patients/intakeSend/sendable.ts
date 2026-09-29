@@ -35,34 +35,65 @@ export function sendableForms(templates: IntakeTemplate[]): SendableForm[] {
     .filter((form): form is SendableForm => form !== null)
 }
 
+/** What the acknowledgment screen says: a heading, then a line or two. */
+export interface DeliveryOutcome {
+  heading: string
+  lines: string[]
+  /** False when something the clinician asked for did not go out. */
+  complete: boolean
+}
+
+export interface DeliveryFacts {
+  formCount: number
+  invited: boolean
+  inviteError: unknown
+  /** The client could already sign in before this send. */
+  hadAccess: boolean
+  email: string | null | undefined
+  phone: string | null | undefined
+}
+
 /**
  * What to tell the clinician after pressing Send.
  *
  * The forms and the way in are separate sends, and only the forms are
- * certain by the time this renders. A client who can already reach the
- * portal needs no second credential, so saying one went would be untrue; a
- * client with no email or mobile on file has the forms waiting and no way to
- * reach them, and that is the one state worth interrupting for.
+ * certain by the time this renders. The heading says what actually went out
+ * and never more: a failed invitation is named in it, not left to a line the
+ * clinician might not read. A client who can already reach the portal needs
+ * no second credential, so saying one went would be untrue; a client with no
+ * email or mobile on file has the forms waiting and no way to reach them, and
+ * that is the one state worth interrupting for.
  */
-export function deliverySentence(
-  formCount: number,
-  invited: boolean,
-  inviteError: unknown,
-  hadAccess: boolean,
-): string {
-  const lead = formCount > 0 ? "Sent." : "Invitation sent."
+export function deliveryOutcome(facts: DeliveryFacts): DeliveryOutcome {
+  const { formCount, invited, inviteError, hadAccess, email, phone } = facts
+  const forms = formCount > 0
   if (inviteError) {
     const status = (inviteError as { status?: number } | null)?.status
+    const heading = forms ? "Forms sent. The invitation didn't go out." : "Invitation not sent"
     if (status === 422) {
-      return "The forms are ready. This client needs an email address and a mobile number on file before they can be invited to open them."
+      return {
+        heading,
+        lines: [
+          "This client needs an email address and a mobile number on file before they can be invited.",
+        ],
+        complete: false,
+      }
     }
-    return formCount > 0
-      ? "The forms are ready, but the invitation could not be sent. You can send it again from the chart."
-      : "The invitation could not be sent. You can try again from the chart."
+    return {
+      heading,
+      lines: [forms ? "You can send the invitation again from the chart." : "You can try again from the chart."],
+      complete: false,
+    }
   }
-  if (invited) return `${lead} They will get a link by email and a code by text.`
-  if (hadAccess && formCount > 0) return "Sent. The forms are waiting in their portal."
-  return "Sent."
+  if (invited) {
+    const lines = [`They'll get a link by email at ${email} and a code by text at ${phone}.`]
+    if (forms) lines.push("You'll see their answers on the Intake tab once they're done.")
+    return { heading: forms ? "Forms and invitation sent" : "Invitation sent", lines, complete: true }
+  }
+  if (hadAccess && forms) {
+    return { heading: "Forms sent", lines: ["They're waiting in their portal."], complete: true }
+  }
+  return { heading: "Forms sent", lines: [], complete: true }
 }
 
 /**

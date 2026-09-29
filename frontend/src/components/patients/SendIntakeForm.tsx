@@ -32,11 +32,18 @@ export function SendIntakeForm({ patientId }: { patientId: string }) {
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-[520px]">
-          <DialogHeader>
-            <DialogTitle>Send forms</DialogTitle>
-            <DialogDescription>Choose what this client should do, then review it.</DialogDescription>
-          </DialogHeader>
-          {open && <SendFormsFlow patientId={patientId} onDone={() => setOpen(false)} />}
+          {open && (
+            <SendFormsFlow
+              patientId={patientId}
+              onDone={() => setOpen(false)}
+              header={
+                <DialogHeader>
+                  <DialogTitle>Send forms</DialogTitle>
+                  <DialogDescription>Choose what this client should do, then review it.</DialogDescription>
+                </DialogHeader>
+              }
+            />
+          )}
         </DialogContent>
       </Dialog>
     </div>
