@@ -250,6 +250,12 @@ class AuditAction(StrEnum):
     PATIENT_PORTAL_INVITE_PREVIEWED = "patient_portal_invite_previewed"
     PATIENT_PORTAL_SESSION_REDEEMED = "patient_portal_session_redeemed"
 
+    # A practice turned its client portal on or off. Turning it off ends
+    # every client's access at once, so when that happened, and who did it,
+    # belongs on the record beside the invitations. The payload is the old
+    # and new setting and nothing else.
+    PRACTICE_PORTAL_OFFERING_CHANGED = "practice_portal_offering_changed"
+
     # A patient signed themselves out. The mirror image of
     # PATIENT_PORTAL_SESSION_REDEEMED and recorded for the same reason:
     # when a credential stopped working is as much a part of the access
@@ -655,6 +661,7 @@ class ResourceType(StrEnum):
     PATIENT_MESSAGE_THREAD = "patient_message_thread"
     REFILL_REQUEST = "refill_request"
     INVITATION = "invitation"
+    PRACTICE_PORTAL = "practice_portal"
     CLAIM = "claim"
     CLAIM_EXPORT = "claim_export"
     BILLING_PERIOD_EXPORT = "billing_period_export"

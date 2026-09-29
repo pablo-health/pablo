@@ -49,7 +49,8 @@ export function SendFormsFlow({ patientId, onDone, dismissLabel = "Cancel" }: Se
   const forms = sendableForms(templates ?? [])
   const hasWayIn = !!access && (access.invite_outstanding || access.live_sessions > 0)
   const contactComplete = !!patient?.email && !!patient?.phone
-  const canInvite = !noPortal && !!access && !hasWayIn && contactComplete
+  const portalOff = !!access && !access.portal_enabled
+  const canInvite = !noPortal && !!access && !portalOff && !hasWayIn && contactComplete
 
   const [step, setStep] = useState<Step>("choose")
   const [selected, setSelected] = useState<string[]>([])
@@ -218,7 +219,15 @@ export function SendFormsFlow({ patientId, onDone, dismissLabel = "Cancel" }: Se
       {!noPortal && access && patient && (
         <section className="space-y-2">
           <h3 className="text-sm font-semibold text-neutral-900">Portal</h3>
-          {hasWayIn ? (
+          {portalOff ? (
+            <p className="text-sm text-neutral-600" data-testid="send-forms-portal-off">
+              To invite them to the portal,{" "}
+              <Link href="/dashboard/settings/portal" className="font-medium underline">
+                turn on the client portal
+              </Link>
+              .
+            </p>
+          ) : hasWayIn ? (
             <p className="text-sm text-neutral-600">They can already sign in to the portal.</p>
           ) : contactComplete ? (
             <div className="flex items-center gap-2">

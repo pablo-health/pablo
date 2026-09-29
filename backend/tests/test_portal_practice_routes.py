@@ -26,7 +26,7 @@ from unittest.mock import patch
 
 import pytest
 from app.auth.service import require_active_subscription
-from app.db.platform_models import PortalPracticeSlugRow, PracticeRow
+from app.db.platform_models import PortalPracticeSlugRow, PracticePortalSettingsRow, PracticeRow
 from app.portal.factory import build_invite_link
 from app.portal.practice_routes import _RESERVED_SLUGS, _slugify, router
 from app.rate_limit import (
@@ -89,9 +89,11 @@ class _FakeSession:
         self,
         practices: dict[str, PracticeRow] | None = None,
         slugs: dict[str, PortalPracticeSlugRow] | None = None,
+        portal_settings: dict[str, PracticePortalSettingsRow] | None = None,
     ) -> None:
         self.practices = practices or {}
         self.slugs = slugs or {}
+        self.portal_settings = portal_settings or {}
         self._pending: PortalPracticeSlugRow | None = None
         self.committed = 0
         self.closed = False
@@ -101,6 +103,8 @@ class _FakeSession:
             return self.practices.get(key)
         if model is PortalPracticeSlugRow:
             return self.slugs.get(key)
+        if model is PracticePortalSettingsRow:
+            return self.portal_settings.get(key)
         raise AssertionError(f"unexpected model {model!r}")
 
     def execute(self, stmt: Any) -> _FakeResult:
@@ -148,14 +152,19 @@ def _slug_row(
     *,
     practice_id: str = PRACTICE_ID,
     display_name: str = "Example Therapy",
-    enabled: bool = True,
 ) -> PortalPracticeSlugRow:
     return PortalPracticeSlugRow(
         slug=slug,
         practice_id=practice_id,
         display_name=display_name,
-        enabled=enabled,
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+
+def _offering(*, enabled: bool = True) -> PracticePortalSettingsRow:
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    return PracticePortalSettingsRow(
+        practice_id=PRACTICE_ID, enabled=enabled, decided_at=now, updated_at=now
     )
 
 
@@ -168,7 +177,10 @@ def _clean_rate_limits() -> Iterator[None]:
 
 @pytest.fixture
 def fake_db() -> _FakeSession:
-    return _FakeSession(practices={PRACTICE_ID: _practice()})
+    return _FakeSession(
+        practices={PRACTICE_ID: _practice()},
+        portal_settings={PRACTICE_ID: _offering()},
+    )
 
 
 @pytest.fixture
@@ -234,13 +246,17 @@ def test_resolve_does_not_say_whether_a_practice_turned_the_portal_off(
     """Unknown and disabled answer identically, status AND body. A response
     that distinguished them — an ``enabled`` field, or a different status —
     would be exactly the oracle this 404 exists to withhold."""
-    fake_db.slugs["turned-off"] = _slug_row("turned-off", enabled=False)
+    fake_db.slugs["turned-off"] = _slug_row("turned-off")
+    fake_db.portal_settings[PRACTICE_ID] = _offering(enabled=False)
+    # A practice that was never asked has no settings row, and that is off too.
+    fake_db.slugs["never-asked"] = _slug_row("never-asked", practice_id="practice-2")
 
     unknown = client.get(RESOLVE_URL.format(slug="never-existed"))
     disabled = client.get(RESOLVE_URL.format(slug="turned-off"))
+    never_asked = client.get(RESOLVE_URL.format(slug="never-asked"))
 
-    assert unknown.status_code == disabled.status_code == 404
-    assert unknown.json() == disabled.json()
+    assert unknown.status_code == disabled.status_code == never_asked.status_code == 404
+    assert unknown.json() == disabled.json() == never_asked.json()
     assert "enabled" not in disabled.text
 
 

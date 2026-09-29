@@ -45,6 +45,7 @@ from ..db import DEFAULT_PRACTICE_SCHEMA, create_standalone_session
 from ..settings import get_settings
 from . import tokens
 from .db_store import DbPortalSessionStore
+from .portal_settings import portal_enabled_for_schema
 
 if TYPE_CHECKING:
     from .store import PortalSessionRecord
@@ -131,6 +132,15 @@ class PortalSessionResolver:
             return None
         return record
 
+    def _portal_offered(self, tenant: str) -> bool:
+        """Whether the practice still offers the portal. Off on any failure,
+        for the same reason as :meth:`_live_record`."""
+        try:
+            return portal_enabled_for_schema(tenant)
+        except Exception:
+            logger.warning("Portal settings lookup failed; refusing the credential")
+            return False
+
     def resolve(self, credential: PatientCredential) -> PatientContext | None:
         """A live portal session becomes its patient principal, else ``None``."""
         claims = self._verified_claims(credential.value)
@@ -142,6 +152,11 @@ class PortalSessionResolver:
         if record.patient_id != claims.patient_id:
             # Signature good, row present, and the two disagree about who
             # this is. Nothing legitimate produces that.
+            return None
+        if not self._portal_offered(claims.tenant):
+            # The practice has turned its portal off. The session is left
+            # alone rather than revoked, so turning it back on lets clients
+            # carry on where they were; until then it authorizes nothing.
             return None
 
         return PatientContext(

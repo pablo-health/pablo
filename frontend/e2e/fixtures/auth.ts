@@ -155,7 +155,13 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       await context.storageState({ path: storageStatePath, indexedDB: true })
       await context.close()
 
-      await clearDiary(await ApiClient.forUser(email, password))
+      const api = await ApiClient.forUser(email, password)
+      await clearDiary(api)
+      // A practice offers the portal only once it turns it on, and every
+      // worker shares this practice. On, once, here — so no portal spec has
+      // to remember to, and none of them turns it off under the others
+      // (portal-offering.spec.ts does that on the second practice instead).
+      await api.put("/api/portal/settings", { enabled: true })
 
       await provide({ email, password, uid, storageStatePath })
     },

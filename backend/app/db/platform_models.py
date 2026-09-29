@@ -33,7 +33,7 @@ from sqlalchemy import (
     Uuid,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from ..models.enums import PracticeEdition
@@ -315,9 +315,9 @@ class PortalPracticeSlugRow(PlatformBase):
     slug: Mapped[str] = mapped_column(String(63), primary_key=True)
     practice_id: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    #: A practice that has turned its portal off keeps its address claimed.
-    #: The resolve route answers the same 404 either way — see
-    #: ``app.portal.practice_routes``.
+    #: No longer read. Whether a practice offers the portal lives in
+    #: :class:`PracticePortalSettingsRow`, which exists before an address does;
+    #: this column stays until a later migration drops it.
     enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=text("true")
     )
@@ -362,6 +362,42 @@ class PortalWelcomeRow(PlatformBase):
     heading: Mapped[str] = mapped_column(Text, nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class PracticePortalSettingsRow(PlatformBase):
+    """Whether a practice offers its clients the portal, and how.
+
+    Keyed on the practice rather than on its portal address, so the answer
+    exists before any address has been minted: a practice can decide to offer
+    the portal before it has invited anybody, and an address is only minted
+    once something needs a link.
+
+    **No row means off.** A practice has to turn the portal on; offering
+    clients a way into their records is the practice's decision, not a
+    default it inherits. Every practice that existed when this table arrived
+    was given a row with the portal on (see the migration), so nobody who was
+    already offering it lost it.
+
+    No PHI: a switch, a list of module names and two timestamps.
+    """
+
+    __tablename__ = "practice_portal_settings"
+    __table_args__ = {"schema": PLATFORM_SCHEMA}
+
+    practice_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    #: Which portal modules this practice offers, narrowing what the
+    #: deployment serves. ``None`` means everything the deployment serves.
+    enabled_modules: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
+    #: When the practice first answered whether to offer the portal, either
+    #: way. ``None`` means it has not been asked yet.
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    #: The clinician who last changed it. ``None`` for the rows the migration
+    #: wrote.
+    updated_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 
 class SetupTokenRow(PlatformBase):

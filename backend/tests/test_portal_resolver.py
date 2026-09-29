@@ -45,12 +45,16 @@ NOW = int(time.time())
 class _StubbedResolver(PortalSessionResolver):
     """The real resolver with only the database reach stubbed out."""
 
-    def __init__(self, record: PortalSessionRecord | None) -> None:
+    def __init__(self, record: PortalSessionRecord | None, *, offered: bool = True) -> None:
         self._record = record
+        self._offered = offered
         self.looked_up: list[str] = []
 
     def _signing_key(self) -> str:
         return KEY
+
+    def _portal_offered(self, tenant: str) -> bool:
+        return self._offered and tenant.startswith("practice_")
 
     def _live_record(self, claims: tokens.SessionClaims) -> PortalSessionRecord | None:
         self.looked_up.append(claims.jti)
@@ -207,6 +211,28 @@ def test_a_revoked_session_resolves_to_none() -> None:
     resolver = _StubbedResolver(revoked)
 
     assert resolver.resolve(_credential(_session_token())) is None
+
+
+def test_a_live_session_resolves_to_none_while_the_practice_has_the_portal_off() -> None:
+    """Every signed-in portal request comes through here, so this is where
+    turning the portal off reaches a client who is already signed in."""
+    resolver = _StubbedResolver(_live_record(), offered=False)
+
+    assert resolver.resolve(_credential(_session_token())) is None
+
+
+def test_a_failed_settings_lookup_refuses_rather_than_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rejection is ``None``, never an exception — the protocol's rule — and
+    a lookup that could not decide is not a yes."""
+
+    def _boom(_schema: str) -> bool:
+        raise RuntimeError("platform unavailable")
+
+    monkeypatch.setattr("app.portal.resolver.portal_enabled_for_schema", _boom)
+
+    assert PortalSessionResolver()._portal_offered(TENANT) is False
 
 
 def test_a_missing_row_resolves_to_none() -> None:

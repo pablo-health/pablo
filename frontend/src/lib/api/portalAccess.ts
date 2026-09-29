@@ -32,6 +32,8 @@ export interface PortalAccessState {
   patient_id: string
   invite_outstanding: boolean
   live_sessions: number
+  /** Whether the practice offers the portal at all; nothing to invite to when not. */
+  portal_enabled: boolean
   /** Unix seconds — when access was last cut off, or null if it never was. */
   revoked_at: number | null
 }

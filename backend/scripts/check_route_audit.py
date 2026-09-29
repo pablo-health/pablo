@@ -318,6 +318,9 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("get", "/api/portal/welcome"),  # the practice's welcome, no PHI
         ("put", "/api/portal/welcome"),  # saves the practice's welcome
         ("delete", "/api/portal/welcome"),  # back to the default welcome
+        # settings_routes.py — whether the practice offers the portal. The
+        # read is a switch; the PUT is audited (it ends every client's access).
+        ("get", "/api/portal/settings"),  # the practice's on/off, no PHI
         # portal/recovery.py — account recovery. It answers 202 to everybody
         # and discloses nothing: no name, no chart, no hint that the address
         # matched. The MATCHING path IS audited, as
