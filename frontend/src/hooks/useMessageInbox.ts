@@ -63,6 +63,8 @@ export function useThread(threadId: string | null) {
     queryKey: messageInboxKeys.thread(threadId ?? ""),
     queryFn: () => getThread(threadId as string),
     enabled: threadId !== null,
+    // An open conversation picks up what arrives while it is open.
+    refetchInterval: POLL_MS,
   })
 }
 

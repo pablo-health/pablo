@@ -42,16 +42,31 @@ interface ThreadViewProps {
   patientName: string
   /** Back to the list, on a screen too narrow to show both. */
   onBack: () => void
+  /**
+   * Set when the client cannot reach Messages now, so there is nowhere for a
+   * reply to go: what to do about it, shown in place of the reply box.
+   */
+  repliesOffNote?: string | null
 }
 
-export function ThreadView({ threadId, patientId, patientName, onBack }: ThreadViewProps) {
+export function ThreadView({
+  threadId,
+  patientId,
+  patientName,
+  onBack,
+  repliesOffNote = null,
+}: ThreadViewProps) {
   const { data: thread, isLoading, isError, refetch } = useThread(threadId)
   const markRead = useMarkThreadRead()
   const markedFor = useRef<string | null>(null)
 
+  // Marked read once per thread AND per message count: a message that arrives
+  // while the thread is open is seen too, rather than holding the badge up
+  // until the thread is closed and reopened.
   useEffect(() => {
-    if (thread && markedFor.current !== thread.id) {
-      markedFor.current = thread.id
+    const key = thread ? `${thread.id}:${thread.messages.length}` : null
+    if (thread && key !== null && markedFor.current !== key) {
+      markedFor.current = key
       markRead.mutate(thread.id)
     }
   }, [thread, markRead])
@@ -108,7 +123,16 @@ export function ThreadView({ threadId, patientId, patientName, onBack }: ThreadV
         ))}
       </ol>
 
-      <ReplyBox threadId={thread.id} closed={closed} />
+      {repliesOffNote ? (
+        <p className="border-t border-neutral-200 p-4 text-sm text-neutral-600" data-testid="thread-replies-off">
+          {repliesOffNote}{" "}
+          <Link href="/dashboard/settings/portal" className="font-medium underline">
+            Client portal settings
+          </Link>
+        </p>
+      ) : (
+        <ReplyBox threadId={thread.id} closed={closed} />
+      )}
     </div>
   )
 }
