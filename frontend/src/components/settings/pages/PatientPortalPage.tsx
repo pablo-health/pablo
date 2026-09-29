@@ -2,10 +2,12 @@
 
 "use client"
 
+import { usePortalSettings } from "@/hooks/usePortalSettings"
 import { IntakeDocumentsCard } from "../intake/IntakeDocumentsCard"
 import { IntakeFormsCard } from "../intake/IntakeFormsCard"
 import { InviteEmailCard } from "../intake/InviteEmailCard"
 import { LicensedInstrumentsCard } from "../intake/LicensedInstrumentsCard"
+import { PortalOfferingCard } from "../intake/PortalOfferingCard"
 import { PortalWelcomeCard } from "../intake/PortalWelcomeCard"
 import { SettingsCard } from "../ui"
 
@@ -13,9 +15,11 @@ import { SettingsCard } from "../ui"
  * Practice > Patient portal.
  *
  * Gated behind `patient_portal`, so this only renders where a deployment has
- * turned the portal on. Forms and the documents they can ask somebody to
- * sign are here; sign-in and the rest of the portal's controls arrive with
- * the surfaces they belong to.
+ * turned the portal on. The first card is whether this practice offers it;
+ * the welcome and the invitation only matter once it does, so they wait,
+ * greyed, until then. Forms and the documents they can ask somebody to sign
+ * stay open either way — a practice can build them before it offers the
+ * portal.
  *
  * Documents come after forms because that is the order a practice meets
  * them: the form is the thing being built, and a document is something a
@@ -24,11 +28,29 @@ import { SettingsCard } from "../ui"
  * not let it add.
  */
 export function PatientPortalPage() {
+  const { data: settings } = usePortalSettings()
+  // Until the answer arrives, nothing is greyed: a slow read must not flash
+  // a practice's own settings as unavailable.
+  const off = settings?.enabled === false
+
   return (
     <>
+      <PortalOfferingCard />
       <IntakeFormsCard />
-      <PortalWelcomeCard />
-      <InviteEmailCard />
+      {off && (
+        <p className="mb-3 text-sm text-muted-foreground" data-testid="portal-off-note">
+          Turn on the client portal to invite clients.
+        </p>
+      )}
+      <div
+        inert={off}
+        aria-disabled={off || undefined}
+        className={off ? "opacity-50" : undefined}
+        data-testid="portal-client-facing-settings"
+      >
+        <PortalWelcomeCard />
+        <InviteEmailCard />
+      </div>
       <IntakeDocumentsCard />
       <LicensedInstrumentsCard />
       <SettingsCard title="Patient sign-in">

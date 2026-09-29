@@ -90,6 +90,7 @@ from .factory import (
 )
 from .invite_composer import FormNames, InviteFacts, compose, get_invite_form_names
 from .invite_template_store import InviteTemplateStore, get_invite_template_store
+from .portal_settings import portal_enabled_for_practice, portal_enabled_for_schema
 from .practice_routes import PracticeAddress, ensure_practice_slug, practice_address_for_schema
 from .tenant_gateway import (
     PortalStores,
@@ -185,8 +186,7 @@ def _practice_address_for(user: User) -> tuple[str, PracticeAddress]:
     address = ensure_practice_slug(practice_id)
     if not address.enabled:
         raise ConflictError(
-            "This practice's patient portal is switched off, so there is "
-            "nowhere for an invitation to lead.",
+            "Turn on the client portal in Settings to invite clients.",
             code="PORTAL_DISABLED_FOR_PRACTICE",
         )
     return practice_id, address
@@ -247,6 +247,9 @@ class PortalAccessState(BaseModel):
     invite_outstanding: bool
     #: How many sessions would authenticate right now.
     live_sessions: int
+    #: Whether the practice offers the portal at all. When it does not, there
+    #: is nothing to invite this patient to.
+    portal_enabled: bool
 
 
 class PortalAccessRevoked(BaseModel):
@@ -372,10 +375,12 @@ def get_portal_access(
     """
     _patient_or_404(patients, patient_id, user.id)
     now = int(utc_now().timestamp())
+    practice = _resolve_practice_from_email(user.email)
     return PortalAccessState(
         patient_id=patient_id,
         invite_outstanding=stores.challenges.has_outstanding(patient_id),
         live_sessions=stores.sessions.live_count_for_patient(patient_id, now=now),
+        portal_enabled=practice is not None and portal_enabled_for_practice(practice[0]),
     )
 
 
@@ -644,7 +649,8 @@ def _verified_invite_claims(token: str) -> tokens.InviteClaims:
 
     Both checks refuse with the same 401, and both happen before any
     database work: a forged token must not reach a connection, let alone
-    choose which schema it points at.
+    choose which schema it points at. Only then is the practice asked whether
+    it still offers the portal.
     """
     try:
         claims = tokens.verify_invite_token(signing_key=_signing_key(), token=token)
@@ -653,6 +659,7 @@ def _verified_invite_claims(token: str) -> tokens.InviteClaims:
     if not _is_tenant_schema(claims.tenant):
         logger.warning("Portal redemption presented a non-practice schema claim")
         raise _unauthenticated()
+    _require_portal_offered(claims.tenant)
     return claims
 
 
@@ -665,7 +672,27 @@ def _verified_session_claims(token: str) -> tokens.SessionClaims:
     if not _is_tenant_schema(claims.tenant):
         logger.warning("Portal refresh presented a non-practice schema claim")
         raise _unauthenticated()
+    _require_portal_offered(claims.tenant)
     return claims
+
+
+def _require_portal_offered(tenant: str) -> None:
+    """The same 401 when the practice has turned its portal off.
+
+    An invitation sent before the portal went off must not open it, and a
+    session must not be refreshed past it. The refusal is the uniform one, so
+    a practice's choice is not something a token-holder can read back.
+    """
+    try:
+        offered = portal_enabled_for_schema(tenant)
+    except Exception as exc:
+        logger.warning(
+            "Portal settings lookup failed; refusing",
+            extra={"error_type": type(exc).__name__},
+        )
+        offered = False
+    if not offered:
+        raise _unauthenticated()
 
 
 @contextmanager

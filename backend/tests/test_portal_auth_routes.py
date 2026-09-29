@@ -207,6 +207,19 @@ def _practice_address(monkeypatch: pytest.MonkeyPatch) -> None:
         "app.portal.routes.practice_address_for_schema",
         lambda schema: _address(PRACTICE_SLUG) if schema == TENANT else None,
     )
+    _offer_portal(monkeypatch, offered=True)
+
+
+def _offer_portal(monkeypatch: pytest.MonkeyPatch, *, offered: bool) -> None:
+    """Whether the practice offers the portal, without a platform table."""
+    monkeypatch.setattr(
+        "app.portal.routes.portal_enabled_for_schema",
+        lambda schema: offered and schema == TENANT,
+    )
+    monkeypatch.setattr(
+        "app.portal.routes.portal_enabled_for_practice",
+        lambda practice_id: offered and practice_id == PRACTICE_ID,
+    )
 
 
 def _address(slug: str, *, enabled: bool = True) -> PracticeAddress:
@@ -902,6 +915,7 @@ def test_access_state_reports_outstanding_invitation_then_live_session(
         "patient_id": PATIENT_ID,
         "invite_outstanding": False,
         "live_sessions": 0,
+        "portal_enabled": True,
     }
 
     token, otp = _issue_and_capture(client, delivery, sms)
@@ -914,6 +928,51 @@ def test_access_state_reports_outstanding_invitation_then_live_session(
     # The invitation was burned by its single use; the session is live.
     assert active["invite_outstanding"] is False
     assert active["live_sessions"] == 1
+
+
+def test_access_state_says_when_the_practice_does_not_offer_the_portal(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """So the invite affordance can point at the setting instead of offering
+    an invitation that would be refused."""
+    _offer_portal(monkeypatch, offered=False)
+
+    assert client.get(_access_url()).json()["portal_enabled"] is False
+
+
+def test_an_invitation_sent_before_the_portal_went_off_does_not_open_it(
+    client: TestClient,
+    delivery: CapturingInviteDelivery,
+    sms: FakeSmsGateway,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Neither half of sign-in works: no code is texted, and a code already
+    texted does not redeem. Same 401 as any other refusal."""
+    token, otp = _issue_and_capture(client, delivery, sms)
+    texted = len(sms.sent)
+    _offer_portal(monkeypatch, offered=False)
+
+    assert _uniform_401(client.post(REQUEST_CODE_URL, json={"token": token}))
+    assert len(sms.sent) == texted
+    assert _uniform_401(_redeem(client, token, otp))
+
+
+def test_a_session_does_not_refresh_after_the_portal_went_off(
+    client: TestClient,
+    delivery: CapturingInviteDelivery,
+    sms: FakeSmsGateway,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token, otp = _issue_and_capture(client, delivery, sms)
+    session = _redeem(client, token, otp).json()["session_token"]
+    _offer_portal(monkeypatch, offered=False)
+
+    assert _uniform_401(_refresh(client, session))
+
+    # Back on, and the same session carries on: turning the portal off
+    # suspends access rather than revoking it.
+    _offer_portal(monkeypatch, offered=True)
+    assert _refresh(client, session).status_code == 200
 
 
 def test_access_state_never_leaks_a_credential(
@@ -954,6 +1013,7 @@ def test_revoke_kills_live_sessions_and_the_invitation_in_flight(
         "patient_id": PATIENT_ID,
         "invite_outstanding": False,
         "live_sessions": 0,
+        "portal_enabled": True,
     }
 
 

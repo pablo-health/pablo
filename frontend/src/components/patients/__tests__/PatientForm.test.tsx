@@ -35,6 +35,7 @@ vi.mock("@/lib/api/portalAccess", async (importOriginal) => ({
     patient_id: "patient-new",
     invite_outstanding: false,
     live_sessions: 0,
+    portal_enabled: true,
     revoked_at: null,
   }),
 }))

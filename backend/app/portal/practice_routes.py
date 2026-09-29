@@ -35,7 +35,7 @@ from sqlalchemy.exc import IntegrityError
 from ..auth.route_security import truly_public
 from ..auth.service import _resolve_practice_from_email, require_active_subscription
 from ..db import create_standalone_session
-from ..db.platform_models import PortalPracticeSlugRow, PracticeRow
+from ..db.platform_models import PortalPracticeSlugRow, PracticePortalSettingsRow, PracticeRow
 from ..models import User
 from ..rate_limit import require_portal_practice_resolve_rate_limit
 
@@ -43,6 +43,7 @@ from ..rate_limit import require_portal_practice_resolve_rate_limit
 # so it cannot live in a TYPE_CHECKING block.
 from ..services.captcha import CaptchaVerifier, get_captcha_verifier
 from ..utcnow import utc_now
+from .portal_settings import portal_enabled_in
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -160,10 +161,11 @@ def resolve_portal_practice(
     session = create_standalone_session()
     try:
         row = session.get(PortalPracticeSlugRow, slug)
+        offered = row is not None and portal_enabled_in(session, row.practice_id)
     finally:
         session.close()
 
-    if row is None or not row.enabled:
+    if row is None or not offered:
         raise _practice_not_found()
     return PortalPracticeResolution(
         slug=row.slug,
@@ -228,7 +230,11 @@ def practice_address_for_schema(schema: str) -> PracticeAddress | None:
         ).scalar_one_or_none()
         if row is None:
             return None
-        return PracticeAddress(slug=row.slug, display_name=row.display_name, enabled=row.enabled)
+        return PracticeAddress(
+            slug=row.slug,
+            display_name=row.display_name,
+            enabled=portal_enabled_in(session, practice),
+        )
     finally:
         session.close()
 
@@ -269,9 +275,13 @@ def practice_schema_for_slug(slug: str) -> str | None:
         return session.execute(
             select(PracticeRow.schema_name)
             .join(PortalPracticeSlugRow, PortalPracticeSlugRow.practice_id == PracticeRow.id)
+            .join(
+                PracticePortalSettingsRow,
+                PracticePortalSettingsRow.practice_id == PracticeRow.id,
+            )
             .where(
                 PortalPracticeSlugRow.slug == slug,
-                PortalPracticeSlugRow.enabled.is_(True),
+                PracticePortalSettingsRow.enabled.is_(True),
                 PracticeRow.is_active.is_(True),
                 PracticeRow.deleted_at.is_(None),
             )
@@ -305,7 +315,7 @@ def ensure_practice_slug(practice_id: str) -> PracticeAddress:
             return PracticeAddress(
                 slug=existing.slug,
                 display_name=existing.display_name,
-                enabled=existing.enabled,
+                enabled=portal_enabled_in(session, practice_id),
             )
 
         practice_row = session.get(PracticeRow, practice_id)
@@ -321,7 +331,6 @@ def ensure_practice_slug(practice_id: str) -> PracticeAddress:
                 slug=candidate,
                 practice_id=practice_id,
                 display_name=practice_row.name,
-                enabled=True,
                 created_at=now,
             )
             try:
@@ -334,7 +343,11 @@ def ensure_practice_slug(practice_id: str) -> PracticeAddress:
                     raise
                 continue
             session.commit()
-            return PracticeAddress(slug=candidate, display_name=practice_row.name, enabled=True)
+            return PracticeAddress(
+                slug=candidate,
+                display_name=practice_row.name,
+                enabled=portal_enabled_in(session, practice_id),
+            )
 
         # Every candidate in the budget collided — practically unreachable (it
         # means every numeric suffix of the same base is already taken), but

@@ -81,7 +81,13 @@ const SECOND = template({
   versions: [version("version-2", 1, "2026-03-02T12:00:00Z")],
 })
 
-const NO_ACCESS = { patient_id: "patient-a", invite_outstanding: false, live_sessions: 0, revoked_at: null }
+const NO_ACCESS = {
+  patient_id: "patient-a",
+  invite_outstanding: false,
+  live_sessions: 0,
+  portal_enabled: true,
+  revoked_at: null,
+}
 
 const onDone = vi.fn()
 
@@ -210,6 +216,18 @@ describe("SendFormsFlow", () => {
     await waitFor(() => expect(mockInvite).toHaveBeenCalled())
     expect(mockAssign).not.toHaveBeenCalled()
     expect(await screen.findByTestId("send-forms-outcome")).toHaveTextContent("Invitation sent.")
+  })
+
+  it("points at the setting instead of offering an invitation when the practice's portal is off", async () => {
+    mockAccess.mockResolvedValue({ ...NO_ACCESS, portal_enabled: false })
+    renderFlow()
+    const note = await screen.findByTestId("send-forms-portal-off")
+    expect(note).toHaveTextContent("To invite them to the portal, turn on the client portal.")
+    expect(screen.getByRole("link", { name: "turn on the client portal" })).toHaveAttribute(
+      "href",
+      "/dashboard/settings/portal",
+    )
+    expect(screen.queryByRole("checkbox", { name: "Invite them to the portal" })).not.toBeInTheDocument()
   })
 
   it("does not offer an invitation to a client who can already sign in", async () => {
