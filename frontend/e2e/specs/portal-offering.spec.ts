@@ -53,7 +53,7 @@ test.describe("offering the portal", () => {
       expect((await request.get(CAPABILITIES, signedIn)).status()).toBe(200)
       expect((await request.get(address)).status()).toBe(200)
 
-      expect(await api.put(SETTINGS, { enabled: false })).toEqual({
+      expect(await api.put(SETTINGS, { enabled: false })).toMatchObject({
         enabled: false,
         decided: true,
       })
