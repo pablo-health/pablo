@@ -305,6 +305,24 @@ def _portal_settings() -> Iterator[None]:
     get_settings.cache_clear()
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _both_practices_offer_the_portal() -> Iterator[None]:
+    """Whether a practice offers the portal is not what this module tests.
+
+    Practice Y is a bare schema with no platform row at all, so the real
+    lookup would call its portal off and every Y session would be refused
+    for that reason — hiding the isolation refusals this module exists to
+    prove. What turning the portal off does is covered in
+    ``tests_integration/database/test_portal_settings_store.py`` and the
+    unit suites.
+    """
+    mp = pytest.MonkeyPatch()
+    mp.setattr("app.portal.resolver.portal_enabled_for_schema", lambda _schema: True)
+    mp.setattr("app.portal.routes.portal_enabled_for_schema", lambda _schema: True)
+    yield
+    mp.undo()
+
+
 @pytest.fixture(scope="module")
 def practice_x(engine: Engine) -> Iterator[str]:
     """Practice X, wired for real clinician resolution.

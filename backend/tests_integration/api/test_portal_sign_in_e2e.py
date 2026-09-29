@@ -126,7 +126,11 @@ def engine() -> Iterator[Engine]:
 @pytest.fixture(scope="module")
 def practice(engine: Engine) -> Iterator[str]:
     """A provisioned practice with one patient who has both channels on file."""
-    from app.db.platform_models import PlatformUserRow, PracticeRow  # noqa: PLC0415
+    from app.db.platform_models import (  # noqa: PLC0415
+        PlatformUserRow,
+        PracticePortalSettingsRow,
+        PracticeRow,
+    )
     from app.db.provisioning import create_practice_schema  # noqa: PLC0415
     from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
 
@@ -153,6 +157,12 @@ def practice(engine: Engine) -> Iterator[str]:
                 owner_email=f"{_PRACTICE_ID}@example.test",
                 owner_user_id=_CLINICIAN,
                 created_at=now,
+            )
+        )
+        # A practice offers the portal only once it turns it on.
+        session.add(
+            PracticePortalSettingsRow(
+                practice_id=_PRACTICE_ID, enabled=True, decided_at=now, updated_at=now
             )
         )
         session.commit()
@@ -187,6 +197,10 @@ def practice(engine: Engine) -> Iterator[str]:
         # schema does not take it with it.
         conn.execute(
             text("DELETE FROM platform.companion_practice_slugs WHERE practice_id = :i"),
+            {"i": _PRACTICE_ID},
+        )
+        conn.execute(
+            text("DELETE FROM platform.practice_portal_settings WHERE practice_id = :i"),
             {"i": _PRACTICE_ID},
         )
         conn.execute(text("DELETE FROM platform.practices WHERE id = :i"), {"i": _PRACTICE_ID})

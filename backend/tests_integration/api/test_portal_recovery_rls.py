@@ -141,6 +141,7 @@ def slug(engine: Engine) -> Iterator[str]:
     from app.db.platform_models import (  # noqa: PLC0415
         EmailTenantMappingRow,
         PlatformUserRow,
+        PracticePortalSettingsRow,
         PracticeRow,
     )
     from app.db.provisioning import create_practice_schema  # noqa: PLC0415
@@ -179,6 +180,12 @@ def slug(engine: Engine) -> Iterator[str]:
                 email=_MEMBER_EMAIL, tenant_id=_SCHEMA, practice_id=_PRACTICE_ID, created_at=now
             )
         )
+        # Recovery resolves only a practice that offers the portal.
+        session.add(
+            PracticePortalSettingsRow(
+                practice_id=_PRACTICE_ID, enabled=True, decided_at=now, updated_at=now
+            )
+        )
         session.commit()
 
     yield ensure_practice_slug(_PRACTICE_ID).slug
@@ -191,6 +198,10 @@ def slug(engine: Engine) -> Iterator[str]:
         )
         conn.execute(
             text("DELETE FROM platform.email_tenant_mappings WHERE practice_id = :i"),
+            {"i": _PRACTICE_ID},
+        )
+        conn.execute(
+            text("DELETE FROM platform.practice_portal_settings WHERE practice_id = :i"),
             {"i": _PRACTICE_ID},
         )
         conn.execute(text("DELETE FROM platform.practices WHERE id = :i"), {"i": _PRACTICE_ID})
