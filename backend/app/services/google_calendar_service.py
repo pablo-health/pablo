@@ -235,6 +235,14 @@ UNATTESTED_FALLBACK_TITLING = EventTitleStyle.INITIALS
 # contractual — ask for a size we've sized the page loop around.
 _SYNC_PAGE_SIZE = 250
 
+# The calendar an import scan reads. Google resolves "primary" to the
+# account's own calendar, which is what the IMPORT grant reaches.
+_IMPORT_CALENDAR_ID = "primary"
+
+# The private property every event Pablo writes carries, naming the
+# appointment behind it.
+_PABLO_APPOINTMENT_KEY = "pablo_appointment_id"
+
 # Google answers a syncToken it no longer honours with 410 Gone.
 _HTTP_GONE = 410
 _HTTP_FORBIDDEN = 403
@@ -430,8 +438,13 @@ def _event_to_candidate(event: dict[str, Any]) -> ImportCandidate | None:
     """Map one expanded occurrence, skipping anything without real times.
 
     All-day events carry a date rather than a dateTime and are not
-    sessions, so they drop out here.
+    sessions, so they drop out here. So does any event Pablo wrote itself:
+    when sessions go to the therapist's own calendar they sit beside the
+    practice being imported, and proposing them would book each twice.
     """
+    private = event.get("extendedProperties", {}).get("private", {})
+    if private.get(_PABLO_APPOINTMENT_KEY):
+        return None
     start = _parse_event_time(event.get("start", {}))
     end = _parse_event_time(event.get("end", {}))
     event_id = event.get("id")
@@ -932,15 +945,20 @@ class GoogleCalendarService:
         start: datetime,
         end: datetime,
     ) -> tuple[list[ImportCandidate], bool]:
-        """Read every occurrence in the window. Returns (occurrences, truncated)."""
+        """Read every occurrence in the window. Returns (occurrences, truncated).
+
+        Reads the therapist's own calendar, not the one PUSH writes to. The
+        practice being imported lives where the therapist already keeps it;
+        a calendar Pablo made holds only what Pablo put there, so scanning
+        it proposes nothing.
+        """
         credentials = self._get_credentials(user_id)
-        token_doc = self._token_repo.get(user_id)
-        if not credentials or not token_doc or not token_doc.calendar_id:
+        if not credentials:
             return [], False
 
         service = _build_calendar_service(credentials)
         kwargs: dict[str, Any] = {
-            "calendarId": token_doc.calendar_id,
+            "calendarId": _IMPORT_CALENDAR_ID,
             "singleEvents": True,
             "showDeleted": False,
             "orderBy": "startTime",
@@ -990,15 +1008,14 @@ class GoogleCalendarService:
         therapist's own statement that the series finished.
         """
         credentials = self._get_credentials(user_id)
-        token_doc = self._token_repo.get(user_id)
-        if not credentials or not token_doc or not token_doc.calendar_id:
+        if not credentials:
             return {}
 
         service = _build_calendar_service(credentials)
         rules: dict[str, list[str]] = {}
         for series_id in series_ids:
             try:
-                master = _read_event(service, token_doc.calendar_id, series_id)
+                master = _read_event(service, _IMPORT_CALENDAR_ID, series_id)
             except Exception:
                 # A series whose master can't be read still gets proposed,
                 # with a rule built from its observed cadence.
@@ -1354,7 +1371,7 @@ class GoogleCalendarService:
             "description": f"Session type: {appointment.session_type}",
             "extendedProperties": {
                 "private": {
-                    "pablo_appointment_id": appointment.id,
+                    _PABLO_APPOINTMENT_KEY: appointment.id,
                 }
             },
         }

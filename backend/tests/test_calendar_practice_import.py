@@ -310,6 +310,7 @@ class _FakeEvents:
         self.masters = masters
         self.list_calls: list[dict[str, Any]] = []
         self.get_calls: list[str] = []
+        self.get_calendar_ids: list[str] = []
 
     def list(self, **kwargs: Any) -> Any:
         self.list_calls.append(dict(kwargs))
@@ -317,6 +318,7 @@ class _FakeEvents:
 
     def get(self, **kwargs: Any) -> Any:
         self.get_calls.append(kwargs["eventId"])
+        self.get_calendar_ids.append(kwargs["calendarId"])
         return _FakeRequest(self.masters.get(kwargs["eventId"], {}))
 
 
@@ -436,6 +438,53 @@ class TestScan:
 
         assert fake.events_resource.get_calls == ["series-1"]
         assert proposal.series[0].recurrence_rule == "RRULE:FREQ=WEEKLY;BYDAY=MO"
+
+    def test_a_connection_writing_to_its_own_calendar_still_scans_the_therapists(
+        self,
+        token_repo: MagicMock,
+        calendar_service: GoogleCalendarService,
+    ) -> None:
+        """The calendar Pablo made holds only Pablo's sessions — nothing to import."""
+        token_repo.get.return_value = GoogleCalendarTokenDoc(
+            user_id="user-001",
+            encrypted_tokens="encrypted",
+            calendar_id="pablo-sessions@group.calendar.google.com",
+            write_target="app_calendar",
+            granted_capabilities="push,import",
+        )
+        events = [
+            _google_event(NOW - timedelta(days=days), summary=CLIENT_TITLE, series_id="series-1")
+            for days in (21, 14, 7)
+        ]
+        masters = {"series-1": {"recurrence": ["RRULE:FREQ=WEEKLY;BYDAY=MO"]}}
+
+        _, fake = _run_scan(calendar_service, [{"items": events}], masters)
+
+        assert fake.events_resource.list_calls[0]["calendarId"] == "primary"
+        assert fake.events_resource.get_calendar_ids == ["primary"]
+
+    def test_sessions_pablo_wrote_are_not_proposed_again(
+        self,
+        calendar_service: GoogleCalendarService,
+    ) -> None:
+        """Sessions written to the therapist's own calendar would otherwise book twice."""
+        ours = [
+            {
+                **_google_event(NOW - timedelta(days=days), summary="Therapy Session"),
+                "extendedProperties": {"private": {"pablo_appointment_id": "appt-1"}},
+            }
+            for days in (21, 14, 7)
+        ]
+        theirs = [
+            _google_event(NOW - timedelta(days=days, hours=2), summary=CLIENT_TITLE)
+            for days in (21, 14, 7)
+        ]
+
+        proposal, _ = _run_scan(calendar_service, [{"items": ours + theirs}])
+
+        assert len(proposal.series) == 1
+        assert proposal.series[0].occurrences_in_window == 3
+        assert proposal.events_read == 3
 
     def test_all_day_events_are_not_sessions(
         self,
