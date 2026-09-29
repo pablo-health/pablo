@@ -25,8 +25,10 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { useCreatePatient, useUpdatePatient } from "@/hooks/usePatients"
+import { usePortalSettings } from "@/hooks/usePortalSettings"
 import { useFeature } from "@/lib/featureGates"
 import { NewClientNextStep } from "./intakeSend/NewClientNextStep"
+import { PortalOfferPrompt, type PortalAnswer } from "./intakeSend/PortalOfferPrompt"
 import type { PatientResponse } from "@/types/patients"
 
 const patientFormSchema = z.object({
@@ -85,6 +87,12 @@ export function PatientForm({ mode, patient, open, onOpenChange }: PatientFormPr
   const status = watch("status")
   const portalOn = useFeature("patient_portal")
   const [created, setCreated] = useState<PatientResponse | null>(null)
+  // The practice's own answer to "offer a portal?"; asked once, on the first
+  // client added after the deployment serves one (see PortalOfferPrompt).
+  const { data: portalSettings, isLoading: portalSettingsLoading } = usePortalSettings({
+    enabled: portalOn,
+  })
+  const [portalAnswer, setPortalAnswer] = useState<PortalAnswer | null>(null)
 
   // Reset form when dialog opens/closes or patient changes
   useEffect(() => {
@@ -164,12 +172,33 @@ export function PatientForm({ mode, patient, open, onOpenChange }: PatientFormPr
   if (created) {
     const finish = () => {
       setCreated(null)
+      setPortalAnswer(null)
       onOpenChange(false)
     }
+    const ask = portalSettings !== undefined && !portalSettings.decided && portalAnswer === null
     return (
       <Dialog open={open} onOpenChange={(next) => !next && finish()}>
         <DialogContent className="sm:max-w-[520px]">
-          <NewClientNextStep patient={created} onDone={finish} />
+          {portalSettingsLoading ? (
+            // Not yet known whether to ask: showing the next step and then
+            // swapping it for the question would move the screen under a click.
+            <DialogTitle className="sr-only">Loading</DialogTitle>
+          ) : ask ? (
+            <PortalOfferPrompt
+              modules={Object.keys(portalSettings.modules ?? {})}
+              onAnswered={setPortalAnswer}
+            />
+          ) : (
+            <NewClientNextStep
+              patient={created}
+              onDone={finish}
+              portalNote={
+                portalAnswer === "not_now"
+                  ? "You can turn on the client portal any time in Settings."
+                  : undefined
+              }
+            />
+          )}
         </DialogContent>
       </Dialog>
     )

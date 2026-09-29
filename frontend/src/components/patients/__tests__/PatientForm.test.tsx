@@ -44,6 +44,16 @@ vi.mock("@/lib/api/inviteTemplate", async (importOriginal) => ({
   getInviteTemplate: vi.fn().mockResolvedValue({ editable: false }),
 }))
 
+// The practice's portal answer. Decided unless a test says otherwise.
+const MODULES_ON = { intake: true, messaging: true, appointments: true, refills: true }
+const mockPortalSettings = vi.fn()
+const mockSavePortalSettings = vi.fn()
+vi.mock("@/lib/api/portalSettings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api/portalSettings")>()),
+  getPortalSettings: (...a: unknown[]) => mockPortalSettings(...a),
+  savePortalSettings: (...a: unknown[]) => mockSavePortalSettings(...a),
+}))
+
 const createWrapper = () => {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -409,6 +419,7 @@ describe("PatientForm", () => {
   describe("After adding a client, where there is a portal", () => {
     beforeEach(() => {
       mockFeature.mockImplementation((name) => name === "patient_portal")
+      mockPortalSettings.mockResolvedValue({ enabled: true, decided: true, modules: MODULES_ON })
     })
 
     it("runs on to what they should do instead of closing", async () => {
@@ -452,6 +463,84 @@ describe("PatientForm", () => {
 
       await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false))
       expect(screen.queryByTestId("new-client-next-step")).not.toBeInTheDocument()
+    })
+  })
+
+  describe("The first client, where the practice has never decided about a portal", () => {
+    beforeEach(() => {
+      mockFeature.mockImplementation((name) => name === "patient_portal")
+      mockPortalSettings.mockResolvedValue({ enabled: false, decided: false, modules: MODULES_ON })
+      mockSavePortalSettings.mockImplementation((change: { enabled: boolean }) =>
+        Promise.resolve({ enabled: change.enabled, decided: true, modules: MODULES_ON }),
+      )
+      vi.mocked(patientsApi.createPatient).mockResolvedValue({
+        ...mockPatient,
+        id: "patient-new",
+        first_name: "Robin",
+        last_name: "Reyes",
+      })
+      vi.mocked(patientsApi.getPatient).mockResolvedValue({ ...mockPatient, id: "patient-new" })
+    })
+
+    async function addRobin() {
+      const user = userEvent.setup()
+      const { Wrapper } = createWrapper()
+      render(<PatientForm mode="create" open={true} onOpenChange={vi.fn()} />, {
+        wrapper: Wrapper,
+      })
+      await user.type(screen.getByLabelText(/first name/i), "Robin")
+      await user.type(screen.getByLabelText(/last name/i), "Reyes")
+      await user.click(screen.getByRole("button", { name: /create patient/i }))
+      return user
+    }
+
+    it("asks once whether to offer a portal before anything else", async () => {
+      await addRobin()
+
+      expect(await screen.findByTestId("portal-offer-prompt")).toHaveTextContent(
+        "Offer your clients a portal?",
+      )
+      expect(screen.queryByTestId("new-client-next-step")).not.toBeInTheDocument()
+    })
+
+    it("records not now, then goes on and says where to change it", async () => {
+      const user = await addRobin()
+
+      await user.click(await screen.findByRole("button", { name: "Not now" }))
+
+      expect(mockSavePortalSettings).toHaveBeenCalledWith({ enabled: false })
+      const next = await screen.findByTestId("new-client-next-step")
+      expect(next).toHaveTextContent("You can turn on the client portal any time in Settings.")
+    })
+
+    it("turns it on with the parts chosen, then goes on to what the client should do", async () => {
+      const user = await addRobin()
+
+      await user.click(await screen.findByRole("button", { name: "Yes, set it up" }))
+      const choose = await screen.findByTestId("portal-offer-choose")
+      expect(choose).toHaveTextContent("What can clients do in it?")
+      // Everything the deployment serves starts checked.
+      expect(screen.getByRole("checkbox", { name: "Messages" })).toBeChecked()
+      await user.click(screen.getByRole("checkbox", { name: "Appointments" }))
+      await user.click(screen.getByRole("button", { name: "Turn on the portal" }))
+
+      expect(mockSavePortalSettings).toHaveBeenCalledWith({
+        enabled: true,
+        modules: { intake: true, messaging: true, appointments: false, refills: true },
+      })
+      const next = await screen.findByTestId("new-client-next-step")
+      expect(next).toHaveTextContent("Choose forms to send and whether to invite them to the portal.")
+    })
+
+    it("will not turn it on with nothing in it", async () => {
+      const user = await addRobin()
+      await user.click(await screen.findByRole("button", { name: "Yes, set it up" }))
+      for (const part of ["Forms", "Messages", "Appointments", "Refill requests"]) {
+        await user.click(screen.getByRole("checkbox", { name: part }))
+      }
+
+      expect(screen.getByRole("button", { name: "Turn on the portal" })).toBeDisabled()
+      expect(screen.getByText("Choose at least one.")).toBeInTheDocument()
     })
   })
 

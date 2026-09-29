@@ -17,11 +17,12 @@ export const portalSettingsKeys = {
 
 /** Whether the practice offers the portal. `retry: false`: a deployment
  * without the portal answers 404, and asking again does not change that. */
-export function usePortalSettings() {
+export function usePortalSettings({ enabled = true }: { enabled?: boolean } = {}) {
   return useAuthQuery<PortalSettings>({
     queryKey: portalSettingsKeys.all,
     queryFn: () => getPortalSettings(),
     retry: false,
+    enabled,
   })
 }
 
