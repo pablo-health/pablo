@@ -40,14 +40,35 @@ const WHEN: Intl.DateTimeFormatOptions = {
 }
 
 export function MessagesInbox() {
-  const { data: portal } = usePortalSettings()
+  const { data: portal, isLoading: portalLoading } = usePortalSettings()
   const [view, setView] = useState<View>("conversations")
   const [selected, setSelected] = useState<Selected | null>(null)
 
-  if (portal?.enabled === false) {
+  // Wait for the practice's answer before loading anything: listing messages
+  // and then replacing them with "turned off" would show what it then denies.
+  // A deployment without the setting (an error, not loading) carries on.
+  if (portalLoading) {
+    return (
+      <div className="space-y-2" data-testid="messages-loading">
+        <Skeleton className="h-14 w-full" />
+        <Skeleton className="h-14 w-full" />
+      </div>
+    )
+  }
+
+  // Nothing to read or answer when clients cannot reach Messages: the whole
+  // portal is off, or the practice turned the Messages part off. Either way
+  // a reply here would go somewhere the client cannot open.
+  const off =
+    portal?.enabled === false
+      ? "Your client portal is off."
+      : portal?.modules?.messaging === false
+        ? "Messages are turned off in your client portal."
+        : null
+  if (off) {
     return (
       <div className="card py-10 text-center" data-testid="messages-portal-off">
-        <p className="text-sm text-neutral-700">Your client portal is off.</p>
+        <p className="text-sm text-neutral-700">{off}</p>
         <Link href="/dashboard/settings/portal" className="mt-2 inline-block text-sm font-medium underline">
           Client portal settings
         </Link>
