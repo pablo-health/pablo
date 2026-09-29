@@ -27,7 +27,7 @@ import pytest
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from app.db import DEFAULT_PRACTICE_SCHEMA, PLATFORM_SCHEMA
-from app.db.platform_models import PlatformBase
+from app.db.platform_models import PlatformBase, PracticeRow
 from app.portal.portal_settings import (
     NOT_OFFERED,
     PlatformPortalSettingsStore,
@@ -35,6 +35,7 @@ from app.portal.portal_settings import (
     portal_enabled_for_schema,
 )
 from sqlalchemy import create_engine, text
+from sqlalchemy.orm import Session as OrmSession
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -63,22 +64,21 @@ def engine() -> Iterator[Engine]:
 def _new_practice(engine: Engine, *, deleted: bool = False) -> tuple[str, str]:
     practice_id = f"practice-portal-{uuid.uuid4().hex[:8]}"
     schema = f"practice_{uuid.uuid4().hex[:12]}"
-    with engine.begin() as conn:
-        conn.execute(
-            text(
-                "INSERT INTO platform.practices "
-                "(id, name, schema_name, owner_email, created_at, deleted_at) "
-                "VALUES (:id, :name, :schema, :email, :now, :deleted)"
-            ),
-            {
-                "id": practice_id,
-                "name": "Example Therapy",
-                "schema": schema,
-                "email": f"{practice_id}@example.test",
-                "now": datetime.now(UTC),
-                "deleted": datetime.now(UTC) if deleted else None,
-            },
+    now = datetime.now(UTC)
+    # Through the model, so the columns whose defaults live in the ORM rather
+    # than the table (``product``, ``status``, ...) are filled in.
+    with OrmSession(bind=engine) as session:
+        session.add(
+            PracticeRow(
+                id=practice_id,
+                name="Example Therapy",
+                schema_name=schema,
+                owner_email=f"{practice_id}@example.test",
+                created_at=now,
+                deleted_at=now if deleted else None,
+            )
         )
+        session.commit()
     return practice_id, schema
 
 
