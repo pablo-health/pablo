@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING, Annotated
 from fastapi import Depends, HTTPException, status
 
 from ..auth.patient_context import PatientContext, get_patient_context
+from ..settings import get_settings
+from .modules import known_modules
 from .portal_settings import portal_settings_for_schema, practice_offers_module
 
 if TYPE_CHECKING:
@@ -40,6 +42,13 @@ def require_portal_module(name: str) -> Callable[[PatientContext], None]:
     def _practice_offers_it(
         patient: Annotated[PatientContext, Depends(get_patient_context)],
     ) -> None:
+        # The deployment first. Some of a module's routers are mounted whatever
+        # PORTAL_MODULES says (booking, and the patient halves of intake
+        # documents, blank forms and assignments), so "not mounted" cannot be
+        # relied on to refuse them; a module this deployment does not serve is
+        # the same 404 here, before the practice is asked anything.
+        if name not in known_modules(get_settings().portal_module_names):
+            raise _not_found()
         try:
             settings = portal_settings_for_schema(patient.practice_schema)
         except Exception as exc:

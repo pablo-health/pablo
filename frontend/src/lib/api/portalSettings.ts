@@ -19,6 +19,8 @@ export interface PortalSettingsChange {
   enabled?: boolean
   /** Parts to turn on or off; ones left out keep their setting. */
   modules?: Record<string, boolean>
+  /** Apply only if the practice has never answered (the first-client prompt). */
+  only_if_undecided?: boolean
 }
 
 const SETTINGS = "/api/portal/settings"

@@ -175,7 +175,12 @@ export function PatientForm({ mode, patient, open, onOpenChange }: PatientFormPr
       setPortalAnswer(null)
       onOpenChange(false)
     }
-    const ask = portalSettings !== undefined && !portalSettings.decided && portalAnswer === null
+    // Nothing to offer when the deployment serves no part a practice chooses.
+    const ask =
+      portalSettings !== undefined &&
+      !portalSettings.decided &&
+      Object.keys(portalSettings.modules ?? {}).length > 0 &&
+      portalAnswer === null
     return (
       <Dialog open={open} onOpenChange={(next) => !next && finish()}>
         <DialogContent className="sm:max-w-[520px]">

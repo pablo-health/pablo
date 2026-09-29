@@ -297,7 +297,14 @@ class PostgresPatientMessageRepository(PatientMessageRepository):
             select(func.count())
             .select_from(PatientMessageThreadRow)
             .join(PatientRow, PatientRow.id == PatientMessageThreadRow.patient_id)
-            .where(*self._inbox_scope(user_id), self._inbox_unread() > 0)
+            .where(
+                *self._inbox_scope(user_id),
+                # Open only: the badge counts what the default (Open) list can
+                # clear. A thread closed with something unread in it would
+                # otherwise hold the badge up with nothing to open.
+                PatientMessageThreadRow.status == THREAD_STATUS_OPEN,
+                self._inbox_unread() > 0,
+            )
         ).scalar()
         return int(count or 0)
 

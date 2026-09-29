@@ -56,6 +56,13 @@ _COALESCED_READ_ACTIONS: frozenset[AuditAction] = frozenset(
         # every mutation — without coalescing a single busy calendar session
         # would write the same rows dozens of times.
         AuditAction.APPOINTMENT_VIEWED,
+        # The practice's Messages page and its nav badge refetch every minute
+        # while open, and the thread list audits one of these per patient it
+        # shows (the ungrouped view, one per thread). Without coalescing an
+        # open tab would record the same disclosure sixty times an hour —
+        # reads nobody made. Opening one thread is recorded the same way.
+        AuditAction.PATIENT_MESSAGE_THREAD_VIEWED,
+        AuditAction.PATIENT_MESSAGE_UNREAD_COUNTED,
     }
 )
 _COALESCED_READ_ACTION_VALUES: frozenset[str] = frozenset(a.value for a in _COALESCED_READ_ACTIONS)

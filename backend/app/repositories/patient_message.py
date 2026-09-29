@@ -110,7 +110,10 @@ class PatientMessageRepository(ABC):
 
     @abstractmethod
     def count_unread_threads(self, user_id: str) -> int:
-        """How many threads the clinician may see have something unread."""
+        """How many OPEN threads the clinician may see have something unread.
+
+        Open only, so the count matches what the default list can clear.
+        """
 
     @abstractmethod
     def get_thread(self, thread_id: str, user_id: str) -> PatientMessageThread | None:
@@ -424,7 +427,11 @@ class InMemoryPatientMessageRepository(PatientMessageRepository):
         return found[:limit]
 
     def count_unread_threads(self, user_id: str) -> int:
-        return sum(1 for t in self._inbox_candidates(user_id) if self._clinician_unread_count(t))
+        return sum(
+            1
+            for t in self._inbox_candidates(user_id)
+            if t.status == THREAD_STATUS_OPEN and self._clinician_unread_count(t)
+        )
 
     def _clinician_unread_count(self, thread: PatientMessageThread) -> int:
         since = thread.clinician_last_read_at

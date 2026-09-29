@@ -108,6 +108,57 @@ test.describe("offering the portal", () => {
     }
   })
 
+  test("with Messages off, a signed-in client can neither read nor send, and the practice still can", async ({
+    otherPracticeApi: api,
+    request,
+  }) => {
+    await api.put(SETTINGS, { enabled: true })
+    try {
+      const { email, phone } = givePortalContactDetails()
+      const patient = await givePatient(api, { email, phone })
+      const session = await givePortalSession(api, request, patient.id, email, phone)
+      const signedIn = { headers: { Authorization: `Bearer ${session}` } }
+      const threads = `${BACKEND_URL}/api/patient/messages/threads`
+
+      const started = await request.post(threads, {
+        ...signedIn,
+        data: { subject: "Before it went off", body: "hello" },
+      })
+      expect(started.status()).toBe(201)
+
+      await api.put(SETTINGS, { modules: { messaging: false } })
+
+      expect((await request.get(threads, signedIn)).status()).toBe(404)
+      expect(
+        (await request.post(threads, { ...signedIn, data: { body: "again" } })).status(),
+      ).toBe(404)
+      const capabilities = await (await request.get(CAPABILITIES, signedIn)).json()
+      expect(capabilities.modules.messaging).toBe(false)
+      // The practice still has what was sent before: the clinician side is
+      // not a portal module.
+      const inbox = await api.get<{ data: { subject: string | null }[] }>(
+        "/api/message-threads?status=all",
+      )
+      expect(inbox.data.map((t) => t.subject)).toContain("Before it went off")
+    } finally {
+      await api.put(SETTINGS, { enabled: true, modules: { messaging: true } })
+    }
+  })
+
+  test("a first-time 'not now' never undoes a colleague's answer", async ({
+    otherPracticeApi: api,
+  }) => {
+    // The second practice has answered (on) by the time this runs; the
+    // first-client prompt's decline is sent only-if-undecided.
+    await api.put(SETTINGS, { enabled: true })
+    const after = await api.put<{ enabled: boolean }>(SETTINGS, {
+      enabled: false,
+      only_if_undecided: true,
+    })
+    expect(after.enabled).toBe(true)
+    expect((await api.get<{ enabled: boolean }>(SETTINGS)).enabled).toBe(true)
+  })
+
   test("the settings page shows the practice's switch", async ({ signedInPage: page }) => {
     await page.goto("/dashboard/settings/portal")
 

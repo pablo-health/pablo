@@ -61,6 +61,10 @@ class PortalSettingsRequest(BaseModel):
     enabled: bool | None = None
     #: Modules to turn on or off. Ones left out keep their setting.
     modules: dict[str, bool] | None = None
+    #: Apply this only if the practice has never answered. The first-client
+    #: prompt sends it: a "not now" from a screen loaded before a colleague
+    #: turned the portal on must not turn it off for the whole practice.
+    only_if_undecided: bool = False
 
 
 def _practice_id(user: User) -> str:
@@ -135,6 +139,9 @@ def save_portal_settings(
     practice_id = _practice_id(user)
     choosable = _choosable(request)
     before = store.get(practice_id)
+    if body.only_if_undecided and before.decided_at is not None:
+        # Somebody at the practice already answered; theirs stands.
+        return _response(before, choosable)
     after = before
     changes: dict[str, Any] = {}
 
