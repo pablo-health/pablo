@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -207,19 +208,29 @@ def seeded(practice: _Practice) -> dict[str, str]:
     return {"ada_thread": ada_thread, "grace_thread": grace_thread}
 
 
-def _repo_for(practice: _Practice, user: str) -> tuple[PostgresPatientMessageRepository, Session]:
-    session = Session(bind=practice.connect(user=user))
-    return PostgresPatientMessageRepository(session), session
+@contextmanager
+def _inbox_as(practice: _Practice, user: str) -> Iterator[PostgresPatientMessageRepository]:
+    """The repository on a connection armed as *user*, closed afterwards.
+
+    The connection is closed, not just the session: its transaction began
+    with the ``SET search_path`` and the session only joins it, so closing
+    the session alone would leave the reads' locks held — and the module
+    teardown's ``DROP SCHEMA`` waiting on them for good.
+    """
+    conn = practice.connect(user=user)
+    session = Session(bind=conn)
+    try:
+        yield PostgresPatientMessageRepository(session)
+    finally:
+        session.close()
+        conn.close()
 
 
 def test_conversations_are_the_clinicians_own_unread_first(
     practice: _Practice, seeded: dict[str, str]
 ) -> None:
-    repo, session = _repo_for(practice, _CLINICIAN)
-    try:
+    with _inbox_as(practice, _CLINICIAN) as repo:
         rows = repo.list_inbox_threads(_CLINICIAN)
-    finally:
-        session.close()
 
     assert [row.thread.id for row in rows] == [seeded["ada_thread"], seeded["grace_thread"]]
     ada, grace = rows
@@ -231,12 +242,9 @@ def test_conversations_are_the_clinicians_own_unread_first(
 def test_every_client_message_is_its_own_row_newest_first(
     practice: _Practice, seeded: dict[str, str]
 ) -> None:
-    repo, session = _repo_for(practice, _CLINICIAN)
-    try:
+    with _inbox_as(practice, _CLINICIAN) as repo:
         rows = repo.list_inbox_messages(_CLINICIAN)
         unread = repo.list_inbox_messages(_CLINICIAN, unread_only=True)
-    finally:
-        session.close()
 
     assert [(row.patient_name, row.message.body) for row in rows] == [
         ("Ada Lovelace", "ada again"),
@@ -252,11 +260,8 @@ def test_every_client_message_is_its_own_row_newest_first(
 
 @pytest.mark.usefixtures("seeded")
 def test_the_badge_counts_threads_with_something_unread(practice: _Practice) -> None:
-    repo, session = _repo_for(practice, _CLINICIAN)
-    try:
+    with _inbox_as(practice, _CLINICIAN) as repo:
         assert repo.count_unread_threads(_CLINICIAN) == 1
-    finally:
-        session.close()
 
 
 @pytest.mark.usefixtures("seeded")
@@ -264,11 +269,8 @@ def test_another_clinicians_patient_is_theirs_alone(practice: _Practice) -> None
     """The control for the absences above: the other clinician sees their
     own patient, so Linus missing from the first clinician's inbox is the
     grant working, not an empty table."""
-    repo, session = _repo_for(practice, _OTHER_CLINICIAN)
-    try:
+    with _inbox_as(practice, _OTHER_CLINICIAN) as repo:
         assert [row.patient_name for row in repo.list_inbox_threads(_OTHER_CLINICIAN)] == [
             "Linus Other"
         ]
         assert repo.count_unread_threads(_OTHER_CLINICIAN) == 1
-    finally:
-        session.close()
