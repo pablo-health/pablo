@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { SendFormsFlow } from "../SendFormsFlow"
 import { sendableForms } from "../sendable"
 import { SendIntakeForm } from "../../SendIntakeForm"
@@ -91,8 +92,24 @@ const NO_ACCESS = {
 
 const onDone = vi.fn()
 
-function renderFlow() {
-  return renderWithProviders(<SendFormsFlow patientId="patient-a" onDone={onDone} />)
+/** Inside an open dialog, as both of its hosts render it. */
+function renderFlow(props: { chartHref?: string } = {}) {
+  return renderWithProviders(
+    <Dialog open>
+      <DialogContent>
+        <SendFormsFlow
+          patientId="patient-a"
+          onDone={onDone}
+          header={
+            <DialogHeader>
+              <DialogTitle>Send forms</DialogTitle>
+            </DialogHeader>
+          }
+          {...props}
+        />
+      </DialogContent>
+    </Dialog>,
+  )
 }
 
 async function tick(name: string) {
@@ -171,9 +188,15 @@ describe("SendFormsFlow", () => {
     expect(mockAssign.mock.invocationCallOrder[0]).toBeLessThan(
       mockInvite.mock.invocationCallOrder[0],
     )
-    expect(await screen.findByTestId("send-forms-outcome")).toHaveTextContent(
-      "Sent. They will get a link by email and a code by text.",
+    expect(await screen.findByTestId("send-forms-heading")).toHaveTextContent(
+      "Forms and invitation sent",
     )
+    expect(screen.getByTestId("send-forms-outcome")).toHaveTextContent(
+      "They'll get a link by email at robin@example.test and a code by text at +15005550006.",
+    )
+    expect(screen.getByTestId("send-forms-sent-list")).toHaveTextContent("Before we meet")
+    // The question the dialog opened with is gone, not left above the answer.
+    expect(screen.queryByText("Send forms")).not.toBeInTheDocument()
   })
 
   it("previews the invitation email for this client before anything is sent", async () => {
@@ -215,7 +238,8 @@ describe("SendFormsFlow", () => {
     await send()
     await waitFor(() => expect(mockInvite).toHaveBeenCalled())
     expect(mockAssign).not.toHaveBeenCalled()
-    expect(await screen.findByTestId("send-forms-outcome")).toHaveTextContent("Invitation sent.")
+    expect(await screen.findByTestId("send-forms-heading")).toHaveTextContent("Invitation sent")
+    expect(screen.queryByTestId("send-forms-sent-list")).not.toBeInTheDocument()
   })
 
   it("points at the setting instead of offering an invitation when the practice's portal is off", async () => {
@@ -240,8 +264,9 @@ describe("SendFormsFlow", () => {
     await send()
     await waitFor(() => expect(mockAssign).toHaveBeenCalled())
     expect(mockInvite).not.toHaveBeenCalled()
-    expect(await screen.findByTestId("send-forms-outcome")).toHaveTextContent(
-      "The forms are waiting in their portal.",
+    expect(await screen.findByTestId("send-forms-heading")).toHaveTextContent("Forms sent")
+    expect(screen.getByTestId("send-forms-outcome")).toHaveTextContent(
+      "They're waiting in their portal.",
     )
   })
 
@@ -294,9 +319,37 @@ describe("SendFormsFlow", () => {
     await tick("Before we meet")
     await review()
     await send()
-    expect(await screen.findByTestId("send-forms-outcome")).toHaveTextContent(
+    // The heading names the failure; it never claims an invitation went.
+    expect(await screen.findByTestId("send-forms-heading")).toHaveTextContent(
+      "Forms sent. The invitation didn't go out.",
+    )
+    expect(screen.getByTestId("send-forms-outcome")).toHaveTextContent(
       /email address and a mobile number on file/i,
     )
+  })
+
+  it("names a failed invitation in the heading when nothing else was sent", async () => {
+    mockInvite.mockRejectedValue(Object.assign(new Error("boom"), { status: 500 }))
+    renderFlow()
+    await review()
+    await send()
+    expect(await screen.findByTestId("send-forms-heading")).toHaveTextContent("Invitation not sent")
+    expect(screen.getByTestId("send-forms-outcome")).toHaveTextContent(
+      "You can try again from the chart.",
+    )
+  })
+
+  it("offers the chart from the acknowledgment when it was opened for a new client", async () => {
+    renderFlow({ chartHref: "/dashboard/patients/patient-a" })
+    await tick("Before we meet")
+    await review()
+    await send()
+    expect(await screen.findByRole("link", { name: "Open client’s chart" })).toHaveAttribute(
+      "href",
+      "/dashboard/patients/patient-a",
+    )
+    await userEvent.click(screen.getByRole("button", { name: "Done" }))
+    expect(onDone).toHaveBeenCalled()
   })
 
   it("leaves without sending anything", async () => {
