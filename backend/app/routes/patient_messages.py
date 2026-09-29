@@ -92,7 +92,7 @@ import logging
 import uuid
 from typing import Annotated, NoReturn
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, status
 
 from ..api_errors import ConflictError, NotFoundError, UnprocessableEntityError
 from ..auth.patient_context import PatientContext, get_patient_context
@@ -123,6 +123,14 @@ from ..models.patient_message import (
     THREAD_STATUS_CLOSED,
     THREAD_STATUS_OPEN,
     ThreadAssignmentFilter,
+    ThreadStatusFilter,
+)
+from ..models.patient_message_api import (
+    InboxMessageListResponse,
+    InboxMessageResponse,
+    InboxThreadListResponse,
+    InboxThreadResponse,
+    UnreadThreadCountResponse,
 )
 from ..rate_limit import get_patient_message_send_limiter
 from ..repositories import PatientDocumentRepository, PatientMessageRepository, PatientRepository
@@ -657,6 +665,123 @@ def list_threads_for_patient(
         data=[PatientMessageThreadResponse.from_thread(t, unread) for t, unread in rows],
         total=len(rows),
     )
+
+
+#: The most threads one inbox page lists. A practice's open correspondence
+#: fits many times over; the cap is here so no single read is unbounded.
+INBOX_PAGE_LIMIT = 200
+
+
+@message_threads_router.get("", response_model=InboxThreadListResponse)
+def list_inbox_threads(
+    request: Request,
+    status_filter: Annotated[ThreadStatusFilter, Query(alias="status")] = "open",
+    assigned: ThreadAssignmentFilter = "all",
+    limit: Annotated[int, Query(ge=1, le=INBOX_PAGE_LIMIT)] = 100,
+    user: User = Depends(require_baa_acceptance),
+    repo: PatientMessageRepository = Depends(get_patient_message_repository),
+    audit: AuditService = Depends(get_audit_service),
+) -> InboxThreadListResponse:
+    """The practice's inbox: every thread the caller may see, across patients.
+
+    Unread first, then newest. Scoped by the caller's grants, like every
+    clinician verb here: a patient they cannot see contributes nothing, not
+    even a count.
+
+    Carries whose each thread is and when it last moved, and no message
+    text — the same disclosure as each patient's own thread list, so it is
+    audited the same way: one row per patient that appears, never per
+    thread. Opening a thread is the content read, and it has its own row.
+    """
+    rows = repo.list_inbox_threads(
+        user.id, status=status_filter, assigned=assigned, limit=limit + 1
+    )
+    page = rows[:limit]
+    per_patient: dict[str, int] = {}
+    for row in page:
+        per_patient[row.thread.patient_id] = per_patient.get(row.thread.patient_id, 0) + 1
+    for patient_id, thread_count in per_patient.items():
+        audit.log_patient_message_action(
+            action=AuditAction.PATIENT_MESSAGE_THREAD_VIEWED,
+            user=user,
+            request=request,
+            resource_id=patient_id,
+            patient_id=patient_id,
+            resource_type=ResourceType.PATIENT,
+            changes={"thread_count": thread_count, "surface": "inbox"},
+        )
+    return InboxThreadListResponse(
+        data=[InboxThreadResponse.from_inbox_thread(row) for row in page],
+        total=len(page),
+        has_more=len(rows) > limit,
+    )
+
+
+@message_threads_router.get("/messages", response_model=InboxMessageListResponse)
+def list_inbox_messages(
+    request: Request,
+    unread_only: bool = False,
+    limit: Annotated[int, Query(ge=1, le=INBOX_PAGE_LIMIT)] = 100,
+    user: User = Depends(require_baa_acceptance),
+    repo: PatientMessageRepository = Depends(get_patient_message_repository),
+    audit: AuditService = Depends(get_audit_service),
+) -> InboxMessageListResponse:
+    """Every message clients sent, one row each, newest first.
+
+    The ungrouped view of the same inbox: no message is folded into its
+    conversation, so a practice can see each one as it arrived. It carries
+    the words, so it is recorded as the content read it is — one row per
+    thread whose messages appear, like opening that thread.
+
+    Declared before ``/{thread_id}`` so the path is not read as a thread id.
+    """
+    rows = repo.list_inbox_messages(user.id, unread_only=unread_only, limit=limit + 1)
+    page = rows[:limit]
+    by_patient: dict[str, list[PatientMessage]] = {}
+    per_thread: dict[str, tuple[str, int]] = {}
+    for row in page:
+        by_patient.setdefault(row.thread.patient_id, []).append(row.message)
+        _, seen = per_thread.get(row.thread.id, (row.thread.patient_id, 0))
+        per_thread[row.thread.id] = (row.thread.patient_id, seen + 1)
+    for patient_id, messages in by_patient.items():
+        _attachments_of(messages, patient_id, repo)
+    for thread_id, (patient_id, message_count) in per_thread.items():
+        audit.log_patient_message_action(
+            action=AuditAction.PATIENT_MESSAGE_THREAD_VIEWED,
+            user=user,
+            request=request,
+            resource_id=thread_id,
+            patient_id=patient_id,
+            changes={"message_count": message_count, "surface": "inbox_messages"},
+        )
+    return InboxMessageListResponse(
+        data=[InboxMessageResponse.from_inbox_message(row) for row in page],
+        total=len(page),
+        has_more=len(rows) > limit,
+    )
+
+
+@message_threads_router.get("/unread-count", response_model=UnreadThreadCountResponse)
+def count_unread_threads(
+    request: Request,
+    user: User = Depends(require_baa_acceptance),
+    repo: PatientMessageRepository = Depends(get_patient_message_repository),
+    audit: AuditService = Depends(get_audit_service),
+) -> UnreadThreadCountResponse:
+    """How many of the caller's threads have something unread, for a badge.
+
+    Declared before ``/{thread_id}`` so the path is not read as a thread id.
+    """
+    count = repo.count_unread_threads(user.id)
+    audit.log(
+        AuditAction.PATIENT_MESSAGE_UNREAD_COUNTED,
+        user,
+        request,
+        resource_type=ResourceType.SELF,
+        resource_id=user.id,
+        changes={"threads_with_unread": count},
+    )
+    return UnreadThreadCountResponse(threads_with_unread=count)
 
 
 @message_threads_router.get("/{thread_id}", response_model=PatientMessageThreadDetailResponse)

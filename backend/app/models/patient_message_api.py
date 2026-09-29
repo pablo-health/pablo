@@ -21,6 +21,8 @@ from pydantic import BaseModel, Field
 
 from .patient_message import (
     MAX_ATTACHMENTS_PER_MESSAGE,
+    InboxMessage,
+    InboxThread,
     MessageAttachment,
     PatientMessage,
     PatientMessageThread,
@@ -166,6 +168,63 @@ class PatientMessageThreadDetailResponse(PatientMessageThreadResponse):
 class PatientMessageThreadListResponse(BaseModel):
     data: list[PatientMessageThreadResponse]
     total: int
+
+
+class InboxThreadResponse(PatientMessageThreadResponse):
+    """A row of the practice's inbox: the thread, and whose it is."""
+
+    patient_id: str
+    patient_name: str
+
+    @staticmethod
+    def from_inbox_thread(row: InboxThread) -> InboxThreadResponse:
+        base = PatientMessageThreadResponse.from_thread(row.thread, row.unread_count)
+        return InboxThreadResponse(
+            **base.model_dump(), patient_id=row.thread.patient_id, patient_name=row.patient_name
+        )
+
+
+class InboxThreadListResponse(BaseModel):
+    data: list[InboxThreadResponse]
+    total: int
+    #: True when there were more threads than the page returned.
+    has_more: bool
+
+
+class InboxMessageResponse(PatientMessageResponse):
+    """One client message on its own row, with whose it is and where it lives."""
+
+    patient_id: str
+    patient_name: str
+    thread_subject: str | None = None
+    thread_status: str
+    #: Sent since the practice last marked its thread read.
+    unread: bool
+
+    @staticmethod
+    def from_inbox_message(row: InboxMessage) -> InboxMessageResponse:
+        base = PatientMessageResponse.from_message(row.message)
+        return InboxMessageResponse(
+            **base.model_dump(),
+            patient_id=row.thread.patient_id,
+            patient_name=row.patient_name,
+            thread_subject=row.thread.subject,
+            thread_status=row.thread.status,
+            unread=row.unread,
+        )
+
+
+class InboxMessageListResponse(BaseModel):
+    data: list[InboxMessageResponse]
+    total: int
+    #: True when there were more messages than the page returned.
+    has_more: bool
+
+
+class UnreadThreadCountResponse(BaseModel):
+    """How many of the caller's threads have something unread. A count only."""
+
+    threads_with_unread: int
 
 
 class MarkThreadReadResponse(BaseModel):

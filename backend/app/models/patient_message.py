@@ -29,6 +29,9 @@ MAX_ATTACHMENTS_PER_MESSAGE = 5
 # listed and never what may be read — see :class:`PatientMessageThread`.
 ThreadAssignmentFilter = Literal["me", "unassigned", "all"]
 
+# Which threads the practice's inbox lists. Open is where the work is.
+ThreadStatusFilter = Literal["open", "closed", "all"]
+
 
 @dataclass
 class PatientMessageThread:
@@ -58,6 +61,37 @@ class PatientMessageThread:
     closed_by: str | None = None
     assigned_user_id: str | None = None
     clinician_last_read_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class InboxThread:
+    """One row of the practice's inbox: a thread, whose it is, and what is new.
+
+    ``patient_name`` is the name the practice knows them by, so the list can
+    say whose conversation it is without a second request per row. No
+    message text rides along: the inbox discloses that correspondence exists
+    and when it last moved, and opening a thread is the content read.
+    """
+
+    thread: PatientMessageThread
+    patient_name: str
+    unread_count: int
+
+
+@dataclass(frozen=True)
+class InboxMessage:
+    """One message a client sent, on its own row of the practice's inbox.
+
+    The ungrouped view: every message by itself, newest first, with the
+    thread it belongs to so opening it lands in the conversation. ``unread``
+    is measured the same way a thread's count is — sent after the practice
+    last marked that thread read.
+    """
+
+    message: PatientMessage
+    thread: PatientMessageThread
+    patient_name: str
+    unread: bool
 
 
 @dataclass
