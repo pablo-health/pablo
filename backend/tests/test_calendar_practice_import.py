@@ -463,6 +463,29 @@ class TestScan:
         assert fake.events_resource.list_calls[0]["calendarId"] == "primary"
         assert fake.events_resource.get_calendar_ids == ["primary"]
 
+    def test_sessions_pablo_wrote_are_not_proposed_again(
+        self,
+        calendar_service: GoogleCalendarService,
+    ) -> None:
+        """Sessions written to the therapist's own calendar would otherwise book twice."""
+        ours = [
+            {
+                **_google_event(NOW - timedelta(days=days), summary="Therapy Session"),
+                "extendedProperties": {"private": {"pablo_appointment_id": "appt-1"}},
+            }
+            for days in (21, 14, 7)
+        ]
+        theirs = [
+            _google_event(NOW - timedelta(days=days, hours=2), summary=CLIENT_TITLE)
+            for days in (21, 14, 7)
+        ]
+
+        proposal, _ = _run_scan(calendar_service, [{"items": ours + theirs}])
+
+        assert len(proposal.series) == 1
+        assert proposal.series[0].occurrences_in_window == 3
+        assert proposal.events_read == 3
+
     def test_all_day_events_are_not_sessions(
         self,
         calendar_service: GoogleCalendarService,

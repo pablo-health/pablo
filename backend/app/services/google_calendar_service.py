@@ -239,6 +239,10 @@ _SYNC_PAGE_SIZE = 250
 # account's own calendar, which is what the IMPORT grant reaches.
 _IMPORT_CALENDAR_ID = "primary"
 
+# The private property every event Pablo writes carries, naming the
+# appointment behind it.
+_PABLO_APPOINTMENT_KEY = "pablo_appointment_id"
+
 # Google answers a syncToken it no longer honours with 410 Gone.
 _HTTP_GONE = 410
 _HTTP_FORBIDDEN = 403
@@ -434,8 +438,13 @@ def _event_to_candidate(event: dict[str, Any]) -> ImportCandidate | None:
     """Map one expanded occurrence, skipping anything without real times.
 
     All-day events carry a date rather than a dateTime and are not
-    sessions, so they drop out here.
+    sessions, so they drop out here. So does any event Pablo wrote itself:
+    when sessions go to the therapist's own calendar they sit beside the
+    practice being imported, and proposing them would book each twice.
     """
+    private = event.get("extendedProperties", {}).get("private", {})
+    if private.get(_PABLO_APPOINTMENT_KEY):
+        return None
     start = _parse_event_time(event.get("start", {}))
     end = _parse_event_time(event.get("end", {}))
     event_id = event.get("id")
@@ -1362,7 +1371,7 @@ class GoogleCalendarService:
             "description": f"Session type: {appointment.session_type}",
             "extendedProperties": {
                 "private": {
-                    "pablo_appointment_id": appointment.id,
+                    _PABLO_APPOINTMENT_KEY: appointment.id,
                 }
             },
         }
