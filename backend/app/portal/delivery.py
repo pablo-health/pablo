@@ -105,7 +105,9 @@ class SmsGateway(Protocol):
 #: An allow-list rather than a free string, so the set of things a patient
 #: can be emailed about is enumerable from one place and a caller cannot
 #: invent a notice with a sentence of its own in the name.
-PORTAL_NOTICES: frozenset[str] = frozenset({"intake_correction_requested"})
+PORTAL_NOTICES: frozenset[str] = frozenset(
+    {"intake_correction_requested", "refill_request_decided"}
+)
 
 
 class PortalNoticeDelivery(Protocol):
