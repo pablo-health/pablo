@@ -41,7 +41,14 @@ export async function signInToFreshPractice(
   const email = addressOf(name)
   await ensureEmulatorUser(email, PASSWORD)
 
-  const context = await browser.newContext({ baseURL: BASE_URL })
+  // An explicitly empty storage state. The test runner applies the project's
+  // defaults to every context it makes, including the shared worker's saved
+  // sign-in, so without this /login would redirect straight to the dashboard
+  // as the worker's clinician — in the wrong practice.
+  const context = await browser.newContext({
+    baseURL: BASE_URL,
+    storageState: { cookies: [], origins: [] },
+  })
   const page = await context.newPage()
   await page.goto("/login")
   await page.getByLabel("Email").fill(email)
