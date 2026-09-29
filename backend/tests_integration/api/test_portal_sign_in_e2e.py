@@ -445,52 +445,37 @@ def test_reading_the_number_leaves_no_patient_scope_behind(
     of ``patients`` sees nothing: the number comes back, and afterwards the
     session is as unscoped as it was before.
     """
-    from app.db import (  # noqa: PLC0415
-        _current_patient_id,
-        _current_tenant_schema,
-        _current_user_id,
-    )
     from app.portal.db_store import DbPortalAuthStore  # noqa: PLC0415
     from app.portal.tenant_gateway import DbPortalTenantGateway  # noqa: PLC0415
 
-    # Other tests in the suite leave a principal behind in the ContextVars
-    # (``arm_current_user_id`` called in the pytest thread), which the
-    # ``after_begin`` listener would re-arm on this session. Clear them, so
-    # what is measured below is the read's own effect. Pooled connections
-    # need nothing: the pool's checkin resets both principal settings.
-    tokens = [
-        (var, var.set(None))
-        for var in (_current_user_id, _current_patient_id, _current_tenant_schema)
-    ]
-    try:
-        with DbPortalTenantGateway().open(_SCHEMA, None) as work:
-            assert isinstance(work.challenges, DbPortalAuthStore)
-            session = work.challenges._session
-            before = session.execute(
-                text("SELECT current_setting('app.current_patient_id', true)")
-            ).scalar_one()
-            assert not before, f"the session started armed as {before!r}"
+    # No cleanup here: whatever earlier tests armed, the pool's checkin and
+    # the shared ContextVar guard in backend/conftest.py hand this session
+    # over with nobody armed. The "before" assertion is what proves it.
+    with DbPortalTenantGateway().open(_SCHEMA, None) as work:
+        assert isinstance(work.challenges, DbPortalAuthStore)
+        session = work.challenges._session
+        before = session.execute(
+            text("SELECT current_setting('app.current_patient_id', true)")
+        ).scalar_one()
+        assert not before, f"the session started armed as {before!r}"
 
-            assert work.step_up_phone(practice) == _PATIENT_PHONE
-            assert work.step_up_phone(str(uuid.uuid4())) is None
+        assert work.step_up_phone(practice) == _PATIENT_PHONE
+        assert work.step_up_phone(str(uuid.uuid4())) is None
 
-            # Same session, next statements: no patient is armed, so the
-            # chart is invisible again.
-            armed = session.execute(
-                text("SELECT current_setting('app.current_patient_id', true)")
-            ).scalar_one()
-            # NULL before (never set on this connection) and '' after (set in
-            # the savepoint, then reverted) both mean no principal.
-            assert (armed or "") == (before or ""), "the read changed who the session reads as"
-            assert not armed
-            visible = session.execute(
-                text("SELECT count(*) FROM patients WHERE id = CAST(:p AS uuid)"),
-                {"p": practice},
-            ).scalar_one()
-            assert visible == 0
-    finally:
-        for var, token in reversed(tokens):
-            var.reset(token)
+        # Same session, next statements: no patient is armed, so the chart
+        # is invisible again.
+        armed = session.execute(
+            text("SELECT current_setting('app.current_patient_id', true)")
+        ).scalar_one()
+        # NULL before (never set on this connection) and '' after (set in the
+        # savepoint, then reverted) both mean no principal.
+        assert (armed or "") == (before or ""), "the read changed who the session reads as"
+        assert not armed
+        visible = session.execute(
+            text("SELECT count(*) FROM patients WHERE id = CAST(:p AS uuid)"),
+            {"p": practice},
+        ).scalar_one()
+        assert visible == 0
 
 
 def _stored_hash(engine: Engine, token: str) -> str | None:

@@ -85,6 +85,29 @@ _TENANT_EMAIL = "e2e-chat@example.com"
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _arming_here_stays_here() -> Iterator[None]:
+    """Hand back the request ContextVars as this module found them.
+
+    A test here arms the user with ``arm_current_user_id`` in the pytest
+    thread, which sets the process's request ContextVars; that user must not
+    be the next module's starting principal.
+    """
+    from app.db import (  # noqa: PLC0415
+        _current_patient_id,
+        _current_tenant_schema,
+        _current_user_id,
+    )
+
+    tokens = [
+        (var, var.set(var.get()))
+        for var in (_current_user_id, _current_patient_id, _current_tenant_schema)
+    ]
+    yield
+    for var, token in reversed(tokens):
+        var.reset(token)
+
+
 @pytest.fixture(scope="module")
 def engine() -> Iterator[Engine]:
     backend_dir = Path(__file__).resolve().parents[2]
