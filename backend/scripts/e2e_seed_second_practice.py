@@ -96,7 +96,16 @@ FRESH_NO = SeededPractice(
     name="Fresh Practice No",
     unanswered=True,
 )
-SEEDED = (SECOND_PRACTICE, FRESH_YES, FRESH_NO)
+# Its own practice for a spec that turns Messages off: doing that in the shared
+# practice would pull the Messages page out from under the specs that use it.
+FRESH_MESSAGES = SeededPractice(
+    id="e2e-fresh-messages",
+    schema="practice_e2e_fresh_messages",
+    email="e2e-fresh-messages@example.com",
+    name="Fresh Practice Messages",
+    unanswered=True,
+)
+SEEDED = (SECOND_PRACTICE, FRESH_YES, FRESH_NO, FRESH_MESSAGES)
 
 # Kept for anything that still reads the second practice by its old names.
 SECOND_PRACTICE_ID = SECOND_PRACTICE.id

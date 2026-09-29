@@ -196,13 +196,18 @@ describe("MessagesInbox", () => {
     expect(await screen.findByTestId("messages-portal-off")).toHaveTextContent(
       "Your client portal is off.",
     )
-    expect(screen.getByRole("link", { name: "Client portal settings" })).toHaveAttribute(
-      "href",
-      "/dashboard/settings/portal",
+    expect(
+      within(screen.getByTestId("messages-portal-off")).getByRole("link", {
+        name: "Client portal settings",
+      }),
+    ).toHaveAttribute("href", "/dashboard/settings/portal")
+    await userEvent.click((await screen.findAllByTestId("conversation-row"))[0])
+    expect(await screen.findByTestId("thread-replies-off")).toHaveTextContent(
+      "Turn the client portal back on to reply.",
     )
   })
 
-  it("says so, and loads nothing, when the practice turned Messages off", async () => {
+  it("keeps what clients already sent readable when Messages is off, and offers no reply", async () => {
     mockPortal.mockResolvedValue({
       enabled: true,
       decided: true,
@@ -213,7 +218,40 @@ describe("MessagesInbox", () => {
     expect(await screen.findByTestId("messages-portal-off")).toHaveTextContent(
       "Messages are turned off in your client portal.",
     )
-    expect(api.listInboxThreads).not.toHaveBeenCalled()
+    // The conversations are still the practice's to read.
+    await userEvent.click((await screen.findAllByTestId("conversation-row"))[0])
+    const thread = await screen.findByTestId("thread-view")
+    expect(within(thread).getAllByTestId("thread-message-client")).toHaveLength(2)
+    // A reply would land where the client cannot open it: no reply box.
+    expect(within(thread).queryByTestId("thread-reply-input")).not.toBeInTheDocument()
+    expect(within(thread).getByTestId("thread-replies-off")).toHaveTextContent(
+      "Turn Messages back on to reply.",
+    )
+  })
+
+  it("marks an open conversation read again when a new message arrives in it", async () => {
+    renderWithProviders(<MessagesInbox />)
+    await userEvent.click((await screen.findAllByTestId("conversation-row"))[0])
+    await waitFor(() => expect(api.markThreadRead).toHaveBeenCalledTimes(1))
+
+    api.getThread.mockResolvedValue({
+      id: "t-ada",
+      subject: "Refill question",
+      status: "open",
+      created_at: "2026-09-28T09:00:00Z",
+      last_message_at: "2026-09-28T12:00:00Z",
+      closed_at: null,
+      messages: [
+        message("m1", "Hello there"),
+        message("m2", "Can I get more?"),
+        message("m3", "One more thing"),
+      ],
+    })
+    // Stand in for the poll: the reply refetch re-reads the thread.
+    await userEvent.type(await screen.findByTestId("thread-reply-input"), "ok")
+    await userEvent.click(screen.getByTestId("thread-reply-send"))
+
+    await waitFor(() => expect(api.markThreadRead).toHaveBeenCalledTimes(2))
   })
 
   it("works as usual where the deployment does not list Messages as a choice", async () => {

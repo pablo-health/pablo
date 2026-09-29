@@ -19,7 +19,7 @@ import type { Browser, BrowserContext, Page } from "@playwright/test"
 import { ApiClient, ensureEmulatorUser } from "./api"
 import { BASE_URL } from "./stack"
 
-export type FreshPracticeName = "yes" | "no"
+export type FreshPracticeName = "yes" | "no" | "messages"
 
 const PASSWORD = "E2e-fresh-practice-password-long-enough"
 

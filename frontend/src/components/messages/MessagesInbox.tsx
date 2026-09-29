@@ -41,8 +41,6 @@ const WHEN: Intl.DateTimeFormatOptions = {
 
 export function MessagesInbox() {
   const { data: portal, isLoading: portalLoading } = usePortalSettings()
-  const [view, setView] = useState<View>("conversations")
-  const [selected, setSelected] = useState<Selected | null>(null)
 
   // Wait for the practice's answer before loading anything: listing messages
   // and then replacing them with "turned off" would show what it then denies.
@@ -56,25 +54,44 @@ export function MessagesInbox() {
     )
   }
 
-  // Nothing to read or answer when clients cannot reach Messages: the whole
-  // portal is off, or the practice turned the Messages part off. Either way
-  // a reply here would go somewhere the client cannot open.
+  // When clients cannot reach Messages — the whole portal is off, or the
+  // practice turned the Messages part off — what they already sent is still
+  // the practice's to read, so the lists stay. What goes is replying: a reply
+  // would land somewhere the client cannot open.
   const off =
     portal?.enabled === false
       ? "Your client portal is off."
       : portal?.modules?.messaging === false
         ? "Messages are turned off in your client portal."
         : null
-  if (off) {
-    return (
-      <div className="card py-10 text-center" data-testid="messages-portal-off">
-        <p className="text-sm text-neutral-700">{off}</p>
-        <Link href="/dashboard/settings/portal" className="mt-2 inline-block text-sm font-medium underline">
-          Client portal settings
-        </Link>
-      </div>
-    )
-  }
+  const repliesOffNote =
+    portal?.enabled === false
+      ? "Turn the client portal back on to reply."
+      : portal?.modules?.messaging === false
+        ? "Turn Messages back on to reply."
+        : null
+
+  return (
+    <div className="space-y-3">
+      {off && (
+        <div
+          className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3"
+          data-testid="messages-portal-off"
+        >
+          <p className="text-sm text-neutral-800">{off}</p>
+          <Link href="/dashboard/settings/portal" className="text-sm font-medium underline">
+            Client portal settings
+          </Link>
+        </div>
+      )}
+      <InboxPanes repliesOffNote={repliesOffNote} />
+    </div>
+  )
+}
+
+function InboxPanes({ repliesOffNote }: { repliesOffNote: string | null }) {
+  const [view, setView] = useState<View>("conversations")
+  const [selected, setSelected] = useState<Selected | null>(null)
 
   return (
     <div className="grid min-h-[70vh] overflow-hidden rounded-2xl border border-neutral-200 bg-card md:grid-cols-[380px_1fr]">
@@ -97,6 +114,7 @@ export function MessagesInbox() {
             patientId={selected.patientId}
             patientName={selected.patientName}
             onBack={() => setSelected(null)}
+            repliesOffNote={repliesOffNote}
           />
         ) : (
           <div className="flex h-full items-center justify-center p-8 text-sm text-neutral-500">
