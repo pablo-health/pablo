@@ -311,6 +311,17 @@ class TestUnreadCount:
 
         assert inbox.get(UNREAD).json() == {"threads_with_unread": 1}
 
+    def test_counts_only_what_the_open_list_can_clear(
+        self, inbox: TestClient, repo: InMemoryPatientMessageRepository, mock_user_id: str
+    ) -> None:
+        """A thread closed with something unread in it would otherwise hold
+        the badge up with nothing in the default (Open) list to open."""
+        _thread(repo, _ADA, "t-open", at=_T0)
+        _thread(repo, _GRACE, "t-closed", at=_T0)
+        repo.close_thread("t-closed", mock_user_id, _T0 + timedelta(hours=1))
+
+        assert inbox.get(UNREAD).json() == {"threads_with_unread": 1}
+
     def test_is_not_read_as_a_thread_id(self, inbox: TestClient) -> None:
         """Declared before ``/{thread_id}``; were it after, this would 404."""
         assert inbox.get(UNREAD).status_code == 200

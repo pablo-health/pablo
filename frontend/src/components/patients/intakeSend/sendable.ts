@@ -51,6 +51,8 @@ export interface DeliveryFacts {
   hadAccess: boolean
   email: string | null | undefined
   phone: string | null | undefined
+  /** False on a deployment that serves no portal at all. */
+  portalServed?: boolean
 }
 
 /**
@@ -93,7 +95,18 @@ export function deliveryOutcome(facts: DeliveryFacts): DeliveryOutcome {
   if (hadAccess && forms) {
     return { heading: "Forms sent", lines: ["They're waiting in their portal."], complete: true }
   }
-  return { heading: "Forms sent", lines: [], complete: true }
+  if (facts.portalServed === false) {
+    // A deployment with no portal: forms are filled in with the practice,
+    // and there is no invitation to be missing.
+    return { heading: "Forms sent", lines: [], complete: true }
+  }
+  // Forms on the chart and no way in for the client: the one state worth
+  // interrupting for (see above), so it is not shown as done.
+  return {
+    heading: "Forms sent",
+    lines: ["They'll need an invitation to the portal to open them."],
+    complete: false,
+  }
 }
 
 /**

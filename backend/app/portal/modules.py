@@ -66,10 +66,13 @@ PORTAL_MODULE_NAMES: Final[tuple[str, ...]] = (
 #: route table, so a typo here reads as "module off" — the safe direction,
 #: and one the capability tests catch immediately.
 #:
-#: ``documents`` and ``billing`` name paths that nothing mounts yet. That is
-#: deliberate and is the mechanism working: both are real portal modules
-#: with clinician-side routes already built and no patient-facing surface,
-#: so they report off until one lands, whatever the configuration says.
+#: ``billing`` names a path that nothing mounts yet. That is deliberate and is
+#: the mechanism working: it is a real portal module with clinician-side
+#: routes already built and no patient-facing surface, so it reports off until
+#: one lands, whatever the configuration says. ``documents`` IS mounted — it is
+#: the shared upload and download route intake and messaging both use — so it
+#: follows the configuration, and a practice cannot switch it off on its own
+#: (``portal_settings.NOT_CHOSEN_BY_PRACTICE``).
 MODULE_MARKER_PATHS: Final[Mapping[str, str]] = {
     "intake": "/api/patient/intake/form",
     "messaging": "/api/patient/messages/threads",

@@ -41,7 +41,9 @@ export function PortalOfferPrompt({ modules, onAnswered }: PortalOfferPromptProp
           enabled: true,
           modules: Object.fromEntries(modules.map((name) => [name, chosen.includes(name)])),
         }
-      : { enabled: false }
+      : // Only if nobody at the practice has answered since this screen
+        // loaded: a colleague's "on" must not be undone by this "not now".
+        { enabled: false, only_if_undecided: true }
     save.mutate(change, { onSuccess: () => onAnswered(enabled ? "on" : "not_now") })
   }
 
@@ -57,7 +59,7 @@ export function PortalOfferPrompt({ modules, onAnswered }: PortalOfferPromptProp
         <DialogHeader>
           <DialogTitle>Offer your clients a portal?</DialogTitle>
           <DialogDescription>
-            Clients sign in to do what you ask of them between visits and to reach your practice.
+            Clients sign in between visits to do what you ask of them.
           </DialogDescription>
         </DialogHeader>
         {failed}

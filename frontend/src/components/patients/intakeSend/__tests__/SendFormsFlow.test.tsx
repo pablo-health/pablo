@@ -47,6 +47,13 @@ vi.mock("@/lib/api/portalAccess", async (importOriginal) => {
   }
 })
 
+// The practice's portal parts. Every part on unless a test says otherwise.
+const mockPortalSettings = vi.fn()
+vi.mock("@/lib/api/portalSettings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api/portalSettings")>()),
+  getPortalSettings: (...a: unknown[]) => mockPortalSettings(...a),
+}))
+
 vi.mock("@/lib/api/patients", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api/patients")>()
   return { ...actual, getPatient: (...a: unknown[]) => mockPatient(...a) }
@@ -151,6 +158,11 @@ describe("sendableForms", () => {
 describe("SendFormsFlow", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockPortalSettings.mockResolvedValue({
+      enabled: true,
+      decided: true,
+      modules: { intake: true, messaging: true },
+    })
     mockTemplates.mockResolvedValue([template(), SECOND])
     mockAssign.mockResolvedValue({ id: "assignment-1" })
     mockAccess.mockResolvedValue(NO_ACCESS)
@@ -242,6 +254,38 @@ describe("SendFormsFlow", () => {
     expect(screen.queryByTestId("send-forms-sent-list")).not.toBeInTheDocument()
   })
 
+  it("never says a client can sign in to a portal that is off, even with a live session", async () => {
+    mockAccess.mockResolvedValue({ ...NO_ACCESS, live_sessions: 1, portal_enabled: false })
+    renderFlow()
+    await tick("Before we meet")
+    await review()
+    expect(screen.getByTestId("send-forms-review-portal")).not.toHaveTextContent(
+      "They can already sign in",
+    )
+    await send()
+
+    // Forms went; the client cannot open them, and the screen says so.
+    expect(await screen.findByTestId("send-forms-heading")).toHaveTextContent("Forms sent")
+    expect(screen.getByTestId("send-forms-outcome")).toHaveTextContent(
+      "They'll need an invitation to the portal to open them.",
+    )
+    expect(screen.getByTestId("send-forms-outcome")).not.toHaveTextContent("waiting in their portal")
+  })
+
+  it("offers no forms, and says why, where the practice turned Forms off", async () => {
+    mockPortalSettings.mockResolvedValue({
+      enabled: true,
+      decided: true,
+      modules: { intake: false, messaging: true },
+    })
+    renderFlow()
+
+    expect(await screen.findByTestId("send-forms-forms-off")).toHaveTextContent(
+      "Forms are turned off in your client portal.",
+    )
+    expect(screen.queryByRole("checkbox", { name: "Before we meet" })).not.toBeInTheDocument()
+  })
+
   it("points at the setting instead of offering an invitation when the practice's portal is off", async () => {
     mockAccess.mockResolvedValue({ ...NO_ACCESS, portal_enabled: false })
     renderFlow()
@@ -285,6 +329,9 @@ describe("SendFormsFlow", () => {
     await send()
     await waitFor(() => expect(mockAssign).toHaveBeenCalled())
     expect(mockInvite).not.toHaveBeenCalled()
+    // No portal here, so nothing is missing: no call for an invitation.
+    expect(await screen.findByTestId("send-forms-heading")).toHaveTextContent("Forms sent")
+    expect(screen.queryByTestId("send-forms-outcome")).not.toBeInTheDocument()
   })
 
   it("points at setup when the practice has published no form", async () => {

@@ -15,6 +15,7 @@ import { useIntakeTemplates } from "@/hooks/useIntakePackets"
 import { useInviteTemplate } from "@/hooks/useInviteTemplate"
 import { usePatient } from "@/hooks/usePatients"
 import { useIssuePortalInvite, usePortalAccess } from "@/hooks/usePortalAccess"
+import { usePortalSettings } from "@/hooks/usePortalSettings"
 import { InviteEmailPreview } from "./InviteEmailPreview"
 import {
   assignErrorMessage,
@@ -68,10 +69,17 @@ export function SendFormsFlow({
   const assign = useAssignIntakePacket(patientId)
   const invite = useIssuePortalInvite(patientId)
 
-  const forms = sendableForms(templates ?? [])
-  const hasWayIn = !!access && (access.invite_outstanding || access.live_sessions > 0)
+  const { data: portalSettings } = usePortalSettings()
+  // A practice that turned the Forms part of its portal off has nowhere for a
+  // client to fill one in, so there is nothing to send.
+  const formsOff = portalSettings?.modules?.intake === false
+  const forms = formsOff ? [] : sendableForms(templates ?? [])
   const contactComplete = !!patient?.email && !!patient?.phone
   const portalOff = !!access && !access.portal_enabled
+  // A live session into a portal that is off opens nothing, so it is not a
+  // way in: saying "they can already sign in" would be untrue.
+  const hasWayIn =
+    !!access && !portalOff && (access.invite_outstanding || access.live_sessions > 0)
   const canInvite = !noPortal && !!access && !portalOff && !hasWayIn && contactComplete
 
   const [step, setStep] = useState<Step>("choose")
@@ -129,6 +137,7 @@ export function SendFormsFlow({
         invited,
         inviteError,
         hadAccess: hasWayIn,
+        portalServed: !noPortal,
         email: patient?.email,
         phone: patient?.phone,
       }),
@@ -253,7 +262,14 @@ export function SendFormsFlow({
       {header}
       <section className="space-y-2">
         <h3 className="text-sm font-semibold text-neutral-900">Forms to fill in</h3>
-        {templatesLoading ? (
+        {formsOff ? (
+          <p className="text-sm text-neutral-600" data-testid="send-forms-forms-off">
+            Forms are turned off in your client portal.{" "}
+            <Link href="/dashboard/settings/portal" className="font-medium underline">
+              Client portal settings
+            </Link>
+          </p>
+        ) : templatesLoading ? (
           <p className="text-sm text-neutral-500">Loading forms…</p>
         ) : forms.length > 0 ? (
           <ul className="space-y-2">

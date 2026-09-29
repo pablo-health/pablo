@@ -12,6 +12,7 @@ included, as part of appointments — and a clinician route never asks.
 from __future__ import annotations
 
 import re
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Annotated
 
 import pytest
@@ -27,6 +28,20 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
 TENANT = "practice_abc123"
+
+
+@pytest.fixture(autouse=True)
+def _deployment_serves_every_module(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The gate's deployment check sees every module as served, so these
+    tests are about the practice's choice. The test that narrows the
+    deployment replaces this."""
+    monkeypatch.setattr(
+        module_gate,
+        "get_settings",
+        lambda: SimpleNamespace(
+            portal_module_names=("intake", "messaging", "appointments", "refills")
+        ),
+    )
 
 
 def _patient() -> PatientContext:
@@ -161,6 +176,67 @@ def test_every_patient_route_of_a_module_is_refused_when_the_practice_turned_it_
         response = client.request(method, _concrete(path))
         assert response.status_code == 404, f"{method} {path} answered {response.status_code}"
         assert looked_up == [TENANT], f"{method} {path} did not ask the {module} gate"
+
+
+#: Patient-facing prefixes that are deliberately NOT a module's: the client's
+#: own account (sign-in, the capability document, the profile), chat (its own
+#: gate, ``enable_patient_chat``) and documents (the upload/download route
+#: intake and messaging share, so gating it would turn one module off from
+#: under another).
+NOT_A_MODULE_PREFIXES: tuple[str, ...] = (
+    "/api/patient/auth",
+    "/api/patient/capabilities",
+    "/api/patient/profile",
+    "/api/patient/chat",
+    "/api/patient/documents",
+)
+
+
+def test_every_patient_route_is_gated_or_deliberately_not() -> None:
+    """A new patient-facing router must be classified here, or this fails.
+
+    Without it, a router added under /api/patient/ ships reachable by the
+    client of a practice that turned its module off — or of a deployment that
+    does not serve it — and every other test stays green.
+    """
+    from app.main import app  # noqa: PLC0415
+
+    gated = tuple(prefix for prefix, _module in MODULE_PREFIXES)
+    unclassified = sorted(
+        path
+        for path, _route in iter_api_routes(app)
+        if path.startswith("/api/patient/")
+        and not path.startswith(gated)
+        and not path.startswith(NOT_A_MODULE_PREFIXES)
+    )
+    assert unclassified == [], (
+        f"patient routes neither module-gated nor on NOT_A_MODULE_PREFIXES: {unclassified}"
+    )
+
+
+def test_a_module_the_deployment_does_not_serve_is_refused_before_the_practice_is_asked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Some routers are mounted whatever PORTAL_MODULES says (booking among
+    them), so the gate itself refuses a module the deployment does not serve —
+    even for a practice that never narrowed anything."""
+    asked: list[str] = []
+
+    def _all_on(schema: str) -> PortalSettings:
+        asked.append(schema)
+        return NOT_OFFERED
+
+    monkeypatch.setattr(module_gate, "portal_settings_for_schema", _all_on)
+    monkeypatch.setattr(
+        module_gate,
+        "get_settings",
+        lambda: SimpleNamespace(portal_module_names=("intake", "messaging")),
+    )
+
+    response = TestClient(_app("appointments")).get("/api/patient/thing")
+
+    assert response.status_code == 404
+    assert asked == []
 
 
 def test_a_clinician_route_never_asks_the_gate(real_app: tuple[FastAPI, list[str]]) -> None:

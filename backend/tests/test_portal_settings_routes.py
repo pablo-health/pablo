@@ -38,8 +38,8 @@ URL = "/api/portal/settings"
 
 #: What the deployment serves in these tests. Chat is served but is not the
 #: practice's to choose; billing is configured but not mounted.
-CONFIGURED = ("intake", "messaging", "appointments", "refills", "billing", "chat")
-MOUNTED = frozenset({"intake", "messaging", "appointments", "refills", "chat"})
+CONFIGURED = ("intake", "messaging", "documents", "appointments", "refills", "billing", "chat")
+MOUNTED = frozenset({"intake", "messaging", "documents", "appointments", "refills", "chat"})
 ALL_ON = {"intake": True, "messaging": True, "appointments": True, "refills": True}
 
 
@@ -163,6 +163,33 @@ def test_the_practice_comes_from_the_caller_not_the_request(
     assert store.get(PRACTICE_ID).enabled is True
 
 
+def test_a_first_time_answer_does_not_overrule_one_already_given(
+    client: TestClient, store: InMemoryPortalSettingsStore, audit: _RecordingAudit
+) -> None:
+    """The first-client prompt's "not now" is sent only-if-undecided: a
+    colleague who turned the portal on meanwhile must not be switched off by
+    a screen loaded before they did."""
+    client.put(URL, json={"enabled": True})
+    entries = len(audit.entries)
+
+    response = client.put(URL, json={"enabled": False, "only_if_undecided": True})
+
+    assert response.status_code == 200
+    assert response.json()["enabled"] is True
+    assert store.get(PRACTICE_ID).enabled is True
+    assert len(audit.entries) == entries
+
+
+def test_an_only_if_undecided_answer_is_taken_when_nobody_has_answered(
+    client: TestClient, store: InMemoryPortalSettingsStore
+) -> None:
+    response = client.put(URL, json={"enabled": False, "only_if_undecided": True})
+
+    assert response.json()["enabled"] is False
+    assert response.json()["decided"] is True
+    assert store.get(PRACTICE_ID).decided_at is not None
+
+
 def test_a_caller_with_no_practice_gets_a_conflict(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -175,9 +202,12 @@ def test_a_caller_with_no_practice_gets_a_conflict(
 # ── which parts ─────────────────────────────────────────────────────────
 
 
-def test_the_choices_are_what_the_deployment_serves_less_chat(client: TestClient) -> None:
+def test_the_choices_are_what_the_deployment_serves_less_chat_and_documents(
+    client: TestClient,
+) -> None:
     """Billing is configured but not mounted, so it is not offered as a
-    choice; chat has a gate of its own; order is the order clients meet them."""
+    choice; chat has a gate of its own; documents is the shared upload route and
+    is not the practice's to switch off; order is the order clients meet them."""
     assert list(client.get(URL).json()["modules"]) == [
         "intake",
         "messaging",

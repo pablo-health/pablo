@@ -508,7 +508,11 @@ describe("PatientForm", () => {
 
       await user.click(await screen.findByRole("button", { name: "Not now" }))
 
-      expect(mockSavePortalSettings).toHaveBeenCalledWith({ enabled: false })
+      // Sent only-if-undecided, so it cannot undo a colleague's "on".
+      expect(mockSavePortalSettings).toHaveBeenCalledWith({
+        enabled: false,
+        only_if_undecided: true,
+      })
       const next = await screen.findByTestId("new-client-next-step")
       expect(next).toHaveTextContent("You can turn on the client portal any time in Settings.")
     })
@@ -530,6 +534,14 @@ describe("PatientForm", () => {
       })
       const next = await screen.findByTestId("new-client-next-step")
       expect(next).toHaveTextContent("Choose forms to send and whether to invite them to the portal.")
+    })
+
+    it("does not ask where the deployment serves no part a practice can choose", async () => {
+      mockPortalSettings.mockResolvedValue({ enabled: false, decided: false, modules: {} })
+      await addRobin()
+
+      expect(await screen.findByTestId("new-client-next-step")).toBeInTheDocument()
+      expect(screen.queryByTestId("portal-offer-prompt")).not.toBeInTheDocument()
     })
 
     it("will not turn it on with nothing in it", async () => {
