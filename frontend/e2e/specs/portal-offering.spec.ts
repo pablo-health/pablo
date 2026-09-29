@@ -10,7 +10,10 @@
  *      public address and new invitations. And back on, the same session
  *      carries on, because turning it off suspends access rather than
  *      revoking it.
- *   2. **The settings page shows the switch** a practice uses to do it.
+ *   2. **A part turned off is gone for real**: the capability document drops
+ *      it, and its routes — booking included, for appointments — answer 404
+ *      to a client who is signed in.
+ *   3. **The settings page shows the switches** a practice uses to do it.
  *
  * The off/on round trip runs on the SECOND practice. Every worker shares the
  * first one, and turning its portal off would pull it out from under every
@@ -74,6 +77,37 @@ test.describe("offering the portal", () => {
     }
   })
 
+  test("a part the practice turns off disappears from the portal and its routes refuse", async ({
+    otherPracticeApi: api,
+    request,
+  }) => {
+    await api.put(SETTINGS, { enabled: true })
+    try {
+      const { email, phone } = givePortalContactDetails()
+      const patient = await givePatient(api, { email, phone })
+      const session = await givePortalSession(api, request, patient.id, email, phone)
+      const signedIn = { headers: { Authorization: `Bearer ${session}` } }
+      const appointments = `${BACKEND_URL}/api/patient/appointments`
+
+      expect((await request.get(appointments, signedIn)).status()).toBe(200)
+
+      const saved = await api.put<{ modules: Record<string, boolean> }>(SETTINGS, {
+        modules: { appointments: false },
+      })
+      expect(saved.modules.appointments).toBe(false)
+
+      const capabilities = await (await request.get(CAPABILITIES, signedIn)).json()
+      expect(capabilities.modules.appointments).toBe(false)
+      expect(capabilities.modules.messaging).toBe(true)
+      expect((await request.get(appointments, signedIn)).status()).toBe(404)
+      expect(
+        (await request.get(`${BACKEND_URL}/api/patient/booking/options`, signedIn)).status(),
+      ).toBe(404)
+    } finally {
+      await api.put(SETTINGS, { enabled: true, modules: { appointments: true } })
+    }
+  })
+
   test("the settings page shows the practice's switch", async ({ signedInPage: page }) => {
     await page.goto("/dashboard/settings/portal")
 
@@ -81,5 +115,10 @@ test.describe("offering the portal", () => {
     await expect(toggle).toBeVisible()
     await expect(toggle).toHaveAttribute("aria-checked", "true")
     await expect(page.getByTestId("portal-off-note")).toHaveCount(0)
+    // The parts this stack serves, each with its own switch, on by default.
+    for (const part of ["Forms", "Messages", "Appointments", "Refill requests"]) {
+      await expect(page.getByRole("switch", { name: part })).toHaveAttribute("aria-checked", "true")
+    }
+    await expect(page.getByTestId("portal-booking-line")).toContainText("Booking settings")
   })
 })

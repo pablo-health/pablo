@@ -31,6 +31,7 @@ from ..db.platform_models import PracticePortalSettingsRow, PracticeRow
 from ..utcnow import utc_now
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from datetime import datetime
 
     from sqlalchemy.orm import Session
@@ -67,6 +68,9 @@ class PortalSettingsStore(Protocol):
 
     def set_enabled(self, practice_id: str, *, enabled: bool, by: str) -> PortalSettings:
         """Turn the portal on or off. Records the decision the first time."""
+
+    def set_modules(self, practice_id: str, *, modules: tuple[str, ...], by: str) -> PortalSettings:
+        """Keep exactly these modules on for the practice's clients."""
 
 
 class PlatformPortalSettingsStore:
@@ -106,6 +110,27 @@ class PlatformPortalSettingsStore:
         finally:
             session.close()
 
+    def set_modules(self, practice_id: str, *, modules: tuple[str, ...], by: str) -> PortalSettings:
+        now = utc_now()
+        session = create_standalone_session()
+        try:
+            statement = insert(PracticePortalSettingsRow).values(
+                practice_id=practice_id,
+                enabled_modules=list(modules),
+                updated_at=now,
+                updated_by=by,
+            )
+            session.execute(
+                statement.on_conflict_do_update(
+                    index_elements=["practice_id"],
+                    set_={"enabled_modules": list(modules), "updated_at": now, "updated_by": by},
+                )
+            )
+            session.commit()
+            return _from_row(session.get(PracticePortalSettingsRow, practice_id))
+        finally:
+            session.close()
+
 
 class InMemoryPortalSettingsStore:
     def __init__(self) -> None:
@@ -117,6 +142,11 @@ class InMemoryPortalSettingsStore:
     def set_enabled(self, practice_id: str, *, enabled: bool, by: str) -> PortalSettings:  # noqa: ARG002 — matches the port
         current = self.get(practice_id)
         updated = replace(current, enabled=enabled, decided_at=current.decided_at or utc_now())
+        self.settings[practice_id] = updated
+        return updated
+
+    def set_modules(self, practice_id: str, *, modules: tuple[str, ...], by: str) -> PortalSettings:  # noqa: ARG002 — matches the port
+        updated = replace(self.get(practice_id), enabled_modules=tuple(modules))
         self.settings[practice_id] = updated
         return updated
 
@@ -158,3 +188,50 @@ def portal_enabled_for_schema(schema: str) -> bool:
         return bool(enabled)
     finally:
         session.close()
+
+
+def portal_settings_for_schema(schema: str) -> PortalSettings:
+    """The settings of the practice whose clients live in *schema*.
+
+    :data:`NOT_OFFERED` for an unknown schema or a practice with no row.
+    """
+    session = create_standalone_session()
+    try:
+        row = session.execute(
+            select(PracticePortalSettingsRow)
+            .join(PracticeRow, PracticeRow.id == PracticePortalSettingsRow.practice_id)
+            .where(PracticeRow.schema_name == schema)
+        ).scalar_one_or_none()
+        return _from_row(row)
+    finally:
+        session.close()
+
+
+# ── which modules a practice serves ─────────────────────────────────────
+
+#: Modules a practice does not choose for itself. Patient chat has a gate of
+#: its own that predates the portal (``enable_patient_chat``), so a
+#: practice's module list neither adds nor removes it.
+NOT_CHOSEN_BY_PRACTICE: frozenset[str] = frozenset({"chat"})
+
+
+def choosable_modules(served: Iterable[str]) -> tuple[str, ...]:
+    """The modules a practice may turn on or off, from those the deployment serves."""
+    return tuple(name for name in served if name not in NOT_CHOSEN_BY_PRACTICE)
+
+
+def practice_offers_module(settings: PortalSettings, name: str) -> bool:
+    """Whether the practice has this module on.
+
+    The practice can only narrow what the deployment serves, never widen it:
+    this answers "has the practice turned it off?", and a module the
+    deployment does not serve stays off whatever it says here.
+    """
+    if name in NOT_CHOSEN_BY_PRACTICE or settings.enabled_modules is None:
+        return True
+    return name in settings.enabled_modules
+
+
+def practice_modules(configured: Iterable[str], settings: PortalSettings) -> tuple[str, ...]:
+    """The deployment's configured modules, narrowed to the ones the practice has on."""
+    return tuple(name for name in configured if practice_offers_module(settings, name))

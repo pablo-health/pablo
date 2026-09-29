@@ -2,7 +2,12 @@
 
 "use client"
 
-import { getPortalSettings, savePortalSettings, type PortalSettings } from "@/lib/api/portalSettings"
+import {
+  getPortalSettings,
+  savePortalSettings,
+  type PortalSettings,
+  type PortalSettingsChange,
+} from "@/lib/api/portalSettings"
 import { portalAccessKeys } from "./usePortalAccess"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
 
@@ -21,8 +26,8 @@ export function usePortalSettings() {
 }
 
 export function useSavePortalSettings() {
-  return useAuthMutation<PortalSettings, Pick<PortalSettings, "enabled">>({
-    mutationFn: (settings) => savePortalSettings(settings),
+  return useAuthMutation<PortalSettings, PortalSettingsChange>({
+    mutationFn: (change) => savePortalSettings(change),
     // Every client's access state carries the switch too.
     invalidateKeys: [portalSettingsKeys.all, portalAccessKeys.all],
   })

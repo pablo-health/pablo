@@ -33,6 +33,7 @@ from app.portal.portal_settings import (
     PlatformPortalSettingsStore,
     portal_enabled_for_practice,
     portal_enabled_for_schema,
+    portal_settings_for_schema,
 )
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session as OrmSession
@@ -140,6 +141,29 @@ def test_one_practices_setting_never_reaches_another(engine: Engine) -> None:
     assert portal_enabled_for_schema(our_schema) is True
     assert portal_enabled_for_schema(their_schema) is False
     assert store.get(theirs) == NOT_OFFERED
+
+
+def test_a_practices_modules_round_trip_and_leave_the_switch_alone(engine: Engine) -> None:
+    store = PlatformPortalSettingsStore()
+    practice_id, schema = _new_practice(engine)
+    store.set_enabled(practice_id, enabled=True, by="clinician-1")
+
+    narrowed = store.set_modules(practice_id, modules=("messaging", "refills"), by="clinician-2")
+
+    assert narrowed.enabled_modules == ("messaging", "refills")
+    assert narrowed.enabled is True
+    assert portal_settings_for_schema(schema).enabled_modules == ("messaging", "refills")
+
+
+def test_choosing_modules_before_deciding_does_not_turn_the_portal_on(engine: Engine) -> None:
+    store = PlatformPortalSettingsStore()
+    practice_id, schema = _new_practice(engine)
+
+    chosen = store.set_modules(practice_id, modules=("intake",), by="clinician-1")
+
+    assert chosen.enabled is False
+    assert chosen.decided_at is None
+    assert portal_enabled_for_schema(schema) is False
 
 
 @pytest.mark.usefixtures("engine")

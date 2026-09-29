@@ -71,6 +71,8 @@ from app.auth.service import (  # noqa: E402
 from app.calendar_providers import pkce_store  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import User  # noqa: E402
+from app.portal import module_gate as portal_module_gate  # noqa: E402
+from app.portal.portal_settings import NOT_OFFERED  # noqa: E402
 from app.repositories import (  # noqa: E402
     InMemoryAllowlistRepository,
     InMemoryChatRepository,
@@ -148,6 +150,20 @@ def fake_pkce_redis(monkeypatch: pytest.MonkeyPatch) -> FakePkceRedis:
     redis = FakePkceRedis()
     monkeypatch.setattr(pkce_store, "get_redis_client", lambda: redis)
     return redis
+
+
+@pytest.fixture(autouse=True)
+def portal_modules_all_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A practice that has not narrowed its portal: every module on.
+
+    Autouse because every patient route of a portal module asks the practice's
+    settings first (``app.portal.module_gate``), and this suite has no
+    platform table to ask. The gate itself is proven in
+    ``test_portal_module_gate.py``, which replaces this answer.
+    """
+    monkeypatch.setattr(
+        portal_module_gate, "portal_settings_for_schema", lambda _schema: NOT_OFFERED
+    )
 
 
 @pytest.fixture(autouse=True)

@@ -35,7 +35,7 @@ describe("PatientPortalPage", () => {
   beforeEach(() => vi.clearAllMocks())
 
   it("greys the welcome and the invitation while the portal is off", async () => {
-    mockSettings.mockResolvedValue({ enabled: false, decided: true })
+    mockSettings.mockResolvedValue({ enabled: false, decided: true, modules: {} })
     renderWithProviders(<PatientPortalPage />)
 
     expect(await screen.findByTestId("portal-off-note")).toHaveTextContent(
@@ -48,7 +48,7 @@ describe("PatientPortalPage", () => {
   })
 
   it("leaves everything open once the portal is on", async () => {
-    mockSettings.mockResolvedValue({ enabled: true, decided: true })
+    mockSettings.mockResolvedValue({ enabled: true, decided: true, modules: {} })
     renderWithProviders(<PatientPortalPage />)
 
     expect(await screen.findByRole("switch", { name: "Client portal" })).toHaveAttribute(

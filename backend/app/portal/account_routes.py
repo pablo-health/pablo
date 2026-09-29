@@ -55,6 +55,12 @@ from ..settings import get_settings
 from .db_store import DbPortalSessionStore
 from .factory import build_portal_auth_service
 from .modules import mounted_modules_on, portal_capabilities
+from .portal_settings import (
+    NOT_OFFERED,
+    PortalSettingsStore,
+    get_portal_settings_store,
+    practice_modules,
+)
 from .practice_routes import practice_address_for_schema, practice_id_for_schema
 from .welcome import DEFAULT_WELCOME, render_welcome
 from .welcome_store import PortalWelcomeStore, get_portal_welcome_store
@@ -234,19 +240,22 @@ def get_capabilities(
     request: Request,
     patient: CurrentPatient,
     welcomes: Annotated[PortalWelcomeStore, Depends(get_portal_welcome_store)],
+    portal_settings: Annotated[PortalSettingsStore, Depends(get_portal_settings_store)],
 ) -> PortalCapabilitiesResponse:
     """What this portal serves, for the shell to render a navigation from.
 
-    Single-factor is enough. The answer is about the DEPLOYMENT, not about
-    the person: which modules exist here is the same for every patient of
-    this practice, and a shell that cannot draw its own navigation until the
-    second factor clears would show an empty frame to someone mid-sign-in.
+    Single-factor is enough. The answer is about the deployment and the
+    practice, not about the person: which modules exist here is the same for
+    every patient of this practice, and a shell that cannot draw its own
+    navigation until the second factor clears would show an empty frame to
+    someone mid-sign-in.
 
-    The mounted half is read off the live application, so a module this
-    build does not serve reports off however it is configured — see
-    :mod:`app.portal.modules`.
+    Three things narrow it, and none can widen it: what the deployment is
+    configured to serve, what this practice has turned on, and what is
+    actually mounted — read off the live application, so a module this build
+    does not serve reports off however it is configured (see
+    :mod:`app.portal.modules`).
     """
-    configured = get_settings().portal_module_names
     mounted = mounted_modules_on(request.app)
     # The practice's own name, from the same platform directory the
     # unauthenticated slug route answers from — so the header before sign-in
@@ -262,6 +271,10 @@ def get_capabilities(
     practice_id = practice_id_for_schema(patient.practice_schema)
     stored = None if practice_id is None else welcomes.get(practice_id)
     welcome = render_welcome(stored or DEFAULT_WELCOME, display_name)
+    # The practice narrows what the deployment is configured to serve; the
+    # route table then narrows that again. Neither step can add a module.
+    offered = NOT_OFFERED if practice_id is None else portal_settings.get(practice_id)
+    configured = practice_modules(get_settings().portal_module_names, offered)
     return PortalCapabilitiesResponse(
         practice=PortalPracticeSummary(display_name=display_name),
         welcome=PortalWelcomeSummary(heading=welcome.heading, body=welcome.body),
