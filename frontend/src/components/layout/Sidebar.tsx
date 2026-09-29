@@ -5,6 +5,7 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { AdminNav } from "./AdminNav"
+import { NavBadge } from "./NavBadge"
 import { PabloNote } from "./PabloNote"
 import { SidebarFooter } from "./SidebarFooter"
 import { clinicianNavigation, settingsItem } from "./sidebarExtensions"
@@ -55,6 +56,7 @@ export function Sidebar({ isAdmin = false, hideClinicianMenus = false }: Sidebar
             >
               <item.icon className={`h-5 w-5 transition-transform duration-200 ${isActive ? "" : "group-hover:scale-110"}`} />
               {item.name}
+              {item.badge && <NavBadge kind={item.badge} />}
             </Link>
           )
         })}

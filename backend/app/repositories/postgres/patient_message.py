@@ -18,18 +18,21 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import String, Uuid, bindparam, func, select, text
+from sqlalchemy import String, Uuid, bindparam, func, or_, select, text
 
 from ...db.models import (
     PatientDocumentRow,
     PatientMessageAttachmentRow,
     PatientMessageRow,
     PatientMessageThreadRow,
+    PatientRow,
 )
 from ...models.patient_message import (
     SENDER_PATIENT,
     THREAD_STATUS_CLOSED,
     THREAD_STATUS_OPEN,
+    InboxMessage,
+    InboxThread,
 )
 from ..patient_message import PatientMessageAccessDeniedError, PatientMessageRepository
 
@@ -37,11 +40,11 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import datetime
 
-    from sqlalchemy import Row
+    from sqlalchemy import ColumnElement, Row, ScalarSelect
     from sqlalchemy.orm import Session
 
     from ...models import MessageAttachment, PatientMessage, PatientMessageThread
-    from ...models.patient_message import ThreadAssignmentFilter
+    from ...models.patient_message import ThreadAssignmentFilter, ThreadStatusFilter
 
 
 _HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindparams(
@@ -177,6 +180,126 @@ class PostgresPatientMessageRepository(PatientMessageRepository):
             .all()
         )
         return [(_thread(r), self._clinician_unread_count(r)) for r in rows]
+
+    def _inbox_unread(self) -> ScalarSelect[int]:
+        """Per-thread unread count, correlated to the outer thread row.
+
+        The same rule as :meth:`_clinician_unread_count`, as one expression
+        so the inbox counts every thread in the query that lists them.
+        """
+        thread = PatientMessageThreadRow
+        return (
+            select(func.count())
+            .select_from(PatientMessageRow)
+            .where(
+                PatientMessageRow.thread_id == thread.id,
+                PatientMessageRow.sender == SENDER_PATIENT,
+                or_(
+                    thread.clinician_last_read_at.is_(None),
+                    PatientMessageRow.created_at > thread.clinician_last_read_at,
+                ),
+            )
+            .correlate(thread)
+            .scalar_subquery()
+        )
+
+    def _inbox_scope(self, user_id: str) -> list[ColumnElement[bool]]:
+        """The threads a clinician's inbox may list: granted, and not deleted.
+
+        ``has_patient_access`` in the WHERE is the same predicate the row
+        policy applies; stated here too so the query is right even on a
+        schema migrated without its policies.
+        """
+        return [
+            func.has_patient_access(
+                PatientMessageThreadRow.patient_id, bindparam("inbox_uid", user_id, String())
+            ),
+            PatientRow.deleted_at.is_(None),
+        ]
+
+    def list_inbox_threads(
+        self,
+        user_id: str,
+        *,
+        status: ThreadStatusFilter = "open",
+        assigned: ThreadAssignmentFilter = "all",
+        limit: int = 100,
+    ) -> list[InboxThread]:
+        thread = PatientMessageThreadRow
+        unread = self._inbox_unread().label("unread")
+        statement = (
+            select(
+                thread,
+                unread,
+                PatientRow.first_name,
+                PatientRow.last_name,
+                PatientRow.preferred_name,
+            )
+            .join(PatientRow, PatientRow.id == thread.patient_id)
+            .where(*self._inbox_scope(user_id))
+        )
+        if status != "all":
+            statement = statement.where(thread.status == status)
+        if assigned == "me":
+            statement = statement.where(thread.assigned_user_id == user_id)
+        elif assigned == "unassigned":
+            statement = statement.where(thread.assigned_user_id.is_(None))
+        rows = self._session.execute(
+            statement.order_by((unread > 0).desc(), thread.last_message_at.desc()).limit(limit)
+        ).all()
+        return [
+            InboxThread(
+                thread=_thread(row),
+                patient_name=f"{preferred or first} {last}".strip(),
+                unread_count=int(count or 0),
+            )
+            for row, count, first, last, preferred in rows
+        ]
+
+    def list_inbox_messages(
+        self, user_id: str, *, unread_only: bool = False, limit: int = 100
+    ) -> list[InboxMessage]:
+        thread = PatientMessageThreadRow
+        unread = or_(
+            thread.clinician_last_read_at.is_(None),
+            PatientMessageRow.created_at > thread.clinician_last_read_at,
+        )
+        statement = (
+            select(
+                PatientMessageRow,
+                thread,
+                unread.label("unread"),
+                PatientRow.first_name,
+                PatientRow.last_name,
+                PatientRow.preferred_name,
+            )
+            .join(thread, thread.id == PatientMessageRow.thread_id)
+            .join(PatientRow, PatientRow.id == thread.patient_id)
+            .where(*self._inbox_scope(user_id), PatientMessageRow.sender == SENDER_PATIENT)
+        )
+        if unread_only:
+            statement = statement.where(unread)
+        rows = self._session.execute(
+            statement.order_by(PatientMessageRow.created_at.desc()).limit(limit)
+        ).all()
+        return [
+            InboxMessage(
+                message=_message(message),
+                thread=_thread(thread_row),
+                patient_name=f"{preferred or first} {last}".strip(),
+                unread=bool(is_unread),
+            )
+            for message, thread_row, is_unread, first, last, preferred in rows
+        ]
+
+    def count_unread_threads(self, user_id: str) -> int:
+        count = self._session.execute(
+            select(func.count())
+            .select_from(PatientMessageThreadRow)
+            .join(PatientRow, PatientRow.id == PatientMessageThreadRow.patient_id)
+            .where(*self._inbox_scope(user_id), self._inbox_unread() > 0)
+        ).scalar()
+        return int(count or 0)
 
     def _clinician_unread_count(self, row: PatientMessageThreadRow) -> int:
         """How many patient messages have arrived since the practice looked.

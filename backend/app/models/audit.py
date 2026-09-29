@@ -250,6 +250,11 @@ class AuditAction(StrEnum):
     PATIENT_PORTAL_INVITE_PREVIEWED = "patient_portal_invite_previewed"
     PATIENT_PORTAL_SESSION_REDEEMED = "patient_portal_session_redeemed"
 
+    # A clinician's messages badge asked how many conversations have
+    # something unread. One number across every patient they can see; no
+    # patient is named, so the row is about the clinician, not a chart.
+    PATIENT_MESSAGE_UNREAD_COUNTED = "patient_message_unread_counted"
+
     # A practice turned its client portal on or off. Turning it off ends
     # every client's access at once, so when that happened, and who did it,
     # belongs on the record beside the invitations. The payload is the old

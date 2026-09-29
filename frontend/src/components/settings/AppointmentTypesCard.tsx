@@ -56,7 +56,23 @@ const NEW_TYPE_DEFAULTS = {
   horizon_unit: "business" as const,
 }
 
-export function AppointmentTypesCard() {
+/**
+ * The practice's appointment types, in Settings > Scheduling and in the
+ * billing setup wizard.
+ *
+ * `purpose` decides what each row shows, because the two places ask
+ * different questions of the same records. Billing needs a name, a length, a
+ * fee and a code; when Pablo may offer a type is scheduling's business, so
+ * the wizard leaves it out. And the per-type self-book switch, plus the
+ * patients' cancel and reschedule cutoffs, only mean anything once the
+ * practice lets clients book — until then they are hidden rather than shown
+ * disabled. Hidden settings keep their stored values.
+ */
+export function AppointmentTypesCard({
+  purpose = "scheduling",
+}: {
+  purpose?: "scheduling" | "billing"
+} = {}) {
   const { data: typesData } = useAppointmentTypes()
   const { data: policy } = useSchedulingPolicy()
   const createType = useCreateAppointmentType()
@@ -70,6 +86,7 @@ export function AppointmentTypesCard() {
 
   const types = typesData?.data ?? []
   const selfBookOn = Boolean(policy?.self_book_existing || policy?.self_book_new)
+  const forScheduling = purpose === "scheduling"
   const defaultNoticeHours = policy?.min_notice_hours ?? 24
 
   function handleAdd() {
@@ -109,7 +126,8 @@ export function AppointmentTypesCard() {
                 onToggle={() => setOpenId(openId === t.id ? null : t.id)}
                 onChange={(patch) => handleChange(t.id, patch)}
                 onDelete={() => setDeleteTarget(t)}
-                selfBookOn={selfBookOn}
+                showSelfBook={forScheduling && selfBookOn}
+                showOffering={forScheduling}
                 defaultNoticeHours={defaultNoticeHours}
               />
             ))}
@@ -119,18 +137,20 @@ export function AppointmentTypesCard() {
               <Plus className="h-4 w-4" />
               Add a type
             </Button>
-            <button
-              type="button"
-              onClick={() => setDefaultsOpen(!defaultsOpen)}
-              className="inline-flex items-center gap-1 border-0 bg-transparent text-[13px] font-semibold text-muted-foreground"
-            >
-              Defaults for all types
-              {defaultsOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-            </button>
+            {forScheduling && (
+              <button
+                type="button"
+                onClick={() => setDefaultsOpen(!defaultsOpen)}
+                className="inline-flex items-center gap-1 border-0 bg-transparent text-[13px] font-semibold text-muted-foreground"
+              >
+                Defaults for all types
+                {defaultsOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+              </button>
+            )}
           </div>
         </div>
 
-        {defaultsOpen && policy && (
+        {forScheduling && defaultsOpen && policy && (
           <div className="border-t border-border bg-foreground/[0.025]">
             <SettingsRow
               nested
@@ -153,6 +173,9 @@ export function AppointmentTypesCard() {
                 </SelectContent>
               </Select>
             </SettingsRow>
+            {/* Cutoffs for the patients' own changes: only once they can book. */}
+            {selfBookOn && (
+            <>
             <SettingsRow nested label="Patients may cancel until" description="Later than this, they have to message you.">
               <Select
                 value={String(policy.cancel_cutoff_hours)}
@@ -187,6 +210,8 @@ export function AppointmentTypesCard() {
                 </SelectContent>
               </Select>
             </SettingsRow>
+            </>
+            )}
           </div>
         )}
       </SettingsCard>

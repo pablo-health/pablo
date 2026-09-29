@@ -30,11 +30,15 @@ from app.auth.patient_context import (
     get_patient_resolver_registry,
 )
 from app.main import app, portal_module_routers
+from app.models import Patient
 from app.models.audit import ACTOR_TYPE_CLINICIAN, ACTOR_TYPE_PATIENT, AuditAction
 from app.models.refill_request import RefillRequest
+from app.portal.delivery import CapturingNoticeDelivery
+from app.portal.factory import get_notice_delivery
 from app.portal.modules import MODULE_MARKER_PATHS
 from app.rate_limit import REFILL_REQUESTS_PER_MINUTE, reset_refill_request_limiter
-from app.repositories import InMemoryRefillRequestRepository
+from app.repositories import InMemoryPatientRepository, InMemoryRefillRequestRepository
+from app.routes.patient_intake_assignments import get_clinician_patient_repository
 from app.routes.refill_requests import (
     get_clinician_refill_request_repository,
     get_refill_request_repository,
@@ -92,6 +96,33 @@ def refill_repo() -> InMemoryRefillRequestRepository:
     return repo
 
 
+def _chart(patient_id: str, first: str, last: str, email: str) -> Patient:
+    now = utc_now()
+    return Patient(
+        id=patient_id,
+        first_name=first,
+        last_name=last,
+        email=email,
+        created_at=now,
+        updated_at=now,
+        date_of_birth="1990-03-14",
+    )
+
+
+@pytest.fixture
+def patients(mock_user_id: str) -> InMemoryPatientRepository:
+    """The charts the decision route reads the patient's address from."""
+    repo = InMemoryPatientRepository()
+    repo.create(_chart(_PATIENT_A, "Ada", "Lovelace", "ada@example.com"), mock_user_id)
+    repo.create(_chart(_PATIENT_B, "Grace", "Hopper", "grace@example.com"), mock_user_id)
+    return repo
+
+
+@pytest.fixture
+def notices() -> CapturingNoticeDelivery:
+    return CapturingNoticeDelivery()
+
+
 @pytest.fixture(autouse=True)
 def hooks() -> RefillRequestHookRegistry:
     registry = get_refill_request_hook_registry()
@@ -104,6 +135,8 @@ def hooks() -> RefillRequestHookRegistry:
 def refill_client(
     client: TestClient,
     refill_repo: InMemoryRefillRequestRepository,
+    patients: InMemoryPatientRepository,
+    notices: CapturingNoticeDelivery,
     monkeypatch: pytest.MonkeyPatch,
 ) -> TestClient:
     """Both refill routers on one app, sharing the shared app's overrides.
@@ -118,6 +151,8 @@ def refill_client(
     app.dependency_overrides[get_patient_resolver_registry] = lambda: registry
     app.dependency_overrides[get_refill_request_repository] = lambda: refill_repo
     app.dependency_overrides[get_clinician_refill_request_repository] = lambda: refill_repo
+    app.dependency_overrides[get_clinician_patient_repository] = lambda: patients
+    app.dependency_overrides[get_notice_delivery] = lambda: notices
     monkeypatch.setattr(patient_context_module, "get_db_session", object)
     monkeypatch.setattr(patient_context_module, "set_tenant_schema", lambda _s, _schema: None)
     monkeypatch.setattr(patient_context_module, "arm_current_patient_id", lambda _s, _p: None)
@@ -533,6 +568,115 @@ class TestClinicianDecides:
         ]
         assert seen[0].decided_at is not None
         assert seen[0].practice_schema == "practice_test"
+
+
+def _wire_portal_address(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A portal origin and a practice slug, so a link can be minted.
+
+    Patched at the seams :mod:`app.portal.notices` reads, as the intake review
+    suite does: what is under test is which payload is sent.
+    """
+    from app.portal import notices as notices_module  # noqa: PLC0415 — test-local seam
+    from app.portal.practice_routes import PracticeAddress  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        notices_module, "_resolve_practice_from_email", lambda _email: ("practice-1", "schema")
+    )
+    monkeypatch.setattr(
+        notices_module,
+        "ensure_practice_slug",
+        lambda _pid: PracticeAddress(slug="a-practice", display_name="A Practice", enabled=True),
+    )
+    monkeypatch.setattr(
+        notices_module,
+        "build_portal_link",
+        lambda *, slug: f"https://portal.example.test/portal/{slug}",
+    )
+
+
+class _FailingNotices(CapturingNoticeDelivery):
+    def send_notice(self, *, to_email: str, notice: str, link: str) -> None:
+        raise RuntimeError("mail server down")
+
+
+class TestDecisionNotice:
+    def test_one_link_only_notice_to_the_patient(
+        self,
+        refill_client: TestClient,
+        refill_repo: InMemoryRefillRequestRepository,
+        notices: CapturingNoticeDelivery,
+        mock_user_id: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _wire_portal_address(monkeypatch)
+        _seed(refill_repo, "r1", _PATIENT_A, minutes_ago=5)
+        refill_repo.grant_access(_PATIENT_A, mock_user_id)
+
+        response = refill_client.post(
+            f"{CLINICIAN_BASE}/r1/decision",
+            json={"status": "declined", "prescriber_note": "sent to CVS"},
+        )
+
+        assert response.status_code == 200, response.text
+        assert len(notices.sent) == 1
+        sent = notices.sent[0]
+        assert sent.to_email == "ada@example.com"
+        assert sent.notice == "refill_request_decided"
+        assert sent.link == "https://portal.example.test/portal/a-practice"
+
+    def test_a_second_answer_sends_nothing_more(
+        self,
+        refill_client: TestClient,
+        refill_repo: InMemoryRefillRequestRepository,
+        notices: CapturingNoticeDelivery,
+        mock_user_id: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _wire_portal_address(monkeypatch)
+        _seed(refill_repo, "r1", _PATIENT_A, minutes_ago=5)
+        refill_repo.grant_access(_PATIENT_A, mock_user_id)
+        refill_client.post(f"{CLINICIAN_BASE}/r1/decision", json={"status": "approved"})
+
+        second = refill_client.post(f"{CLINICIAN_BASE}/r1/decision", json={"status": "declined"})
+
+        assert second.status_code == 409
+        assert len(notices.sent) == 1
+
+    def test_a_failed_send_does_not_fail_the_decision(
+        self,
+        refill_client: TestClient,
+        refill_repo: InMemoryRefillRequestRepository,
+        mock_user_id: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _wire_portal_address(monkeypatch)
+        app.dependency_overrides[get_notice_delivery] = _FailingNotices
+        _seed(refill_repo, "r1", _PATIENT_A, minutes_ago=5)
+        refill_repo.grant_access(_PATIENT_A, mock_user_id)
+
+        response = refill_client.post(f"{CLINICIAN_BASE}/r1/decision", json={"status": "approved"})
+
+        assert response.status_code == 200, response.text
+        assert refill_repo.list_for_patient(_PATIENT_A)[0].status == "approved"
+
+    def test_a_chart_with_no_email_address_is_not_a_failure(
+        self,
+        refill_client: TestClient,
+        refill_repo: InMemoryRefillRequestRepository,
+        patients: InMemoryPatientRepository,
+        notices: CapturingNoticeDelivery,
+        mock_user_id: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _wire_portal_address(monkeypatch)
+        patients.create(_chart(_PATIENT_A, "Ada", "Lovelace", ""), mock_user_id)
+        _seed(refill_repo, "r1", _PATIENT_A, minutes_ago=5)
+        refill_repo.grant_access(_PATIENT_A, mock_user_id)
+
+        response = refill_client.post(f"{CLINICIAN_BASE}/r1/decision", json={"status": "approved"})
+
+        assert response.status_code == 200, response.text
+        assert notices.sent == []
 
 
 class TestMounting:

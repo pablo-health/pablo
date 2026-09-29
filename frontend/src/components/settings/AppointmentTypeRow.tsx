@@ -108,7 +108,8 @@ export function AppointmentTypeRow({
   onToggle,
   onChange,
   onDelete,
-  selfBookOn,
+  showSelfBook,
+  showOffering,
   defaultNoticeHours,
 }: {
   appointmentType: AppointmentTypeResponse
@@ -116,7 +117,10 @@ export function AppointmentTypeRow({
   onToggle: () => void
   onChange: (patch: UpdateAppointmentTypeRequest) => void
   onDelete: () => void
-  selfBookOn: boolean
+  /** The per-type self-book switch. Only where the practice lets clients book at all. */
+  showSelfBook: boolean
+  /** When Pablo may offer this type, and how much warning it needs. */
+  showOffering: boolean
   defaultNoticeHours: number
 }) {
   const [nameDraft, setNameDraft] = useState(appointmentType.name)
@@ -155,24 +159,27 @@ export function AppointmentTypeRow({
                 {AUDIENCE_LABEL[appointmentType.audience]}
               </SettingsBadge>
             </div>
-            <small className="mt-0.5 block text-[12.5px] text-muted-foreground">
-              Offered from {earliestLabel(appointmentType.earliest_offer_business_days)} up to{" "}
-              {horizonLabel(appointmentType.horizon, appointmentType.horizon_unit)} out, needs {formatHours(notice)} warning
-              {appointmentType.min_notice_hours == null ? " (default)" : ""}
-            </small>
+            {showOffering && (
+              <small className="mt-0.5 block text-[12.5px] text-muted-foreground" data-testid="appointment-type-offering">
+                Offered from {earliestLabel(appointmentType.earliest_offer_business_days)} up to{" "}
+                {horizonLabel(appointmentType.horizon, appointmentType.horizon_unit)} out, needs {formatHours(notice)} warning
+                {appointmentType.min_notice_hours == null ? " (default)" : ""}
+              </small>
+            )}
           </div>
         </button>
         <div className="flex shrink-0 items-center gap-[18px]">
           <SchedulingTypeExtras appointmentType={appointmentType} onChange={onChange} />
-          <label className="grid justify-items-center gap-1 text-[10.5px] font-bold uppercase tracking-[0.08em] text-muted-foreground">
-            Self-book
-            <Toggle
-              checked={appointmentType.self_bookable && selfBookOn}
-              onChange={(v) => selfBookOn && onChange({ self_bookable: v })}
-              disabled={!selfBookOn}
-              label={`${appointmentType.name} self-book`}
-            />
-          </label>
+          {showSelfBook && (
+            <label className="grid justify-items-center gap-1 text-[10.5px] font-bold uppercase tracking-[0.08em] text-muted-foreground">
+              Self-book
+              <Toggle
+                checked={appointmentType.self_bookable}
+                onChange={(v) => onChange({ self_bookable: v })}
+                label={`${appointmentType.name} self-book`}
+              />
+            </label>
+          )}
           <Button type="button" variant="ghost" size="icon-sm" onClick={onToggle} aria-label={open ? "Collapse" : "Expand"}>
             {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
           </Button>
@@ -258,7 +265,8 @@ export function AppointmentTypeRow({
             />
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
+          {showOffering && (
+          <div className="grid grid-cols-3 gap-3" data-testid="appointment-type-offering-fields">
             <label className="grid gap-1 text-[12.5px] font-semibold text-foreground">
               How much warning do you need?
               <Select
@@ -326,14 +334,19 @@ export function AppointmentTypeRow({
               </Select>
             </label>
           </div>
+          )}
 
           <div className="flex items-center justify-between gap-3">
             <span className="text-[12.5px] text-muted-foreground">
-              Which days count comes from{" "}
-              <Link href="/dashboard/settings/availability" className="underline">
-                Availability
-              </Link>
-              . This never overrides it.
+              {showOffering && (
+                <>
+                  Which days count comes from{" "}
+                  <Link href="/dashboard/settings/availability" className="underline">
+                    Availability
+                  </Link>
+                  . This never overrides it.
+                </>
+              )}
             </span>
             <Button type="button" variant="destructive" size="sm" onClick={onDelete}>
               Delete type

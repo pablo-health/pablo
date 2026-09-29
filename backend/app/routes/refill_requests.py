@@ -29,9 +29,11 @@ decision route is the only thing that moves it.
 answered — including by a colleague a moment earlier — is a 409, and the
 first answer stands.
 
-**Nothing is sent anywhere.** The engine records that the prescriber sent
-the prescription, asked for a visit, or declined; it transmits nothing to a
-pharmacy.
+**Nothing is sent to a pharmacy.** The engine records that the prescriber
+sent the prescription, asked for a visit, or declined; it transmits nothing.
+What a decision may send is a portal notice telling the patient their
+request was answered: a name and a link, never the medication or the
+decision (see :mod:`app.portal.notices`).
 
 **Audit follows who is acting**, as on secure messaging: a patient reading
 their own requests is not a disclosure; asking is recorded, and so is every
@@ -46,7 +48,7 @@ deployment may configure them; the default is none. See
 from __future__ import annotations
 
 import uuid
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request, status
 
@@ -67,6 +69,8 @@ from ..models.refill_request_api import (
     RefillRequestList,
     RefillRequestResponse,
 )
+from ..portal.factory import get_notice_delivery
+from ..portal.notices import send_portal_notice
 from ..rate_limit import get_refill_request_limiter
 from ..repositories import RefillRequestRepository
 from ..repositories import get_refill_request_repository as _repo_factory
@@ -82,6 +86,11 @@ from ..services.refill_request_hooks import (
     dispatch_refill_request_event,
 )
 from ..utcnow import utc_now
+from .patient_intake_assignments import get_clinician_patient_repository
+
+if TYPE_CHECKING:
+    from ..portal.delivery import PortalNoticeDelivery
+    from ..repositories.patient import PatientRepository
 
 patient_refills_router = APIRouter(prefix="/api/patient/refills", tags=["refill-requests"])
 refill_requests_router = APIRouter(prefix="/api/refill-requests", tags=["refill-requests"])
@@ -89,6 +98,10 @@ refill_requests_router = APIRouter(prefix="/api/refill-requests", tags=["refill-
 CurrentPatient = Annotated[PatientContext, Depends(get_patient_context)]
 
 ALREADY_DECIDED_MESSAGE = "This request was already answered."
+
+#: The notice a decision sends. A name and a link; see
+#: :mod:`app.portal.notices` for why it can be nothing more.
+DECIDED_NOTICE = "refill_request_decided"
 
 
 def get_refill_request_repository() -> RefillRequestRepository:
@@ -297,9 +310,18 @@ def decide_refill_request(
     user: User = Depends(require_baa_acceptance),
     ctx: TenantContext = Depends(get_tenant_context),
     repo: RefillRequestRepository = Depends(get_clinician_refill_request_repository),
+    patients: PatientRepository = Depends(get_clinician_patient_repository),
+    notices: PortalNoticeDelivery = Depends(get_notice_delivery),
     audit: AuditService = Depends(get_audit_service),
 ) -> RefillRequestResponse:
-    """Record the prescriber's answer. Once."""
+    """Record the prescriber's answer. Once.
+
+    On success the patient is told their request was answered, if the
+    deployment has wired a channel and the chart has an address. The message
+    is the notice's name and a link to the practice's portal page, where the
+    status is read after sign-in. Best effort by design: the decision is
+    already recorded, and a mail server being down is not a reason to lose it.
+    """
     try:
         decided = repo.decide(
             request_id,
@@ -326,5 +348,12 @@ def decide_refill_request(
         kind="decided",
         practice_schema=ctx.practice_schema,
         request=decided,
+    )
+    patient = patients.get(decided.patient_id, user.id)
+    send_portal_notice(
+        notices,
+        notice=DECIDED_NOTICE,
+        to_email=patient.email if patient is not None else None,
+        from_clinician_email=user.email,
     )
     return RefillRequestResponse.from_request(decided)
