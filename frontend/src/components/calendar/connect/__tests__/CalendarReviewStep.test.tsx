@@ -192,18 +192,18 @@ describe("CalendarReviewStep", () => {
     expect(onConfirm).toHaveBeenCalledOnce()
   })
 
-  it("shows the exact footer copy naming the miss case, and the kept-nothing sentence appears once", () => {
+  it("shows the exact footer copy naming the miss case, and claims nothing about what is kept", () => {
     const list = [series({ candidate_key: "a" })]
     const { container } = render(<CalendarReviewStep {...baseProps()} proposal={proposal(list)} />)
 
     expect(
       screen.getByText(
-        "Pablo read your calendar once and kept nothing. If a client isn't in this list - someone you see monthly, or on a changing schedule - add them once you're in. It takes a minute."
+        "If a client isn't in this list - someone you see monthly, or on a changing schedule - add them once you're in. It takes a minute."
       )
     ).toBeInTheDocument()
 
-    const occurrences = (container.textContent ?? "").split("kept nothing").length - 1
-    expect(occurrences).toBe(1)
+    // Pablo keeps the therapist's answers now, so "kept nothing" would be untrue.
+    expect(container.textContent ?? "").not.toMatch(/kept nothing/i)
   })
 
   it("never claims a category the heuristic can't verify", () => {

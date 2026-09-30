@@ -276,7 +276,7 @@ export function CalendarReviewStep({
 
       <p className="border-t border-border pt-3 text-xs text-muted-foreground">
         {
-          "Pablo read your calendar once and kept nothing. If a client isn't in this list - someone you see monthly, or on a changing schedule - add them once you're in. It takes a minute."
+          "If a client isn't in this list - someone you see monthly, or on a changing schedule - add them once you're in. It takes a minute."
         }
       </p>
 
