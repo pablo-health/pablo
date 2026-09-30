@@ -6,7 +6,12 @@ import { ArrowLeft, Calendar, Check, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { SetupStepHead } from "@/components/setup"
-import type { ConfirmImportResult, ImportProposal, ProposedSeries } from "@/lib/api/scheduling"
+import type {
+  ConfirmImportResult,
+  ImportPatientChoice,
+  ImportProposal,
+  ProposedSeries,
+} from "@/lib/api/scheduling"
 
 const VISIBLE_ROWS = 5
 
@@ -38,10 +43,60 @@ function whenLabel(series: ProposedSeries): string {
   return `${day} · ${timeLabel(series.local_start_time)}`
 }
 
+const NEW_CLIENT = "new"
+
+function choiceLabel(choice: ImportPatientChoice): string {
+  if (!choice.date_of_birth) return choice.display_name
+  const [year, month, day] = choice.date_of_birth.split("-")
+  return `${choice.display_name}, born ${Number(month)}/${Number(day)}/${year}`
+}
+
+/** Which client a series is: named when certain, a small choice when a few
+ * clients could be it, and a new client otherwise. */
+function ClientChoice({
+  series,
+  patientId,
+  onChoose,
+}: {
+  series: ProposedSeries
+  patientId: string | null
+  onChoose: (patientId: string | null) => void
+}) {
+  const { patient, possible } = series.match
+  if (patient) {
+    return (
+      <span className="block text-xs text-secondary-700">Matches {patient.display_name}</span>
+    )
+  }
+  if (possible.length === 0) {
+    return <span className="block text-xs text-muted-foreground">New client</span>
+  }
+  return (
+    <select
+      aria-label={`Which client is ${series.summary}?`}
+      value={patientId ?? NEW_CLIENT}
+      onChange={(event) =>
+        onChoose(event.target.value === NEW_CLIENT ? null : event.target.value)
+      }
+      className="mt-1 rounded-md border border-border bg-card px-1.5 py-0.5 text-xs text-neutral-900"
+    >
+      {possible.map((choice) => (
+        <option key={choice.patient_id} value={choice.patient_id}>
+          {choiceLabel(choice)}
+        </option>
+      ))}
+      <option value={NEW_CLIENT}>New client</option>
+    </select>
+  )
+}
+
 interface CalendarReviewStepProps {
   proposal: ImportProposal | null
   checked: Record<string, boolean>
   onToggle: (candidateKey: string) => void
+  /** The existing client each series is; null for a new client. */
+  clientFor: Record<string, string | null>
+  onChooseClient: (candidateKey: string, patientId: string | null) => void
   expanded: boolean
   onToggleExpanded: () => void
   onBack: () => void
@@ -57,6 +112,8 @@ export function CalendarReviewStep({
   proposal,
   checked,
   onToggle,
+  clientFor,
+  onChooseClient,
   expanded,
   onToggleExpanded,
   onBack,
@@ -80,9 +137,8 @@ export function CalendarReviewStep({
         </p>
         {result.skipped.length > 0 ? (
           <p className="mx-auto max-w-md text-sm text-amber-700">
-            {result.skipped.length} chart{result.skipped.length === 1 ? "" : "s"} were created,
-            but couldn&rsquo;t be scheduled — the times collided with something already booked.
-            You can schedule them yourself from their chart.
+            {result.skipped.length} couldn&rsquo;t be scheduled — the times collided with
+            something already booked. You can schedule them yourself from their chart.
           </p>
         ) : null}
         <Button onClick={onFinish} className="mt-2">
@@ -124,25 +180,35 @@ export function CalendarReviewStep({
 
       <div className="flex flex-col">
         {visible.map((series) => (
-          <label
+          // A div, not a label: the client choice sits in the row, and a
+          // label would turn every click on it into a tick or an untick.
+          <div
             key={series.candidate_key}
-            className="grid cursor-pointer grid-cols-[20px_1fr_auto] items-center gap-3 border-b border-border py-2.5 last:border-b-0"
+            className="grid grid-cols-[20px_1fr_auto] items-center gap-3 border-b border-border py-2.5 last:border-b-0"
           >
             <Checkbox
+              id={`series-${series.candidate_key}`}
               checked={checked[series.candidate_key] ?? false}
               onCheckedChange={() => onToggle(series.candidate_key)}
               aria-label={series.summary}
             />
             <span>
-              <span className="block text-sm font-medium text-neutral-900">{series.summary}</span>
-              <span className="block text-xs tabular-nums text-muted-foreground">
-                {whenLabel(series)} · {cadenceLabel(series.cadence)}
-              </span>
+              <label htmlFor={`series-${series.candidate_key}`} className="block cursor-pointer">
+                <span className="block text-sm font-medium text-neutral-900">{series.summary}</span>
+                <span className="block text-xs tabular-nums text-muted-foreground">
+                  {whenLabel(series)} · {cadenceLabel(series.cadence)}
+                </span>
+              </label>
+              <ClientChoice
+                series={series}
+                patientId={clientFor[series.candidate_key] ?? null}
+                onChoose={(patientId) => onChooseClient(series.candidate_key, patientId)}
+              />
             </span>
             <span className="whitespace-nowrap text-xs tabular-nums text-muted-foreground">
               {series.occurrences_ahead} ahead
             </span>
-          </label>
+          </div>
         ))}
       </div>
 

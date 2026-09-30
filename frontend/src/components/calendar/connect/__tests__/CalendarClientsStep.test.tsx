@@ -27,6 +27,8 @@ function series(overrides: Partial<ProposedSeries> = {}): ProposedSeries {
     status: "active",
     confidence: 0.9,
     preselected: true,
+    source_identifier: "series:rec-1",
+    match: { patient: null, possible: [] },
     ...overrides,
   }
 }

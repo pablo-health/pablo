@@ -141,6 +141,8 @@ function proposalWith(overrides: Partial<ImportProposal> = {}): ImportProposal {
         status: "active",
         confidence: 0.9,
         preselected: true,
+        source_identifier: "series:rec-a",
+        match: { patient: null, possible: [] },
       },
       {
         candidate_key: "b",
@@ -157,6 +159,8 @@ function proposalWith(overrides: Partial<ImportProposal> = {}): ImportProposal {
         status: "active",
         confidence: 0.4,
         preselected: false,
+        source_identifier: "series:rec-b",
+        match: { patient: null, possible: [] },
       },
     ],
     left_alone: 3,
@@ -339,6 +343,70 @@ describe("CalendarSetupWizard", () => {
     const [series] = confirmImport.mock.calls[0] as unknown as [Array<{ candidate_key: string }>]
     expect(series.map((item) => item.candidate_key)).toEqual(["a"])
     expect(await screen.findByText(/1 client added/i)).toBeInTheDocument()
+  })
+
+  it("confirms each series onto the client it matched, or as a new client", async () => {
+    getStatus.mockResolvedValue(CONNECTED)
+    const base = proposalWith()
+    scanForImport.mockResolvedValue({
+      ...base,
+      series: [
+        {
+          ...base.series[0],
+          match: {
+            patient: { patient_id: "p-1", display_name: "Jane Miller", date_of_birth: null },
+            possible: [],
+          },
+        },
+        {
+          ...base.series[1],
+          summary: "Sam Lee",
+          preselected: true,
+          match: {
+            patient: null,
+            possible: [
+              { patient_id: "p-7", display_name: "Sam Lee", date_of_birth: "1990-03-14" },
+              { patient_id: "p-8", display_name: "Sam Lee", date_of_birth: null },
+            ],
+          },
+        },
+      ],
+    })
+    confirmImport.mockResolvedValue({
+      confirmed: [],
+      patients_created: 0,
+      appointments_created: 0,
+      skipped: [],
+    })
+    const user = userEvent.setup()
+    renderWizard()
+    await goToClientsStep(user)
+
+    await user.click(screen.getByRole("button", { name: "Look at my week" }))
+    await screen.findByTestId("qualifying-count")
+    await user.click(screen.getByRole("button", { name: /continue/i }))
+    await screen.findByText("Matches Jane Miller")
+
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Which client is Sam Lee?" }),
+      "p-7"
+    )
+    await user.click(screen.getByRole("button", { name: /add 2 clients/i }))
+
+    await waitFor(() => expect(confirmImport).toHaveBeenCalled())
+    const [series] = confirmImport.mock.calls[0] as unknown as [
+      Array<{ candidate_key: string; patient_id: string | null; source_identifier: string }>,
+    ]
+    expect(
+      series.map(({ candidate_key, patient_id, source_identifier }) => ({
+        candidate_key,
+        patient_id,
+        source_identifier,
+      }))
+    ).toEqual([
+      { candidate_key: "a", patient_id: "p-1", source_identifier: "series:rec-a" },
+      { candidate_key: "b", patient_id: "p-7", source_identifier: "series:rec-b" },
+    ])
   })
 
   it("asks for incremental import consent before it can scan", async () => {

@@ -350,9 +350,26 @@ export async function completeGoogleCalendarImportConsent(
 // on screen for the therapist to read — never logged, matched, or sent
 // anywhere else.
 
+/** An existing client a proposed series may be. */
+export interface ImportPatientChoice {
+  patient_id: string
+  display_name: string
+  /** ISO date, when the chart has one — tells two same-named clients apart. */
+  date_of_birth: string | null
+}
+
+/** Which existing client a series is: certain, one of a few, or nobody. */
+export interface SeriesMatch {
+  patient: ImportPatientChoice | null
+  possible: ImportPatientChoice[]
+}
+
 export interface ProposedSeries {
   candidate_key: string
   summary: string
+  /** How a confirmed series is remembered — hand it back on confirm. */
+  source_identifier: string
+  match: SeriesMatch
   /** Monday is 0, matching Python's weekday(). */
   weekday: number
   /** HH:MM in the calendar's own timezone. */
@@ -408,6 +425,9 @@ export async function scanCalendarForImport(
 export interface ConfirmImportSeriesInput {
   candidate_key: string
   display_name: string
+  /** An existing client this series belongs to; null creates a new one. */
+  patient_id: string | null
+  source_identifier: string
   /** First occurrence to create — must be in the future. */
   start_at: string
   duration_minutes: number
@@ -426,8 +446,8 @@ export interface ConfirmImportResult {
   confirmed: ConfirmedSeries[]
   patients_created: number
   appointments_created: number
-  /** Candidate keys whose chart was created but whose recurring series
-   * collided with something already booked. Keys only, never titles. */
+  /** Candidate keys whose recurring series collided with something
+   * already booked. Keys only, never titles. */
   skipped: string[]
 }
 

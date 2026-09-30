@@ -195,7 +195,7 @@ def test_delete_clinical_rows_purges_chat_and_documents_and_patient() -> None:
         "DELETE FROM appointments",
         "DELETE FROM notes",
         "DELETE FROM therapy_sessions",
-        "DELETE FROM ical_client_mappings",
+        "DELETE FROM patient_source_mappings",
         "DELETE FROM chat_messages",
         "DELETE FROM chat_conversations",
         "DELETE FROM patients",

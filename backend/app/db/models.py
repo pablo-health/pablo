@@ -2169,13 +2169,15 @@ class TelehealthConnectionRow(Base):
     last_error: Mapped[str | None] = mapped_column(Text)
 
 
-class ICalClientMappingRow(Base):
-    __tablename__ = "ical_client_mappings"
+class PatientSourceMappingRow(Base):
+    """Which patient an outside source's identifier means, once the clinician said so."""
+
+    __tablename__ = "patient_source_mappings"
 
     doc_id: Mapped[str] = mapped_column(String(500), primary_key=True)
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
-    ehr_system: Mapped[str] = mapped_column(String(50), nullable=False)
-    client_identifier: Mapped[str] = mapped_column(String(255), nullable=False)
+    source: Mapped[str] = mapped_column(String(50), nullable=False)
+    source_identifier: Mapped[str] = mapped_column(String(255), nullable=False)
     patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

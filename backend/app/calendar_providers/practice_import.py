@@ -110,6 +110,9 @@ class ProposedSeries:
 
     preselected: bool
 
+    series_id: str | None = None
+    """The provider's own id for the recurring series, when it had one."""
+
 
 @dataclass(frozen=True)
 class ImportProposal:
@@ -327,6 +330,7 @@ def build_proposal(
                 # well it scores: the score says "shaped like a client hour",
                 # not "still seeing this person".
                 preselected=status is SeriesStatus.ACTIVE and confidence >= preselect_above,
+                series_id=group.series_id,
             )
         )
         accounted += len(ordered)

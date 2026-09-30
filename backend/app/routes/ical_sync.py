@@ -33,13 +33,13 @@ from ..repositories import (
     get_appointment_repository as _appt_repo_factory,
 )
 from ..repositories import (
-    get_ical_client_mapping_repository as _mapping_repo_factory,
-)
-from ..repositories import (
     get_ical_sync_config_repository as _config_repo_factory,
 )
 from ..repositories import (
     get_patient_repository as _patient_repo_factory,
+)
+from ..repositories import (
+    get_patient_source_mapping_repository as _mapping_repo_factory,
 )
 from ..services import AuditService, get_audit_service
 from ..services.ical_sync_service import ICalSyncService

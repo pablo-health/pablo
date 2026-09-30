@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -619,6 +619,26 @@ class GoogleCalendarConsentOptionsResponse(BaseModel):
 # --- Calendar practice-import models ---
 
 
+class ImportPatientChoice(BaseModel):
+    """An existing patient a series may belong to."""
+
+    patient_id: str
+    display_name: str
+    date_of_birth: date | None = None
+
+
+class SeriesMatchResponse(BaseModel):
+    """Which existing patient a proposed series is, as far as Pablo can tell.
+
+    ``patient`` is set only when the match is certain. Otherwise
+    ``possible`` lists the patients it could be, for the therapist to choose
+    between; both empty means nobody matched and the series is a new client.
+    """
+
+    patient: ImportPatientChoice | None = None
+    possible: list[ImportPatientChoice] = Field(default_factory=list)
+
+
 class ProposedSeriesResponse(BaseModel):
     """One candidate client series a scan found.
 
@@ -628,6 +648,10 @@ class ProposedSeriesResponse(BaseModel):
 
     candidate_key: str
     summary: str
+    source_identifier: str = Field(
+        description="How a confirmed series is remembered. Hand it back on confirm"
+    )
+    match: SeriesMatchResponse
     weekday: int = Field(description="Monday is 0, matching Python's weekday()")
     local_start_time: str = Field(description="HH:MM in the calendar's timezone")
     duration_minutes: int
@@ -681,6 +705,14 @@ class ConfirmImportSeries(BaseModel):
 
     candidate_key: str = Field(min_length=1, max_length=64)
     display_name: str = Field(min_length=1, max_length=255)
+    patient_id: str | None = Field(
+        default=None, description="An existing patient this series belongs to; none creates one"
+    )
+    source_identifier: str | None = Field(
+        default=None,
+        max_length=255,
+        description="The scan's source_identifier for this series",
+    )
     start_at: datetime = Field(description="First occurrence to create — must be in the future")
     duration_minutes: int = Field(ge=5, le=480)
     cadence: str = Field(description="weekly, biweekly, or monthly")
@@ -711,9 +743,8 @@ class ConfirmImportResponse(BaseModel):
     skipped: list[str] = Field(
         default_factory=list,
         description=(
-            "Candidate keys whose chart was created but whose recurring series "
-            "was not — a collision with something already booked. Keys only, "
-            "never titles."
+            "Candidate keys whose recurring series could not be created — a "
+            "collision with something already booked. Keys only, never titles."
         ),
     )
 

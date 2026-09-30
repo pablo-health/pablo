@@ -28,15 +28,15 @@ from urllib.request import Request, urlopen
 from icalendar import Calendar
 
 from ..models.enums import EhrSystem
-from ..repositories.ical_client_mapping import ICalClientMapping, ICalClientMappingRepository
+from ..patients.matching import MatchContext, PatientHint, match_patient, remember_match
 from ..repositories.ical_sync_config import ICalSyncConfig, ICalSyncConfigRepository
 from ..scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from ..utcnow import utc_now
 from .token_encryption import decrypt_tokens, encrypt_tokens
 
 if TYPE_CHECKING:
-    from ..models.patient import Patient
     from ..repositories.patient import PatientRepository
+    from ..repositories.patient_source_mapping import PatientSourceMappingRepository
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
 
 logger = logging.getLogger(__name__)
@@ -117,7 +117,7 @@ class ICalSyncService:
         config_repo: ICalSyncConfigRepository,
         appointment_repo: AppointmentRepository,
         patient_repo: PatientRepository,
-        mapping_repo: ICalClientMappingRepository,
+        mapping_repo: PatientSourceMappingRepository,
     ) -> None:
         self._config_repo = config_repo
         self._appt_repo = appointment_repo
@@ -189,13 +189,7 @@ class ICalSyncService:
         patient_id: str,
     ) -> None:
         """Manually map a client identifier to a patient and update appointments."""
-        mapping = ICalClientMapping(
-            user_id=user_id,
-            ehr_system=ehr_system,
-            client_identifier=client_identifier,
-            patient_id=patient_id,
-        )
-        self._mapping_repo.save(mapping)
+        remember_match(ehr_system, client_identifier, patient_id, self._match_context(user_id))
 
         # Update existing appointments with this identifier — collect the
         # matches and link them in a single UPDATE rather than one per row.
@@ -226,6 +220,7 @@ class ICalSyncService:
 
         all_patients, _ = self._patient_repo.list_by_user(user_id, page=1, page_size=10000)
         existing_by_name = {(p.first_name.lower(), p.last_name.lower()): p for p in all_patients}
+        ctx = self._match_context(user_id)
 
         for row_num, row in enumerate(reader, start=1):
             first_name = row.get("First Name", "").strip()
@@ -253,13 +248,7 @@ class ICalSyncService:
                 patient = existing_by_name.get(key)
                 patient_id = patient.id if patient else None
                 if patient_id:
-                    mapping = ICalClientMapping(
-                        user_id=user_id,
-                        ehr_system=ehr_system,
-                        client_identifier=sh_code,
-                        patient_id=patient_id,
-                    )
-                    self._mapping_repo.save(mapping)
+                    remember_match(ehr_system, sh_code, patient_id, ctx)
                     result.mappings_created += 1
 
         return result
@@ -277,12 +266,8 @@ class ICalSyncService:
         existing_appts = self._appt_repo.list_by_ical_source(user_id, config.ehr_system)
         existing_by_uid = {a.ical_uid: a for a in existing_appts if a.ical_uid}
 
-        # Load mappings and patients for client matching
-        mappings = {
-            m.client_identifier: m.patient_id
-            for m in self._mapping_repo.list_by_source(user_id, config.ehr_system)
-        }
-        all_patients, _ = self._patient_repo.list_by_user(user_id, page=1, page_size=10000)
+        # Patients and remembered identifiers load once for the whole feed
+        ctx = self._match_context(user_id)
 
         result = SyncResult()
 
@@ -295,9 +280,7 @@ class ICalSyncService:
                 # Re-attempt matching for previously unmatched appointments
                 if not existing.patient_id:
                     client_id = self._extract_client_identifier(config.ehr_system, event.summary)
-                    patient_id = self._match_patient(
-                        config.ehr_system, client_id, mappings, all_patients
-                    )
+                    patient_id = self._match_patient(config.ehr_system, client_id, ctx)
                     if patient_id:
                         existing.patient_id = patient_id
                         existing.notes = f"ical_client:{client_id}"
@@ -311,9 +294,7 @@ class ICalSyncService:
                     result.unchanged += 1
             else:
                 client_id = self._extract_client_identifier(config.ehr_system, event.summary)
-                patient_id = self._match_patient(
-                    config.ehr_system, client_id, mappings, all_patients
-                )
+                patient_id = self._match_patient(config.ehr_system, client_id, ctx)
                 appt = self._create_appointment(user_id, config.ehr_system, event, patient_id)
                 # Store identifier in notes for later resolution
                 if client_id:
@@ -428,64 +409,12 @@ class ICalSyncService:
             return notes[len("ical_client:") :]
         return ""
 
-    def _match_patient(
-        self,
-        ehr_system: str,
-        client_identifier: str,
-        mappings: dict[str, str],
-        patients: list[Patient],
-    ) -> str:
-        """Attempt to match a client identifier to a Pablo patient ID."""
-        # Check saved mappings first
-        if client_identifier in mappings:
-            return mappings[client_identifier]
+    def _match_context(self, user_id: str) -> MatchContext:
+        return MatchContext.for_clinician(user_id, self._patient_repo, self._mapping_repo)
 
-        # SimplePractice: try matching by initials or full name
-        if ehr_system == EhrSystem.SIMPLEPRACTICE:
-            return self._match_sp_patient(client_identifier, patients)
-
-        # Sessions Health: try matching by full name (when calendar uses names, not SH codes)
-        if ehr_system == EhrSystem.SESSIONS_HEALTH:
-            return self._match_by_full_name(client_identifier, patients)
-
-        return ""
-
-    def _match_sp_patient(self, identifier: str, patients: list[Patient]) -> str:
-        """Match a SimplePractice identifier to a patient."""
-        # Initials format: "J.A."
-        m = _SP_INITIALS_RE.match(identifier + " Appointment")
-        if m:
-            first_initial = m.group(1).upper()
-            last_initial = m.group(2).upper()
-            matches = [
-                p
-                for p in patients
-                if p.first_name
-                and p.last_name
-                and p.first_name[0].upper() == first_initial
-                and p.last_name[0].upper() == last_initial
-            ]
-            if len(matches) == 1:
-                return matches[0].id
-            return ""
-
-        # Full name format: "Jane Adams"
-        return self._match_by_full_name(identifier, patients)
-
-    def _match_by_full_name(self, identifier: str, patients: list[Patient]) -> str:
-        """Match a full name identifier to a patient. Only matches if exactly one patient found."""
-        _min_name_parts = 2
-        parts = identifier.split()
-        if len(parts) >= _min_name_parts:
-            first = parts[0].lower()
-            last = parts[-1].lower()
-            matches = [
-                p for p in patients if p.first_name_lower == first and p.last_name_lower == last
-            ]
-            if len(matches) == 1:
-                return matches[0].id
-
-        return ""
+    def _match_patient(self, ehr_system: str, client_identifier: str, ctx: MatchContext) -> str:
+        """Match a client identifier to a Pablo patient ID, or ``""``."""
+        return match_patient(_hint(ehr_system, client_identifier), ctx).patient_id or ""
 
     def _derive_appointment_url(
         self, ehr_system: str, uid: str, event_url: str | None
@@ -665,15 +594,20 @@ class ICalSyncService:
             updated_at=now,
         )
 
-    @staticmethod
-    def _find_patient_by_name(
-        patients: list[Patient], first_name: str, last_name: str
-    ) -> str | None:
-        """Find a patient by first and last name."""
-        for p in patients:
-            if (
-                p.first_name.lower() == first_name.lower()
-                and p.last_name.lower() == last_name.lower()
-            ):
-                return p.id
-        return None
+
+def _hint(ehr_system: str, client_identifier: str) -> PatientHint:
+    """What a feed's client identifier says about the client.
+
+    A remembered answer for the identifier always counts. Beyond that,
+    SimplePractice writes either initials or a full name; Sessions Health
+    writes a client code, or a full name when the calendar is set to show
+    names. Other sources match on a remembered answer only.
+    """
+    hint = PatientHint(source=ehr_system, source_identifier=client_identifier)
+    if ehr_system == EhrSystem.SIMPLEPRACTICE:
+        if _SP_INITIALS_RE.match(client_identifier + " Appointment"):
+            return hint.model_copy(update={"initials": client_identifier})
+        return hint.model_copy(update={"full_name": client_identifier})
+    if ehr_system == EhrSystem.SESSIONS_HEALTH:
+        return hint.model_copy(update={"full_name": client_identifier})
+    return hint

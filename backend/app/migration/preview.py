@@ -24,11 +24,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..patients.matching import Candidate, MatchContext, PatientHint, match_patient
 from .attribution import ArchiveAttribution, attribute_archive
 
 if TYPE_CHECKING:
-    from datetime import date
-
     from .ledger import LedgerEntry
     from .readers.simplepractice import ContactCard, SimplePracticeArchive
 
@@ -63,15 +62,8 @@ STORED_UPLOAD_TYPES: dict[str, str] = {
 }
 
 
-@dataclass(frozen=True)
-class ExistingPatient:
-    """The little the preview needs to know about a patient already here."""
-
-    id: str
-    first_name: str
-    last_name: str
-    date_of_birth: date | None
-    email: str | None
+#: The little the preview needs to know about a patient already here.
+ExistingPatient = Candidate
 
 
 @dataclass(frozen=True)
@@ -119,24 +111,20 @@ def _delta_state(
 
 
 def _match_existing(
-    card: ContactCard, existing: list[ExistingPatient]
+    card: ContactCard, ctx: MatchContext
 ) -> tuple[str | None, str | None, list[str]]:
-    """(patient id when certain, evidence, possible-duplicate ids)."""
-    same_name = [
-        p
-        for p in existing
-        if p.first_name.strip().lower() == card.given_name.strip().lower()
-        and p.last_name.strip().lower() == card.family_name.strip().lower()
-    ]
-    if card.birthday is not None:
-        by_dob = [p for p in same_name if p.date_of_birth == card.birthday]
-        if len(by_dob) == 1:
-            return by_dob[0].id, "name_and_dob", []
-    if card.email:
-        by_email = [p for p in existing if p.email and p.email.lower() == card.email.lower()]
-        if len(by_email) == 1:
-            return by_email[0].id, "email", []
-    return None, None, [p.id for p in same_name]
+    """(patient id when certain, evidence, possible-duplicate ids).
+
+    A name alone never merges a client into an existing chart here: a
+    same-named patient is put to the practice as a possible duplicate.
+    """
+    hint = PatientHint(
+        full_name=f"{card.given_name} {card.family_name}",
+        email=card.email,
+        date_of_birth=card.birthday,
+    )
+    result = match_patient(hint, ctx, name_alone_is_enough=False)
+    return result.patient_id, result.evidence, result.possible_ids
 
 
 class _Builder:
@@ -196,10 +184,11 @@ class _Builder:
     def clients_section(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         clients: list[dict[str, Any]] = []
         duplicates: list[dict[str, Any]] = []
+        existing = MatchContext.over(self.inputs.existing_patients)
         for card in self.att.clients:
             entry = self.inputs.ledger.get(("contact", card.source_id))
             state = _delta_state(entry, card.digest, self.inputs.edited_targets)
-            matched_id, evidence, possible = _match_existing(card, self.inputs.existing_patients)
+            matched_id, evidence, possible = _match_existing(card, existing)
             if entry is not None and entry.state != "undone":
                 matched_id, evidence, possible = entry.target_id, "ledger", []
             address = card.address

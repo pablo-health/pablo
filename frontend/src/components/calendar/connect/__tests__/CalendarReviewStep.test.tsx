@@ -22,6 +22,8 @@ function series(overrides: Partial<ProposedSeries> = {}): ProposedSeries {
     status: "active",
     confidence: 0.9,
     preselected: true,
+    source_identifier: "series:rec-1",
+    match: { patient: null, possible: [] },
     ...overrides,
   }
 }
@@ -42,6 +44,8 @@ function baseProps() {
   return {
     checked: {},
     onToggle: vi.fn(),
+    clientFor: {} as Record<string, string | null>,
+    onChooseClient: vi.fn(),
     expanded: false,
     onToggleExpanded: vi.fn(),
     onBack: vi.fn(),
@@ -207,6 +211,75 @@ describe("CalendarReviewStep", () => {
     const text = container.textContent ?? ""
     expect(text).not.toMatch(/your clients/i)
     expect(text).not.toMatch(/personal/i)
+  })
+
+  describe("which client each series is", () => {
+    const jane = { patient_id: "p-1", display_name: "Jane Adams", date_of_birth: "1980-01-02" }
+    const otherJane = { patient_id: "p-2", display_name: "Jane Adams", date_of_birth: null }
+
+    function rows() {
+      return [
+        series({
+          candidate_key: "certain",
+          summary: "Jane A weekly",
+          match: { patient: { ...jane }, possible: [] },
+        }),
+        series({
+          candidate_key: "possible",
+          summary: "Jane Adams",
+          match: { patient: null, possible: [jane, otherJane] },
+        }),
+        series({ candidate_key: "none", summary: "Robin Tran" }),
+      ]
+    }
+
+    it("names a certain match, offers a choice for a possible one, and a new client otherwise", () => {
+      render(
+        <CalendarReviewStep
+          {...baseProps()}
+          proposal={proposal(rows())}
+          clientFor={{ certain: "p-1", possible: null, none: null }}
+        />
+      )
+
+      expect(screen.getByText("Matches Jane Adams")).toBeInTheDocument()
+
+      const choice = screen.getByRole("combobox", { name: "Which client is Jane Adams?" })
+      expect(choice).toHaveValue("new")
+      expect(
+        Array.from((choice as HTMLSelectElement).options).map((option) => option.text)
+      ).toEqual(["Jane Adams, born 1/2/1980", "Jane Adams", "New client"])
+
+      expect(screen.getByText("New client", { selector: "span" })).toBeInTheDocument()
+      expect(screen.getAllByRole("combobox")).toHaveLength(1)
+    })
+
+    it("reports the client picked for a possible match, and New client as none", async () => {
+      const user = userEvent.setup()
+      const onChooseClient = vi.fn()
+      const onToggle = vi.fn()
+      render(
+        <CalendarReviewStep
+          {...baseProps()}
+          onToggle={onToggle}
+          onChooseClient={onChooseClient}
+          proposal={proposal(rows())}
+          clientFor={{ certain: "p-1", possible: "p-2", none: null }}
+        />
+      )
+
+      const choice = screen.getByRole("combobox", { name: "Which client is Jane Adams?" })
+      expect(choice).toHaveValue("p-2")
+      await user.selectOptions(choice, "p-1")
+      await user.selectOptions(choice, "new")
+
+      expect(onChooseClient.mock.calls).toEqual([
+        ["possible", "p-1"],
+        ["possible", null],
+      ])
+      // Choosing a client is not ticking or unticking the row.
+      expect(onToggle).not.toHaveBeenCalled()
+    })
   })
 
   it("after confirming, names what was imported and that read access ended", () => {

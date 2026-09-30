@@ -201,6 +201,8 @@ export function CalendarSetupWizard({
 
   // Step 4 — which proposed series to keep.
   const [checked, setChecked] = useState<Record<string, boolean>>({})
+  // Which existing client each series is; null means a new client.
+  const [clientFor, setClientFor] = useState<Record<string, string | null>>({})
   const [expanded, setExpanded] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [confirmError, setConfirmError] = useState<string | null>(null)
@@ -251,6 +253,16 @@ export function CalendarSetupWizard({
     if (!proposal) return
     setChecked(
       Object.fromEntries(proposal.series.map((series) => [series.candidate_key, series.preselected]))
+    )
+    // A certain match is that client; anything less starts as a new client
+    // until the therapist picks one of the possible names.
+    setClientFor(
+      Object.fromEntries(
+        proposal.series.map((series) => [
+          series.candidate_key,
+          series.match.patient?.patient_id ?? null,
+        ])
+      )
     )
   }, [proposal])
 
@@ -426,6 +438,10 @@ export function CalendarSetupWizard({
     setChecked((current) => ({ ...current, [candidateKey]: !current[candidateKey] }))
   }, [])
 
+  const handleChooseClient = useCallback((candidateKey: string, patientId: string | null) => {
+    setClientFor((current) => ({ ...current, [candidateKey]: patientId }))
+  }, [])
+
   const handleConfirm = useCallback(async () => {
     if (!proposal) return
     setConfirming(true)
@@ -436,6 +452,8 @@ export function CalendarSetupWizard({
         .map((item) => ({
           candidate_key: item.candidate_key,
           display_name: item.summary,
+          patient_id: clientFor[item.candidate_key] ?? null,
+          source_identifier: item.source_identifier,
           start_at: item.first_future_start ?? new Date().toISOString(),
           duration_minutes: item.duration_minutes,
           cadence: item.cadence,
@@ -449,7 +467,7 @@ export function CalendarSetupWizard({
     } finally {
       setConfirming(false)
     }
-  }, [proposal, checked])
+  }, [proposal, checked, clientFor])
 
   const titlingSettled = selection.event_titling !== "full" || attested
   const isLastStep = activeIndex === steps.length - 1
@@ -550,6 +568,8 @@ export function CalendarSetupWizard({
           proposal={proposal}
           checked={checked}
           onToggle={handleToggleSeries}
+          clientFor={clientFor}
+          onChooseClient={handleChooseClient}
           expanded={expanded}
           onToggleExpanded={() => setExpanded((value) => !value)}
           onBack={() => setActiveIndex(clientsIndex)}
