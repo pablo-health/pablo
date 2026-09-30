@@ -295,7 +295,7 @@ class _Practice:
             ICalSyncConfig(
                 user_id=user_id,
                 ehr_system=SH,
-                encrypted_feed_url=encrypt_tokens({"feed_url": "https://x.test/sh"}),
+                encrypted_feed_url=encrypt_tokens({"feed_url": "https://app.sessionshealth.com/calendars/sh"}),
                 connected_at=utc_now(),
             )
         ]
