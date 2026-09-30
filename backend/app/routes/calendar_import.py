@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
 
 from fastapi import APIRouter, Depends, Query, Request
 
@@ -53,6 +53,7 @@ from ..scheduling_engine.exceptions import (
     AppointmentConflictError,
     InvalidAppointmentError,
     InvalidRecurrenceError,
+    RuleViolationError,
 )
 from ..scheduling_engine.models.appointment import RecurrenceFrequency
 from ..scheduling_engine.services.scheduling import (  # noqa: TC001 — resolved at runtime
@@ -69,6 +70,7 @@ from .patients import get_patient_repository
 from .scheduling import (
     _is_valid_gcal_redirect_uri,
     get_google_calendar_service,
+    get_owner_timezone,
     get_scheduling_service,
 )
 
@@ -233,6 +235,7 @@ def confirm_calendar_import(
     patient_repo: PatientRepository = Depends(get_patient_repository),
     scheduling: SchedulingService = Depends(get_scheduling_service),
     audit: AuditService = Depends(get_audit_service),
+    owner_tz: tzinfo = Depends(get_owner_timezone),
 ) -> ConfirmImportResponse:
     """Create patients and recurring appointments for the confirmed series.
 
@@ -284,8 +287,20 @@ def confirm_calendar_import(
                     "timezone": item.timezone,
                     "count": item.occurrences,
                 },
+                # Working hours and the other rules read in the owner's own
+                # zone, as a booking made anywhere else does. Left at the
+                # UTC default, a 2pm Eastern session checked as 18:00 and was
+                # refused as outside 9-5.
+                tz=owner_tz,
             )
-        except (AppointmentConflictError, InvalidAppointmentError, InvalidRecurrenceError):
+        except (
+            AppointmentConflictError,
+            InvalidAppointmentError,
+            InvalidRecurrenceError,
+            # A series outside the practice's hours or other booking rules is
+            # skipped like a clash, not a 500 that loses the whole import.
+            RuleViolationError,
+        ):
             # The chart stands even when its schedule doesn't: the therapist
             # books around whatever collided. Keys only — never the title.
             logger.warning("Could not create a recurring series during a calendar import")

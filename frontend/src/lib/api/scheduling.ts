@@ -394,10 +394,13 @@ export function importNeedsConsent(
 }
 
 export async function scanCalendarForImport(
-  redirectUri: string
+  redirectUri: string,
+  /** IANA zone the therapist's week is read in — without it the scan reads UTC. */
+  timeZone: string
 ): Promise<ImportProposal | ImportConsentRequired> {
   return post<ImportProposal | ImportConsentRequired>(
-    `/api/calendar/import/scan?redirect_uri=${encodeURIComponent(redirectUri)}`,
+    `/api/calendar/import/scan?redirect_uri=${encodeURIComponent(redirectUri)}` +
+      `&timezone=${encodeURIComponent(timeZone)}`,
     {}
   )
 }
