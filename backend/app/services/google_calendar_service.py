@@ -11,7 +11,9 @@ HIPAA Compliance:
 - OAuth tokens encrypted at rest with AES-256-GCM
 - No PHI (patient names, session details) included in log messages
 - Google Calendar events use generic titles by default
-- Pablo is source of truth for therapy appointments
+- Pablo is source of truth for therapy appointments; only the time and the
+  existence of a session Pablo pushed follow changes made in Google (see
+  ``google_calendar_follow``)
 """
 
 from __future__ import annotations
@@ -245,6 +247,8 @@ _PABLO_APPOINTMENT_KEY = "pablo_appointment_id"
 
 # Google answers a syncToken it no longer honours with 410 Gone.
 _HTTP_GONE = 410
+# And a calendar that no longer exists with 404.
+_HTTP_NOT_FOUND = 404
 _HTTP_FORBIDDEN = 403
 _HTTP_TOO_MANY_REQUESTS = 429
 
@@ -270,8 +274,8 @@ class _EventPage(NamedTuple):
     page_count: int
 
 
-def _is_expired_sync_token(exc: Exception) -> bool:
-    """Report whether an API error is Google's expired-syncToken 410.
+def _http_status(exc: Exception) -> int | None:
+    """The HTTP status behind a Google API error, if it carries one.
 
     Duck-typed rather than caught by class: googleapiclient is a lazy
     import here, and its HttpError exposes the status two different ways
@@ -280,7 +284,12 @@ def _is_expired_sync_token(exc: Exception) -> bool:
     status = getattr(getattr(exc, "resp", None), "status", None)
     if status is None:
         status = getattr(exc, "status_code", None)
-    return status == _HTTP_GONE
+    return status if isinstance(status, int) else None
+
+
+def _is_expired_sync_token(exc: Exception) -> bool:
+    """Report whether an API error is Google's expired-syncToken 410."""
+    return _http_status(exc) == _HTTP_GONE
 
 
 def _event_to_change(event: dict[str, Any]) -> dict[str, Any]:
@@ -296,6 +305,16 @@ def _event_to_change(event: dict[str, Any]) -> dict[str, Any]:
 
 class CalendarScopeNotGrantedError(Exception):
     """Google's answer is missing a permission this request asked for."""
+
+
+class CalendarGoneError(Exception):
+    """The calendar Pablo made on this account no longer exists.
+
+    Raised by an inbound sync rather than folded into an empty change list,
+    because the two mean opposite things: no changes leaves every session
+    where it is, while a vanished calendar means every event went at once
+    and nothing about any one session has been decided.
+    """
 
 
 def _exchange_code(flow: Any, code: str, requested_scopes: Sequence[str]) -> None:
@@ -487,8 +506,8 @@ def _event_to_candidate(event: dict[str, Any]) -> ImportCandidate | None:
     private = event.get("extendedProperties", {}).get("private", {})
     if private.get(_PABLO_APPOINTMENT_KEY):
         return None
-    start = _parse_event_time(event.get("start", {}))
-    end = _parse_event_time(event.get("end", {}))
+    start = parse_event_time(event.get("start", {}))
+    end = parse_event_time(event.get("end", {}))
     event_id = event.get("id")
     if start is None or end is None or not event_id:
         return None
@@ -504,7 +523,8 @@ def _event_to_candidate(event: dict[str, Any]) -> ImportCandidate | None:
     )
 
 
-def _parse_event_time(slot: dict[str, Any]) -> datetime | None:
+def parse_event_time(slot: dict[str, Any]) -> datetime | None:
+    """A Google event boundary as an instant; None for an all-day date."""
     raw = slot.get("dateTime")
     if not raw:
         return None
@@ -791,8 +811,8 @@ class GoogleCalendarService:
     def sync_from_google(self, user_id: str) -> list[dict[str, Any]]:
         """Poll Google Calendar for incremental changes using syncToken.
 
-        Returns a list of change dicts for the caller to process.
-        Pablo is source of truth — external events are stored as informational only.
+        Returns a list of change dicts for the caller to process. Raises
+        :class:`CalendarGoneError` when the calendar Pablo made was deleted.
         """
         credentials = self._get_credentials(user_id)
         if not credentials:
@@ -829,12 +849,63 @@ class GoogleCalendarService:
                 len(page.changes),
                 page.page_count,
             )
-        except Exception:
+        except Exception as exc:
+            if (
+                _http_status(exc) == _HTTP_NOT_FOUND
+                and token_doc.write_target == CalendarWriteTarget.APP_CALENDAR.value
+            ):
+                raise CalendarGoneError from exc
             # HIPAA: don't log response bodies that might contain PHI
             logger.exception("Google Calendar sync failed")
             return []
 
         return page.changes
+
+    def recreate_app_calendar(self, user_id: str) -> bool:
+        """Make the Pablo calendar again after it was deleted in Google.
+
+        Forgets the sync token too: it belonged to the old calendar, and the
+        next poll should read the new one from scratch. Returns whether a
+        calendar is in place to push to. A connection to the therapist's own
+        calendar has nothing of Pablo's to recreate.
+        """
+        credentials = self._get_credentials(user_id)
+        token_doc = self._token_repo.get(user_id)
+        if (
+            not credentials
+            or not token_doc
+            or token_doc.write_target != CalendarWriteTarget.APP_CALENDAR.value
+        ):
+            return False
+        token_doc.calendar_id = self._get_or_create_app_calendar_id(credentials, user_id)
+        token_doc.sync_token = None
+        self._token_repo.save(token_doc)
+        logger.info("Recreated the Pablo-owned Google calendar after it was deleted")
+        return True
+
+    def read_event_times(self, user_id: str, event_id: str) -> tuple[datetime, datetime] | None:
+        """Where Google has one of Pablo's events now, or None if it can't say.
+
+        None covers an event that is gone, an all-day event, and a connection
+        that is not there any more — none of them is a time to move to.
+        """
+        credentials = self._get_credentials(user_id)
+        token_doc = self._token_repo.get(user_id)
+        if not credentials or not token_doc or not token_doc.calendar_id:
+            return None
+        service = _build_calendar_service(credentials)
+        try:
+            event = _read_event(service, token_doc.calendar_id, event_id)
+        except Exception:
+            logger.warning("Could not read a Google Calendar event")
+            return None
+        if event.get("status") == "cancelled":
+            return None
+        start = parse_event_time(event.get("start", {}))
+        end = parse_event_time(event.get("end", {}))
+        if start is None or end is None:
+            return None
+        return start, end
 
     @staticmethod
     def _list_all_events(

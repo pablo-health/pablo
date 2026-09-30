@@ -5,6 +5,11 @@
 import { useCallback, useMemo, useState } from "react"
 import type { CSSProperties } from "react"
 import { useAppointmentList, useUpdateAppointment } from "@/hooks/useAppointments"
+import {
+  useHeldGoogleRemovals,
+  useResolveGoogleChange,
+  useResolveHeldGoogleRemovals,
+} from "@/hooks/useGoogleCalendarChanges"
 import { usePatientList } from "@/hooks/usePatients"
 import { useAvailabilityRules, useFreeSlots } from "@/hooks/useAvailability"
 import { summarize } from "@/components/settings/AvailabilitySettings"
@@ -13,6 +18,7 @@ import { ApiError } from "@/lib/api/client"
 import type {
   AppointmentResponse,
   AppointmentStatus,
+  GoogleChangeResolution,
 } from "@/types/scheduling"
 import { CalendarDays } from "lucide-react"
 import "./editorial.css"
@@ -25,6 +31,8 @@ import { EditorialSidebar, type EditorialTheme } from "./EditorialSidebar"
 import { EditorialMiniMonth } from "./EditorialMiniMonth"
 import { EditorialEventPeek } from "./EditorialEventPeek"
 import { EditorialEventContextMenu } from "./EditorialEventContextMenu"
+import { GoogleChangesBanner } from "./GoogleChangesBanner"
+import { needsGoogleDecision } from "./GoogleChangeNotice"
 import { matchWholeDayBlockRule } from "./unavailability"
 import {
   DENSITY_PRESETS,
@@ -109,6 +117,29 @@ export function EditorialCalendar({
       }
     },
     [showToast],
+  )
+
+  const { data: heldGoogleRemovals } = useHeldGoogleRemovals()
+  const resolveGoogleChange = useResolveGoogleChange()
+  const resolveHeldGoogleRemovals = useResolveHeldGoogleRemovals()
+  const googleChangePending =
+    resolveGoogleChange.isPending || resolveHeldGoogleRemovals.isPending
+
+  const handleResolveGoogleChange = useCallback(
+    (appointment: AppointmentResponse, resolution: GoogleChangeResolution) => {
+      resolveGoogleChange.mutate(
+        { appointmentId: appointment.id, resolution },
+        { onSuccess: () => setPeek(null), onError: handleUpdateError },
+      )
+    },
+    [resolveGoogleChange, handleUpdateError],
+  )
+
+  const handleResolveHeld = useCallback(
+    (resolution: GoogleChangeResolution) => {
+      resolveHeldGoogleRemovals.mutate(resolution, { onError: handleUpdateError })
+    },
+    [resolveHeldGoogleRemovals, handleUpdateError],
   )
 
   const { data: availabilityRulesData } = useAvailabilityRules()
@@ -298,6 +329,15 @@ export function EditorialCalendar({
           </div>
         </div>
 
+        <GoogleChangesBanner
+          appointments={data?.data ?? []}
+          patientMap={patientMap}
+          heldCount={heldGoogleRemovals?.count ?? 0}
+          onResolve={handleResolveGoogleChange}
+          onResolveHeld={handleResolveHeld}
+          pending={googleChangePending}
+        />
+
         {pickerOpen && (
           <div
             className="absolute right-6 top-32 z-30 w-[300px] rounded-2xl p-4 lg:right-8"
@@ -369,6 +409,10 @@ export function EditorialCalendar({
           anchorRect={peek.anchorRect}
           onClose={() => setPeek(null)}
           onEdit={handleEdit}
+          onResolveGoogleChange={
+            needsGoogleDecision(peek.appointment) ? handleResolveGoogleChange : undefined
+          }
+          googleChangePending={googleChangePending}
         />
       )}
 
