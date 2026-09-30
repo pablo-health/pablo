@@ -133,12 +133,18 @@ class ICalSyncService:
         appointment_repo: AppointmentRepository,
         patient_repo: PatientRepository,
         mapping_repo: PatientSourceMappingRepository,
-        external_events: ExternalCalendarEventRepository,
+        external_events: ExternalCalendarEventRepository | None = None,
     ) -> None:
         self._config_repo = config_repo
         self._appt_repo = appointment_repo
         self._patient_repo = patient_repo
         self._mapping_repo = mapping_repo
+        if external_events is None:
+            # Callers that predate outside sessions construct this service
+            # without it; they get the default repository rather than an error.
+            from ..repositories import get_external_calendar_event_repository
+
+            external_events = get_external_calendar_event_repository()
         self._outside = OutsideSessions(
             external_events, appointment_repo, patient_repo, mapping_repo
         )
