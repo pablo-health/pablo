@@ -48,6 +48,16 @@ class GoogleCalendarTokenDoc:
 
     calendar_id: str | None = None
     sync_token: str | None = None
+    main_calendar_sync_token: str | None = None
+    """Where reading the clinician's own calendar resumes. Separate from
+    ``sync_token``, which belongs to the calendar Pablo writes to — they are
+    different calendars unless the connection writes to the main one."""
+
+    follow_main_calendar: bool = False
+    """Whether sessions another service puts on the main calendar are
+    followed. Read from the settings that outlive a connection and written
+    through :meth:`GoogleCalendarTokenRepository.set_follow_main_calendar`."""
+
     last_synced_at: datetime | None = None
     connected_at: datetime | None = None
     last_sync_error: str | None = None
@@ -64,6 +74,8 @@ class GoogleCalendarTokenDoc:
             "granted_capabilities": self.granted_capabilities,
             "calendar_id": self.calendar_id,
             "sync_token": self.sync_token,
+            "main_calendar_sync_token": self.main_calendar_sync_token,
+            "follow_main_calendar": self.follow_main_calendar,
             "last_synced_at": self.last_synced_at,
             "connected_at": self.connected_at,
             "last_sync_error": self.last_sync_error,
@@ -82,6 +94,8 @@ class GoogleCalendarTokenDoc:
             granted_capabilities=data.get("granted_capabilities") or "push,import",
             calendar_id=data.get("calendar_id"),
             sync_token=data.get("sync_token"),
+            main_calendar_sync_token=data.get("main_calendar_sync_token"),
+            follow_main_calendar=bool(data.get("follow_main_calendar", False)),
             last_synced_at=data.get("last_synced_at"),
             connected_at=data.get("connected_at"),
             last_sync_error=data.get("last_sync_error"),
@@ -109,6 +123,11 @@ class GoogleCalendarTokenRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def update_main_calendar_sync_token(self, user_id: str, sync_token: str | None) -> None:
+        """Record where the main-calendar read resumes; None starts it over."""
+        raise NotImplementedError
+
+    @abstractmethod
     def delete(self, user_id: str) -> bool:
         raise NotImplementedError
 
@@ -124,4 +143,9 @@ class GoogleCalendarTokenRepository(ABC):
     @abstractmethod
     def remember_app_calendar_id(self, user_id: str, calendar_id: str) -> None:
         """Record a calendar Pablo just created. Survives a disconnect."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def set_follow_main_calendar(self, user_id: str, *, follow: bool) -> None:
+        """Record whether to follow sessions on the main calendar. Survives a disconnect."""
         raise NotImplementedError

@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from .claims import ClaimRepository
     from .coverage import PatientCoverageRepository, PayerRepository
     from .diagnostic_assessment import DiagnosticAssessmentRepository
+    from .external_calendar_event import ExternalCalendarEventRepository
     from .google_calendar_token import GoogleCalendarTokenRepository
     from .ical_sync_config import ICalSyncConfigRepository
     from .outcome_measure import OutcomeMeasureRepository
@@ -302,6 +303,13 @@ def get_patient_source_mapping_repository() -> PatientSourceMappingRepository:
     return PostgresPatientSourceMappingRepository(_get_pg_session())
 
 
+def get_external_calendar_event_repository() -> ExternalCalendarEventRepository:
+    """Get the followed-calendar-event repository instance."""
+    from .postgres.external_calendar_event import PostgresExternalCalendarEventRepository
+
+    return PostgresExternalCalendarEventRepository(_get_pg_session())
+
+
 # Former name, kept so existing callers keep working; remove once none remain.
 get_ical_client_mapping_repository = get_patient_source_mapping_repository
 
@@ -538,6 +546,7 @@ __all__ = [
     "get_diagnostic_definition_provider",
     "get_ehr_prompt_repository",
     "get_ehr_route_repository",
+    "get_external_calendar_event_repository",
     "get_google_calendar_token_repository",
     "get_ical_client_mapping_repository",
     "get_ical_sync_config_repository",

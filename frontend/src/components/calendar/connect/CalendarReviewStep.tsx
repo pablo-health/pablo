@@ -4,14 +4,9 @@
 
 import { ArrowLeft, Calendar, Check, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
 import { SetupStepHead } from "@/components/setup"
-import type {
-  ConfirmImportResult,
-  ImportPatientChoice,
-  ImportProposal,
-  ProposedSeries,
-} from "@/lib/api/scheduling"
+import type { ConfirmImportResult, ImportProposal, ProposedSeries } from "@/lib/api/scheduling"
+import { WhichClientsList } from "./WhichClientsList"
 
 const VISIBLE_ROWS = 5
 
@@ -43,53 +38,6 @@ function whenLabel(series: ProposedSeries): string {
   return `${day} · ${timeLabel(series.local_start_time)}`
 }
 
-const NEW_CLIENT = "new"
-
-function choiceLabel(choice: ImportPatientChoice): string {
-  if (!choice.date_of_birth) return choice.display_name
-  const [year, month, day] = choice.date_of_birth.split("-")
-  return `${choice.display_name}, born ${Number(month)}/${Number(day)}/${year}`
-}
-
-/** Which client a series is: named when certain, a small choice when a few
- * clients could be it, and a new client otherwise. */
-function ClientChoice({
-  series,
-  patientId,
-  onChoose,
-}: {
-  series: ProposedSeries
-  patientId: string | null
-  onChoose: (patientId: string | null) => void
-}) {
-  const { patient, possible } = series.match
-  if (patient) {
-    return (
-      <span className="block text-xs text-secondary-700">Matches {patient.display_name}</span>
-    )
-  }
-  if (possible.length === 0) {
-    return <span className="block text-xs text-muted-foreground">New client</span>
-  }
-  return (
-    <select
-      aria-label={`Which client is ${series.summary}?`}
-      value={patientId ?? NEW_CLIENT}
-      onChange={(event) =>
-        onChoose(event.target.value === NEW_CLIENT ? null : event.target.value)
-      }
-      className="mt-1 rounded-md border border-border bg-card px-1.5 py-0.5 text-xs text-neutral-900"
-    >
-      {possible.map((choice) => (
-        <option key={choice.patient_id} value={choice.patient_id}>
-          {choiceLabel(choice)}
-        </option>
-      ))}
-      <option value={NEW_CLIENT}>New client</option>
-    </select>
-  )
-}
-
 interface CalendarReviewStepProps {
   proposal: ImportProposal | null
   checked: Record<string, boolean>
@@ -109,6 +57,8 @@ interface CalendarReviewStepProps {
   error: string | null
   result: ConfirmImportResult | null
   onFinish: () => void
+  /** New sessions keep coming in from this calendar. */
+  following?: boolean
 }
 
 export function CalendarReviewStep({
@@ -128,6 +78,7 @@ export function CalendarReviewStep({
   error,
   result,
   onFinish,
+  following = false,
 }: CalendarReviewStepProps) {
   if (result) {
     return (
@@ -137,8 +88,11 @@ export function CalendarReviewStep({
         </h2>
         <p className="mx-auto max-w-md text-sm text-muted-foreground">
           {result.appointments_created} appointment{result.appointments_created === 1 ? "" : "s"}{" "}
-          scheduled ahead. Read access ended when the import finished — Pablo asks again if you
-          ever import a second time.
+          scheduled ahead.
+          {/* Following keeps reading the calendar, so this would be false. */}
+          {following
+            ? null
+            : " Read access ended when the import finished — Pablo asks again if you ever import a second time."}
         </p>
         {result.skipped.length > 0 ? (
           <p className="mx-auto max-w-md text-sm text-amber-700">
@@ -195,72 +149,21 @@ export function CalendarReviewStep({
         lede={`These ${total} repeat on a weekly or biweekly rhythm. Check the ones that are clients. Uncheck standups, classes, and anything else that just happens to repeat.`}
       />
 
-      <div className="flex flex-col">
-        {visible.map((series) => {
-          const key = series.candidate_key
-          const isNotClient = notClient[key] ?? false
-          return (
-            // A div, not a label: the client choice sits in the row, and a
-            // label would turn every click on it into a tick or an untick.
-            <div
-              key={key}
-              className="grid grid-cols-[20px_1fr_auto] items-center gap-3 border-b border-border py-2.5 last:border-b-0"
-            >
-              <Checkbox
-                id={`series-${key}`}
-                checked={!isNotClient && (checked[key] ?? false)}
-                disabled={isNotClient}
-                onCheckedChange={() => onToggle(key)}
-                aria-label={series.summary}
-              />
-              <span>
-                <label htmlFor={`series-${key}`} className="block cursor-pointer">
-                  <span
-                    className={`block text-sm font-medium ${isNotClient ? "text-muted-foreground" : "text-neutral-900"}`}
-                  >
-                    {series.summary}
-                  </span>
-                  <span className="block text-xs tabular-nums text-muted-foreground">
-                    {whenLabel(series)} · {cadenceLabel(series.cadence)}
-                  </span>
-                </label>
-                {isNotClient ? (
-                  // Unticking only skips this import; this answer is kept, so
-                  // later looks at the calendar leave the series out.
-                  <span className="block text-xs text-muted-foreground">
-                    Not a client. Pablo will remember.{" "}
-                    <button
-                      type="button"
-                      onClick={() => onToggleNotClient(key)}
-                      className="font-medium underline underline-offset-2 hover:text-neutral-700"
-                    >
-                      Undo
-                    </button>
-                  </span>
-                ) : (
-                  <>
-                    <ClientChoice
-                      series={series}
-                      patientId={clientFor[key] ?? null}
-                      onChoose={(patientId) => onChooseClient(key, patientId)}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => onToggleNotClient(key)}
-                      className="mt-0.5 block text-xs text-muted-foreground underline underline-offset-2 hover:text-neutral-700"
-                    >
-                      Not a client
-                    </button>
-                  </>
-                )}
-              </span>
-              <span className="whitespace-nowrap text-xs tabular-nums text-muted-foreground">
-                {series.occurrences_ahead} ahead
-              </span>
-            </div>
-          )
-        })}
-      </div>
+      <WhichClientsList
+        rows={visible.map((series) => ({
+          key: series.candidate_key,
+          title: series.summary,
+          detail: `${whenLabel(series)} · ${cadenceLabel(series.cadence)}`,
+          aside: `${series.occurrences_ahead} ahead`,
+          match: series.match,
+        }))}
+        checked={checked}
+        onToggle={onToggle}
+        clientFor={clientFor}
+        onChooseClient={onChooseClient}
+        notClient={notClient}
+        onToggleNotClient={onToggleNotClient}
+      />
 
       {hiddenCount > 0 || expanded ? (
         <button

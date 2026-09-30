@@ -1,0 +1,95 @@
+// Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+
+// --- Sessions on the clinician's own calendar that nobody has answered yet ---
+//
+// When following is on, events on the main calendar that look like sessions
+// come in as open rows. Each asks "who is this?" once per client; an answer
+// turns that client's events into appointments that follow their event.
+// Titles are the calendar's own wording, shown to the clinician and nowhere
+// else.
+
+import type { SeriesMatch } from "./scheduling"
+import type { SessionResponse } from "@/types/sessions"
+import { get, post, put } from "./client"
+
+/** One open event on the clinician's calendar, not yet an appointment. */
+export interface OutsideSession {
+  id: string
+  source: string
+  source_identifier: string
+  title: string
+  start_at: string
+  end_at: string
+}
+
+export interface OutsideSessionList {
+  events: OutsideSession[]
+}
+
+/** One "who is this?" question: a series, or every event with one title. */
+export interface OutsideQuestion {
+  key: string
+  source: string
+  source_identifier: string
+  title: string
+  recurring: boolean
+  /** Open occurrences the answer will settle. */
+  sessions: number
+  next_start_at: string
+  match: SeriesMatch
+}
+
+export interface OutsideQuestions {
+  count: number
+  questions: OutsideQuestion[]
+}
+
+/** An answer to one question. `patient_id` null with `new_client_name`
+ * adds a new client under that name. */
+export interface OutsideAnswer {
+  source: string
+  source_identifier: string
+  patient_id: string | null
+  new_client_name: string | null
+  not_a_client: boolean
+}
+
+export interface OutsideAnswerResult {
+  answered: number
+  appointments_created: number
+  appointments: { outside_session_id: string; appointment_id: string }[]
+}
+
+export async function listOutsideSessions(
+  start: string,
+  end: string
+): Promise<OutsideSessionList> {
+  return get<OutsideSessionList>(
+    `/api/calendar/outside-sessions?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`
+  )
+}
+
+export async function getOutsideQuestions(): Promise<OutsideQuestions> {
+  return get<OutsideQuestions>("/api/calendar/outside-sessions/questions")
+}
+
+export async function answerOutsideSessions(
+  answers: OutsideAnswer[]
+): Promise<OutsideAnswerResult> {
+  return post<OutsideAnswerResult>("/api/calendar/outside-sessions/answer", { answers })
+}
+
+export async function setFollowMainCalendar(
+  enabled: boolean
+): Promise<{ follow_main_calendar: boolean }> {
+  return put<{ follow_main_calendar: boolean }>("/api/google-calendar/follow-main-calendar", {
+    enabled,
+  })
+}
+
+/** Start the session (and its note) for an appointment. */
+export async function startSessionFromAppointment(
+  appointmentId: string
+): Promise<SessionResponse> {
+  return post<SessionResponse>(`/api/appointments/${appointmentId}/start-session`, {})
+}

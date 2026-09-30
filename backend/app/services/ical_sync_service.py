@@ -9,6 +9,11 @@ HIPAA Compliance:
 - Feed URLs encrypted at rest (AES-256-GCM) — they are bearer-token-equivalent
 - No PHI (client names, feed URLs, response bodies) in log messages
 - Appointment titles stored as generic "Session" (not raw SUMMARY)
+
+An event whose client can't be matched is not an appointment — an appointment
+always has a patient. It is held as an open outside session
+(``outside_sessions``) and asked about once; the answer is remembered, and
+the feed's later events for that client are booked on their own.
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ from urllib.request import Request, urlopen
 
 from icalendar import Calendar
 
+from ..calendar_providers.source_identity import ical_source
 from ..models.enums import EhrSystem
 from ..patients.matching import (
     MatchContext,
@@ -35,12 +41,15 @@ from ..patients.matching import (
     match_patient,
     remember_match,
 )
+from ..repositories.external_calendar_event import ExternalCalendarEvent
 from ..repositories.ical_sync_config import ICalSyncConfig, ICalSyncConfigRepository
 from ..scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from ..utcnow import utc_now
+from .outside_sessions import OutsideSessions
 from .token_encryption import decrypt_tokens, encrypt_tokens
 
 if TYPE_CHECKING:
+    from ..repositories.external_calendar_event import ExternalCalendarEventRepository
     from ..repositories.patient import PatientRepository
     from ..repositories.patient_source_mapping import PatientSourceMappingRepository
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
@@ -124,11 +133,15 @@ class ICalSyncService:
         appointment_repo: AppointmentRepository,
         patient_repo: PatientRepository,
         mapping_repo: PatientSourceMappingRepository,
+        external_events: ExternalCalendarEventRepository,
     ) -> None:
         self._config_repo = config_repo
         self._appt_repo = appointment_repo
         self._patient_repo = patient_repo
         self._mapping_repo = mapping_repo
+        self._outside = OutsideSessions(
+            external_events, appointment_repo, patient_repo, mapping_repo
+        )
 
     def configure(self, user_id: str, ehr_system: str, feed_url: str) -> ConfigureResult:
         """Validate, test-fetch, encrypt, and store the iCal feed URL."""
@@ -194,20 +207,10 @@ class ICalSyncService:
         client_identifier: str,
         patient_id: str,
     ) -> None:
-        """Manually map a client identifier to a patient and update appointments."""
-        remember_match(ehr_system, client_identifier, patient_id, self._match_context(user_id))
-
-        # Update existing appointments with this identifier — collect the
-        # matches and link them in a single UPDATE rather than one per row.
-        appointments = self._appt_repo.list_by_ical_source(user_id, ehr_system)
-        matching_ids = [
-            appt.id
-            for appt in appointments
-            if appt.patient_id == ""
-            and self._get_client_identifier(ehr_system, appt.notes or "") == client_identifier
-        ]
-        if matching_ids:
-            self._appt_repo.bulk_set_patient(matching_ids, patient_id)
+        """Map a client identifier to a patient, booking the feed events waiting on it."""
+        self._outside.answer(
+            user_id, ical_source(ehr_system), client_identifier, patient_id=patient_id
+        )
 
     def import_clients(
         self,
@@ -299,31 +302,9 @@ class ICalSyncService:
                 else:
                     result.unchanged += 1
             else:
-                client_id = self._extract_client_identifier(config.ehr_system, event.summary)
-                match = self._match(config.ehr_system, client_id, ctx)
-                if match.evidence == "not_a_client":
-                    # The clinician said this is not a client: skip it, don't ask.
-                    continue
-                patient_id = match.patient_id or ""
-                appt = self._create_appointment(user_id, config.ehr_system, event, patient_id)
-                # Store identifier in notes for later resolution
-                if client_id:
-                    appt.notes = f"ical_client:{client_id}"
-                self._appt_repo.create(appt)
-                result.created += 1
+                self._add_event(user_id, config.ehr_system, event, ctx, result)
 
-                if not patient_id:
-                    result.unmatched_events.append(
-                        {
-                            "ical_uid": uid,
-                            "client_identifier": client_id or "unknown",
-                            "start_at": event.start_at.isoformat(),
-                            "ehr_appointment_url": self._derive_appointment_url(
-                                config.ehr_system, uid, event.url
-                            )
-                            or "",
-                        }
-                    )
+        self._outside.forget(user_id, ical_source(config.ehr_system), keep=set(feed_events))
 
         # Soft-delete events no longer in feed
         for uid, appt in existing_by_uid.items():
@@ -342,6 +323,55 @@ class ICalSyncService:
             result.unchanged,
         )
         return result
+
+    def _add_event(
+        self,
+        user_id: str,
+        ehr_system: str,
+        event: ParsedEvent,
+        ctx: MatchContext,
+        result: SyncResult,
+    ) -> None:
+        """Book a feed event new to Pablo, or hold it until its client is known."""
+        source = ical_source(ehr_system)
+        client_id = self._extract_client_identifier(ehr_system, event.summary)
+        match = self._match(ehr_system, client_id, ctx)
+        if match.evidence == "not_a_client":
+            # The clinician said this is not a client: skip it, don't ask.
+            self._outside.drop(user_id, source, event.uid)
+            return
+        if match.patient_id:
+            appt = self._create_appointment(user_id, ehr_system, event, match.patient_id)
+            if client_id:
+                appt.notes = f"ical_client:{client_id}"
+            self._appt_repo.create(appt)
+            self._outside.settle(user_id, source, event.uid, appt)
+            result.created += 1
+            return
+        # No patient, so not an appointment: held until the clinician says
+        # who it is.
+        self._outside.hold(
+            ExternalCalendarEvent(
+                id=str(uuid.uuid4()),
+                user_id=user_id,
+                source=source,
+                source_event_id=event.uid,
+                start_at=event.start_at,
+                end_at=event.end_at,
+                title=event.summary,
+            )
+        )
+        result.unmatched_events.append(
+            {
+                "ical_uid": event.uid,
+                "client_identifier": client_id or "unknown",
+                "start_at": event.start_at.isoformat(),
+                "ehr_appointment_url": self._derive_appointment_url(
+                    ehr_system, event.uid, event.url
+                )
+                or "",
+            }
+        )
 
     def _fetch_feed(self, feed_url: str) -> str:
         """Fetch iCal feed data via HTTP GET."""
@@ -396,7 +426,8 @@ class ICalSyncService:
             )
         return events
 
-    def _extract_client_identifier(self, ehr_system: str, summary: str) -> str:
+    @staticmethod
+    def _extract_client_identifier(ehr_system: str, summary: str) -> str:
         """Extract the client identifier from the SUMMARY field."""
         if ehr_system == EhrSystem.SIMPLEPRACTICE:
             # Try initials first: "J.A. Appointment"
@@ -448,7 +479,7 @@ class ICalSyncService:
         event: ParsedEvent,
         patient_id: str,
     ) -> Appointment:
-        """Create an Appointment from a parsed iCal event."""
+        """Create an Appointment from a parsed iCal event, for a matched patient."""
         video_link = None
         video_platform = None
         if ehr_system == EhrSystem.SIMPLEPRACTICE and event.url:
@@ -459,7 +490,7 @@ class ICalSyncService:
         return Appointment(
             id=str(uuid.uuid4()),
             user_id=user_id,
-            patient_id=patient_id or "",
+            patient_id=patient_id,
             title="Session",
             start_at=event.start_at,
             end_at=event.end_at,
@@ -472,6 +503,8 @@ class ICalSyncService:
             ical_source=ehr_system,
             ical_sync_status="synced",
             ehr_appointment_url=self._derive_appointment_url(ehr_system, event.uid, event.url),
+            outside_source=ical_source(ehr_system),
+            outside_event_id=event.uid,
             created_at=_now(),
         )
 
@@ -624,3 +657,9 @@ def _hint(ehr_system: str, client_identifier: str) -> PatientHint:
     if ehr_system == EhrSystem.SESSIONS_HEALTH:
         return hint.model_copy(update={"full_name": client_identifier})
     return hint
+
+
+def feed_identity(ehr_system: str, summary: str) -> tuple[str, PatientHint]:
+    """How a feed event's client is remembered, and what its title says about them."""
+    identifier = ICalSyncService._extract_client_identifier(ehr_system, summary)
+    return identifier, _hint(ehr_system, identifier)

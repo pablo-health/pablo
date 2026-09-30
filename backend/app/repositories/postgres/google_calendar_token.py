@@ -26,7 +26,10 @@ class PostgresGoogleCalendarTokenRepository(GoogleCalendarTokenRepository):
         row = self._session.get(GoogleCalendarTokenRow, user_id)
         if row is None:
             return None
-        return _row_to_doc(row)
+        doc = _row_to_doc(row)
+        settings = self._session.get(GoogleCalendarSettingsRow, user_id)
+        doc.follow_main_calendar = bool(settings and settings.follow_main_calendar)
+        return doc
 
     def list_all(self) -> list[GoogleCalendarTokenDoc]:
         """Return all token docs across all users (for scheduled sync dispatch)."""
@@ -46,6 +49,7 @@ class PostgresGoogleCalendarTokenRepository(GoogleCalendarTokenRepository):
         row.granted_capabilities = token_doc.granted_capabilities
         row.calendar_id = token_doc.calendar_id
         row.sync_token = token_doc.sync_token
+        row.main_calendar_sync_token = token_doc.main_calendar_sync_token
         row.last_synced_at = token_doc.last_synced_at
         row.connected_at = token_doc.connected_at
         self._session.flush()
@@ -56,6 +60,12 @@ class PostgresGoogleCalendarTokenRepository(GoogleCalendarTokenRepository):
             now = utc_now()
             row.sync_token = sync_token
             row.last_synced_at = now
+            self._session.flush()
+
+    def update_main_calendar_sync_token(self, user_id: str, sync_token: str | None) -> None:
+        row = self._session.get(GoogleCalendarTokenRow, user_id)
+        if row:
+            row.main_calendar_sync_token = sync_token
             self._session.flush()
 
     def delete(self, user_id: str) -> bool:
@@ -85,6 +95,17 @@ class PostgresGoogleCalendarTokenRepository(GoogleCalendarTokenRepository):
             row.updated_at = utc_now()
         self._session.flush()
 
+    def set_follow_main_calendar(self, user_id: str, *, follow: bool) -> None:
+        row = self._session.get(GoogleCalendarSettingsRow, user_id)
+        if row is None:
+            self._session.add(
+                GoogleCalendarSettingsRow(user_id=user_id, follow_main_calendar=follow)
+            )
+        else:
+            row.follow_main_calendar = follow
+            row.updated_at = utc_now()
+        self._session.flush()
+
 
 def _row_to_doc(row: GoogleCalendarTokenRow) -> GoogleCalendarTokenDoc:
     return GoogleCalendarTokenDoc(
@@ -97,6 +118,7 @@ def _row_to_doc(row: GoogleCalendarTokenRow) -> GoogleCalendarTokenDoc:
         granted_capabilities=row.granted_capabilities,
         calendar_id=row.calendar_id,
         sync_token=row.sync_token,
+        main_calendar_sync_token=row.main_calendar_sync_token,
         last_synced_at=row.last_synced_at,
         connected_at=row.connected_at,
         last_sync_error=getattr(row, "last_sync_error", None),

@@ -437,6 +437,10 @@ def _sync_appointment_to_google(
     on an appointment whose provider is Meet, so every other appointment's
     push is exactly the call it has always been.
     """
+    if appt.outside_event_id:
+        # Already on a calendar another service keeps; a Pablo event would
+        # put it there twice.
+        return appt
     wants_conference = appt.provider == GOOGLE_MEET and not appt.video_link
     try:
         if wants_conference:
@@ -554,6 +558,8 @@ def _to_response(
         ical_source=appt.ical_source,
         ical_sync_status=appt.ical_sync_status,
         ehr_appointment_url=appt.ehr_appointment_url,
+        outside_source=appt.outside_source,
+        outside_event_id=appt.outside_event_id,
         session_id=appt.session_id,
         service_code=appt.service_code,
         modifiers=appt.modifiers,
@@ -707,6 +713,26 @@ def get_appointment(
     )
 
 
+#: The fields a followed session takes from the event it follows.
+_FOLLOWED_TIME_FIELDS = frozenset({"start_at", "end_at", "duration_minutes"})
+
+
+def _refuse_moving_a_followed_session(
+    service: SchedulingService, appointment_id: str, user_id: str
+) -> None:
+    """A session followed from another calendar moves there, not here.
+
+    Pablo never writes to that calendar, so a time set here would only be
+    overwritten by the next read of it.
+    """
+    try:
+        existing = service.get_appointment(appointment_id, user_id)
+    except AppointmentNotFoundError as e:
+        raise NotFoundError(str(e)) from e
+    if existing.outside_event_id:
+        raise ConflictError("This session's time follows the calendar it came from")
+
+
 @router.patch("/api/appointments/{appointment_id}", response_model=AppointmentResponse)
 def update_appointment(
     appointment_id: str,
@@ -734,6 +760,8 @@ def update_appointment(
             except AppointmentNotFoundError as e:
                 raise NotFoundError(str(e)) from e
         updates["note_inputs"] = _checked_note_inputs(note_type, request.note_inputs)
+    if _FOLLOWED_TIME_FIELDS & updates.keys():
+        _refuse_moving_a_followed_session(service, appointment_id, user.id)
     try:
         appt = service.update_appointment(
             appointment_id, user.id, tz=tz, rule_override=rule_override, **updates

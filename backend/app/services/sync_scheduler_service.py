@@ -19,8 +19,10 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from ..calendar_providers.source_identity import GOOGLE_CALENDAR_SOURCE
+from ..models.audit import ACTOR_TYPE_SYSTEM, AuditAction
 from ..settings import get_settings
-from .google_calendar_follow import GoogleChangeFollower
+from .google_calendar_follow import SYNC_COMPONENT, GoogleChangeFollower
 from .google_calendar_service import CalendarGoneError
 
 if TYPE_CHECKING:
@@ -33,8 +35,12 @@ if TYPE_CHECKING:
     from ..services.google_calendar_service import GoogleCalendarService
     from ..services.ical_sync_service import ICalSyncService
     from ..services.reminder_service import ReminderService
+    from .outside_sessions import OutsideSessions
 
 logger = logging.getLogger(__name__)
+
+#: Why the audit trail shows an appointment the system made on its own.
+BOOKED_FROM_MAIN_CALENDAR = "booked_from_main_calendar"
 
 
 @dataclass
@@ -66,6 +72,7 @@ class ExecuteSummary:
     google_synced: bool = False
     google_error: bool = False
     google_changes_processed: int = 0
+    outside_sessions_followed: int = 0
     reminders_sent: int = 0
     errors: list[str] = field(default_factory=list)
 
@@ -76,6 +83,7 @@ class ExecuteSummary:
             "google_synced": self.google_synced,
             "google_error": self.google_error,
             "google_changes_processed": self.google_changes_processed,
+            "outside_sessions_followed": self.outside_sessions_followed,
             "reminders_sent": self.reminders_sent,
         }
 
@@ -98,6 +106,7 @@ class SyncSchedulerService:
         reminder_service: ReminderService,
         appointment_repo: AppointmentRepository,
         audit_service: AuditService | None = None,
+        outside_sessions: OutsideSessions | None = None,
     ) -> None:
         self._ical_config_repo = ical_config_repo
         self._google_token_repo = google_token_repo
@@ -109,6 +118,7 @@ class SyncSchedulerService:
         # Resolved when first needed, so a caller built before the follower
         # existed keeps working without passing one.
         self._audit_service = audit_service
+        self._outside_sessions = outside_sessions
         self._follower = GoogleChangeFollower(appointment_repo, google_calendar_service)
 
     def dispatch(self) -> DispatchSummary:
@@ -205,6 +215,14 @@ class SyncSchedulerService:
                 logger.exception("Google Calendar sync failed for scheduled run")
                 summary.google_error = True
 
+            # 2b. Sessions another service puts on the main calendar
+            if google_token.follow_main_calendar:
+                try:
+                    summary.outside_sessions_followed = self._follow_main_calendar(user_id)
+                except Exception:
+                    logger.exception("Following the main calendar failed for scheduled run")
+                    summary.google_error = True
+
         # 3. Reminders
         try:
             reminder_result = self._reminder_service.check_and_send_reminders(user_id)
@@ -228,6 +246,55 @@ class SyncSchedulerService:
         if user is None:
             return 0
         return self._follower.follow(user, self._audit(), changes).changed
+
+    def _follow_main_calendar(self, user_id: str) -> int:
+        """Bring in sessions from the main calendar, and follow the answered ones.
+
+        Only reads: nothing is ever written to an event another service made.
+        New events are held, answered or dropped first; then the appointments
+        already made for answered events follow their moves and deletions,
+        under the same guards as Pablo's own sessions.
+        """
+        changes = self._google_calendar_service.read_main_calendar_changes(user_id)
+        if not changes:
+            return 0
+        user = self._user_repo.get(user_id)
+        if user is None:
+            return 0
+        audit = self._audit()
+        ingested = self._outside().ingest_google(user_id, changes)
+        for appointment in ingested.booked:
+            audit.log_appointment_action(
+                AuditAction.APPOINTMENT_CREATED,
+                user,
+                None,
+                appointment.id,
+                patient_id=appointment.patient_id,
+                changes={"reason": BOOKED_FROM_MAIN_CALENDAR},
+                actor_type=ACTOR_TYPE_SYSTEM,
+                actor_component=SYNC_COMPONENT,
+            )
+        followed = self._follower.follow(
+            user, audit, changes, outside_source=GOOGLE_CALENDAR_SOURCE
+        )
+        return ingested.held + followed.changed
+
+    def _outside(self) -> OutsideSessions:
+        if self._outside_sessions is None:
+            from ..repositories import (
+                get_external_calendar_event_repository,
+                get_patient_repository,
+                get_patient_source_mapping_repository,
+            )
+            from .outside_sessions import OutsideSessions
+
+            self._outside_sessions = OutsideSessions(
+                get_external_calendar_event_repository(),
+                self._appointment_repo,
+                get_patient_repository(),
+                get_patient_source_mapping_repository(),
+            )
+        return self._outside_sessions
 
     def _rebuild_google_calendar(self, user_id: str) -> bool:
         """Recreate a deleted Pablo calendar and push upcoming sessions back.

@@ -14,6 +14,12 @@ import { CalendarSessionsStep } from "./CalendarSessionsStep"
 import { CalendarClientsStep } from "./CalendarClientsStep"
 import { CalendarReviewStep } from "./CalendarReviewStep"
 import {
+  recallAndClearFollowWanted,
+  recallAndClearImportPending,
+  rememberImportPending,
+} from "./importConsent"
+import { setFollowMainCalendar } from "@/lib/api/outsideSessions"
+import {
   completeGoogleCalendarConnect,
   completeGoogleCalendarImportConsent,
   confirmCalendarImport,
@@ -54,11 +60,6 @@ const DEFAULT_SELECTION: GoogleCalendarSelection = {
  * here instead, for the moment the browser lands back on this page. */
 const SELECTION_KEY = "pablo.calendar-connect.selection"
 
-/** Set while an incremental IMPORT-capability round trip is in flight, so
- * the code-exchange effect knows this return from Google is "Look at my
- * week" continuing, not a fresh connect. */
-const IMPORT_PENDING_KEY = "pablo.calendar-import.pending"
-
 function rememberSelection(selection: GoogleCalendarSelection): void {
   try {
     window.sessionStorage.setItem(SELECTION_KEY, JSON.stringify(selection))
@@ -86,29 +87,11 @@ function recallSelection(): GoogleCalendarSelection {
   }
 }
 
-function rememberImportPending(): void {
-  try {
-    window.sessionStorage.setItem(IMPORT_PENDING_KEY, "1")
-  } catch {
-    // Best effort — see rememberSelection.
-  }
-}
-
 function browserTimeZone(): string {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
   } catch {
     return "UTC"
-  }
-}
-
-function recallAndClearImportPending(): boolean {
-  try {
-    const pending = window.sessionStorage.getItem(IMPORT_PENDING_KEY) === "1"
-    window.sessionStorage.removeItem(IMPORT_PENDING_KEY)
-    return pending
-  } catch {
-    return false
   }
 }
 
@@ -209,6 +192,8 @@ export function CalendarSetupWizard({
   const [confirming, setConfirming] = useState(false)
   const [confirmError, setConfirmError] = useState<string | null>(null)
   const [confirmResult, setConfirmResult] = useState<ConfirmImportResult | null>(null)
+  const [followSaving, setFollowSaving] = useState(false)
+  const [followError, setFollowError] = useState<string | null>(null)
 
   const { data: status } = useQuery({
     queryKey: ["google-calendar", "status"],
@@ -269,6 +254,24 @@ export function CalendarSetupWizard({
     setNotClient({})
   }, [proposal])
 
+  const following = Boolean(status?.follow_main_calendar)
+
+  const changeFollowing = useCallback(
+    async (enabled: boolean) => {
+      setFollowSaving(true)
+      setFollowError(null)
+      try {
+        await setFollowMainCalendar(enabled)
+        await queryClient.invalidateQueries({ queryKey: ["google-calendar"] })
+      } catch (err) {
+        setFollowError(message(err, "Could not save that. Try again in a moment."))
+      } finally {
+        setFollowSaving(false)
+      }
+    },
+    [queryClient]
+  )
+
   const redirectUri = typeof window === "undefined" ? "" : `${window.location.origin}${returnPath}`
 
   const startConnect = useCallback(async () => {
@@ -280,6 +283,7 @@ export function CalendarSetupWizard({
       // behind; left there, this connect's return would be taken for that
       // import grant and exchanged as one, which Google's answer cannot pass.
       recallAndClearImportPending()
+      recallAndClearFollowWanted()
       const { auth_url } = await getGoogleCalendarAuthUrl(redirectUri, selection)
       window.location.assign(auth_url)
     } catch (err) {
@@ -336,9 +340,17 @@ export function CalendarSetupWizard({
       // that fails is reported where it was asked for, not on step 1.
       setActiveIndex(clientsIndex)
       setScanning(true)
+      // Started from the "keep bringing in new sessions" setting: the grant
+      // was asked for to turn following on, so do that once it lands.
+      const followWanted = recallAndClearFollowWanted()
       completeGoogleCalendarImportConsent(code, state, redirectUri)
-        .then(() => {
+        .then(async () => {
           if (cancelled) return
+          if (followWanted) {
+            await setFollowMainCalendar(true).catch((err: unknown) =>
+              setFollowError(message(err, "Could not save that. Try again in a moment."))
+            )
+          }
           queryClient.invalidateQueries({ queryKey: ["google-calendar"] })
           return runScan()
         })
@@ -574,6 +586,10 @@ export function CalendarSetupWizard({
           error={scanError}
           onScan={runScan}
           onSkip={finishWizard}
+          following={following}
+          onFollowingChange={changeFollowing}
+          followSaving={followSaving}
+          followError={followError}
         />
       ) : (
         <CalendarReviewStep
@@ -593,6 +609,7 @@ export function CalendarSetupWizard({
           error={confirmError}
           result={confirmResult}
           onFinish={finishAfterImport}
+          following={following}
         />
       )}
     </SetupWizardShell>

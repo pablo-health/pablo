@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 import pytest
 from app.models.patient import Patient
 from app.patients.matching import remember_not_a_client
+from app.repositories.external_calendar_event import InMemoryExternalCalendarEventRepository
 from app.repositories.ical_sync_config import ICalSyncConfig
 from app.repositories.patient import InMemoryPatientRepository
 from app.repositories.patient_source_mapping import (
@@ -192,6 +193,7 @@ def service():
         appointment_repo=InMemoryAppointmentRepository(),
         patient_repo=InMemoryPatientRepository(),
         mapping_repo=InMemoryPatientSourceMappingRepository(),
+        external_events=InMemoryExternalCalendarEventRepository(),
     )
 
 
@@ -318,7 +320,12 @@ class TestSyncDiff:
             appointment_repo=appt_repo,
             patient_repo=patient_repo,
             mapping_repo=mapping_repo,
+            external_events=InMemoryExternalCalendarEventRepository(),
         )
+        # The feed's two clients are on the caseload, so its events are
+        # sessions; TestUnmatchedFeedEvents covers a feed nobody matches.
+        patient_repo.create(_make_patient("p-ja", "Jane", "Adams"), "user1")
+        patient_repo.create(_make_patient("p-pb", "Pablo", "Bear"), "user1")
         return svc
 
     @patch.object(ICalSyncService, "_fetch_feed")
@@ -344,7 +351,11 @@ class TestSyncDiff:
         [result] = sync_service.sync("user1", "simplepractice")
 
         assert result.created == 1
-        assert [e["client_identifier"] for e in result.unmatched_events] == ["P.B."]
+        assert result.unmatched_events == []
+        [appointment] = sync_service._appt_repo.list_by_ical_source(
+            "user1", sync_service._config_repo.list_by_user("user1")[0].ehr_system
+        )
+        assert appointment.patient_id == "p-pb"
 
     @patch.object(ICalSyncService, "_fetch_feed")
     def test_second_sync_no_changes(self, mock_fetch: MagicMock, sync_service: ICalSyncService):
@@ -403,6 +414,102 @@ class TestSyncDiff:
         video_appt = next(a for a in appts if a.ical_uid == "3426439378")
         assert video_appt.video_link is not None
         assert urlparse(video_appt.video_link).hostname == "video.simplepractice.com"
+
+
+# A feed that names its clients in a way nothing matches until the clinician
+# says who they are.
+_PLAIN_FEED = "test_feed"
+_PLAIN_ICAL = """\
+BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:feed-event-1
+DTSTART:20990105T150000Z
+DTEND:20990105T155000Z
+SUMMARY:Client 7
+END:VEVENT
+BEGIN:VEVENT
+UID:feed-event-2
+DTSTART:20990112T150000Z
+DTEND:20990112T155000Z
+SUMMARY:Client 7
+END:VEVENT
+END:VCALENDAR"""
+
+
+class TestUnmatchedFeedEvents:
+    """A feed event nobody can match is held as a question, never an appointment."""
+
+    @pytest.fixture
+    def feed(self, _encryption_key: Any) -> ICalSyncService:
+        config_repo = InMemoryICalSyncConfigRepo()
+        config_repo.save(
+            ICalSyncConfig(
+                user_id="user1",
+                ehr_system=_PLAIN_FEED,
+                encrypted_feed_url=encrypt_tokens({"feed_url": "https://feed.test/cal"}),
+                connected_at=_now(),
+            )
+        )
+        return ICalSyncService(
+            config_repo=config_repo,  # type: ignore[arg-type]
+            appointment_repo=InMemoryAppointmentRepository(),
+            patient_repo=InMemoryPatientRepository(),
+            mapping_repo=InMemoryPatientSourceMappingRepository(),
+            external_events=InMemoryExternalCalendarEventRepository(),
+        )
+
+    @staticmethod
+    def _open(feed: ICalSyncService) -> list[str]:
+        return sorted(e.source_event_id for e in feed._outside._events.list_open("user1"))
+
+    @patch.object(ICalSyncService, "_fetch_feed", return_value=_PLAIN_ICAL)
+    def test_an_unmatched_event_is_held_not_booked(
+        self, fetch: MagicMock, feed: ICalSyncService
+    ) -> None:
+        [result] = feed.sync("user1")
+
+        assert result.created == 0
+        assert feed._appt_repo.list_by_ical_source("user1", _PLAIN_FEED) == []
+        assert self._open(feed) == ["feed-event-1", "feed-event-2"]
+        assert {e["client_identifier"] for e in result.unmatched_events} == {"Client 7"}
+
+    @patch.object(ICalSyncService, "_fetch_feed", return_value=_PLAIN_ICAL)
+    def test_no_appointment_is_ever_written_without_a_patient(
+        self, fetch: MagicMock, feed: ICalSyncService
+    ) -> None:
+        feed.sync("user1")
+        feed.sync("user1")
+
+        assert all(a.patient_id for a in feed._appt_repo._appointments.values())
+
+    @patch.object(ICalSyncService, "_fetch_feed", return_value=_PLAIN_ICAL)
+    def test_resolving_the_client_books_the_held_events_and_remembers(
+        self, fetch: MagicMock, feed: ICalSyncService
+    ) -> None:
+        feed._patient_repo.create(_make_patient("p7", "Seven", "Client"), "user1")
+        feed.sync("user1")
+
+        feed.resolve_client("user1", _PLAIN_FEED, "Client 7", "p7")
+
+        booked = feed._appt_repo.list_by_ical_source("user1", _PLAIN_FEED)
+        assert sorted(a.ical_uid or "" for a in booked) == ["feed-event-1", "feed-event-2"]
+        assert {a.patient_id for a in booked} == {"p7"}
+        assert self._open(feed) == []
+        # The next read finds them as its own, and asks nothing.
+        [result] = feed.sync("user1")
+        assert (result.created, result.unmatched_events) == (0, [])
+
+    @patch.object(ICalSyncService, "_fetch_feed", return_value=_PLAIN_ICAL)
+    def test_an_event_that_leaves_the_feed_takes_its_question_with_it(
+        self, fetch: MagicMock, feed: ICalSyncService
+    ) -> None:
+        feed.sync("user1")
+        fetch.return_value = _PLAIN_ICAL.replace("UID:feed-event-2", "UID:feed-event-3")
+
+        feed.sync("user1")
+
+        assert self._open(feed) == ["feed-event-1", "feed-event-3"]
 
 
 class TestUrlValidation:

@@ -13,6 +13,8 @@ import {
   EVENT_MICRO_PX,
 } from "./EditorialEventCard"
 import { EditorialEventWrapper } from "./EditorialEventWrapper"
+import { OutsideSessionLayer } from "./OutsideSessionBlock"
+import type { OutsideSession } from "@/lib/api/outsideSessions"
 import { UnavailableLayer } from "./UnavailableLayer"
 import { assignLanes } from "./laneLayout"
 import { rulesInForceForDate } from "./unavailability"
@@ -23,6 +25,9 @@ import {
   gridHours,
   minutesSinceMidnight,
 } from "./dateUtils"
+
+const NO_OUTSIDE_SESSIONS: OutsideSession[] = []
+function ignoreOutside() {}
 
 interface EditorialDayViewProps {
   anchor: Date
@@ -51,6 +56,9 @@ interface EditorialDayViewProps {
   dayEnd?: number
   /** Height of one hour row in px, from the active density preset. */
   rowHeightPx?: number
+  /** Events from the clinician's own calendar nobody has answered yet. */
+  outsideSessions?: OutsideSession[]
+  onOpenOutside?: (session: OutsideSession) => void
 }
 
 export function EditorialDayView({
@@ -68,6 +76,8 @@ export function EditorialDayView({
   dayStart = DAY_START_HOUR,
   dayEnd = DAY_END_HOUR,
   rowHeightPx = HOUR_ROW_PX,
+  outsideSessions = NO_OUTSIDE_SESSIONS,
+  onOpenOutside = ignoreOutside,
 }: EditorialDayViewProps) {
   const scrollerRef = useRef<HTMLDivElement>(null)
   const today = isToday(anchor)
@@ -195,6 +205,13 @@ export function EditorialDayView({
                 </EditorialEventWrapper>
               )
             })}
+            <OutsideSessionLayer
+              day={anchor}
+              sessions={outsideSessions}
+              dayStart={dayStart}
+              rowHeightPx={rowHeightPx}
+              onOpen={onOpenOutside}
+            />
             {today && <DayNowLine dayStart={dayStart} dayEnd={dayEnd} rowHeightPx={rowHeightPx} />}
           </div>
         </div>

@@ -24,7 +24,6 @@ digest of its title, never by the title itself.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta, tzinfo
@@ -44,6 +43,10 @@ from ..calendar_providers.practice_import import (
     DEFAULT_LOOKBACK_DAYS,
     ImportProposal,
     ProposedSeries,
+)
+from ..calendar_providers.source_identity import (
+    GOOGLE_CALENDAR_SOURCE,
+    calendar_source_identifier,
 )
 from ..models import AuditAction, User
 from ..models.audit import ResourceType
@@ -67,7 +70,6 @@ from ..patients.matching import (
     MatchResult,
     PatientHint,
     match_patient,
-    normalize,
     remember_match,
     remember_not_a_client,
 )
@@ -117,7 +119,7 @@ MAX_LOOKBACK_DAYS = 400
 MAX_HORIZON_DAYS = 400
 PATIENT_ORIGIN = "calendar_import"
 #: The source a confirmed series is remembered under.
-MATCH_SOURCE = "google_calendar"
+MATCH_SOURCE = GOOGLE_CALENDAR_SOURCE
 
 
 def get_patient_source_mapping_repository(
@@ -128,19 +130,11 @@ def get_patient_source_mapping_repository(
 
 
 def _source_identifier(series: ProposedSeries) -> str:
-    """How a confirmed series is remembered.
-
-    The provider's series id when the scan saw one. Otherwise a digest of the
-    normalised title: stable across scans, and it keeps the title out of the
-    table.
-    """
-    if series.series_id:
-        return f"series:{series.series_id}"
-    digest = hashlib.sha256(normalize(series.summary).encode()).hexdigest()[:32]
-    return f"title:{digest}"
+    """How a confirmed series is remembered — the same way following does."""
+    return calendar_source_identifier(series.series_id, series.summary)
 
 
-def _series_match(result: MatchResult, ctx: MatchContext) -> SeriesMatchResponse:
+def series_match(result: MatchResult, ctx: MatchContext) -> SeriesMatchResponse:
     def choices(patient_ids: list[str]) -> list[ImportPatientChoice]:
         # Two charts can share a name, so a date of birth, when the chart has
         # one, is what lets the therapist tell them apart.
@@ -175,7 +169,7 @@ def _to_response(proposal: ImportProposal, ctx: MatchContext) -> ImportProposalR
                 candidate_key=series.candidate_key,
                 summary=series.summary,
                 source_identifier=identifier,
-                match=_series_match(result, ctx),
+                match=series_match(result, ctx),
                 weekday=series.weekday,
                 local_start_time=series.local_start_time,
                 duration_minutes=series.duration_minutes,

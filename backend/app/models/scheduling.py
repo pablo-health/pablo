@@ -202,6 +202,10 @@ class AppointmentResponse(BaseModel):
     ical_source: str | None = None
     ical_sync_status: str | None = None
     ehr_appointment_url: str | None = None
+    #: Set when the appointment follows an event on another calendar; its
+    #: time comes from there, so it is not moved in Pablo.
+    outside_source: str | None = None
+    outside_event_id: str | None = None
     session_id: str | None = None
     service_code: str | None = None
     modifiers: list[str] | None = None
@@ -530,6 +534,14 @@ class GoogleCalendarStatusResponse(BaseModel):
     """Response for Google Calendar connection status."""
 
     connected: bool
+    follow_main_calendar: bool = Field(
+        default=False,
+        description="Whether sessions on the main calendar are brought in and followed",
+    )
+    import_granted: bool = Field(
+        default=False,
+        description="Whether the connection can read events, which following needs",
+    )
     calendar_id: str | None = None
     calendar_name: str | None = Field(
         default=None,
