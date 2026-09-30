@@ -522,7 +522,8 @@ CREATE TABLE __TENANT_SCHEMA__.ical_sync_configs (
     last_synced_at timestamp with time zone,
     last_sync_error text,
     connected_at timestamp with time zone NOT NULL,
-    consecutive_error_count integer DEFAULT 0
+    consecutive_error_count integer DEFAULT 0,
+    title_style character varying(16)
 );
 
 
@@ -984,6 +985,7 @@ CREATE TABLE __TENANT_SCHEMA__.patient_source_mappings (
     patient_id uuid,
     created_at timestamp with time zone NOT NULL,
     answer text DEFAULT 'client'::text NOT NULL,
+    answered_title text,
     CONSTRAINT ck_patient_source_mappings_answer CHECK ((answer = ANY (ARRAY['client'::text, 'not_a_client'::text]))),
     CONSTRAINT ck_patient_source_mappings_patient_when_client CHECK (((answer = 'client'::text) = (patient_id IS NOT NULL)))
 );

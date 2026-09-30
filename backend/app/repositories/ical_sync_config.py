@@ -26,6 +26,9 @@ class ICalSyncConfig:
     last_sync_error: str | None = None
     connected_at: datetime | None = None
     consecutive_error_count: int = 0
+    title_style: str | None = None
+    """How the feed's titles name clients, as of the last read: ``initials``,
+    ``names`` or ``codes``. None until a read has looked."""
 
     @property
     def doc_id(self) -> str:
@@ -40,6 +43,7 @@ class ICalSyncConfig:
             "last_sync_error": self.last_sync_error,
             "connected_at": self.connected_at,
             "consecutive_error_count": self.consecutive_error_count,
+            "title_style": self.title_style,
         }
 
     @classmethod
@@ -52,6 +56,7 @@ class ICalSyncConfig:
             last_sync_error=data.get("last_sync_error"),
             connected_at=data.get("connected_at", ""),
             consecutive_error_count=data.get("consecutive_error_count", 0),
+            title_style=data.get("title_style"),
         )
 
 
@@ -80,6 +85,11 @@ class ICalSyncConfigRepository(ABC):
 
     @abstractmethod
     def update_sync_status(
-        self, user_id: str, ehr_system: str, *, error: str | None = None
+        self,
+        user_id: str,
+        ehr_system: str,
+        *,
+        error: str | None = None,
+        title_style: str | None = None,
     ) -> None:
-        pass
+        """Record the outcome of a read; ``title_style`` when the read saw events."""

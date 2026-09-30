@@ -29,7 +29,7 @@ class OutsideSessionsResponse(BaseModel):
 
 
 class OutsideQuestionResponse(BaseModel):
-    """One "who is this?": every open event remembered under one identifier."""
+    """One "who is this?": every open event under one identifier, or one event."""
 
     key: str
     source: str
@@ -39,6 +39,21 @@ class OutsideQuestionResponse(BaseModel):
     sessions: int = Field(description="How many open events the answer settles")
     next_start_at: datetime
     match: SeriesMatchResponse
+    outside_session_id: str | None = Field(
+        default=None,
+        description=(
+            "Set when the question is about this one event: its identifier (initials, a "
+            "name two charts share) could mean someone else next time, so each event is "
+            "asked. Hand it back with the answer"
+        ),
+    )
+    client_inactive: bool = Field(
+        default=False,
+        description=(
+            "The suggested client's chart is inactive or on hold. Confirming with "
+            "``reactivate`` makes it active again; the session books either way"
+        ),
+    )
 
 
 class OutsideQuestionsResponse(BaseModel):
@@ -58,6 +73,15 @@ class OutsideAnswer(BaseModel):
         description="The calendar's wording, as-is; an empty one still adds a client",
     )
     not_a_client: bool = False
+    outside_session_id: str | None = Field(
+        default=None,
+        max_length=64,
+        description="The one event this answers, when the question was about one event",
+    )
+    reactivate: bool = Field(
+        default=False,
+        description="Make an inactive client's chart active again while booking",
+    )
 
     @model_validator(mode="after")
     def _one_answer(self) -> Self:

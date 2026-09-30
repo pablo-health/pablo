@@ -29,10 +29,17 @@ const EHR_OPTIONS = [
 
 const URL_HINTS: Record<string, string> = {
   simplepractice:
-    "Find this in SimplePractice: Settings > Calendar > Apple Calendar section. For best client matching, set calendar display to show full names.",
+    "Find this in SimplePractice: Settings > Calendar > Apple Calendar section. Set the calendar display to show full names, so Pablo can tell clients apart.",
   sessions_health:
     "Find this in Sessions Health: Settings > Calendar Integration > iCal Feed URL.",
 }
+
+// Initials never identify one client, so every session on such a feed is a
+// question. The setting that fixes it is the clinician's, in their own
+// calendar sync; this only says what the feed shows and what changes if they
+// do. The reasoning is in outside_sessions.py.
+const INITIALS_NOTE =
+  "This feed shows clients by their initials, so Pablo asks about every session. Showing full names in the calendar sync means fewer questions."
 
 export function IntegrationSettings() {
   const [connections, setConnections] = useState<ICalConnectionStatus[]>([])
@@ -169,6 +176,11 @@ export function IntegrationSettings() {
                   {conn.last_sync_error && (
                     <p className="text-xs text-red-500 mt-0.5">
                       {conn.last_sync_error}
+                    </p>
+                  )}
+                  {conn.title_style === "initials" && (
+                    <p data-testid="feed-initials-note" className="text-xs text-neutral-600 mt-1">
+                      {INITIALS_NOTE}
                     </p>
                   )}
                 </div>

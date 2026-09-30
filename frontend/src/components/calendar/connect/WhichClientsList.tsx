@@ -20,9 +20,18 @@ export interface ClientQuestionRow {
   /** Right-hand note, such as how many are ahead. */
   aside?: string
   match: SeriesMatch
+  /** The preselected client's chart is inactive or on hold. Confirming the
+   * session offers to make them active again. */
+  clientInactive?: boolean
 }
 
 const NEW_CLIENT = "new"
+
+/** The preselected client's name, for the offer to make them active again. */
+function clientNamed(row: ClientQuestionRow): string {
+  const chosen = row.match.possible.find((c) => c.patient_id === row.match.suggested_patient_id)
+  return chosen?.display_name ?? "this client"
+}
 
 function choiceLabel(choice: ImportPatientChoice): string {
   if (!choice.date_of_birth) return choice.display_name
@@ -100,6 +109,9 @@ interface WhichClientsListProps {
   /** Rows marked as not a client; remembered when saved. */
   notClient: Record<string, boolean>
   onToggleNotClient: (key: string) => void
+  /** Rows whose inactive client is made active again on save. Default on. */
+  reactivate?: Record<string, boolean>
+  onToggleReactivate?: (key: string) => void
 }
 
 /**
@@ -115,6 +127,8 @@ export function WhichClientsList({
   onChooseClient,
   notClient,
   onToggleNotClient,
+  reactivate = {},
+  onToggleReactivate,
 }: WhichClientsListProps) {
   return (
     <div className="flex flex-col">
@@ -123,6 +137,12 @@ export function WhichClientsList({
         const isNotClient = notClient[key] ?? false
         // A colleague's client can't be added here, so it can't be ticked.
         const elsewhere = seenElsewhere(row.match)
+        // The offer to reactivate goes with the inactive chart: picking
+        // another client, or a new one, takes it away.
+        const offerReactivate =
+          Boolean(row.clientInactive) &&
+          row.match.suggested_patient_id != null &&
+          (clientFor[key] ?? null) === row.match.suggested_patient_id
         return (
           // A div, not a label: the client choice sits in the row, and a
           // label would turn every click on it into a tick or an untick.
@@ -170,6 +190,16 @@ export function WhichClientsList({
                     patientId={clientFor[key] ?? null}
                     onChoose={(patientId) => onChooseClient(key, patientId)}
                   />
+                  {offerReactivate ? (
+                    <label className="mt-1 flex cursor-pointer items-center gap-1.5 text-xs text-neutral-700">
+                      <Checkbox
+                        checked={reactivate[key] ?? true}
+                        onCheckedChange={() => onToggleReactivate?.(key)}
+                        aria-label={`Make ${clientNamed(row)} active again`}
+                      />
+                      Make {clientNamed(row)} active again
+                    </label>
+                  ) : null}
                   <button
                     type="button"
                     onClick={() => onToggleNotClient(key)}

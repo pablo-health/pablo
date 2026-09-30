@@ -15,13 +15,15 @@ import { OutsideSessionsReview, type SubmitOutsideAnswers } from "./OutsideSessi
 
 type ReviewState = { mode: "all" } | { mode: "single"; session: OutsideSession } | null
 
-/** The question for one event: its series' or title's, or a bare one while
- * the question list is still loading. */
+/** The question for one event: its own, when its title is asked about per
+ * event; otherwise its series' or title's; or a bare one while the question
+ * list is still loading. */
 function questionFor(session: OutsideSession, questions: OutsideQuestion[]): OutsideQuestion {
+  const sameIdentifier = (q: OutsideQuestion) =>
+    q.source === session.source && q.source_identifier === session.source_identifier
   return (
-    questions.find(
-      (q) => q.source === session.source && q.source_identifier === session.source_identifier
-    ) ?? {
+    questions.find((q) => q.outside_session_id === session.id) ??
+    questions.find((q) => sameIdentifier(q) && !q.outside_session_id) ?? {
       key: `${session.source}|${session.source_identifier}`,
       source: session.source,
       source_identifier: session.source_identifier,
@@ -30,6 +32,8 @@ function questionFor(session: OutsideSession, questions: OutsideQuestion[]): Out
       sessions: 1,
       next_start_at: session.start_at,
       match: { patient: null, possible: [], suggested_patient_id: null },
+      // Answers this event alone, which every identifier accepts.
+      outside_session_id: session.id,
     }
   )
 }

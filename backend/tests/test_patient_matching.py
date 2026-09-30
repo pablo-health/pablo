@@ -332,3 +332,18 @@ def test_a_context_over_patients_in_hand_matches_without_a_store() -> None:
     ctx = MatchContext.over([Candidate("p1", "Jane", "Adams", date(1980, 1, 2), None)])
     hint = PatientHint(full_name="Jane Adams", date_of_birth=date(1980, 1, 2))
     assert match_patient(hint, ctx).evidence == "name_and_dob"
+
+
+def test_a_name_missing_a_middle_name_is_a_question_when_a_chart_has_one() -> None:
+    """ "Mary Smith" fits Mary / Smith and Mary Ann / Smith: nobody is guessed."""
+    ctx = MatchContext.over(
+        [
+            Candidate(id="mary", first_name="Mary", last_name="Smith"),
+            Candidate(id="mary-ann", first_name="Mary Ann", last_name="Smith"),
+        ]
+    )
+
+    result = match_patient(PatientHint(full_name="Mary Smith"), ctx)
+
+    assert result.patient_id is None
+    assert sorted(result.possible_ids) == ["mary", "mary-ann"]

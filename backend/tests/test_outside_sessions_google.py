@@ -8,6 +8,8 @@ inserts, patches, updates or deletes an event it did not create.
 
 from __future__ import annotations
 
+import base64
+import os
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
@@ -15,6 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from app.calendar_providers.source_identity import (
     GOOGLE_CALENDAR_SOURCE,
+    answered_title_digest,
     calendar_source_identifier,
 )
 from app.models.patient import Patient
@@ -34,16 +37,26 @@ from app.services.google_calendar_follow import GoogleSyncStatus
 from app.services.google_calendar_service import GoogleCalendarService
 from app.services.outside_sessions import OutsideSessions
 from app.services.sync_scheduler_service import SyncSchedulerService
+from app.settings import get_settings
 from app.utcnow import utc_now
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator, Iterator
 
     from app.models import User
 
 USER_ID = "test-user-123"
 PABLO_CALENDAR = "pablo-made-calendar"
 _WRITES = ("insert", "patch", "update", "delete", "move", "quickAdd")
+
+
+@pytest.fixture(autouse=True)
+def _calendar_key(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
+    """The secret the answered-title digest is keyed under; every answer needs it."""
+    monkeypatch.setenv("GOOGLE_CALENDAR_ENCRYPTION_KEY", base64.b64encode(os.urandom(32)).decode())
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 def _in(days: float, hour: int = 14) -> datetime:
@@ -210,6 +223,7 @@ class _Stack:
             calendar_source_identifier(series, "", 0, "00:00"),
             patient_id,
             self.outside.context(USER_ID),
+            answered_title=answered_title_digest("Weekly 1:1"),
         )
 
 

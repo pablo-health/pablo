@@ -293,4 +293,143 @@ describe("sessions from the clinician's own calendar", () => {
     drag(document.querySelector('[data-event="1"]') as HTMLElement)
     expect(updateMutate).toHaveBeenCalledTimes(1)
   })
+
+  it("answers a question about one event for that event alone", () => {
+    const start = todayAt(14)
+    OUTSIDE.push({
+      id: "o1",
+      source: "ical:simplepractice",
+      source_identifier: "J.A.",
+      title: "J.A. Appointment",
+      start_at: start.toISOString(),
+      end_at: new Date(start.getTime() + 50 * 60_000).toISOString(),
+    })
+    // Initials fit two clients, so each event is its own question, pre-filled
+    // with the last answer.
+    QUESTIONS.push({
+      key: "ical:simplepractice|J.A.|o1",
+      source: "ical:simplepractice",
+      source_identifier: "J.A.",
+      title: "J.A. Appointment",
+      recurring: false,
+      sessions: 1,
+      next_start_at: start.toISOString(),
+      outside_session_id: "o1",
+      match: {
+        patient: null,
+        possible: [
+          { patient_id: "p1", display_name: "Jane Doe", date_of_birth: null },
+          { patient_id: "p2", display_name: "John Adams", date_of_birth: null },
+        ],
+        suggested_patient_id: "p1",
+      },
+    })
+
+    render(<EditorialCalendar {...defaults()} defaultView="day" />, { wrapper: wrap() })
+    fireEvent.click(screen.getByTestId("outside-session"))
+
+    const dialog = screen.getByRole("dialog")
+    expect(
+      within(dialog).getByRole("combobox", { name: "Which client is J.A. Appointment?" })
+    ).toHaveValue("p1")
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }))
+    expect(answerMutateAsync).toHaveBeenCalledWith([
+      {
+        source: "ical:simplepractice",
+        source_identifier: "J.A.",
+        patient_id: "p1",
+        new_client_name: null,
+        not_a_client: false,
+        outside_session_id: "o1",
+      },
+    ])
+  })
+
+  it("offers to make an inactive client active again, on by default", () => {
+    QUESTIONS.push({ ...MATCHED, client_inactive: true })
+
+    render(<EditorialCalendar {...defaults()} />, { wrapper: wrap() })
+    fireEvent.click(
+      within(screen.getByTestId("outside-sessions-line")).getByRole("button", { name: "Review" })
+    )
+
+    const dialog = screen.getByRole("dialog")
+    const offer = within(dialog).getByRole("checkbox", { name: "Make Jane Doe active again" })
+    expect(offer).toBeChecked()
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }))
+    expect(answerMutateAsync).toHaveBeenCalledWith([
+      {
+        source: "google_calendar",
+        source_identifier: "series:abc",
+        patient_id: "p1",
+        new_client_name: null,
+        not_a_client: false,
+        reactivate: true,
+      },
+    ])
+  })
+
+  it("books without reactivating when the offer is unticked, and drops it for another client", () => {
+    QUESTIONS.push({ ...MATCHED, client_inactive: true })
+
+    render(<EditorialCalendar {...defaults()} />, { wrapper: wrap() })
+    fireEvent.click(
+      within(screen.getByTestId("outside-sessions-line")).getByRole("button", { name: "Review" })
+    )
+    const dialog = screen.getByRole("dialog")
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: "Make Jane Doe active again" }))
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }))
+    expect(answerMutateAsync).toHaveBeenLastCalledWith([
+      {
+        source: "google_calendar",
+        source_identifier: "series:abc",
+        patient_id: "p1",
+        new_client_name: null,
+        not_a_client: false,
+      },
+    ])
+
+    // Picking "New client" instead: nothing to reactivate.
+    fireEvent.change(
+      within(dialog).getByRole("combobox", { name: "Which client is Jane Doe?" }),
+      { target: { value: "new" } }
+    )
+    expect(
+      within(dialog).queryByRole("checkbox", { name: "Make Jane Doe active again" })
+    ).not.toBeInTheDocument()
+  })
+
+  it("shows no such offer for an active client", () => {
+    QUESTIONS.push(MATCHED)
+
+    render(<EditorialCalendar {...defaults()} />, { wrapper: wrap() })
+    fireEvent.click(
+      within(screen.getByTestId("outside-sessions-line")).getByRole("button", { name: "Review" })
+    )
+
+    expect(
+      within(screen.getByRole("dialog")).queryByRole("checkbox", { name: /active again/ })
+    ).not.toBeInTheDocument()
+  })
+
+  it("answers one event from its block before the question list has loaded", async () => {
+    const start = todayAt(14)
+    OUTSIDE.push({
+      id: "o1",
+      source: "ical:simplepractice",
+      source_identifier: "J.A.",
+      title: "J.A. Appointment",
+      start_at: start.toISOString(),
+      end_at: new Date(start.getTime() + 50 * 60_000).toISOString(),
+    })
+
+    render(<EditorialCalendar {...defaults()} defaultView="day" />, { wrapper: wrap() })
+    fireEvent.click(screen.getByTestId("outside-session"))
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Save" }))
+
+    expect(answerMutateAsync).toHaveBeenCalledWith([
+      expect.objectContaining({ source_identifier: "J.A.", outside_session_id: "o1" }),
+    ])
+  })
 })

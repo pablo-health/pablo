@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import base64
+import os
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
@@ -35,12 +37,26 @@ from app.services.google_calendar_follow import (
     Resolution,
 )
 from app.services.outside_sessions import OutsideSessions
+from app.settings import get_settings
 from app.utcnow import utc_now
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
+
     from app.models import User
 
 USER_ID = "test-user-123"
+
+
+@pytest.fixture(autouse=True)
+def _calendar_key(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
+    """The secret the answered-title digest is keyed under; every answer needs it."""
+    monkeypatch.setenv("GOOGLE_CALENDAR_ENCRYPTION_KEY", base64.b64encode(os.urandom(32)).decode())
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 SERIES = "series-weekly-1"
 
 
@@ -248,6 +264,7 @@ class TestRememberedSlots:
         self, h: _Harness, mock_user: User
     ) -> None:
         h.patient("p1", "Jane", "Smith")
+        h.poll(mock_user, [_event("e1", _in(2))])
         h.answer("p1")
 
         h.poll(mock_user, [_event("e9", _in(30))])

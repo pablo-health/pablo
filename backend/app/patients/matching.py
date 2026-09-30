@@ -42,8 +42,8 @@ The checks run in a fixed order, strongest first:
    so it is asked once per series.
 
 A name that agrees only on its first and last word ("Mary Ann Smith" and a
-chart for Mary Smith) is never certain: it may be someone else, so it is
-offered as a possible match.
+chart for Mary Smith, or "Pablo Bear" and a chart typed as Pablo A / Bear) is
+never certain: it may be someone else, so it is offered as a possible match.
 
 A remembered answer always settles the question. If the patient it names is
 no longer a live chart, there is no match at all — never a weaker guess in
@@ -269,9 +269,31 @@ def _full_name_matches(
         if normalize(f"{first} {last}") == wanted:
             whole.append(c)
             found.append(c)
-        elif parts[0] == first and parts[-1] == last:
+        elif _first_and_last_word(first, last) == (parts[0], parts[-1]):
             found.append(c)
     return whole, found
+
+
+def _first_and_last_word(first_name: str, last_name: str) -> tuple[str, str]:
+    """A chart's name as a first and a last word, whatever else was typed.
+
+    A middle name or initial lands in either field ("Pablo A" / "Bear"), and a
+    record naming the same person often drops it, so it counts on neither side.
+    """
+    first = first_name.split()
+    last = last_name.split()
+    return (first[0] if first else "", last[-1] if last else "")
+
+
+def same_name_charts(full_name: str, ctx: MatchContext) -> list[Candidate]:
+    """The charts the caller sees whose first and last name are this name's.
+
+    Middle names are ignored on both sides. This is what decides whether a
+    name on its own can identify one client: two of the caller's charts
+    bearing it can't be told apart by it.
+    """
+    _, found = _full_name_matches(full_name, [c for c in ctx.candidates if c.visible])
+    return found
 
 
 def _initials_matches(initials: str, candidates: list[Candidate]) -> list[Candidate]:
@@ -359,13 +381,36 @@ def _match(hint: PatientHint, ctx: MatchContext, *, name_alone_is_enough: bool) 
     return MatchResult(possible_ids=[c.id for c in possible])
 
 
-def remember_match(source: str, source_identifier: str, patient_id: str, ctx: MatchContext) -> None:
+def remember_match(
+    source: str,
+    source_identifier: str,
+    patient_id: str,
+    ctx: MatchContext,
+    *,
+    answered_title: str | None = None,
+) -> None:
     """Record that this source's identifier means this patient.
 
     Idempotent. An identifier already remembered under different case or
     spacing is updated in place rather than stored twice.
+
+    ``answered_title`` is the keyed digest of the title the answer was given
+    under (``answered_title_digest``), for sources whose identifier can
+    outlive the client it named: a provider's series id stays the same when
+    the series is handed to someone else, so the answer holds only while the
+    title does. Left unset by sources where the identifier is the title.
     """
-    _remember(source, source_identifier, ANSWER_CLIENT, patient_id, ctx)
+    _remember(
+        ctx,
+        PatientSourceMapping(
+            user_id=ctx.user_id,
+            source=source,
+            source_identifier=source_identifier,
+            patient_id=patient_id,
+            answer=ANSWER_CLIENT,
+            answered_title=answered_title,
+        ),
+    )
 
 
 def remember_not_a_client(source: str, source_identifier: str, ctx: MatchContext) -> None:
@@ -373,27 +418,27 @@ def remember_not_a_client(source: str, source_identifier: str, ctx: MatchContext
 
     Idempotent, and replaces a client answer for the same identifier.
     """
-    _remember(source, source_identifier, ANSWER_NOT_A_CLIENT, None, ctx)
-
-
-def _remember(
-    source: str, source_identifier: str, answer: str, patient_id: str | None, ctx: MatchContext
-) -> None:
-    identifier = " ".join(source_identifier.split())
-    existing = ctx.remembered(source).get(normalize(identifier))
-    if existing is not None:
-        if (existing.answer, existing.patient_id) == (answer, patient_id):
-            return
-        identifier = existing.source_identifier
-    ctx.save(
+    _remember(
+        ctx,
         PatientSourceMapping(
             user_id=ctx.user_id,
             source=source,
-            source_identifier=identifier,
-            patient_id=patient_id,
-            answer=answer,
-        )
+            source_identifier=source_identifier,
+            patient_id=None,
+            answer=ANSWER_NOT_A_CLIENT,
+        ),
     )
+
+
+def _remember(ctx: MatchContext, mapping: PatientSourceMapping) -> None:
+    mapping.source_identifier = " ".join(mapping.source_identifier.split())
+    existing = ctx.remembered(mapping.source).get(normalize(mapping.source_identifier))
+    if existing is not None:
+        same = (existing.answer, existing.patient_id, existing.answered_title)
+        if same == (mapping.answer, mapping.patient_id, mapping.answered_title):
+            return
+        mapping.source_identifier = existing.source_identifier
+    ctx.save(mapping)
 
 
 __all__ = [
@@ -407,4 +452,5 @@ __all__ = [
     "normalize",
     "remember_match",
     "remember_not_a_client",
+    "same_name_charts",
 ]

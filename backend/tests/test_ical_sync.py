@@ -24,7 +24,7 @@ from app.repositories.patient_source_mapping import (
     PatientSourceMapping,
 )
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
-from app.services.ical_sync_service import ICalSyncService
+from app.services.ical_sync_service import ICalSyncService, ParsedEvent
 from app.services.token_encryption import encrypt_tokens
 from app.settings import get_settings
 from app.utcnow import utc_now
@@ -77,6 +77,13 @@ SUMMARY:P.B. Appointment
 URL;VALUE=URI:https://video.simplepractice.com/appt-485bc95d4f126fadb091e02f240ea244
 END:VEVENT
 END:VCALENDAR"""
+
+# The same feed with the calendar sync set to show full names, which is the
+# only setting under which a feed books on its own: initials never identify one
+# client. Captures of both settings are under ``fixtures/simplepractice_feed``.
+SP_NAMES_ICAL_DATA = SP_ICAL_DATA.replace("J.A. Appointment", "Jane Adams Appointment").replace(
+    "P.B. Appointment", "Pablo Bear Appointment"
+)
 
 # Real iCal feed data from Sessions Health test account
 SH_ICAL_DATA = """\
@@ -162,12 +169,19 @@ class InMemoryICalSyncConfigRepo:
         return False
 
     def update_sync_status(
-        self, user_id: str, ehr_system: str, *, error: str | None = None
+        self,
+        user_id: str,
+        ehr_system: str,
+        *,
+        error: str | None = None,
+        title_style: str | None = None,
     ) -> None:
         key = f"{user_id}_{ehr_system}"
         if key in self._configs:
             self._configs[key].last_synced_at = _now()
             self._configs[key].last_sync_error = error
+            if title_style is not None:
+                self._configs[key].title_style = title_style
 
 
 @pytest.fixture
@@ -256,40 +270,42 @@ class TestClientMatching:
     def test_extract_sh_code(self, service: ICalSyncService):
         assert service._extract_client_identifier("sessions_health", "SH00001") == "SH00001"
 
-    def test_match_sp_unique_initials(self, service: ICalSyncService):
+    def test_unique_initials_are_offered_never_booked(self, service: ICalSyncService):
+        """ "J.A." fits Jane Adams alone today; tomorrow it may fit someone new."""
         patients = [
             _make_patient("p1", "Jane", "Adams"),
             _make_patient("p2", "Bob", "Smith"),
         ]
-        result = service._match_patient("simplepractice", "J.A.", _context(service, patients))
-        assert result == "p1"
+        ctx = _context(service, patients)
+        assert service._match("simplepractice", "J.A.", ctx).patient_id == "p1"
+        assert _unattended(service, "simplepractice", "J.A. Appointment", ctx) is None
 
-    def test_match_sp_ambiguous_initials(self, service: ICalSyncService):
+    def test_ambiguous_initials_are_a_question(self, service: ICalSyncService):
         patients = [
             _make_patient("p1", "Jane", "Adams"),
             _make_patient("p2", "John", "Adams"),
         ]
-        result = service._match_patient("simplepractice", "J.A.", _context(service, patients))
-        assert result == ""  # Ambiguous — can't determine
+        ctx = _context(service, patients)
+        assert service._match("simplepractice", "J.A.", ctx).patient_id is None
+        assert _unattended(service, "simplepractice", "J.A. Appointment", ctx) is None
 
-    def test_match_sp_full_name(self, service: ICalSyncService):
+    def test_a_full_name_one_chart_bears_books(self, service: ICalSyncService):
         patients = [
             _make_patient("p1", "Jane", "Adams"),
             _make_patient("p2", "Bob", "Smith"),
         ]
-        result = service._match_patient("simplepractice", "Jane Adams", _context(service, patients))
-        assert result == "p1"
+        ctx = _context(service, patients)
+        assert _unattended(service, "simplepractice", "Jane Adams Appointment", ctx) == "p1"
 
-    def test_match_via_saved_mapping(self, service: ICalSyncService):
+    def test_a_feeds_own_client_code_books_once_answered(self, service: ICalSyncService):
         service._mapping_repo.save(
             PatientSourceMapping("user1", "sessions_health", "SH00001", "patient-abc")
         )
         ctx = _context(service, [_make_patient("patient-abc", "Pablo", "Bear")])
-        result = service._match_patient("sessions_health", "SH00001", ctx)
-        assert result == "patient-abc"
+        assert _unattended(service, "sessions_health", "SH00001", ctx) == "patient-abc"
 
-    def test_two_clients_sharing_initials_are_asked_about_once(self, service: ICalSyncService):
-        """John Adams and James Andersson are both "J.A.": a question, answered once."""
+    def test_two_clients_sharing_initials_are_asked_every_time(self, service: ICalSyncService):
+        """John Adams and James Andersson are both "J.A.": the answer is the next pre-fill."""
         ctx = _context(
             service,
             [_make_patient("john", "John", "Adams"), _make_patient("james", "James", "Andersson")],
@@ -301,11 +317,11 @@ class TestClientMatching:
         # The clinician picks John; that is remembered for the feed's "J.A.".
         remember_match("simplepractice", "J.A.", "john", ctx)
 
-        later = service._match("simplepractice", "J.A.", service._match_context("user1"))
+        ctx = service._match_context("user1")
+        later = service._match("simplepractice", "J.A.", ctx)
         assert (later.patient_id, later.evidence) == ("john", "remembered")
-        assert service._match_patient(
-            "simplepractice", "J.A.", service._match_context("user1")
-        ) == ("john")
+        # Remembered, and still not booked: initials don't say which J.A. this is.
+        assert _unattended(service, "simplepractice", "J.A. Appointment", ctx) is None
 
     def test_a_colleagues_client_sharing_initials_is_not_matched(self, service: ICalSyncService):
         """Initials are weak evidence: only the clinician's own charts count."""
@@ -313,7 +329,7 @@ class TestClientMatching:
         ctx = service._match_context("user1")
 
         assert service._match("simplepractice", "J.A.", ctx).patient_id is None
-        assert service._match_patient("simplepractice", "J.A.", ctx) == ""
+        assert _unattended(service, "simplepractice", "J.A. Appointment", ctx) is None
 
     def test_a_remembered_colleagues_client_is_never_booked_from_a_feed(
         self, service: ICalSyncService
@@ -326,7 +342,16 @@ class TestClientMatching:
         ctx = service._match_context("user1")
 
         assert service._match("sessions_health", "SH00001", ctx).patient_id == "theirs"
-        assert service._match_patient("sessions_health", "SH00001", ctx) == ""
+        assert _unattended(service, "sessions_health", "SH00001", ctx) is None
+
+
+def _unattended(service: ICalSyncService, ehr: str, summary: str, ctx: MatchContext) -> str | None:
+    """The chart a feed event with this title books to without asking, if any."""
+    start = _now()
+    event = ParsedEvent(
+        uid="uid-1", summary=summary, start_at=start, end_at=start, duration_minutes=60
+    )
+    return service._outside.unattended(ICalSyncService._row("user1", ehr, event), ctx)
 
 
 def _context(service: ICalSyncService, patients: list[Patient]) -> MatchContext:
@@ -372,7 +397,7 @@ class TestSyncDiff:
     def test_initial_sync_creates_appointments(
         self, mock_fetch: MagicMock, sync_service: ICalSyncService
     ):
-        mock_fetch.return_value = SP_ICAL_DATA
+        mock_fetch.return_value = SP_NAMES_ICAL_DATA
         results = sync_service.sync("user1", "simplepractice")
 
         assert len(results) == 1
@@ -385,8 +410,8 @@ class TestSyncDiff:
     def test_an_identifier_remembered_as_not_a_client_is_skipped(
         self, mock_fetch: MagicMock, sync_service: ICalSyncService
     ):
-        mock_fetch.return_value = SP_ICAL_DATA
-        remember_not_a_client("simplepractice", "J.A.", sync_service._match_context("user1"))
+        mock_fetch.return_value = SP_NAMES_ICAL_DATA
+        remember_not_a_client("simplepractice", "Jane Adams", sync_service._match_context("user1"))
 
         [result] = sync_service.sync("user1", "simplepractice")
 
@@ -415,7 +440,7 @@ class TestSyncDiff:
 
     @patch.object(ICalSyncService, "_fetch_feed")
     def test_second_sync_no_changes(self, mock_fetch: MagicMock, sync_service: ICalSyncService):
-        mock_fetch.return_value = SP_ICAL_DATA
+        mock_fetch.return_value = SP_NAMES_ICAL_DATA
         sync_service.sync("user1", "simplepractice")
 
         # Second sync — no changes
@@ -429,7 +454,7 @@ class TestSyncDiff:
     def test_deleted_event_soft_deletes_appointment(
         self, mock_fetch: MagicMock, sync_service: ICalSyncService
     ):
-        mock_fetch.return_value = SP_ICAL_DATA
+        mock_fetch.return_value = SP_NAMES_ICAL_DATA
         sync_service.sync("user1", "simplepractice")
 
         # Second sync with one event removed
@@ -451,7 +476,7 @@ class TestSyncDiff:
 
     @patch.object(ICalSyncService, "_fetch_feed")
     def test_ehr_appointment_url_set(self, mock_fetch: MagicMock, sync_service: ICalSyncService):
-        mock_fetch.return_value = SP_ICAL_DATA
+        mock_fetch.return_value = SP_NAMES_ICAL_DATA
         sync_service.sync("user1", "simplepractice")
 
         appts = sync_service._appt_repo.list_by_ical_source("user1", "simplepractice")
@@ -463,7 +488,7 @@ class TestSyncDiff:
 
     @patch.object(ICalSyncService, "_fetch_feed")
     def test_video_link_extracted(self, mock_fetch: MagicMock, sync_service: ICalSyncService):
-        mock_fetch.return_value = SP_ICAL_DATA
+        mock_fetch.return_value = SP_NAMES_ICAL_DATA
         sync_service.sync("user1", "simplepractice")
 
         appts = sync_service._appt_repo.list_by_ical_source("user1", "simplepractice")
