@@ -4,6 +4,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { CheckCircle2 } from "lucide-react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { SetupNav, SetupWizardShell, type SetupStepperStep } from "@/components/setup"
@@ -174,6 +175,9 @@ export function CalendarSetupWizard({
   const reviewIndex = stepOffset + 3
 
   const [activeIndex, setActiveIndex] = useState(0)
+  // Set when Google has just finished a connect, so the step it lands on
+  // can say so; gone once the therapist moves off that step.
+  const [justConnected, setJustConnected] = useState(false)
   const [selection, setSelection] = useState<GoogleCalendarSelection>(DEFAULT_SELECTION)
   const [attested, setAttested] = useState(false)
   const [applying, setApplying] = useState(false)
@@ -216,6 +220,14 @@ export function CalendarSetupWizard({
     if (!grantedWriteTarget) return
     setSelection((current) => ({ ...current, write_target: grantedWriteTarget }))
   }, [grantedWriteTarget])
+
+  // Likewise whether busy times were granted, so step 2 only offers to ask
+  // Google again when the therapist has actually changed it.
+  const grantedBusy = status?.connected && typeof status.busy === "boolean" ? status.busy : null
+  useEffect(() => {
+    if (grantedBusy === null) return
+    setSelection((current) => ({ ...current, busy: grantedBusy }))
+  }, [grantedBusy])
 
   // Show what the connection is actually set to, not the default.
   const storedTitling = status?.connected ? status.event_titling : null
@@ -290,13 +302,14 @@ export function CalendarSetupWizard({
       // "Look at my week" sent the therapist to Google for the IMPORT
       // grant alone. Completing it picks the flow back up: land on the
       // clients step and finish what the button started, without making
-      // the therapist press it again.
+      // the therapist press it again. Landing there comes first, so a grant
+      // that fails is reported where it was asked for, not on step 1.
+      setActiveIndex(clientsIndex)
       setScanning(true)
       completeGoogleCalendarImportConsent(code, state, redirectUri)
         .then(() => {
           if (cancelled) return
           queryClient.invalidateQueries({ queryKey: ["google-calendar"] })
-          setActiveIndex(clientsIndex)
           return runScan()
         })
         .catch((err: unknown) => {
@@ -319,7 +332,9 @@ export function CalendarSetupWizard({
       .then(() => {
         if (cancelled) return
         queryClient.invalidateQueries({ queryKey: ["google-calendar"] })
-        setActiveIndex(sessionsIndex)
+        // Connected is done with steps 1 and 2: move on, and say so.
+        setJustConnected(true)
+        setActiveIndex(clientsIndex)
       })
       .catch((err: unknown) => {
         if (!cancelled) setError(message(err, "Google did not finish connecting."))
@@ -344,7 +359,6 @@ export function CalendarSetupWizard({
     authLoading,
     user,
     clientsIndex,
-    sessionsIndex,
   ])
 
   // Changing how events read on an already-connected calendar does not
@@ -428,12 +442,16 @@ export function CalendarSetupWizard({
   // The hours step owns its own buttons, and "Finish later" there would
   // answer the Google steps' gate for a question that was not asked.
   const onHoursStep = withHoursStep && activeIndex === 0
+  const showConnected = justConnected && activeIndex === clientsIndex
 
   return (
     <SetupWizardShell
       steps={steps}
       activeIndex={activeIndex}
-      onJump={setActiveIndex}
+      onJump={(index) => {
+        setJustConnected(false)
+        setActiveIndex(index)
+      }}
       reachable={() => true}
       title="Google Calendar"
       lede="Put the sessions you book in Pablo onto your calendar."
@@ -441,8 +459,19 @@ export function CalendarSetupWizard({
       footer={
         onReviewStep || onHoursStep ? null : (
           <SetupNav
-            onBack={activeIndex > 0 ? () => setActiveIndex(activeIndex - 1) : undefined}
-            onContinue={() => (isLastStep ? finishWizard() : setActiveIndex(activeIndex + 1))}
+            onBack={
+              activeIndex > 0
+                ? () => {
+                    setJustConnected(false)
+                    setActiveIndex(activeIndex - 1)
+                  }
+                : undefined
+            }
+            onContinue={() => {
+              setJustConnected(false)
+              if (isLastStep) finishWizard()
+              else setActiveIndex(activeIndex + 1)
+            }}
             canContinue={
               activeIndex === connectIndex
                 ? true
@@ -458,6 +487,12 @@ export function CalendarSetupWizard({
         )
       }
     >
+      {showConnected ? (
+        <p role="status" className="mb-4 flex items-center gap-2 text-sm font-medium text-green-700">
+          <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+          Google Calendar is connected.
+        </p>
+      ) : null}
       {onHoursStep ? (
         <CalendarHoursStep
           onSaved={() => setActiveIndex(connectIndex)}
@@ -481,7 +516,8 @@ export function CalendarSetupWizard({
           onSelectionChange={setSelection}
           connecting={connecting || applying}
           error={error}
-          onConnect={status?.connected ? applyTitling : startConnect}
+          onConnect={startConnect}
+          onSaveTitling={applyTitling}
           attested={attested}
           onAttestedChange={setAttested}
         />

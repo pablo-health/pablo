@@ -69,7 +69,11 @@ interface CalendarSessionsStepProps {
   onSelectionChange: (selection: GoogleCalendarSelection) => void
   connecting: boolean
   error: string | null
+  /** Go to Google: to connect, or to change what an existing connection holds. */
   onConnect: () => void
+  /** Save how events read on an existing connection. Pablo's own record, so
+   * no trip to Google. */
+  onSaveTitling: () => void
   /** True once the therapist has confirmed the account is covered. Only
    * meaningful for the full-name choice, which is gated on it. */
   attested: boolean
@@ -84,11 +88,23 @@ export function CalendarSessionsStep({
   connecting,
   error,
   onConnect,
+  onSaveTitling,
   attested,
   onAttestedChange,
 }: CalendarSessionsStepProps) {
   const promiseFor = (id: string) =>
     options?.write_targets.find((option) => option.id === id)?.promise
+
+  const connected = status?.connected === true
+  // Where sessions go and busy times are Google's permissions; changing
+  // either on a live connection means Google asks again. How events read is
+  // Pablo's own record and saves without leaving the page. An older backend
+  // that does not report the busy grant is treated as unchanged there.
+  const googleChanged =
+    connected &&
+    (selection.write_target !== status?.write_target ||
+      (typeof status?.busy === "boolean" && selection.busy !== status.busy))
+  const titlingChanged = connected && selection.event_titling !== status?.event_titling
 
   return (
     <div className="space-y-5">
@@ -216,17 +232,27 @@ export function CalendarSessionsStep({
         ) : null}
       </fieldset>
 
-      <div className="space-y-2">
-        {status?.connected ? (
-          <p className="text-sm text-muted-foreground">
-            Each of these is a separate permission, so changing one means asking Google again.
-          </p>
-        ) : null}
+      {!connected ? (
         <Button onClick={onConnect} disabled={connecting}>
           {connecting ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
-          {status?.connected ? "Ask Google again" : "Connect Google Calendar"}
+          Connect Google Calendar
         </Button>
-      </div>
+      ) : googleChanged ? (
+        <div className="space-y-2">
+          <p className="text-sm text-muted-foreground">
+            You changed what Pablo can do on your calendar, so Google will ask you again.
+          </p>
+          <Button onClick={onConnect} disabled={connecting}>
+            {connecting ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
+            Update access with Google
+          </Button>
+        </div>
+      ) : titlingChanged ? (
+        <Button onClick={onSaveTitling} disabled={connecting}>
+          {connecting ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
+          Save how events read
+        </Button>
+      ) : null}
 
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
     </div>

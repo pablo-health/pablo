@@ -460,10 +460,69 @@ describe("CalendarSetupWizard event titling", () => {
     await goToSessionsStep(user)
 
     await user.click(screen.getByRole("radio", { name: /therapy session/i }))
-    await user.click(screen.getByRole("button", { name: /ask google again/i }))
+    expect(screen.queryByRole("button", { name: /update access with google/i })).toBeNull()
+    await user.click(screen.getByRole("button", { name: /save how events read/i }))
 
     await waitFor(() => expect(setTitling).toHaveBeenCalledWith("generic", false))
     expect(getAuthUrl).not.toHaveBeenCalled()
+  })
+})
+
+describe("CalendarSetupWizard changing an existing connection", () => {
+  const CONNECTED_WITH_BUSY: GoogleCalendarStatus = {
+    connected: true,
+    calendar_id: "pablo-made@group.calendar.google.com",
+    calendar_name: "Pablo Sessions",
+    last_synced_at: null,
+    write_target: "app_calendar",
+    busy: true,
+    event_titling: "initials",
+    titling_needs_attestation: false,
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    window.sessionStorage.clear()
+    getStatus.mockResolvedValue(CONNECTED_WITH_BUSY)
+    getConsentOptions.mockResolvedValue(CONSENT_OPTIONS)
+    getAuthUrl.mockResolvedValue({ auth_url: "https://accounts.google.com/o/oauth2/auth?x=1" })
+    getBusyWindows.mockResolvedValue({ windows: [] })
+  })
+
+  it("offers nothing to press when nothing has changed", async () => {
+    const user = userEvent.setup()
+    renderWizard()
+    await goToSessionsStep(user)
+
+    expect(screen.queryByRole("button", { name: /update access with google/i })).toBeNull()
+    expect(screen.queryByRole("button", { name: /save how events read/i })).toBeNull()
+    expect(screen.queryByRole("button", { name: /connect google calendar/i })).toBeNull()
+  })
+
+  it("goes to Google when where sessions go changes", async () => {
+    const user = userEvent.setup()
+    renderWizard()
+    await goToSessionsStep(user)
+
+    await user.click(screen.getByRole("radio", { name: /my main calendar/i }))
+    expect(screen.getByText(/google will ask you again/i)).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: /update access with google/i }))
+
+    await waitFor(() => expect(getAuthUrl).toHaveBeenCalled())
+    expect(getAuthUrl.mock.calls[0][1].write_target).toBe("primary")
+    expect(setTitling).not.toHaveBeenCalled()
+  })
+
+  it("goes to Google when busy times are turned off", async () => {
+    const user = userEvent.setup()
+    renderWizard()
+    await goToSessionsStep(user)
+
+    await user.click(screen.getByRole("checkbox", { name: /also check when i'm busy/i }))
+    await user.click(screen.getByRole("button", { name: /update access with google/i }))
+
+    await waitFor(() => expect(getAuthUrl).toHaveBeenCalled())
+    expect(getAuthUrl.mock.calls[0][1].busy).toBe(false)
   })
 })
 
@@ -565,6 +624,30 @@ describe("CalendarSetupWizard returning from Google", () => {
     expect(window.sessionStorage.getItem("pablo.calendar-import.pending")).toBeNull()
     // Never mistaken for a fresh connect.
     expect(completeConnect).not.toHaveBeenCalled()
+  })
+
+  it("moves on to the clients step after a connect, and says it is connected", async () => {
+    getStatus.mockResolvedValue(CONNECTED)
+    getBusyWindows.mockResolvedValue({ windows: [] })
+
+    renderWizard()
+
+    await waitFor(() => expect(completeConnect).toHaveBeenCalled())
+    await screen.findByText("Bring over your week")
+    expect(screen.getByRole("status")).toHaveTextContent("Google Calendar is connected.")
+  })
+
+  it("reports a failed import grant on the clients step, not the first one", async () => {
+    getStatus.mockResolvedValue(CONNECTED)
+    completeImportConsent.mockRejectedValue(new Error("Google did not finish granting access."))
+    getBusyWindows.mockResolvedValue({ windows: [] })
+    window.sessionStorage.setItem("pablo.calendar-import.pending", "1")
+
+    renderWizard()
+
+    await screen.findByText("Bring over your week")
+    await screen.findByText(/google did not finish granting access/i)
+    expect(scanForImport).not.toHaveBeenCalled()
   })
 })
 
