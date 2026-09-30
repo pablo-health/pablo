@@ -294,6 +294,48 @@ def _event_to_change(event: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+class CalendarScopeNotGrantedError(Exception):
+    """Google's answer is missing a permission this request asked for."""
+
+
+def _exchange_code(flow: Any, code: str, requested_scopes: Sequence[str]) -> None:
+    """Trade the authorization code for tokens, accepting a wider grant.
+
+    Google answers an incremental request (``include_granted_scopes``) with
+    every permission the account has granted this app, not only the ones
+    just asked for — including grants from earlier connects. oauthlib treats
+    any difference from the requested scopes as an error ("Scope has
+    changed"), which fails exactly the request designed to add to what is
+    already held. So the exchange runs without an expected scope, and the
+    check that matters is made here instead: everything asked for must be
+    in what Google granted. A therapist who unticks the new permission on
+    Google's screen is refused, rather than recorded as having granted it.
+
+    The session's scope goes back afterwards because the credentials are
+    built from it.
+    """
+    session = flow.oauth2session
+    expected = session.scope
+    session.scope = None
+    try:
+        flow.fetch_token(code=code)
+    finally:
+        session.scope = expected
+
+    granted = session.token.get("scope")
+    if isinstance(granted, str):
+        granted_set = set(granted.split())
+    elif isinstance(granted, list | tuple | set | frozenset):
+        granted_set = {str(scope) for scope in granted}
+    else:
+        # Google always names the scopes; a response without them cannot
+        # be checked, and is taken as the grant that was asked for.
+        return
+    missing = [scope for scope in requested_scopes if scope not in granted_set]
+    if missing:
+        raise CalendarScopeNotGrantedError("Google did not grant: " + ", ".join(sorted(missing)))
+
+
 def _build_flow(
     client_id: str,
     client_secret: str,
@@ -628,7 +670,7 @@ class GoogleCalendarService:
             scopes,
         )
         flow.code_verifier = verifier
-        flow.fetch_token(code=code)
+        _exchange_code(flow, code, scopes)
         credentials = flow.credentials
 
         token_data = {
