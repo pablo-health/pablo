@@ -533,6 +533,15 @@ class Settings(BaseSettings):
                 raise ValueError("DEBUG must not be enabled outside ENVIRONMENT=development")
             if not self.require_mfa:
                 raise ValueError("REQUIRE_MFA must not be disabled outside ENVIRONMENT=development")
+            if self.ical_feed_base_url:
+                # Redirects every clinician's feed reads, and what comes back
+                # names their clients. Unlike the NPPES and clearinghouse
+                # origins, which a deployment may legitimately front with a
+                # proxy, this exists for the end-to-end stack and nothing
+                # else. The other two are reported in the startup posture.
+                raise ValueError(
+                    "ICAL_FEED_BASE_URL must not be set outside ENVIRONMENT=development"
+                )
         return self
 
     # Firebase Blocking Function OIDC Verification
@@ -1478,6 +1487,19 @@ class Settings(BaseSettings):
         ),
     )
 
+    ical_feed_base_url: str | None = Field(
+        default=None,
+        description=(
+            "Origin that answers calendar-feed fetches instead of the "
+            "provider's own host, for a deployment that should not reach "
+            "SimplePractice or Sessions Health — the end-to-end harness's "
+            "stand-in. A feed URL is still checked against the provider's "
+            "host and path allowlist as typed; only the fetch is redirected, "
+            "keeping the validated path. Unset (the ordinary case) means the "
+            "provider itself."
+        ),
+    )
+
     clearinghouse_webhook_secret: SecretStr = Field(
         default=SecretStr(""),
         description=(
@@ -1764,15 +1786,24 @@ def log_startup_posture(settings: Settings, logger: logging.Logger) -> None:
     no PHI, no secrets.
     """
     cors_origin_count = len([o for o in settings.cors_origins.split(",") if o.strip()])
+    # Whether an outside service is being answered by something other than
+    # itself. Each is a legitimate proxy on some deployments and a stand-in
+    # on the end-to-end stack; the feed origin is refused outside development
+    # (see _validate_deployment_posture) and is here so a boot log says so.
     logger.info(
         "startup posture: mfa=%s restrict_signups=%s use_redis=%s "
-        "test_identity_signup=%s dpop=%s cors_origins=%d",
+        "test_identity_signup=%s dpop=%s cors_origins=%d "
+        "nppes_origin_override=%s clearinghouse_origin_override=%s "
+        "ical_feed_origin_override=%s",
         settings.require_mfa,
         settings.restrict_signups,
         settings.use_redis,
         settings.test_identity_signup_armed,
         settings.enable_dpop_validation,
         cors_origin_count,
+        bool(settings.nppes_base_url),
+        bool(settings.clearinghouse_base_url),
+        bool(settings.ical_feed_base_url),
     )
 
 

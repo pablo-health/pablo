@@ -129,6 +129,37 @@ def test_debug_and_mfa_bypass_allowed_in_development() -> None:
     assert not settings.require_mfa
 
 
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_feed_origin_override_rejected_outside_development(environment: str) -> None:
+    with pytest.raises(ValueError, match="ICAL_FEED_BASE_URL must not be set"):
+        _make(environment=environment, ical_feed_base_url="http://fake-ical:8082")
+
+
+def test_feed_origin_override_allowed_in_development() -> None:
+    settings = _make(environment="development", ical_feed_base_url="http://fake-ical:8082")
+    assert settings.ical_feed_base_url == "http://fake-ical:8082"
+
+
+def test_proxyable_origins_are_allowed_in_production_and_reported(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A caching proxy for the registry, or a recording proxy for the
+    # clearinghouse, is a deployment's own business; the boot log says so.
+    settings = _make(
+        environment="production",
+        nppes_base_url="https://nppes-cache.internal/",
+        clearinghouse_base_url="https://clearinghouse-proxy.internal",
+    )
+    logger = logging.getLogger("app.settings.test_origin_posture")
+    with caplog.at_level(logging.INFO, logger=logger.name):
+        log_startup_posture(settings, logger)
+    [record] = [r for r in caplog.records if r.name == logger.name]
+    message = record.getMessage()
+    assert "nppes_origin_override=True" in message
+    assert "clearinghouse_origin_override=True" in message
+    assert "ical_feed_origin_override=False" in message
+
+
 def test_log_startup_posture_emits_summary_line(caplog: pytest.LogCaptureFixture) -> None:
     settings = _make(environment="development")
     logger = logging.getLogger("app.settings.test_startup_posture")
@@ -143,3 +174,6 @@ def test_log_startup_posture_emits_summary_line(caplog: pytest.LogCaptureFixture
     assert "test_identity_signup=False" in message
     assert "dpop=False" in message
     assert "cors_origins=1" in message
+    assert "nppes_origin_override=False" in message
+    assert "clearinghouse_origin_override=False" in message
+    assert "ical_feed_origin_override=False" in message

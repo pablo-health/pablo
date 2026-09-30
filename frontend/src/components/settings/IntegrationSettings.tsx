@@ -21,6 +21,7 @@ import {
   Loader2,
   Upload,
 } from "lucide-react"
+import { useAuth } from "@/lib/auth-context"
 
 const EHR_OPTIONS = [
   { value: "simplepractice", label: "SimplePractice" },
@@ -42,6 +43,7 @@ const INITIALS_NOTE =
   "This feed shows clients by their initials, so Pablo asks about every session. Showing full names in the calendar sync means fewer questions."
 
 export function IntegrationSettings() {
+  const { loading: authLoading } = useAuth()
   const [connections, setConnections] = useState<ICalConnectionStatus[]>([])
   const [loaded, setLoaded] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -69,8 +71,13 @@ export function IntegrationSettings() {
   }, [])
 
   useEffect(() => {
+    // On a full page load this effect can run before the provider that
+    // restores the session, and a request sent then carries no token: the
+    // card showed "Not authenticated" until a reload. Wait for auth to
+    // settle, as the query hooks do.
+    if (authLoading) return
     loadStatus()
-  }, [loadStatus])
+  }, [authLoading, loadStatus])
 
   const handleConnect = async () => {
     setConnecting(true)

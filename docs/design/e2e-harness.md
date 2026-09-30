@@ -28,6 +28,7 @@ Extends the existing `docker-compose.yml` (`backend`, `postgres`) with:
 | `firebase-auth` | `ghcr.io/…/firebase-tools` emulator, `auth` only | the backend already honours `FIREBASE_AUTH_EMULATOR_HOST` (`backend/app/auth/firebase_init.py`); the frontend gains `connectAuthEmulator` behind `NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST` |
 | `fake-clearinghouse` | `scripts/fake_clearinghouse.py` (FastAPI) | serves the recorded responses in `backend/tests/fixtures/clearinghouse/` for payer search, eligibility, claim submission, enrollment, polling and reports, and posts `transaction processed` webhooks back to the backend on a scripted delay |
 | `fake-mail` | `scripts/fake_mail.py` (aiosmtpd + FastAPI) | the mail the product sends, catchable. A booking link is born requiring the booker to confirm by email and the booking is refused outright when nothing can deliver that mail, so a silent drain is not enough |
+| `fake-ical` | `scripts/fake_ical.py` (FastAPI) | the calendar feed a clinician follows: the two captured SimplePractice reads in `backend/tests/fixtures/simplepractice_feed/`, every event moved forward by whole weeks to start after today. The backend reads feeds from it through `ICAL_FEED_BASE_URL`; the URL typed into Settings still has to pass the provider's allowlist |
 
 The fake clearinghouse is deterministic: a claim whose control number
 starts `REJ` gets the recorded edit rejection; anything else gets the
