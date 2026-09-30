@@ -683,14 +683,8 @@ class GoogleCalendarService:
 
         encrypted = encrypt_tokens(token_data)
 
+        self._record_existing_app_calendar(user_id)
         calendar_id = self._resolve_calendar_id(credentials, write_target, user_id)
-        # A main-calendar connection still carries the app calendar forward,
-        # so switching back later reuses it instead of making another.
-        app_calendar_id = (
-            calendar_id
-            if write_target is CalendarWriteTarget.APP_CALENDAR
-            else self._token_repo.get_app_calendar_id(user_id)
-        )
         granted = self._granted_after(user_id, requested, declarations)
 
         now = _now()
@@ -698,7 +692,6 @@ class GoogleCalendarService:
             user_id=user_id,
             encrypted_tokens=encrypted,
             calendar_id=calendar_id,
-            app_calendar_id=app_calendar_id,
             connected_at=now,
             last_synced_at=now,
             provider=GOOGLE_PROVIDER_ID,
@@ -883,9 +876,10 @@ class GoogleCalendarService:
     def disconnect(self, user_id: str) -> bool:
         """Remove stored tokens, disconnecting Google Calendar.
 
-        The id of the calendar Pablo made is kept, so a later connect finds
-        it rather than making another one.
+        The calendar Pablo made is remembered apart from the tokens, so a
+        later connect finds it rather than making another one.
         """
+        self._record_existing_app_calendar(user_id)
         deleted = self._token_repo.delete(user_id)
         if deleted:
             logger.info("Google Calendar disconnected")
@@ -1353,6 +1347,23 @@ class GoogleCalendarService:
         )
         return str(listing.get("summary") or "primary")
 
+    def _record_existing_app_calendar(self, user_id: str) -> None:
+        """Remember an app calendar connected before calendars were recorded.
+
+        Such a connection's calendar is known only from its token row, which
+        a disconnect deletes and a main-calendar connect overwrites. Copying
+        it across first, from the clinician's own row, is what lets those
+        connections reuse it too. A no-op once anything is recorded.
+        """
+        stored = self._token_repo.get(user_id)
+        if (
+            stored is not None
+            and stored.calendar_id
+            and stored.write_target == CalendarWriteTarget.APP_CALENDAR.value
+            and not self._token_repo.get_app_calendar_id(user_id)
+        ):
+            self._token_repo.remember_app_calendar_id(user_id, stored.calendar_id)
+
     def _get_or_create_app_calendar_id(self, credentials: Credentials, user_id: str) -> str:
         """Get the calendar Pablo owns on this account, creating it once.
 
@@ -1362,10 +1373,12 @@ class GoogleCalendarService:
         ``calendar.app.created``, and Google refuses ``calendarList.list``
         under it: this used to open with that call, so the connect could never
         finish. Its identity is already ours to remember, so remember it —
-        in ``app_calendar_id``, which only ever holds a calendar Pablo
-        created and outlives both a switch to the main calendar and a
-        disconnect. Never a search by name: a calendar the therapist made
-        and happened to call "Pablo Sessions" is theirs, not ours.
+        in its own record rather than the connection's, because disconnecting
+        deletes the connection and a main-calendar connect points it
+        elsewhere, and either used to leave the next app-calendar connect
+        nothing to reuse. Only an id Pablo's own insert returned is recorded,
+        never a calendar matched by name: one the therapist made and happened
+        to call "Pablo Sessions" is theirs, not ours.
 
         A remembered id still has to be checked, because the record outlives
         the account that id belongs to. ``handle_callback`` runs whenever a
@@ -1398,6 +1411,7 @@ class GoogleCalendarService:
         calendar_id = created.get("id")
         if not calendar_id:
             raise GoogleCalendarError("Google did not return an id for the created calendar")
+        self._token_repo.remember_app_calendar_id(user_id, str(calendar_id))
         logger.info("Created a Pablo-owned Google calendar for session events")
         return str(calendar_id)
 

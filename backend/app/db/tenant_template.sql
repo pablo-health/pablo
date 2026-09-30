@@ -442,6 +442,15 @@ CREATE TABLE __TENANT_SCHEMA__.ehr_routes (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.google_app_calendars (
+    user_id uuid NOT NULL,
+    calendar_id text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.google_calendar_tokens (
     user_id uuid NOT NULL,
     encrypted_tokens text NOT NULL,
@@ -455,8 +464,7 @@ CREATE TABLE __TENANT_SCHEMA__.google_calendar_tokens (
     write_target character varying(32) DEFAULT 'primary'::character varying NOT NULL,
     granted_capabilities character varying(255) DEFAULT 'push,import'::character varying NOT NULL,
     event_titling character varying(16) DEFAULT 'generic'::character varying NOT NULL,
-    titling_attested_account character varying(255) DEFAULT ''::character varying NOT NULL,
-    app_calendar_id character varying(255)
+    titling_attested_account character varying(255) DEFAULT ''::character varying NOT NULL
 );
 
 
@@ -1434,6 +1442,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.ehr_prompts
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.ehr_routes
     ADD CONSTRAINT ehr_routes_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.google_app_calendars
+    ADD CONSTRAINT google_app_calendars_pkey PRIMARY KEY (user_id);
 
 
 

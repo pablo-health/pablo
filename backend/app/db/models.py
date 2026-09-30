@@ -2108,12 +2108,34 @@ class GoogleCalendarTokenRow(Base):
         String(255), nullable=False, server_default="push,import"
     )
     calendar_id: Mapped[str | None] = mapped_column(String(255))
-    app_calendar_id: Mapped[str | None] = mapped_column(String(255))
     sync_token: Mapped[str | None] = mapped_column(Text)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     connected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_sync_error: Mapped[str | None] = mapped_column(Text)
     consecutive_error_count: Mapped[int] = mapped_column(default=0)
+
+
+class GoogleAppCalendarRow(Base):
+    """The calendar Pablo created on a clinician's Google account.
+
+    Kept apart from ``google_calendar_tokens`` because it outlives the
+    connection: disconnecting deletes the grant, and connecting to the main
+    calendar writes elsewhere, but the next app-calendar connect should find
+    this calendar again rather than make another. Only ever written with an id
+    Google returned from Pablo's own insert, so a calendar the clinician made
+    is never recorded here, whatever it is called.
+    """
+
+    __tablename__ = "google_app_calendars"
+
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    calendar_id: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
 
 
 class TelehealthConnectionRow(Base):

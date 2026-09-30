@@ -4,10 +4,10 @@
 
 The unit suite (``tests/test_google_calendar.py``) drives the service with a
 ``MagicMock`` repository, so it can only assume what a disconnect leaves
-behind. These tests run a connect, a disconnect and a second connect through
-the real repository against a provisioned tenant schema, with only Google
-mocked: the second connect must find the first calendar, and the disconnected
-row must not read as a connection anywhere.
+behind. These tests run connects, disconnects and target switches through the
+real repository against a provisioned tenant schema, with only Google mocked:
+a later app-calendar connect must find the first calendar, and a disconnect
+must still leave nothing in ``google_calendar_tokens``.
 
 Run: ``make test-integration``.
 """
@@ -25,6 +25,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from app.calendar_providers import pkce_store
+from app.calendar_providers.capabilities import CalendarWriteTarget
 from app.db import _current_tenant_schema, arm_current_user_id, set_tenant_schema
 from app.repositories.google_calendar_token import GoogleCalendarTokenDoc
 from app.repositories.postgres.google_calendar_token import (
@@ -122,7 +123,12 @@ def service(repo: PostgresGoogleCalendarTokenRepository) -> GoogleCalendarServic
     )
 
 
-def _connect(service: GoogleCalendarService, user_id: str, google: MagicMock) -> None:
+def _connect(
+    service: GoogleCalendarService,
+    user_id: str,
+    google: MagicMock,
+    write_target: CalendarWriteTarget = CalendarWriteTarget.APP_CALENDAR,
+) -> None:
     # Only the calendar ids matter here; the grant's contents never do.
     credentials = MagicMock(
         token=None, refresh_token=None, token_uri=None, client_id=None, client_secret=None
@@ -134,7 +140,11 @@ def _connect(service: GoogleCalendarService, user_id: str, google: MagicMock) ->
         build_flow.return_value.credentials = credentials
         build_svc.return_value = google
         service.handle_callback(
-            user_id, "auth-code", "http://localhost/callback", state=authorized_state(user_id)
+            user_id,
+            "auth-code",
+            "http://localhost/callback",
+            state=authorized_state(user_id),
+            write_target=write_target,
         )
 
 
@@ -142,7 +152,17 @@ def _google_that_creates(calendar_id: str) -> MagicMock:
     google = MagicMock()
     google.calendars().insert().execute.return_value = {"id": calendar_id}
     google.calendars().insert.reset_mock()
+    google.events().list().execute.return_value = {"summary": "therapist@gmail.com"}
     return google
+
+
+def _token_rows(session: Session, user_id: str) -> int:
+    return int(
+        session.execute(
+            text("SELECT count(*) FROM google_calendar_tokens WHERE user_id = :u"),
+            {"u": user_id},
+        ).scalar_one()
+    )
 
 
 def test_reconnecting_after_a_disconnect_reuses_the_calendar(
@@ -163,7 +183,28 @@ def test_reconnecting_after_a_disconnect_reuses_the_calendar(
     stored = repo.get(user_id)
     assert stored is not None
     assert stored.calendar_id == _FIRST
-    assert stored.app_calendar_id == _FIRST
+
+
+def test_switching_to_the_main_calendar_and_back_reuses_the_calendar(
+    service: GoogleCalendarService,
+    repo: PostgresGoogleCalendarTokenRepository,
+    user_id: str,
+) -> None:
+    _connect(service, user_id, _google_that_creates(_FIRST))
+    _connect(
+        service, user_id, _google_that_creates(_SECOND), write_target=CalendarWriteTarget.PRIMARY
+    )
+    main = repo.get(user_id)
+    assert main is not None
+    assert main.calendar_id == "therapist@gmail.com"
+
+    back = _google_that_creates(_SECOND)
+    _connect(service, user_id, back)
+
+    back.calendars().insert.assert_not_called()
+    stored = repo.get(user_id)
+    assert stored is not None
+    assert stored.calendar_id == _FIRST
 
 
 def test_a_different_account_after_a_disconnect_gets_its_own_calendar(
@@ -181,44 +222,45 @@ def test_a_different_account_after_a_disconnect_gets_its_own_calendar(
     stored = repo.get(user_id)
     assert stored is not None
     assert stored.calendar_id == _SECOND
-    assert stored.app_calendar_id == _SECOND
+    assert repo.get_app_calendar_id(user_id) == _SECOND
 
 
-def test_a_disconnected_row_is_not_a_connection(
+def test_a_disconnect_leaves_no_token_row(
     service: GoogleCalendarService,
-    repo: PostgresGoogleCalendarTokenRepository,
-    user_id: str,
-) -> None:
-    """What survives a disconnect is the calendar's id, and nothing else."""
-    _connect(service, user_id, _google_that_creates(_FIRST))
-    service.disconnect(user_id)
-
-    assert repo.get(user_id) is None
-    assert repo.exists(user_id) is False
-    assert user_id not in {doc.user_id for doc in repo.list_all()}
-    assert service.get_sync_status(user_id)["connected"] is False
-    assert service.disconnect(user_id) is False
-    assert repo.get_app_calendar_id(user_id) == _FIRST
-
-
-def test_disconnecting_a_main_calendar_connection_leaves_nothing(
     repo: PostgresGoogleCalendarTokenRepository,
     session: Session,
     user_id: str,
 ) -> None:
-    """With no calendar of Pablo's to remember, the row goes entirely."""
+    """The calendar is remembered elsewhere; the credentials table forgets the user."""
+    _connect(service, user_id, _google_that_creates(_FIRST))
+    service.disconnect(user_id)
 
+    assert user_id not in {doc.user_id for doc in repo.list_all()}
+    assert _token_rows(session, user_id) == 0
+    assert repo.get_app_calendar_id(user_id) == _FIRST
+
+
+def test_an_unrecorded_app_calendar_survives_a_disconnect(
+    service: GoogleCalendarService,
+    repo: PostgresGoogleCalendarTokenRepository,
+    user_id: str,
+) -> None:
+    """A connection made before calendars were recorded knows its id only from its token row."""
     repo.save(
         GoogleCalendarTokenDoc(
             user_id=user_id,
             encrypted_tokens="sealed",
-            write_target="primary",
-            calendar_id="therapist@gmail.com",
+            write_target="app_calendar",
+            calendar_id=_FIRST,
         )
     )
-    assert repo.delete(user_id) is True
+    assert repo.get_app_calendar_id(user_id) is None
 
-    remaining = session.execute(
-        text("SELECT count(*) FROM google_calendar_tokens WHERE user_id = :u"), {"u": user_id}
-    ).scalar_one()
-    assert remaining == 0
+    service.disconnect(user_id)
+    reconnect = _google_that_creates(_SECOND)
+    _connect(service, user_id, reconnect)
+
+    reconnect.calendars().insert.assert_not_called()
+    stored = repo.get(user_id)
+    assert stored is not None
+    assert stored.calendar_id == _FIRST

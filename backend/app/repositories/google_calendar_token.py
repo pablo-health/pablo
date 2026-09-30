@@ -47,12 +47,6 @@ class GoogleCalendarTokenDoc:
     is the default here and in the database."""
 
     calendar_id: str | None = None
-    app_calendar_id: str | None = None
-    """The calendar Pablo created on the connected account, if it made one.
-    Unlike ``calendar_id`` it outlives a switch to the main calendar and a
-    disconnect, so the next app-calendar connect reuses it rather than
-    leaving a second "Pablo Sessions" calendar behind."""
-
     sync_token: str | None = None
     last_synced_at: datetime | None = None
     connected_at: datetime | None = None
@@ -69,7 +63,6 @@ class GoogleCalendarTokenDoc:
             "titling_attested_account": self.titling_attested_account,
             "granted_capabilities": self.granted_capabilities,
             "calendar_id": self.calendar_id,
-            "app_calendar_id": self.app_calendar_id,
             "sync_token": self.sync_token,
             "last_synced_at": self.last_synced_at,
             "connected_at": self.connected_at,
@@ -88,7 +81,6 @@ class GoogleCalendarTokenDoc:
             titling_attested_account=data.get("titling_attested_account") or "",
             granted_capabilities=data.get("granted_capabilities") or "push,import",
             calendar_id=data.get("calendar_id"),
-            app_calendar_id=data.get("app_calendar_id"),
             sync_token=data.get("sync_token"),
             last_synced_at=data.get("last_synced_at"),
             connected_at=data.get("connected_at"),
@@ -118,7 +110,10 @@ class GoogleCalendarTokenRepository(ABC):
 
     @abstractmethod
     def delete(self, user_id: str) -> bool:
-        """Drop the connection; the app calendar's id is kept for a reconnect."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def exists(self, user_id: str) -> bool:
         raise NotImplementedError
 
     @abstractmethod
@@ -127,5 +122,6 @@ class GoogleCalendarTokenRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def exists(self, user_id: str) -> bool:
+    def remember_app_calendar_id(self, user_id: str, calendar_id: str) -> None:
+        """Record a calendar Pablo just created. Survives a disconnect."""
         raise NotImplementedError
