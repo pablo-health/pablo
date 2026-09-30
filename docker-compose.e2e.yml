@@ -121,6 +121,10 @@ services:
       # Never the real CMS registry: it is somebody else's uptime, and its
       # records are real people's, which is not what a fixture should be.
       - NPPES_BASE_URL=http://fake-nppes:8081/
+      # A followed calendar feed is read from the stand-in below rather than
+      # the provider. The URL a spec types still has to pass the provider's
+      # host and path allowlist; only the fetch is redirected, same path.
+      - ICAL_FEED_BASE_URL=http://fake-ical:8082
       - CLEARINGHOUSE_WEBHOOK_SECRET=e2e-clearinghouse-webhook-shared-secret
       # The practice's tax id is stored encrypted under this key, and filing a
       # claim needs a billing profile, so without it saving one is a 500. The
@@ -240,6 +244,8 @@ services:
       fake-clearinghouse:
         condition: service_healthy
       fake-nppes:
+        condition: service_healthy
+      fake-ical:
         condition: service_healthy
       fake-mail:
         condition: service_healthy
@@ -558,6 +564,32 @@ services:
           "python",
           "-c",
           "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://localhost:8081/_fake/health').getcode() == 200 else 1)",
+        ]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    networks:
+      - e2e-net
+
+  # The calendar feed a clinician follows (scripts/fake_ical.py): the two
+  # captured SimplePractice reads, moved forward to start after today so a
+  # spec has sessions ahead of it to book. The backend reads feeds from here
+  # through ICAL_FEED_BASE_URL.
+  fake-ical:
+    build:
+      context: .
+      dockerfile: scripts/e2e/fake-ical.Dockerfile
+    ports:
+      - "${E2E_ICAL_PORT:-8082}:8082"
+    environment:
+      - FAKE_ICAL_FIXTURES=/srv/fixtures
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://localhost:8082/_fake/health').getcode() == 200 else 1)",
         ]
       interval: 3s
       timeout: 3s

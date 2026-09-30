@@ -74,6 +74,9 @@ class SeededPractice:
     #: Clear the practice's portal answer on every run, so it is always a
     #: practice that has never been asked.
     unanswered: bool = False
+    #: Tables in the practice's schema emptied on every run, so a spec that
+    #: builds up state across its cases starts from nothing each bring-up.
+    emptied: tuple[str, ...] = ()
 
 
 SECOND_PRACTICE = SeededPractice(
@@ -105,7 +108,26 @@ FRESH_MESSAGES = SeededPractice(
     name="Fresh Practice Messages",
     unanswered=True,
 )
-SEEDED = (SECOND_PRACTICE, FRESH_YES, FRESH_NO, FRESH_MESSAGES)
+# Its own practice for the spec that follows a calendar feed: a feed puts a
+# season of sessions on the calendar and a question on every one of them,
+# which no spec sharing the default practice's calendar should have to see.
+# Its cases build on each other's reads, so what they leave — the feed, its
+# questions, the sessions booked and the charts — is emptied on every
+# bring-up, the way the unanswered practices' portal answer is.
+FRESH_FEED = SeededPractice(
+    id="e2e-fresh-feed",
+    schema="practice_e2e_fresh_feed",
+    email="e2e-fresh-feed@example.com",
+    name="Fresh Practice Feed",
+    emptied=(
+        "ical_sync_configs",
+        "external_calendar_events",
+        "appointments",
+        "patient_source_mappings",
+        "patients",
+    ),
+)
+SEEDED = (SECOND_PRACTICE, FRESH_YES, FRESH_NO, FRESH_MESSAGES, FRESH_FEED)
 
 # Kept for anything that still reads the second practice by its old names.
 SECOND_PRACTICE_ID = SECOND_PRACTICE.id
@@ -209,8 +231,30 @@ def main() -> int:
         # than a schema with no practice behind it. Reconciling, so safe to
         # call on every boot.
         create_practice_schema(get_engine(), practice.schema)
+        if practice.emptied:
+            _empty(practice)
         logger.info("practice %s ready: schema %s", practice.id, practice.schema)
     return 0
+
+
+def _empty(practice: SeededPractice) -> None:
+    """Empty the tables a spec leaves behind, and whatever hangs off them.
+
+    After the schema exists, so the first bring-up finds the tables too. The
+    cascade takes the rows of tables that reference these (a session, a
+    note) along with them; a test practice has nothing worth keeping.
+    """
+    from app.db import create_standalone_session
+    from sqlalchemy import text
+
+    tables = ", ".join(f"{practice.schema}.{table}" for table in practice.emptied)
+    session = create_standalone_session()
+    try:
+        session.execute(text(f"TRUNCATE TABLE {tables} CASCADE"))
+        session.commit()
+    finally:
+        session.close()
+    logger.info("emptied %s in %s", ", ".join(practice.emptied), practice.id)
 
 
 if __name__ == "__main__":
