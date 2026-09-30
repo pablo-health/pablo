@@ -29,6 +29,7 @@ from app.calendar_providers.source_identity import (
 )
 from app.main import app
 from app.models.patient import Patient
+from app.patients.identifiers import PRACTICE_SCOPE, calendar_scope
 from app.patients.matching import remember_match, remember_not_a_client
 from app.repositories.external_calendar_event import (
     ANSWER_CLIENT,
@@ -67,6 +68,8 @@ FULL_NAMES = (FIXTURES / "full_names.ics").read_text()
 USER = "user1"
 SP = "simplepractice"
 FEED_SOURCE = ical_source(SP)
+#: The followed main calendar's real id.
+MAIN = "clinician@example.test"
 
 
 @pytest.fixture(autouse=True)
@@ -301,7 +304,7 @@ class TestInitialsFeed:
         assert row.answer == ANSWER_NOT_A_CLIENT
         # Nothing was remembered for the title, and the next read asks the
         # rest again without bringing this one back.
-        assert four.mappings.list_by_source(USER, SP) == []
+        assert four.mappings.list_by_source(PRACTICE_SCOPE, SP) == []
         four.sync(INITIALS)
         assert len(four.questions_titled("J.A. Appointment")) == 37
 
@@ -389,7 +392,7 @@ class TestWhatStillBooks:
             )
         )
         feed.chart("p1", "Pablo", "Bear")
-        remember_match(sh, "SH00001", "p1", feed.outside.context(USER))
+        remember_match(sh, "SH00001", "p1", feed.outside.context(USER), scope=PRACTICE_SCOPE)
 
         with patch.object(ICalSyncService, "_fetch_feed", return_value=SH_ICAL_DATA):
             [result] = feed.service.sync(USER, sh)
@@ -408,7 +411,9 @@ class _Google:
         self.appointments = InMemoryAppointmentRepository()
         self.patients = InMemoryPatientRepository()
         self.mappings = InMemoryPatientSourceMappingRepository()
-        self.outside = OutsideSessions(self.events, self.appointments, self.patients, self.mappings)
+        self.outside = OutsideSessions(
+            self.events, self.appointments, self.patients, self.mappings, main_calendar_id=MAIN
+        )
 
     def chart(self, patient_id: str, first: str, last: str, *, status: str = "active") -> None:
         self.patients.create(_patient(patient_id, first, last, status=status), USER)
@@ -420,6 +425,7 @@ class _Google:
             calendar_source_identifier(series, "", 0, "00:00"),
             patient_id,
             self.outside.context(USER),
+            scope=calendar_scope(MAIN),
             answered_title=answered_title_digest(title) if title is not None else None,
         )
 
@@ -482,7 +488,9 @@ class TestAnInactiveChart:
     def test_is_asked_whatever_the_evidence(self, feed: _Feed) -> None:
         feed.chart("jane", "Jane", "Smith", status="inactive")
         feed.chart("john", "John", "Adams", status="on_hold")
-        remember_match("simplepractice", "John Adams", "john", feed.outside.context(USER))
+        remember_match(
+            "simplepractice", "John Adams", "john", feed.outside.context(USER), scope=PRACTICE_SCOPE
+        )
 
         feed.sync(FULL_NAMES)
 
@@ -689,7 +697,7 @@ class TestWhatIsRememberedNeverStandsInForIdentity:
     ) -> None:
         feed.chart("first", "Jane", "Smith")
         feed.chart("second", "Jane", "Smith")
-        remember_match(SP, "jane smith", "first", feed.outside.context(USER))
+        remember_match(SP, "jane smith", "first", feed.outside.context(USER), scope=PRACTICE_SCOPE)
         feed.patients.delete("first", USER)
 
         feed.sync(FULL_NAMES)
@@ -700,7 +708,7 @@ class TestWhatIsRememberedNeverStandsInForIdentity:
 
     def test_a_name_said_to_be_no_client_is_never_booked(self, feed: _Feed) -> None:
         feed.chart("jane", "Jane", "Smith")
-        remember_not_a_client(SP, "jane smith", feed.outside.context(USER))
+        remember_not_a_client(SP, "jane smith", feed.outside.context(USER), scope=PRACTICE_SCOPE)
         start = utc_now()
         event = ParsedEvent(
             uid="u1",
@@ -720,7 +728,7 @@ class TestWhatIsRememberedNeverStandsInForIdentity:
         feed.patients.create(_patient("theirs", "Jack", "Ames"), "colleague")
         feed.chart("john", "John", "Adams")
         feed.chart("james", "James", "Anderson")
-        remember_match(SP, "J.A.", "theirs", feed.outside.context(USER))
+        remember_match(SP, "J.A.", "theirs", feed.outside.context(USER), scope=PRACTICE_SCOPE)
 
         feed.sync(INITIALS)
 
@@ -739,7 +747,7 @@ class TestWhatIsRememberedNeverStandsInForIdentity:
     ) -> None:
         feed.chart("john", "John", "Adams")
         feed.chart("james", "James", "Anderson")
-        remember_not_a_client(SP, "J.A.", feed.outside.context(USER))
+        remember_not_a_client(SP, "J.A.", feed.outside.context(USER), scope=PRACTICE_SCOPE)
 
         feed.sync(INITIALS)
 

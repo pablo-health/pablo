@@ -8,9 +8,12 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import String, Uuid, bindparam, func, or_, select, text, update
+from sqlalchemy.exc import IntegrityError
 
 from ...db.models import AppointmentRow, PatientClinicianRow
+from ...db.practice_directory import OUTSIDE_APPOINTMENT_FUNCTION
 from ...models.patient_facing import PatientAppointmentResponse
+from ...scheduling_engine.exceptions import OutsideEventAlreadyBookedError
 from ...scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from ...scheduling_engine.repositories.appointment import AppointmentRepository
 from ...utcnow import utc_now
@@ -18,6 +21,21 @@ from ...utcnow import utc_now
 if TYPE_CHECKING:
     from sqlalchemy.engine import CursorResult
     from sqlalchemy.orm import Session
+
+
+#: One outside event is at most one live appointment: per calendar, or per
+#: clinician for a feed. See the model and the revision that adds them.
+_OUTSIDE_EVENT_INDEXES = frozenset(
+    {
+        "uq_appointments_outside_event_per_calendar",
+        "uq_appointments_outside_event_per_clinician",
+    }
+)
+
+
+def _constraint_name(exc: IntegrityError) -> str | None:
+    diag = getattr(exc.orig, "diag", None)
+    return getattr(diag, "constraint_name", None)
 
 
 _HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindparams(
@@ -346,15 +364,47 @@ class PostgresAppointmentRepository(AppointmentRepository):
         ).scalar_one_or_none()
         return _row_to_appointment(row) if row else None
 
+    def outside_appointment_id(
+        self, source: str, calendar_id: str | None, event_id: str, user_id: str
+    ) -> str | None:
+        if calendar_id is None:
+            found = self._session.execute(
+                select(AppointmentRow.id)
+                .where(
+                    AppointmentRow.user_id == user_id,
+                    AppointmentRow.outside_source == source,
+                    AppointmentRow.outside_calendar_id.is_(None),
+                    AppointmentRow.outside_event_id == event_id,
+                    AppointmentRow.status != AppointmentStatus.CANCELLED,
+                )
+                .order_by(AppointmentRow.created_at, AppointmentRow.id)
+                .limit(1)
+            ).scalar()
+            return str(found) if found else None
+        # The practice's answer, past this clinician's row policy: see
+        # ``app.db.practice_directory``.
+        found = self._session.execute(
+            text(f"SELECT {OUTSIDE_APPOINTMENT_FUNCTION}(:source, :calendar_id, :event_id)"),
+            {"source": source, "calendar_id": calendar_id, "event_id": event_id},
+        ).scalar()
+        return str(found) if found else None
+
     def create(self, appointment: Appointment) -> Appointment:
         row = AppointmentRow()
         _appointment_to_row(appointment, row)
         # SAVEPOINT, not a bare flush: a slot collision (unique active-slot
         # index) must undo this INSERT and nothing else, leaving the caller's
         # session usable to translate the error rather than stuck aborted.
-        with self._session.begin_nested():
-            self._session.add(row)
-            self._session.flush()
+        try:
+            with self._session.begin_nested():
+                self._session.add(row)
+                self._session.flush()
+        except IntegrityError as exc:
+            if _constraint_name(exc) in _OUTSIDE_EVENT_INDEXES:
+                raise OutsideEventAlreadyBookedError(
+                    "That outside event is already booked"
+                ) from exc
+            raise
         return appointment
 
     def create_batch(self, appointments: list[Appointment]) -> list[Appointment]:

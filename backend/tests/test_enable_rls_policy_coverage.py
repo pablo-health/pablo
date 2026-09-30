@@ -198,6 +198,33 @@ def test_user_id_table_still_gets_isolation_policy() -> None:
     assert "CREATE POLICY rls_patient_self_read" not in ddl
 
 
+def test_remembered_answers_are_the_practices_and_old_rows_their_owners() -> None:
+    """``patient_source_mappings`` gets the practice-answers policy, not the owner one.
+
+    A scoped row is any armed clinician's to read; a row without a scope
+    (from before answers were the practice's, holding a plain identifier)
+    is its owner's alone. Both arms need an armed clinician, so the table
+    stays fail-closed with nothing armed.
+    """
+    session = _run({"patient_source_mappings": {"doc_id", "user_id", "scope"}})
+    ddl = " ".join(session.executed)
+
+    assert "CREATE POLICY rls_practice_answers ON practice_test.patient_source_mappings" in ddl
+    assert "scope IS NOT NULL AND coalesce(current_setting('app.current_user_id', true)" in ddl
+    assert "scope IS NULL AND user_id::text = current_setting('app.current_user_id', true)" in ddl
+    assert "CREATE POLICY rls_user_isolation ON practice_test.patient_source_mappings" not in ddl
+    assert "FORCE ROW LEVEL SECURITY" in ddl
+
+
+def test_remembered_answers_keep_the_owner_policy_until_their_schema_has_a_scope() -> None:
+    """A schema the revision hasn't reached falls through to the owner-only shape."""
+    session = _run({"patient_source_mappings": {"doc_id", "user_id"}})
+    ddl = " ".join(session.executed)
+
+    assert "CREATE POLICY rls_user_isolation ON practice_test.patient_source_mappings" in ddl
+    assert "rls_practice_answers ON practice_test.patient_source_mappings USING" not in ddl
+
+
 def test_appointments_gets_both_the_clinician_and_patient_arms() -> None:
     """``appointments`` is owned by a clinician and readable by its patient.
 

@@ -28,6 +28,7 @@ from app.main import app
 from app.models import User
 from app.models.patient import Patient
 from app.models.user import UserPreferences
+from app.patients.identifiers import PRACTICE_SCOPE, calendar_scope, identifier_digest
 from app.patients.matching import MatchContext, PatientHint, match_patient, remember_match
 from app.repositories.external_calendar_event import (
     ExternalCalendarEvent,
@@ -63,6 +64,9 @@ COLLEAGUE = "colleague-456"
 COLLEAGUE_NAME = "Dr. Rivera"
 _REDIRECT = "http://localhost:3000/dashboard/settings/calendar"
 _SERIES = "rec-1"
+#: The main calendar's real id; a calendar's answers are remembered under it.
+MAIN = "clinician@example.test"
+CALENDAR = calendar_scope(MAIN)
 
 
 @pytest.fixture(autouse=True)
@@ -119,10 +123,16 @@ class TestStrongEvidenceSeesThePractice:
 
     def test_a_remembered_colleagues_client_is_matched_and_not_seen(self) -> None:
         ctx = _practice((_patient("theirs", "Jane", "Adams"), COLLEAGUE))
-        remember_match("simplepractice", "J.A.", "theirs", ctx)
+        remember_match("simplepractice", "J.A.", "theirs", ctx, scope=PRACTICE_SCOPE)
 
         result = match_patient(
-            PatientHint(initials="J.A.", source="simplepractice", source_identifier="J.A."), ctx
+            PatientHint(
+                initials="J.A.",
+                source="simplepractice",
+                source_identifier="J.A.",
+                scope=PRACTICE_SCOPE,
+            ),
+            ctx,
         )
 
         assert (result.patient_id, result.evidence) == ("theirs", "remembered")
@@ -207,6 +217,8 @@ def _scan(client: TestClient, summary: str, *, timezone: str = "UTC") -> dict[st
     now = datetime.now(UTC)
     first = now - timedelta(days=21)
     gcal = MagicMock()
+    gcal.known_main_calendar_id.return_value = None
+    gcal.main_calendar_id.return_value = MAIN
     gcal.scan_for_practice_import.return_value = build_proposal(
         [
             ImportCandidate(
@@ -264,13 +276,13 @@ def import_client(
 
 def _remembered_as_theirs(mappings: InMemoryPatientSourceMappingRepository) -> None:
     """This series was answered as the colleague's client (the strong evidence)."""
-    mappings.save(
-        PatientSourceMapping(
-            ME,
-            GOOGLE_CALENDAR_SOURCE,
-            calendar_source_identifier(_SERIES, "", 0, "00:00"),
-            "theirs",
-        )
+    mappings.save(_theirs(calendar_source_identifier(_SERIES, "", 0, "00:00")))
+
+
+def _theirs(identifier: str) -> PatientSourceMapping:
+    """A main-calendar series ``ME`` answered as the colleague's client, as stored."""
+    return PatientSourceMapping(
+        CALENDAR, GOOGLE_CALENDAR_SOURCE, identifier_digest(identifier), "theirs", ME
     )
 
 
@@ -430,6 +442,7 @@ def outside(client: TestClient) -> tuple[InMemoryExternalCalendarEventRepository
         "import_granted": True,
         "follow_calendar_id": "primary",
     }
+    calendar.known_main_calendar_id.return_value = MAIN
     app.dependency_overrides[get_owner_timezone] = lambda: UTC
     app.dependency_overrides[get_external_calendar_events] = lambda: events
     app.dependency_overrides[get_appointment_repository] = lambda: appointments
@@ -460,9 +473,7 @@ class TestOutsideSessionsForAColleaguesClient:
         events, _ = outside
         mock_repo.create(_patient("theirs", "Jane", "Adams"), COLLEAGUE)
         identifier = _hold(events, "Jane Adams")
-        mock_mapping_repo.save(
-            PatientSourceMapping(ME, GOOGLE_CALENDAR_SOURCE, identifier, "theirs")
-        )
+        mock_mapping_repo.save(_theirs(identifier))
 
         [question] = client.get("/api/calendar/outside-sessions/questions").json()["questions"]
 
@@ -479,9 +490,7 @@ class TestOutsideSessionsForAColleaguesClient:
         events, _ = outside
         mock_repo.create(_patient("theirs", "Jane", "Adams"), COLLEAGUE)
         identifier = _hold(events, "Jane Adams")
-        mock_mapping_repo.save(
-            PatientSourceMapping(ME, GOOGLE_CALENDAR_SOURCE, identifier, "theirs")
-        )
+        mock_mapping_repo.save(_theirs(identifier))
 
         response = _answer(client, identifier, new_client_name="Jane Adams")
 
@@ -527,8 +536,8 @@ class TestUnattendedBooking:
         mappings = InMemoryPatientSourceMappingRepository()
         patients.create(_patient("theirs", "Jane", "Adams"), COLLEAGUE)
         identifier = calendar_source_identifier("wk", "", 0, "00:00")
-        mappings.save(PatientSourceMapping(ME, GOOGLE_CALENDAR_SOURCE, identifier, "theirs"))
-        outside = OutsideSessions(events, appointments, patients, mappings)
+        mappings.save(_theirs(identifier))
+        outside = OutsideSessions(events, appointments, patients, mappings, main_calendar_id=MAIN)
         start = (utc_now() + timedelta(days=2)).replace(minute=0, second=0, microsecond=0)
 
         result = outside.ingest_google(
@@ -555,12 +564,13 @@ class TestUnattendedBooking:
         mappings = InMemoryPatientSourceMappingRepository()
         patients.create(_patient("mine", "Jane", "Adams"), ME)
         appointments.grant_access("mine", ME)
-        outside = OutsideSessions(events, appointments, patients, mappings)
+        outside = OutsideSessions(events, appointments, patients, mappings, main_calendar_id=MAIN)
         remember_match(
             GOOGLE_CALENDAR_SOURCE,
             calendar_source_identifier("wk", "", 0, "00:00"),
             "mine",
             outside.context(ME),
+            scope=CALENDAR,
             answered_title=answered_title_digest("Weekly 1:1"),
         )
         start = (utc_now() + timedelta(days=2)).replace(minute=0, second=0, microsecond=0)
@@ -601,7 +611,11 @@ def test_two_of_my_clients_sharing_a_name_are_picked_once_per_slot() -> None:
     patients.create(_patient("first", "Jane", "Adams"), ME)
     patients.create(_patient("second", "Jane", "Adams"), ME)
     outside = OutsideSessions(
-        events, InMemoryAppointmentRepository(), patients, InMemoryPatientSourceMappingRepository()
+        events,
+        InMemoryAppointmentRepository(),
+        patients,
+        InMemoryPatientSourceMappingRepository(),
+        main_calendar_id=MAIN,
     )
     start = (utc_now() + timedelta(days=2)).replace(hour=14, minute=0, second=0, microsecond=0)
     outside.ingest_google(ME, [_slot_event("e1", start)])
@@ -618,7 +632,10 @@ def test_two_of_my_clients_sharing_a_name_are_picked_once_per_slot() -> None:
     assert identifier == question.source_identifier
     match = match_patient(
         PatientHint(
-            full_name="Jane Adams", source=GOOGLE_CALENDAR_SOURCE, source_identifier=identifier
+            full_name="Jane Adams",
+            source=GOOGLE_CALENDAR_SOURCE,
+            source_identifier=identifier,
+            scope=CALENDAR,
         ),
         outside.context(ME),
     )

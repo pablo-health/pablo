@@ -1674,6 +1674,11 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
     principal arms a different GUC. Its policy splits on ``actor_type``
     instead: see the branch for what each half permits.
 
+    ``patient_source_mappings`` is the practice's remembered answers: any
+    armed clinician reads a row with a ``scope``, and a row without one
+    (from before answers were the practice's) is its owner's alone. See
+    ``practice_answers`` for the one definition every path applies.
+
     Two kinds of tables are deliberately NOT given a row policy:
       * Tables with none of ``user_id`` / ``patient_id`` / ``id`` (e.g.
         ehr_prompts) never reach the loop — the column query above
@@ -1864,6 +1869,7 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
         session.execute(text(f"DROP POLICY IF EXISTS rls_patient_self_write ON {qualified}"))
         session.execute(text(f"DROP POLICY IF EXISTS rls_patient_self_insert ON {qualified}"))
         session.execute(text(f"DROP POLICY IF EXISTS rls_patient_self_delete ON {qualified}"))
+        session.execute(text(f"DROP POLICY IF EXISTS rls_practice_answers ON {qualified}"))
 
         # Additive: created before the clinician shape is chosen, because
         # several of those branches ``continue``. Permissive policies OR
@@ -1940,6 +1946,18 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
                 "RLS (note_access: shared=patient_access, restricted=author) enabled on %s",
                 qualified,
             )
+            continue
+        if table_name == "patient_source_mappings" and "scope" in columns:
+            # Remembered answers are the practice's, so every armed clinician
+            # reads them; rows from before that carry plain-text identifiers
+            # and stay their owner's until adopted. The column guard lets the
+            # reconcile replay over a schema that predates the ``scope``
+            # column: such a schema keeps the owner-only shape below until
+            # its own upgrade adds it.
+            from .practice_answers import apply_practice_answers_policy
+
+            apply_practice_answers_policy(session, schema_name)
+            logger.info("RLS (practice answers; old rows owner-only) enabled on %s", qualified)
             continue
         if table_name == "patient_clinicians":
             # The grant table itself: gating it via

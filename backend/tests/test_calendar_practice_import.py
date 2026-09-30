@@ -31,6 +31,7 @@ from app.calendar_providers.practice_import import (
 from app.calendar_providers.provider import BusyWindow, ImportCandidate
 from app.main import app
 from app.models.patient import Patient
+from app.patients.identifiers import calendar_scope, identifier_digest
 from app.repositories.google_calendar_token import GoogleCalendarTokenDoc
 from app.routes.patients import get_patient_repository
 from app.routes.scheduling import get_google_calendar_service, get_scheduling_service
@@ -753,6 +754,18 @@ def audit_spy() -> MagicMock:
     return spy
 
 
+#: The main calendar's real id, which the import's answers are remembered under.
+MAIN = "clinician@example.test"
+
+
+def _gcal() -> MagicMock:
+    """A connected calendar service whose main calendar is known."""
+    gcal = MagicMock()
+    gcal.known_main_calendar_id.return_value = None
+    gcal.main_calendar_id.return_value = MAIN
+    return gcal
+
+
 @pytest.fixture
 def import_client(
     client: TestClient,
@@ -763,6 +776,7 @@ def import_client(
     in-memory repos so a confirmation writes something a test can read back."""
     app.dependency_overrides[get_scheduling_service] = lambda: SchedulingService(appt_repo)
     app.dependency_overrides[get_patient_repository] = lambda: mock_repo
+    app.dependency_overrides[get_google_calendar_service] = _gcal
     return client
 
 
@@ -785,7 +799,7 @@ class TestScanRoute:
     ) -> None:
         """Proposing is not ingesting. A therapist who walks away leaves
         nothing behind — no patient, no appointment, no staged row."""
-        gcal = MagicMock()
+        gcal = _gcal()
         gcal.scan_for_practice_import.return_value = build_proposal(
             _weekly(4, first=NOW - timedelta(days=21)),
             now=NOW,
@@ -807,7 +821,7 @@ class TestScanRoute:
 
     def test_a_scan_without_the_grant_asks_for_it(self, client: TestClient) -> None:
         """The consent prompt is the expected first answer, not a failure."""
-        gcal = MagicMock()
+        gcal = _gcal()
         gcal.scan_for_practice_import.side_effect = CalendarImportNotAuthorizedError("google")
         gcal.get_auth_url.return_value = "https://accounts.google.com/o/oauth2/auth?scope=x"
         app.dependency_overrides[get_google_calendar_service] = lambda: gcal
@@ -826,7 +840,7 @@ class TestScanRoute:
         client: TestClient,
         audit_spy: MagicMock,
     ) -> None:
-        gcal = MagicMock()
+        gcal = _gcal()
         gcal.scan_for_practice_import.return_value = build_proposal(
             _weekly(4, first=NOW - timedelta(days=21)),
             now=NOW,
@@ -841,7 +855,7 @@ class TestScanRoute:
         assert "events_read" in recorded
 
     def test_an_unknown_redirect_is_refused(self, client: TestClient) -> None:
-        gcal = MagicMock()
+        gcal = _gcal()
         app.dependency_overrides[get_google_calendar_service] = lambda: gcal
 
         response = client.post(
@@ -856,7 +870,7 @@ class TestBusyWindowsRoute:
     """The pre-scan week grid's data source: intervals only, never a title."""
 
     def test_busy_windows_carry_only_start_and_end(self, client: TestClient) -> None:
-        gcal = MagicMock()
+        gcal = _gcal()
         gcal.list_busy_windows.return_value = [
             BusyWindow(
                 start=datetime(2026, 9, 1, 14, 0, tzinfo=UTC),
@@ -884,7 +898,7 @@ class TestBusyWindowsRoute:
         self, client: TestClient
     ) -> None:
         """Declining the busy checkbox at connect is not a 500."""
-        gcal = MagicMock()
+        gcal = _gcal()
         gcal.list_busy_windows.side_effect = CalendarBusyNotAuthorizedError("google")
         app.dependency_overrides[get_google_calendar_service] = lambda: gcal
 
@@ -900,7 +914,7 @@ class TestBusyWindowsRoute:
         assert response.json() == {"granted": False}
 
     def test_an_inverted_window_is_refused(self, client: TestClient) -> None:
-        gcal = MagicMock()
+        gcal = _gcal()
         app.dependency_overrides[get_google_calendar_service] = lambda: gcal
 
         response = client.get(
@@ -1048,7 +1062,7 @@ class TestMatchOrAsk:
 
     @staticmethod
     def _scan(client: TestClient, *, summary: str = CLIENT_TITLE, series_id: str | None = "rec-1"):
-        gcal = MagicMock()
+        gcal = _gcal()
         gcal.scan_for_practice_import.return_value = build_proposal(
             _weekly(4, first=NOW - timedelta(days=21), summary=summary, series_id=series_id),
             now=NOW,
@@ -1116,9 +1130,9 @@ class TestMatchOrAsk:
         [series] = self._scan(import_client, series_id=None)
         self._confirm(import_client, series, None)
 
-        [stored] = mock_mapping_repo.list_by_source(_USER, "google_calendar")
-        assert stored.source_identifier.startswith("shape:")
-        assert CLIENT_TITLE.lower() not in stored.source_identifier.lower()
+        [stored] = mock_mapping_repo.list_by_source(calendar_scope(MAIN), "google_calendar")
+        assert stored.identifier_digest.startswith("shape:")
+        assert CLIENT_TITLE.lower() not in stored.identifier_digest.lower()
 
         [again] = self._scan(import_client, series_id=None)
         assert again["match"]["patient"]["patient_id"] == _patients(mock_repo)[0].id
@@ -1131,8 +1145,11 @@ class TestMatchOrAsk:
         [series] = self._scan(import_client)
         self._confirm(import_client, series, None)
 
-        [stored] = mock_mapping_repo.list_by_source(_USER, "google_calendar")
-        assert stored.source_identifier == "series:rec-1"
+        # Under the main calendar's id, as a keyed digest of the series id.
+        [stored] = mock_mapping_repo.list_by_source(calendar_scope(MAIN), "google_calendar")
+        assert stored.identifier_digest == identifier_digest("series:rec-1")
+        assert "rec-1" not in stored.identifier_digest
+        assert stored.answered_by_user_id == _USER
 
     def test_two_clients_with_the_series_name_are_offered_as_a_choice(
         self,
@@ -1210,7 +1227,7 @@ class TestMatchOrAsk:
         assert response.status_code == 200, response.text
         assert response.json()["patients_created"] == 0
         assert _patients(mock_repo) == []
-        [stored] = mock_mapping_repo.list_by_source(_USER, "google_calendar")
+        [stored] = mock_mapping_repo.list_by_source(calendar_scope(MAIN), "google_calendar")
         assert (stored.answer, stored.patient_id) == ("not_a_client", None)
         assert self._scan(import_client, summary="Team standup") == []
 
@@ -1242,7 +1259,7 @@ class TestMatchOrAsk:
         mock_repo: InMemoryPatientRepository,
     ) -> None:
         """Hand-entered "Therapy Session" on Monday and on Thursday are two people."""
-        gcal = MagicMock()
+        gcal = _gcal()
         gcal.scan_for_practice_import.return_value = build_proposal(
             _weekly(4, first=NOW - timedelta(days=20), summary="Therapy Session")
             + _weekly(4, first=NOW - timedelta(days=17), summary="Therapy Session"),
@@ -1297,8 +1314,8 @@ class TestMatchOrAsk:
         )
 
         assert response.status_code == 200, response.text
-        [stored] = mock_mapping_repo.list_by_source(_USER, "google_calendar")
-        assert stored.source_identifier == identifier
+        [stored] = mock_mapping_repo.list_by_source(calendar_scope(MAIN), "google_calendar")
+        assert stored.identifier_digest == identifier_digest(identifier)
 
     def test_a_clash_is_caught_whatever_its_case_or_spacing(
         self,

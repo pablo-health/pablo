@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 import pytest
 from app.models.patient import Patient
+from app.patients.identifiers import PRACTICE_SCOPE, identifier_digest
 from app.patients.matching import remember_match, remember_not_a_client
 from app.repositories.external_calendar_event import InMemoryExternalCalendarEventRepository
 from app.repositories.ical_sync_config import ICalSyncConfig
@@ -200,7 +201,7 @@ def _encryption_key(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
 
 
 @pytest.fixture
-def service():
+def service(_encryption_key: Any):
     """Create an ICalSyncService with in-memory repos."""
     return ICalSyncService(
         config_repo=InMemoryICalSyncConfigRepo(),  # type: ignore[arg-type]
@@ -299,7 +300,7 @@ class TestClientMatching:
 
     def test_a_feeds_own_client_code_books_once_answered(self, service: ICalSyncService):
         service._mapping_repo.save(
-            PatientSourceMapping("user1", "sessions_health", "SH00001", "patient-abc")
+            _answered("sessions_health", "SH00001", "patient-abc"),
         )
         ctx = _context(service, [_make_patient("patient-abc", "Pablo", "Bear")])
         assert _unattended(service, "sessions_health", "SH00001", ctx) == "patient-abc"
@@ -315,7 +316,7 @@ class TestClientMatching:
         assert sorted(first.possible_ids) == ["james", "john"]
 
         # The clinician picks John; that is remembered for the feed's "J.A.".
-        remember_match("simplepractice", "J.A.", "john", ctx)
+        remember_match("simplepractice", "J.A.", "john", ctx, scope=PRACTICE_SCOPE)
 
         ctx = service._match_context("user1")
         later = service._match("simplepractice", "J.A.", ctx)
@@ -336,13 +337,18 @@ class TestClientMatching:
     ):
         """Matched on strong evidence, but only the clinician's own chart gets the booking."""
         service._patient_repo.create(_make_patient("theirs", "Jane", "Adams"), "colleague")
-        service._mapping_repo.save(
-            PatientSourceMapping("user1", "sessions_health", "SH00001", "theirs")
-        )
+        service._mapping_repo.save(_answered("sessions_health", "SH00001", "theirs"))
         ctx = service._match_context("user1")
 
         assert service._match("sessions_health", "SH00001", ctx).patient_id == "theirs"
         assert _unattended(service, "sessions_health", "SH00001", ctx) is None
+
+
+def _answered(source: str, identifier: str, patient_id: str) -> PatientSourceMapping:
+    """A feed identifier answered by a colleague: the practice's answer, as stored."""
+    return PatientSourceMapping(
+        PRACTICE_SCOPE, source, identifier_digest(identifier), patient_id, "colleague"
+    )
 
 
 def _unattended(service: ICalSyncService, ehr: str, summary: str, ctx: MatchContext) -> str | None:
@@ -411,7 +417,12 @@ class TestSyncDiff:
         self, mock_fetch: MagicMock, sync_service: ICalSyncService
     ):
         mock_fetch.return_value = SP_NAMES_ICAL_DATA
-        remember_not_a_client("simplepractice", "Jane Adams", sync_service._match_context("user1"))
+        remember_not_a_client(
+            "simplepractice",
+            "Jane Adams",
+            sync_service._match_context("user1"),
+            scope=PRACTICE_SCOPE,
+        )
 
         [result] = sync_service.sync("user1", "simplepractice")
 
@@ -675,9 +686,10 @@ class TestCsvImport:
         )
         assert result.mappings_created == 2
 
-        # Verify SH00001 maps to Pablo Bear
-        mapping = service._mapping_repo.get("user1", "sessions_health", "SH00001")
-        assert mapping is not None
+        # Verify SH00001 maps to Pablo Bear, as the practice's answer
+        stored = service._mapping_repo.list_by_source(PRACTICE_SCOPE, "sessions_health")
+        assert identifier_digest("SH00001") in {m.identifier_digest for m in stored}
+        assert {m.answered_by_user_id for m in stored} == {"user1"}
 
     def test_import_zip(self, service: ICalSyncService):
         csv_content = (

@@ -24,8 +24,11 @@ uncertain, and never stands in the way of a new client.
 
 The checks run in a fixed order, strongest first:
 
-1. ``remembered`` — the clinician already said which patient this source's
-   identifier means (``patient_source_mappings``).
+1. ``remembered`` — someone in the practice already said which patient this
+   source's identifier means (``patient_source_mappings``). An answer is the
+   practice's for a feed's client codes, and one calendar's for a calendar's
+   series; the hint says which (``scope``), and the identifier is looked up
+   by its keyed digest (``identifiers.identifier_digest``).
 2. ``name_and_dob`` — exactly one patient in the practice has this name and
    date of birth.
 3. ``email`` — exactly one patient in the practice has this email. Some
@@ -74,6 +77,13 @@ from ..repositories.patient_source_mapping import (
     ANSWER_NOT_A_CLIENT,
     PatientSourceMapping,
 )
+from .identifiers import (
+    PRACTICE_SCOPE,
+    calendar_scope,
+    identifier_digest,
+    is_calendar_scope,
+    normalize,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -105,6 +115,9 @@ class PatientHint(BaseModel):
     """Where the record came from: ``"google_calendar"``, ``"simplepractice"``."""
     source_identifier: str | None = None
     """How that source names the client: a series id, a client code, initials."""
+    scope: str | None = None
+    """Whose remembered answer counts: ``practice``, or one calendar's. See
+    ``identifiers``. Without one, nothing remembered is consulted."""
 
 
 class MatchResult(BaseModel):
@@ -176,16 +189,18 @@ def _parse_date(value: str | None) -> date | None:
         return None
 
 
-def normalize(value: str | None) -> str:
-    """Lower case, with runs of whitespace collapsed and the ends trimmed."""
-    return " ".join((value or "").split()).lower()
-
-
 class MatchContext:
-    """The practice's patients and one clinician's remembered answers, read once.
+    """The practice's patients and its remembered answers, read once.
 
     Build one per request or per sync run and reuse it for every record in
-    it; the patients are loaded on first use, not per match.
+    it; the patients are loaded on first use, not per match, and each
+    source's answers on first lookup.
+
+    ``main_calendar_id`` is the clinician's main calendar, when the caller
+    knows it. Answers this clinician gave before answers were the practice's
+    are all about that calendar (it was the only one that could be followed
+    or imported), so they are adopted into its scope the first time it is
+    read here; feed answers are adopted into the practice's the same way.
     """
 
     def __init__(
@@ -194,13 +209,15 @@ class MatchContext:
         *,
         user_id: str = "",
         mappings: PatientSourceMappingRepository | None = None,
+        main_calendar_id: str | None = None,
     ) -> None:
         self.user_id = user_id
+        self.main_calendar_id = main_calendar_id
         self._load_candidates = load_candidates
         self._mappings = mappings
         self._candidates: list[Candidate] | None = None
-        # source -> normalized identifier -> the mapping as stored
-        self._remembered: dict[str, dict[str, PatientSourceMapping]] = {}
+        # (source, scope) -> identifier digest -> the answer as stored
+        self._remembered: dict[tuple[str, str], dict[str, PatientSourceMapping]] = {}
 
     @classmethod
     def for_practice(
@@ -208,6 +225,8 @@ class MatchContext:
         user_id: str,
         patient_repo: PatientRepository,
         mappings: PatientSourceMappingRepository,
+        *,
+        main_calendar_id: str | None = None,
     ) -> MatchContext:
         """Every live chart in the practice, each marked as seen by ``user_id`` or not."""
 
@@ -217,7 +236,7 @@ class MatchContext:
                 for client in patient_repo.practice_directory()
             ]
 
-        return cls(load, user_id=user_id, mappings=mappings)
+        return cls(load, user_id=user_id, mappings=mappings, main_calendar_id=main_calendar_id)
 
     @classmethod
     def over(cls, candidates: Iterable[Candidate]) -> MatchContext:
@@ -234,18 +253,40 @@ class MatchContext:
     def candidate(self, patient_id: str) -> Candidate | None:
         return next((c for c in self.candidates if c.id == patient_id), None)
 
-    def remembered(self, source: str) -> dict[str, PatientSourceMapping]:
-        if source not in self._remembered:
-            stored = self._mappings.list_by_source(self.user_id, source) if self._mappings else []
-            self._remembered[source] = {normalize(m.source_identifier): m for m in stored}
-        return self._remembered[source]
+    def remembered(self, source: str, scope: str) -> dict[str, PatientSourceMapping]:
+        """This scope's answers for a source, by identifier digest."""
+        key = (source, scope)
+        if key not in self._remembered:
+            stored: list[PatientSourceMapping] = []
+            if self._mappings is not None:
+                if self.user_id and self._adopts_into(scope):
+                    self._mappings.adopt_legacy(self.user_id, source, scope)
+                stored = self._mappings.list_by_source(scope, source)
+            self._remembered[key] = {m.identifier_digest: m for m in stored}
+        return self._remembered[key]
+
+    def lookup(self, source: str, scope: str, identifier: str) -> PatientSourceMapping | None:
+        """The answer on record for this identifier, if any."""
+        return self.remembered(source, scope).get(identifier_digest(identifier))
+
+    def _adopts_into(self, scope: str) -> bool:
+        """Whether a clinician's old answers for a source belong in this scope.
+
+        The practice's, for a feed. For a calendar, only the main one: every
+        old calendar answer was given about it, and moving them onto another
+        calendar would carry a "not a client" for Monday 09:00 onto a
+        calendar it was never about.
+        """
+        if scope == PRACTICE_SCOPE:
+            return True
+        return self.main_calendar_id is not None and scope == calendar_scope(self.main_calendar_id)
 
     def save(self, mapping: PatientSourceMapping) -> None:
         if self._mappings is None:
             msg = "This context has nowhere to remember a match"
             raise RuntimeError(msg)
         self._mappings.save(mapping)
-        self.remembered(mapping.source)[normalize(mapping.source_identifier)] = mapping
+        self.remembered(mapping.source, mapping.scope)[mapping.identifier_digest] = mapping
 
 
 def _full_name_matches(
@@ -332,8 +373,8 @@ def _match(hint: PatientHint, ctx: MatchContext, *, name_alone_is_enough: bool) 
     candidates = ctx.candidates
     live = {c.id for c in candidates}
 
-    if hint.source and hint.source_identifier:
-        known = ctx.remembered(hint.source).get(normalize(hint.source_identifier))
+    if hint.source and hint.source_identifier and hint.scope:
+        known = ctx.lookup(hint.source, hint.scope, hint.source_identifier)
         if known is not None and known.answer == ANSWER_NOT_A_CLIENT:
             return MatchResult(evidence="not_a_client")
         if known is not None:
@@ -381,18 +422,22 @@ def _match(hint: PatientHint, ctx: MatchContext, *, name_alone_is_enough: bool) 
     return MatchResult(possible_ids=[c.id for c in possible])
 
 
-def remember_match(
+def remember_match(  # noqa: PLR0913 — the answer's parts, each named at the call site
     source: str,
     source_identifier: str,
     patient_id: str,
     ctx: MatchContext,
     *,
+    scope: str,
     answered_title: str | None = None,
 ) -> None:
     """Record that this source's identifier means this patient.
 
     Idempotent. An identifier already remembered under different case or
-    spacing is updated in place rather than stored twice.
+    spacing is the same identifier, and its answer is replaced in place.
+
+    ``scope`` is whose answer this is: the practice's for a feed's client
+    code, one calendar's for a series (see ``identifiers``).
 
     ``answered_title`` is the keyed digest of the title the answer was given
     under (``answered_title_digest``), for sources whose identifier can
@@ -400,45 +445,48 @@ def remember_match(
     the series is handed to someone else, so the answer holds only while the
     title does. Left unset by sources where the identifier is the title.
     """
-    _remember(
-        ctx,
-        PatientSourceMapping(
-            user_id=ctx.user_id,
-            source=source,
-            source_identifier=source_identifier,
-            patient_id=patient_id,
-            answer=ANSWER_CLIENT,
-            answered_title=answered_title,
-        ),
-    )
+    _remember(ctx, source, source_identifier, scope, patient_id, ANSWER_CLIENT, answered_title)
 
 
-def remember_not_a_client(source: str, source_identifier: str, ctx: MatchContext) -> None:
+def remember_not_a_client(
+    source: str, source_identifier: str, ctx: MatchContext, *, scope: str
+) -> None:
     """Record that this source's identifier is not a client, so it is never asked about.
 
     Idempotent, and replaces a client answer for the same identifier.
     """
-    _remember(
-        ctx,
+    _remember(ctx, source, source_identifier, scope, None, ANSWER_NOT_A_CLIENT, None)
+
+
+def _remember(  # noqa: PLR0913 — the answer's parts, each named at the call site
+    ctx: MatchContext,
+    source: str,
+    source_identifier: str,
+    scope: str,
+    patient_id: str | None,
+    answer: str,
+    answered_title: str | None,
+) -> None:
+    existing = ctx.lookup(source, scope, source_identifier)
+    if existing is not None and (existing.answer, existing.patient_id, existing.answered_title) == (
+        answer,
+        patient_id,
+        answered_title,
+    ):
+        return
+    ctx.save(
         PatientSourceMapping(
-            user_id=ctx.user_id,
+            scope=scope,
             source=source,
-            source_identifier=source_identifier,
-            patient_id=None,
-            answer=ANSWER_NOT_A_CLIENT,
-        ),
+            identifier_digest=identifier_digest(source_identifier),
+            patient_id=patient_id,
+            answered_by_user_id=ctx.user_id,
+            answer=answer,
+            answered_title=answered_title,
+            # On a personal calendar the answerer's session is the one booked.
+            session_clinician_user_id=ctx.user_id if is_calendar_scope(scope) else None,
+        )
     )
-
-
-def _remember(ctx: MatchContext, mapping: PatientSourceMapping) -> None:
-    mapping.source_identifier = " ".join(mapping.source_identifier.split())
-    existing = ctx.remembered(mapping.source).get(normalize(mapping.source_identifier))
-    if existing is not None:
-        same = (existing.answer, existing.patient_id, existing.answered_title)
-        if same == (mapping.answer, mapping.patient_id, mapping.answered_title):
-            return
-        mapping.source_identifier = existing.source_identifier
-    ctx.save(mapping)
 
 
 __all__ = [

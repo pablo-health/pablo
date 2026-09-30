@@ -19,6 +19,7 @@ from app.calendar_providers.source_identity import (
     event_source_identifier,
 )
 from app.models.patient import Patient
+from app.patients.identifiers import calendar_scope
 from app.patients.matching import remember_match
 from app.repositories.audit import InMemoryAuditRepository
 from app.repositories.external_calendar_event import (
@@ -46,6 +47,9 @@ if TYPE_CHECKING:
     from app.models import User
 
 USER_ID = "test-user-123"
+#: The followed calendar's real id; its answers are remembered under it.
+MAIN = "clinician@example.test"
+SCOPE = calendar_scope(MAIN)
 
 
 @pytest.fixture(autouse=True)
@@ -93,7 +97,9 @@ class _Harness:
         self.appointments = InMemoryAppointmentRepository()
         self.patients = InMemoryPatientRepository()
         self.mappings = InMemoryPatientSourceMappingRepository()
-        self.outside = OutsideSessions(self.events, self.appointments, self.patients, self.mappings)
+        self.outside = OutsideSessions(
+            self.events, self.appointments, self.patients, self.mappings, main_calendar_id=MAIN
+        )
         self.calendar = MagicMock()
         self.follower = GoogleChangeFollower(self.appointments, self.calendar)
         self.audit = AuditService(InMemoryAuditRepository())
@@ -111,7 +117,7 @@ class _Harness:
 
     def poll(self, user: User, changes: list[dict[str, Any]]) -> None:
         """What one scheduled read does: bring events in, then follow them."""
-        self.outside.ingest_google(USER_ID, changes)
+        self.outside.ingest_google(USER_ID, changes, calendar_id=MAIN)
         self.follower.follow(user, self.audit, changes, outside_source=GOOGLE_CALENDAR_SOURCE)
 
     def open_ids(self) -> list[str]:
@@ -195,6 +201,7 @@ class TestWhatBecomesAQuestion:
             event_source_identifier(None, "Dentist", start, UTC),
             "deleted-patient",
             h.outside.context(USER_ID),
+            scope=SCOPE,
         )
 
         h.poll(mock_user, [_event("x", start, title="Dentist", series=None)])
@@ -220,6 +227,7 @@ class TestSharedIdentifier:
             ),
             "p1",
             h.outside.context(USER_ID),
+            scope=SCOPE,
         )
 
         h.poll(mock_user, [_event("e1", start, series=None)])
@@ -239,6 +247,7 @@ class TestRememberedSlots:
             calendar_source_identifier(None, "Session", monday.weekday(), monday.strftime("%H:%M")),
             "p1",
             h.outside.context(USER_ID),
+            scope=SCOPE,
         )
         return monday
 

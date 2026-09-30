@@ -4,10 +4,14 @@
 
 from __future__ import annotations
 
+import base64
+import os
 from datetime import date
+from typing import TYPE_CHECKING
 
 import pytest
 from app.models.patient import Patient
+from app.patients.identifiers import PRACTICE_SCOPE, calendar_scope, identifier_digest
 from app.patients.matching import (
     Candidate,
     MatchContext,
@@ -18,9 +22,24 @@ from app.patients.matching import (
 )
 from app.repositories.patient import InMemoryPatientRepository
 from app.repositories.patient_source_mapping import InMemoryPatientSourceMappingRepository
+from app.settings import get_settings
 from app.utcnow import utc_now
 
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
 USER = "clinician-1"
+#: The calendar answers about a series are remembered under.
+CALENDAR = calendar_scope("me@example.test")
+
+
+@pytest.fixture(autouse=True)
+def _calendar_key(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
+    """The secret identifiers are digested under; every remembered answer needs it."""
+    monkeypatch.setenv("GOOGLE_CALENDAR_ENCRYPTION_KEY", base64.b64encode(os.urandom(32)).decode())
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 def _patient(
@@ -213,41 +232,70 @@ class TestRemembered:
         ctx = _ctx(
             patients, mappings, _patient("p1", "Jane", "Adams"), _patient("p2", "Jane", "Adams")
         )
-        remember_match("google_calendar", "series:abc", "p2", ctx)
+        remember_match("google_calendar", "series:abc", "p2", ctx, scope=CALENDAR)
 
         fresh = MatchContext.for_practice(USER, patients, mappings)
         hint = PatientHint(
-            full_name="Jane Adams", source="google_calendar", source_identifier="series:abc"
+            full_name="Jane Adams",
+            source="google_calendar",
+            source_identifier="series:abc",
+            scope=CALENDAR,
         )
         result = match_patient(hint, fresh)
         assert (result.patient_id, result.evidence) == ("p2", "remembered")
 
     def test_remembering_twice_stores_one_answer(self, patients, mappings) -> None:
         ctx = _ctx(patients, mappings, _patient("p1", "Jane", "Adams"))
-        remember_match("simplepractice", "J.A.", "p1", ctx)
-        remember_match("simplepractice", " j.a. ", "p1", ctx)
-        assert len(mappings.list_by_source(USER, "simplepractice")) == 1
+        remember_match("simplepractice", "J.A.", "p1", ctx, scope=PRACTICE_SCOPE)
+        remember_match("simplepractice", " j.a. ", "p1", ctx, scope=PRACTICE_SCOPE)
+        assert len(mappings.list_by_source(PRACTICE_SCOPE, "simplepractice")) == 1
 
     def test_remembering_a_different_patient_replaces_the_answer(self, patients, mappings) -> None:
         ctx = _ctx(patients, mappings, _patient("p1", "Jane", "Adams"), _patient("p2", "Bo", "Li"))
-        remember_match("simplepractice", "J.A.", "p1", ctx)
-        remember_match("simplepractice", "j.a.", "p2", ctx)
-        stored = mappings.list_by_source(USER, "simplepractice")
-        assert [(m.source_identifier, m.patient_id) for m in stored] == [("J.A.", "p2")]
+        remember_match("simplepractice", "J.A.", "p1", ctx, scope=PRACTICE_SCOPE)
+        remember_match("simplepractice", "j.a.", "p2", ctx, scope=PRACTICE_SCOPE)
+        stored = mappings.list_by_source(PRACTICE_SCOPE, "simplepractice")
+        assert [(m.identifier_digest, m.patient_id) for m in stored] == [
+            (identifier_digest("J.A."), "p2")
+        ]
 
     def test_an_answer_for_one_source_does_not_leak_into_another(self, patients, mappings) -> None:
         ctx = _ctx(patients, mappings, _patient("p1", "Jane", "Adams"), _patient("p2", "Bo", "Li"))
-        remember_match("simplepractice", "SH00001", "p1", ctx)
-        hint = PatientHint(source="sessions_health", source_identifier="SH00001")
+        remember_match("simplepractice", "SH00001", "p1", ctx, scope=PRACTICE_SCOPE)
+        hint = PatientHint(
+            source="sessions_health", source_identifier="SH00001", scope=PRACTICE_SCOPE
+        )
         assert match_patient(hint, ctx).patient_id is None
 
-    def test_another_clinicians_answer_is_not_used(self, patients, mappings) -> None:
+    def test_an_answer_for_one_calendar_does_not_leak_into_another(
+        self, patients, mappings
+    ) -> None:
+        ctx = _ctx(patients, mappings, _patient("p1", "Jane", "Adams"))
+        remember_match("google_calendar", "series:abc", "p1", ctx, scope=CALENDAR)
+        hint = PatientHint(
+            source="google_calendar",
+            source_identifier="series:abc",
+            scope=calendar_scope("team@group.calendar.google.test"),
+        )
+        assert match_patient(hint, ctx).evidence != "remembered"
+
+    def test_a_colleagues_answer_for_a_feed_is_the_practices(self, patients, mappings) -> None:
+        """A feed code names the practice's client, whoever said so."""
         mine = _ctx(patients, mappings, _patient("p1", "Jane", "Adams"))
-        remember_match("simplepractice", "J.A.", "p1", mine)
+        remember_match("simplepractice", "J.A.", "p1", mine, scope=PRACTICE_SCOPE)
         patients.grant_access("p1", "clinician-2")
         theirs = MatchContext.for_practice("clinician-2", patients, mappings)
+        hint = PatientHint(source="simplepractice", source_identifier="J.A.", scope=PRACTICE_SCOPE)
+        result = match_patient(hint, theirs)
+        assert (result.patient_id, result.evidence) == ("p1", "remembered")
+        [stored] = mappings.list_by_source(PRACTICE_SCOPE, "simplepractice")
+        assert stored.answered_by_user_id == USER
+
+    def test_a_hint_with_no_scope_consults_nothing_remembered(self, patients, mappings) -> None:
+        ctx = _ctx(patients, mappings, _patient("p1", "Jane", "Adams"))
+        remember_match("simplepractice", "J.A.", "p1", ctx, scope=PRACTICE_SCOPE)
         hint = PatientHint(source="simplepractice", source_identifier="J.A.")
-        assert match_patient(hint, theirs).evidence != "remembered"
+        assert match_patient(hint, ctx).evidence != "remembered"
 
 
 class TestDeleted:
@@ -261,11 +309,13 @@ class TestDeleted:
             _patient("john", "John", "Adams"),
             _patient("jane", "Jane", "Anderson"),
         )
-        remember_match("simplepractice", "J.A.", "john", ctx)
+        remember_match("simplepractice", "J.A.", "john", ctx, scope=PRACTICE_SCOPE)
         patients.delete("john", USER)
 
         fresh = MatchContext.for_practice(USER, patients, mappings)
-        hint = PatientHint(initials="J.A.", source="simplepractice", source_identifier="J.A.")
+        hint = PatientHint(
+            initials="J.A.", source="simplepractice", source_identifier="J.A.", scope=PRACTICE_SCOPE
+        )
         result = match_patient(hint, fresh)
         assert result.patient_id is None
         assert result.possible_ids == []
@@ -281,10 +331,12 @@ class TestDeleted:
 
     def test_a_remembered_deleted_patient_is_not_matched(self, patients, mappings) -> None:
         ctx = _ctx(patients, mappings, _patient("p1", "Jane", "Adams"))
-        remember_match("simplepractice", "J.A.", "p1", ctx)
+        remember_match("simplepractice", "J.A.", "p1", ctx, scope=PRACTICE_SCOPE)
         patients.delete("p1", USER)
         fresh = MatchContext.for_practice(USER, patients, mappings)
-        hint = PatientHint(initials="J.A.", source="simplepractice", source_identifier="J.A.")
+        hint = PatientHint(
+            initials="J.A.", source="simplepractice", source_identifier="J.A.", scope=PRACTICE_SCOPE
+        )
         result = match_patient(hint, fresh)
         assert result.patient_id is None
         assert result.possible_ids == []
@@ -296,11 +348,14 @@ class TestNotAClient:
     ) -> None:
         """Even a name that uniquely matches a chart does not bring it back."""
         ctx = _ctx(patients, mappings, _patient("p1", "Team", "Meeting"))
-        remember_not_a_client("google_calendar", "series:standup", ctx)
+        remember_not_a_client("google_calendar", "series:standup", ctx, scope=CALENDAR)
 
         fresh = MatchContext.for_practice(USER, patients, mappings)
         hint = PatientHint(
-            full_name="Team Meeting", source="google_calendar", source_identifier="series:standup"
+            full_name="Team Meeting",
+            source="google_calendar",
+            source_identifier="series:standup",
+            scope=CALENDAR,
         )
         result = match_patient(hint, fresh)
         assert result.evidence == "not_a_client"
@@ -309,22 +364,22 @@ class TestNotAClient:
 
     def test_not_a_client_replaces_a_client_answer_in_place(self, patients, mappings) -> None:
         ctx = _ctx(patients, mappings, _patient("p1", "Jane", "Adams"))
-        remember_match("google_calendar", "series:x", "p1", ctx)
-        remember_not_a_client("google_calendar", " SERIES:X ", ctx)
-        remember_not_a_client("google_calendar", "series:x", ctx)
+        remember_match("google_calendar", "series:x", "p1", ctx, scope=CALENDAR)
+        remember_not_a_client("google_calendar", " SERIES:X ", ctx, scope=CALENDAR)
+        remember_not_a_client("google_calendar", "series:x", ctx, scope=CALENDAR)
 
-        [stored] = mappings.list_by_source(USER, "google_calendar")
-        assert (stored.source_identifier, stored.answer, stored.patient_id) == (
-            "series:x",
+        [stored] = mappings.list_by_source(CALENDAR, "google_calendar")
+        assert (stored.identifier_digest, stored.answer, stored.patient_id) == (
+            identifier_digest("series:x"),
             "not_a_client",
             None,
         )
 
     def test_a_client_answer_can_replace_not_a_client(self, patients, mappings) -> None:
         ctx = _ctx(patients, mappings, _patient("p1", "Jane", "Adams"))
-        remember_not_a_client("google_calendar", "series:x", ctx)
-        remember_match("google_calendar", "series:x", "p1", ctx)
-        hint = PatientHint(source="google_calendar", source_identifier="series:x")
+        remember_not_a_client("google_calendar", "series:x", ctx, scope=CALENDAR)
+        remember_match("google_calendar", "series:x", "p1", ctx, scope=CALENDAR)
+        hint = PatientHint(source="google_calendar", source_identifier="series:x", scope=CALENDAR)
         assert match_patient(hint, ctx).evidence == "remembered"
 
 

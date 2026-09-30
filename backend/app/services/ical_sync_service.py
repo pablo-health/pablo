@@ -46,6 +46,7 @@ from icalendar import Calendar
 
 from ..calendar_providers.source_identity import ical_source
 from ..models.enums import EhrSystem
+from ..patients.identifiers import PRACTICE_SCOPE
 from ..patients.matching import (
     MatchContext,
     MatchResult,
@@ -302,7 +303,7 @@ class ICalSyncService:
                 patient = existing_by_name.get(key)
                 patient_id = patient.id if patient else None
                 if patient_id:
-                    remember_match(ehr_system, sh_code, patient_id, ctx)
+                    remember_match(ehr_system, sh_code, patient_id, ctx, scope=PRACTICE_SCOPE)
                     result.mappings_created += 1
 
         return result
@@ -711,12 +712,14 @@ class FeedIdentity:
 def _hint(ehr_system: str, client_identifier: str) -> FeedIdentity:
     """What a feed's client identifier says about the client.
 
-    A remembered answer for the identifier always counts. Beyond that,
-    SimplePractice writes either initials or a full name; Sessions Health
-    writes a client code, or a full name when the calendar is set to show
-    names. Other sources match on a remembered answer only.
+    A remembered answer for the identifier always counts, and it is the
+    practice's: a feed's identifier names the practice's client in the other
+    system. Beyond that, SimplePractice writes either initials or a full
+    name; Sessions Health writes a client code, or a full name when the
+    calendar is set to show names. Other sources match on a remembered
+    answer only.
     """
-    hint = PatientHint(source=ehr_system, source_identifier=client_identifier)
+    hint = PatientHint(source=ehr_system, source_identifier=client_identifier, scope=PRACTICE_SCOPE)
     if ehr_system == EhrSystem.SIMPLEPRACTICE:
         if _SP_INITIALS_RE.match(client_identifier + " Appointment"):
             initials = hint.model_copy(update={"initials": client_identifier})

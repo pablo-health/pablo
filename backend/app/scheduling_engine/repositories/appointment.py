@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 # below constructs it; it is a plain Pydantic model and pulls nothing else in.
 from ...models.patient_facing import PatientAppointmentResponse
 from ...utcnow import utc_now
+from ..exceptions import OutsideEventAlreadyBookedError
 from ..models.appointment import AppointmentStatus
 
 if TYPE_CHECKING:
@@ -163,8 +164,25 @@ class AppointmentRepository(ABC):
         """Get the appointment (if any) following an event on another calendar."""
 
     @abstractmethod
+    def outside_appointment_id(
+        self, source: str, calendar_id: str | None, event_id: str, user_id: str
+    ) -> str | None:
+        """The live appointment following this outside event, if there is one.
+
+        Looked for across the whole practice when the event is on a calendar
+        (``calendar_id``), since a colleague following the same calendar may
+        have booked it; on ``user_id``'s own diary otherwise, as a feed is
+        one clinician's. Returns only the id: the appointment itself may be
+        a colleague's and not this clinician's to read.
+        """
+
+    @abstractmethod
     def create(self, appointment: Appointment) -> Appointment:
-        """Create a new appointment."""
+        """Create a new appointment.
+
+        Raises ``OutsideEventAlreadyBookedError`` when it would be a second
+        live appointment for one outside event.
+        """
 
     @abstractmethod
     def create_batch(self, appointments: list[Appointment]) -> list[Appointment]:
@@ -382,6 +400,22 @@ class InMemoryAppointmentRepository(AppointmentRepository):
                 return a
         return None
 
+    def outside_appointment_id(
+        self, source: str, calendar_id: str | None, event_id: str, user_id: str
+    ) -> str | None:
+        live = sorted(
+            (
+                a
+                for a in self._appointments.values()
+                if a.status != AppointmentStatus.CANCELLED
+                and (a.outside_source, a.outside_calendar_id, a.outside_event_id)
+                == (source, calendar_id, event_id)
+                and (calendar_id is not None or a.user_id == user_id)
+            ),
+            key=lambda a: (a.created_at or utc_now(), a.id),
+        )
+        return live[0].id if live else None
+
     def list_expired_pending(self, user_id: str, now: datetime) -> list[Appointment]:
         return [
             appt
@@ -399,6 +433,20 @@ class InMemoryAppointmentRepository(AppointmentRepository):
         return None
 
     def create(self, appointment: Appointment) -> Appointment:
+        if (
+            appointment.outside_event_id is not None
+            and appointment.outside_source is not None
+            and appointment.status != AppointmentStatus.CANCELLED
+            and self.outside_appointment_id(
+                appointment.outside_source,
+                appointment.outside_calendar_id,
+                appointment.outside_event_id,
+                appointment.user_id,
+            )
+            is not None
+        ):
+            # What the unique index refuses in Postgres.
+            raise OutsideEventAlreadyBookedError("That outside event is already booked")
         self._appointments[appointment.id] = appointment
         # Auto-grant the creator access to the patient — mirrors the
         # Postgres guarantee that callers verified patient access
