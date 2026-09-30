@@ -1368,15 +1368,15 @@ class GoogleCalendarService:
         """Get the calendar Pablo owns on this account, creating it once.
 
         Reconnecting finds the existing calendar rather than leaving a second
-        one behind — but it finds it in our own token record, not by asking
-        for a list. The app-calendar grant is a single scope,
+        one behind — but it finds it in our own records, not by asking for a
+        list. The app-calendar grant is a single scope,
         ``calendar.app.created``, and Google refuses ``calendarList.list``
         under it: this used to open with that call, so the connect could never
-        finish. Its identity is already ours to remember, so remember it —
-        in its own record rather than the connection's, because disconnecting
-        deletes the connection and a main-calendar connect points it
-        elsewhere, and either used to leave the next app-calendar connect
-        nothing to reuse. Only an id Pablo's own insert returned is recorded,
+        finish. Its identity is already ours to remember, so remember it — in
+        the clinician's calendar settings rather than on the connection,
+        because disconnecting deletes the connection and a main-calendar
+        connect points it elsewhere, and either used to leave the next
+        app-calendar connect nothing to reuse. Only an id Pablo's own insert returned is recorded,
         never a calendar matched by name: one the therapist made and happened
         to call "Pablo Sessions" is theirs, not ours.
 

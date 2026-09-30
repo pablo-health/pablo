@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""google_app_calendars — the calendar Pablo made, remembered past the connection
+"""google_calendar_settings — Google Calendar choices that outlive a connection
 
 A connection that writes to a calendar Pablo makes used to find that calendar
 again on reconnect from ``google_calendar_tokens.calendar_id``. That column is
@@ -9,9 +9,11 @@ overwrote it, and disconnecting deleted the row it lived on. Either way the
 next app-calendar connect had nothing to reuse and made another
 "Pablo Sessions" calendar.
 
-This table holds only calendars Pablo created, one per clinician, and nothing
-about the grant: a disconnect still deletes the token row outright, and this
-one stays.
+This table holds a clinician's Google Calendar choices that should survive
+the connection, one row per clinician, starting with ``app_calendar_id``: the
+calendar Pablo created, and only ever an id Pablo's own insert returned. It
+holds nothing about the grant: a disconnect still deletes the token row
+outright, and this one stays.
 
 No backfill here. The ids to copy sit in ``google_calendar_tokens``, which is
 FORCE-RLS'd per user, and this chain may run as a role without BYPASSRLS — a
@@ -49,13 +51,13 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     op.execute(
-        "CREATE TABLE IF NOT EXISTS google_app_calendars ("
+        "CREATE TABLE IF NOT EXISTS google_calendar_settings ("
         "user_id UUID PRIMARY KEY, "
-        "calendar_id TEXT NOT NULL, "
+        "app_calendar_id TEXT NOT NULL, "
         "created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "
         "updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now())"
     )
 
 
 def downgrade() -> None:
-    op.execute("DROP TABLE IF EXISTS google_app_calendars")
+    op.execute("DROP TABLE IF EXISTS google_calendar_settings")
