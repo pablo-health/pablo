@@ -25,8 +25,17 @@ Two surfaces, each only as wide as the backend relies on:
   around.
 
 Below ``/_fake/`` a spec puts events on a calendar, moves or retitles them,
-deletes them, adds a second calendar, expires the sync tokens, reads what
-the backend pushed, and reads what was granted. Everything lives in memory.
+deletes them, adds a second calendar, expires the sync tokens or the access
+tokens, reads what the backend pushed, and reads what was granted.
+Everything lives in memory.
+
+Not modelled, so a spec cannot lean on it: a consent screen that refuses
+or narrows; a sync token's memory of the ``timeMin``/``timeMax`` it was
+issued under (a resumed read here answers every change, not only those in
+the original window); attendees' own calendars; and anything past the
+calendars, events and free/busy the backend calls. A series is expanded
+from its whole ``recurrence`` — RRULE, RDATE and EXDATE lines — by
+``dateutil``, in the event's own zone.
 
 Run with ``uvicorn fake_google:app --port 8090``; the compose stack builds
 it from ``scripts/e2e/fake-google.Dockerfile``.
@@ -219,6 +228,9 @@ async def authorize(request: Request) -> Response:
         "challenge": params.get("code_challenge"),
         "method": params.get("code_challenge_method", "plain"),
         "include_granted": params.get("include_granted_scopes") == "true",
+        # Google issues a refresh token only to a request that asked for
+        # offline access; a connect that forgot to would die in an hour.
+        "offline": params.get("access_type") == "offline",
     }
     joiner = "&" if "?" in redirect_uri else "?"
     back = {"code": code, "scope": " ".join(sorted(scopes))}
@@ -240,19 +252,22 @@ def _client_from(request: Request, form: dict[str, str]) -> tuple[str | None, st
     return form.get("client_id"), form.get("client_secret")
 
 
-def _issue(scopes: set[str]) -> dict[str, Any]:
+def _issue(scopes: set[str], *, offline: bool) -> dict[str, Any]:
+    """An access token, and a refresh token only when offline access was asked for."""
     granted = frozenset(scopes)
     access = "ya29.fake-" + secrets.token_urlsafe(16)
-    refresh = "1//fake-" + secrets.token_urlsafe(16)
     state.tokens[access] = granted
-    state.refresh_tokens[refresh] = granted
-    return {
+    issued: dict[str, Any] = {
         "access_token": access,
         "expires_in": 3599,
-        "refresh_token": refresh,
         "scope": " ".join(sorted(granted)),
         "token_type": "Bearer",
     }
+    if offline:
+        refresh = "1//fake-" + secrets.token_urlsafe(16)
+        state.refresh_tokens[refresh] = granted
+        issued["refresh_token"] = refresh
+    return issued
 
 
 class OAuthError(Exception):
@@ -293,9 +308,8 @@ async def token(request: Request) -> Response:
         scopes = state.refresh_tokens.get(form.get("refresh_token", ""))
         if scopes is None:
             raise OAuthError("invalid_grant")
-        issued = _issue(set(scopes))
-        del issued["refresh_token"]
-        return JSONResponse(issued)
+        # A refresh answers with a new access token; the refresh token stays.
+        return JSONResponse(_issue(set(scopes), offline=False))
 
     pending = state.codes.pop(form.get("code", ""), None)
     if pending is None:
@@ -305,7 +319,7 @@ async def token(request: Request) -> Response:
     if pending["include_granted"]:
         scopes |= state.granted
     state.granted = set(scopes)
-    return JSONResponse(_issue(scopes))
+    return JSONResponse(_issue(scopes, offline=pending["offline"]))
 
 
 # --- Scopes ----------------------------------------------------------------
@@ -400,13 +414,12 @@ def _instance_id(master_id: str, start: datetime) -> str:
 
 
 def _occurrences(master: dict[str, Any]) -> Iterator[datetime]:
+    """When a series happens, from its whole recurrence: RRULE, RDATE and EXDATE lines."""
     start = _parse_time(master["start"])
-    if start is None:
+    lines = list(master.get("recurrence", []))
+    if start is None or not lines:
         return iter(())
-    rules = [line for line in master.get("recurrence", []) if line.upper().startswith("RRULE")]
-    if not rules:
-        return iter(())
-    rule = rrulestr(rules[0], dtstart=start)
+    rule = rrulestr("\n".join(lines), dtstart=start, forceset=True)
     horizon = start + EXPANSION_HORIZON
     return (dt for dt in islice(rule, MAX_INSTANCES) if dt <= horizon)
 
@@ -750,6 +763,18 @@ async def fake_delete_event(calendar_id: str, event_id: str) -> Response:
     calendar = _calendar_or_404(calendar_id)
     _change(calendar, event_id, {"status": "cancelled"}, replace=False)
     return Response(status_code=204)
+
+
+@app.post("/_fake/expire-access-tokens")
+async def fake_expire_access_tokens() -> dict[str, int]:
+    """Age out every access token: the next API call is answered 401.
+
+    The refresh tokens stay, so a client that refreshes on a 401 — as the
+    backend's does — gets a new access token and carries on.
+    """
+    expired = len(state.tokens)
+    state.tokens.clear()
+    return {"expired": expired}
 
 
 @app.post("/_fake/calendars/{calendar_id}/expire-sync-tokens")

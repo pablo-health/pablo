@@ -46,6 +46,7 @@ from ..models.outside_sessions import (
 )
 from ..models.patient import Patient
 from ..patients.seen_by import SeenBy
+from ..rate_limit import get_calendar_sync_limiter
 from ..repositories import (
     PatientRepository,
     UserRepository,
@@ -142,10 +143,19 @@ def sync_calendars_now(
     and reminders. A clinician who has just started following a calendar
     sees its sessions without waiting; a test can read a calendar it just
     changed. Counts only reach the audit trail.
+
+    Per-user limited (``calendar_sync_rate_per_min``): a pass reaches Google
+    several times and follows what comes back, and the schedule already
+    runs one every fifteen minutes. Being on demand, it skips the loop's
+    working-hours and consecutive-failure guards on purpose. A Google
+    rate-limit answer is retried once after at most three seconds
+    (``reliability.HTTP_REQUEST``), so a pass never sleeps for long inside
+    the request.
     """
+    get_calendar_sync_limiter().check(user.id)
     summary = scheduler.execute(user.id)
     audit.log(
-        AuditAction.ICAL_CALENDAR_SYNCED,
+        AuditAction.CALENDAR_SYNCED,
         user,
         http_request,
         resource_type=ResourceType.APPOINTMENT,

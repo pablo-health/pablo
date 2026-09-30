@@ -3,7 +3,8 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useQueryClient } from "@tanstack/react-query"
+import { useAuthQuery } from "@/hooks/useAuthQuery"
 import { CheckCircle2 } from "lucide-react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
@@ -196,16 +197,21 @@ export function CalendarSetupWizard({
   const [followSaving, setFollowSaving] = useState(false)
   const [followError, setFollowError] = useState<string | null>(null)
 
-  const { data: status } = useQuery({
+  // Each waits for sign-in to settle. On a full page load — which is how
+  // the browser arrives back from Google — a bare query fires before the
+  // session is restored, goes out without a token and reads as "not
+  // connected" until a retry lands, so a step that keys on the status
+  // (the follow checkbox) would render from a 401 for its first second.
+  const { data: status } = useAuthQuery({
     queryKey: ["google-calendar", "status"],
     queryFn: getGoogleCalendarStatus,
   })
-  const { data: options } = useQuery({
+  const { data: options } = useAuthQuery({
     queryKey: ["google-calendar", "consent-options"],
     queryFn: getGoogleCalendarConsentOptions,
     staleTime: 60 * 60 * 1000,
   })
-  const { data: busyWindows } = useQuery({
+  const { data: busyWindows } = useAuthQuery({
     queryKey: ["google-calendar", "busy", busyRange.start, busyRange.end],
     queryFn: () => getCalendarBusyWindows(busyRange.start, busyRange.end),
     enabled: Boolean(status?.connected),

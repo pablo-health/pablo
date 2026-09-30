@@ -144,8 +144,15 @@ services:
       - GOOGLE_CALENDAR_CLIENT_SECRET=e2e-google-client-secret
       # Where the OAuth round trip keeps its PKCE verifier (see the redis
       # service). Without a store the connect is refused, not weakened.
+      # Redis also backs everything else USE_REDIS covers: the idle-session
+      # check (a 15-minute gap between requests answers 401 IDLE_TIMEOUT),
+      # rate limits, the tenant cache. Every spec signs in afresh, so a
+      # mid-suite 401 from a run left idle is that check, not a regression.
       - USE_REDIS=true
       - REDIS_HOST=redis
+      # A spec reads a calendar it has just changed several times in a row;
+      # the engine's own default (app.settings) is two passes a minute.
+      - CALENDAR_SYNC_RATE_PER_MIN=120
       # The token exchange goes over plain HTTP to the stand-in, which the
       # OAuth library refuses by default. Development only, like the URL.
       - OAUTHLIB_INSECURE_TRANSPORT=1

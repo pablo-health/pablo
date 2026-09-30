@@ -23,6 +23,7 @@ import {
   localDateTime,
   localWeekday,
   plusMinutes,
+  toUtc,
   type EventTime,
 } from "../fixtures/google"
 
@@ -55,7 +56,12 @@ let stamp = 0
  * the sessions an earlier spec booked from a calendar of the same name.
  */
 async function freshGoogle(api: ApiClient): Promise<string> {
+  // Following outlives a disconnect (and a reconnect to another account),
+  // so it is turned off first, while the connection that can still answer
+  // for it is there. Without this the wizard's checkbox starts checked
+  // and a click on it turns following OFF.
   try {
+    await api.put("/api/google-calendar/followed-calendar", { calendar_id: null })
     await api.delete("/api/google-calendar/disconnect")
   } catch (error) {
     if (!(error instanceof ApiError) || error.status !== 404) throw error
@@ -118,12 +124,15 @@ async function seedWeeklyUntil(
   start: EventTime,
   untilDaysAhead: number,
 ): Promise<string> {
-  const until = localDateTime(untilDaysAhead, "23:59").dateTime.replace(/[-:]/g, "")
+  // An UNTIL is written in UTC: the end of that day on the practice's clock.
+  const until = toUtc(localDateTime(untilDaysAhead, "23:59"))
+    .toISOString()
+    .replace(/[-:]|\.\d{3}/g, "")
   const seeded = await google.seed(calendarId, {
     summary,
     start,
     end: plusMinutes(start, SESSION_MINUTES),
-    recurrence: [`RRULE:FREQ=WEEKLY;UNTIL=${until}Z`],
+    recurrence: [`RRULE:FREQ=WEEKLY;UNTIL=${until}`],
   })
   return seeded.id
 }
@@ -144,19 +153,27 @@ async function connectThroughSetup(page: Page, { follow }: { follow: boolean }):
 
   await page.getByRole("button", { name: "Look at my week" }).click()
   // Reading events is a second grant, asked for only now, and added to
-  // the first rather than replacing it.
-  await expect(page.getByTestId("week-grid")).toBeVisible()
+  // the first rather than replacing it. The scan's own summary line is
+  // what says the week was read: the grid itself shows busy time from the
+  // moment the connection can answer for it, before any scan.
+  await expect(page.getByTestId("left-alone-count")).toBeVisible()
   expect(await google.grant()).toEqual(
     [SCOPE_APP_CALENDAR, SCOPE_FREEBUSY, SCOPE_READ_EVENTS].sort(),
   )
 
   if (follow) {
+    // Nothing is followed yet (freshGoogle turned it off), and the page
+    // knows it: the checkbox is rendered from a status read that waited
+    // for sign-in, so this click turns following ON.
+    const box = page.getByLabel("Keep bringing in new sessions from this calendar")
+    await expect(box).not.toBeChecked()
     const followed = page.waitForResponse(
       (response) =>
         response.url().includes("/api/google-calendar/followed-calendar") && response.ok(),
     )
-    await page.getByLabel("Keep bringing in new sessions from this calendar").click()
+    await box.click()
     await followed
+    await expect(box).toBeChecked()
   }
 }
 
@@ -395,9 +412,12 @@ test("choosing another calendar reads its sessions and leaves the main calendar'
   await page.goto("/dashboard/settings/calendars")
   await expect(page.getByLabel("Keep bringing in new sessions")).toBeChecked()
   const picker = page.getByRole("combobox", { name: "Calendar to bring sessions in from" })
-  // Main first, then by name — including the calendar Pablo made for its
-  // own sessions, which is on the account's list like any other.
-  await expect(picker.locator("option")).toHaveText([account, "Pablo Sessions", "Practice"])
+  // Main first, and the second calendar offered. (Today the list also
+  // carries the calendar Pablo made for its own sessions, as Google's
+  // calendar list does; whether to offer that one is the product's call,
+  // so it is not pinned here.)
+  await expect(picker.locator("option").first()).toHaveText(account)
+  await expect(picker.locator("option", { hasText: "Practice" })).toHaveCount(1)
   await expect(page.getByTestId("followed-calendar-line")).toContainText(
     `Pablo reads the events on ${account}`,
   )
@@ -471,6 +491,22 @@ test("an expired sync token is read over from the start without losing a session
 
   // And the next read resumes from the new token without asking again.
   await readCalendarsNow(api)
+  expect(await questions(api)).toHaveLength(0)
+  expect(await upcomingFor(api, samId)).toHaveLength(4)
+
+  // Google's access tokens last an hour. When one is aged out the next call
+  // is refused, the client refreshes with the refresh token it was granted
+  // for offline access, and the read goes on; nothing about the sessions
+  // changes.
+  const beforeRefresh = (await google.requests()).length
+  await google.expireAccessTokens()
+  await readCalendarsNow(api)
+  const refreshed = (await google.requests()).slice(beforeRefresh)
+  expect(refreshed.some((r) => r.status === 401)).toBe(true)
+  expect(
+    refreshed.some((r) => r.method === "POST" && r.path === "/token" && r.status === 200),
+  ).toBe(true)
+  expect(refreshed.at(-1)?.status).toBe(200)
   expect(await questions(api)).toHaveLength(0)
   expect(await upcomingFor(api, samId)).toHaveLength(4)
 })

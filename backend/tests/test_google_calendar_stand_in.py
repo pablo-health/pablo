@@ -14,10 +14,13 @@ on request, which is how that stack reads a calendar it has just changed.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
 from app.main import app
+from app.models.audit import AuditAction
+from app.rate_limit import get_calendar_sync_limiter
 from app.repositories.audit import InMemoryAuditRepository
 from app.routes.outside_sessions import get_sync_scheduler
 from app.services import get_audit_service
@@ -28,8 +31,9 @@ from app.services.google_calendar_service import (
     google_consent_surface,
 )
 from app.services.sync_scheduler_service import ExecuteSummary
-from app.settings import Settings
+from app.settings import Settings, get_settings
 from google.oauth2.credentials import Credentials
+from pydantic import SecretStr
 
 if TYPE_CHECKING:
     from fastapi.testclient import TestClient
@@ -53,8 +57,22 @@ class TestWhereTheSurfacePoints:
         assert surface.base_url == STAND_IN
 
     @pytest.mark.parametrize("environment", ["staging", "production"])
-    def test_anywhere_else_ignores_it(self, environment: str) -> None:
-        surface = google_consent_surface(_settings(environment=environment))
+    def test_anywhere_else_refuses_to_boot_with_it(self, environment: str) -> None:
+        with pytest.raises(ValueError, match="GOOGLE_CALENDAR_BASE_URL must not be set"):
+            _settings(environment=environment)
+
+    @pytest.mark.parametrize("environment", ["staging", "production"])
+    def test_the_surface_ignores_it_anyway(self, environment: str) -> None:
+        # Belt and braces: settings that somehow carry the value outside
+        # development (the validator is bypassed here) still build a surface
+        # aimed at Google.
+        carried = SimpleNamespace(
+            google_calendar_client_id="client",
+            google_calendar_client_secret=SecretStr("secret"),
+            google_calendar_base_url=STAND_IN,
+            is_development=environment == "development",
+        )
+        surface = google_consent_surface(carried)  # type: ignore[arg-type]
         assert surface.base_url is None
 
     def test_unset_means_google(self) -> None:
@@ -119,8 +137,27 @@ class TestReadingTheCalendarsNow:
         assert body["google_synced"] is True
         assert body["outside_sessions_followed"] == 2
         assert body["reminders_sent"] == 1
-        # Audited in counts, never in content.
+        # Audited in counts, never in content, under its own action.
         [entry] = audit_repo.list_for_user(mock_user_id)
+        assert entry.action == AuditAction.CALENDAR_SYNCED
         assert entry.resource_id == "calendar-sync"
         assert entry.changes is not None
         assert entry.changes["outside_sessions_followed"] == 2
+
+    def test_is_limited_per_user(self, client: TestClient) -> None:
+        scheduler = _Scheduler()
+        app.dependency_overrides[get_sync_scheduler] = lambda: scheduler
+        app.dependency_overrides[get_audit_service] = lambda: AuditService(
+            InMemoryAuditRepository()
+        )
+        limiter = get_calendar_sync_limiter()
+        limiter.reset()
+        try:
+            allowed = get_settings().calendar_sync_rate_per_min
+            for _ in range(allowed):
+                assert client.post("/api/calendar/sync").status_code == 200
+            assert client.post("/api/calendar/sync").status_code == 429
+            # The refused call never reached the pass.
+            assert len(scheduler.ran_for) == allowed
+        finally:
+            limiter.reset()

@@ -129,6 +129,11 @@ export const google = {
   async expireSyncTokens(calendarId: string): Promise<void> {
     await call("POST", `/_fake/calendars/${encodeURIComponent(calendarId)}/expire-sync-tokens`)
   },
+
+  /** Age out every access token: the next API call is answered 401, and a refresh follows. */
+  async expireAccessTokens(): Promise<void> {
+    await call("POST", "/_fake/expire-access-tokens")
+  },
 }
 
 /** The zone the stand-in's account keeps, and the practice's default. */
@@ -160,6 +165,37 @@ export function localDateTime(daysAhead: number, time: string): EventTime {
 export function localWeekday(daysAhead: number): number {
   const { dateTime } = localDateTime(daysAhead, "12:00")
   return new Date(`${dateTime.slice(0, 10)}T12:00:00Z`).getUTCDay()
+}
+
+/**
+ * The instant a wall-clock time in the practice's zone names, for a rule
+ * that has to be written in UTC (an `UNTIL`). Reads the zone's offset off
+ * the clock at that moment, so it is right on either side of a
+ * daylight-saving change.
+ */
+export function toUtc(local: EventTime): Date {
+  const asIfUtc = new Date(`${local.dateTime}Z`)
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: local.timeZone ?? CALENDAR_TIME_ZONE,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(asIfUtc)
+  const part = (type: string) => Number(parts.find((p) => p.type === type)?.value)
+  const shownAt = Date.UTC(
+    part("year"),
+    part("month") - 1,
+    part("day"),
+    part("hour"),
+    part("minute"),
+    part("second"),
+  )
+  // The zone showed `asIfUtc` as `shownAt`; the difference is its offset.
+  return new Date(asIfUtc.getTime() - (shownAt - asIfUtc.getTime()))
 }
 
 /** A slot's end, `minutes` after its start, in the same zone. */

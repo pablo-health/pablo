@@ -56,9 +56,10 @@ fake can answer for all four hosts.
 
 **Where the Google calls go.** `GOOGLE_CALENDAR_BASE_URL` points the OAuth
 flow (`google_auth_oauthlib`) and the Calendar client (`googleapiclient`,
-through its `api_endpoint` option) at `fake-google`. The backend honours it
-only under `ENVIRONMENT=development`; anywhere else it is ignored and
-Google's own hosts answer. The browser is sent to the stand-in's
+through its `api_endpoint` option) at `fake-google`. Outside
+`ENVIRONMENT=development` the backend refuses to boot with it set, like
+`ICAL_FEED_BASE_URL`, and the provider ignores it even then unless the
+environment is development. The browser is sent to the stand-in's
 authorization page and the backend exchanges the code with it, so it has to
 be one address on both sides: like `fake-gcs`, it shares the backend's
 network namespace and listens on the port it is published on. The setting
