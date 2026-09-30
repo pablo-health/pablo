@@ -8,6 +8,7 @@ import { CalendarDays, Repeat, User, Users, Video, X } from "lucide-react"
 import type { AppointmentResponse } from "@/types/scheduling"
 import { editorialStatusMeta } from "./status"
 import { clampToViewport } from "./viewportClamp"
+import { GoogleChangeNotice, type ResolveGoogleChange } from "./GoogleChangeNotice"
 
 /** Popover dimensions used for viewport clamping. */
 const PEEK_WIDTH = 320
@@ -28,6 +29,9 @@ interface EditorialEventPeekProps {
   onClose: () => void
   /** "Edit" button / handoff to the existing edit flow. */
   onEdit: (appointment: AppointmentResponse) => void
+  /** Settles a Google Calendar change the sync left for the therapist. */
+  onResolveGoogleChange?: ResolveGoogleChange
+  googleChangePending?: boolean
 }
 
 /** Clamp the anchored peek into the viewport (position: fixed). */
@@ -52,6 +56,8 @@ export function EditorialEventPeek({
   anchorRect,
   onClose,
   onEdit,
+  onResolveGoogleChange,
+  googleChangePending,
 }: EditorialEventPeekProps) {
   const ref = useRef<HTMLDivElement>(null)
   // Capture the element that had focus before the peek opened so we can
@@ -179,6 +185,14 @@ export function EditorialEventPeek({
             </PeekRow>
           )}
         </div>
+
+        {onResolveGoogleChange && (
+          <GoogleChangeNotice
+            appointment={appointment}
+            onResolve={onResolveGoogleChange}
+            pending={googleChangePending}
+          />
+        )}
 
         <div className="mt-5 flex items-center justify-end gap-2.5">
           <span

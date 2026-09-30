@@ -28,7 +28,11 @@ from app.calendar_providers.oauth_state import (
 from app.calendar_providers.pkce_store import PkceStoreUnavailableError
 from app.repositories.google_calendar_token import GoogleCalendarTokenDoc
 from app.scheduling_engine.models.appointment import Appointment
-from app.services.google_calendar_service import GoogleCalendarService, _build_flow
+from app.services.google_calendar_service import (
+    CalendarGoneError,
+    GoogleCalendarService,
+    _build_flow,
+)
 from app.services.reminder_service import ReminderService
 from app.services.token_encryption import (
     TokenEncryptionError,
@@ -1273,6 +1277,68 @@ class TestSyncFromGoogle:
         assert changes == []
         token_repo.update_sync_token.assert_not_called()
         token_repo.save.assert_not_called()
+
+    def test_a_deleted_pablo_calendar_is_reported_not_read_as_no_changes(
+        self,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+        connected_token_doc: GoogleCalendarTokenDoc,
+    ) -> None:
+        connected_token_doc.write_target = CalendarWriteTarget.APP_CALENDAR.value
+
+        with pytest.raises(CalendarGoneError):
+            self._run_sync(calendar_service, token_repo, connected_token_doc, [_FakeHttpError(404)])
+
+    def test_a_404_on_the_therapists_own_calendar_is_not_a_deleted_calendar(
+        self,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+        connected_token_doc: GoogleCalendarTokenDoc,
+    ) -> None:
+        connected_token_doc.write_target = CalendarWriteTarget.PRIMARY.value
+
+        changes, _ = self._run_sync(
+            calendar_service, token_repo, connected_token_doc, [_FakeHttpError(404)]
+        )
+
+        assert changes == []
+
+    def test_recreating_makes_a_new_calendar_and_forgets_the_old_sync_token(
+        self,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        stored = GoogleCalendarTokenDoc(
+            user_id="user-001",
+            encrypted_tokens="encrypted",
+            write_target=CalendarWriteTarget.APP_CALENDAR.value,
+            calendar_id="deleted@group.calendar.google.com",
+        )
+        stored.sync_token = "old-calendar-token"
+        token_repo.get.return_value = stored
+        google = MagicMock()
+        google.calendars().get().execute.side_effect = _FakeHttpError(404)
+        google.calendars().insert().execute.return_value = {
+            "id": "remade@group.calendar.google.com"
+        }
+        creds = MagicMock()
+        creds.expired = False
+        with (
+            patch(
+                "app.services.google_calendar_service.decrypt_tokens",
+                return_value={"token": "ya29.access", "refresh_token": "1//refresh"},
+            ),
+            patch("app.services.google_calendar_service._make_credentials", return_value=creds),
+            patch(
+                "app.services.google_calendar_service._build_calendar_service",
+                return_value=google,
+            ),
+        ):
+            assert calendar_service.recreate_app_calendar("user-001") is True
+
+        saved = token_repo.save.call_args[0][0]
+        assert saved.calendar_id == "remade@group.calendar.google.com"
+        assert saved.sync_token is None
 
     def test_no_event_content_in_logs(
         self,

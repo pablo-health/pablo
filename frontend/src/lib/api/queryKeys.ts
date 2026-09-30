@@ -136,6 +136,9 @@ const baseQueryKeys = {
     details: () => [...baseQueryKeys.appointments.all, "detail"] as const,
     detail: (appointmentId: string) =>
       [...baseQueryKeys.appointments.details(), appointmentId] as const,
+    // Under `all` so anything that refreshes appointments refreshes this too.
+    heldGoogleRemovals: () =>
+      [...baseQueryKeys.appointments.all, "held-google-removals"] as const,
   },
 
   // Availability rule query keys
