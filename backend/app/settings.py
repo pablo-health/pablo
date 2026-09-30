@@ -726,7 +726,9 @@ class Settings(BaseSettings):
         description=(
             "Use Redis for shared state (auth codes, rate limiting, tenant cache). "
             "Required for multi-instance Cloud Run deployments. "
-            "When False, uses in-memory stores (fine for single-instance / self-hosted)."
+            "When False, uses in-memory stores (fine for single-instance / self-hosted). "
+            "Connecting a calendar needs it outside development: the OAuth round trip's "
+            "PKCE verifier is kept in memory only in a development environment."
         ),
     )
     redis_host: str = Field(default="localhost", description="Redis host")
