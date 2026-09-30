@@ -60,6 +60,28 @@ CREATE FUNCTION __TENANT_SCHEMA__.has_patient_access(p_patient_id uuid, p_user_i
 
 
 
+CREATE FUNCTION __TENANT_SCHEMA__.practice_client_directory() RETURNS TABLE(id uuid, first_name character varying, last_name character varying, date_of_birth date, email character varying, clinician_ids uuid[])
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $$
+        SELECT p.id, p.first_name, p.last_name, p.date_of_birth, p.email,
+               coalesce(
+                   array_agg(g.user_id ORDER BY g.user_id)
+                       FILTER (WHERE g.user_id IS NOT NULL),
+                   '{}'::uuid[]
+               )
+        FROM __TENANT_SCHEMA__.patients p
+        LEFT JOIN __TENANT_SCHEMA__.patient_clinicians g
+          ON g.patient_id = p.id
+         AND (g.expires_at IS NULL OR g.expires_at > now())
+        WHERE p.deleted_at IS NULL
+          AND p.status <> 'pending'
+          AND coalesce(current_setting('app.current_user_id', true), '') <> ''
+        GROUP BY p.id
+    $$;
+
+
+
 
 CREATE TABLE __TENANT_SCHEMA__.alembic_version (
     version_num character varying(32) NOT NULL

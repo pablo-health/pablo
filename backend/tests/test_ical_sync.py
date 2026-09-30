@@ -288,6 +288,14 @@ class TestClientMatching:
         result = service._match_patient("sessions_health", "SH00001", ctx)
         assert result == "patient-abc"
 
+    def test_a_colleagues_client_is_never_booked_from_a_feed(self, service: ICalSyncService):
+        """Matched practice-wide, but only the clinician's own chart gets the booking."""
+        service._patient_repo.create(_make_patient("theirs", "Jane", "Adams"), "colleague")
+        ctx = service._match_context("user1")
+
+        assert service._match("simplepractice", "Jane Adams", ctx).patient_id == "theirs"
+        assert service._match_patient("simplepractice", "Jane Adams", ctx) == ""
+
 
 def _context(service: ICalSyncService, patients: list[Patient]) -> MatchContext:
     for patient in patients:

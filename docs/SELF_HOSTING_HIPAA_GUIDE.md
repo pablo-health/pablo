@@ -71,6 +71,19 @@ HIPAA requires that only authorized individuals can access PHI.
 - **MFA (default)**: Pablo ships with TOTP MFA support. Enable it in Identity Platform during setup.
 - **Google Cloud IAP**: If you deploy behind Identity-Aware Proxy, users authenticate via their Google account at the load balancer level before reaching the app. This satisfies HIPAA access control requirements without app-level MFA. The setup script offers this as an option.
 
+### Database roles
+
+Row-level security shows each clinician only the clients they hold a grant on. One narrow read sees past that: when a calendar or a feed names a client, Pablo checks the whole practice so a colleague's client is recognised instead of getting a second chart. That read is a database function owned by a role named `pablo_practice_directory`, which cannot log in, cannot bypass row-level security, and may read only a client's id, name, date of birth and email, and who sees them.
+
+Migrations create the role when the database user running them has `CREATEROLE`, and stop with an error naming this section when it doesn't. PostgreSQL 16 or later is required. To create it by hand, run this as an administrator, replacing `pablo` with the user Pablo connects as, then run the migrations again:
+
+```sql
+CREATE ROLE pablo_practice_directory NOLOGIN NOBYPASSRLS;
+GRANT pablo_practice_directory TO pablo WITH INHERIT FALSE, SET TRUE;
+```
+
+`INHERIT FALSE` matters: it lets Pablo hand the role ownership of each practice's function without Pablo's own reads gaining anything from it.
+
 ## 3. Encryption
 
 | | Self-Hosted | Pablo Solo |

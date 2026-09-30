@@ -5,6 +5,11 @@
 import { Checkbox } from "@/components/ui/checkbox"
 import type { ImportPatientChoice, SeriesMatch } from "@/lib/api/scheduling"
 
+/** Whether a match is a client of the practice that someone else sees. */
+export function seenElsewhere(match: SeriesMatch): boolean {
+  return match.seen_by != null
+}
+
 /** One thing on a calendar that may be a client. */
 export interface ClientQuestionRow {
   key: string
@@ -23,6 +28,27 @@ function choiceLabel(choice: ImportPatientChoice): string {
   if (!choice.date_of_birth) return choice.display_name
   const [year, month, day] = choice.date_of_birth.split("-")
   return `${choice.display_name}, born ${Number(month)}/${Number(day)}/${year}`
+}
+
+/** A colleague's client: who sees them, and who to ask. Nothing about the
+ * chart itself — the row's title is the calendar's own wording. */
+function SeenElsewhere({ names }: { names: string[] }) {
+  const seenBy =
+    names.length > 0
+      ? `, seen by ${new Intl.ListFormat("en", { type: "conjunction" }).format(names)}`
+      : ""
+  const ask = new Intl.ListFormat("en", { type: "disjunction" }).format([
+    ...names,
+    "your practice owner",
+  ])
+  return (
+    <>
+      <span className="block text-xs text-secondary-700">
+        Already a client of the practice{seenBy}.
+      </span>
+      <span className="block text-xs text-muted-foreground">Ask {ask} for access.</span>
+    </>
+  )
 }
 
 /** Which client a row is: named when certain, a small choice when a few
@@ -95,6 +121,8 @@ export function WhichClientsList({
       {rows.map((row) => {
         const key = row.key
         const isNotClient = notClient[key] ?? false
+        // A colleague's client can't be added here, so it can't be ticked.
+        const elsewhere = seenElsewhere(row.match)
         return (
           // A div, not a label: the client choice sits in the row, and a
           // label would turn every click on it into a tick or an untick.
@@ -104,8 +132,8 @@ export function WhichClientsList({
           >
             <Checkbox
               id={`series-${key}`}
-              checked={!isNotClient && (checked[key] ?? false)}
-              disabled={isNotClient}
+              checked={!isNotClient && !elsewhere && (checked[key] ?? false)}
+              disabled={isNotClient || elsewhere}
               onCheckedChange={() => onToggle(key)}
               aria-label={row.title}
             />
@@ -120,7 +148,9 @@ export function WhichClientsList({
                   {row.detail}
                 </span>
               </label>
-              {isNotClient ? (
+              {elsewhere ? (
+                <SeenElsewhere names={row.match.seen_by ?? []} />
+              ) : isNotClient ? (
                 // Leaving a row unticked only skips it for now; this answer
                 // is kept, so it is not asked about again.
                 <span className="block text-xs text-muted-foreground">

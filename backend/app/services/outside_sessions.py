@@ -133,7 +133,7 @@ class OutsideSessions:
         )
 
     def context(self, user_id: str) -> MatchContext:
-        return MatchContext.for_clinician(user_id, self._patients, self._mappings)
+        return MatchContext.for_practice(user_id, self._patients, self._mappings)
 
     # --- Reading a calendar ------------------------------------------------
 
@@ -194,9 +194,12 @@ class OutsideSessions:
             incoming.patient_id = row.patient_id
             incoming.appointment_id = row.appointment_id
             incoming.created_at = row.created_at
+        # Never onto a chart this clinician doesn't see: the row stays a
+        # question, which says who does see that client.
         if (
             match.evidence == "remembered"
             and match.patient_id
+            and match.visible
             and _books_unattended(incoming, identity)
         ):
             if incoming.answer == ANSWER_OPEN:
@@ -313,7 +316,9 @@ class OutsideSessions:
         A unique name match is offered as the answer to confirm — here it is
         a suggestion, and the clinician still says yes. So is a remembered
         answer for a slot rather than a provider series (``suggested``): the
-        same weekday and time can be someone else now.
+        same weekday and time can be someone else now. A client of the
+        practice the clinician doesn't see is never suggested; the question
+        says who sees them.
         """
         ctx = self.context(user_id)
         by_key: dict[tuple[str, str], Question] = {}
@@ -325,7 +330,7 @@ class OutsideSessions:
             if question is None:
                 match = match_patient(identity.hint, ctx)
                 suggested = None
-                if match.evidence == "remembered" and match.patient_id:
+                if match.evidence == "remembered" and match.patient_id and match.visible:
                     suggested = match.patient_id
                     match = MatchResult(possible_ids=[match.patient_id])
                 question = Question(
@@ -350,6 +355,20 @@ class OutsideSessions:
             for row in self._events.list_by_source(user_id, source)
             if row.answer == ANSWER_OPEN and self._identity(row).identifier == source_identifier
         ]
+
+    def seen_by_someone_else(
+        self, user_id: str, source: str, source_identifier: str, ctx: MatchContext
+    ) -> bool:
+        """Whether this question is certainly a client the clinician doesn't see.
+
+        Such a question can't be answered with a new client, which would be a
+        second chart for the same person, any more than with that chart.
+        """
+        rows = self.open_rows(user_id, source, source_identifier)
+        if not rows:
+            return False
+        match = match_patient(self._identity(rows[0]).hint, ctx)
+        return match.patient_id is not None and not match.visible
 
     def answer(
         self,

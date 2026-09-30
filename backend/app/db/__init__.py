@@ -2241,6 +2241,12 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
             f"grant that was never created."
         )
 
+    # The one read of ``patients`` that sees the whole practice: matching.
+    # Owner, grants and its two role-scoped policies — see the module.
+    from .practice_directory import apply_practice_directory_access
+
+    apply_practice_directory_access(session, schema_name)
+
     session.commit()
     return RlsReconcileCounts(applied=len(tables) - len(skipped), skipped=len(skipped))
 

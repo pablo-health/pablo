@@ -407,7 +407,7 @@ def test_a_remembered_slot_is_offered_preselected(client: TestClient, wired: _Wi
         GOOGLE_CALENDAR_SOURCE,
         calendar_source_identifier(None, row.title, local.weekday(), local.strftime("%H:%M")),
         "p1",
-        MatchContext.for_clinician(USER_ID, wired.patients, wired.mappings),
+        MatchContext.for_practice(USER_ID, wired.patients, wired.mappings),
     )
 
     [question] = client.get("/api/calendar/outside-sessions/questions").json()["questions"]
