@@ -56,7 +56,6 @@ class InboxSource(Protocol):
         ``requested``. The Inbox applies dismissals and snoozes on top, so a
         source need not know about them.
         """
-        ...
 
     def get_items(self, ctx: InboxContext, source_ids: Iterable[str]) -> list[InboxItem]:
         """These items, whatever state their source now has them in.
@@ -65,14 +64,14 @@ class InboxSource(Protocol):
         after it was dismissed still reads correctly there. An id the
         clinician cannot see is left out, exactly as one that does not exist.
         """
-        ...
 
 
 @runtime_checkable
 class InboxEnricher(Protocol):
     """Fills in more on items that already exist. Never adds or removes one."""
 
-    def enrich(self, items: list[InboxItem], ctx: InboxContext) -> list[InboxItem]: ...
+    def enrich(self, items: list[InboxItem], ctx: InboxContext) -> list[InboxItem]:
+        """The same items, with what this enricher knows filled in."""
 
 
 class InboxRegistry:
