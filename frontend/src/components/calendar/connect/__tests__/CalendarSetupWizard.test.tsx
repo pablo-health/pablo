@@ -409,6 +409,41 @@ describe("CalendarSetupWizard", () => {
     ])
   })
 
+  it("sends a series marked not a client to be remembered, not imported", async () => {
+    getStatus.mockResolvedValue(CONNECTED)
+    const base = proposalWith()
+    scanForImport.mockResolvedValue({
+      ...base,
+      series: base.series.map((item) => ({ ...item, preselected: true })),
+    })
+    confirmImport.mockResolvedValue({
+      confirmed: [],
+      patients_created: 1,
+      appointments_created: 4,
+      skipped: [],
+    })
+    const user = userEvent.setup()
+    renderWizard()
+    await goToClientsStep(user)
+
+    await user.click(screen.getByRole("button", { name: "Look at my week" }))
+    await screen.findByTestId("qualifying-count")
+    await user.click(screen.getByRole("button", { name: /continue/i }))
+    await screen.findByText("Which of these are clients?")
+
+    // Rows render in order; the second is "Standup".
+    await user.click(screen.getAllByRole("button", { name: "Not a client" })[1])
+    await user.click(screen.getByRole("button", { name: /add 1 client/i }))
+
+    await waitFor(() => expect(confirmImport).toHaveBeenCalled())
+    const [series, notClients] = confirmImport.mock.calls[0] as unknown as [
+      Array<{ candidate_key: string }>,
+      string[],
+    ]
+    expect(series.map((item) => item.candidate_key)).toEqual(["a"])
+    expect(notClients).toEqual(["series:rec-b"])
+  })
+
   it("asks for incremental import consent before it can scan", async () => {
     getStatus.mockResolvedValue(CONNECTED)
     scanForImport.mockResolvedValue({

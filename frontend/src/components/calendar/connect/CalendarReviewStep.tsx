@@ -97,6 +97,9 @@ interface CalendarReviewStepProps {
   /** The existing client each series is; null for a new client. */
   clientFor: Record<string, string | null>
   onChooseClient: (candidateKey: string, patientId: string | null) => void
+  /** Series marked as not a client; remembered on confirm. */
+  notClient: Record<string, boolean>
+  onToggleNotClient: (candidateKey: string) => void
   expanded: boolean
   onToggleExpanded: () => void
   onBack: () => void
@@ -114,6 +117,8 @@ export function CalendarReviewStep({
   onToggle,
   clientFor,
   onChooseClient,
+  notClient,
+  onToggleNotClient,
   expanded,
   onToggleExpanded,
   onBack,
@@ -168,7 +173,19 @@ export function CalendarReviewStep({
   const total = proposal.series.length
   const visible = expanded ? proposal.series : proposal.series.slice(0, VISIBLE_ROWS)
   const hiddenCount = total - visible.length
-  const checkedCount = proposal.series.filter((series) => checked[series.candidate_key]).length
+  const checkedCount = proposal.series.filter(
+    (series) => checked[series.candidate_key] && !notClient[series.candidate_key]
+  ).length
+  const notClientCount = proposal.series.filter((series) => notClient[series.candidate_key]).length
+  // Only "not a client" answers to keep: nothing to add, still something to save.
+  const savingOnly = checkedCount === 0 && notClientCount > 0
+  const confirmLabel = confirming
+    ? savingOnly
+      ? "Saving…"
+      : "Adding…"
+    : savingOnly
+      ? "Save"
+      : `Add ${checkedCount} client${checkedCount === 1 ? "" : "s"}`
 
   return (
     <div className="space-y-4">
@@ -179,37 +196,70 @@ export function CalendarReviewStep({
       />
 
       <div className="flex flex-col">
-        {visible.map((series) => (
-          // A div, not a label: the client choice sits in the row, and a
-          // label would turn every click on it into a tick or an untick.
-          <div
-            key={series.candidate_key}
-            className="grid grid-cols-[20px_1fr_auto] items-center gap-3 border-b border-border py-2.5 last:border-b-0"
-          >
-            <Checkbox
-              id={`series-${series.candidate_key}`}
-              checked={checked[series.candidate_key] ?? false}
-              onCheckedChange={() => onToggle(series.candidate_key)}
-              aria-label={series.summary}
-            />
-            <span>
-              <label htmlFor={`series-${series.candidate_key}`} className="block cursor-pointer">
-                <span className="block text-sm font-medium text-neutral-900">{series.summary}</span>
-                <span className="block text-xs tabular-nums text-muted-foreground">
-                  {whenLabel(series)} · {cadenceLabel(series.cadence)}
-                </span>
-              </label>
-              <ClientChoice
-                series={series}
-                patientId={clientFor[series.candidate_key] ?? null}
-                onChoose={(patientId) => onChooseClient(series.candidate_key, patientId)}
+        {visible.map((series) => {
+          const key = series.candidate_key
+          const isNotClient = notClient[key] ?? false
+          return (
+            // A div, not a label: the client choice sits in the row, and a
+            // label would turn every click on it into a tick or an untick.
+            <div
+              key={key}
+              className="grid grid-cols-[20px_1fr_auto] items-center gap-3 border-b border-border py-2.5 last:border-b-0"
+            >
+              <Checkbox
+                id={`series-${key}`}
+                checked={!isNotClient && (checked[key] ?? false)}
+                disabled={isNotClient}
+                onCheckedChange={() => onToggle(key)}
+                aria-label={series.summary}
               />
-            </span>
-            <span className="whitespace-nowrap text-xs tabular-nums text-muted-foreground">
-              {series.occurrences_ahead} ahead
-            </span>
-          </div>
-        ))}
+              <span>
+                <label htmlFor={`series-${key}`} className="block cursor-pointer">
+                  <span
+                    className={`block text-sm font-medium ${isNotClient ? "text-muted-foreground" : "text-neutral-900"}`}
+                  >
+                    {series.summary}
+                  </span>
+                  <span className="block text-xs tabular-nums text-muted-foreground">
+                    {whenLabel(series)} · {cadenceLabel(series.cadence)}
+                  </span>
+                </label>
+                {isNotClient ? (
+                  // Unticking only skips this import; this answer is kept, so
+                  // later looks at the calendar leave the series out.
+                  <span className="block text-xs text-muted-foreground">
+                    Not a client. Pablo will remember.{" "}
+                    <button
+                      type="button"
+                      onClick={() => onToggleNotClient(key)}
+                      className="font-medium underline underline-offset-2 hover:text-neutral-700"
+                    >
+                      Undo
+                    </button>
+                  </span>
+                ) : (
+                  <>
+                    <ClientChoice
+                      series={series}
+                      patientId={clientFor[key] ?? null}
+                      onChoose={(patientId) => onChooseClient(key, patientId)}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => onToggleNotClient(key)}
+                      className="mt-0.5 block text-xs text-muted-foreground underline underline-offset-2 hover:text-neutral-700"
+                    >
+                      Not a client
+                    </button>
+                  </>
+                )}
+              </span>
+              <span className="whitespace-nowrap text-xs tabular-nums text-muted-foreground">
+                {series.occurrences_ahead} ahead
+              </span>
+            </div>
+          )
+        })}
       </div>
 
       {hiddenCount > 0 || expanded ? (
@@ -237,11 +287,12 @@ export function CalendarReviewStep({
           Back
         </Button>
         <span className="flex-1" />
-        <Button onClick={onConfirm} disabled={confirming || checkedCount === 0}>
+        <Button
+          onClick={onConfirm}
+          disabled={confirming || (checkedCount === 0 && notClientCount === 0)}
+        >
           {confirming ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-          {confirming
-            ? "Adding…"
-            : `Add ${checkedCount} client${checkedCount === 1 ? "" : "s"}`}
+          {confirmLabel}
         </Button>
       </div>
     </div>

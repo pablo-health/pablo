@@ -46,6 +46,8 @@ function baseProps() {
     onToggle: vi.fn(),
     clientFor: {} as Record<string, string | null>,
     onChooseClient: vi.fn(),
+    notClient: {} as Record<string, boolean>,
+    onToggleNotClient: vi.fn(),
     expanded: false,
     onToggleExpanded: vi.fn(),
     onBack: vi.fn(),
@@ -279,6 +281,47 @@ describe("CalendarReviewStep", () => {
       ])
       // Choosing a client is not ticking or unticking the row.
       expect(onToggle).not.toHaveBeenCalled()
+    })
+  })
+
+  describe("not a client", () => {
+    it("marks a row as not a client, and says it will be remembered", async () => {
+      const user = userEvent.setup()
+      const onToggleNotClient = vi.fn()
+      render(
+        <CalendarReviewStep
+          {...baseProps()}
+          onToggleNotClient={onToggleNotClient}
+          proposal={proposal([series({ candidate_key: "standup", summary: "Standup" })])}
+        />
+      )
+
+      await user.click(screen.getByRole("button", { name: "Not a client" }))
+      expect(onToggleNotClient).toHaveBeenCalledWith("standup")
+    })
+
+    it("shows a marked row as remembered, unticked, with a way back", async () => {
+      const user = userEvent.setup()
+      const onToggleNotClient = vi.fn()
+      render(
+        <CalendarReviewStep
+          {...baseProps()}
+          onToggleNotClient={onToggleNotClient}
+          checked={{ standup: true }}
+          notClient={{ standup: true }}
+          proposal={proposal([series({ candidate_key: "standup", summary: "Standup" })])}
+        />
+      )
+
+      expect(screen.getByText(/Not a client\. Pablo will remember\./)).toBeInTheDocument()
+      const box = screen.getByRole("checkbox", { name: "Standup" })
+      expect(box).not.toBeChecked()
+      expect(box).toBeDisabled()
+      // Nothing to add, but the answer still needs saving.
+      expect(screen.getByRole("button", { name: "Save" })).toBeEnabled()
+
+      await user.click(screen.getByRole("button", { name: "Undo" }))
+      expect(onToggleNotClient).toHaveBeenCalledWith("standup")
     })
   })
 

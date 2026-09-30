@@ -28,7 +28,13 @@ from urllib.request import Request, urlopen
 from icalendar import Calendar
 
 from ..models.enums import EhrSystem
-from ..patients.matching import MatchContext, PatientHint, match_patient, remember_match
+from ..patients.matching import (
+    MatchContext,
+    MatchResult,
+    PatientHint,
+    match_patient,
+    remember_match,
+)
 from ..repositories.ical_sync_config import ICalSyncConfig, ICalSyncConfigRepository
 from ..scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from ..utcnow import utc_now
@@ -294,7 +300,11 @@ class ICalSyncService:
                     result.unchanged += 1
             else:
                 client_id = self._extract_client_identifier(config.ehr_system, event.summary)
-                patient_id = self._match_patient(config.ehr_system, client_id, ctx)
+                match = self._match(config.ehr_system, client_id, ctx)
+                if match.evidence == "not_a_client":
+                    # The clinician said this is not a client: skip it, don't ask.
+                    continue
+                patient_id = match.patient_id or ""
                 appt = self._create_appointment(user_id, config.ehr_system, event, patient_id)
                 # Store identifier in notes for later resolution
                 if client_id:
@@ -412,9 +422,12 @@ class ICalSyncService:
     def _match_context(self, user_id: str) -> MatchContext:
         return MatchContext.for_clinician(user_id, self._patient_repo, self._mapping_repo)
 
+    def _match(self, ehr_system: str, client_identifier: str, ctx: MatchContext) -> MatchResult:
+        return match_patient(_hint(ehr_system, client_identifier), ctx)
+
     def _match_patient(self, ehr_system: str, client_identifier: str, ctx: MatchContext) -> str:
         """Match a client identifier to a Pablo patient ID, or ``""``."""
-        return match_patient(_hint(ehr_system, client_identifier), ctx).patient_id or ""
+        return self._match(ehr_system, client_identifier, ctx).patient_id or ""
 
     def _derive_appointment_url(
         self, ehr_system: str, uid: str, event_url: str | None

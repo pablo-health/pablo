@@ -16,6 +16,11 @@ The checks run in a fixed order, strongest first:
 4. ``full_name`` — exactly one patient has this name.
 5. ``initials`` — exactly one patient has these initials.
 
+A remembered answer can also be that the identifier is not a client at all
+(a standing staff meeting on a calendar). That comes back as
+``evidence="not_a_client"`` with no patient and nothing possible, and callers
+skip the record rather than ask about it.
+
 Every check but the first needs exactly one candidate. Two patients who share
 a name are never guessed between: the answer is ``possible_ids`` and no match,
 and the caller asks. Comparisons ignore case and extra whitespace. Deleted
@@ -32,7 +37,11 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field
 
-from ..repositories.patient_source_mapping import PatientSourceMapping
+from ..repositories.patient_source_mapping import (
+    ANSWER_CLIENT,
+    ANSWER_NOT_A_CLIENT,
+    PatientSourceMapping,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -41,7 +50,7 @@ if TYPE_CHECKING:
     from ..repositories.patient import PatientRepository
     from ..repositories.patient_source_mapping import PatientSourceMappingRepository
 
-Evidence = Literal["remembered", "email", "name_and_dob", "full_name", "initials"]
+Evidence = Literal["remembered", "not_a_client", "email", "name_and_dob", "full_name", "initials"]
 
 #: Evidence that rests on a name alone. Some callers treat it as a question.
 NAME_ONLY: frozenset[Evidence] = frozenset({"full_name", "initials"})
@@ -223,6 +232,8 @@ def match_patient(
 
     if hint.source and hint.source_identifier:
         known = ctx.remembered(hint.source).get(normalize(hint.source_identifier))
+        if known is not None and known.answer == ANSWER_NOT_A_CLIENT:
+            return MatchResult(evidence="not_a_client")
         if known is not None and known.patient_id in live:
             return MatchResult(patient_id=known.patient_id, evidence="remembered")
 
@@ -258,10 +269,24 @@ def remember_match(source: str, source_identifier: str, patient_id: str, ctx: Ma
     Idempotent. An identifier already remembered under different case or
     spacing is updated in place rather than stored twice.
     """
+    _remember(source, source_identifier, ANSWER_CLIENT, patient_id, ctx)
+
+
+def remember_not_a_client(source: str, source_identifier: str, ctx: MatchContext) -> None:
+    """Record that this source's identifier is not a client, so it is never asked about.
+
+    Idempotent, and replaces a client answer for the same identifier.
+    """
+    _remember(source, source_identifier, ANSWER_NOT_A_CLIENT, None, ctx)
+
+
+def _remember(
+    source: str, source_identifier: str, answer: str, patient_id: str | None, ctx: MatchContext
+) -> None:
     identifier = " ".join(source_identifier.split())
     existing = ctx.remembered(source).get(normalize(identifier))
     if existing is not None:
-        if existing.patient_id == patient_id:
+        if (existing.answer, existing.patient_id) == (answer, patient_id):
             return
         identifier = existing.source_identifier
     ctx.save(
@@ -270,6 +295,7 @@ def remember_match(source: str, source_identifier: str, patient_id: str, ctx: Ma
             source=source,
             source_identifier=identifier,
             patient_id=patient_id,
+            answer=answer,
         )
     )
 
@@ -284,4 +310,5 @@ __all__ = [
     "match_patient",
     "normalize",
     "remember_match",
+    "remember_not_a_client",
 ]

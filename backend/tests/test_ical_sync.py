@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 import pytest
 from app.models.patient import Patient
+from app.patients.matching import remember_not_a_client
 from app.repositories.ical_sync_config import ICalSyncConfig
 from app.repositories.patient import InMemoryPatientRepository
 from app.repositories.patient_source_mapping import (
@@ -322,6 +323,18 @@ class TestSyncDiff:
         assert result.created == 2
         assert result.updated == 0
         assert result.deleted == 0
+
+    @patch.object(ICalSyncService, "_fetch_feed")
+    def test_an_identifier_remembered_as_not_a_client_is_skipped(
+        self, mock_fetch: MagicMock, sync_service: ICalSyncService
+    ):
+        mock_fetch.return_value = SP_ICAL_DATA
+        remember_not_a_client("simplepractice", "J.A.", sync_service._match_context("user1"))
+
+        [result] = sync_service.sync("user1", "simplepractice")
+
+        assert result.created == 1
+        assert [e["client_identifier"] for e in result.unmatched_events] == ["P.B."]
 
     @patch.object(ICalSyncService, "_fetch_feed")
     def test_second_sync_no_changes(self, mock_fetch: MagicMock, sync_service: ICalSyncService):

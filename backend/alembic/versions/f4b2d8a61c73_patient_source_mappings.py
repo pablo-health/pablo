@@ -19,6 +19,18 @@ primary key and foreign key are renamed to match; row policies are attached
 to the table, so they follow the rename, and the tenant migrate job
 reconciles them by table name after the chain runs.
 
+A remembered answer can also be "this is not a client" — a standing staff
+meeting on a calendar — so it is never asked about again. That adds
+``answer`` (``'client'`` or ``'not_a_client'``, default ``'client'``, which
+is what every existing row is) and makes ``patient_id`` nullable, with a
+check that a patient is present exactly when the answer is a client.
+
+The downgrade has to drop the not-a-client answers, since the old table has
+nowhere to keep them. The table is FORCE-RLS'd and this chain may run as a
+role without BYPASSRLS, so that delete runs with row security suspended and
+restored — otherwise it would match nothing and ``SET NOT NULL`` would fail
+on the rows it could not see.
+
 Idempotent, like every revision in this chain: it is fanned out once per
 practice schema, and each step is guarded on the old name still being there.
 
@@ -91,9 +103,71 @@ def upgrade() -> None:
         END $$;
         """
     )
+    op.execute(
+        """
+        ALTER TABLE patient_source_mappings
+            ADD COLUMN IF NOT EXISTS answer TEXT NOT NULL DEFAULT 'client';
+        ALTER TABLE patient_source_mappings ALTER COLUMN patient_id DROP NOT NULL;
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conrelid = to_regclass('patient_source_mappings')
+                  AND conname = 'ck_patient_source_mappings_answer'
+            ) THEN
+                ALTER TABLE patient_source_mappings
+                    ADD CONSTRAINT ck_patient_source_mappings_answer
+                    CHECK (answer IN ('client', 'not_a_client'));
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conrelid = to_regclass('patient_source_mappings')
+                  AND conname = 'ck_patient_source_mappings_patient_when_client'
+            ) THEN
+                ALTER TABLE patient_source_mappings
+                    ADD CONSTRAINT ck_patient_source_mappings_patient_when_client
+                    CHECK ((answer = 'client') = (patient_id IS NOT NULL));
+            END IF;
+        END $$;
+        """
+    )
 
 
 def downgrade() -> None:
+    op.execute(
+        """
+        DO $$
+        DECLARE
+            was_enabled boolean;
+            was_forced boolean;
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'patient_source_mappings' AND column_name = 'answer'
+            ) THEN
+                RETURN;
+            END IF;
+            SELECT relrowsecurity, relforcerowsecurity INTO was_enabled, was_forced
+            FROM pg_class WHERE oid = to_regclass('patient_source_mappings');
+            ALTER TABLE patient_source_mappings NO FORCE ROW LEVEL SECURITY;
+            ALTER TABLE patient_source_mappings DISABLE ROW LEVEL SECURITY;
+            DELETE FROM patient_source_mappings WHERE patient_id IS NULL;
+            IF was_enabled THEN
+                ALTER TABLE patient_source_mappings ENABLE ROW LEVEL SECURITY;
+            END IF;
+            IF was_forced THEN
+                ALTER TABLE patient_source_mappings FORCE ROW LEVEL SECURITY;
+            END IF;
+            ALTER TABLE patient_source_mappings
+                DROP CONSTRAINT IF EXISTS ck_patient_source_mappings_patient_when_client;
+            ALTER TABLE patient_source_mappings
+                DROP CONSTRAINT IF EXISTS ck_patient_source_mappings_answer;
+            ALTER TABLE patient_source_mappings DROP COLUMN answer;
+            ALTER TABLE patient_source_mappings ALTER COLUMN patient_id SET NOT NULL;
+        END $$;
+        """
+    )
     op.execute(
         """
         DO $$

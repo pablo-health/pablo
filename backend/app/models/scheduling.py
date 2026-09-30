@@ -5,9 +5,9 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal, Self
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # Runtime import: Pydantic resolves this annotation at runtime for validation,
 # so it cannot live in a TYPE_CHECKING block.
@@ -721,9 +721,23 @@ class ConfirmImportSeries(BaseModel):
 
 
 class ConfirmImportRequest(BaseModel):
-    """The subset of a proposal to turn into patients and appointments."""
+    """The subset of a proposal to turn into patients and appointments.
 
-    series: list[ConfirmImportSeries] = Field(min_length=1, max_length=200)
+    ``not_clients`` carries the ``source_identifier`` of each series marked
+    as not a client, to be remembered so it is not proposed again.
+    """
+
+    series: list[ConfirmImportSeries] = Field(default_factory=list, max_length=200)
+    not_clients: list[Annotated[str, Field(min_length=1, max_length=255)]] = Field(
+        default_factory=list, max_length=200
+    )
+
+    @model_validator(mode="after")
+    def _something_to_confirm(self) -> Self:
+        if not self.series and not self.not_clients:
+            msg = "Confirm at least one series"
+            raise ValueError(msg)
+        return self
 
 
 class ConfirmedSeriesResponse(BaseModel):

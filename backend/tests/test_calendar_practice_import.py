@@ -1184,6 +1184,48 @@ class TestMatchOrAsk:
         assert _patients(mock_repo) == []
         assert _appointments(appt_repo) == []
 
+    def test_a_series_marked_not_a_client_is_left_out_of_later_scans(
+        self,
+        import_client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_mapping_repo: InMemoryPatientSourceMappingRepository,
+    ) -> None:
+        [series] = self._scan(import_client, summary="Team standup")
+
+        response = import_client.post(
+            "/api/calendar/import/confirm",
+            json={"not_clients": [series["source_identifier"]]},
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["patients_created"] == 0
+        assert _patients(mock_repo) == []
+        [stored] = mock_mapping_repo.list_by_source(_USER, "google_calendar")
+        assert (stored.answer, stored.patient_id) == ("not_a_client", None)
+        assert self._scan(import_client, summary="Team standup") == []
+
+    def test_a_series_cannot_be_both_a_client_and_not_a_client(
+        self,
+        import_client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+    ) -> None:
+        [series] = self._scan(import_client)
+        response = import_client.post(
+            "/api/calendar/import/confirm",
+            json={
+                "series": [_confirm_item(source_identifier=series["source_identifier"])],
+                "not_clients": [series["source_identifier"]],
+            },
+        )
+
+        assert response.status_code == 400, response.text
+        assert _patients(mock_repo) == []
+
+    def test_a_confirmation_with_nothing_in_it_is_refused(self, import_client: TestClient) -> None:
+        response = import_client.post("/api/calendar/import/confirm", json={})
+
+        assert response.status_code == 422, response.text
+
 
 def _chart(patient_id: str, first: str, last: str, *, dob: str | None = None) -> Patient:
     now = datetime.now(UTC)

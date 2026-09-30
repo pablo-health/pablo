@@ -452,9 +452,15 @@ export interface ConfirmImportResult {
 }
 
 export async function confirmCalendarImport(
-  series: ConfirmImportSeriesInput[]
+  series: ConfirmImportSeriesInput[],
+  /** source_identifier of each series marked as not a client, remembered so
+   * later scans leave it out. */
+  notClients: string[] = []
 ): Promise<ConfirmImportResult> {
-  return post<ConfirmImportResult>("/api/calendar/import/confirm", { series })
+  return post<ConfirmImportResult>("/api/calendar/import/confirm", {
+    series,
+    not_clients: notClients,
+  })
 }
 
 // --- Busy windows — the anonymous pre-scan week grid's data source ---

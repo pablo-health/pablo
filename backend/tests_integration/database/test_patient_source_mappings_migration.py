@@ -6,7 +6,8 @@
 place. The rows are clinicians' own answers to "which patient is J.A.?", so
 losing one means a feed stops matching a client nobody is asked about again.
 This builds a tenant at the parent revision holding a mapping, runs the real
-migration, and reads the row back under the new names.
+migration, and reads the row back under the new names. The same revision adds
+the "not a client" answer, and its check constraints are exercised here too.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from app.db import PLATFORM_SCHEMA
 from app.db.migrate_tenants import TenantStatus, _alembic_config_for, upgrade_tenant_schema
 from app.db.provisioning import _ALEMBIC_INI_PATH, create_practice_schema, ensure_schemas
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import IntegrityError
 
 _db_url = os.environ.get("DATABASE_URL", "")
 pytestmark = pytest.mark.skipif(
@@ -204,3 +206,91 @@ def test_the_downgrade_restores_the_old_names_with_the_row(engine, tenant_with_a
         "SELECT ehr_system, client_identifier, patient_id::text FROM ical_client_mappings",
     )
     assert [tuple(r) for r in rows] == [("simplepractice", "J.A.", patient_id)]
+
+
+def test_existing_rows_become_client_answers(engine, tenant_with_a_mapping) -> None:
+    schema, _ = tenant_with_a_mapping
+
+    upgrade_tenant_schema(engine, schema)
+
+    rows = _read(
+        engine, schema, "patient_source_mappings", "SELECT answer FROM patient_source_mappings"
+    )
+    assert [r[0] for r in rows] == ["client"]
+
+
+def _insert(engine, schema: str, identifier: str, answer: str, patient_id: str | None) -> None:
+    with engine.begin() as conn:
+        conn.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
+        # Row security is stood down for the seed only. A rejected insert
+        # rolls the whole transaction back, the flags with it.
+        _set_rls(conn, schema, "patient_source_mappings", on=False)
+        conn.execute(
+            text(
+                "INSERT INTO patient_source_mappings (doc_id, user_id, source,"
+                " source_identifier, answer, patient_id, created_at)"
+                " VALUES (:doc, :uid, 'google_calendar', :ident, :answer, :pid, now())"
+            ),
+            {
+                "doc": f"{_USER_ID}_google_calendar_{identifier}",
+                "uid": _USER_ID,
+                "ident": identifier,
+                "answer": answer,
+                "pid": patient_id,
+            },
+        )
+        _set_rls(conn, schema, "patient_source_mappings", on=True)
+
+
+def test_a_not_a_client_answer_needs_no_patient(engine, tenant_with_a_mapping) -> None:
+    schema, _ = tenant_with_a_mapping
+    upgrade_tenant_schema(engine, schema)
+
+    _insert(engine, schema, "series:standup", "not_a_client", None)
+
+    rows = _read(
+        engine,
+        schema,
+        "patient_source_mappings",
+        "SELECT patient_id FROM patient_source_mappings WHERE answer = 'not_a_client'",
+    )
+    assert [r[0] for r in rows] == [None]
+
+
+@pytest.mark.parametrize(
+    ("answer", "with_patient"),
+    [("client", False), ("not_a_client", True), ("maybe", False)],
+    ids=["client-without-patient", "not-a-client-with-patient", "unknown-answer"],
+)
+def test_the_check_constraints_reject_an_inconsistent_answer(
+    engine, tenant_with_a_mapping, answer: str, with_patient: bool
+) -> None:
+    schema, patient_id = tenant_with_a_mapping
+    upgrade_tenant_schema(engine, schema)
+
+    with pytest.raises(IntegrityError, match="ck_patient_source_mappings_"):
+        _insert(engine, schema, "series:bad", answer, patient_id if with_patient else None)
+
+
+def test_the_downgrade_drops_not_a_client_answers_it_cannot_hold(
+    engine, tenant_with_a_mapping
+) -> None:
+    """The old table has no way to say "not a client", so those rows go."""
+    schema, patient_id = tenant_with_a_mapping
+    upgrade_tenant_schema(engine, schema)
+    _insert(engine, schema, "series:standup", "not_a_client", None)
+
+    with engine.begin() as conn:
+        conn.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
+        cfg = _alembic_config_for(schema)
+        cfg.attributes["connection"] = conn
+        cfg.attributes["version_table_schema"] = schema
+        command.downgrade(cfg, _PARENT)
+
+    rows = _read(
+        engine,
+        schema,
+        "ical_client_mappings",
+        "SELECT client_identifier, patient_id::text FROM ical_client_mappings",
+    )
+    assert [tuple(r) for r in rows] == [("J.A.", patient_id)]

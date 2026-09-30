@@ -2170,15 +2170,30 @@ class TelehealthConnectionRow(Base):
 
 
 class PatientSourceMappingRow(Base):
-    """Which patient an outside source's identifier means, once the clinician said so."""
+    """What an outside source's identifier means, once the clinician said so.
+
+    Either a client (``answer='client'`` with the patient it is) or not a
+    client at all (``answer='not_a_client'``, no patient), such as a standing
+    staff meeting on a calendar, so it is never asked about again.
+    """
 
     __tablename__ = "patient_source_mappings"
+    __table_args__ = (
+        CheckConstraint(
+            "answer IN ('client', 'not_a_client')", name="ck_patient_source_mappings_answer"
+        ),
+        CheckConstraint(
+            "(answer = 'client') = (patient_id IS NOT NULL)",
+            name="ck_patient_source_mappings_patient_when_client",
+        ),
+    )
 
     doc_id: Mapped[str] = mapped_column(String(500), primary_key=True)
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
     source: Mapped[str] = mapped_column(String(50), nullable=False)
     source_identifier: Mapped[str] = mapped_column(String(255), nullable=False)
-    patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    answer: Mapped[str] = mapped_column(Text, nullable=False, server_default="client")
+    patient_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 

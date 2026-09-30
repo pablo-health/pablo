@@ -51,6 +51,7 @@ class PostgresPatientSourceMappingRepository(PatientSourceMappingRepository):
         row.user_id = mapping.user_id
         row.source = mapping.source
         row.source_identifier = mapping.source_identifier
+        row.answer = mapping.answer
         row.patient_id = mapping.patient_id
         row.created_at = mapping.created_at
         self._session.flush()
@@ -63,4 +64,5 @@ def _row_to_mapping(row: PatientSourceMappingRow) -> PatientSourceMapping:
         source_identifier=row.source_identifier,
         patient_id=row.patient_id,
         created_at=row.created_at,
+        answer=row.answer,
     )

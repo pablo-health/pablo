@@ -4,8 +4,9 @@
 
 A source (an EHR calendar feed, a calendar import) names a client its own
 way: initials like "J.A.", a code like "SH00001", a calendar series id. Once
-the clinician has said which patient that is, the answer is kept here so the
-next record from the same source is matched without asking again. Read and
+the clinician has said which patient that is — or that it is not a client at
+all, like a standing staff meeting — the answer is kept here so the next
+record from the same source is settled without asking again. Read and
 written through ``app.patients.matching``.
 """
 
@@ -19,15 +20,22 @@ if TYPE_CHECKING:
     from datetime import datetime
 
 
+#: The identifier is a client, and ``patient_id`` says which.
+ANSWER_CLIENT = "client"
+#: The identifier is not a client; there is no patient.
+ANSWER_NOT_A_CLIENT = "not_a_client"
+
+
 @dataclass
 class PatientSourceMapping:
-    """One source identifier, and the patient it means."""
+    """One source identifier, and what it means."""
 
     user_id: str
     source: str
     source_identifier: str
-    patient_id: str
+    patient_id: str | None
     created_at: datetime | None = None
+    answer: str = ANSWER_CLIENT
 
     @property
     def doc_id(self) -> str:

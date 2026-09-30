@@ -11,7 +11,9 @@ A series can be a client the practice already has. The scan says which
 patient each series is when that is certain, or which it might be, and the
 confirmation either names an existing patient or asks for a new one. Every
 confirmed series is remembered against its patient, so a second import of
-the same calendar lands on the same charts instead of making new ones.
+the same calendar lands on the same charts instead of making new ones. A
+series the therapist marks as not a client is remembered too, and later
+scans leave it out.
 
 Event titles carry client names. They travel to the person who owns them
 and nowhere else: not to a log line, not to an error message, not to a
@@ -62,10 +64,12 @@ from ..models.scheduling import (
 )
 from ..patients.matching import (
     MatchContext,
+    MatchResult,
     PatientHint,
     match_patient,
     normalize,
     remember_match,
+    remember_not_a_client,
 )
 from ..repositories import (
     PatientRepository,
@@ -136,12 +140,7 @@ def _source_identifier(series: ProposedSeries) -> str:
     return f"title:{digest}"
 
 
-def _series_match(
-    series: ProposedSeries, identifier: str, ctx: MatchContext
-) -> SeriesMatchResponse:
-    hint = PatientHint(full_name=series.summary, source=MATCH_SOURCE, source_identifier=identifier)
-    result = match_patient(hint, ctx)
-
+def _series_match(result: MatchResult, ctx: MatchContext) -> SeriesMatchResponse:
     def choices(patient_ids: list[str]) -> list[ImportPatientChoice]:
         # Two charts can share a name, so a date of birth, when the chart has
         # one, is what lets the therapist tell them apart.
@@ -164,12 +163,19 @@ def _to_response(proposal: ImportProposal, ctx: MatchContext) -> ImportProposalR
     series_out: list[ProposedSeriesResponse] = []
     for series in proposal.series:
         identifier = _source_identifier(series)
+        hint = PatientHint(
+            full_name=series.summary, source=MATCH_SOURCE, source_identifier=identifier
+        )
+        result = match_patient(hint, ctx)
+        if result.evidence == "not_a_client":
+            # The therapist already said this series is not a client.
+            continue
         series_out.append(
             ProposedSeriesResponse(
                 candidate_key=series.candidate_key,
                 summary=series.summary,
                 source_identifier=identifier,
-                match=_series_match(series, identifier, ctx),
+                match=_series_match(result, ctx),
                 weekday=series.weekday,
                 local_start_time=series.local_start_time,
                 duration_minutes=series.duration_minutes,
@@ -286,7 +292,8 @@ def scan_calendar_for_practice(
         resource_id="calendar-import-scan",
         changes={
             "events_read": proposal.events_read,
-            "series_proposed": len(proposal.series),
+            "series_proposed": len(response.series),
+            "series_not_clients": len(proposal.series) - len(response.series),
             "left_alone": proposal.left_alone,
             "partial": proposal.partial,
             "lookback_days": proposal.lookback_days,
@@ -349,10 +356,16 @@ def confirm_calendar_import(
 
     An existing patient who already has appointments ahead is not scheduled
     again: that is the same series imported twice.
+
+    ``not_clients`` names series the therapist marked as not a client. They
+    are remembered as such, so later scans leave them out.
     """
     now = utc_now()
 
     # Everything is checked before anything is written.
+    confirming = {item.source_identifier for item in request.series if item.source_identifier}
+    if confirming & set(request.not_clients):
+        raise BadRequestError("A series can't be both a client and not a client")
     checked: list[tuple[ConfirmImportSeries, RecurrenceFrequency, Patient | None]] = []
     for item in request.series:
         frequency = _validate(item, now)
@@ -364,6 +377,9 @@ def confirm_calendar_import(
         checked.append((item, frequency, existing))
 
     match_ctx = MatchContext.for_clinician(ctx.user_id, patient_repo, mappings)
+    for identifier in request.not_clients:
+        remember_not_a_client(MATCH_SOURCE, identifier, match_ctx)
+
     confirmed: list[ConfirmedSeriesResponse] = []
     skipped: list[str] = []
     patients_created = 0

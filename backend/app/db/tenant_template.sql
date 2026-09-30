@@ -936,8 +936,11 @@ CREATE TABLE __TENANT_SCHEMA__.patient_source_mappings (
     user_id uuid NOT NULL,
     source character varying(50) NOT NULL,
     source_identifier character varying(255) NOT NULL,
-    patient_id uuid NOT NULL,
-    created_at timestamp with time zone NOT NULL
+    patient_id uuid,
+    created_at timestamp with time zone NOT NULL,
+    answer text DEFAULT 'client'::text NOT NULL,
+    CONSTRAINT ck_patient_source_mappings_answer CHECK ((answer = ANY (ARRAY['client'::text, 'not_a_client'::text]))),
+    CONSTRAINT ck_patient_source_mappings_patient_when_client CHECK (((answer = 'client'::text) = (patient_id IS NOT NULL)))
 );
 
 

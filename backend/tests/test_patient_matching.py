@@ -14,6 +14,7 @@ from app.patients.matching import (
     PatientHint,
     match_patient,
     remember_match,
+    remember_not_a_client,
 )
 from app.repositories.patient import InMemoryPatientRepository
 from app.repositories.patient_source_mapping import InMemoryPatientSourceMappingRepository
@@ -235,6 +236,44 @@ class TestDeleted:
         result = match_patient(hint, fresh)
         assert result.patient_id is None
         assert result.possible_ids == []
+
+
+class TestNotAClient:
+    def test_a_remembered_not_a_client_is_skipped_on_a_later_match(
+        self, patients, mappings
+    ) -> None:
+        """Even a name that uniquely matches a chart does not bring it back."""
+        ctx = _ctx(patients, mappings, _patient("p1", "Team", "Meeting"))
+        remember_not_a_client("google_calendar", "series:standup", ctx)
+
+        fresh = MatchContext.for_clinician(USER, patients, mappings)
+        hint = PatientHint(
+            full_name="Team Meeting", source="google_calendar", source_identifier="series:standup"
+        )
+        result = match_patient(hint, fresh)
+        assert result.evidence == "not_a_client"
+        assert result.patient_id is None
+        assert result.possible_ids == []
+
+    def test_not_a_client_replaces_a_client_answer_in_place(self, patients, mappings) -> None:
+        ctx = _ctx(patients, mappings, _patient("p1", "Jane", "Adams"))
+        remember_match("google_calendar", "series:x", "p1", ctx)
+        remember_not_a_client("google_calendar", " SERIES:X ", ctx)
+        remember_not_a_client("google_calendar", "series:x", ctx)
+
+        [stored] = mappings.list_by_source(USER, "google_calendar")
+        assert (stored.source_identifier, stored.answer, stored.patient_id) == (
+            "series:x",
+            "not_a_client",
+            None,
+        )
+
+    def test_a_client_answer_can_replace_not_a_client(self, patients, mappings) -> None:
+        ctx = _ctx(patients, mappings, _patient("p1", "Jane", "Adams"))
+        remember_not_a_client("google_calendar", "series:x", ctx)
+        remember_match("google_calendar", "series:x", "p1", ctx)
+        hint = PatientHint(source="google_calendar", source_identifier="series:x")
+        assert match_patient(hint, ctx).evidence == "remembered"
 
 
 def test_a_context_over_patients_in_hand_matches_without_a_store() -> None:
