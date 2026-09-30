@@ -2108,6 +2108,7 @@ class GoogleCalendarTokenRow(Base):
         String(255), nullable=False, server_default="push,import"
     )
     calendar_id: Mapped[str | None] = mapped_column(String(255))
+    app_calendar_id: Mapped[str | None] = mapped_column(String(255))
     sync_token: Mapped[str | None] = mapped_column(Text)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     connected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

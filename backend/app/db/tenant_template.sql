@@ -455,7 +455,8 @@ CREATE TABLE __TENANT_SCHEMA__.google_calendar_tokens (
     write_target character varying(32) DEFAULT 'primary'::character varying NOT NULL,
     granted_capabilities character varying(255) DEFAULT 'push,import'::character varying NOT NULL,
     event_titling character varying(16) DEFAULT 'generic'::character varying NOT NULL,
-    titling_attested_account character varying(255) DEFAULT ''::character varying NOT NULL
+    titling_attested_account character varying(255) DEFAULT ''::character varying NOT NULL,
+    app_calendar_id character varying(255)
 );
 
 

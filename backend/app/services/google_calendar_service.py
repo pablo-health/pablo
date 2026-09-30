@@ -684,6 +684,13 @@ class GoogleCalendarService:
         encrypted = encrypt_tokens(token_data)
 
         calendar_id = self._resolve_calendar_id(credentials, write_target, user_id)
+        # A main-calendar connection still carries the app calendar forward,
+        # so switching back later reuses it instead of making another.
+        app_calendar_id = (
+            calendar_id
+            if write_target is CalendarWriteTarget.APP_CALENDAR
+            else self._token_repo.get_app_calendar_id(user_id)
+        )
         granted = self._granted_after(user_id, requested, declarations)
 
         now = _now()
@@ -691,6 +698,7 @@ class GoogleCalendarService:
             user_id=user_id,
             encrypted_tokens=encrypted,
             calendar_id=calendar_id,
+            app_calendar_id=app_calendar_id,
             connected_at=now,
             last_synced_at=now,
             provider=GOOGLE_PROVIDER_ID,
@@ -873,7 +881,11 @@ class GoogleCalendarService:
             kwargs["pageToken"] = page_token
 
     def disconnect(self, user_id: str) -> bool:
-        """Remove stored tokens, disconnecting Google Calendar."""
+        """Remove stored tokens, disconnecting Google Calendar.
+
+        The id of the calendar Pablo made is kept, so a later connect finds
+        it rather than making another one.
+        """
         deleted = self._token_repo.delete(user_id)
         if deleted:
             logger.info("Google Calendar disconnected")
@@ -1349,7 +1361,11 @@ class GoogleCalendarService:
         for a list. The app-calendar grant is a single scope,
         ``calendar.app.created``, and Google refuses ``calendarList.list``
         under it: this used to open with that call, so the connect could never
-        finish. Its identity is already ours to remember, so remember it.
+        finish. Its identity is already ours to remember, so remember it —
+        in ``app_calendar_id``, which only ever holds a calendar Pablo
+        created and outlives both a switch to the main calendar and a
+        disconnect. Never a search by name: a calendar the therapist made
+        and happened to call "Pablo Sessions" is theirs, not ours.
 
         A remembered id still has to be checked, because the record outlives
         the account that id belongs to. ``handle_callback`` runs whenever a
@@ -1366,21 +1382,17 @@ class GoogleCalendarService:
         """
         service = _build_calendar_service(credentials)
 
-        stored = self._token_repo.get(user_id)
-        if (
-            stored is not None
-            and stored.calendar_id
-            and stored.write_target == CalendarWriteTarget.APP_CALENDAR.value
-        ):
+        remembered = self._token_repo.get_app_calendar_id(user_id)
+        if remembered:
             try:
-                service.calendars().get(calendarId=stored.calendar_id).execute()
+                service.calendars().get(calendarId=remembered).execute()
             except Exception:
                 # Deleted, or owned by an account these credentials do not
                 # speak for. Either way the remembered id is not usable now.
                 logger.info("Stored Pablo-owned calendar is unreachable; creating a new one")
             else:
                 logger.info("Reusing the existing Pablo-owned Google calendar")
-                return stored.calendar_id
+                return remembered
 
         created = service.calendars().insert(body={"summary": _APP_CALENDAR_SUMMARY}).execute()
         calendar_id = created.get("id")
