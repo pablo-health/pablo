@@ -32,6 +32,8 @@ function questionFor(session: OutsideSession, questions: OutsideQuestion[]): Out
       sessions: 1,
       next_start_at: session.start_at,
       match: { patient: null, possible: [], suggested_patient_id: null },
+      // Answers this event alone, which every identifier accepts.
+      outside_session_id: session.id,
     }
   )
 }
