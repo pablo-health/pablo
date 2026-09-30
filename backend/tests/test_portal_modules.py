@@ -141,8 +141,8 @@ class TestMountedIsReadFromTheRouteTable:
         has to come back.
 
         ``chat`` is mounted here because the test settings turn
-        ``ENABLE_PATIENT_CHAT`` on, which is the gate that decides whether
-        this build serves patient chat at all. Naming it in
+        ``ENABLE_PATIENT_PORTAL_CHAT`` on, which is the gate that decides
+        whether this build serves the client-facing assistant at all. Naming it in
         ``PORTAL_MODULES`` is the separate, narrower decision about whether
         the portal offers it — so a mounted-but-unconfigured chat reports
         off in the capability document, which the intersection cases above

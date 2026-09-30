@@ -1114,6 +1114,17 @@ class Settings(BaseSettings):
             "see docs/architecture/patient-context-chat-oss.md."
         ),
     )
+    # The client-facing assistant (/api/patient/chat) is a separate switch
+    # from the clinician's chart chat above. A clinician's tool and an
+    # assistant a client talks to alone have different bars: the client one
+    # stays off until its crisis handling is enforced outside the prompt.
+    enable_patient_portal_chat: bool = Field(
+        default=False,
+        description=(
+            "Mount the client-facing chat assistant (/api/patient/chat). "
+            "Independent of enable_patient_chat."
+        ),
+    )
     # Companion thin-client launch-intent handoff. When false, the
     # /api/launch/intent + /api/launch/redeem router is NOT mounted, so
     # both endpoints return 404. Kept off until the desktop companions

@@ -17,6 +17,9 @@ os.environ["PABLO_EDITION"] = "solo"
 # manual smoke step at deploy time, not by a unit test (the app builds
 # its router list once at import).
 os.environ["ENABLE_PATIENT_CHAT"] = "true"
+# The client-facing assistant has its own switch; turned on here so the
+# /api/patient/chat suites exercise it.
+os.environ["ENABLE_PATIENT_PORTAL_CHAT"] = "true"
 # Mount the patient portal sign-in router for tests. Off by default in
 # production; flipping it here is what puts those routes in front of the
 # guardrail suites that walk the live route table (MFA posture, subscription
