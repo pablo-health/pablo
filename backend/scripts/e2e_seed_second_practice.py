@@ -105,7 +105,16 @@ FRESH_MESSAGES = SeededPractice(
     name="Fresh Practice Messages",
     unanswered=True,
 )
-SEEDED = (SECOND_PRACTICE, FRESH_YES, FRESH_NO, FRESH_MESSAGES)
+# Its own practice for the spec that follows a calendar feed: a feed puts a
+# season of sessions on the calendar and a question on every one of them,
+# which no spec sharing the default practice's calendar should have to see.
+FRESH_FEED = SeededPractice(
+    id="e2e-fresh-feed",
+    schema="practice_e2e_fresh_feed",
+    email="e2e-fresh-feed@example.com",
+    name="Fresh Practice Feed",
+)
+SEEDED = (SECOND_PRACTICE, FRESH_YES, FRESH_NO, FRESH_MESSAGES, FRESH_FEED)
 
 # Kept for anything that still reads the second practice by its old names.
 SECOND_PRACTICE_ID = SECOND_PRACTICE.id

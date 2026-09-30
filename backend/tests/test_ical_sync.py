@@ -627,6 +627,90 @@ class TestUrlValidation:
             service._validate_feed_url("unknown_ehr", "https://example.com")
 
 
+SP_FEED_URL = "https://secure.simplepractice.com/ical/abc123/feed.ics"
+
+
+def _serving(ical: str) -> MagicMock:
+    """A stand-in for ``urlopen`` whose response body is ``ical``."""
+    opened = MagicMock()
+    opened.__enter__.return_value.read.return_value = ical.encode("utf-8")
+    return MagicMock(return_value=opened)
+
+
+def _fetched(mock_urlopen: MagicMock) -> str:
+    """The URL the one fetch was made to."""
+    (request,), _ = mock_urlopen.call_args
+    return request.full_url
+
+
+class TestFeedOrigin:
+    """Where a feed is read from: the provider, or the origin a deployment names.
+
+    The end-to-end stack serves captured feeds from a stand-in, so a feed URL
+    that has passed the allowlist is fetched from ``ICAL_FEED_BASE_URL``
+    instead of the provider. The allowlist itself is untouched by the setting.
+    """
+
+    @pytest.fixture
+    def _no_origin(self, monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
+        monkeypatch.delenv("ICAL_FEED_BASE_URL", raising=False)
+        get_settings.cache_clear()
+        yield
+        get_settings.cache_clear()
+
+    @pytest.fixture
+    def _fake_origin(self, monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
+        monkeypatch.setenv("ICAL_FEED_BASE_URL", "http://fake-ical:8082/")
+        get_settings.cache_clear()
+        yield
+        get_settings.cache_clear()
+
+    @pytest.mark.usefixtures("_no_origin")
+    def test_unset_reads_the_provider(self, service: ICalSyncService):
+        with patch("app.services.ical_sync_service.urlopen", _serving(SP_ICAL_DATA)) as opened:
+            service._fetch_feed(SP_FEED_URL)
+
+        assert _fetched(opened) == SP_FEED_URL
+
+    @pytest.mark.usefixtures("_fake_origin")
+    def test_set_reads_the_same_path_from_that_origin(self, service: ICalSyncService):
+        with patch("app.services.ical_sync_service.urlopen", _serving(SP_ICAL_DATA)) as opened:
+            body = service._fetch_feed(SP_FEED_URL)
+
+        assert _fetched(opened) == "http://fake-ical:8082/ical/abc123/feed.ics"
+        assert body == SP_ICAL_DATA
+
+    @pytest.mark.usefixtures("_fake_origin", "_encryption_key")
+    def test_connecting_reads_the_validated_path_from_that_origin(self, service: ICalSyncService):
+        with patch("app.services.ical_sync_service.urlopen", _serving(SP_ICAL_DATA)) as opened:
+            result = service.configure("user1", "simplepractice", SP_FEED_URL)
+
+        assert result.event_count == 2
+        assert _fetched(opened) == "http://fake-ical:8082/ical/abc123/feed.ics"
+
+    @pytest.mark.usefixtures("_fake_origin")
+    def test_the_allowlist_still_refuses_a_url_off_the_provider(self, service: ICalSyncService):
+        with (
+            patch("app.services.ical_sync_service.urlopen", _serving(SP_ICAL_DATA)) as opened,
+            pytest.raises(ValueError, match="hostname must be"),
+        ):
+            service.configure("user1", "simplepractice", "https://evil.example/ical/feed.ics")
+
+        opened.assert_not_called()
+
+    @pytest.mark.usefixtures("_fake_origin")
+    def test_the_allowlist_still_refuses_a_path_off_the_feed(self, service: ICalSyncService):
+        with (
+            patch("app.services.ical_sync_service.urlopen", _serving(SP_ICAL_DATA)) as opened,
+            pytest.raises(ValueError, match="path must start with"),
+        ):
+            service.configure(
+                "user1", "simplepractice", "https://secure.simplepractice.com/admin/feed.ics"
+            )
+
+        opened.assert_not_called()
+
+
 class TestCsvImport:
     """Tests for CSV/zip client import with auto-mapping."""
 

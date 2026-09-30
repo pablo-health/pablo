@@ -1478,6 +1478,19 @@ class Settings(BaseSettings):
         ),
     )
 
+    ical_feed_base_url: str | None = Field(
+        default=None,
+        description=(
+            "Origin that answers calendar-feed fetches instead of the "
+            "provider's own host, for a deployment that should not reach "
+            "SimplePractice or Sessions Health — the end-to-end harness's "
+            "stand-in. A feed URL is still checked against the provider's "
+            "host and path allowlist as typed; only the fetch is redirected, "
+            "keeping the validated path. Unset (the ordinary case) means the "
+            "provider itself."
+        ),
+    )
+
     clearinghouse_webhook_secret: SecretStr = Field(
         default=SecretStr(""),
         description=(

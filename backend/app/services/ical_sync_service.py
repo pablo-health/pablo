@@ -56,6 +56,7 @@ from ..patients.matching import (
 from ..repositories.external_calendar_event import ANSWER_OPEN, ExternalCalendarEvent
 from ..repositories.ical_sync_config import ICalSyncConfig, ICalSyncConfigRepository
 from ..scheduling_engine.models.appointment import Appointment, AppointmentStatus
+from ..settings import get_settings
 from ..utcnow import utc_now
 from .outside_sessions import OutsideSessions
 from .token_encryption import decrypt_tokens, encrypt_tokens
@@ -437,8 +438,9 @@ class ICalSyncService:
 
     def _fetch_feed(self, feed_url: str) -> str:
         """Fetch iCal feed data via HTTP GET."""
-        req = Request(feed_url, headers={"User-Agent": "Pablo/1.0"})  # noqa: S310
+        req = Request(_fetch_url(feed_url), headers={"User-Agent": "Pablo/1.0"})  # noqa: S310
         # feed_url pre-validated by _validate_feed_url() (https + host allowlist) — no SSRF.
+        # The origin it is read from is the operator's setting, never the URL's.
         # nosemgrep
         with urlopen(req, timeout=FETCH_TIMEOUT_SECONDS) as resp:  # noqa: S310
             raw: bytes = resp.read()
@@ -697,6 +699,23 @@ class ICalSyncService:
             created_at=now,
             updated_at=now,
         )
+
+
+def _fetch_url(feed_url: str) -> str:
+    """Where a feed URL that has passed the allowlist is actually read from.
+
+    Ordinarily the URL itself. A deployment that must not reach the provider
+    — the end-to-end stack, whose feeds are served by a stand-in — names an
+    origin in ``ical_feed_base_url``, and the feed's own path is read from
+    there instead. The URL has already been held to the provider's host and
+    path; this swaps only the origin, so the check stays exactly as strict.
+    """
+    origin = get_settings().ical_feed_base_url
+    if not origin:
+        return feed_url
+    parsed = urlparse(feed_url)
+    query = f"?{parsed.query}" if parsed.query else ""
+    return f"{origin.rstrip('/')}{parsed.path}{query}"
 
 
 @dataclass(frozen=True)
