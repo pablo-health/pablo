@@ -81,6 +81,7 @@ from .routes import (
     migration,
     note_types,
     notes,
+    outside_sessions,
     passkey,
     patient_appointments,
     patient_booking,
@@ -306,13 +307,31 @@ def portal_module_routers(modules: Iterable[str]) -> list[APIRouter]:
     and turning the patient side of messaging off must not take the
     practice's inbox with it.
 
-    ``chat`` is absent for a different reason. It has a gate of its own that
-    predates the portal (``enable_patient_chat``), and that flag is what
-    decides whether this build serves patient chat at all; naming it in
-    ``PORTAL_MODULES`` decides whether the portal offers it, which is the
-    narrower question the capability document answers.
+    ``chat`` is absent for a different reason. It has a gate of its own
+    (``enable_patient_portal_chat``, see :func:`chat_routers`), and that flag
+    is what decides whether this build serves the client-facing assistant at
+    all; naming it in ``PORTAL_MODULES`` decides whether the portal offers
+    it, which is the narrower question the capability document answers.
     """
     return [router for _name, router in _portal_module_router_pairs(modules)]
+
+
+def chat_routers(*, clinician_chat: bool, portal_chat: bool) -> list[APIRouter]:
+    """The chat routers this build serves.
+
+    Two switches, because they answer different questions. The clinician's
+    chart chat (``/api/chat``) is a tool a clinician uses about a client. The
+    client-facing assistant (``/api/patient/chat``) is something a client
+    talks to alone, and stays off until its crisis handling is enforced
+    outside the prompt. Turning one off never takes the other with it, and
+    neither touches portal messaging, which is a portal module.
+    """
+    routers: list[APIRouter] = []
+    if clinician_chat:
+        routers.append(chat.router)
+    if portal_chat:
+        routers.append(patient_chat.router)
+    return routers
 
 
 def _portal_module_router_pairs(modules: Iterable[str]) -> list[tuple[str, APIRouter]]:
@@ -374,6 +393,7 @@ app.include_router(ehr_routes.route_router)
 app.include_router(ehr_routes.navigate_router)
 app.include_router(ical_sync.router)
 app.include_router(calendar_import.router)
+app.include_router(outside_sessions.router)
 app.include_router(migration.router)
 app.include_router(note_types.router)
 app.include_router(compliance.router)
@@ -385,13 +405,15 @@ app.include_router(medications_router)
 app.include_router(diagnostic_definitions_router)
 app.include_router(diagnostic_assessments_router)
 app.include_router(patient_diagnostic_assessments_router)
-if settings.enable_patient_chat:
-    app.include_router(chat.router)
-    # Patient chat's mount gate is this flag and not the portal module list
-    # — see ``portal_module_routers`` for why the two questions are
-    # different. Naming "chat" in PORTAL_MODULES is what puts it in the
-    # portal's navigation; this is what makes it exist.
-    app.include_router(patient_chat.router)
+# The client-facing assistant's mount gate is its own flag, not the portal
+# module list — see ``portal_module_routers`` for why the two questions are
+# different. Naming "chat" in PORTAL_MODULES is what puts it in the portal's
+# navigation; the flag is what makes it exist.
+for _router in chat_routers(
+    clinician_chat=settings.enable_patient_chat,
+    portal_chat=settings.enable_patient_portal_chat,
+):
+    app.include_router(_router)
 # The patient's own half of intake went up with the portal modules above.
 # The clinician's read of what that form collected is unconditional for a
 # different reason: it sits behind the ordinary clinician door, and an

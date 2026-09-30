@@ -139,6 +139,11 @@ const baseQueryKeys = {
     // Under `all` so anything that refreshes appointments refreshes this too.
     heldGoogleRemovals: () =>
       [...baseQueryKeys.appointments.all, "held-google-removals"] as const,
+    // Also under `all`: answering one turns it into appointments.
+    outsideSessions: (params: { start: string; end: string }) =>
+      [...baseQueryKeys.appointments.all, "outside-sessions", params] as const,
+    outsideQuestions: () =>
+      [...baseQueryKeys.appointments.all, "outside-questions"] as const,
   },
 
   // Availability rule query keys

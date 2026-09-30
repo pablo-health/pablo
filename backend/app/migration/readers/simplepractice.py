@@ -39,7 +39,7 @@ from datetime import date, datetime, time
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-import fitz  # type: ignore[import-untyped]  # PyMuPDF, as the engine imports it
+import pymupdf
 
 SOURCE_SYSTEM = "simplepractice"
 
@@ -386,7 +386,7 @@ def _pdf_lines(data: bytes) -> list[str]:
     Repeated page footers are kept: the parser recognises them wherever
     they fall.
     """
-    with fitz.open(stream=data, filetype="pdf") as doc:
+    with pymupdf.open(stream=data, filetype="pdf") as doc:
         text = "\n".join(page.get_text("text", sort=True) for page in doc)
     return text.splitlines()
 

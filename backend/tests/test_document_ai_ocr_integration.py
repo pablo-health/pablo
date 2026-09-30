@@ -39,7 +39,7 @@ import re
 import unicodedata
 from pathlib import Path
 
-import fitz  # type: ignore[import-untyped]
+import pymupdf
 import pytest
 from app.services.document_ai_ocr import DocumentAiOcrClient
 from app.services.patient_documents_service import _SCANNED_PDF_TEXT_THRESHOLD
@@ -94,12 +94,12 @@ def _rasterize_to_image_only_pdf(text: str) -> bytes:
     text_pdf_bytes = text_buf.getvalue()
 
     scanned_buf = io.BytesIO()
-    out_doc = fitz.open()
-    with fitz.open(stream=text_pdf_bytes, filetype="pdf") as src:
+    out_doc = pymupdf.open()
+    with pymupdf.open(stream=text_pdf_bytes, filetype="pdf") as src:
         for page in src:
             pix = page.get_pixmap(dpi=_RASTER_DPI, alpha=False)
             png_bytes = pix.tobytes("png")
-            img_rect = fitz.Rect(0, 0, page.rect.width, page.rect.height)
+            img_rect = pymupdf.Rect(0, 0, page.rect.width, page.rect.height)
             new_page = out_doc.new_page(width=page.rect.width, height=page.rect.height)
             new_page.insert_image(img_rect, stream=png_bytes)
     out_doc.save(scanned_buf)
@@ -176,7 +176,7 @@ def test_ocr_round_trip_recovers_majority_of_words(
     scanned_pdf = _rasterize_to_image_only_pdf(original_text)
 
     # Confirm the rasterized PDF would actually trip the fallback path.
-    with fitz.open(stream=scanned_pdf, filetype="pdf") as doc:
+    with pymupdf.open(stream=scanned_pdf, filetype="pdf") as doc:
         embedded = "".join(page.get_text() for page in doc).strip()
     assert len(embedded) < _SCANNED_PDF_TEXT_THRESHOLD, (
         f"Rasterized {fixture_path.name} still has {len(embedded)} chars of "

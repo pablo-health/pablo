@@ -17,6 +17,9 @@ os.environ["PABLO_EDITION"] = "solo"
 # manual smoke step at deploy time, not by a unit test (the app builds
 # its router list once at import).
 os.environ["ENABLE_PATIENT_CHAT"] = "true"
+# The client-facing assistant has its own switch; turned on here so the
+# /api/patient/chat suites exercise it.
+os.environ["ENABLE_PATIENT_PORTAL_CHAT"] = "true"
 # Mount the patient portal sign-in router for tests. Off by default in
 # production; flipping it here is what puts those routes in front of the
 # guardrail suites that walk the live route table (MFA posture, subscription
@@ -89,6 +92,12 @@ from app.repositories import (  # noqa: E402
     get_clinician_profile_repository,
     get_identity_repository,
     get_user_repository,
+)
+from app.repositories.patient_source_mapping import (  # noqa: E402
+    InMemoryPatientSourceMappingRepository,
+)
+from app.routes.calendar_import import (  # noqa: E402
+    get_patient_source_mapping_repository,
 )
 from app.routes.chat import (  # noqa: E402
     get_chat_repository_dep as get_chat_route_chat_repository,
@@ -194,6 +203,12 @@ def mock_session_repo() -> InMemoryTherapySessionRepository:
 def mock_repo(mock_session_repo: InMemoryTherapySessionRepository) -> InMemoryPatientRepository:
     """Create a fresh in-memory repository for each test."""
     return InMemoryPatientRepository(session_repo=mock_session_repo)
+
+
+@pytest.fixture
+def mock_mapping_repo() -> InMemoryPatientSourceMappingRepository:
+    """Remembered source identifiers, fresh for each test."""
+    return InMemoryPatientSourceMappingRepository()
 
 
 @pytest.fixture
@@ -368,6 +383,7 @@ def client(
     mock_ehr_route_repo: InMemoryEhrRouteRepository,
     mock_ehr_prompt_repo: InMemoryEhrPromptRepository,
     mock_ehr_navigation_service: MockEhrNavigationService,
+    mock_mapping_repo: InMemoryPatientSourceMappingRepository,
 ) -> Any:
     """Create a TestClient with mocked dependencies."""
     # Override dependencies
@@ -408,6 +424,7 @@ def client(
     app.dependency_overrides[get_ehr_route_repository] = lambda: mock_ehr_route_repo
     app.dependency_overrides[get_ehr_prompt_repository] = lambda: mock_ehr_prompt_repo
     app.dependency_overrides[get_ehr_navigation_service] = lambda: mock_ehr_navigation_service
+    app.dependency_overrides[get_patient_source_mapping_repository] = lambda: mock_mapping_repo
     # Default to "no Google Calendar connected" so scheduling-route tests
     # that don't care about Google sync stay deterministic and DB-free.
     # Tests exercising the sync behavior override this per-test.

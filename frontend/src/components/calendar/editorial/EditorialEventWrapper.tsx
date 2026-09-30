@@ -4,7 +4,7 @@
 
 import { useEffect, useRef } from "react"
 import type { ReactNode } from "react"
-import type { AppointmentResponse } from "@/types/scheduling"
+import { followsOutsideEvent, type AppointmentResponse } from "@/types/scheduling"
 import {
   DRAG_THRESHOLD_PX,
   rescheduledStart,
@@ -66,11 +66,14 @@ export function EditorialEventWrapper({
   onPeek,
   onEdit,
   onContextMenu,
-  drag,
+  drag: dragConfig,
   children,
   className,
   style,
 }: EditorialEventWrapperProps) {
+  // An appointment brought in from the clinician's own calendar takes its
+  // time from that event, so it can't be dragged to a new one here.
+  const drag = followsOutsideEvent(appointment) ? undefined : dragConfig
   const ref = useRef<HTMLDivElement>(null)
   /** Set immediately after a committed drop so the trailing click is ignored. */
   const justDragged = useRef(false)

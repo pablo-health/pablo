@@ -33,13 +33,16 @@ from ..repositories import (
     get_appointment_repository as _appt_repo_factory,
 )
 from ..repositories import (
-    get_ical_client_mapping_repository as _mapping_repo_factory,
+    get_external_calendar_event_repository,
 )
 from ..repositories import (
     get_ical_sync_config_repository as _config_repo_factory,
 )
 from ..repositories import (
     get_patient_repository as _patient_repo_factory,
+)
+from ..repositories import (
+    get_patient_source_mapping_repository as _mapping_repo_factory,
 )
 from ..services import AuditService, get_audit_service
 from ..services.ical_sync_service import ICalSyncService
@@ -62,6 +65,7 @@ def _get_service(
         appointment_repo=_appt_repo_factory(),
         patient_repo=_patient_repo_factory(),
         mapping_repo=_mapping_repo_factory(),
+        external_events=get_external_calendar_event_repository(),
     )
 
 
@@ -152,6 +156,7 @@ def ical_sync_status(
                 connected=s.connected,
                 last_synced_at=s.last_synced_at,
                 last_sync_error=s.last_sync_error,
+                title_style=s.title_style,
             )
             for s in statuses
         ]
@@ -179,13 +184,20 @@ def resolve_client(
     service: ICalSyncService = Depends(_get_service),
     audit: AuditService = Depends(get_audit_service),
 ) -> dict[str, str]:
-    """Manually map a client identifier to a Pablo patient."""
-    service.resolve_client(
-        ctx.user_id,
-        request.ehr_system,
-        request.client_identifier,
-        request.patient_id,
-    )
+    """Manually map a client identifier to a Pablo patient.
+
+    An identifier asked about per event (initials, a name two charts share)
+    is refused here: those are answered one event each in the calendar.
+    """
+    try:
+        service.resolve_client(
+            ctx.user_id,
+            request.ehr_system,
+            request.client_identifier,
+            request.patient_id,
+        )
+    except ValueError as exc:
+        raise BadRequestError(str(exc)) from exc
     audit.log(
         action=AuditAction.CLIENT_RESOLVED,
         user=user,

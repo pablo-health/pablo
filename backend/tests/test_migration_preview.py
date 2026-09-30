@@ -134,6 +134,32 @@ def test_existing_patient_with_same_name_and_no_dob_is_a_question(
     assert "duplicate decision for client 112092152" in decisions_complete(p, {})
 
 
+def test_an_existing_patient_with_the_cards_email_is_merged_by_email(
+    archive: SimplePracticeArchive,
+) -> None:
+    card = next(c for c in archive.contacts if c.source_id == LULU)
+    existing = [ExistingPatient("p-3", "Lulu", "Jones", None, card.email)]
+    p = _preview(archive, existing_patients=existing)
+    lulu = next(c for c in p["clients"] if c["card_id"] == LULU)
+    assert lulu["existing_patient_id"] == "p-3"
+    assert lulu["match_evidence"] == "email"
+
+
+def test_a_shared_family_email_does_not_merge_a_child_into_the_parent(
+    archive: SimplePracticeArchive,
+) -> None:
+    """Name and date of birth decide before an email a family shares."""
+    card = next(c for c in archive.contacts if c.source_id == LULU)
+    existing = [
+        ExistingPatient("parent", "Lola", "Llama", None, card.email),
+        ExistingPatient("child", "Lulu", "Llama", card.birthday, None),
+    ]
+    p = _preview(archive, existing_patients=existing)
+    lulu = next(c for c in p["clients"] if c["card_id"] == LULU)
+    assert lulu["existing_patient_id"] == "child"
+    assert lulu["match_evidence"] == "name_and_dob"
+
+
 def test_second_run_reads_as_a_delta(archive: SimplePracticeArchive) -> None:
     note = next(n for n in archive.notes if n.source_id == "1007836363")
     other = next(n for n in archive.notes if n.source_id == "1007836365")

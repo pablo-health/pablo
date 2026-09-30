@@ -27,7 +27,7 @@ from ...models import Patient
 from ...models.enums import ClinicianRole
 from ...models.patient_facing import PATIENT_SELF_WRITABLE_COLUMNS, PatientFacingPatient
 from ...utcnow import utc_now
-from ..patient import PatientRepository
+from ..patient import PatientRepository, PracticeClient
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -36,6 +36,12 @@ if TYPE_CHECKING:
 _HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindparams(
     bindparam("pid", type_=Uuid(as_uuid=False)),
     bindparam("uid", type_=String()),
+)
+
+# Unqualified: the tenant search path resolves it to this practice's own.
+_PRACTICE_DIRECTORY_SQL = text(
+    "SELECT id, first_name, last_name, date_of_birth, email, clinician_ids "
+    "FROM practice_client_directory()"
 )
 
 #: What :meth:`PostgresPatientRepository.get_for_patient_principal` selects.
@@ -326,6 +332,22 @@ class PostgresPatientRepository(PatientRepository):
         offset = (page - 1) * page_size
         rows = self._session.execute(stmt.offset(offset).limit(page_size)).scalars().all()
         return [_row_to_patient(r) for r in rows], total
+
+    def practice_directory(self) -> list[PracticeClient]:
+        """Through ``practice_client_directory()``, the one read of ``patients``
+        that sees past the grant — see ``app.db.practice_directory``."""
+        rows = self._session.execute(_PRACTICE_DIRECTORY_SQL).all()
+        return [
+            PracticeClient(
+                id=str(row.id),
+                first_name=row.first_name,
+                last_name=row.last_name,
+                date_of_birth=row.date_of_birth,
+                email=row.email,
+                clinician_ids=tuple(str(uid) for uid in row.clinician_ids),
+            )
+            for row in rows
+        ]
 
     def create(self, patient: Patient, user_id: str) -> Patient:
         """Create the patient and the primary-clinician grant atomically.

@@ -1883,7 +1883,7 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
         #     has_patient_access.
         #   * Fallback to direct user_id ownership for tables that have
         #     a user_id column but no patient_id (e.g. availability_rules,
-        #     google_calendar_tokens, ical_client_mappings).
+        #     google_calendar_tokens, ical_sync_configs).
         if table_name == "patient_documents":
             # Non-restricted categories (chart, consent) → patient_access
             # (co-treaters share). category IN ('therapist_private',
@@ -2240,6 +2240,12 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
             f"columns the schema query selects. Refusing to report success on a "
             f"grant that was never created."
         )
+
+    # The one read of ``patients`` that sees the whole practice: matching.
+    # Owner, grants and its two role-scoped policies — see the module.
+    from .practice_directory import apply_practice_directory_access
+
+    apply_practice_directory_access(session, schema_name)
 
     session.commit()
     return RlsReconcileCounts(applied=len(tables) - len(skipped), skipped=len(skipped))

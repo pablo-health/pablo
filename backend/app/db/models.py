@@ -1863,6 +1863,14 @@ class AppointmentRow(Base):
     ical_source: Mapped[str | None] = mapped_column(String(50), index=True)
     ical_sync_status: Mapped[str | None] = mapped_column(String(20))
     ehr_appointment_url: Mapped[str | None] = mapped_column(Text)
+    # A session someone else's calendar holds, which this appointment follows:
+    # where the event lives (``google_calendar``, ``ical:<source>``) and its id
+    # there. Its time comes from that event, never the other way.
+    outside_source: Mapped[str | None] = mapped_column(String(64))
+    outside_event_id: Mapped[str | None] = mapped_column(Text, index=True)
+    # The calendar that event is on, for a calendar Pablo follows; None for a
+    # feed, and for sessions booked before the calendar was recorded.
+    outside_calendar_id: Mapped[str | None] = mapped_column(Text)
     # Clinical link
     session_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
     # Billing codes for the visit — see app.scheduling_engine.models.appointment.
@@ -2169,6 +2177,9 @@ class GoogleCalendarTokenRow(Base):
     )
     calendar_id: Mapped[str | None] = mapped_column(String(255))
     sync_token: Mapped[str | None] = mapped_column(Text)
+    #: Where the read of the clinician's own ("primary") calendar resumes,
+    #: apart from ``sync_token``, which belongs to the calendar Pablo writes.
+    main_calendar_sync_token: Mapped[str | None] = mapped_column(Text)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     connected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_sync_error: Mapped[str | None] = mapped_column(Text)
@@ -2185,13 +2196,27 @@ class GoogleCalendarSettingsRow(Base):
     next app-calendar connect should find this calendar again rather than make
     another. It is only ever written with an id Google returned from Pablo's
     own insert, so a calendar the clinician made is never recorded here,
-    whatever it is called.
+    whatever it is called. None until Pablo has made one.
+
+    ``follow_calendar_id`` is the calendar whose sessions another service
+    puts there are brought in (``outside_sessions``), or None when nothing is
+    followed. ``primary`` stands for the account's main calendar until a read
+    resolves it to the calendar's real id. It only takes effect while the
+    connection can read events.
     """
 
     __tablename__ = "google_calendar_settings"
 
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
-    app_calendar_id: Mapped[str] = mapped_column(Text, nullable=False)
+    app_calendar_id: Mapped[str | None] = mapped_column(Text)
+    follow_calendar_id: Mapped[str | None] = mapped_column(Text)
+    #: Superseded by ``follow_calendar_id`` and never read. Still written, as
+    #: whether anything is followed, so an image from before the chosen
+    #: calendar keeps working while a deploy rolls over; a later revision
+    #: drops it.
+    follow_main_calendar: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
@@ -2229,15 +2254,77 @@ class TelehealthConnectionRow(Base):
     last_error: Mapped[str | None] = mapped_column(Text)
 
 
-class ICalClientMappingRow(Base):
-    __tablename__ = "ical_client_mappings"
+class PatientSourceMappingRow(Base):
+    """What an outside source's identifier means, once the clinician said so.
 
-    doc_id: Mapped[str] = mapped_column(String(500), primary_key=True)
+    Either a client (``answer='client'`` with the patient it is) or not a
+    client at all (``answer='not_a_client'``, no patient), such as a standing
+    staff meeting on a calendar, so it is never asked about again.
+    """
+
+    __tablename__ = "patient_source_mappings"
+    __table_args__ = (
+        CheckConstraint(
+            "answer IN ('client', 'not_a_client')", name="ck_patient_source_mappings_answer"
+        ),
+        CheckConstraint(
+            "(answer = 'client') = (patient_id IS NOT NULL)",
+            name="ck_patient_source_mappings_patient_when_client",
+        ),
+    )
+
+    doc_id: Mapped[str] = mapped_column(Text, primary_key=True)
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
-    ehr_system: Mapped[str] = mapped_column(String(50), nullable=False)
-    client_identifier: Mapped[str] = mapped_column(String(255), nullable=False)
-    patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    source: Mapped[str] = mapped_column(String(50), nullable=False)
+    source_identifier: Mapped[str] = mapped_column(Text, nullable=False)
+    answer: Mapped[str] = mapped_column(Text, nullable=False, server_default="client")
+    patient_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    #: Keyed digest of the title the answer was given under; see
+    #: ``app.calendar_providers.source_identity.answered_title_digest``.
+    answered_title: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ExternalCalendarEventRow(Base):
+    """A session on a calendar Pablo follows, before and after it is answered.
+
+    ``open`` until the clinician says who it is; then ``client`` with the
+    patient and the appointment made for it, or ``not_a_client``. An open row
+    is not an appointment — ``appointments.patient_id`` stays required.
+    Nothing here is ever written back to the calendar it came from.
+    """
+
+    __tablename__ = "external_calendar_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "source", "source_event_id", name="uq_external_calendar_events_event"
+        ),
+        CheckConstraint(
+            "answer IN ('open', 'client', 'not_a_client')",
+            name="ck_external_calendar_events_answer",
+        ),
+        Index("ix_external_calendar_events_user_answer", "user_id", "answer"),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_event_id: Mapped[str] = mapped_column(Text, nullable=False)
+    source_series_id: Mapped[str | None] = mapped_column(Text)
+    #: The followed calendar the event is on; None for a feed.
+    calendar_id: Mapped[str | None] = mapped_column(Text)
+    start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    answer: Mapped[str] = mapped_column(String(16), nullable=False, server_default="open")
+    patient_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    appointment_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
 
 
 class ICalSyncConfigRow(Base):
@@ -2251,6 +2338,9 @@ class ICalSyncConfigRow(Base):
     last_sync_error: Mapped[str | None] = mapped_column(Text)
     connected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     consecutive_error_count: Mapped[int] = mapped_column(default=0)
+    #: How the feed's titles name clients, as of the last read: ``initials``,
+    #: ``names`` or ``codes``. Settings say so when it is initials.
+    title_style: Mapped[str | None] = mapped_column(String(16))
 
 
 class ComplianceItemRow(Base):

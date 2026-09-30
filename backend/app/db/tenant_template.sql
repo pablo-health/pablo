@@ -60,6 +60,28 @@ CREATE FUNCTION __TENANT_SCHEMA__.has_patient_access(p_patient_id uuid, p_user_i
 
 
 
+CREATE FUNCTION __TENANT_SCHEMA__.practice_client_directory() RETURNS TABLE(id uuid, first_name character varying, last_name character varying, date_of_birth date, email character varying, clinician_ids uuid[])
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $$
+        SELECT p.id, p.first_name, p.last_name, p.date_of_birth, p.email,
+               coalesce(
+                   array_agg(g.user_id ORDER BY g.user_id)
+                       FILTER (WHERE g.user_id IS NOT NULL),
+                   '{}'::uuid[]
+               )
+        FROM __TENANT_SCHEMA__.patients p
+        LEFT JOIN __TENANT_SCHEMA__.patient_clinicians g
+          ON g.patient_id = p.id
+         AND (g.expires_at IS NULL OR g.expires_at > now())
+        WHERE p.deleted_at IS NULL
+          AND p.status <> 'pending'
+          AND coalesce(current_setting('app.current_user_id', true), '') <> ''
+        GROUP BY p.id
+    $$;
+
+
+
 
 CREATE TABLE __TENANT_SCHEMA__.alembic_version (
     version_num character varying(32) NOT NULL
@@ -150,7 +172,10 @@ CREATE TABLE __TENANT_SCHEMA__.appointments (
     telehealth_checked_in_at timestamp with time zone,
     telehealth_started_at timestamp with time zone,
     telehealth_ended_at timestamp with time zone,
-    note_inputs jsonb
+    note_inputs jsonb,
+    outside_source character varying(64),
+    outside_event_id text,
+    outside_calendar_id text
 );
 
 
@@ -442,11 +467,33 @@ CREATE TABLE __TENANT_SCHEMA__.ehr_routes (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.external_calendar_events (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    source character varying(64) NOT NULL,
+    source_event_id text NOT NULL,
+    source_series_id text,
+    start_at timestamp with time zone NOT NULL,
+    end_at timestamp with time zone NOT NULL,
+    title text DEFAULT ''::text NOT NULL,
+    answer character varying(16) DEFAULT 'open'::character varying NOT NULL,
+    patient_id uuid,
+    appointment_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    calendar_id text,
+    CONSTRAINT ck_external_calendar_events_answer CHECK (((answer)::text = ANY ((ARRAY['open'::character varying, 'client'::character varying, 'not_a_client'::character varying])::text[])))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.google_calendar_settings (
     user_id uuid NOT NULL,
-    app_calendar_id text NOT NULL,
+    app_calendar_id text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    follow_main_calendar boolean DEFAULT false NOT NULL,
+    follow_calendar_id text
 );
 
 
@@ -464,18 +511,8 @@ CREATE TABLE __TENANT_SCHEMA__.google_calendar_tokens (
     write_target character varying(32) DEFAULT 'primary'::character varying NOT NULL,
     granted_capabilities character varying(255) DEFAULT 'push,import'::character varying NOT NULL,
     event_titling character varying(16) DEFAULT 'generic'::character varying NOT NULL,
-    titling_attested_account character varying(255) DEFAULT ''::character varying NOT NULL
-);
-
-
-
-CREATE TABLE __TENANT_SCHEMA__.ical_client_mappings (
-    doc_id character varying(500) NOT NULL,
-    user_id uuid NOT NULL,
-    ehr_system character varying(50) NOT NULL,
-    client_identifier character varying(255) NOT NULL,
-    patient_id uuid NOT NULL,
-    created_at timestamp with time zone NOT NULL
+    titling_attested_account character varying(255) DEFAULT ''::character varying NOT NULL,
+    main_calendar_sync_token text
 );
 
 
@@ -488,7 +525,8 @@ CREATE TABLE __TENANT_SCHEMA__.ical_sync_configs (
     last_synced_at timestamp with time zone,
     last_sync_error text,
     connected_at timestamp with time zone NOT NULL,
-    consecutive_error_count integer DEFAULT 0
+    consecutive_error_count integer DEFAULT 0,
+    title_style character varying(16)
 );
 
 
@@ -954,6 +992,21 @@ CREATE TABLE __TENANT_SCHEMA__.patient_payment_methods (
     created_by_user_id character varying(128) NOT NULL,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.patient_source_mappings (
+    doc_id text NOT NULL,
+    user_id uuid NOT NULL,
+    source character varying(50) NOT NULL,
+    source_identifier text NOT NULL,
+    patient_id uuid,
+    created_at timestamp with time zone NOT NULL,
+    answer text DEFAULT 'client'::text NOT NULL,
+    answered_title text,
+    CONSTRAINT ck_patient_source_mappings_answer CHECK ((answer = ANY (ARRAY['client'::text, 'not_a_client'::text]))),
+    CONSTRAINT ck_patient_source_mappings_patient_when_client CHECK (((answer = 'client'::text) = (patient_id IS NOT NULL)))
 );
 
 
@@ -1461,6 +1514,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.ehr_routes
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.external_calendar_events
+    ADD CONSTRAINT external_calendar_events_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.google_calendar_settings
     ADD CONSTRAINT google_calendar_settings_pkey PRIMARY KEY (user_id);
 
@@ -1468,11 +1526,6 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.google_calendar_settings
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.google_calendar_tokens
     ADD CONSTRAINT google_calendar_tokens_pkey PRIMARY KEY (user_id);
-
-
-
-ALTER TABLE ONLY __TENANT_SCHEMA__.ical_client_mappings
-    ADD CONSTRAINT ical_client_mappings_pkey PRIMARY KEY (doc_id);
 
 
 
@@ -1611,6 +1664,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_payment_methods
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_source_mappings
+    ADD CONSTRAINT patient_source_mappings_pkey PRIMARY KEY (doc_id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.patients
     ADD CONSTRAINT patients_pkey PRIMARY KEY (id);
 
@@ -1703,6 +1761,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.therapy_sessions
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.appointment_types
     ADD CONSTRAINT uq_appointment_types_user_name UNIQUE (user_id, name);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.external_calendar_events
+    ADD CONSTRAINT uq_external_calendar_events_event UNIQUE (user_id, source, source_event_id);
 
 
 
@@ -1808,6 +1871,10 @@ CREATE INDEX ix_appointments_ical_source ON __TENANT_SCHEMA__.appointments USING
 
 
 CREATE INDEX ix_appointments_meeting_external_id ON __TENANT_SCHEMA__.appointments USING btree (meeting_external_id);
+
+
+
+CREATE INDEX ix_appointments_outside_event_id ON __TENANT_SCHEMA__.appointments USING btree (outside_event_id);
 
 
 
@@ -1967,7 +2034,7 @@ CREATE INDEX ix_ehr_routes_ehr_system ON __TENANT_SCHEMA__.ehr_routes USING btre
 
 
 
-CREATE INDEX ix_ical_client_mappings_user_id ON __TENANT_SCHEMA__.ical_client_mappings USING btree (user_id);
+CREATE INDEX ix_external_calendar_events_user_answer ON __TENANT_SCHEMA__.external_calendar_events USING btree (user_id, answer);
 
 
 
@@ -2124,6 +2191,10 @@ CREATE INDEX ix_patient_messages_patient_id ON __TENANT_SCHEMA__.patient_message
 
 
 CREATE INDEX ix_patient_messages_thread_created ON __TENANT_SCHEMA__.patient_messages USING btree (thread_id, created_at);
+
+
+
+CREATE INDEX ix_patient_source_mappings_user_id ON __TENANT_SCHEMA__.patient_source_mappings USING btree (user_id);
 
 
 
@@ -2529,11 +2600,6 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.payers
 
 
 
-ALTER TABLE ONLY __TENANT_SCHEMA__.ical_client_mappings
-    ADD CONSTRAINT ical_client_mappings_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
-
-
-
 ALTER TABLE ONLY __TENANT_SCHEMA__.notes
     ADD CONSTRAINT notes_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
 
@@ -2576,6 +2642,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_medications
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_message_threads
     ADD CONSTRAINT patient_message_threads_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_source_mappings
+    ADD CONSTRAINT patient_source_mappings_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
 
 
 

@@ -13,13 +13,17 @@
  * backend/scripts/e2e_seed_second_practice.py, which also clears their
  * portal answer on every bring-up. Each spec uses its own: the answer is
  * given once per run, so two specs sharing one would race for it.
+ *
+ * "messages" and "feed" are practices of their own for a different reason:
+ * the spec using each changes something every other spec would see —
+ * Messages turned off, a season of feed sessions on the calendar.
  */
 
-import type { Browser, BrowserContext, Page } from "@playwright/test"
+import type { Browser, BrowserContext, BrowserContextOptions, Page } from "@playwright/test"
 import { ApiClient, ensureEmulatorUser } from "./api"
 import { BASE_URL } from "./stack"
 
-export type FreshPracticeName = "yes" | "no" | "messages"
+export type FreshPracticeName = "yes" | "no" | "messages" | "feed"
 
 const PASSWORD = "E2e-fresh-practice-password-long-enough"
 
@@ -33,10 +37,16 @@ export interface FreshPractice {
   api: ApiClient
 }
 
-/** Sign into the fresh practice *name* in a browser context of its own. */
+/**
+ * Sign into the fresh practice *name* in a browser context of its own.
+ *
+ * A context made here gets none of the project's `use` options, so a spec
+ * that pins the browser's timezone passes it in `options`.
+ */
 export async function signInToFreshPractice(
   browser: Browser,
   name: FreshPracticeName,
+  options: Pick<BrowserContextOptions, "timezoneId"> = {},
 ): Promise<FreshPractice> {
   const email = addressOf(name)
   await ensureEmulatorUser(email, PASSWORD)
@@ -46,6 +56,7 @@ export async function signInToFreshPractice(
   // sign-in, so without this /login would redirect straight to the dashboard
   // as the worker's clinician — in the wrong practice.
   const context = await browser.newContext({
+    ...options,
     baseURL: BASE_URL,
     storageState: { cookies: [], origins: [] },
   })

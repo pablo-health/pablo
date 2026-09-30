@@ -167,6 +167,15 @@ class AppointmentRepository(ABC):
         """Get the appointment (if any) synced to a given Google Calendar event."""
 
     @abstractmethod
+    def get_by_outside_event(
+        self,
+        user_id: str,
+        source: str,
+        event_id: str,
+    ) -> Appointment | None:
+        """Get the appointment (if any) following an event on another calendar."""
+
+    @abstractmethod
     def create(self, appointment: Appointment) -> Appointment:
         """Create a new appointment."""
 
@@ -386,6 +395,17 @@ class InMemoryAppointmentRepository(AppointmentRepository):
     ) -> Appointment | None:
         for a in self._appointments.values():
             if a.user_id == user_id and a.google_event_id == google_event_id:
+                return a
+        return None
+
+    def get_by_outside_event(
+        self,
+        user_id: str,
+        source: str,
+        event_id: str,
+    ) -> Appointment | None:
+        for a in self._appointments.values():
+            if (a.user_id, a.outside_source, a.outside_event_id) == (user_id, source, event_id):
                 return a
         return None
 

@@ -4,9 +4,9 @@
 
 import { ArrowLeft, Calendar, Check, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
 import { SetupStepHead } from "@/components/setup"
 import type { ConfirmImportResult, ImportProposal, ProposedSeries } from "@/lib/api/scheduling"
+import { seenElsewhere, WhichClientsList } from "./WhichClientsList"
 
 const VISIBLE_ROWS = 5
 
@@ -42,6 +42,12 @@ interface CalendarReviewStepProps {
   proposal: ImportProposal | null
   checked: Record<string, boolean>
   onToggle: (candidateKey: string) => void
+  /** The existing client each series is; null for a new client. */
+  clientFor: Record<string, string | null>
+  onChooseClient: (candidateKey: string, patientId: string | null) => void
+  /** Series marked as not a client; remembered on confirm. */
+  notClient: Record<string, boolean>
+  onToggleNotClient: (candidateKey: string) => void
   expanded: boolean
   onToggleExpanded: () => void
   onBack: () => void
@@ -51,12 +57,18 @@ interface CalendarReviewStepProps {
   error: string | null
   result: ConfirmImportResult | null
   onFinish: () => void
+  /** New sessions keep coming in from this calendar. */
+  following?: boolean
 }
 
 export function CalendarReviewStep({
   proposal,
   checked,
   onToggle,
+  clientFor,
+  onChooseClient,
+  notClient,
+  onToggleNotClient,
   expanded,
   onToggleExpanded,
   onBack,
@@ -66,6 +78,7 @@ export function CalendarReviewStep({
   error,
   result,
   onFinish,
+  following = false,
 }: CalendarReviewStepProps) {
   if (result) {
     return (
@@ -75,14 +88,23 @@ export function CalendarReviewStep({
         </h2>
         <p className="mx-auto max-w-md text-sm text-muted-foreground">
           {result.appointments_created} appointment{result.appointments_created === 1 ? "" : "s"}{" "}
-          scheduled ahead. Read access ended when the import finished — Pablo asks again if you
-          ever import a second time.
+          scheduled ahead.
+          {/* Following keeps reading the calendar, so this would be false. */}
+          {following
+            ? null
+            : " Read access ended when the import finished — Pablo asks again if you ever import a second time."}
         </p>
+        {result.already_scheduled.map((key) => (
+          <p key={key} className="mx-auto max-w-md text-sm text-muted-foreground">
+            {proposal?.series.find((series) => series.candidate_key === key)?.summary ??
+              "One series"}{" "}
+            is already on your calendar.
+          </p>
+        ))}
         {result.skipped.length > 0 ? (
           <p className="mx-auto max-w-md text-sm text-amber-700">
-            {result.skipped.length} chart{result.skipped.length === 1 ? "" : "s"} were created,
-            but couldn&rsquo;t be scheduled — the times collided with something already booked.
-            You can schedule them yourself from their chart.
+            {result.skipped.length} couldn&rsquo;t be scheduled — the times collided with
+            something already booked. You can schedule them yourself from their chart.
           </p>
         ) : null}
         <Button onClick={onFinish} className="mt-2">
@@ -112,7 +134,22 @@ export function CalendarReviewStep({
   const total = proposal.series.length
   const visible = expanded ? proposal.series : proposal.series.slice(0, VISIBLE_ROWS)
   const hiddenCount = total - visible.length
-  const checkedCount = proposal.series.filter((series) => checked[series.candidate_key]).length
+  const checkedCount = proposal.series.filter(
+    (series) =>
+      checked[series.candidate_key] &&
+      !notClient[series.candidate_key] &&
+      !seenElsewhere(series.match)
+  ).length
+  const notClientCount = proposal.series.filter((series) => notClient[series.candidate_key]).length
+  // Only "not a client" answers to keep: nothing to add, still something to save.
+  const savingOnly = checkedCount === 0 && notClientCount > 0
+  const confirmLabel = confirming
+    ? savingOnly
+      ? "Saving…"
+      : "Adding…"
+    : savingOnly
+      ? "Save"
+      : `Add ${checkedCount} client${checkedCount === 1 ? "" : "s"}`
 
   return (
     <div className="space-y-4">
@@ -122,29 +159,21 @@ export function CalendarReviewStep({
         lede={`These ${total} repeat on a weekly or biweekly rhythm. Check the ones that are clients. Uncheck standups, classes, and anything else that just happens to repeat.`}
       />
 
-      <div className="flex flex-col">
-        {visible.map((series) => (
-          <label
-            key={series.candidate_key}
-            className="grid cursor-pointer grid-cols-[20px_1fr_auto] items-center gap-3 border-b border-border py-2.5 last:border-b-0"
-          >
-            <Checkbox
-              checked={checked[series.candidate_key] ?? false}
-              onCheckedChange={() => onToggle(series.candidate_key)}
-              aria-label={series.summary}
-            />
-            <span>
-              <span className="block text-sm font-medium text-neutral-900">{series.summary}</span>
-              <span className="block text-xs tabular-nums text-muted-foreground">
-                {whenLabel(series)} · {cadenceLabel(series.cadence)}
-              </span>
-            </span>
-            <span className="whitespace-nowrap text-xs tabular-nums text-muted-foreground">
-              {series.occurrences_ahead} ahead
-            </span>
-          </label>
-        ))}
-      </div>
+      <WhichClientsList
+        rows={visible.map((series) => ({
+          key: series.candidate_key,
+          title: series.summary,
+          detail: `${whenLabel(series)} · ${cadenceLabel(series.cadence)}`,
+          aside: `${series.occurrences_ahead} ahead`,
+          match: series.match,
+        }))}
+        checked={checked}
+        onToggle={onToggle}
+        clientFor={clientFor}
+        onChooseClient={onChooseClient}
+        notClient={notClient}
+        onToggleNotClient={onToggleNotClient}
+      />
 
       {hiddenCount > 0 || expanded ? (
         <button
@@ -160,7 +189,7 @@ export function CalendarReviewStep({
 
       <p className="border-t border-border pt-3 text-xs text-muted-foreground">
         {
-          "Pablo read your calendar once and kept nothing. If a client isn't in this list - someone you see monthly, or on a changing schedule - add them once you're in. It takes a minute."
+          "If a client isn't in this list - someone you see monthly, or on a changing schedule - add them once you're in. It takes a minute."
         }
       </p>
 
@@ -171,11 +200,12 @@ export function CalendarReviewStep({
           Back
         </Button>
         <span className="flex-1" />
-        <Button onClick={onConfirm} disabled={confirming || checkedCount === 0}>
+        <Button
+          onClick={onConfirm}
+          disabled={confirming || (checkedCount === 0 && notClientCount === 0)}
+        >
           {confirming ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-          {confirming
-            ? "Adding…"
-            : `Add ${checkedCount} client${checkedCount === 1 ? "" : "s"}`}
+          {confirmLabel}
         </Button>
       </div>
     </div>

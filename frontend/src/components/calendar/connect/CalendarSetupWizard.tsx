@@ -3,7 +3,8 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useQueryClient } from "@tanstack/react-query"
+import { useAuthQuery } from "@/hooks/useAuthQuery"
 import { CheckCircle2 } from "lucide-react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
@@ -13,6 +14,13 @@ import { CalendarHoursStep } from "./CalendarHoursStep"
 import { CalendarSessionsStep } from "./CalendarSessionsStep"
 import { CalendarClientsStep } from "./CalendarClientsStep"
 import { CalendarReviewStep } from "./CalendarReviewStep"
+import { seenElsewhere } from "./WhichClientsList"
+import {
+  recallAndClearFollowWanted,
+  recallAndClearImportPending,
+  rememberImportPending,
+} from "./importConsent"
+import { setFollowedCalendar } from "@/lib/api/outsideSessions"
 import {
   completeGoogleCalendarConnect,
   completeGoogleCalendarImportConsent,
@@ -54,11 +62,6 @@ const DEFAULT_SELECTION: GoogleCalendarSelection = {
  * here instead, for the moment the browser lands back on this page. */
 const SELECTION_KEY = "pablo.calendar-connect.selection"
 
-/** Set while an incremental IMPORT-capability round trip is in flight, so
- * the code-exchange effect knows this return from Google is "Look at my
- * week" continuing, not a fresh connect. */
-const IMPORT_PENDING_KEY = "pablo.calendar-import.pending"
-
 function rememberSelection(selection: GoogleCalendarSelection): void {
   try {
     window.sessionStorage.setItem(SELECTION_KEY, JSON.stringify(selection))
@@ -86,29 +89,11 @@ function recallSelection(): GoogleCalendarSelection {
   }
 }
 
-function rememberImportPending(): void {
-  try {
-    window.sessionStorage.setItem(IMPORT_PENDING_KEY, "1")
-  } catch {
-    // Best effort — see rememberSelection.
-  }
-}
-
 function browserTimeZone(): string {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
   } catch {
     return "UTC"
-  }
-}
-
-function recallAndClearImportPending(): boolean {
-  try {
-    const pending = window.sessionStorage.getItem(IMPORT_PENDING_KEY) === "1"
-    window.sessionStorage.removeItem(IMPORT_PENDING_KEY)
-    return pending
-  } catch {
-    return false
   }
 }
 
@@ -201,21 +186,32 @@ export function CalendarSetupWizard({
 
   // Step 4 — which proposed series to keep.
   const [checked, setChecked] = useState<Record<string, boolean>>({})
+  // Which existing client each series is; null means a new client.
+  const [clientFor, setClientFor] = useState<Record<string, string | null>>({})
+  // Series marked as not a client, remembered on confirm.
+  const [notClient, setNotClient] = useState<Record<string, boolean>>({})
   const [expanded, setExpanded] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [confirmError, setConfirmError] = useState<string | null>(null)
   const [confirmResult, setConfirmResult] = useState<ConfirmImportResult | null>(null)
+  const [followSaving, setFollowSaving] = useState(false)
+  const [followError, setFollowError] = useState<string | null>(null)
 
-  const { data: status } = useQuery({
+  // Each waits for sign-in to settle. On a full page load — which is how
+  // the browser arrives back from Google — a bare query fires before the
+  // session is restored, goes out without a token and reads as "not
+  // connected" until a retry lands, so a step that keys on the status
+  // (the follow checkbox) would render from a 401 for its first second.
+  const { data: status } = useAuthQuery({
     queryKey: ["google-calendar", "status"],
     queryFn: getGoogleCalendarStatus,
   })
-  const { data: options } = useQuery({
+  const { data: options } = useAuthQuery({
     queryKey: ["google-calendar", "consent-options"],
     queryFn: getGoogleCalendarConsentOptions,
     staleTime: 60 * 60 * 1000,
   })
-  const { data: busyWindows } = useQuery({
+  const { data: busyWindows } = useAuthQuery({
     queryKey: ["google-calendar", "busy", busyRange.start, busyRange.end],
     queryFn: () => getCalendarBusyWindows(busyRange.start, busyRange.end),
     enabled: Boolean(status?.connected),
@@ -252,7 +248,38 @@ export function CalendarSetupWizard({
     setChecked(
       Object.fromEntries(proposal.series.map((series) => [series.candidate_key, series.preselected]))
     )
+    // A certain match is that client, and a name-only match starts on the
+    // chart it named; anything less starts as a new client until the
+    // therapist picks one of the possible names.
+    setClientFor(
+      Object.fromEntries(
+        proposal.series.map((series) => [
+          series.candidate_key,
+          series.match.patient?.patient_id ?? series.match.suggested_patient_id ?? null,
+        ])
+      )
+    )
+    setNotClient({})
   }, [proposal])
+
+  const following = Boolean(status?.follow_calendar_id)
+
+  const changeFollowing = useCallback(
+    async (enabled: boolean) => {
+      setFollowSaving(true)
+      setFollowError(null)
+      try {
+        // The wizard reads the main calendar, so that is the one followed.
+        await setFollowedCalendar(enabled ? "primary" : null)
+        await queryClient.invalidateQueries({ queryKey: ["google-calendar"] })
+      } catch (err) {
+        setFollowError(message(err, "Could not save that. Try again in a moment."))
+      } finally {
+        setFollowSaving(false)
+      }
+    },
+    [queryClient]
+  )
 
   const redirectUri = typeof window === "undefined" ? "" : `${window.location.origin}${returnPath}`
 
@@ -265,6 +292,7 @@ export function CalendarSetupWizard({
       // behind; left there, this connect's return would be taken for that
       // import grant and exchanged as one, which Google's answer cannot pass.
       recallAndClearImportPending()
+      recallAndClearFollowWanted()
       const { auth_url } = await getGoogleCalendarAuthUrl(redirectUri, selection)
       window.location.assign(auth_url)
     } catch (err) {
@@ -321,9 +349,17 @@ export function CalendarSetupWizard({
       // that fails is reported where it was asked for, not on step 1.
       setActiveIndex(clientsIndex)
       setScanning(true)
+      // Started from the "keep bringing in new sessions" setting: the grant
+      // was asked for to turn following on, so do that once it lands.
+      const followWanted = recallAndClearFollowWanted()
       completeGoogleCalendarImportConsent(code, state, redirectUri)
-        .then(() => {
+        .then(async () => {
           if (cancelled) return
+          if (followWanted) {
+            await setFollowedCalendar("primary").catch((err: unknown) =>
+              setFollowError(message(err, "Could not save that. Try again in a moment."))
+            )
+          }
           queryClient.invalidateQueries({ queryKey: ["google-calendar"] })
           return runScan()
         })
@@ -426,30 +462,50 @@ export function CalendarSetupWizard({
     setChecked((current) => ({ ...current, [candidateKey]: !current[candidateKey] }))
   }, [])
 
+  const handleChooseClient = useCallback((candidateKey: string, patientId: string | null) => {
+    setClientFor((current) => ({ ...current, [candidateKey]: patientId }))
+  }, [])
+
+  const handleToggleNotClient = useCallback((candidateKey: string) => {
+    setNotClient((current) => ({ ...current, [candidateKey]: !current[candidateKey] }))
+    // A series that is not a client is not imported either.
+    setChecked((current) => ({ ...current, [candidateKey]: false }))
+  }, [])
+
   const handleConfirm = useCallback(async () => {
     if (!proposal) return
     setConfirming(true)
     setConfirmError(null)
     try {
       const series = proposal.series
-        .filter((item) => checked[item.candidate_key])
+        .filter(
+          (item) =>
+            checked[item.candidate_key] &&
+            !notClient[item.candidate_key] &&
+            !seenElsewhere(item.match)
+        )
         .map((item) => ({
           candidate_key: item.candidate_key,
           display_name: item.summary,
+          patient_id: clientFor[item.candidate_key] ?? null,
+          source_identifier: item.source_identifier,
           start_at: item.first_future_start ?? new Date().toISOString(),
           duration_minutes: item.duration_minutes,
           cadence: item.cadence,
           occurrences: Math.max(item.occurrences_ahead, 1),
           timezone: proposal.timezone,
         }))
-      const result = await confirmCalendarImport(series)
+      const notClients = proposal.series
+        .filter((item) => notClient[item.candidate_key])
+        .map((item) => item.source_identifier)
+      const result = await confirmCalendarImport(series, notClients)
       setConfirmResult(result)
     } catch (err) {
       setConfirmError(message(err, "Could not add those clients. Nothing was changed — try again."))
     } finally {
       setConfirming(false)
     }
-  }, [proposal, checked])
+  }, [proposal, checked, clientFor, notClient])
 
   const titlingSettled = selection.event_titling !== "full" || attested
   const isLastStep = activeIndex === steps.length - 1
@@ -544,12 +600,20 @@ export function CalendarSetupWizard({
           error={scanError}
           onScan={runScan}
           onSkip={finishWizard}
+          following={following}
+          onFollowingChange={changeFollowing}
+          followSaving={followSaving}
+          followError={followError}
         />
       ) : (
         <CalendarReviewStep
           proposal={proposal}
           checked={checked}
           onToggle={handleToggleSeries}
+          clientFor={clientFor}
+          onChooseClient={handleChooseClient}
+          notClient={notClient}
+          onToggleNotClient={handleToggleNotClient}
           expanded={expanded}
           onToggleExpanded={() => setExpanded((value) => !value)}
           onBack={() => setActiveIndex(clientsIndex)}
@@ -559,6 +623,7 @@ export function CalendarSetupWizard({
           error={confirmError}
           result={confirmResult}
           onFinish={finishAfterImport}
+          following={following}
         />
       )}
     </SetupWizardShell>

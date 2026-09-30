@@ -314,6 +314,27 @@ class PostgresAppointmentRepository(AppointmentRepository):
         ).scalar_one_or_none()
         return _row_to_appointment(row) if row else None
 
+    def get_by_outside_event(
+        self,
+        user_id: str,
+        source: str,
+        event_id: str,
+    ) -> Appointment | None:
+        row = (
+            self._session.execute(
+                select(AppointmentRow)
+                .where(
+                    AppointmentRow.user_id == user_id,
+                    AppointmentRow.outside_source == source,
+                    AppointmentRow.outside_event_id == event_id,
+                )
+                .order_by(AppointmentRow.created_at.desc())
+            )
+            .scalars()
+            .first()
+        )
+        return _row_to_appointment(row) if row else None
+
     def list_expired_pending(self, user_id: str, now: datetime) -> list[Appointment]:
         """Pending requests on ``user_id``'s calendar whose expiry has passed.
 
@@ -437,6 +458,9 @@ def _row_to_appointment(row: AppointmentRow) -> Appointment:
         ical_source=row.ical_source,
         ical_sync_status=row.ical_sync_status,
         ehr_appointment_url=row.ehr_appointment_url,
+        outside_source=row.outside_source,
+        outside_event_id=row.outside_event_id,
+        outside_calendar_id=row.outside_calendar_id,
         session_id=row.session_id,
         service_code=row.service_code,
         modifiers=row.modifiers,
@@ -490,6 +514,11 @@ def _appointment_to_row(appt: Appointment, row: AppointmentRow) -> None:
     row.ical_source = appt.ical_source
     row.ical_sync_status = appt.ical_sync_status
     row.ehr_appointment_url = appt.ehr_appointment_url
+    row.outside_source, row.outside_event_id, row.outside_calendar_id = (
+        appt.outside_source,
+        appt.outside_event_id,
+        appt.outside_calendar_id,
+    )
     row.session_id = appt.session_id
     row.service_code = appt.service_code
     row.modifiers = appt.modifiers

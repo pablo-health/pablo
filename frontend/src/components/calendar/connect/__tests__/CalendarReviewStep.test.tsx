@@ -22,6 +22,8 @@ function series(overrides: Partial<ProposedSeries> = {}): ProposedSeries {
     status: "active",
     confidence: 0.9,
     preselected: true,
+    source_identifier: "series:rec-1",
+    match: { patient: null, possible: [], suggested_patient_id: null },
     ...overrides,
   }
 }
@@ -42,6 +44,10 @@ function baseProps() {
   return {
     checked: {},
     onToggle: vi.fn(),
+    clientFor: {} as Record<string, string | null>,
+    onChooseClient: vi.fn(),
+    notClient: {} as Record<string, boolean>,
+    onToggleNotClient: vi.fn(),
     expanded: false,
     onToggleExpanded: vi.fn(),
     onBack: vi.fn(),
@@ -186,18 +192,18 @@ describe("CalendarReviewStep", () => {
     expect(onConfirm).toHaveBeenCalledOnce()
   })
 
-  it("shows the exact footer copy naming the miss case, and the kept-nothing sentence appears once", () => {
+  it("shows the exact footer copy naming the miss case, and claims nothing about what is kept", () => {
     const list = [series({ candidate_key: "a" })]
     const { container } = render(<CalendarReviewStep {...baseProps()} proposal={proposal(list)} />)
 
     expect(
       screen.getByText(
-        "Pablo read your calendar once and kept nothing. If a client isn't in this list - someone you see monthly, or on a changing schedule - add them once you're in. It takes a minute."
+        "If a client isn't in this list - someone you see monthly, or on a changing schedule - add them once you're in. It takes a minute."
       )
     ).toBeInTheDocument()
 
-    const occurrences = (container.textContent ?? "").split("kept nothing").length - 1
-    expect(occurrences).toBe(1)
+    // Pablo keeps the therapist's answers now, so "kept nothing" would be untrue.
+    expect(container.textContent ?? "").not.toMatch(/kept nothing/i)
   })
 
   it("never claims a category the heuristic can't verify", () => {
@@ -209,12 +215,123 @@ describe("CalendarReviewStep", () => {
     expect(text).not.toMatch(/personal/i)
   })
 
+  describe("which client each series is", () => {
+    const jane = { patient_id: "p-1", display_name: "Jane Adams", date_of_birth: "1980-01-02" }
+    const otherJane = { patient_id: "p-2", display_name: "Jane Adams", date_of_birth: null }
+
+    function rows() {
+      return [
+        series({
+          candidate_key: "certain",
+          summary: "Jane A weekly",
+          match: { patient: { ...jane }, possible: [], suggested_patient_id: null },
+        }),
+        series({
+          candidate_key: "possible",
+          summary: "Jane Adams",
+          match: { patient: null, possible: [jane, otherJane], suggested_patient_id: null },
+        }),
+        series({ candidate_key: "none", summary: "Robin Tran" }),
+      ]
+    }
+
+    it("names a certain match, offers a choice for a possible one, and a new client otherwise", () => {
+      render(
+        <CalendarReviewStep
+          {...baseProps()}
+          proposal={proposal(rows())}
+          clientFor={{ certain: "p-1", possible: null, none: null }}
+        />
+      )
+
+      expect(screen.getByText("Matches Jane Adams")).toBeInTheDocument()
+
+      const choice = screen.getByRole("combobox", { name: "Which client is Jane Adams?" })
+      expect(choice).toHaveValue("new")
+      expect(
+        Array.from((choice as HTMLSelectElement).options).map((option) => option.text)
+      ).toEqual(["Jane Adams, born 1/2/1980", "Jane Adams", "New client"])
+
+      expect(screen.getByText("New client", { selector: "span" })).toBeInTheDocument()
+      expect(screen.getAllByRole("combobox")).toHaveLength(1)
+    })
+
+    it("reports the client picked for a possible match, and New client as none", async () => {
+      const user = userEvent.setup()
+      const onChooseClient = vi.fn()
+      const onToggle = vi.fn()
+      render(
+        <CalendarReviewStep
+          {...baseProps()}
+          onToggle={onToggle}
+          onChooseClient={onChooseClient}
+          proposal={proposal(rows())}
+          clientFor={{ certain: "p-1", possible: "p-2", none: null }}
+        />
+      )
+
+      const choice = screen.getByRole("combobox", { name: "Which client is Jane Adams?" })
+      expect(choice).toHaveValue("p-2")
+      await user.selectOptions(choice, "p-1")
+      await user.selectOptions(choice, "new")
+
+      expect(onChooseClient.mock.calls).toEqual([
+        ["possible", "p-1"],
+        ["possible", null],
+      ])
+      // Choosing a client is not ticking or unticking the row.
+      expect(onToggle).not.toHaveBeenCalled()
+    })
+  })
+
+  describe("not a client", () => {
+    it("marks a row as not a client, and says it will be remembered", async () => {
+      const user = userEvent.setup()
+      const onToggleNotClient = vi.fn()
+      render(
+        <CalendarReviewStep
+          {...baseProps()}
+          onToggleNotClient={onToggleNotClient}
+          proposal={proposal([series({ candidate_key: "standup", summary: "Standup" })])}
+        />
+      )
+
+      await user.click(screen.getByRole("button", { name: "Not a client" }))
+      expect(onToggleNotClient).toHaveBeenCalledWith("standup")
+    })
+
+    it("shows a marked row as remembered, unticked, with a way back", async () => {
+      const user = userEvent.setup()
+      const onToggleNotClient = vi.fn()
+      render(
+        <CalendarReviewStep
+          {...baseProps()}
+          onToggleNotClient={onToggleNotClient}
+          checked={{ standup: true }}
+          notClient={{ standup: true }}
+          proposal={proposal([series({ candidate_key: "standup", summary: "Standup" })])}
+        />
+      )
+
+      expect(screen.getByText(/Not a client\. Pablo will remember\./)).toBeInTheDocument()
+      const box = screen.getByRole("checkbox", { name: "Standup" })
+      expect(box).not.toBeChecked()
+      expect(box).toBeDisabled()
+      // Nothing to add, but the answer still needs saving.
+      expect(screen.getByRole("button", { name: "Save" })).toBeEnabled()
+
+      await user.click(screen.getByRole("button", { name: "Undo" }))
+      expect(onToggleNotClient).toHaveBeenCalledWith("standup")
+    })
+  })
+
   it("after confirming, names what was imported and that read access ended", () => {
     const result: ConfirmImportResult = {
       confirmed: [{ candidate_key: "a", patient_id: "p-1", appointments_created: 4 }],
       patients_created: 1,
       appointments_created: 4,
       skipped: [],
+      already_scheduled: [],
     }
     render(<CalendarReviewStep {...baseProps()} proposal={proposal([series()])} result={result} />)
 
@@ -229,10 +346,34 @@ describe("CalendarReviewStep", () => {
       patients_created: 1,
       appointments_created: 0,
       skipped: ["a"],
+      already_scheduled: [],
     }
     render(<CalendarReviewStep {...baseProps()} proposal={proposal([series()])} result={result} />)
 
     expect(screen.getByText(/collided with something already booked/i)).toBeInTheDocument()
+  })
+
+  it("says, one line each, which series were already on the calendar", () => {
+    const result: ConfirmImportResult = {
+      confirmed: [],
+      patients_created: 0,
+      appointments_created: 0,
+      skipped: [],
+      already_scheduled: ["a"],
+    }
+    render(
+      <CalendarReviewStep
+        {...baseProps()}
+        proposal={proposal([
+          series({ candidate_key: "a", summary: "Jane Miller" }),
+          series({ candidate_key: "b", summary: "Sam Lee" }),
+        ])}
+        result={result}
+      />
+    )
+
+    expect(screen.getByText("Jane Miller is already on your calendar.")).toBeInTheDocument()
+    expect(screen.queryByText(/Sam Lee/)).not.toBeInTheDocument()
   })
 
   it("fires onFinish from the post-confirm summary", async () => {
@@ -243,6 +384,7 @@ describe("CalendarReviewStep", () => {
       patients_created: 1,
       appointments_created: 2,
       skipped: [],
+      already_scheduled: [],
     }
     render(
       <CalendarReviewStep
@@ -255,6 +397,40 @@ describe("CalendarReviewStep", () => {
 
     await user.click(screen.getByRole("button", { name: /go to my calendar/i }))
     expect(onFinish).toHaveBeenCalledOnce()
+  })
+
+  it("shows a colleague's client as seen by them, and can't add it", () => {
+    const theirs = series({
+      candidate_key: "theirs",
+      summary: "Grace Hopper",
+      preselected: false,
+      match: {
+        patient: null,
+        possible: [],
+        suggested_patient_id: null,
+        seen_by: ["Dr. Rivera", "Dr. Okafor"],
+      },
+    })
+    render(
+      <CalendarReviewStep
+        {...baseProps()}
+        proposal={proposal([theirs])}
+        checked={{ theirs: true }}
+      />
+    )
+
+    expect(
+      screen.getByText("Already a client of the practice, seen by Dr. Rivera and Dr. Okafor.")
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText("Ask Dr. Rivera, Dr. Okafor, or your practice owner for access.")
+    ).toBeInTheDocument()
+    const box = screen.getByRole("checkbox", { name: "Grace Hopper" })
+    expect(box).not.toBeChecked()
+    expect(box).toBeDisabled()
+    expect(screen.queryByRole("button", { name: "Not a client" })).not.toBeInTheDocument()
+    // Nothing to add, so nothing to confirm.
+    expect(screen.getByRole("button", { name: "Add 0 clients" })).toBeDisabled()
   })
 
   it("offers a way back to the week when jumped to before a scan", () => {

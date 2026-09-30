@@ -17,6 +17,8 @@ import {
   EVENT_MICRO_PX,
 } from "./EditorialEventCard"
 import { EditorialEventWrapper } from "./EditorialEventWrapper"
+import { OutsideSessionLayer } from "./OutsideSessionBlock"
+import type { OutsideSession } from "@/lib/api/outsideSessions"
 import { UnavailableLayer } from "./UnavailableLayer"
 import { assignLanes } from "./laneLayout"
 import { matchWholeDayBlockRule, rulesInForceForDate } from "./unavailability"
@@ -28,6 +30,9 @@ import {
   minutesSinceMidnight,
   weekDays,
 } from "./dateUtils"
+
+const NO_OUTSIDE_SESSIONS: OutsideSession[] = []
+function ignoreOutside() {}
 
 interface EditorialWeekViewProps {
   anchor: Date
@@ -53,6 +58,9 @@ interface EditorialWeekViewProps {
   dayEnd?: number
   /** Height of one hour row in px, from the active density preset. */
   rowHeightPx?: number
+  /** Events from the clinician's own calendar nobody has answered yet. */
+  outsideSessions?: OutsideSession[]
+  onOpenOutside?: (session: OutsideSession) => void
 }
 
 export function EditorialWeekView({
@@ -69,6 +77,8 @@ export function EditorialWeekView({
   dayStart = DAY_START_HOUR,
   dayEnd = DAY_END_HOUR,
   rowHeightPx = HOUR_ROW_PX,
+  outsideSessions = NO_OUTSIDE_SESSIONS,
+  onOpenOutside = ignoreOutside,
 }: EditorialWeekViewProps) {
   const days = useMemo(() => weekDays(anchor), [anchor])
   const hours = useMemo(() => gridHours(dayStart, dayEnd), [dayStart, dayEnd])
@@ -147,6 +157,8 @@ export function EditorialWeekView({
                 dayStart={dayStart}
                 dayEnd={dayEnd}
                 rowHeightPx={rowHeightPx}
+                outsideSessions={outsideSessions}
+                onOpenOutside={onOpenOutside}
               />
             ))}
             <NowLine days={days} dayStart={dayStart} dayEnd={dayEnd} rowHeightPx={rowHeightPx} />
@@ -260,6 +272,8 @@ function DayColumn({
   dayStart,
   dayEnd,
   rowHeightPx,
+  outsideSessions,
+  onOpenOutside,
 }: {
   day: Date
   /** 0-based index of this column within the visible 7-day week (used for
@@ -281,6 +295,8 @@ function DayColumn({
   dayStart: number
   dayEnd: number
   rowHeightPx: number
+  outsideSessions: OutsideSession[]
+  onOpenOutside: (session: OutsideSession) => void
 }) {
   const today = isToday(day)
   const totalHeight = rowHeightPx * (dayEnd - dayStart)
@@ -364,6 +380,13 @@ function DayColumn({
           </EditorialEventWrapper>
         )
       })}
+      <OutsideSessionLayer
+        day={day}
+        sessions={outsideSessions}
+        dayStart={dayStart}
+        rowHeightPx={rowHeightPx}
+        onOpen={onOpenOutside}
+      />
     </div>
   )
 }

@@ -987,3 +987,33 @@ describe("AppointmentModal — booking past an availability rule", () => {
     expect(mockCreate.mock.calls[0][0]).toMatchObject({ rule_override: false })
   })
 })
+
+describe("AppointmentModal — an appointment that follows the clinician's own calendar", () => {
+  const followed = {
+    ...baseAppointment,
+    outside_source: "google_calendar",
+    outside_event_id: "ev1",
+  }
+
+  afterEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it("locks the time, says why, and leaves the time out of the save", async () => {
+    const user = userEvent.setup()
+    render(<AppointmentModal open onClose={vi.fn()} appointment={followed} />, {
+      wrapper: createWrapper(),
+    })
+
+    expect(screen.getByLabelText("Date")).toBeDisabled()
+    expect(screen.getByLabelText("Time")).toBeDisabled()
+    expect(screen.getByText("The time follows your Google Calendar.")).toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: "Save changes" }))
+    expect(mockUpdate).toHaveBeenCalledTimes(1)
+    const data = mockUpdate.mock.calls[0][0].data
+    expect(data).not.toHaveProperty("start_at")
+    expect(data).not.toHaveProperty("end_at")
+    expect(data).not.toHaveProperty("duration_minutes")
+  })
+})

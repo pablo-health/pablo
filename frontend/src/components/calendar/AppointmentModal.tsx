@@ -401,6 +401,9 @@ function AppointmentForm({
 
   const isEditing = !!appointment
   const isRecurring = !!appointment?.recurring_appointment_id
+  // Brought in from the clinician's own calendar: its time is whatever that
+  // event says, so it is not edited here.
+  const followsOutside = !!appointment?.outside_event_id
   const [scope, setScope] = useState<SeriesScope>("this")
 
   const defaultDuration =
@@ -561,11 +564,16 @@ function AppointmentForm({
       // An empty object clears inputs left over from the appointment's
       // previous note type; omitted when there is nothing to set or clear.
       const hadInputs = Object.keys(appointment.note_inputs ?? {}).length > 0
+      // A followed appointment's time comes from its calendar event, so the
+      // update leaves it out rather than sending it back unchanged.
+      const { start_at, end_at, duration_minutes, ...untimed } = payload
+      const timing = followsOutside ? {} : { start_at, end_at, duration_minutes }
       updateMutation.mutate(
         {
           appointmentId: appointment.id,
           data: {
-            ...payload,
+            ...untimed,
+            ...timing,
             ...(declaredInputs.length > 0 || hadInputs
               ? { note_inputs: filledNoteInputs }
               : {}),
@@ -742,6 +750,7 @@ function AppointmentForm({
             <input
               type="date"
               aria-label="Date"
+              disabled={followsOutside}
               value={dateStr}
               onChange={(e) => setDateStr(e.target.value)}
               className={`${FIELD_CLASS} flex-[1.4]`}
@@ -751,12 +760,20 @@ function AppointmentForm({
               type="time"
               aria-label="Time"
               step={900}
+              disabled={followsOutside}
               value={timeStr}
               onChange={(e) => setTimeStr(e.target.value)}
               className={`${FIELD_CLASS} flex-1`}
               style={fieldStyle()}
             />
           </div>
+          {followsOutside && (
+            <p className="mt-1.5 text-[12.5px]" style={{ color: "var(--ed-ink-soft)" }}>
+              {appointment?.outside_source === "google_calendar"
+                ? "The time follows your Google Calendar."
+                : "The time follows the calendar this came from."}
+            </p>
+          )}
           {!isEditing && (
             <AvailabilitySlotPicker
               date={dateStr}
@@ -768,7 +785,7 @@ function AppointmentForm({
         </div>
 
         {/* Length — quick-pick chips */}
-        <div>
+        <div hidden={followsOutside}>
           <FieldLabel>Length</FieldLabel>
           <div className="flex flex-wrap gap-[7px]">
             {lengths.map((m) => {

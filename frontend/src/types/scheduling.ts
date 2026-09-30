@@ -44,9 +44,22 @@ export interface AppointmentResponse {
   is_exception: boolean
   google_event_id: string | null
   google_sync_status: string | null
+  /**
+   * Set on an appointment brought in from the clinician's own calendar: where
+   * it came from (`google_calendar`, `ical:<feed>`) and that event's id. Its
+   * time follows that event, so Pablo doesn't move it. Optional so cached
+   * payloads from older servers still typecheck.
+   */
+  outside_source?: string | null
+  outside_event_id?: string | null
   session_id: string | null
   created_at: string
   updated_at: string | null
+}
+
+/** Whether an appointment's time follows an event on another calendar. */
+export function followsOutsideEvent(appointment: AppointmentResponse): boolean {
+  return Boolean(appointment.outside_event_id)
 }
 
 /**

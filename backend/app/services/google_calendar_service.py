@@ -44,6 +44,7 @@ from ..calendar_providers.pkce_store import remember_verifier, take_verifier
 from ..calendar_providers.practice_import import (
     DEFAULT_HORIZON_DAYS,
     DEFAULT_LOOKBACK_DAYS,
+    MAX_HORIZON_DAYS,
     build_proposal,
 )
 from ..calendar_providers.provider import BusyWindow, ConsentSurface, ImportCandidate
@@ -241,6 +242,10 @@ _SYNC_PAGE_SIZE = 250
 # account's own calendar, which is what the IMPORT grant reaches.
 _IMPORT_CALENDAR_ID = "primary"
 
+#: What following "the main calendar" stores until a read resolves it to the
+#: calendar's real id. Google accepts it as an id on every call.
+FOLLOW_MAIN_CALENDAR = "primary"
+
 # The private property every event Pablo writes carries, naming the
 # appointment behind it.
 _PABLO_APPOINTMENT_KEY = "pablo_appointment_id"
@@ -269,9 +274,13 @@ class RetitleOutcome(NamedTuple):
 class _EventPage(NamedTuple):
     """The result of walking every page of one events().list call."""
 
-    changes: list[dict[str, Any]]
+    events: list[dict[str, Any]]
     next_sync_token: str | None
     page_count: int
+
+    @property
+    def changes(self) -> list[dict[str, Any]]:
+        return [_event_to_change(event) for event in self.events]
 
 
 def _http_status(exc: Exception) -> int | None:
@@ -301,6 +310,67 @@ def _event_to_change(event: dict[str, Any]) -> dict[str, Any]:
         "end": event.get("end", {}),
         "status": event.get("status", ""),
     }
+
+
+def _is_pablos_own(event: Mapping[str, Any]) -> bool:
+    private = (event.get("extendedProperties") or {}).get("private") or {}
+    return bool(private.get(_PABLO_APPOINTMENT_KEY))
+
+
+def _declined(event: Mapping[str, Any]) -> bool:
+    """Whether the calendar's owner said no to this event."""
+    return any(
+        attendee.get("self") and attendee.get("responseStatus") == "declined"
+        for attendee in event.get("attendees") or []
+    )
+
+
+def _main_calendar_change(event: dict[str, Any]) -> dict[str, Any] | None:
+    """A change on the clinician's own calendar, for following outside sessions.
+
+    None for an event Pablo wrote itself (followed as Pablo's own) and for an
+    all-day event, which is never a session. A declined event reads as gone:
+    the clinician is not going. A deletion carries no times or properties, so
+    it passes as a deletion and whoever holds its id decides what it was.
+    """
+    if _is_pablos_own(event):
+        return None
+    change = _event_to_change(event)
+    change["series_id"] = event.get("recurringEventId")
+    if change["status"] == "cancelled":
+        return change
+    if _declined(event):
+        change["status"] = "cancelled"
+        return change
+    if parse_event_time(change["start"]) is None or parse_event_time(change["end"]) is None:
+        return None
+    return change
+
+
+class MainCalendarRead(NamedTuple):
+    """One read of the calendar the clinician follows."""
+
+    changes: list[dict[str, Any]]
+    full: bool
+    """Read from scratch rather than resumed. A full read holds every event
+    in its ``window``, so anything in that window missing from it is gone —
+    and deletions from before it are never reported on their own."""
+    window: tuple[datetime, datetime] | None = None
+    """What a full read covered: ``[start, end)``. Nothing outside it can be
+    judged from the read."""
+    calendar_id: str | None = None
+    """The calendar read, by its real id. Only its own rows and sessions can
+    be judged from the read."""
+    main_calendar_id: str | None = None
+    """The main calendar's real id, when this read learned it."""
+
+
+class ReadableCalendar(NamedTuple):
+    """A calendar the connection can read, offered to be followed."""
+
+    id: str
+    name: str
+    primary: bool
 
 
 class CalendarScopeNotGrantedError(Exception):
@@ -355,22 +425,40 @@ def _exchange_code(flow: Any, code: str, requested_scopes: Sequence[str]) -> Non
         raise CalendarScopeNotGrantedError("Google did not grant: " + ", ".join(sorted(missing)))
 
 
+_GOOGLE_AUTH_URI = "https://accounts.google.com/o/oauth2/auth"
+_GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"  # noqa: S105 — an endpoint, not a secret
+
+# Where a stand-in (``ConsentSurface.base_url``) answers each of Google's
+# three hosts. The paths are Google's own, so one origin can serve all three.
+_STAND_IN_AUTH_PATH = "/o/oauth2/auth"
+_STAND_IN_TOKEN_PATH = "/token"  # noqa: S105 — an endpoint, not a secret
+_STAND_IN_API_PATH = "/calendar/v3/"
+
+
 def _build_flow(
     client_id: str,
     client_secret: str,
     redirect_uri: str,
     scopes: Sequence[str],
+    *,
+    base_url: str | None = None,
 ) -> Any:
-    """Lazily import and construct a google_auth_oauthlib Flow."""
+    """Lazily import and construct a google_auth_oauthlib Flow.
+
+    ``base_url`` points both OAuth endpoints at a stand-in for Google; the
+    token URI it hands out is stored with the tokens, so refreshes go there
+    too.
+    """
     from google_auth_oauthlib.flow import Flow
 
+    origin = base_url.rstrip("/") if base_url else None
     return Flow.from_client_config(
         {
             "web": {
                 "client_id": client_id,
                 "client_secret": client_secret,
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
+                "auth_uri": f"{origin}{_STAND_IN_AUTH_PATH}" if origin else _GOOGLE_AUTH_URI,
+                "token_uri": f"{origin}{_STAND_IN_TOKEN_PATH}" if origin else _GOOGLE_TOKEN_URI,
             }
         },
         scopes=list(scopes),
@@ -378,11 +466,20 @@ def _build_flow(
     )
 
 
-def _build_calendar_service(credentials: Any) -> Any:
-    """Lazily import and build a Google Calendar API service."""
+def _build_calendar_service(credentials: Any, *, base_url: str | None = None) -> Any:
+    """Lazily import and build a Google Calendar API service.
+
+    The client is built from the discovery document the library ships, so
+    nothing is fetched to construct it. ``base_url`` replaces where every
+    call then goes — the library's own seam for that, ``api_endpoint`` — so
+    a stand-in is reached by the same request code as Google is.
+    """
     from googleapiclient.discovery import build  # type: ignore[import-untyped,import-not-found]
 
-    return build("calendar", "v3", credentials=credentials)
+    client_options = (
+        {"api_endpoint": f"{base_url.rstrip('/')}{_STAND_IN_API_PATH}"} if base_url else None
+    )
+    return build("calendar", "v3", credentials=credentials, client_options=client_options)
 
 
 def _make_credentials(
@@ -634,6 +731,7 @@ class GoogleCalendarService:
             self._surface.client_secret,
             redirect_uri,
             scopes_for(declarations, requested),
+            base_url=self._surface.base_url,
         )
         # A request made entirely of capabilities the provider declares
         # incremental is one asked for later, alongside grants already held —
@@ -688,6 +786,7 @@ class GoogleCalendarService:
             self._surface.client_secret,
             redirect_uri,
             scopes,
+            base_url=self._surface.base_url,
         )
         flow.code_verifier = verifier
         _exchange_code(flow, code, scopes)
@@ -756,7 +855,7 @@ class GoogleCalendarService:
             appointment,
             self._summary_for(user_id, appointment, self._effective_style(token_doc)),
         )
-        service = _build_calendar_service(credentials)
+        service = self._calendar(credentials)
 
         if appointment.google_event_id:
             event = (
@@ -797,7 +896,7 @@ class GoogleCalendarService:
         if not token_doc or not token_doc.calendar_id:
             return False
 
-        service = _build_calendar_service(credentials)
+        service = self._calendar(credentials)
         try:
             service.events().delete(
                 calendarId=token_doc.calendar_id,
@@ -823,7 +922,7 @@ class GoogleCalendarService:
         if not token_doc or not token_doc.calendar_id:
             return []
 
-        service = _build_calendar_service(credentials)
+        service = self._calendar(credentials)
 
         try:
             try:
@@ -847,7 +946,7 @@ class GoogleCalendarService:
 
             logger.info(
                 "Synced %d changes from Google Calendar over %d page(s)",
-                len(page.changes),
+                len(page.events),
                 page.page_count,
             )
         except Exception as exc:
@@ -884,19 +983,24 @@ class GoogleCalendarService:
         logger.info("Recreated the Pablo-owned Google calendar after it was deleted")
         return True
 
-    def read_event_times(self, user_id: str, event_id: str) -> tuple[datetime, datetime] | None:
-        """Where Google has one of Pablo's events now, or None if it can't say.
+    def read_event_times(
+        self, user_id: str, event_id: str, *, followed_calendar: str | None = None
+    ) -> tuple[datetime, datetime] | None:
+        """Where Google has an event now, or None if it can't say.
 
-        None covers an event that is gone, an all-day event, and a connection
-        that is not there any more — none of them is a time to move to.
+        One of Pablo's own by default; ``followed_calendar`` reads a followed
+        session on that calendar instead. None covers an event that is gone,
+        an all-day event, and a connection that is not there any more — none
+        of them is a time to move to.
         """
         credentials = self._get_credentials(user_id)
         token_doc = self._token_repo.get(user_id)
         if not credentials or not token_doc or not token_doc.calendar_id:
             return None
-        service = _build_calendar_service(credentials)
+        calendar_id = followed_calendar or token_doc.calendar_id
+        service = self._calendar(credentials)
         try:
-            event = _read_event(service, token_doc.calendar_id, event_id)
+            event = _read_event(service, calendar_id, event_id)
         except Exception:
             logger.warning("Could not read a Google Calendar event")
             return None
@@ -908,18 +1012,162 @@ class GoogleCalendarService:
             return None
         return start, end
 
+    def can_read_events(self, user_id: str) -> bool:
+        """Whether the connection holds the grant to read event content."""
+        token_doc = self._token_repo.get(user_id)
+        granted = token_doc.granted_capabilities if token_doc else ""
+        return CalendarCapability.IMPORT.value in _split_capabilities(granted)
+
+    def list_readable_calendars(self, user_id: str) -> list[ReadableCalendar]:
+        """The calendars this connection can read, the main one first.
+
+        Needs the grant to read events (``calendar.readonly``, which covers
+        the calendar list); without it there is nothing to offer.
+        """
+        if not self.can_read_events(user_id):
+            return []
+        credentials = self._get_credentials(user_id)
+        if not credentials:
+            return []
+        service = self._calendar(credentials)
+        found: list[ReadableCalendar] = []
+        page_token: str | None = None
+        while True:
+            kwargs: dict[str, Any] = {"minAccessRole": "reader"}
+            if page_token:
+                kwargs["pageToken"] = page_token
+            request = service.calendarList().list(**kwargs)
+            page: dict[str, Any] = _with_calendar_retry(request.execute)
+            for item in page.get("items", []):
+                calendar_id = str(item.get("id") or "")
+                if not calendar_id or item.get("deleted"):
+                    continue
+                found.append(
+                    ReadableCalendar(
+                        id=calendar_id,
+                        name=str(item.get("summaryOverride") or item.get("summary") or ""),
+                        primary=bool(item.get("primary")),
+                    )
+                )
+            page_token = page.get("nextPageToken")
+            if not page_token:
+                break
+        return sorted(found, key=lambda c: (not c.primary, c.name.lower()))
+
+    def set_followed_calendar(
+        self, user_id: str, calendar_id: str | None, *, main_calendar: bool = False
+    ) -> bool:
+        """Follow this calendar, or none. Returns whether that changed anything.
+
+        Choosing another calendar starts its read over, from now: whatever an
+        earlier stretch of following left behind is not replayed. The caller
+        checks the id is one the connection can read, and says whether it is
+        the main calendar.
+        """
+        token_doc = self._token_repo.get(user_id)
+        current = token_doc.follow_calendar_id if token_doc else None
+        if calendar_id == current:
+            return False
+        if calendar_id is not None:
+            self._token_repo.update_main_calendar_sync_token(user_id, None)
+        self._token_repo.set_followed_calendar(
+            user_id, calendar_id, main_calendar=main_calendar or calendar_id == FOLLOW_MAIN_CALENDAR
+        )
+        return True
+
+    def remember_followed_calendar_id(self, user_id: str, calendar_id: str) -> None:
+        """Store the main calendar's real id in place of ``primary``; the read carries on."""
+        self._token_repo.resolve_followed_main_calendar(user_id, calendar_id)
+
+    def read_main_calendar_changes(self, user_id: str) -> MainCalendarRead:
+        """What changed on the followed calendar since the last read.
+
+        Read only — nothing here writes to that calendar. Resumes from its own
+        sync token, separate from the one of the calendar Pablo writes to, and
+        leaves out Pablo's own events and all-day events. Needs the grant to
+        read event content; without it, or with nothing followed, there is
+        nothing to read.
+
+        A followed ``primary`` is resolved to the main calendar's real id and
+        stored, keeping its sync token: it is the same calendar.
+
+        Without a token (the first read, or Google aged the token out) the
+        read starts over from now, and says so: see ``MainCalendarRead.full``.
+        """
+        nothing = MainCalendarRead([], full=False)
+        if not self.can_read_events(user_id):
+            return nothing
+        credentials = self._get_credentials(user_id)
+        token_doc = self._token_repo.get(user_id)
+        if not credentials or not token_doc or not token_doc.follow_calendar_id:
+            return nothing
+        service = self._calendar(credentials)
+        calendar_id = token_doc.follow_calendar_id
+        main_calendar_id = None
+        if calendar_id == FOLLOW_MAIN_CALENDAR:
+            resolved: dict[str, Any] = _with_calendar_retry(
+                lambda: service.calendarList().get(calendarId=FOLLOW_MAIN_CALENDAR).execute()
+            )
+            calendar_id = main_calendar_id = str(resolved.get("id") or FOLLOW_MAIN_CALENDAR)
+            if calendar_id != FOLLOW_MAIN_CALENDAR and not (
+                self._token_repo.resolve_followed_main_calendar(user_id, calendar_id)
+            ):
+                # Another calendar was chosen while this read was starting;
+                # the next read follows that one.
+                return nothing
+        full = token_doc.main_calendar_sync_token is None
+        # Bounded like an import scan: past it, Google's expansion of a
+        # repeating event may stop, and a missing instance proves nothing.
+        start = _now()
+        window = (start, start + timedelta(days=MAX_HORIZON_DAYS))
+        try:
+            page = self._list_all_events(
+                service,
+                calendar_id,
+                sync_token=token_doc.main_calendar_sync_token,
+                window=window,
+            )
+        except Exception as exc:
+            if not _is_expired_sync_token(exc):
+                raise
+            logger.info("Followed calendar sync token expired; re-reading from a fresh window")
+            self._token_repo.update_main_calendar_sync_token(user_id, None)
+            page = self._list_all_events(service, calendar_id, sync_token=None, window=window)
+            full = True
+        if page.next_sync_token:
+            self._token_repo.update_main_calendar_sync_token(user_id, page.next_sync_token)
+        changes = [
+            change
+            for change in (_main_calendar_change(event) for event in page.events)
+            if change is not None
+        ]
+        # HIPAA: counts only.
+        logger.info(
+            "Read %d followed calendar changes over %d page(s)", len(changes), page.page_count
+        )
+        return MainCalendarRead(
+            changes,
+            full=full,
+            window=window if full else None,
+            calendar_id=calendar_id,
+            main_calendar_id=main_calendar_id,
+        )
+
     @staticmethod
     def _list_all_events(
         service: Any,
         calendar_id: str,
         *,
         sync_token: str | None,
+        window: tuple[datetime, datetime] | None = None,
     ) -> _EventPage:
         """Walk every page of events().list, collecting changes and the sync token.
 
         Google splits large result sets across pages and only returns
         nextSyncToken on the final one, so reading a single page both drops
         changes and leaves the next poll with nothing to resume from.
+
+        ``window`` bounds a read without a token; a resumed read takes none.
         """
         kwargs: dict[str, Any] = {
             "calendarId": calendar_id,
@@ -928,20 +1176,23 @@ class GoogleCalendarService:
         }
         if sync_token:
             kwargs["syncToken"] = sync_token
+        elif window is not None:
+            kwargs["timeMin"] = window[0].isoformat()
+            kwargs["timeMax"] = window[1].isoformat()
         else:
             # First sync: only get future events
             kwargs["timeMin"] = utc_now_iso()
 
-        changes: list[dict[str, Any]] = []
+        events: list[dict[str, Any]] = []
         page_count = 0
         while True:
             result = service.events().list(**kwargs).execute()
             page_count += 1
-            changes.extend(_event_to_change(event) for event in result.get("items", []))
+            events.extend(result.get("items", []))
 
             page_token = result.get("nextPageToken")
             if not page_token:
-                return _EventPage(changes, result.get("nextSyncToken"), page_count)
+                return _EventPage(events, result.get("nextSyncToken"), page_count)
             kwargs["pageToken"] = page_token
 
     def disconnect(self, user_id: str) -> bool:
@@ -969,6 +1220,8 @@ class GoogleCalendarService:
                 "busy": None,
                 "event_titling": None,
                 "titling_needs_attestation": False,
+                "follow_calendar_id": None,
+                "import_granted": False,
             }
         return {
             "connected": True,
@@ -988,6 +1241,9 @@ class GoogleCalendarService:
             in _split_capabilities(token_doc.granted_capabilities),
             "event_titling": self._effective_style(token_doc).value,
             "titling_needs_attestation": self._needs_reattestation(token_doc),
+            "follow_calendar_id": token_doc.follow_calendar_id,
+            "import_granted": CalendarCapability.IMPORT.value
+            in _split_capabilities(token_doc.granted_capabilities),
         }
 
     def list_busy_windows(
@@ -1012,7 +1268,7 @@ class GoogleCalendarService:
         if not credentials:
             return []
 
-        service = _build_calendar_service(credentials)
+        service = self._calendar(credentials)
         body = {
             "timeMin": start.isoformat(),
             "timeMax": end.isoformat(),
@@ -1078,7 +1334,7 @@ class GoogleCalendarService:
         if not credentials:
             return [], False
 
-        service = _build_calendar_service(credentials)
+        service = self._calendar(credentials)
         kwargs: dict[str, Any] = {
             "calendarId": _IMPORT_CALENDAR_ID,
             "singleEvents": True,
@@ -1133,7 +1389,7 @@ class GoogleCalendarService:
         if not credentials:
             return {}
 
-        service = _build_calendar_service(credentials)
+        service = self._calendar(credentials)
         rules: dict[str, list[str]] = {}
         for series_id in series_ids:
             try:
@@ -1331,7 +1587,7 @@ class GoogleCalendarService:
         capped = len(upcoming) > _RETITLE_MAX_EVENTS
         upcoming = upcoming[:_RETITLE_MAX_EVENTS]
 
-        service = _build_calendar_service(credentials)
+        service = self._calendar(credentials)
         retitled = 0
         failed = 0
         for appointment in upcoming:
@@ -1358,6 +1614,10 @@ class GoogleCalendarService:
         return RetitleOutcome(
             retitled=retitled, failed=failed, skipped=len(upcoming) if capped else 0
         )
+
+    def _calendar(self, credentials: Credentials) -> Any:
+        """A Calendar API client for these credentials, at wherever this surface points."""
+        return _build_calendar_service(credentials, base_url=self._surface.base_url)
 
     def _get_credentials(self, user_id: str) -> Credentials | None:
         """Load and refresh OAuth credentials for a user."""
@@ -1412,7 +1672,7 @@ class GoogleCalendarService:
         primary calendar. ``"primary"`` is itself a valid id for every call
         Pablo makes, so it stands in when no name comes back.
         """
-        service = _build_calendar_service(credentials)
+        service = self._calendar(credentials)
         listing = (
             service.events().list(calendarId="primary", maxResults=1, fields="summary").execute()
         )
@@ -1464,7 +1724,7 @@ class GoogleCalendarService:
         direction leaves a stray calendar; being wrong in the other silently
         points a connection at somebody else's.
         """
-        service = _build_calendar_service(credentials)
+        service = self._calendar(credentials)
 
         remembered = self._token_repo.get_app_calendar_id(user_id)
         if remembered:
@@ -1552,12 +1812,19 @@ def google_consent_surface(settings: Settings) -> ConsentSurface:
 
     Calendar has its own settings keys, and so its own OAuth client: which
     client a surface uses stays a deployment choice.
+
+    A stand-in for Google (``google_calendar_base_url``) is honoured only in
+    a development environment. Anywhere else the setting is ignored rather
+    than refused, so a deployment that carries it by mistake still talks to
+    Google and never sends a clinician's calendar to whatever else answers
+    at that address.
     """
     return ConsentSurface(
         provider_id=GOOGLE_PROVIDER_ID,
         client_id=settings.google_calendar_client_id,
         client_secret=settings.google_calendar_client_secret.get_secret_value(),
         allowed_capabilities=frozenset(GOOGLE_CAPABILITIES),
+        base_url=settings.google_calendar_base_url if settings.is_development else None,
     )
 
 

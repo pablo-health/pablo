@@ -5,6 +5,7 @@
 import { Fragment, useSyncExternalStore } from "react"
 import { Check, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { SetupStepHead } from "@/components/setup"
 import type { BusyWindowsGranted, BusyWindowsNotGranted, ImportProposal } from "@/lib/api/scheduling"
 import { busyWindowsGranted } from "@/lib/api/scheduling"
@@ -52,6 +53,12 @@ interface CalendarClientsStepProps {
   error: string | null
   onScan: () => void
   onSkip: () => void
+  /** New sessions keep coming in from this calendar. Offered once the week
+   * has been read, since it needs the same access. */
+  following?: boolean
+  onFollowingChange?: (enabled: boolean) => void
+  followSaving?: boolean
+  followError?: string | null
 }
 
 export function CalendarClientsStep({
@@ -61,6 +68,10 @@ export function CalendarClientsStep({
   error,
   onScan,
   onSkip,
+  following = false,
+  onFollowingChange,
+  followSaving = false,
+  followError = null,
 }: CalendarClientsStepProps) {
   const reducedMotion = usePrefersReducedMotion()
   const scanned = proposal !== null
@@ -195,7 +206,29 @@ export function CalendarClientsStep({
             pattern. Next: you decide which ones are clients.
           </span>
         </div>
-      ) : (
+      ) : null}
+
+      {scanned && onFollowingChange ? (
+        <div className="flex items-start gap-2.5 rounded-lg border border-border p-3">
+          <Checkbox
+            id="follow-main-calendar"
+            checked={following}
+            disabled={followSaving}
+            onCheckedChange={(value) => onFollowingChange(value === true)}
+          />
+          <label htmlFor="follow-main-calendar" className="cursor-pointer text-sm">
+            <span className="block font-medium text-neutral-900">
+              Keep bringing in new sessions from this calendar
+            </span>
+            <span className="block text-xs text-muted-foreground">
+              Pablo asks who each new client is, once.
+            </span>
+          </label>
+        </div>
+      ) : null}
+      {followError ? <p className="text-sm text-red-600">{followError}</p> : null}
+
+      {scanned ? null : (
         <div className="flex items-center gap-2 border-t border-border pt-4">
           <Button variant="ghost" size="sm" onClick={onSkip} disabled={scanning}>
             Skip, I&rsquo;ll add them myself

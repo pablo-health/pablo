@@ -13,13 +13,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import TYPE_CHECKING
 
 from .repositories import (
     get_appointment_repository,
+    get_external_calendar_event_repository,
     get_google_calendar_token_repository,
-    get_ical_client_mapping_repository,
     get_ical_sync_config_repository,
     get_patient_repository,
+    get_patient_source_mapping_repository,
     get_user_repository,
 )
 from .services.google_calendar_service import (
@@ -30,6 +32,11 @@ from .services.ical_sync_service import ICalSyncService
 from .services.reminder_service import ReminderService
 from .services.sync_scheduler_service import SyncSchedulerService, _is_within_working_hours
 from .settings import get_settings
+
+if TYPE_CHECKING:
+    from .repositories.google_calendar_token import GoogleCalendarTokenRepository
+    from .repositories.ical_sync_config import ICalSyncConfigRepository
+    from .repositories.user import UserRepository
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +53,44 @@ async def calendar_sync_loop() -> None:
             logger.exception("Background calendar sync loop error")
 
 
+def build_sync_scheduler(
+    *,
+    ical_config_repo: ICalSyncConfigRepository | None = None,
+    google_token_repo: GoogleCalendarTokenRepository | None = None,
+    user_repo: UserRepository | None = None,
+) -> SyncSchedulerService:
+    """The scheduler wired to this deployment's repositories and providers.
+
+    One construction, shared by the loop below and by the route that runs
+    the same pass for one account on request, so the two cannot drift. The
+    loop hands in the repositories it reads on its own; the route takes the
+    defaults.
+    """
+    ical_config_repo = ical_config_repo or get_ical_sync_config_repository()
+    google_token_repo = google_token_repo or get_google_calendar_token_repository()
+    appointment_repo = get_appointment_repository()
+
+    return SyncSchedulerService(
+        ical_config_repo=ical_config_repo,
+        google_token_repo=google_token_repo,
+        user_repo=user_repo or get_user_repository(),
+        ical_sync_service=ICalSyncService(
+            config_repo=ical_config_repo,
+            appointment_repo=appointment_repo,
+            patient_repo=get_patient_repository(),
+            mapping_repo=get_patient_source_mapping_repository(),
+            external_events=get_external_calendar_event_repository(),
+        ),
+        google_calendar_service=GoogleCalendarService.from_surface(
+            google_consent_surface(get_settings()),
+            token_repo=google_token_repo,
+            appointment_repo=appointment_repo,
+        ),
+        reminder_service=ReminderService(appointment_repo),
+        appointment_repo=appointment_repo,
+    )
+
+
 def _run_sync_cycle() -> None:
     """Execute one sync cycle for all eligible users."""
     settings = get_settings()
@@ -53,25 +98,10 @@ def _run_sync_cycle() -> None:
     ical_config_repo = get_ical_sync_config_repository()
     google_token_repo = get_google_calendar_token_repository()
     user_repo = get_user_repository()
-    appointment_repo = get_appointment_repository()
-
-    service = SyncSchedulerService(
+    service = build_sync_scheduler(
         ical_config_repo=ical_config_repo,
         google_token_repo=google_token_repo,
         user_repo=user_repo,
-        ical_sync_service=ICalSyncService(
-            config_repo=ical_config_repo,
-            appointment_repo=appointment_repo,
-            patient_repo=get_patient_repository(),
-            mapping_repo=get_ical_client_mapping_repository(),
-        ),
-        google_calendar_service=GoogleCalendarService.from_surface(
-            google_consent_surface(settings),
-            token_repo=google_token_repo,
-            appointment_repo=appointment_repo,
-        ),
-        reminder_service=ReminderService(appointment_repo),
-        appointment_repo=appointment_repo,
     )
 
     configs = ical_config_repo.list_all()

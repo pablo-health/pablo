@@ -36,7 +36,7 @@ added to it that becomes one.
 Carrying the floors in the prompt is also not the same as enforcing them.
 Exposure to a real patient gates on the always-on crisis floor shipping
 independently of this text; see the deployment notes on
-``settings.enable_patient_chat``.
+``settings.enable_patient_portal_chat``.
 """
 
 from __future__ import annotations

@@ -274,9 +274,9 @@ class DocumentAiOcrClient:
 
 
 def _count_pdf_pages(pdf_bytes: bytes) -> int:
-    import fitz  # type: ignore[import-untyped]
+    import pymupdf
 
-    with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+    with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
         return int(doc.page_count)
 
 

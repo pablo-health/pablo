@@ -258,10 +258,10 @@ def _extract_pdf_text(data: bytes) -> str:
     Raises :class:`DocumentTextExtractionError` for a scanned / image-only
     PDF (text below :data:`_SCANNED_PDF_TEXT_THRESHOLD`).
     """
-    import fitz  # type: ignore[import-untyped]  # PyMuPDF, imported lazily
+    import pymupdf  # imported lazily
 
     try:
-        with fitz.open(stream=data, filetype="pdf") as doc:
+        with pymupdf.open(stream=data, filetype="pdf") as doc:
             body = "".join(page.get_text() for page in doc).strip()
     except Exception as exc:
         # MuPDF raises a range of errors on corrupt / encrypted / non-PDF
