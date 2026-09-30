@@ -4,10 +4,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any, Literal
+from datetime import date, datetime
+from typing import Annotated, Any, Literal, Self
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # Runtime import: Pydantic resolves this annotation at runtime for validation,
 # so it cannot live in a TYPE_CHECKING block.
@@ -637,6 +637,32 @@ class GoogleCalendarConsentOptionsResponse(BaseModel):
 # --- Calendar practice-import models ---
 
 
+class ImportPatientChoice(BaseModel):
+    """An existing patient a series may belong to."""
+
+    patient_id: str
+    display_name: str
+    date_of_birth: date | None = None
+
+
+class SeriesMatchResponse(BaseModel):
+    """Which existing patient a proposed series is, as far as Pablo can tell.
+
+    ``patient`` is set only when the match is certain on more than a name.
+    Otherwise ``possible`` lists the patients it could be, for the therapist
+    to choose between — with ``suggested_patient_id`` preselected when a name
+    alone pointed at one of them. Both empty means nobody matched and the
+    series is a new client.
+    """
+
+    patient: ImportPatientChoice | None = None
+    possible: list[ImportPatientChoice] = Field(default_factory=list)
+    suggested_patient_id: str | None = Field(
+        default=None,
+        description="One of ``possible`` to preselect: it matched on name alone",
+    )
+
+
 class ProposedSeriesResponse(BaseModel):
     """One candidate client series a scan found.
 
@@ -646,6 +672,10 @@ class ProposedSeriesResponse(BaseModel):
 
     candidate_key: str
     summary: str
+    source_identifier: str = Field(
+        description="How a confirmed series is remembered. Hand it back on confirm"
+    )
+    match: SeriesMatchResponse
     weekday: int = Field(description="Monday is 0, matching Python's weekday()")
     local_start_time: str = Field(description="HH:MM in the calendar's timezone")
     duration_minutes: int
@@ -690,6 +720,11 @@ class ImportConsentRequiredResponse(BaseModel):
     auth_url: str
 
 
+#: A provider's series id can run to 1024 characters; this leaves room for
+#: its prefix. The column is unbounded text; this only bounds a request.
+MAX_SOURCE_IDENTIFIER = 2048
+
+
 class ConfirmImportSeries(BaseModel):
     """One series a therapist chose to import.
 
@@ -699,6 +734,14 @@ class ConfirmImportSeries(BaseModel):
 
     candidate_key: str = Field(min_length=1, max_length=64)
     display_name: str = Field(min_length=1, max_length=255)
+    patient_id: str | None = Field(
+        default=None, description="An existing patient this series belongs to; none creates one"
+    )
+    source_identifier: str | None = Field(
+        default=None,
+        max_length=MAX_SOURCE_IDENTIFIER,
+        description="The scan's source_identifier for this series",
+    )
     start_at: datetime = Field(description="First occurrence to create — must be in the future")
     duration_minutes: int = Field(ge=5, le=480)
     cadence: str = Field(description="weekly, biweekly, or monthly")
@@ -707,9 +750,23 @@ class ConfirmImportSeries(BaseModel):
 
 
 class ConfirmImportRequest(BaseModel):
-    """The subset of a proposal to turn into patients and appointments."""
+    """The subset of a proposal to turn into patients and appointments.
 
-    series: list[ConfirmImportSeries] = Field(min_length=1, max_length=200)
+    ``not_clients`` carries the ``source_identifier`` of each series marked
+    as not a client, to be remembered so it is not proposed again.
+    """
+
+    series: list[ConfirmImportSeries] = Field(default_factory=list, max_length=200)
+    not_clients: list[Annotated[str, Field(min_length=1, max_length=MAX_SOURCE_IDENTIFIER)]] = (
+        Field(default_factory=list, max_length=200)
+    )
+
+    @model_validator(mode="after")
+    def _something_to_confirm(self) -> Self:
+        if not self.series and not self.not_clients:
+            msg = "Confirm at least one series"
+            raise ValueError(msg)
+        return self
 
 
 class ConfirmedSeriesResponse(BaseModel):
@@ -729,9 +786,15 @@ class ConfirmImportResponse(BaseModel):
     skipped: list[str] = Field(
         default_factory=list,
         description=(
-            "Candidate keys whose chart was created but whose recurring series "
-            "was not — a collision with something already booked. Keys only, "
-            "never titles."
+            "Candidate keys whose recurring series could not be created — a "
+            "collision with something already booked. Keys only, never titles."
+        ),
+    )
+    already_scheduled: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Candidate keys the patient already had booked in the same slot, so "
+            "nothing was added for them. Keys only, never titles."
         ),
     )
 

@@ -382,9 +382,29 @@ export async function completeGoogleCalendarImportConsent(
 // on screen for the therapist to read — never logged, matched, or sent
 // anywhere else.
 
+/** An existing client a proposed series may be. */
+export interface ImportPatientChoice {
+  patient_id: string
+  display_name: string
+  /** ISO date, when the chart has one — tells two same-named clients apart. */
+  date_of_birth: string | null
+}
+
+/** Which existing client a series is: certain, one of a few, or nobody. */
+export interface SeriesMatch {
+  /** Set only when the match rests on more than a name. */
+  patient: ImportPatientChoice | null
+  possible: ImportPatientChoice[]
+  /** One of `possible` to preselect: it matched on name alone. */
+  suggested_patient_id: string | null
+}
+
 export interface ProposedSeries {
   candidate_key: string
   summary: string
+  /** How a confirmed series is remembered — hand it back on confirm. */
+  source_identifier: string
+  match: SeriesMatch
   /** Monday is 0, matching Python's weekday(). */
   weekday: number
   /** HH:MM in the calendar's own timezone. */
@@ -440,6 +460,9 @@ export async function scanCalendarForImport(
 export interface ConfirmImportSeriesInput {
   candidate_key: string
   display_name: string
+  /** An existing client this series belongs to; null creates a new one. */
+  patient_id: string | null
+  source_identifier: string
   /** First occurrence to create — must be in the future. */
   start_at: string
   duration_minutes: number
@@ -458,15 +481,24 @@ export interface ConfirmImportResult {
   confirmed: ConfirmedSeries[]
   patients_created: number
   appointments_created: number
-  /** Candidate keys whose chart was created but whose recurring series
-   * collided with something already booked. Keys only, never titles. */
+  /** Candidate keys whose recurring series collided with something
+   * already booked. Keys only, never titles. */
   skipped: string[]
+  /** Candidate keys the client already had booked in the same slot, so
+   * nothing was added for them. */
+  already_scheduled: string[]
 }
 
 export async function confirmCalendarImport(
-  series: ConfirmImportSeriesInput[]
+  series: ConfirmImportSeriesInput[],
+  /** source_identifier of each series marked as not a client, remembered so
+   * later scans leave it out. */
+  notClients: string[] = []
 ): Promise<ConfirmImportResult> {
-  return post<ConfirmImportResult>("/api/calendar/import/confirm", { series })
+  return post<ConfirmImportResult>("/api/calendar/import/confirm", {
+    series,
+    not_clients: notClients,
+  })
 }
 
 // --- Busy windows — the anonymous pre-scan week grid's data source ---

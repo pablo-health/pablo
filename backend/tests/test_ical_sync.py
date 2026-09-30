@@ -15,18 +15,23 @@ from urllib.parse import urlparse
 
 import pytest
 from app.models.patient import Patient
+from app.patients.matching import remember_not_a_client
 from app.repositories.ical_sync_config import ICalSyncConfig
+from app.repositories.patient import InMemoryPatientRepository
+from app.repositories.patient_source_mapping import (
+    InMemoryPatientSourceMappingRepository,
+    PatientSourceMapping,
+)
+from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
+from app.services.ical_sync_service import ICalSyncService
+from app.services.token_encryption import encrypt_tokens
+from app.settings import get_settings
 from app.utcnow import utc_now
 
 if TYPE_CHECKING:
     from collections.abc import Generator
 
-    from app.repositories.ical_client_mapping import ICalClientMapping
-from app.repositories.patient import InMemoryPatientRepository
-from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
-from app.services.ical_sync_service import ICalSyncService
-from app.services.token_encryption import encrypt_tokens
-from app.settings import get_settings
+    from app.patients.matching import MatchContext
 
 # Real iCal feed data from SimplePractice test account
 SP_ICAL_DATA = """\
@@ -164,39 +169,6 @@ class InMemoryICalSyncConfigRepo:
             self._configs[key].last_sync_error = error
 
 
-class InMemoryICalClientMappingRepo:
-    """In-memory client mapping repo for tests."""
-
-    def __init__(self) -> None:
-        self._mappings: dict[str, ICalClientMapping] = {}
-
-    def get(
-        self, user_id: str, ehr_system: str, client_identifier: str
-    ) -> ICalClientMapping | None:
-        key = f"{user_id}_{ehr_system}_{client_identifier}"
-        return self._mappings.get(key)
-
-    def list_by_user(self, user_id: str) -> list[ICalClientMapping]:
-        return [m for m in self._mappings.values() if m.user_id == user_id]
-
-    def list_by_source(self, user_id: str, ehr_system: str) -> list[ICalClientMapping]:
-        return [
-            m
-            for m in self._mappings.values()
-            if m.user_id == user_id and m.ehr_system == ehr_system
-        ]
-
-    def save(self, mapping: ICalClientMapping) -> None:
-        self._mappings[mapping.doc_id] = mapping
-
-    def delete(self, user_id: str, ehr_system: str, client_identifier: str) -> bool:
-        key = f"{user_id}_{ehr_system}_{client_identifier}"
-        if key in self._mappings:
-            del self._mappings[key]
-            return True
-        return False
-
-
 @pytest.fixture
 def _encryption_key(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
     """Set up a test encryption key.
@@ -219,7 +191,7 @@ def service():
         config_repo=InMemoryICalSyncConfigRepo(),  # type: ignore[arg-type]
         appointment_repo=InMemoryAppointmentRepository(),
         patient_repo=InMemoryPatientRepository(),
-        mapping_repo=InMemoryICalClientMappingRepo(),  # type: ignore[arg-type]
+        mapping_repo=InMemoryPatientSourceMappingRepository(),
     )
 
 
@@ -287,7 +259,7 @@ class TestClientMatching:
             _make_patient("p1", "Jane", "Adams"),
             _make_patient("p2", "Bob", "Smith"),
         ]
-        result = service._match_sp_patient("J.A.", patients)
+        result = service._match_patient("simplepractice", "J.A.", _context(service, patients))
         assert result == "p1"
 
     def test_match_sp_ambiguous_initials(self, service: ICalSyncService):
@@ -295,7 +267,7 @@ class TestClientMatching:
             _make_patient("p1", "Jane", "Adams"),
             _make_patient("p2", "John", "Adams"),
         ]
-        result = service._match_sp_patient("J.A.", patients)
+        result = service._match_patient("simplepractice", "J.A.", _context(service, patients))
         assert result == ""  # Ambiguous — can't determine
 
     def test_match_sp_full_name(self, service: ICalSyncService):
@@ -303,14 +275,22 @@ class TestClientMatching:
             _make_patient("p1", "Jane", "Adams"),
             _make_patient("p2", "Bob", "Smith"),
         ]
-        result = service._match_sp_patient("Jane Adams", patients)
+        result = service._match_patient("simplepractice", "Jane Adams", _context(service, patients))
         assert result == "p1"
 
     def test_match_via_saved_mapping(self, service: ICalSyncService):
-        mappings = {"SH00001": "patient-abc"}
-        patients: list[Patient] = []
-        result = service._match_patient("sessions_health", "SH00001", mappings, patients)
+        service._mapping_repo.save(
+            PatientSourceMapping("user1", "sessions_health", "SH00001", "patient-abc")
+        )
+        ctx = _context(service, [_make_patient("patient-abc", "Pablo", "Bear")])
+        result = service._match_patient("sessions_health", "SH00001", ctx)
         assert result == "patient-abc"
+
+
+def _context(service: ICalSyncService, patients: list[Patient]) -> MatchContext:
+    for patient in patients:
+        service._patient_repo.create(patient, "user1")
+    return service._match_context("user1")
 
 
 class TestSyncDiff:
@@ -322,7 +302,7 @@ class TestSyncDiff:
         config_repo = InMemoryICalSyncConfigRepo()
         appt_repo = InMemoryAppointmentRepository()
         patient_repo = InMemoryPatientRepository()
-        mapping_repo = InMemoryICalClientMappingRepo()
+        mapping_repo = InMemoryPatientSourceMappingRepository()
 
         encrypted = encrypt_tokens({"feed_url": "https://secure.simplepractice.com/ical/test"})
         config = ICalSyncConfig(
@@ -337,7 +317,7 @@ class TestSyncDiff:
             config_repo=config_repo,  # type: ignore[arg-type]
             appointment_repo=appt_repo,
             patient_repo=patient_repo,
-            mapping_repo=mapping_repo,  # type: ignore[arg-type]
+            mapping_repo=mapping_repo,
         )
         return svc
 
@@ -353,6 +333,34 @@ class TestSyncDiff:
         assert result.created == 2
         assert result.updated == 0
         assert result.deleted == 0
+
+    @patch.object(ICalSyncService, "_fetch_feed")
+    def test_an_identifier_remembered_as_not_a_client_is_skipped(
+        self, mock_fetch: MagicMock, sync_service: ICalSyncService
+    ):
+        mock_fetch.return_value = SP_ICAL_DATA
+        remember_not_a_client("simplepractice", "J.A.", sync_service._match_context("user1"))
+
+        [result] = sync_service.sync("user1", "simplepractice")
+
+        assert result.created == 1
+        assert [e["client_identifier"] for e in result.unmatched_events] == ["P.B."]
+
+    @patch.object(ICalSyncService, "_fetch_feed")
+    def test_a_remembered_client_since_deleted_is_asked_about_not_reassigned(
+        self, mock_fetch: MagicMock, sync_service: ICalSyncService
+    ):
+        """ "J.A." meant John Adams. With John deleted, Jane Anderson must not inherit it."""
+        mock_fetch.return_value = SP_ICAL_DATA
+        patients = sync_service._patient_repo
+        patients.create(_make_patient("john", "John", "Adams"), "user1")
+        patients.create(_make_patient("jane", "Jane", "Anderson"), "user1")
+        sync_service.resolve_client("user1", "simplepractice", "J.A.", "john")
+        patients.delete("john", "user1")
+
+        [result] = sync_service.sync("user1", "simplepractice")
+
+        assert "J.A." in [e["client_identifier"] for e in result.unmatched_events]
 
     @patch.object(ICalSyncService, "_fetch_feed")
     def test_second_sync_no_changes(self, mock_fetch: MagicMock, sync_service: ICalSyncService):
@@ -496,7 +504,7 @@ class TestCsvImport:
         assert result.mappings_created == 2
 
         # Verify SH00001 maps to Pablo Bear
-        mapping = service._mapping_repo.get("user1", "sessions_health", "SH00001")  # type: ignore[union-attr]
+        mapping = service._mapping_repo.get("user1", "sessions_health", "SH00001")
         assert mapping is not None
 
     def test_import_zip(self, service: ICalSyncService):

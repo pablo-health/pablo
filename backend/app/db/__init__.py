@@ -1883,7 +1883,7 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
         #     has_patient_access.
         #   * Fallback to direct user_id ownership for tables that have
         #     a user_id column but no patient_id (e.g. availability_rules,
-        #     google_calendar_tokens, ical_client_mappings).
+        #     google_calendar_tokens, ical_sync_configs).
         if table_name == "patient_documents":
             # Non-restricted categories (chart, consent) → patient_access
             # (co-treaters share). category IN ('therapist_private',

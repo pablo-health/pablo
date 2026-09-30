@@ -469,17 +469,6 @@ CREATE TABLE __TENANT_SCHEMA__.google_calendar_tokens (
 
 
 
-CREATE TABLE __TENANT_SCHEMA__.ical_client_mappings (
-    doc_id character varying(500) NOT NULL,
-    user_id uuid NOT NULL,
-    ehr_system character varying(50) NOT NULL,
-    client_identifier character varying(255) NOT NULL,
-    patient_id uuid NOT NULL,
-    created_at timestamp with time zone NOT NULL
-);
-
-
-
 CREATE TABLE __TENANT_SCHEMA__.ical_sync_configs (
     doc_id character varying(300) NOT NULL,
     user_id uuid NOT NULL,
@@ -938,6 +927,20 @@ CREATE TABLE __TENANT_SCHEMA__.patient_payment_methods (
     created_by_user_id character varying(128) NOT NULL,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.patient_source_mappings (
+    doc_id text NOT NULL,
+    user_id uuid NOT NULL,
+    source character varying(50) NOT NULL,
+    source_identifier text NOT NULL,
+    patient_id uuid,
+    created_at timestamp with time zone NOT NULL,
+    answer text DEFAULT 'client'::text NOT NULL,
+    CONSTRAINT ck_patient_source_mappings_answer CHECK ((answer = ANY (ARRAY['client'::text, 'not_a_client'::text]))),
+    CONSTRAINT ck_patient_source_mappings_patient_when_client CHECK (((answer = 'client'::text) = (patient_id IS NOT NULL)))
 );
 
 
@@ -1455,11 +1458,6 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.google_calendar_tokens
 
 
 
-ALTER TABLE ONLY __TENANT_SCHEMA__.ical_client_mappings
-    ADD CONSTRAINT ical_client_mappings_pkey PRIMARY KEY (doc_id);
-
-
-
 ALTER TABLE ONLY __TENANT_SCHEMA__.ical_sync_configs
     ADD CONSTRAINT ical_sync_configs_pkey PRIMARY KEY (doc_id);
 
@@ -1587,6 +1585,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_messages
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_payment_methods
     ADD CONSTRAINT patient_payment_methods_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_source_mappings
+    ADD CONSTRAINT patient_source_mappings_pkey PRIMARY KEY (doc_id);
 
 
 
@@ -1946,10 +1949,6 @@ CREATE INDEX ix_ehr_routes_ehr_system ON __TENANT_SCHEMA__.ehr_routes USING btre
 
 
 
-CREATE INDEX ix_ical_client_mappings_user_id ON __TENANT_SCHEMA__.ical_client_mappings USING btree (user_id);
-
-
-
 CREATE INDEX ix_ical_sync_configs_user_id ON __TENANT_SCHEMA__.ical_sync_configs USING btree (user_id);
 
 
@@ -2103,6 +2102,10 @@ CREATE INDEX ix_patient_messages_patient_id ON __TENANT_SCHEMA__.patient_message
 
 
 CREATE INDEX ix_patient_messages_thread_created ON __TENANT_SCHEMA__.patient_messages USING btree (thread_id, created_at);
+
+
+
+CREATE INDEX ix_patient_source_mappings_user_id ON __TENANT_SCHEMA__.patient_source_mappings USING btree (user_id);
 
 
 
@@ -2504,11 +2507,6 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.payers
 
 
 
-ALTER TABLE ONLY __TENANT_SCHEMA__.ical_client_mappings
-    ADD CONSTRAINT ical_client_mappings_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
-
-
-
 ALTER TABLE ONLY __TENANT_SCHEMA__.notes
     ADD CONSTRAINT notes_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
 
@@ -2551,6 +2549,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_medications
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_message_threads
     ADD CONSTRAINT patient_message_threads_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_source_mappings
+    ADD CONSTRAINT patient_source_mappings_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
 
 
 

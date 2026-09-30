@@ -15,7 +15,6 @@ only ids, so either runner can call them.
 from __future__ import annotations
 
 import logging
-from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -44,25 +43,13 @@ def archive_base() -> Path:
     return Path(get_settings().import_archive_dir)
 
 
-def _dob(value: str | None) -> date | None:
-    if not value:
-        return None
-    try:
-        return date.fromisoformat(value[:10])
-    except ValueError:
-        return None
-
-
 def _existing_patients(user_id: str) -> list[ExistingPatient]:
     repo = get_patient_repository()
     out: list[ExistingPatient] = []
     page = 1
     while True:
         patients, total = repo.list_by_user(user_id, page=page, page_size=_PATIENT_PAGE)
-        out.extend(
-            ExistingPatient(p.id, p.first_name, p.last_name, _dob(p.date_of_birth), p.email)
-            for p in patients
-        )
+        out.extend(ExistingPatient.from_patient(p) for p in patients)
         if page * _PATIENT_PAGE >= total or not patients:
             return out
         page += 1

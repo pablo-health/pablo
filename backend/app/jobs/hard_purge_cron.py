@@ -22,7 +22,7 @@ didn't happen. The BAA §7 Stage 2 promise covers audio of soft-deleted patients
 regardless of the per-practice audio retention slider.
 
 The clinical-row delete removes every patient-associated surface: appointments,
-notes, therapy_sessions, ical_client_mappings, chat history
+notes, therapy_sessions, patient_source_mappings, chat history
 (chat_conversations + chat_messages — which have no FK cascade from patients),
 patient_documents (FK cascade), and the patients row itself. A hard purge
 leaves zero rows and zero blobs for the patient across all surfaces.
@@ -153,7 +153,7 @@ def _delete_clinical_rows(conn: Any, schema: str, patient_id: str) -> None:
     conn.execute(text("DELETE FROM notes WHERE patient_id = :pid"), {"pid": patient_id})
     conn.execute(text("DELETE FROM therapy_sessions WHERE patient_id = :pid"), {"pid": patient_id})
     conn.execute(
-        text("DELETE FROM ical_client_mappings WHERE patient_id = :pid"), {"pid": patient_id}
+        text("DELETE FROM patient_source_mappings WHERE patient_id = :pid"), {"pid": patient_id}
     )
     # Chat history is patient-associated but chat_conversations.patient_id has no
     # FK to patients, so it is NOT removed by the patients-row cascade. Delete the

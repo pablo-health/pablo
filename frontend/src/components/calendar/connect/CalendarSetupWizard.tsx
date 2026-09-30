@@ -201,6 +201,10 @@ export function CalendarSetupWizard({
 
   // Step 4 — which proposed series to keep.
   const [checked, setChecked] = useState<Record<string, boolean>>({})
+  // Which existing client each series is; null means a new client.
+  const [clientFor, setClientFor] = useState<Record<string, string | null>>({})
+  // Series marked as not a client, remembered on confirm.
+  const [notClient, setNotClient] = useState<Record<string, boolean>>({})
   const [expanded, setExpanded] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [confirmError, setConfirmError] = useState<string | null>(null)
@@ -252,6 +256,18 @@ export function CalendarSetupWizard({
     setChecked(
       Object.fromEntries(proposal.series.map((series) => [series.candidate_key, series.preselected]))
     )
+    // A certain match is that client, and a name-only match starts on the
+    // chart it named; anything less starts as a new client until the
+    // therapist picks one of the possible names.
+    setClientFor(
+      Object.fromEntries(
+        proposal.series.map((series) => [
+          series.candidate_key,
+          series.match.patient?.patient_id ?? series.match.suggested_patient_id ?? null,
+        ])
+      )
+    )
+    setNotClient({})
   }, [proposal])
 
   const redirectUri = typeof window === "undefined" ? "" : `${window.location.origin}${returnPath}`
@@ -426,30 +442,45 @@ export function CalendarSetupWizard({
     setChecked((current) => ({ ...current, [candidateKey]: !current[candidateKey] }))
   }, [])
 
+  const handleChooseClient = useCallback((candidateKey: string, patientId: string | null) => {
+    setClientFor((current) => ({ ...current, [candidateKey]: patientId }))
+  }, [])
+
+  const handleToggleNotClient = useCallback((candidateKey: string) => {
+    setNotClient((current) => ({ ...current, [candidateKey]: !current[candidateKey] }))
+    // A series that is not a client is not imported either.
+    setChecked((current) => ({ ...current, [candidateKey]: false }))
+  }, [])
+
   const handleConfirm = useCallback(async () => {
     if (!proposal) return
     setConfirming(true)
     setConfirmError(null)
     try {
       const series = proposal.series
-        .filter((item) => checked[item.candidate_key])
+        .filter((item) => checked[item.candidate_key] && !notClient[item.candidate_key])
         .map((item) => ({
           candidate_key: item.candidate_key,
           display_name: item.summary,
+          patient_id: clientFor[item.candidate_key] ?? null,
+          source_identifier: item.source_identifier,
           start_at: item.first_future_start ?? new Date().toISOString(),
           duration_minutes: item.duration_minutes,
           cadence: item.cadence,
           occurrences: Math.max(item.occurrences_ahead, 1),
           timezone: proposal.timezone,
         }))
-      const result = await confirmCalendarImport(series)
+      const notClients = proposal.series
+        .filter((item) => notClient[item.candidate_key])
+        .map((item) => item.source_identifier)
+      const result = await confirmCalendarImport(series, notClients)
       setConfirmResult(result)
     } catch (err) {
       setConfirmError(message(err, "Could not add those clients. Nothing was changed — try again."))
     } finally {
       setConfirming(false)
     }
-  }, [proposal, checked])
+  }, [proposal, checked, clientFor, notClient])
 
   const titlingSettled = selection.event_titling !== "full" || attested
   const isLastStep = activeIndex === steps.length - 1
@@ -550,6 +581,10 @@ export function CalendarSetupWizard({
           proposal={proposal}
           checked={checked}
           onToggle={handleToggleSeries}
+          clientFor={clientFor}
+          onChooseClient={handleChooseClient}
+          notClient={notClient}
+          onToggleNotClient={handleToggleNotClient}
           expanded={expanded}
           onToggleExpanded={() => setExpanded((value) => !value)}
           onBack={() => setActiveIndex(clientsIndex)}

@@ -22,10 +22,10 @@ if TYPE_CHECKING:
     from .coverage import PatientCoverageRepository, PayerRepository
     from .diagnostic_assessment import DiagnosticAssessmentRepository
     from .google_calendar_token import GoogleCalendarTokenRepository
-    from .ical_client_mapping import ICalClientMappingRepository
     from .ical_sync_config import ICalSyncConfigRepository
     from .outcome_measure import OutcomeMeasureRepository
     from .patient_payment import PatientPaymentRepository
+    from .patient_source_mapping import PatientSourceMappingRepository
     from .postgres.compliance_document import PostgresComplianceDocumentRepository
     from .postgres.compliance_item import PostgresComplianceItemRepository
     from .postgres.supervision import PostgresSupervisionRepository
@@ -295,13 +295,15 @@ def get_zoom_connection_store() -> PostgresZoomConnectionStore:
     return PostgresZoomConnectionStore(_get_pg_session())
 
 
-def get_ical_client_mapping_repository() -> ICalClientMappingRepository:
-    """Get iCal client mapping repository instance."""
-    from .postgres.ical_client_mapping import (
-        PostgresICalClientMappingRepository,
-    )
+def get_patient_source_mapping_repository() -> PatientSourceMappingRepository:
+    """Get the remembered source-identifier-to-patient repository instance."""
+    from .postgres.patient_source_mapping import PostgresPatientSourceMappingRepository
 
-    return PostgresICalClientMappingRepository(_get_pg_session())
+    return PostgresPatientSourceMappingRepository(_get_pg_session())
+
+
+# Former name, kept so existing callers keep working; remove once none remain.
+get_ical_client_mapping_repository = get_patient_source_mapping_repository
 
 
 def get_ical_sync_config_repository() -> ICalSyncConfigRepository:
@@ -557,6 +559,7 @@ __all__ = [
     "get_patient_message_repository",
     "get_patient_payment_repository",
     "get_patient_repository",
+    "get_patient_source_mapping_repository",
     "get_payer_repository",
     "get_practice_note_type_repository",
     "get_refill_request_repository",

@@ -9,11 +9,11 @@ from .clinician_profile import PostgresClinicianProfileRepository
 from .ehr_prompt import PostgresEhrPromptRepository
 from .ehr_route import PostgresEhrRouteRepository
 from .google_calendar_token import PostgresGoogleCalendarTokenRepository
-from .ical_client_mapping import PostgresICalClientMappingRepository
 from .ical_sync_config import PostgresICalSyncConfigRepository
 from .identity import PostgresIdentityRepository
 from .note import PostgresNotesRepository
 from .patient import PostgresPatientRepository
+from .patient_source_mapping import PostgresPatientSourceMappingRepository
 from .session import PostgresTherapySessionRepository
 from .user import PostgresUserRepository
 
@@ -25,11 +25,11 @@ __all__ = [
     "PostgresEhrPromptRepository",
     "PostgresEhrRouteRepository",
     "PostgresGoogleCalendarTokenRepository",
-    "PostgresICalClientMappingRepository",
     "PostgresICalSyncConfigRepository",
     "PostgresIdentityRepository",
     "PostgresNotesRepository",
     "PostgresPatientRepository",
+    "PostgresPatientSourceMappingRepository",
     "PostgresTherapySessionRepository",
     "PostgresUserRepository",
 ]
