@@ -347,6 +347,22 @@ class TestSyncDiff:
         assert [e["client_identifier"] for e in result.unmatched_events] == ["P.B."]
 
     @patch.object(ICalSyncService, "_fetch_feed")
+    def test_a_remembered_client_since_deleted_is_asked_about_not_reassigned(
+        self, mock_fetch: MagicMock, sync_service: ICalSyncService
+    ):
+        """ "J.A." meant John Adams. With John deleted, Jane Anderson must not inherit it."""
+        mock_fetch.return_value = SP_ICAL_DATA
+        patients = sync_service._patient_repo
+        patients.create(_make_patient("john", "John", "Adams"), "user1")
+        patients.create(_make_patient("jane", "Jane", "Anderson"), "user1")
+        sync_service.resolve_client("user1", "simplepractice", "J.A.", "john")
+        patients.delete("john", "user1")
+
+        [result] = sync_service.sync("user1", "simplepractice")
+
+        assert "J.A." in [e["client_identifier"] for e in result.unmatched_events]
+
+    @patch.object(ICalSyncService, "_fetch_feed")
     def test_second_sync_no_changes(self, mock_fetch: MagicMock, sync_service: ICalSyncService):
         mock_fetch.return_value = SP_ICAL_DATA
         sync_service.sync("user1", "simplepractice")
