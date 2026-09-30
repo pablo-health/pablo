@@ -116,9 +116,28 @@ class OutsideAnswerResponse(BaseModel):
     not_added: list[NotAddedSession] = Field(default_factory=list)
 
 
-class FollowMainCalendarRequest(BaseModel):
-    enabled: bool
+class FollowedCalendarRequest(BaseModel):
+    """Which calendar to follow: an id from the calendar list, ``primary`` for
+    the main calendar, or None to stop following."""
+
+    calendar_id: str | None = Field(default=None, min_length=1, max_length=1024)
 
 
-class FollowMainCalendarResponse(BaseModel):
-    follow_main_calendar: bool
+class FollowedCalendarResponse(BaseModel):
+    follow_calendar_id: str | None
+
+
+class ReadableCalendarResponse(BaseModel):
+    id: str
+    name: str
+    primary: bool
+
+
+class ReadableCalendarsResponse(BaseModel):
+    """The calendars the connection can read, the main one first."""
+
+    calendars: list[ReadableCalendarResponse]
+    follow_calendar_id: str | None = Field(
+        default=None,
+        description="The calendar followed now, by the id it appears under in ``calendars``",
+    )

@@ -8,7 +8,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { AlertCircle, Check } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { disconnectGoogleCalendar, getGoogleCalendarStatus } from "@/lib/api/scheduling"
-import { FollowMainCalendarToggle } from "./FollowMainCalendarToggle"
+import { FollowCalendarSetting } from "./FollowCalendarSetting"
 
 const STATUS_QUERY_KEY = ["google-calendar", "status"]
 
@@ -72,8 +72,8 @@ export function GoogleCalendarSettings() {
         </div>
       </div>
       {status?.connected && (
-        <FollowMainCalendarToggle
-          following={Boolean(status.follow_main_calendar)}
+        <FollowCalendarSetting
+          followedCalendarId={status.follow_calendar_id ?? null}
           importGranted={Boolean(status.import_granted)}
           onChanged={() => queryClient.invalidateQueries({ queryKey: STATUS_QUERY_KEY })}
         />

@@ -53,9 +53,10 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC
+from datetime import UTC, timedelta
 from typing import TYPE_CHECKING, Any, Literal
 
+from ..calendar_providers.practice_import import MAX_HORIZON_DAYS
 from ..calendar_providers.source_identity import (
     GOOGLE_CALENDAR_SOURCE,
     SERIES_PREFIX,
@@ -288,11 +289,14 @@ class OutsideSessions:
 
     # --- Reading a calendar ------------------------------------------------
 
-    def ingest_google(self, user_id: str, changes: list[dict[str, Any]]) -> Ingested:
-        """Hold, refresh, answer or drop a row for each main-calendar change.
+    def ingest_google(
+        self, user_id: str, changes: list[dict[str, Any]], *, calendar_id: str | None = None
+    ) -> Ingested:
+        """Hold, refresh, answer or drop a row for each change on a followed calendar.
 
-        Moves and deletions of an answered session's appointment are the
-        follower's, not this.
+        ``calendar_id`` is the calendar the changes were read from; rows and
+        the appointments booked for them record it. Moves and deletions of an
+        answered session's appointment are the follower's, not this.
         """
         ctx = self.context(user_id)
         result = Ingested()
@@ -313,13 +317,14 @@ class OutsideSessions:
                 source=GOOGLE_CALENDAR_SOURCE,
                 source_event_id=event_id,
                 source_series_id=change.get("series_id"),
+                calendar_id=calendar_id,
                 start_at=start,
                 end_at=end,
                 title=str(change.get("summary") or ""),
             )
             result.held += self._place(incoming, row, ctx, result.booked)
         logger.info(
-            "Followed %d outside sessions from the main calendar, booked %d",
+            "Followed %d outside sessions from a followed calendar, booked %d",
             result.held,
             len(result.booked),
         )
@@ -345,6 +350,15 @@ class OutsideSessions:
             incoming.patient_id = row.patient_id
             incoming.appointment_id = row.appointment_id
             incoming.created_at = row.created_at
+            if (
+                row.appointment_id
+                and incoming.calendar_id
+                and incoming.calendar_id != row.calendar_id
+            ):
+                # An event can sit on two calendars under one id (an invited
+                # copy of it). Read now from the one followed, it is that
+                # calendar's, and so is the session following it.
+                self._record_calendar(row.appointment_id, incoming.user_id, incoming.calendar_id)
         patient_id = self._unattended(incoming, identity, match, ctx)
         if patient_id is not None:
             if incoming.answer == ANSWER_OPEN:
@@ -399,14 +413,20 @@ class OutsideSessions:
                 self._events.delete(user_id, row.id)
 
     def reconcile_full_read(
-        self, user_id: str, present: set[str], window: tuple[datetime, datetime]
+        self,
+        user_id: str,
+        present: set[str],
+        window: tuple[datetime, datetime],
+        calendar_id: str,
     ) -> list[dict[str, Any]]:
-        """Catch up with a full read of the main calendar.
+        """Catch up with a full read of the followed calendar.
 
         A full read (see ``MainCalendarRead``) holds every event in its
         window, and never reports what was deleted before it. So a row for an
         event in that window it doesn't hold is for an event that is gone, and
-        goes. Nothing outside the window is judged.
+        goes. Nothing outside the window is judged, and nothing from another
+        calendar: after the clinician chooses a different calendar, the
+        sessions booked from the old one are not missing from the new one.
         An appointment following such an event is not cancelled here: it comes
         back as a deletion for the follower, so the bulk guard decides — a
         reset that seems to lose everything is held, never mass-cancelled.
@@ -414,15 +434,50 @@ class OutsideSessions:
         start, end = window
         for row in self._events.list_by_source(user_id, GOOGLE_CALENDAR_SOURCE):
             in_window = row.end_at > start and row.start_at < end
-            if in_window and row.source_event_id not in present:
+            if row.calendar_id == calendar_id and in_window and row.source_event_id not in present:
                 self._events.delete(user_id, row.id)
         return [
             {"google_event_id": appointment.outside_event_id, "status": "cancelled"}
             for appointment in self._appointments.list_by_range(user_id, start, end)
             if appointment.outside_source == GOOGLE_CALENDAR_SOURCE
+            and appointment.outside_calendar_id == calendar_id
             and appointment.status == AppointmentStatus.CONFIRMED
             and appointment.outside_event_id not in present
         ]
+
+    def claim_unrecorded(self, user_id: str, main_calendar_id: str) -> int:
+        """Record the main calendar on rows and sessions from before calendars were recorded.
+
+        Until a clinician could choose a calendar, only the main one was ever
+        followed, so every Google row with no calendar came from it, and so
+        did the appointment booked for it. Returns how many rows it recorded.
+        """
+        claimed = 0
+        for row in self._events.list_by_source(user_id, GOOGLE_CALENDAR_SOURCE):
+            if row.calendar_id is not None:
+                continue
+            row.calendar_id = main_calendar_id
+            self._events.save(row)
+            claimed += 1
+        # Sessions, including any whose row an earlier read already removed.
+        # Only upcoming ones matter: a read judges nothing before now.
+        start = utc_now()
+        for appointment in self._appointments.list_by_range(
+            user_id, start, start + timedelta(days=MAX_HORIZON_DAYS)
+        ):
+            if (
+                appointment.outside_source == GOOGLE_CALENDAR_SOURCE
+                and appointment.outside_calendar_id is None
+            ):
+                appointment.outside_calendar_id = main_calendar_id
+                self._appointments.update(appointment)
+        return claimed
+
+    def _record_calendar(self, appointment_id: str, user_id: str, calendar_id: str) -> None:
+        appointment = self._appointments.get(appointment_id, user_id)
+        if appointment is not None and appointment.outside_calendar_id != calendar_id:
+            appointment.outside_calendar_id = calendar_id
+            self._appointments.update(appointment)
 
     def drop_open(self, user_id: str, source: str) -> None:
         """Drop every question from a source, leaving answered sessions as they are."""
@@ -696,6 +751,7 @@ class OutsideSessions:
                 session_type="individual",
                 outside_source=row.source,
                 outside_event_id=row.source_event_id,
+                outside_calendar_id=row.calendar_id,
                 # A feed's own sync follows these by uid, as it does the
                 # sessions it matched itself.
                 ical_uid=row.source_event_id if feed else None,

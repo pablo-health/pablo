@@ -300,9 +300,9 @@ export interface GoogleCalendarStatus {
    * Google account, so names are not being written until it is confirmed
    * again for this one. */
   titling_needs_attestation: boolean
-  /** Keep bringing in new sessions from the main calendar. Optional: an
-   * older backend omits it. */
-  follow_main_calendar?: boolean
+  /** The calendar new sessions are brought in from, or null. `"primary"`
+   * is the main calendar before a read has resolved its id. */
+  follow_calendar_id?: string | null
   /** The connection can read events ("Look at my week"), which following
    * needs. */
   import_granted?: boolean

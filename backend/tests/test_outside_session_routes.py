@@ -30,6 +30,7 @@ from app.routes.scheduling import (
 )
 from app.scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
+from app.services.google_calendar_service import ReadableCalendar
 from app.settings import get_settings
 from app.utcnow import utc_now
 
@@ -43,6 +44,8 @@ if TYPE_CHECKING:
     from fastapi.testclient import TestClient
 
 USER_ID = "test-user-123"
+#: The main calendar's real id.
+MAIN = "clinician@example.test"
 
 
 @pytest.fixture(autouse=True)
@@ -71,9 +74,14 @@ class _Wired:
         self.status: dict[str, Any] = {
             "connected": True,
             "import_granted": True,
-            "follow_main_calendar": True,
+            "follow_calendar_id": MAIN,
         }
         self.calendar.get_sync_status.side_effect = lambda _user_id: self.status
+        self.calendar.list_readable_calendars.return_value = [
+            ReadableCalendar(MAIN, MAIN, primary=True),
+            ReadableCalendar("team@group.calendar.google.test", "Team", primary=False),
+        ]
+        self.calendar.set_followed_calendar.return_value = True
 
     def hold(self, event_id: str, days: int, *, series: str | None = "wk") -> None:
         start = (utc_now() + timedelta(days=days)).replace(minute=0, second=0, microsecond=0)
@@ -277,25 +285,8 @@ def test_an_unknown_client_is_refused_before_anything_is_written(
     assert len(wired.events.list_open(USER_ID)) == 1
 
 
-def test_following_needs_the_grant_to_read_events(client: TestClient, wired: _Wired) -> None:
-    wired.status["import_granted"] = False
-
-    response = client.put("/api/google-calendar/follow-main-calendar", json={"enabled": True})
-
-    assert response.status_code == 400
-    wired.calendar.set_follow_main_calendar.assert_not_called()
-
-
-def test_following_is_turned_on_and_off(client: TestClient, wired: _Wired) -> None:
-    on = client.put("/api/google-calendar/follow-main-calendar", json={"enabled": True})
-    off = client.put("/api/google-calendar/follow-main-calendar", json={"enabled": False})
-
-    assert on.json() == {"follow_main_calendar": True}
-    assert off.json() == {"follow_main_calendar": False}
-    assert [c.kwargs["follow"] for c in wired.calendar.set_follow_main_calendar.call_args_list] == [
-        True,
-        False,
-    ]
+def _follow(client: TestClient, calendar_id: str | None) -> Any:
+    return client.put("/api/google-calendar/followed-calendar", json={"calendar_id": calendar_id})
 
 
 def _followed_appointment(wired: _Wired) -> Appointment:
@@ -389,8 +380,8 @@ def test_turning_following_off_drops_its_questions_and_hides_the_rest(
 ) -> None:
     wired.hold("e1", 2)
 
-    client.put("/api/google-calendar/follow-main-calendar", json={"enabled": False})
-    wired.status["follow_main_calendar"] = False
+    _follow(client, None)
+    wired.status["follow_calendar_id"] = None
 
     assert wired.events.list_open(USER_ID) == []
     # A question held while following was off (a read already under way)
@@ -407,7 +398,7 @@ def test_turning_following_off_leaves_answered_sessions_alone(
     wired.hold("e1", 2)
     _answer_series(client, patient_id="p1")
 
-    client.put("/api/google-calendar/follow-main-calendar", json={"enabled": False})
+    _follow(client, None)
 
     assert wired.appointments.get_by_outside_event(USER_ID, GOOGLE_CALENDAR_SOURCE, "e1")
     [row] = wired.events.list_by_source(USER_ID, GOOGLE_CALENDAR_SOURCE)
@@ -430,3 +421,19 @@ def test_a_remembered_slot_is_offered_preselected(client: TestClient, wired: _Wi
 
     assert question["match"]["patient"] is None
     assert question["match"]["suggested_patient_id"] == "p1"
+
+
+TEAM = "team@group.calendar.google.test"
+
+
+def test_a_refused_choice_writes_nothing(client: TestClient, wired: _Wired) -> None:
+    kept = _followed_appointment(wired)
+    kept.outside_calendar_id = None
+    wired.appointments.update(kept)
+
+    response = _follow(client, "someone-else@group.calendar.google.test")
+
+    assert response.status_code == 400
+    unchanged = wired.appointments.get(kept.id, USER_ID)
+    assert unchanged is not None
+    assert unchanged.outside_calendar_id is None

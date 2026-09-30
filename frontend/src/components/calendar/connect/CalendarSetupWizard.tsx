@@ -19,7 +19,7 @@ import {
   recallAndClearImportPending,
   rememberImportPending,
 } from "./importConsent"
-import { setFollowMainCalendar } from "@/lib/api/outsideSessions"
+import { setFollowedCalendar } from "@/lib/api/outsideSessions"
 import {
   completeGoogleCalendarConnect,
   completeGoogleCalendarImportConsent,
@@ -256,14 +256,15 @@ export function CalendarSetupWizard({
     setNotClient({})
   }, [proposal])
 
-  const following = Boolean(status?.follow_main_calendar)
+  const following = Boolean(status?.follow_calendar_id)
 
   const changeFollowing = useCallback(
     async (enabled: boolean) => {
       setFollowSaving(true)
       setFollowError(null)
       try {
-        await setFollowMainCalendar(enabled)
+        // The wizard reads the main calendar, so that is the one followed.
+        await setFollowedCalendar(enabled ? "primary" : null)
         await queryClient.invalidateQueries({ queryKey: ["google-calendar"] })
       } catch (err) {
         setFollowError(message(err, "Could not save that. Try again in a moment."))
@@ -349,7 +350,7 @@ export function CalendarSetupWizard({
         .then(async () => {
           if (cancelled) return
           if (followWanted) {
-            await setFollowMainCalendar(true).catch((err: unknown) =>
+            await setFollowedCalendar("primary").catch((err: unknown) =>
               setFollowError(message(err, "Could not save that. Try again in a moment."))
             )
           }

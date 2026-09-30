@@ -30,8 +30,8 @@ from ..models import AuditAction, User
 from ..models.audit import ResourceType
 from ..models.outside_sessions import (
     AnsweredAppointment,
-    FollowMainCalendarRequest,
-    FollowMainCalendarResponse,
+    FollowedCalendarRequest,
+    FollowedCalendarResponse,
     NotAddedSession,
     OutsideAnswer,
     OutsideAnswerRequest,
@@ -40,6 +40,8 @@ from ..models.outside_sessions import (
     OutsideQuestionsResponse,
     OutsideSessionResponse,
     OutsideSessionsResponse,
+    ReadableCalendarResponse,
+    ReadableCalendarsResponse,
 )
 from ..models.patient import Patient
 from ..patients.seen_by import SeenBy
@@ -61,8 +63,10 @@ from ..scheduling_engine.repositories.appointment import (  # noqa: TC001 — re
     AppointmentRepository,
 )
 from ..services import AuditService, get_audit_service
-from ..services.google_calendar_service import (  # noqa: TC001 — resolved at runtime
+from ..services.google_calendar_service import (
+    FOLLOW_MAIN_CALENDAR,
     GoogleCalendarService,
+    ReadableCalendar,
 )
 from ..services.outside_sessions import (
     ACTIVE,
@@ -118,7 +122,7 @@ def get_outside_sessions(
 def _not_followed(service: GoogleCalendarService, user_id: str) -> frozenset[str]:
     """Sources whose questions stay out of sight: Google, while it isn't followed."""
     status_info = service.get_sync_status(user_id)
-    if status_info.get("connected") and status_info.get("follow_main_calendar"):
+    if status_info.get("connected") and status_info.get("follow_calendar_id"):
         return frozenset()
     return frozenset({GOOGLE_CALENDAR_SOURCE})
 
@@ -403,26 +407,83 @@ def _new_client(
     return patient
 
 
-@router.put("/api/google-calendar/follow-main-calendar", response_model=FollowMainCalendarResponse)
-def set_follow_main_calendar(
-    request: FollowMainCalendarRequest,
+#: Refusing to follow without the grant to read events.
+NEEDS_READ_ACCESS = "Following a calendar needs access to read its events"
+#: Refusing a calendar the connection can't read.
+NOT_A_READABLE_CALENDAR = "That calendar isn't one this connection can read"
+
+
+def _connected_with_read_access(service: GoogleCalendarService, user_id: str) -> None:
+    status_info = service.get_sync_status(user_id)
+    if not status_info.get("connected"):
+        raise NotFoundError("Google Calendar not connected")
+    if not status_info.get("import_granted"):
+        raise BadRequestError(NEEDS_READ_ACCESS)
+
+
+def _shown_as(followed: str | None, calendars: list[ReadableCalendar]) -> str | None:
+    """The followed calendar by the id the list shows it under."""
+    if followed == FOLLOW_MAIN_CALENDAR:
+        return next((c.id for c in calendars if c.primary), followed)
+    return followed
+
+
+@router.get("/api/google-calendar/calendars", response_model=ReadableCalendarsResponse)
+def list_followable_calendars(
+    user: User = Depends(require_baa_acceptance),
+    service: GoogleCalendarService = Depends(get_google_calendar_service),
+) -> ReadableCalendarsResponse:
+    """The calendars that can be followed: those the connection can read."""
+    _connected_with_read_access(service, user.id)
+    calendars = service.list_readable_calendars(user.id)
+    followed = service.get_sync_status(user.id).get("follow_calendar_id")
+    return ReadableCalendarsResponse(
+        calendars=[
+            ReadableCalendarResponse(id=c.id, name=c.name, primary=c.primary) for c in calendars
+        ],
+        follow_calendar_id=_shown_as(followed, calendars),
+    )
+
+
+@router.put("/api/google-calendar/followed-calendar", response_model=FollowedCalendarResponse)
+def set_followed_calendar(
+    request: FollowedCalendarRequest,
     user: User = Depends(require_baa_acceptance),
     service: GoogleCalendarService = Depends(get_google_calendar_service),
     outside: OutsideSessions = Depends(get_outside_sessions),
-) -> FollowMainCalendarResponse:
-    """Turn bringing in sessions from the main calendar on or off.
+) -> FollowedCalendarResponse:
+    """Choose the calendar whose sessions are brought in, or stop following.
 
     Following reads events, so it needs the grant the "Look at my week" step
-    asks for; turning it on without that grant is refused rather than stored
-    as a choice that does nothing. Turning it off drops the questions it
-    raised; sessions already answered stay as they are.
+    asks for; choosing a calendar without that grant, or one the connection
+    can't read, is refused rather than stored as a choice that does nothing.
+    Stopping, or choosing another calendar, drops the open questions from the
+    one followed until now; sessions already answered stay as they are.
     """
     status_info = service.get_sync_status(user.id)
     if not status_info.get("connected"):
         raise NotFoundError("Google Calendar not connected")
-    if request.enabled and not status_info.get("import_granted"):
-        raise BadRequestError("Following your calendar needs access to read its events")
-    service.set_follow_main_calendar(user.id, follow=request.enabled)
-    if not request.enabled:
+    chosen = request.calendar_id
+    if chosen is not None:
+        _connected_with_read_access(service, user.id)
+        calendars = service.list_readable_calendars(user.id)
+        main = next((c for c in calendars if c.primary), None)
+        if chosen == FOLLOW_MAIN_CALENDAR and main is not None:
+            chosen = main.id
+        if chosen != FOLLOW_MAIN_CALENDAR and chosen not in {c.id for c in calendars}:
+            raise BadRequestError(NOT_A_READABLE_CALENDAR)
+        if main is not None:
+            # Rows from before calendars were recorded came from here.
+            outside.claim_unrecorded(user.id, main.id)
+        is_main = chosen == FOLLOW_MAIN_CALENDAR or (main is not None and chosen == main.id)
+        current = status_info.get("follow_calendar_id")
+        if current == FOLLOW_MAIN_CALENDAR and main is not None and chosen == main.id:
+            # The same calendar, now by its real id: its read carries on.
+            service.remember_followed_calendar_id(user.id, chosen)
+            return FollowedCalendarResponse(follow_calendar_id=chosen)
+        if service.set_followed_calendar(user.id, chosen, main_calendar=is_main):
+            outside.drop_open(user.id, GOOGLE_CALENDAR_SOURCE)
+        return FollowedCalendarResponse(follow_calendar_id=chosen)
+    if service.set_followed_calendar(user.id, None):
         outside.drop_open(user.id, GOOGLE_CALENDAR_SOURCE)
-    return FollowMainCalendarResponse(follow_main_calendar=request.enabled)
+    return FollowedCalendarResponse(follow_calendar_id=chosen)

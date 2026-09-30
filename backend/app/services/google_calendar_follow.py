@@ -51,7 +51,7 @@ from ..scheduling_engine.models.appointment import (
 )
 from ..scheduling_engine.services.scheduling import SchedulingService
 from ..utcnow import utc_now
-from .google_calendar_service import parse_event_time
+from .google_calendar_service import FOLLOW_MAIN_CALENDAR, parse_event_time
 from .telehealth import GOOGLE_MEET
 
 if TYPE_CHECKING:
@@ -369,7 +369,14 @@ class GoogleChangeFollower:
                 return self._settled(appointment) if outside else self._push(user_id, appointment)
             event_id = appointment.outside_event_id or appointment.google_event_id
             times = (
-                self._calendar.read_event_times(user_id, event_id, main_calendar=outside)
+                self._calendar.read_event_times(
+                    user_id,
+                    event_id,
+                    # A session with no calendar recorded came from the main one.
+                    followed_calendar=(appointment.outside_calendar_id or FOLLOW_MAIN_CALENDAR)
+                    if outside
+                    else None,
+                )
                 if event_id
                 else None
             )
