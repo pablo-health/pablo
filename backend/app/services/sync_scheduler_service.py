@@ -215,12 +215,12 @@ class SyncSchedulerService:
                 logger.exception("Google Calendar sync failed for scheduled run")
                 summary.google_error = True
 
-            # 2b. Sessions another service puts on the main calendar
-            if google_token.follow_main_calendar:
+            # 2b. Sessions another service puts on the followed calendar
+            if google_token.follow_calendar_id:
                 try:
-                    summary.outside_sessions_followed = self._follow_main_calendar(user_id)
+                    summary.outside_sessions_followed = self._follow_calendar(user_id)
                 except Exception:
-                    logger.exception("Following the main calendar failed for scheduled run")
+                    logger.exception("Following a calendar failed for scheduled run")
                     summary.google_error = True
 
         # 3. Reminders
@@ -247,8 +247,8 @@ class SyncSchedulerService:
             return 0
         return self._follower.follow(user, self._audit(), changes).changed
 
-    def _follow_main_calendar(self, user_id: str) -> int:
-        """Bring in sessions from the main calendar, and follow the answered ones.
+    def _follow_calendar(self, user_id: str) -> int:
+        """Bring in sessions from the followed calendar, and follow the answered ones.
 
         Only reads: nothing is ever written to an event another service made.
         New events are held, answered or dropped first; then the appointments
@@ -256,18 +256,23 @@ class SyncSchedulerService:
         under the same guards as Pablo's own sessions.
         """
         read = self._google_calendar_service.read_main_calendar_changes(user_id)
+        outside = self._outside().in_zone(self._zone(user_id))
+        if read.main_calendar_id is not None:
+            # Rows from before calendars were recorded came from here.
+            outside.claim_unrecorded(user_id, read.main_calendar_id)
         if not read.changes and not read.full:
             return 0
         user = self._user_repo.get(user_id)
         if user is None:
             return 0
         audit = self._audit()
-        outside = self._outside().in_zone(self._zone(user_id))
         changes = read.changes
-        ingested = outside.ingest_google(user_id, changes)
-        if read.full and read.window is not None:
+        ingested = outside.ingest_google(user_id, changes, calendar_id=read.calendar_id)
+        if read.full and read.window is not None and read.calendar_id is not None:
             present = {str(change.get("google_event_id")) for change in changes}
-            changes = changes + outside.reconcile_full_read(user_id, present, read.window)
+            changes = changes + outside.reconcile_full_read(
+                user_id, present, read.window, read.calendar_id
+            )
         for appointment in ingested.booked:
             audit.log_appointment_action(
                 AuditAction.APPOINTMENT_CREATED,

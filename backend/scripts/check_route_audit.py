@@ -453,7 +453,9 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("get", "/api/google-calendar/callback"),  # OAuth token exchange, no events
         ("get", "/api/google-calendar/status"),  # calendar connection status
         ("delete", "/api/google-calendar/disconnect"),  # removes calendar tokens
-        ("put", "/api/google-calendar/follow-main-calendar"),  # the clinician's own preference
+        # the clinician's own calendars, by name, and which one to follow
+        ("get", "/api/google-calendar/calendars"),
+        ("put", "/api/google-calendar/followed-calendar"),  # the clinician's own preference
         # telehealth.py — which video services are on offer, and the clinician's
         # own connection to one. No patient appears in any of them.
         ("get", "/api/telehealth/providers"),  # deployment config + own connections

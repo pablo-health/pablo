@@ -77,6 +77,7 @@ class PostgresExternalCalendarEventRepository(ExternalCalendarEventRepository):
         row.source = event.source
         row.source_event_id = event.source_event_id
         row.source_series_id = event.source_series_id
+        row.calendar_id = event.calendar_id
         row.start_at = event.start_at
         row.end_at = event.end_at
         row.title = event.title
@@ -103,6 +104,7 @@ def _to_event(row: ExternalCalendarEventRow) -> ExternalCalendarEvent:
         source=row.source,
         source_event_id=row.source_event_id,
         source_series_id=row.source_series_id,
+        calendar_id=row.calendar_id,
         start_at=row.start_at,
         end_at=row.end_at,
         title=row.title,

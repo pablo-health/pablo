@@ -1808,6 +1808,9 @@ class AppointmentRow(Base):
     # there. Its time comes from that event, never the other way.
     outside_source: Mapped[str | None] = mapped_column(String(64))
     outside_event_id: Mapped[str | None] = mapped_column(Text, index=True)
+    # The calendar that event is on, for a calendar Pablo follows; None for a
+    # feed, and for sessions booked before the calendar was recorded.
+    outside_calendar_id: Mapped[str | None] = mapped_column(Text)
     # Clinical link
     session_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
     # Billing codes for the visit — see app.scheduling_engine.models.appointment.
@@ -2135,15 +2138,22 @@ class GoogleCalendarSettingsRow(Base):
     own insert, so a calendar the clinician made is never recorded here,
     whatever it is called. None until Pablo has made one.
 
-    ``follow_main_calendar`` is whether sessions another service puts on the
-    clinician's main calendar are brought in (``outside_sessions``). It only
-    takes effect while the connection can read events.
+    ``follow_calendar_id`` is the calendar whose sessions another service
+    puts there are brought in (``outside_sessions``), or None when nothing is
+    followed. ``primary`` stands for the account's main calendar until a read
+    resolves it to the calendar's real id. It only takes effect while the
+    connection can read events.
     """
 
     __tablename__ = "google_calendar_settings"
 
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     app_calendar_id: Mapped[str | None] = mapped_column(Text)
+    follow_calendar_id: Mapped[str | None] = mapped_column(Text)
+    #: Superseded by ``follow_calendar_id`` and never read. Still written, as
+    #: whether anything is followed, so an image from before the chosen
+    #: calendar keeps working while a deploy rolls over; a later revision
+    #: drops it.
     follow_main_calendar: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
@@ -2241,6 +2251,8 @@ class ExternalCalendarEventRow(Base):
     source: Mapped[str] = mapped_column(String(64), nullable=False)
     source_event_id: Mapped[str] = mapped_column(Text, nullable=False)
     source_series_id: Mapped[str | None] = mapped_column(Text)
+    #: The followed calendar the event is on; None for a feed.
+    calendar_id: Mapped[str | None] = mapped_column(Text)
     start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     title: Mapped[str] = mapped_column(Text, nullable=False, server_default="")

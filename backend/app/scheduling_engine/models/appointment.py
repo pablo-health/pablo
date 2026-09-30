@@ -143,6 +143,8 @@ class Appointment:
     # time comes from that event, and nothing is ever pushed back to it.
     outside_source: str | None = None
     outside_event_id: str | None = None
+    # The followed calendar that event is on; None for a feed.
+    outside_calendar_id: str | None = None
 
     # Clinical link
     session_id: str | None = None
@@ -260,6 +262,7 @@ class Appointment:
             ehr_appointment_url=data.get("ehr_appointment_url"),
             outside_source=data.get("outside_source"),
             outside_event_id=data.get("outside_event_id"),
+            outside_calendar_id=data.get("outside_calendar_id"),
             session_id=data.get("session_id"),
             service_code=data.get("service_code"),
             modifiers=data.get("modifiers"),
@@ -316,6 +319,7 @@ class Appointment:
             "ehr_appointment_url": self.ehr_appointment_url,
             "outside_source": self.outside_source,
             "outside_event_id": self.outside_event_id,
+            "outside_calendar_id": self.outside_calendar_id,
             "session_id": self.session_id,
             "service_code": self.service_code,
             "modifiers": self.modifiers,

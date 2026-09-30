@@ -428,7 +428,7 @@ def outside(client: TestClient) -> tuple[InMemoryExternalCalendarEventRepository
     calendar.get_sync_status.return_value = {
         "connected": True,
         "import_granted": True,
-        "follow_main_calendar": True,
+        "follow_calendar_id": "primary",
     }
     app.dependency_overrides[get_owner_timezone] = lambda: UTC
     app.dependency_overrides[get_external_calendar_events] = lambda: events

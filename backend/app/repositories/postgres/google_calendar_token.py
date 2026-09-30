@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from ...db.models import GoogleCalendarSettingsRow, GoogleCalendarTokenRow
 from ...utcnow import utc_now
@@ -14,6 +14,9 @@ from ..google_calendar_token import GoogleCalendarTokenDoc, GoogleCalendarTokenR
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+#: How following the main calendar is stored until its real id is known.
+FOLLOW_MAIN_CALENDAR_ID = "primary"
 
 
 class PostgresGoogleCalendarTokenRepository(GoogleCalendarTokenRepository):
@@ -28,7 +31,7 @@ class PostgresGoogleCalendarTokenRepository(GoogleCalendarTokenRepository):
             return None
         doc = _row_to_doc(row)
         settings = self._session.get(GoogleCalendarSettingsRow, user_id)
-        doc.follow_main_calendar = bool(settings and settings.follow_main_calendar)
+        doc.follow_calendar_id = settings.follow_calendar_id if settings else None
         return doc
 
     def list_all(self) -> list[GoogleCalendarTokenDoc]:
@@ -95,16 +98,39 @@ class PostgresGoogleCalendarTokenRepository(GoogleCalendarTokenRepository):
             row.updated_at = utc_now()
         self._session.flush()
 
-    def set_follow_main_calendar(self, user_id: str, *, follow: bool) -> None:
+    def set_followed_calendar(
+        self, user_id: str, calendar_id: str | None, *, main_calendar: bool = False
+    ) -> None:
         row = self._session.get(GoogleCalendarSettingsRow, user_id)
+        # Kept in step for an image that still reads it, which follows only
+        # the main calendar: told "on" for another calendar, it would read the
+        # main one against that calendar's sync token and judge its sessions
+        # deleted. See the row.
+        main = calendar_id is not None and main_calendar
         if row is None:
             self._session.add(
-                GoogleCalendarSettingsRow(user_id=user_id, follow_main_calendar=follow)
+                GoogleCalendarSettingsRow(
+                    user_id=user_id, follow_calendar_id=calendar_id, follow_main_calendar=main
+                )
             )
         else:
-            row.follow_main_calendar = follow
+            row.follow_calendar_id = calendar_id
+            row.follow_main_calendar = main
             row.updated_at = utc_now()
         self._session.flush()
+
+    def resolve_followed_main_calendar(self, user_id: str, calendar_id: str) -> bool:
+        result = self._session.execute(
+            update(GoogleCalendarSettingsRow)
+            .where(
+                GoogleCalendarSettingsRow.user_id == user_id,
+                GoogleCalendarSettingsRow.follow_calendar_id == FOLLOW_MAIN_CALENDAR_ID,
+            )
+            .values(follow_calendar_id=calendar_id, updated_at=utc_now())
+            .execution_options(synchronize_session="fetch")
+        )
+        self._session.flush()
+        return bool(getattr(result, "rowcount", 0))
 
 
 def _row_to_doc(row: GoogleCalendarTokenRow) -> GoogleCalendarTokenDoc:
