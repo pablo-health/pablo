@@ -53,7 +53,7 @@ from ..patients.matching import (
     match_patient,
     remember_match,
 )
-from ..repositories.external_calendar_event import ExternalCalendarEvent
+from ..repositories.external_calendar_event import ANSWER_OPEN, ExternalCalendarEvent
 from ..repositories.ical_sync_config import ICalSyncConfig, ICalSyncConfigRepository
 from ..scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from ..utcnow import utc_now
@@ -406,6 +406,10 @@ class ICalSyncService:
         # No patient, so not an appointment: held until the clinician says
         # who it is.
         self._outside.hold(row)
+        if row.answer != ANSWER_OPEN:
+            # Already answered for this event alone (not a client): kept so
+            # it isn't asked again, and not reported as unmatched either.
+            return
         result.unmatched_events.append(
             {
                 "ical_uid": event.uid,
@@ -737,10 +741,15 @@ def feed_identity(ehr_system: str, summary: str) -> FeedIdentity:
 def _title_style(ehr_system: str, events: Iterable[ParsedEvent]) -> TitleStyle | None:
     """How a read's titles name clients, for the settings screen.
 
-    Initials only when every title is initials: a feed showing names is set
-    up as well as it can be, whatever a stray title looks like.
+    Initials only when every appointment title is initials: a feed showing
+    names is set up as well as it can be. A SimplePractice event that isn't an
+    appointment ("Lunch") says nothing about the setting and is left out.
     """
-    kinds = {feed_identity(ehr_system, event.summary).kind for event in events}
+    kinds = {
+        feed_identity(ehr_system, event.summary).kind
+        for event in events
+        if ehr_system != EhrSystem.SIMPLEPRACTICE or _SP_FULLNAME_RE.match(event.summary)
+    }
     if not kinds:
         return None
     if kinds == {"initials"}:

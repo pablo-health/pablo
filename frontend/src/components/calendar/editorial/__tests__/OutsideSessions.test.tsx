@@ -412,4 +412,24 @@ describe("sessions from the clinician's own calendar", () => {
       within(screen.getByRole("dialog")).queryByRole("checkbox", { name: /active again/ })
     ).not.toBeInTheDocument()
   })
+
+  it("answers one event from its block before the question list has loaded", async () => {
+    const start = todayAt(14)
+    OUTSIDE.push({
+      id: "o1",
+      source: "ical:simplepractice",
+      source_identifier: "J.A.",
+      title: "J.A. Appointment",
+      start_at: start.toISOString(),
+      end_at: new Date(start.getTime() + 50 * 60_000).toISOString(),
+    })
+
+    render(<EditorialCalendar {...defaults()} defaultView="day" />, { wrapper: wrap() })
+    fireEvent.click(screen.getByTestId("outside-session"))
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Save" }))
+
+    expect(answerMutateAsync).toHaveBeenCalledWith([
+      expect.objectContaining({ source_identifier: "J.A.", outside_session_id: "o1" }),
+    ])
+  })
 })

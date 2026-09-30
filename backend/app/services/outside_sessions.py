@@ -89,7 +89,10 @@ if TYPE_CHECKING:
 
     from ..repositories.external_calendar_event import ExternalCalendarEventRepository
     from ..repositories.patient import PatientRepository
-    from ..repositories.patient_source_mapping import PatientSourceMappingRepository
+    from ..repositories.patient_source_mapping import (
+        PatientSourceMapping,
+        PatientSourceMappingRepository,
+    )
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
 
 logger = logging.getLogger(__name__)
@@ -208,9 +211,10 @@ class OutsideSessions:
         match: MatchResult,
         ctx: MatchContext,
     ) -> str | None:
-        # Never onto a chart this clinician doesn't see: the row stays a
+        # Never for an identifier the clinician said is not a client, and
+        # never onto a chart this clinician doesn't see: the row stays a
         # question, which says who does see that client.
-        if match.patient_id and not match.visible:
+        if match.evidence == "not_a_client" or (match.patient_id and not match.visible):
             return None
         patient_id = self._one_client(row, identity, match, ctx)
         if patient_id is None:
@@ -233,10 +237,15 @@ class OutsideSessions:
             # middle names aside, and any remembered answer agrees. A new
             # client with the same name taking over the slot before having
             # a chart is the residual case.
+            # A remembered answer is read from the record, not the match:
+            # one whose chart is gone yields no match at all, and must not
+            # hand the name to whoever else bears it.
             assert identity.hint.full_name is not None  # noqa: S101 — a name kind has one
             bearing = [c.id for c in same_name_charts(identity.hint.full_name, ctx)]
-            remembered_elsewhere = match.evidence == "remembered" and bearing != [match.patient_id]
-            return bearing[0] if len(bearing) == 1 and not remembered_elsewhere else None
+            known = _known(ctx, identity)
+            if len(bearing) != 1 or (known is not None and known.patient_id != bearing[0]):
+                return None
+            return bearing[0]
         if match.patient_id is None or match.evidence != "remembered":
             return None
         if identity.kind == "code":
@@ -507,7 +516,16 @@ class OutsideSessions:
     def _question(
         self, row: ExternalCalendarEvent, identity: _Identity, ctx: MatchContext, *, each_time: bool
     ) -> Question:
+        if each_time:
+            return self._each_time_question(row, identity, ctx)
         match = match_patient(identity.hint, ctx)
+        if match.evidence is None and not match.patient_id and not match.possible_ids:
+            # Remembered to a chart that is gone: the matcher rightly guesses
+            # no one, but the question still offers whoever the title could
+            # mean, none of them preselected.
+            by_title = match_patient(_title_only(identity.hint), ctx)
+            ids = [by_title.patient_id] if by_title.patient_id else by_title.possible_ids
+            match = MatchResult(possible_ids=ids)
         suggested = None
         inactive = False
         if match.patient_id and match.visible:
@@ -536,6 +554,45 @@ class OutsideSessions:
             suggested_patient_id=suggested,
             outside_session_id=row.id if each_time else None,
             client_inactive=inactive,
+        )
+
+    def _each_time_question(
+        self, row: ExternalCalendarEvent, identity: _Identity, ctx: MatchContext
+    ) -> Question:
+        """One event whose title can't say which client it is.
+
+        Candidates come from the title alone, among the clinician's own
+        charts. Whatever was answered last under the title is only the
+        pre-fill, and only when the clinician still sees that chart: a
+        remembered answer for initials is not an identity, so it can neither
+        lock the question to a colleague's client nor stand for "not a
+        client" on the next event.
+        """
+        by_title = match_patient(_title_only(identity.hint), ctx)
+        candidates = [by_title.patient_id] if by_title.patient_id else by_title.possible_ids
+        known = _known(ctx, identity)
+        last = known.patient_id if known is not None else None
+        suggested = last if last is not None and _sees(ctx, last) else None
+        if suggested is None and by_title.patient_id and by_title.evidence not in NAME_ONLY:
+            suggested = by_title.patient_id
+        if suggested is not None:
+            match = MatchResult(
+                possible_ids=[suggested, *(c for c in candidates if c != suggested)]
+            )
+        else:
+            match = by_title
+        shown = suggested or match.patient_id
+        patient = self._patients.get(shown, row.user_id) if shown else None
+        return Question(
+            source=row.source,
+            source_identifier=identity.identifier,
+            title=row.title,
+            next_start_at=row.start_at,
+            recurring=bool(row.source_series_id),
+            match=match,
+            suggested_patient_id=suggested,
+            outside_session_id=row.id,
+            client_inactive=patient is not None and patient.status != ACTIVE,
         )
 
     def open_rows(
@@ -567,7 +624,9 @@ class OutsideSessions:
         rows = self.open_rows(user_id, source, source_identifier, row_id=row_id)
         if not rows:
             return False
-        match = match_patient(self._identity(rows[0]).hint, ctx)
+        identity = self._identity(rows[0])
+        hint = _title_only(identity.hint) if self._asks_each_time(identity, ctx) else identity.hint
+        match = match_patient(hint, ctx)
         return match.patient_id is not None and not match.visible
 
     def answer(
@@ -614,7 +673,10 @@ class OutsideSessions:
             source_identifier,
             patient_id,
             ctx,
-            answered_title=answered_title_digest(rows[0].title) if rows else None,
+            # The title the question showed: the soonest row's.
+            answered_title=(
+                answered_title_digest(min(rows, key=lambda r: r.start_at).title) if rows else None
+            ),
         )
         for row in sorted(rows, key=lambda r: r.start_at):
             row.answer = ANSWER_CLIENT
@@ -683,6 +745,21 @@ class OutsideSessions:
 
 def _remembered(ctx: MatchContext, identity: _Identity) -> bool:
     return normalize(identity.identifier) in ctx.remembered(identity.mapping_source)
+
+
+def _known(ctx: MatchContext, identity: _Identity) -> PatientSourceMapping | None:
+    """The answer on record under this identifier, whatever became of its chart."""
+    return ctx.remembered(identity.mapping_source).get(normalize(identity.identifier))
+
+
+def _title_only(hint: PatientHint) -> PatientHint:
+    """What the title says, without what was remembered under it."""
+    return hint.model_copy(update={"source_identifier": None})
+
+
+def _sees(ctx: MatchContext, patient_id: str) -> bool:
+    candidate = ctx.candidate(patient_id)
+    return candidate is not None and candidate.visible
 
 
 def _mapping_source(source: str) -> str:

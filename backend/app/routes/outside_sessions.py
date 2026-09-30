@@ -98,6 +98,8 @@ PATIENT_ORIGIN = "calendar_follow"
 #: A chart's name when the event had no title to take one from.
 UNNAMED_CLIENT = "New client"
 _NAME_MAX = 255
+#: The statuses confirming a session may lift. A pending chart is not one.
+REACTIVATABLE = frozenset({"inactive", "on_hold"})
 
 
 def get_external_calendar_events(
@@ -308,7 +310,7 @@ def answer_outside_sessions(
             )
             continue
         patient = client or _new_client(item, patient_repo, user, http_request, audit)
-        if item.reactivate and patient.status != ACTIVE:
+        if item.reactivate and patient.status in REACTIVATABLE:
             _reactivate(patient, patient_repo, user, http_request, audit)
         rows = outside.answer(
             user.id,

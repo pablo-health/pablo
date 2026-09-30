@@ -29,7 +29,7 @@ from app.calendar_providers.source_identity import (
 )
 from app.main import app
 from app.models.patient import Patient
-from app.patients.matching import remember_match
+from app.patients.matching import remember_match, remember_not_a_client
 from app.repositories.external_calendar_event import (
     ANSWER_CLIENT,
     ANSWER_NOT_A_CLIENT,
@@ -47,7 +47,7 @@ from app.routes.scheduling import (
     get_owner_timezone,
 )
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
-from app.services.ical_sync_service import ICalSyncService, feed_identity
+from app.services.ical_sync_service import ICalSyncService, ParsedEvent, feed_identity
 from app.services.outside_sessions import ONE_SESSION_AT_A_TIME, OutsideSessions
 from app.services.token_encryption import encrypt_tokens
 from app.settings import get_settings
@@ -678,3 +678,126 @@ def test_the_status_route_says_how_a_feed_names_clients(client: TestClient) -> N
     assert response.status_code == 200, response.text
     [connection] = response.json()["connections"]
     assert connection["title_style"] == "initials"
+
+
+# --- Review findings ----------------------------------------------------------
+
+
+class TestWhatIsRememberedNeverStandsInForIdentity:
+    def test_a_name_remembered_to_a_deleted_chart_is_not_handed_to_its_namesake(
+        self, feed: _Feed
+    ) -> None:
+        feed.chart("first", "Jane", "Smith")
+        feed.chart("second", "Jane", "Smith")
+        remember_match(SP, "jane smith", "first", feed.outside.context(USER))
+        feed.patients.delete("first", USER)
+
+        feed.sync(FULL_NAMES)
+
+        assert "second" not in feed.booked().values()
+        [question] = feed.questions_titled("jane smith Appointment")
+        assert "second" in question.match.possible_ids or question.match.patient_id == "second"
+
+    def test_a_name_said_to_be_no_client_is_never_booked(self, feed: _Feed) -> None:
+        feed.chart("jane", "Jane", "Smith")
+        remember_not_a_client(SP, "jane smith", feed.outside.context(USER))
+        start = utc_now()
+        event = ParsedEvent(
+            uid="u1",
+            summary="jane smith Appointment",
+            start_at=start,
+            end_at=start,
+            duration_minutes=60,
+        )
+
+        row = ICalSyncService._row(USER, SP, event)
+
+        assert feed.outside.unattended(row, feed.outside.context(USER)) is None
+
+    def test_initials_remembered_to_a_colleagues_chart_still_offer_my_own(
+        self, feed: _Feed
+    ) -> None:
+        feed.patients.create(_patient("theirs", "Jack", "Ames"), "colleague")
+        feed.chart("john", "John", "Adams")
+        feed.chart("james", "James", "Anderson")
+        remember_match(SP, "J.A.", "theirs", feed.outside.context(USER))
+
+        feed.sync(INITIALS)
+
+        ja = feed.questions_titled("J.A. Appointment")
+        assert len(ja) == 38
+        assert all(sorted(q.match.possible_ids) == ["james", "john"] for q in ja)
+        assert all(q.suggested_patient_id is None for q in ja)
+        first = min(ja, key=lambda q: q.next_start_at)
+        # A new client is not refused: initials never say it is theirs.
+        assert not feed.outside.seen_by_someone_else(
+            USER, FEED_SOURCE, "J.A.", feed.outside.context(USER), row_id=first.outside_session_id
+        )
+
+    def test_initials_once_said_to_be_no_client_still_offer_every_candidate(
+        self, feed: _Feed
+    ) -> None:
+        feed.chart("john", "John", "Adams")
+        feed.chart("james", "James", "Anderson")
+        remember_not_a_client(SP, "J.A.", feed.outside.context(USER))
+
+        feed.sync(INITIALS)
+
+        ja = feed.questions_titled("J.A. Appointment")
+        assert len(ja) == 38
+        assert all(sorted(q.match.possible_ids) == ["james", "john"] for q in ja)
+
+    def test_an_event_answered_as_no_client_is_not_reported_again(self, feed: _Feed) -> None:
+        feed.chart("john", "John", "Adams")
+        feed.chart("james", "James", "Anderson")
+        assert len(feed.sync(INITIALS).unmatched_events) == 44
+        first = feed.soonest("J.A. Appointment")
+        feed.outside.answer(
+            USER, FEED_SOURCE, "J.A.", patient_id=None, row_id=first.outside_session_id
+        )
+
+        assert len(feed.sync(INITIALS).unmatched_events) == 43
+
+
+class TestTheTitleAnAnswerRecords:
+    def test_is_the_title_the_question_showed(self) -> None:
+        g = _Google()
+        g.chart("mine", "Jane", "Smith")
+        # One later occurrence was retitled; it reaches Pablo first.
+        g.poll("moved", "Jane (moved)", days=10)
+        g.poll("usual", "Jane weekly", days=3)
+        [question] = g.outside.questions(USER)
+        assert question.title == "Jane weekly"
+
+        g.outside.answer(
+            USER, GOOGLE_CALENDAR_SOURCE, question.source_identifier, patient_id="mine"
+        )
+
+        assert [a.patient_id for a in g.poll("next", "Jane weekly", days=17)] == ["mine"]
+
+
+class TestAFeedsTitleStyle:
+    def test_a_stray_event_does_not_hide_an_initials_feed(self, feed: _Feed) -> None:
+        lunch = (
+            "BEGIN:VEVENT\r\nDTSTAMP:20260930T163202Z\r\nUID:lunch-1\r\n"
+            "DTSTART;TZID=America/New_York:20261001T120000\r\n"
+            "DTEND;TZID=America/New_York:20261001T130000\r\nSUMMARY:Lunch\r\n"
+            "END:VEVENT\r\nEND:VCALENDAR"
+        )
+
+        result = feed.sync(INITIALS.replace("END:VCALENDAR", lunch))
+
+        assert result.title_style == "initials"
+
+
+class TestReactivationOverTheApi:
+    def test_a_pending_chart_is_not_made_active(self, client: TestClient, wired: _Wired) -> None:
+        wired.chart("jane", "Jane", "Smith", status="pending")
+        wired.hold("r1", "Jane Smith Appointment", 2)
+
+        response = _answer(
+            client, source_identifier="Jane Smith", patient_id="jane", reactivate=True
+        )
+
+        assert response.status_code == 200, response.text
+        assert wired.status("jane") == "pending"
