@@ -714,13 +714,13 @@ def _extract_pdf_text(data: bytes) -> str | None:
 
     Returns the joined text if the result is meaningfully long;
     ``None`` for scanned PDFs (treated as <100 chars). PyMuPDF
-    exceptions bubble — a malformed PDF that pyfitz can't open fails the
+    exceptions bubble — a malformed PDF that PyMuPDF can't open fails the
     same way on every retry, so the caller (``run_finalize_extraction``)
     treats it as a deterministic, non-retryable extraction failure.
     """
-    import fitz  # type: ignore[import-untyped]
+    import pymupdf
 
-    with fitz.open(stream=data, filetype="pdf") as doc:
+    with pymupdf.open(stream=data, filetype="pdf") as doc:
         pages: list[str] = []
         for page in doc:
             pages.append(page.get_text())
