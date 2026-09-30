@@ -196,6 +196,18 @@ describe("CalendarSetupWizard", () => {
     )
   })
 
+  it("a connect is never mistaken for an abandoned 'Look at my week' grant", async () => {
+    // The consent for the import was abandoned at Google; its marker stayed.
+    window.sessionStorage.setItem("pablo.calendar-import.pending", "1")
+    const user = userEvent.setup()
+    renderWizard()
+
+    await user.click(await screen.findByRole("button", { name: /connect google calendar/i }))
+
+    await waitFor(() => expect(getAuthUrl).toHaveBeenCalled())
+    expect(window.sessionStorage.getItem("pablo.calendar-import.pending")).toBeNull()
+  })
+
   it("asks for the main calendar only when that is chosen", async () => {
     const user = userEvent.setup()
     renderWizard()
@@ -618,6 +630,10 @@ describe("CalendarSetupWizard returning from Google", () => {
     // The scan the button asked for runs automatically once the grant lands
     // — the therapist never has to press it a second time.
     await waitFor(() => expect(scanForImport).toHaveBeenCalled())
+    // Read in the therapist's own zone, never left to the scan's UTC default.
+    expect(scanForImport.mock.calls[0][1]).toBe(
+      Intl.DateTimeFormat().resolvedOptions().timeZone
+    )
     await screen.findByText("Bring over your week")
     await screen.findByTestId("qualifying-count")
 

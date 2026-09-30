@@ -2115,6 +2115,31 @@ class GoogleCalendarTokenRow(Base):
     consecutive_error_count: Mapped[int] = mapped_column(default=0)
 
 
+class GoogleCalendarSettingsRow(Base):
+    """A clinician's Google Calendar choices that outlive a connection.
+
+    Kept apart from ``google_calendar_tokens`` because a disconnect deletes
+    the grant and everything on its row, while these should be there when the
+    clinician connects again. The first is ``app_calendar_id``, the calendar
+    Pablo created: connecting to the main calendar writes elsewhere, but the
+    next app-calendar connect should find this calendar again rather than make
+    another. It is only ever written with an id Google returned from Pablo's
+    own insert, so a calendar the clinician made is never recorded here,
+    whatever it is called.
+    """
+
+    __tablename__ = "google_calendar_settings"
+
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    app_calendar_id: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+
 class TelehealthConnectionRow(Base):
     """One clinician's connection to one video service.
 

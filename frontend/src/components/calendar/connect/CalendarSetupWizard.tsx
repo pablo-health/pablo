@@ -94,6 +94,14 @@ function rememberImportPending(): void {
   }
 }
 
+function browserTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
+  } catch {
+    return "UTC"
+  }
+}
+
 function recallAndClearImportPending(): boolean {
   try {
     const pending = window.sessionStorage.getItem(IMPORT_PENDING_KEY) === "1"
@@ -253,6 +261,10 @@ export function CalendarSetupWizard({
     setConnecting(true)
     try {
       rememberSelection(selection)
+      // A "Look at my week" consent abandoned at Google leaves its marker
+      // behind; left there, this connect's return would be taken for that
+      // import grant and exchanged as one, which Google's answer cannot pass.
+      recallAndClearImportPending()
       const { auth_url } = await getGoogleCalendarAuthUrl(redirectUri, selection)
       window.location.assign(auth_url)
     } catch (err) {
@@ -265,7 +277,10 @@ export function CalendarSetupWizard({
     setScanning(true)
     setScanError(null)
     try {
-      const result = await scanCalendarForImport(redirectUri)
+      // The therapist's own zone: the week is proposed, and the series
+      // created, in the hours they keep — not UTC, which put every session
+      // hours off and let daylight saving move them.
+      const result = await scanCalendarForImport(redirectUri, browserTimeZone())
       if (importNeedsConsent(result)) {
         rememberImportPending()
         window.location.assign(result.auth_url)
