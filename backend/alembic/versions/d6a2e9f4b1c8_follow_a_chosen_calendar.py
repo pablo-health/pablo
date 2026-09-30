@@ -11,7 +11,10 @@ while a deploy rolls over.
   ``follow_main_calendar``: every row following the main calendar gets
   ``'primary'``, which the next read resolves to the calendar's real id.
   ``follow_main_calendar`` stays in place and is no longer read; a later
-  revision drops it.
+  revision drops it. It is still written, as "following the main calendar":
+  an image from before this revision reads only that calendar, so it follows
+  for a clinician on the main calendar and not at all for one who chose
+  another, whose sessions it would otherwise judge against the wrong calendar.
 * ``external_calendar_events.calendar_id`` — the followed calendar an event is
   on. NULL for a feed.
 * ``appointments.outside_calendar_id`` — the followed calendar the event an

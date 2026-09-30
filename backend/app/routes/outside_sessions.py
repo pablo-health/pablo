@@ -468,18 +468,22 @@ def set_followed_calendar(
         _connected_with_read_access(service, user.id)
         calendars = service.list_readable_calendars(user.id)
         main = next((c for c in calendars if c.primary), None)
-        if main is not None:
-            # Rows from before calendars were recorded came from here.
-            outside.claim_unrecorded(user.id, main.id)
         if chosen == FOLLOW_MAIN_CALENDAR and main is not None:
             chosen = main.id
         if chosen != FOLLOW_MAIN_CALENDAR and chosen not in {c.id for c in calendars}:
             raise BadRequestError(NOT_A_READABLE_CALENDAR)
+        if main is not None:
+            # Rows from before calendars were recorded came from here.
+            outside.claim_unrecorded(user.id, main.id)
+        is_main = chosen == FOLLOW_MAIN_CALENDAR or (main is not None and chosen == main.id)
         current = status_info.get("follow_calendar_id")
         if current == FOLLOW_MAIN_CALENDAR and main is not None and chosen == main.id:
             # The same calendar, now by its real id: its read carries on.
             service.remember_followed_calendar_id(user.id, chosen)
             return FollowedCalendarResponse(follow_calendar_id=chosen)
-    if service.set_followed_calendar(user.id, chosen):
+        if service.set_followed_calendar(user.id, chosen, main_calendar=is_main):
+            outside.drop_open(user.id, GOOGLE_CALENDAR_SOURCE)
+        return FollowedCalendarResponse(follow_calendar_id=chosen)
+    if service.set_followed_calendar(user.id, None):
         outside.drop_open(user.id, GOOGLE_CALENDAR_SOURCE)
     return FollowedCalendarResponse(follow_calendar_id=chosen)

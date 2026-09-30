@@ -53,9 +53,10 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC
+from datetime import UTC, timedelta
 from typing import TYPE_CHECKING, Any, Literal
 
+from ..calendar_providers.practice_import import MAX_HORIZON_DAYS
 from ..calendar_providers.source_identity import (
     GOOGLE_CALENDAR_SOURCE,
     SERIES_PREFIX,
@@ -349,6 +350,15 @@ class OutsideSessions:
             incoming.patient_id = row.patient_id
             incoming.appointment_id = row.appointment_id
             incoming.created_at = row.created_at
+            if (
+                row.appointment_id
+                and incoming.calendar_id
+                and incoming.calendar_id != row.calendar_id
+            ):
+                # An event can sit on two calendars under one id (an invited
+                # copy of it). Read now from the one followed, it is that
+                # calendar's, and so is the session following it.
+                self._record_calendar(row.appointment_id, incoming.user_id, incoming.calendar_id)
         patient_id = self._unattended(incoming, identity, match, ctx)
         if patient_id is not None:
             if incoming.answer == ANSWER_OPEN:
@@ -449,13 +459,25 @@ class OutsideSessions:
             row.calendar_id = main_calendar_id
             self._events.save(row)
             claimed += 1
-            if row.appointment_id is None:
-                continue
-            appointment = self._appointments.get(row.appointment_id, user_id)
-            if appointment is not None and appointment.outside_calendar_id is None:
+        # Sessions, including any whose row an earlier read already removed.
+        # Only upcoming ones matter: a read judges nothing before now.
+        start = utc_now()
+        for appointment in self._appointments.list_by_range(
+            user_id, start, start + timedelta(days=MAX_HORIZON_DAYS)
+        ):
+            if (
+                appointment.outside_source == GOOGLE_CALENDAR_SOURCE
+                and appointment.outside_calendar_id is None
+            ):
                 appointment.outside_calendar_id = main_calendar_id
                 self._appointments.update(appointment)
         return claimed
+
+    def _record_calendar(self, appointment_id: str, user_id: str, calendar_id: str) -> None:
+        appointment = self._appointments.get(appointment_id, user_id)
+        if appointment is not None and appointment.outside_calendar_id != calendar_id:
+            appointment.outside_calendar_id = calendar_id
+            self._appointments.update(appointment)
 
     def drop_open(self, user_id: str, source: str) -> None:
         """Drop every question from a source, leaving answered sessions as they are."""

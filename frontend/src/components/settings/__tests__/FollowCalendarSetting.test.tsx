@@ -126,4 +126,56 @@ describe("FollowCalendarSetting", () => {
     expect(setFollowed).not.toHaveBeenCalled()
     vi.unstubAllGlobals()
   })
+
+  it("says so when the followed calendar can't be read any more", async () => {
+    listCalendars.mockResolvedValue({
+      calendars: [
+        { id: MAIN, name: MAIN, primary: true },
+        { id: TEAM, name: "Group practice", primary: false },
+      ],
+      follow_calendar_id: "gone@group.calendar.google.test",
+    })
+    render(
+      <FollowCalendarSetting
+        followedCalendarId="gone@group.calendar.google.test"
+        importGranted
+        onChanged={vi.fn()}
+      />
+    )
+
+    expect(await screen.findByTestId("followed-calendar-unreadable")).toHaveTextContent(
+      "Pablo can’t read the calendar it was following any more. Choose another."
+    )
+    expect(screen.queryByTestId("followed-calendar-line")).not.toBeInTheDocument()
+    expect(
+      screen.getByRole("combobox", { name: "Calendar to bring sessions in from" })
+    ).not.toHaveValue(MAIN)
+  })
+
+  it("shows a pick at once, without going back to the old calendar", async () => {
+    const user = userEvent.setup()
+    listCalendars.mockResolvedValue({
+      calendars: [
+        { id: MAIN, name: MAIN, primary: true },
+        { id: TEAM, name: "Group practice", primary: false },
+      ],
+      follow_calendar_id: MAIN,
+    })
+    setFollowed.mockResolvedValue({ follow_calendar_id: TEAM })
+    render(<FollowCalendarSetting followedCalendarId={MAIN} importGranted onChanged={vi.fn()} />)
+    const picker = await screen.findByRole("combobox", {
+      name: "Calendar to bring sessions in from",
+    })
+
+    await user.selectOptions(picker, TEAM)
+
+    await waitFor(() => expect(picker).toHaveValue(TEAM))
+  })
+
+  it("doesn't load calendars while nothing is followed", () => {
+    render(<FollowCalendarSetting followedCalendarId={null} importGranted onChanged={vi.fn()} />)
+
+    expect(listCalendars).not.toHaveBeenCalled()
+    expect(screen.queryByText("Loading your calendars…")).not.toBeInTheDocument()
+  })
 })

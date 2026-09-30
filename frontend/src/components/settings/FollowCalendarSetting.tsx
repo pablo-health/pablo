@@ -46,12 +46,13 @@ export function FollowCalendarSetting({
 }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [calendars, setCalendars] = useState<FollowableCalendar[]>([])
+  const [calendars, setCalendars] = useState<FollowableCalendar[] | null>(null)
   const [shownAs, setShownAs] = useState<string | null>(null)
   const following = importGranted && followedCalendarId !== null
 
+  // Only while following: the list is for choosing which calendar to read.
   useEffect(() => {
-    if (!importGranted) return
+    if (!following) return
     let cancelled = false
     listFollowableCalendars()
       .then((result) => {
@@ -65,13 +66,16 @@ export function FollowCalendarSetting({
     return () => {
       cancelled = true
     }
-  }, [importGranted, followedCalendarId])
+  }, [following, followedCalendarId])
 
   const follow = async (calendarId: string | null) => {
     setSaving(true)
     setError(null)
     try {
-      await setFollowedCalendar(calendarId)
+      const result = await setFollowedCalendar(calendarId)
+      // Show the choice at once, rather than the old one until the status
+      // comes back.
+      setShownAs(result.follow_calendar_id)
       onChanged()
     } catch {
       setError("Could not save that. Try again in a moment.")
@@ -104,7 +108,12 @@ export function FollowCalendarSetting({
   }
 
   const selected = shownAs ?? followedCalendarId
-  const followedName = calendars.find((c) => c.id === selected)?.name
+  const listed = calendars ?? []
+  const followedName = listed.find((c) => c.id === selected)?.name
+  // Followed, but not among the calendars this connection can read now:
+  // unshared or deleted since it was chosen. Said plainly rather than
+  // showing another calendar as the one read.
+  const unreadable = following && calendars !== null && selected !== null && !followedName
 
   return (
     <div className="space-y-1.5 border-t border-border pt-2">
@@ -119,7 +128,10 @@ export function FollowCalendarSetting({
           Keep bringing in new sessions
         </label>
       </div>
-      {following && calendars.length > 1 ? (
+      {following && calendars === null && !error ? (
+        <p className="pl-6 text-xs text-muted-foreground">Loading your calendars…</p>
+      ) : null}
+      {following && (listed.length > 1 || unreadable) ? (
         <div className="pl-6">
           <select
             aria-label="Calendar to bring sessions in from"
@@ -128,13 +140,23 @@ export function FollowCalendarSetting({
             onChange={(event) => follow(event.target.value)}
             className="rounded-md border border-border bg-card px-1.5 py-0.5 text-xs text-neutral-900"
           >
-            {calendars.map((calendar) => (
+            {unreadable ? (
+              <option value={selected ?? ""} disabled>
+                Choose a calendar
+              </option>
+            ) : null}
+            {listed.map((calendar) => (
               <option key={calendar.id} value={calendar.id}>
                 {calendar.name}
               </option>
             ))}
           </select>
         </div>
+      ) : null}
+      {unreadable ? (
+        <p data-testid="followed-calendar-unreadable" className="pl-6 text-xs text-amber-700">
+          Pablo can&rsquo;t read the calendar it was following any more. Choose another.
+        </p>
       ) : null}
       {following && followedName ? (
         <p data-testid="followed-calendar-line" className="pl-6 text-xs text-muted-foreground">

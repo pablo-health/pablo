@@ -157,18 +157,47 @@ def test_choosing_a_calendar_keeps_the_old_flag_in_step(engine, tenant_at_parent
     schema = tenant_at_parent
     upgrade_tenant_schema(engine, schema)
 
-    for user_id, calendar_id in ((_FOLLOWING, None), (_NOT_FOLLOWING, "team@group.test")):
+    choices = (
+        (_FOLLOWING, "team@group.test", False),
+        (_NOT_FOLLOWING, "me@example.test", True),
+    )
+    for user_id, calendar_id, main in choices:
         with Session(engine) as session:
             session.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
             session.execute(text(f"SET app.current_user_id = '{user_id}'"))
             PostgresGoogleCalendarTokenRepository(session).set_followed_calendar(
-                user_id, calendar_id
+                user_id, calendar_id, main_calendar=main
             )
             session.commit()
 
+    # An older image follows only the main calendar: it is told "on" only
+    # for a clinician following that one, never for another calendar.
     assert _settings(engine, schema) == {
-        _FOLLOWING: (False, None),
-        _NOT_FOLLOWING: (True, "team@group.test"),
+        _FOLLOWING: (False, "team@group.test"),
+        _NOT_FOLLOWING: (True, "me@example.test"),
+    }
+
+
+def test_primary_is_resolved_only_while_it_is_still_stored(engine, tenant_at_parent) -> None:
+    schema = tenant_at_parent
+    upgrade_tenant_schema(engine, schema)
+
+    results = []
+    for user_id in (_FOLLOWING, _NOT_FOLLOWING):
+        with Session(engine) as session:
+            session.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
+            session.execute(text(f"SET app.current_user_id = '{user_id}'"))
+            results.append(
+                PostgresGoogleCalendarTokenRepository(session).resolve_followed_main_calendar(
+                    user_id, "me@example.test"
+                )
+            )
+            session.commit()
+
+    assert results == [True, False]
+    assert _settings(engine, schema) == {
+        _FOLLOWING: (True, "me@example.test"),
+        _NOT_FOLLOWING: (False, None),
     }
 
 

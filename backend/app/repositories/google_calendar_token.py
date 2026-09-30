@@ -147,6 +147,22 @@ class GoogleCalendarTokenRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def set_followed_calendar(self, user_id: str, calendar_id: str | None) -> None:
-        """Record which calendar's sessions to follow, or None. Survives a disconnect."""
+    def set_followed_calendar(
+        self, user_id: str, calendar_id: str | None, *, main_calendar: bool = False
+    ) -> None:
+        """Record which calendar's sessions to follow, or None. Survives a disconnect.
+
+        ``main_calendar`` says the choice is the account's main calendar. An
+        image from before calendars could be chosen reads only that one, so
+        it is told to follow only then.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def resolve_followed_main_calendar(self, user_id: str, calendar_id: str) -> bool:
+        """Replace a followed ``primary`` with the main calendar's real id.
+
+        Only while ``primary`` is still what is stored, so a choice made in
+        the meantime is never overwritten. Returns whether it replaced it.
+        """
         raise NotImplementedError

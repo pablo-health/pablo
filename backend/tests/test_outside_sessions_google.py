@@ -180,8 +180,16 @@ class _Tokens(GoogleCalendarTokenRepository):
     def remember_app_calendar_id(self, user_id: str, calendar_id: str) -> None:
         pass
 
-    def set_followed_calendar(self, user_id: str, calendar_id: str | None) -> None:
+    def set_followed_calendar(
+        self, user_id: str, calendar_id: str | None, *, main_calendar: bool = False
+    ) -> None:
         self.doc.follow_calendar_id = calendar_id
+
+    def resolve_followed_main_calendar(self, user_id: str, calendar_id: str) -> bool:
+        if self.doc.follow_calendar_id != "primary":
+            return False
+        self.doc.follow_calendar_id = calendar_id
+        return True
 
 
 class _Stack:
@@ -571,3 +579,56 @@ class TestAChosenCalendar:
             stack.calendar.read_event_times(USER_ID, "t1", followed_calendar=TEAM)
 
         assert read.call_args.args[1] == TEAM
+
+
+class TestChosenCalendarReviewFindings:
+    def test_a_choice_made_while_primary_resolves_is_not_overwritten(self, stack: _Stack) -> None:
+        # The clinician picks another calendar between the read loading its
+        # settings and resolving "primary".
+        original = stack.tokens.get
+
+        def switched_meanwhile(user_id: str) -> GoogleCalendarTokenDoc | None:
+            doc = original(user_id)
+            stack.tokens.doc = GoogleCalendarTokenDoc(
+                **{**stack.tokens.doc.to_dict(), "follow_calendar_id": TEAM}
+            )
+            return doc
+
+        with patch.object(stack.tokens, "get", side_effect=switched_meanwhile):
+            read = stack.calendar.read_main_calendar_changes(USER_ID)
+
+        assert stack.tokens.doc.follow_calendar_id == TEAM
+        assert read.changes == []
+        assert _reads_of(stack, MAIN) == 0
+
+    def test_a_session_whose_row_is_gone_is_still_claimed(self, stack: _Stack) -> None:
+        stack.client("p1", "wk")
+        stack.poll([_google_event("o1", _in(3))])
+        booked = stack.appointments.get_by_outside_event(USER_ID, GOOGLE_CALENDAR_SOURCE, "o1")
+        assert booked is not None
+        booked.outside_calendar_id = None
+        stack.appointments.update(booked)
+        for row in stack.events.list_by_source(USER_ID, GOOGLE_CALENDAR_SOURCE):
+            stack.events.delete(USER_ID, row.id)
+
+        stack.outside.claim_unrecorded(USER_ID, MAIN)
+
+        claimed = stack.appointments.get_by_outside_event(USER_ID, GOOGLE_CALENDAR_SOURCE, "o1")
+        assert claimed is not None
+        assert claimed.outside_calendar_id == MAIN
+
+    def test_an_event_read_from_the_new_calendar_takes_its_session_along(
+        self, stack: _Stack
+    ) -> None:
+        stack.client("p1", "wk")
+        stack.poll([_google_event("o1", _in(3))])
+        stack.calendar.set_followed_calendar(USER_ID, TEAM)
+
+        # The same event, invited onto the team calendar under the same id.
+        stack.poll([_google_event("o1", _in(3))], calendar=TEAM)
+
+        booked = stack.appointments.get_by_outside_event(USER_ID, GOOGLE_CALENDAR_SOURCE, "o1")
+        assert booked is not None
+        assert booked.outside_calendar_id == TEAM
+        [row] = stack.events.list_by_source(USER_ID, GOOGLE_CALENDAR_SOURCE)
+        assert row.calendar_id == TEAM

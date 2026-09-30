@@ -1007,7 +1007,8 @@ class GoogleCalendarService:
             kwargs: dict[str, Any] = {"minAccessRole": "reader"}
             if page_token:
                 kwargs["pageToken"] = page_token
-            page = service.calendarList().list(**kwargs).execute()
+            request = service.calendarList().list(**kwargs)
+            page: dict[str, Any] = _with_calendar_retry(request.execute)
             for item in page.get("items", []):
                 calendar_id = str(item.get("id") or "")
                 if not calendar_id or item.get("deleted"):
@@ -1024,12 +1025,15 @@ class GoogleCalendarService:
                 break
         return sorted(found, key=lambda c: (not c.primary, c.name.lower()))
 
-    def set_followed_calendar(self, user_id: str, calendar_id: str | None) -> bool:
+    def set_followed_calendar(
+        self, user_id: str, calendar_id: str | None, *, main_calendar: bool = False
+    ) -> bool:
         """Follow this calendar, or none. Returns whether that changed anything.
 
         Choosing another calendar starts its read over, from now: whatever an
         earlier stretch of following left behind is not replayed. The caller
-        checks the id is one the connection can read.
+        checks the id is one the connection can read, and says whether it is
+        the main calendar.
         """
         token_doc = self._token_repo.get(user_id)
         current = token_doc.follow_calendar_id if token_doc else None
@@ -1037,12 +1041,14 @@ class GoogleCalendarService:
             return False
         if calendar_id is not None:
             self._token_repo.update_main_calendar_sync_token(user_id, None)
-        self._token_repo.set_followed_calendar(user_id, calendar_id)
+        self._token_repo.set_followed_calendar(
+            user_id, calendar_id, main_calendar=main_calendar or calendar_id == FOLLOW_MAIN_CALENDAR
+        )
         return True
 
     def remember_followed_calendar_id(self, user_id: str, calendar_id: str) -> None:
-        """Store the followed calendar's real id in place of ``primary``; the read carries on."""
-        self._token_repo.set_followed_calendar(user_id, calendar_id)
+        """Store the main calendar's real id in place of ``primary``; the read carries on."""
+        self._token_repo.resolve_followed_main_calendar(user_id, calendar_id)
 
     def read_main_calendar_changes(self, user_id: str) -> MainCalendarRead:
         """What changed on the followed calendar since the last read.
@@ -1070,10 +1076,16 @@ class GoogleCalendarService:
         calendar_id = token_doc.follow_calendar_id
         main_calendar_id = None
         if calendar_id == FOLLOW_MAIN_CALENDAR:
-            resolved = service.calendarList().get(calendarId=FOLLOW_MAIN_CALENDAR).execute()
+            resolved: dict[str, Any] = _with_calendar_retry(
+                lambda: service.calendarList().get(calendarId=FOLLOW_MAIN_CALENDAR).execute()
+            )
             calendar_id = main_calendar_id = str(resolved.get("id") or FOLLOW_MAIN_CALENDAR)
-            if calendar_id != FOLLOW_MAIN_CALENDAR:
-                self._token_repo.set_followed_calendar(user_id, calendar_id)
+            if calendar_id != FOLLOW_MAIN_CALENDAR and not (
+                self._token_repo.resolve_followed_main_calendar(user_id, calendar_id)
+            ):
+                # Another calendar was chosen while this read was starting;
+                # the next read follows that one.
+                return nothing
         full = token_doc.main_calendar_sync_token is None
         # Bounded like an import scan: past it, Google's expansion of a
         # repeating event may stop, and a missing instance proves nothing.

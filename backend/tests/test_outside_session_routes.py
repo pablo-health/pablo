@@ -307,9 +307,9 @@ def test_following_is_turned_on_and_off(client: TestClient, wired: _Wired) -> No
     # The main calendar is stored by its real id.
     assert on.json() == {"follow_calendar_id": MAIN}
     assert off.json() == {"follow_calendar_id": None}
-    assert [c.args for c in wired.calendar.set_followed_calendar.call_args_list] == [
-        (USER_ID, MAIN),
-        (USER_ID, None),
+    assert [(c.args, c.kwargs) for c in wired.calendar.set_followed_calendar.call_args_list] == [
+        ((USER_ID, MAIN), {"main_calendar": True}),
+        ((USER_ID, None), {}),
     ]
 
 
@@ -503,3 +503,22 @@ def test_choosing_the_main_calendar_by_its_id_carries_the_read_on(
     wired.calendar.remember_followed_calendar_id.assert_called_once_with(USER_ID, MAIN)
     wired.calendar.set_followed_calendar.assert_not_called()
     assert len(wired.events.list_open(USER_ID)) == 1
+
+
+def test_another_calendar_is_not_marked_as_the_main_one(client: TestClient, wired: _Wired) -> None:
+    _follow(client, TEAM)
+
+    wired.calendar.set_followed_calendar.assert_called_once_with(USER_ID, TEAM, main_calendar=False)
+
+
+def test_a_refused_choice_writes_nothing(client: TestClient, wired: _Wired) -> None:
+    kept = _followed_appointment(wired)
+    kept.outside_calendar_id = None
+    wired.appointments.update(kept)
+
+    response = _follow(client, "someone-else@group.calendar.google.test")
+
+    assert response.status_code == 400
+    unchanged = wired.appointments.get(kept.id, USER_ID)
+    assert unchanged is not None
+    assert unchanged.outside_calendar_id is None
