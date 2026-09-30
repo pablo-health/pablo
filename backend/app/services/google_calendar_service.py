@@ -1325,10 +1325,21 @@ class GoogleCalendarService:
         return self._get_or_create_app_calendar_id(credentials, user_id)
 
     def _get_primary_calendar_id(self, credentials: Credentials) -> str:
-        """Get the user's primary Google Calendar ID."""
+        """Get the user's primary Google Calendar ID.
+
+        Asked of the events list, not ``calendars().get``: a main-calendar
+        connection holds ``calendar.events`` alone, which may read and write
+        events but not calendar metadata, so ``calendars().get`` answers 403
+        "insufficient authentication scopes" and the connect fails. An events
+        list names its calendar in ``summary`` — the account's address, for a
+        primary calendar. ``"primary"`` is itself a valid id for every call
+        Pablo makes, so it stands in when no name comes back.
+        """
         service = _build_calendar_service(credentials)
-        calendar = service.calendars().get(calendarId="primary").execute()
-        return calendar.get("id", "primary")  # type: ignore[no-any-return]
+        listing = (
+            service.events().list(calendarId="primary", maxResults=1, fields="summary").execute()
+        )
+        return str(listing.get("summary") or "primary")
 
     def _get_or_create_app_calendar_id(self, credentials: Credentials, user_id: str) -> str:
         """Get the calendar Pablo owns on this account, creating it once.

@@ -32,6 +32,7 @@ from app.main import app
 from app.repositories.google_calendar_token import GoogleCalendarTokenDoc
 from app.routes.patients import get_patient_repository
 from app.routes.scheduling import get_google_calendar_service, get_scheduling_service
+from app.scheduling_engine.exceptions import RuleViolationError
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.scheduling_engine.services.scheduling import SchedulingService
 from app.services import get_audit_service
@@ -925,6 +926,46 @@ def _confirm_item(**overrides: Any) -> dict[str, Any]:
 
 
 class TestConfirmRoute:
+    def test_a_series_outside_the_practice_hours_is_skipped_not_fatal(
+        self,
+        import_client: TestClient,
+    ) -> None:
+        """A booking rule refusing one series used to 500 the whole import."""
+        real_create = SchedulingService.create_recurring
+        rule_zones: list[Any] = []
+
+        def create_or_refuse(
+            self: Any, user_id: str, *, data: Any, recurrence: Any, **kwargs: Any
+        ) -> Any:
+            rule_zones.append(kwargs.get("tz"))
+            if data["title"] == "After hours":
+                raise RuleViolationError(["Outside working hours (09:00-17:00)"])
+            return real_create(self, user_id, data=data, recurrence=recurrence, **kwargs)
+
+        with patch.object(SchedulingService, "create_recurring", create_or_refuse):
+            response = import_client.post(
+                "/api/calendar/import/confirm",
+                json={
+                    "series": [
+                        _confirm_item(candidate_key="late", display_name="After hours"),
+                        _confirm_item(
+                            candidate_key="ok",
+                            display_name="In hours",
+                            start_at=_ahead(4).isoformat(),
+                        ),
+                    ]
+                },
+            )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["skipped"] == ["late"]
+        assert [row["candidate_key"] for row in body["confirmed"]] == ["ok"]
+        # Rules are checked in the owner's zone, the same frame a booking made
+        # anywhere else uses — never left to the UTC default.
+        assert rule_zones
+        assert all(zone is not None for zone in rule_zones)
+
     def test_confirming_a_subset_creates_only_that_subset(
         self,
         import_client: TestClient,

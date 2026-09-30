@@ -366,7 +366,14 @@ class TestOAuthFlow:
         mock_build_flow.return_value = mock_flow
 
         mock_service = MagicMock()
-        mock_service.calendars().get().execute.return_value = {"id": "primary@gmail.com"}
+        # A main-calendar grant is calendar.events alone: Google refuses
+        # calendar metadata with a 403, and answers an events list, whose
+        # summary names the calendar. This was every main-calendar connect
+        # failing in production.
+        mock_service.calendars().get().execute.side_effect = AssertionError(
+            "calendars.get needs a read scope a main-calendar connection does not hold"
+        )
+        mock_service.events().list().execute.return_value = {"summary": "primary@gmail.com"}
         mock_build_svc.return_value = mock_service
 
         calendar_service.handle_callback(
