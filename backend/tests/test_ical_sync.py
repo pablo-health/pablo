@@ -19,11 +19,14 @@ from app.repositories.ical_sync_config import ICalSyncConfig
 from app.utcnow import utc_now
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
+
     from app.repositories.ical_client_mapping import ICalClientMapping
 from app.repositories.patient import InMemoryPatientRepository
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.services.ical_sync_service import ICalSyncService
 from app.services.token_encryption import encrypt_tokens
+from app.settings import get_settings
 
 # Real iCal feed data from SimplePractice test account
 SP_ICAL_DATA = """\
@@ -195,11 +198,18 @@ class InMemoryICalClientMappingRepo:
 
 
 @pytest.fixture
-def _encryption_key():
-    """Set up a test encryption key."""
+def _encryption_key(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
+    """Set up a test encryption key.
+
+    The key is read through the cached ``get_settings()``, so setting the
+    environment alone only works when nothing has cached settings since the
+    last clear — which made these tests depend on which file ran before them.
+    """
     key = base64.b64encode(os.urandom(32)).decode("ascii")
-    with patch.dict(os.environ, {"GOOGLE_CALENDAR_ENCRYPTION_KEY": key}):
-        yield
+    monkeypatch.setenv("GOOGLE_CALENDAR_ENCRYPTION_KEY", key)
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 @pytest.fixture
