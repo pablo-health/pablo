@@ -42,6 +42,7 @@ from ..calendar_providers.capabilities import CalendarCapability
 from ..calendar_providers.practice_import import (
     DEFAULT_HORIZON_DAYS,
     DEFAULT_LOOKBACK_DAYS,
+    MAX_HORIZON_DAYS,
     ImportProposal,
     ProposedSeries,
 )
@@ -119,7 +120,6 @@ router = APIRouter(
 )
 
 MAX_LOOKBACK_DAYS = 400
-MAX_HORIZON_DAYS = 400
 PATIENT_ORIGIN = "calendar_import"
 #: The source a confirmed series is remembered under.
 MATCH_SOURCE = GOOGLE_CALENDAR_SOURCE

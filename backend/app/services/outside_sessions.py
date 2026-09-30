@@ -57,7 +57,6 @@ from ..repositories.external_calendar_event import (
 )
 from ..scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from ..utcnow import utc_now
-from .google_calendar_follow import UPCOMING_HORIZON
 from .google_calendar_service import parse_event_time
 
 if TYPE_CHECKING:
@@ -251,25 +250,27 @@ class OutsideSessions:
             if row.source_event_id not in keep:
                 self._events.delete(user_id, row.id)
 
-    def reconcile_full_read(self, user_id: str, present: set[str]) -> list[dict[str, Any]]:
+    def reconcile_full_read(
+        self, user_id: str, present: set[str], window: tuple[datetime, datetime]
+    ) -> list[dict[str, Any]]:
         """Catch up with a full read of the main calendar.
 
-        A full read (see ``MainCalendarRead.full``) holds every event still to
-        come, and never reports what was deleted before it. So a row for an
-        upcoming event it doesn't hold is for an event that is gone, and goes.
+        A full read (see ``MainCalendarRead``) holds every event in its
+        window, and never reports what was deleted before it. So a row for an
+        event in that window it doesn't hold is for an event that is gone, and
+        goes. Nothing outside the window is judged.
         An appointment following such an event is not cancelled here: it comes
         back as a deletion for the follower, so the bulk guard decides — a
         reset that seems to lose everything is held, never mass-cancelled.
         """
-        now = utc_now()
+        start, end = window
         for row in self._events.list_by_source(user_id, GOOGLE_CALENDAR_SOURCE):
-            if row.end_at > now and row.source_event_id not in present:
+            in_window = row.end_at > start and row.start_at < end
+            if in_window and row.source_event_id not in present:
                 self._events.delete(user_id, row.id)
         return [
             {"google_event_id": appointment.outside_event_id, "status": "cancelled"}
-            for appointment in self._appointments.list_by_range(
-                user_id, now, now + UPCOMING_HORIZON
-            )
+            for appointment in self._appointments.list_by_range(user_id, start, end)
             if appointment.outside_source == GOOGLE_CALENDAR_SOURCE
             and appointment.status == AppointmentStatus.CONFIRMED
             and appointment.outside_event_id not in present

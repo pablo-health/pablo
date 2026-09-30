@@ -371,3 +371,51 @@ class TestAFullReRead:
         assert gone is not None
         assert gone.status == AppointmentStatus.CANCELLED
         assert gone.google_sync_status == GoogleSyncStatus.REMOVED_IN_GOOGLE
+
+
+class TestTheFullReadWindow:
+    """A full read covers a bounded window, and only that window is judged."""
+
+    def _followed(self, stack: _Stack, event_id: str) -> Any:
+        return stack.appointments.get_by_outside_event(USER_ID, GOOGLE_CALENDAR_SOURCE, event_id)
+
+    def test_a_full_read_asks_for_a_bounded_window(self, stack: _Stack) -> None:
+        stack.poll([])
+        stack.poll([])
+
+        main_reads = [
+            kwargs for _, kwargs in stack.google.calls if kwargs["calendarId"] == "primary"
+        ]
+        first, resumed = main_reads
+        read_to = datetime.fromisoformat(first["timeMax"])
+        assert timedelta(days=399) < read_to - utc_now() <= timedelta(days=400)
+        assert "timeMax" not in resumed
+        assert "syncToken" in resumed
+
+    def test_a_session_beyond_the_window_is_left_alone(self, stack: _Stack) -> None:
+        stack.client("p1", "wk")
+        stack.poll([_google_event("near", _in(3)), _google_event("far", _in(450))])
+        assert self._followed(stack, "far") is not None
+
+        stack.google.expire_main_token = True
+        stack.poll([_google_event("near", _in(3))])
+
+        far = self._followed(stack, "far")
+        assert far.status == AppointmentStatus.CONFIRMED
+        assert far.google_sync_status not in {
+            GoogleSyncStatus.MISSING_IN_GOOGLE,
+            GoogleSyncStatus.REMOVED_IN_GOOGLE,
+        }
+
+    def test_a_session_inside_the_window_still_goes_through_the_follower(
+        self, stack: _Stack
+    ) -> None:
+        stack.client("p1", "wk")
+        stack.poll([_google_event("near", _in(3)), _google_event("mid", _in(30))])
+
+        stack.google.expire_main_token = True
+        stack.poll([_google_event("near", _in(3))])
+
+        mid = self._followed(stack, "mid")
+        assert mid.status == AppointmentStatus.CANCELLED
+        assert mid.google_sync_status == GoogleSyncStatus.REMOVED_IN_GOOGLE

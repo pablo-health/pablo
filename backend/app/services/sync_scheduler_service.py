@@ -265,9 +265,9 @@ class SyncSchedulerService:
         outside = self._outside().in_zone(self._zone(user_id))
         changes = read.changes
         ingested = outside.ingest_google(user_id, changes)
-        if read.full:
+        if read.full and read.window is not None:
             present = {str(change.get("google_event_id")) for change in changes}
-            changes = changes + outside.reconcile_full_read(user_id, present)
+            changes = changes + outside.reconcile_full_read(user_id, present, read.window)
         for appointment in ingested.booked:
             audit.log_appointment_action(
                 AuditAction.APPOINTMENT_CREATED,

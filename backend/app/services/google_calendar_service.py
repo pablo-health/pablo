@@ -44,6 +44,7 @@ from ..calendar_providers.pkce_store import remember_verifier, take_verifier
 from ..calendar_providers.practice_import import (
     DEFAULT_HORIZON_DAYS,
     DEFAULT_LOOKBACK_DAYS,
+    MAX_HORIZON_DAYS,
     build_proposal,
 )
 from ..calendar_providers.provider import BusyWindow, ConsentSurface, ImportCandidate
@@ -347,9 +348,12 @@ class MainCalendarRead(NamedTuple):
 
     changes: list[dict[str, Any]]
     full: bool
-    """Read from scratch (from now on) rather than resumed. A full read holds
-    every event still to come, so anything missing from it is gone — and
-    deletions from before it are never reported on their own."""
+    """Read from scratch rather than resumed. A full read holds every event
+    in its ``window``, so anything in that window missing from it is gone —
+    and deletions from before it are never reported on their own."""
+    window: tuple[datetime, datetime] | None = None
+    """What a full read covered: ``[start, end)``. Nothing outside it can be
+    judged from the read."""
 
 
 class CalendarScopeNotGrantedError(Exception):
@@ -998,16 +1002,25 @@ class GoogleCalendarService:
             return nothing
         service = _build_calendar_service(credentials)
         full = token_doc.main_calendar_sync_token is None
+        # Bounded like an import scan: past it, Google's expansion of a
+        # repeating event may stop, and a missing instance proves nothing.
+        start = _now()
+        window = (start, start + timedelta(days=MAX_HORIZON_DAYS))
         try:
             page = self._list_all_events(
-                service, _IMPORT_CALENDAR_ID, sync_token=token_doc.main_calendar_sync_token
+                service,
+                _IMPORT_CALENDAR_ID,
+                sync_token=token_doc.main_calendar_sync_token,
+                window=window,
             )
         except Exception as exc:
             if not _is_expired_sync_token(exc):
                 raise
             logger.info("Main calendar sync token expired; re-reading from a fresh window")
             self._token_repo.update_main_calendar_sync_token(user_id, None)
-            page = self._list_all_events(service, _IMPORT_CALENDAR_ID, sync_token=None)
+            page = self._list_all_events(
+                service, _IMPORT_CALENDAR_ID, sync_token=None, window=window
+            )
             full = True
         if page.next_sync_token:
             self._token_repo.update_main_calendar_sync_token(user_id, page.next_sync_token)
@@ -1018,7 +1031,7 @@ class GoogleCalendarService:
         ]
         # HIPAA: counts only.
         logger.info("Read %d main calendar changes over %d page(s)", len(changes), page.page_count)
-        return MainCalendarRead(changes, full=full)
+        return MainCalendarRead(changes, full=full, window=window if full else None)
 
     @staticmethod
     def _list_all_events(
@@ -1026,12 +1039,15 @@ class GoogleCalendarService:
         calendar_id: str,
         *,
         sync_token: str | None,
+        window: tuple[datetime, datetime] | None = None,
     ) -> _EventPage:
         """Walk every page of events().list, collecting changes and the sync token.
 
         Google splits large result sets across pages and only returns
         nextSyncToken on the final one, so reading a single page both drops
         changes and leaves the next poll with nothing to resume from.
+
+        ``window`` bounds a read without a token; a resumed read takes none.
         """
         kwargs: dict[str, Any] = {
             "calendarId": calendar_id,
@@ -1040,6 +1056,9 @@ class GoogleCalendarService:
         }
         if sync_token:
             kwargs["syncToken"] = sync_token
+        elif window is not None:
+            kwargs["timeMin"] = window[0].isoformat()
+            kwargs["timeMax"] = window[1].isoformat()
         else:
             # First sync: only get future events
             kwargs["timeMin"] = utc_now_iso()
