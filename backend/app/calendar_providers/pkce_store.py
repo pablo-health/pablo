@@ -109,7 +109,9 @@ def _memory_allowed() -> bool:
 
     if get_settings().is_development:
         return True
-    logger.error("Connecting a calendar needs Redis (USE_REDIS=true); it is off")
+    # get_redis_client() answers None both when USE_REDIS is off and when a
+    # configured Redis can't be reached, so the log names both.
+    logger.error("Connecting a calendar needs Redis; it is off (USE_REDIS) or unreachable")
     return False
 
 
