@@ -14,6 +14,7 @@
 
 import { defineConfig, devices } from "@playwright/test"
 import { fileURLToPath } from "node:url"
+import { BROWSER_TIME_ZONE } from "./fixtures/clock"
 import { BASE_URL } from "./fixtures/stack"
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url))
@@ -39,6 +40,9 @@ export default defineConfig({
 
   use: {
     baseURL: BASE_URL,
+    // The stack runs in UTC. A browser in UTC too hides every place the
+    // client's zone fails to reach the server, so run it where a clinician is.
+    timezoneId: BROWSER_TIME_ZONE,
     trace: "on-first-retry",
     screenshot: "only-on-failure",
   },
