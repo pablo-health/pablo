@@ -68,6 +68,8 @@ from ..models.scheduling import (
     GoogleCalendarConsentOption,
     GoogleCalendarConsentOptionsResponse,
     GoogleCalendarStatusResponse,
+    GoogleChangeResolutionRequest,
+    HeldRemovalsResponse,
     ParseAvailabilityRulesRequest,
     ParseAvailabilityRulesResponse,
     ProposedAvailabilityRule,
@@ -136,6 +138,11 @@ from ..services import (
     get_audit_service,
 )
 from ..services.availability_parse_service import AvailabilityRuleParseService
+from ..services.google_calendar_follow import (
+    GoogleChangeFollower,
+    GoogleChangeUnavailableError,
+    Resolution,
+)
 from ..services.google_calendar_service import (
     DEFAULT_EVENT_TITLING,
     DEFAULT_WRITE_TARGET,
@@ -287,6 +294,14 @@ def get_google_calendar_service(
         appointment_repo=_appt_repo_factory(),
         patient_repo=_patient_repo_factory(),
     )
+
+
+def get_google_change_follower(
+    repo: AppointmentRepository = Depends(get_appointment_repository),
+    gcal_service: GoogleCalendarService = Depends(get_google_calendar_service),
+) -> GoogleChangeFollower:
+    """Settles the Google Calendar changes the sync did not follow on its own."""
+    return GoogleChangeFollower(repo, gcal_service)
 
 
 class _LazyZoomStore:
@@ -786,6 +801,108 @@ def cancel_appointment(
         appt,
         patient_name=_patient_name_map(patient_repo, user.id, [appt]).get(appt.patient_id),
     )
+
+
+# --- Google Calendar changes the sync left for the therapist ---
+
+
+@router.post(
+    "/api/appointments/{appointment_id}/google-change",
+    response_model=AppointmentResponse,
+)
+def resolve_google_change(
+    appointment_id: str,
+    request: GoogleChangeResolutionRequest,
+    http_request: Request,
+    _ctx: TenantContext = Depends(get_tenant_context),
+    user: User = Depends(require_baa_acceptance),
+    follower: GoogleChangeFollower = Depends(get_google_change_follower),
+    audit: AuditService = Depends(get_audit_service),
+    patient_repo: PatientRepository = Depends(get_patient_repository),
+) -> AppointmentResponse:
+    """Settle one session Google Calendar changed and Pablo did not follow.
+
+    Covers a move Pablo could not follow and a deletion Pablo followed
+    quietly: ``keep_pablo`` keeps or restores Pablo's version and writes it
+    back to Google, ``accept_google`` goes with what Google says.
+    """
+    resolution = Resolution(request.resolution)
+    try:
+        appt = follower.resolve(user.id, appointment_id, resolution)
+    except AppointmentNotFoundError as e:
+        raise NotFoundError(str(e)) from e
+    except (GoogleChangeUnavailableError, InvalidAppointmentError) as e:
+        raise ConflictError(str(e)) from e
+    except AppointmentConflictError as e:
+        raise ConflictError(str(e)) from e
+    audit.log_appointment_action(
+        AuditAction.APPOINTMENT_UPDATED,
+        user,
+        http_request,
+        appt.id,
+        patient_id=appt.patient_id,
+        changes={"google_change_resolution": resolution.value},
+    )
+    return _to_response(
+        appt,
+        patient_name=_patient_name_map(patient_repo, user.id, [appt]).get(appt.patient_id),
+    )
+
+
+@router.get(
+    "/api/google-calendar/held-removals",
+    response_model=HeldRemovalsResponse,
+)
+def google_calendar_held_removals(
+    http_request: Request,
+    _ctx: TenantContext = Depends(get_tenant_context),
+    user: User = Depends(require_baa_acceptance),
+    follower: GoogleChangeFollower = Depends(get_google_change_follower),
+    audit: AuditService = Depends(get_audit_service),
+) -> HeldRemovalsResponse:
+    """How many upcoming sessions a bulk deletion in Google left waiting."""
+    held = follower.held_removals(user.id)
+    for appt in held:
+        audit.log_appointment_action(
+            AuditAction.APPOINTMENT_VIEWED,
+            user,
+            http_request,
+            appt.id,
+            patient_id=appt.patient_id,
+        )
+    return HeldRemovalsResponse(count=len(held))
+
+
+@router.post(
+    "/api/google-calendar/held-removals",
+    response_model=HeldRemovalsResponse,
+)
+def resolve_google_calendar_held_removals(
+    request: GoogleChangeResolutionRequest,
+    http_request: Request,
+    _ctx: TenantContext = Depends(get_tenant_context),
+    user: User = Depends(require_baa_acceptance),
+    follower: GoogleChangeFollower = Depends(get_google_change_follower),
+    audit: AuditService = Depends(get_audit_service),
+) -> HeldRemovalsResponse:
+    """Settle a held bulk deletion: put the sessions back, or cancel them too."""
+    resolution = Resolution(request.resolution)
+    settled = follower.resolve_held(user.id, resolution)
+    action = (
+        AuditAction.APPOINTMENT_UPDATED
+        if resolution is Resolution.KEEP_PABLO
+        else AuditAction.APPOINTMENT_CANCELLED
+    )
+    for appt in settled:
+        audit.log_appointment_action(
+            action,
+            user,
+            http_request,
+            appt.id,
+            patient_id=appt.patient_id,
+            changes={"google_change_resolution": resolution.value},
+        )
+    return HeldRemovalsResponse(count=len(settled))
 
 
 # --- Appointment → session link ---

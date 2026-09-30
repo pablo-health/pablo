@@ -651,6 +651,40 @@ class SchedulingService:
         appointment.updated_at = _now()
         return self._repo.update(appointment)
 
+    def restore_appointment(self, appointment_id: str, user_id: str) -> Appointment:
+        """Undo a cancellation, putting the appointment back where it was.
+
+        Only an outright cancellation qualifies: a row a move left behind has
+        its replacement already booked, and restoring it would book the
+        patient twice. Re-checks for a collision first, because the slot may
+        have been given to somebody else since.
+
+        The cancellation record is cleared rather than kept. An undone
+        cancellation did not happen as far as anybody downstream is
+        concerned — left in place, a restored appointment would still read as
+        cancelled late to the patient who was never told it was cancelled at
+        all. The audit trail is where the round trip is remembered.
+        """
+        appointment = self.get_appointment(appointment_id, user_id)
+        if appointment.status != AppointmentStatus.CANCELLED or appointment.superseded_by_id:
+            raise InvalidAppointmentError(
+                f"Appointment {appointment_id} is not a cancellation that can be undone"
+            )
+        self._reject_if_overlapping(
+            user_id,
+            _as_datetime(appointment.start_at),
+            _as_datetime(appointment.end_at),
+            exclude_appointment_id=appointment_id,
+        )
+        appointment.status = AppointmentStatus.CONFIRMED
+        appointment.cancelled_at = None
+        appointment.cancelled_by = None
+        appointment.cancelled_by_id = None
+        appointment.late_cancellation = None
+        appointment.late_change_acknowledged = None
+        appointment.updated_at = _now()
+        return self._repo.update(appointment)
+
     def list_patient_appointments(self, user_id: str, patient_id: str) -> list[Appointment]:
         """List all appointments for a specific patient."""
         return self._repo.list_by_patient(user_id, patient_id)
