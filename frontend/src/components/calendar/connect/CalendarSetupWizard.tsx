@@ -241,13 +241,14 @@ export function CalendarSetupWizard({
     setChecked(
       Object.fromEntries(proposal.series.map((series) => [series.candidate_key, series.preselected]))
     )
-    // A certain match is that client; anything less starts as a new client
-    // until the therapist picks one of the possible names.
+    // A certain match is that client, and a name-only match starts on the
+    // chart it named; anything less starts as a new client until the
+    // therapist picks one of the possible names.
     setClientFor(
       Object.fromEntries(
         proposal.series.map((series) => [
           series.candidate_key,
-          series.match.patient?.patient_id ?? null,
+          series.match.patient?.patient_id ?? series.match.suggested_patient_id ?? null,
         ])
       )
     )

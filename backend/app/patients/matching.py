@@ -11,10 +11,21 @@ The checks run in a fixed order, strongest first:
 
 1. ``remembered`` — the clinician already said which patient this source's
    identifier means (``patient_source_mappings``).
-2. ``email`` — exactly one patient has this email.
-3. ``name_and_dob`` — exactly one patient has this name and date of birth.
-4. ``full_name`` — exactly one patient has this name.
+2. ``name_and_dob`` — exactly one patient has this name and date of birth.
+3. ``email`` — exactly one patient has this email. After name and date of
+   birth, because families often share one address: a child's record carrying
+   a parent's email must land on the child's chart, not the parent's.
+4. ``full_name`` — exactly one patient has this whole name, and no other
+   patient shares its first and last word.
 5. ``initials`` — exactly one patient has these initials.
+
+A name that agrees only on its first and last word ("Mary Ann Smith" and a
+chart for Mary Smith) is never certain: it may be someone else, so it is
+offered as a possible match.
+
+A remembered answer always settles the question. If the patient it names is
+deleted or no longer the clinician's, there is no match at all — never a
+weaker guess in its place — and the caller asks again.
 
 A remembered answer can also be that the identifier is not a client at all
 (a standing staff meeting on a calendar). That comes back as
@@ -187,23 +198,30 @@ class MatchContext:
         self.remembered(mapping.source)[normalize(mapping.source_identifier)] = mapping
 
 
-def _full_name_matches(full_name: str, candidates: list[Candidate]) -> list[Candidate]:
-    """Patients whose name is this one.
+def _full_name_matches(
+    full_name: str, candidates: list[Candidate]
+) -> tuple[list[Candidate], list[Candidate]]:
+    """Patients whose name is this one: (whole-name matches, all matches).
 
-    Either the whole name agrees ("Mary Ann Smith" and Mary Ann / Smith), or
-    its first and last words are the patient's first and last name ("Jane Q
-    Adams" and Jane / Adams).
+    A whole-name match agrees on every word ("Mary Ann Smith" and Mary Ann /
+    Smith). The wider set also takes a patient whose first and last name are
+    the name's first and last word ("Jane Q Adams" and Jane / Adams), which
+    may be the same person or may not.
     """
     wanted = normalize(full_name)
     parts = wanted.split()
     if len(parts) < _MIN_NAME_PARTS:
-        return []
-    found = []
+        return [], []
+    whole: list[Candidate] = []
+    found: list[Candidate] = []
     for c in candidates:
         first, last = normalize(c.first_name), normalize(c.last_name)
-        if normalize(f"{first} {last}") == wanted or (parts[0] == first and parts[-1] == last):
+        if normalize(f"{first} {last}") == wanted:
+            whole.append(c)
             found.append(c)
-    return found
+        elif parts[0] == first and parts[-1] == last:
+            found.append(c)
+    return whole, found
 
 
 def _initials_matches(initials: str, candidates: list[Candidate]) -> list[Candidate]:
@@ -234,22 +252,30 @@ def match_patient(
         known = ctx.remembered(hint.source).get(normalize(hint.source_identifier))
         if known is not None and known.answer == ANSWER_NOT_A_CLIENT:
             return MatchResult(evidence="not_a_client")
-        if known is not None and known.patient_id in live:
-            return MatchResult(patient_id=known.patient_id, evidence="remembered")
+        if known is not None:
+            if known.patient_id in live:
+                return MatchResult(patient_id=known.patient_id, evidence="remembered")
+            # The remembered patient was deleted or is no longer this
+            # clinician's. Falling through would quietly hand the record to
+            # whoever else shares the initials or name; ask instead.
+            return MatchResult()
 
-    by_name = _full_name_matches(hint.full_name, candidates) if hint.full_name else []
+    whole_name, by_name = (
+        _full_name_matches(hint.full_name, candidates) if hint.full_name else ([], [])
+    )
     by_initials = _initials_matches(hint.initials, candidates) if hint.initials else []
 
     steps: list[tuple[Evidence, list[Candidate]]] = []
-    if hint.email and normalize(hint.email):
-        wanted = normalize(hint.email)
-        steps.append(("email", [c for c in candidates if normalize(c.email) == wanted]))
     if hint.full_name and hint.date_of_birth is not None:
         steps.append(
             ("name_and_dob", [c for c in by_name if c.date_of_birth == hint.date_of_birth])
         )
+    if hint.email and normalize(hint.email):
+        wanted = normalize(hint.email)
+        steps.append(("email", [c for c in candidates if normalize(c.email) == wanted]))
     if hint.full_name:
-        steps.append(("full_name", by_name))
+        # Certain only when the one name match is a whole-name match.
+        steps.append(("full_name", whole_name if len(by_name) == 1 else by_name))
     if hint.initials:
         steps.append(("initials", by_initials))
 

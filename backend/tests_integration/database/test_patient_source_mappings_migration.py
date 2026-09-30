@@ -334,3 +334,21 @@ def test_a_not_a_client_row_is_visible_to_its_clinician_and_nobody_else(
 
     assert _visible_not_a_client_rows(engine, schema, _USER_ID) == 1
     assert _visible_not_a_client_rows(engine, schema, str(uuid.uuid4())) == 0
+
+
+def test_a_provider_id_longer_than_the_old_column_fits(engine, tenant_with_a_mapping) -> None:
+    """Calendar providers' series ids run to 1024 characters."""
+    schema, _ = tenant_with_a_mapping
+    upgrade_tenant_schema(engine, schema)
+    identifier = "series:" + "x" * 1024
+
+    _insert(engine, schema, identifier, "not_a_client", None)
+
+    rows = _read(
+        engine,
+        schema,
+        "patient_source_mappings",
+        "SELECT length(source_identifier) FROM patient_source_mappings"
+        " WHERE answer = 'not_a_client'",
+    )
+    assert [r[0] for r in rows] == [len(identifier)]

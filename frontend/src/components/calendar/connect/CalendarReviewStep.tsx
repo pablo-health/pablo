@@ -94,6 +94,13 @@ export function CalendarReviewStep({
             ? null
             : " Read access ended when the import finished — Pablo asks again if you ever import a second time."}
         </p>
+        {result.already_scheduled.map((key) => (
+          <p key={key} className="mx-auto max-w-md text-sm text-muted-foreground">
+            {proposal?.series.find((series) => series.candidate_key === key)?.summary ??
+              "One series"}{" "}
+            is already on your calendar.
+          </p>
+        ))}
         {result.skipped.length > 0 ? (
           <p className="mx-auto max-w-md text-sm text-amber-700">
             {result.skipped.length} couldn&rsquo;t be scheduled — the times collided with

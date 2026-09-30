@@ -660,13 +660,19 @@ class ImportPatientChoice(BaseModel):
 class SeriesMatchResponse(BaseModel):
     """Which existing patient a proposed series is, as far as Pablo can tell.
 
-    ``patient`` is set only when the match is certain. Otherwise
-    ``possible`` lists the patients it could be, for the therapist to choose
-    between; both empty means nobody matched and the series is a new client.
+    ``patient`` is set only when the match is certain on more than a name.
+    Otherwise ``possible`` lists the patients it could be, for the therapist
+    to choose between — with ``suggested_patient_id`` preselected when a name
+    alone pointed at one of them. Both empty means nobody matched and the
+    series is a new client.
     """
 
     patient: ImportPatientChoice | None = None
     possible: list[ImportPatientChoice] = Field(default_factory=list)
+    suggested_patient_id: str | None = Field(
+        default=None,
+        description="One of ``possible`` to preselect: it matched on name alone",
+    )
 
 
 class ProposedSeriesResponse(BaseModel):
@@ -726,6 +732,11 @@ class ImportConsentRequiredResponse(BaseModel):
     auth_url: str
 
 
+#: A provider's series id can run to 1024 characters; this leaves room for
+#: its prefix. The column is unbounded text; this only bounds a request.
+MAX_SOURCE_IDENTIFIER = 2048
+
+
 class ConfirmImportSeries(BaseModel):
     """One series a therapist chose to import.
 
@@ -740,7 +751,7 @@ class ConfirmImportSeries(BaseModel):
     )
     source_identifier: str | None = Field(
         default=None,
-        max_length=255,
+        max_length=MAX_SOURCE_IDENTIFIER,
         description="The scan's source_identifier for this series",
     )
     start_at: datetime = Field(description="First occurrence to create — must be in the future")
@@ -758,8 +769,8 @@ class ConfirmImportRequest(BaseModel):
     """
 
     series: list[ConfirmImportSeries] = Field(default_factory=list, max_length=200)
-    not_clients: list[Annotated[str, Field(min_length=1, max_length=255)]] = Field(
-        default_factory=list, max_length=200
+    not_clients: list[Annotated[str, Field(min_length=1, max_length=MAX_SOURCE_IDENTIFIER)]] = (
+        Field(default_factory=list, max_length=200)
     )
 
     @model_validator(mode="after")
@@ -789,6 +800,13 @@ class ConfirmImportResponse(BaseModel):
         description=(
             "Candidate keys whose recurring series could not be created — a "
             "collision with something already booked. Keys only, never titles."
+        ),
+    )
+    already_scheduled: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Candidate keys the patient already had booked in the same slot, so "
+            "nothing was added for them. Keys only, never titles."
         ),
     )
 

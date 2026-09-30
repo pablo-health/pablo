@@ -23,7 +23,7 @@ function series(overrides: Partial<ProposedSeries> = {}): ProposedSeries {
     confidence: 0.9,
     preselected: true,
     source_identifier: "series:rec-1",
-    match: { patient: null, possible: [] },
+    match: { patient: null, possible: [], suggested_patient_id: null },
     ...overrides,
   }
 }
@@ -224,12 +224,12 @@ describe("CalendarReviewStep", () => {
         series({
           candidate_key: "certain",
           summary: "Jane A weekly",
-          match: { patient: { ...jane }, possible: [] },
+          match: { patient: { ...jane }, possible: [], suggested_patient_id: null },
         }),
         series({
           candidate_key: "possible",
           summary: "Jane Adams",
-          match: { patient: null, possible: [jane, otherJane] },
+          match: { patient: null, possible: [jane, otherJane], suggested_patient_id: null },
         }),
         series({ candidate_key: "none", summary: "Robin Tran" }),
       ]
@@ -331,6 +331,7 @@ describe("CalendarReviewStep", () => {
       patients_created: 1,
       appointments_created: 4,
       skipped: [],
+      already_scheduled: [],
     }
     render(<CalendarReviewStep {...baseProps()} proposal={proposal([series()])} result={result} />)
 
@@ -345,10 +346,34 @@ describe("CalendarReviewStep", () => {
       patients_created: 1,
       appointments_created: 0,
       skipped: ["a"],
+      already_scheduled: [],
     }
     render(<CalendarReviewStep {...baseProps()} proposal={proposal([series()])} result={result} />)
 
     expect(screen.getByText(/collided with something already booked/i)).toBeInTheDocument()
+  })
+
+  it("says, one line each, which series were already on the calendar", () => {
+    const result: ConfirmImportResult = {
+      confirmed: [],
+      patients_created: 0,
+      appointments_created: 0,
+      skipped: [],
+      already_scheduled: ["a"],
+    }
+    render(
+      <CalendarReviewStep
+        {...baseProps()}
+        proposal={proposal([
+          series({ candidate_key: "a", summary: "Jane Miller" }),
+          series({ candidate_key: "b", summary: "Sam Lee" }),
+        ])}
+        result={result}
+      />
+    )
+
+    expect(screen.getByText("Jane Miller is already on your calendar.")).toBeInTheDocument()
+    expect(screen.queryByText(/Sam Lee/)).not.toBeInTheDocument()
   })
 
   it("fires onFinish from the post-confirm summary", async () => {
@@ -359,6 +384,7 @@ describe("CalendarReviewStep", () => {
       patients_created: 1,
       appointments_created: 2,
       skipped: [],
+      already_scheduled: [],
     }
     render(
       <CalendarReviewStep

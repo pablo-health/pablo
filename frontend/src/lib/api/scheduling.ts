@@ -398,8 +398,11 @@ export interface ImportPatientChoice {
 
 /** Which existing client a series is: certain, one of a few, or nobody. */
 export interface SeriesMatch {
+  /** Set only when the match rests on more than a name. */
   patient: ImportPatientChoice | null
   possible: ImportPatientChoice[]
+  /** One of `possible` to preselect: it matched on name alone. */
+  suggested_patient_id: string | null
 }
 
 export interface ProposedSeries {
@@ -487,6 +490,9 @@ export interface ConfirmImportResult {
   /** Candidate keys whose recurring series collided with something
    * already booked. Keys only, never titles. */
   skipped: string[]
+  /** Candidate keys the client already had booked in the same slot, so
+   * nothing was added for them. */
+  already_scheduled: string[]
 }
 
 export async function confirmCalendarImport(

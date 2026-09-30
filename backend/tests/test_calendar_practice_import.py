@@ -35,6 +35,7 @@ from app.repositories.google_calendar_token import GoogleCalendarTokenDoc
 from app.routes.patients import get_patient_repository
 from app.routes.scheduling import get_google_calendar_service, get_scheduling_service
 from app.scheduling_engine.exceptions import RuleViolationError
+from app.scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.scheduling_engine.services.scheduling import SchedulingService
 from app.services import get_audit_service
@@ -1081,7 +1082,7 @@ class TestMatchOrAsk:
         appt_repo: InMemoryAppointmentRepository,
     ) -> None:
         [first] = self._scan(import_client)
-        assert first["match"] == {"patient": None, "possible": []}
+        assert first["match"] == {"patient": None, "possible": [], "suggested_patient_id": None}
         assert self._confirm(import_client, first, None).json()["patients_created"] == 1
         [patient] = _patients(mock_repo)
         booked = len(_appointments(appt_repo))
@@ -1096,11 +1097,12 @@ class TestMatchOrAsk:
 
         assert body["patients_created"] == 0
         assert [p.id for p in _patients(mock_repo)] == [patient.id]
-        # Already scheduled ahead, so the second confirm books nothing twice.
-        assert body["confirmed"][0]["appointments_created"] == 0
+        # The same series in the same slot: reported, and nothing booked twice.
+        assert body["already_scheduled"] == [again["candidate_key"]]
+        assert body["confirmed"] == []
         assert len(_appointments(appt_repo)) == booked
 
-    def test_a_series_without_a_provider_id_is_remembered_by_its_title_digest(
+    def test_a_series_without_a_provider_id_is_remembered_by_a_digest_of_its_shape(
         self,
         import_client: TestClient,
         mock_repo: InMemoryPatientRepository,
@@ -1110,7 +1112,7 @@ class TestMatchOrAsk:
         self._confirm(import_client, series, None)
 
         [stored] = mock_mapping_repo.list_by_source(_USER, "google_calendar")
-        assert stored.source_identifier.startswith("title:")
+        assert stored.source_identifier.startswith("shape:")
         assert CLIENT_TITLE.lower() not in stored.source_identifier.lower()
 
         [again] = self._scan(import_client, series_id=None)
@@ -1154,7 +1156,10 @@ class TestMatchOrAsk:
     ) -> None:
         mock_repo.create(_chart("p-1", "Jane", "Adams"), _USER)
         [series] = self._scan(import_client, summary="Jane Adams")
-        assert series["match"]["patient"]["patient_id"] == "p-1"
+        # A name alone is offered, preselected, never shown as settled.
+        assert series["match"]["patient"] is None
+        assert [c["patient_id"] for c in series["match"]["possible"]] == ["p-1"]
+        assert series["match"]["suggested_patient_id"] == "p-1"
 
         body = self._confirm(import_client, series, "p-1").json()
 
@@ -1225,6 +1230,146 @@ class TestMatchOrAsk:
         response = import_client.post("/api/calendar/import/confirm", json={})
 
         assert response.status_code == 422, response.text
+
+    def test_two_series_with_one_title_on_different_days_stay_two_clients(
+        self,
+        import_client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+    ) -> None:
+        """Hand-entered "Therapy Session" on Monday and on Thursday are two people."""
+        gcal = MagicMock()
+        gcal.scan_for_practice_import.return_value = build_proposal(
+            _weekly(4, first=NOW - timedelta(days=20), summary="Therapy Session")
+            + _weekly(4, first=NOW - timedelta(days=17), summary="Therapy Session"),
+            now=NOW,
+            timezone="UTC",
+        )
+        app.dependency_overrides[get_google_calendar_service] = lambda: gcal
+
+        def scan() -> list[dict[str, Any]]:
+            response = import_client.post(
+                "/api/calendar/import/scan", params={"redirect_uri": _REDIRECT}
+            )
+            return sorted(response.json()["series"], key=lambda s: s["weekday"])
+
+        monday, thursday = scan()
+        assert monday["source_identifier"] != thursday["source_identifier"]
+
+        body = import_client.post(
+            "/api/calendar/import/confirm",
+            json={
+                "series": [
+                    _confirm_item(
+                        candidate_key=series["candidate_key"],
+                        display_name=series["summary"],
+                        source_identifier=series["source_identifier"],
+                        start_at=_ahead(days).isoformat(),
+                    )
+                    for series, days in ((monday, 3), (thursday, 4))
+                ]
+            },
+        ).json()
+        chart_for = {row["candidate_key"]: row["patient_id"] for row in body["confirmed"]}
+        assert len(set(chart_for.values())) == 2
+
+        again = scan()
+        assert [s["match"]["patient"]["patient_id"] for s in again] == [
+            chart_for[monday["candidate_key"]],
+            chart_for[thursday["candidate_key"]],
+        ]
+        assert len(_patients(mock_repo)) == 2
+
+    def test_a_long_provider_series_id_can_be_remembered(
+        self,
+        import_client: TestClient,
+        mock_mapping_repo: InMemoryPatientSourceMappingRepository,
+    ) -> None:
+        """Provider ids run to 1024 characters; the identifier must fit."""
+        identifier = "series:" + "x" * 1024
+        response = import_client.post(
+            "/api/calendar/import/confirm",
+            json={"series": [_confirm_item(source_identifier=identifier)]},
+        )
+
+        assert response.status_code == 200, response.text
+        [stored] = mock_mapping_repo.list_by_source(_USER, "google_calendar")
+        assert stored.source_identifier == identifier
+
+    def test_a_clash_is_caught_whatever_its_case_or_spacing(
+        self,
+        import_client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+    ) -> None:
+        response = import_client.post(
+            "/api/calendar/import/confirm",
+            json={
+                "series": [_confirm_item(source_identifier="series:Rec-1")],
+                "not_clients": [" SERIES:rec-1 "],
+            },
+        )
+
+        assert response.status_code == 400, response.text
+        assert _patients(mock_repo) == []
+
+    def test_a_one_off_appointment_does_not_stop_a_weekly_series(
+        self,
+        import_client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        appt_repo: InMemoryAppointmentRepository,
+    ) -> None:
+        """An intake ahead, even on the same weekday and time, is not this series."""
+        mock_repo.create(_chart("p-1", "Jane", "Adams"), _USER)
+        appt_repo.grant_access("p-1", _USER)
+        # Day 31 is the series' weekday and time, but after its last week.
+        for days in (1, 31):
+            appt_repo.create(_one_off("p-1", _ahead(days)))
+
+        body = import_client.post(
+            "/api/calendar/import/confirm",
+            json={"series": [_confirm_item(patient_id="p-1", start_at=_ahead(3).isoformat())]},
+        ).json()
+
+        assert body["already_scheduled"] == []
+        assert body["skipped"] == []
+        assert body["appointments_created"] == 4
+
+    def test_two_series_for_one_client_both_book(
+        self,
+        import_client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+    ) -> None:
+        mock_repo.create(_chart("p-1", "Jane", "Adams"), _USER)
+
+        body = import_client.post(
+            "/api/calendar/import/confirm",
+            json={
+                "series": [
+                    _confirm_item(candidate_key="mon", patient_id="p-1"),
+                    _confirm_item(
+                        candidate_key="thu", patient_id="p-1", start_at=_ahead(4).isoformat()
+                    ),
+                ]
+            },
+        ).json()
+
+        assert body["already_scheduled"] == []
+        assert body["appointments_created"] == 8
+        assert {row["candidate_key"] for row in body["confirmed"]} == {"mon", "thu"}
+
+
+def _one_off(patient_id: str, start: datetime) -> Appointment:
+    return Appointment(
+        id=f"one-off-{start:%Y%m%d}",
+        user_id=_USER,
+        patient_id=patient_id,
+        title="Intake",
+        start_at=start,
+        end_at=start + timedelta(minutes=50),
+        duration_minutes=50,
+        status=AppointmentStatus.CONFIRMED,
+        session_type="individual",
+        created_at=start,
+    )
 
 
 def _chart(patient_id: str, first: str, last: str, *, dob: str | None = None) -> Patient:

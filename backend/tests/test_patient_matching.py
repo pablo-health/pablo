@@ -64,6 +64,20 @@ def _ctx(
 
 
 class TestOrder:
+    def test_name_and_dob_decide_before_a_shared_family_email(self, patients, mappings) -> None:
+        """A child's record carrying the family email lands on the child's chart."""
+        ctx = _ctx(
+            patients,
+            mappings,
+            _patient("parent", "Pat", "Lee", email="family@example.com", dob="1975-04-01"),
+            _patient("child", "Sam", "Lee", dob="2012-06-09"),
+        )
+        hint = PatientHint(
+            full_name="Sam Lee", email="family@example.com", date_of_birth=date(2012, 6, 9)
+        )
+        result = match_patient(hint, ctx)
+        assert (result.patient_id, result.evidence) == ("child", "name_and_dob")
+
     def test_email_decides_before_the_name(self, patients, mappings) -> None:
         ctx = _ctx(
             patients,
@@ -160,9 +174,27 @@ class TestNormalization:
         assert match_patient(PatientHint(email=" JANE@example.COM"), ctx).patient_id == "p1"
         assert match_patient(PatientHint(initials="j.a."), ctx).patient_id == "p1"
 
-    def test_a_middle_name_still_matches_first_and_last(self, patients, mappings) -> None:
-        ctx = _ctx(patients, mappings, _patient("p1", "Jane", "Adams"))
-        assert match_patient(PatientHint(full_name="Jane Q Adams"), ctx).patient_id == "p1"
+    def test_a_name_agreeing_only_on_first_and_last_word_is_only_possible(
+        self, patients, mappings
+    ) -> None:
+        """Mary Ann Smith may not be the Mary Smith already on file."""
+        ctx = _ctx(patients, mappings, _patient("p1", "Mary", "Smith"))
+        result = match_patient(PatientHint(full_name="Mary Ann Smith"), ctx)
+        assert result.patient_id is None
+        assert result.possible_ids == ["p1"]
+
+    def test_a_whole_name_match_beside_a_partial_one_is_only_possible(
+        self, patients, mappings
+    ) -> None:
+        ctx = _ctx(
+            patients,
+            mappings,
+            _patient("p1", "Mary Ann", "Smith"),
+            _patient("p2", "Mary", "Smith"),
+        )
+        result = match_patient(PatientHint(full_name="Mary Ann Smith"), ctx)
+        assert result.patient_id is None
+        assert sorted(result.possible_ids) == ["p1", "p2"]
 
     def test_a_two_word_first_name_matches_as_a_whole(self, patients, mappings) -> None:
         ctx = _ctx(patients, mappings, _patient("p1", "Mary Ann", "Smith"))
@@ -219,6 +251,26 @@ class TestRemembered:
 
 
 class TestDeleted:
+    def test_a_remembered_patient_now_deleted_is_not_replaced_by_a_weaker_match(
+        self, patients, mappings
+    ) -> None:
+        """ "J.A." meant John Adams; John is gone. Jane Anderson is not J.A. by default."""
+        ctx = _ctx(
+            patients,
+            mappings,
+            _patient("john", "John", "Adams"),
+            _patient("jane", "Jane", "Anderson"),
+        )
+        remember_match("simplepractice", "J.A.", "john", ctx)
+        patients.delete("john", USER)
+
+        fresh = MatchContext.for_clinician(USER, patients, mappings)
+        hint = PatientHint(initials="J.A.", source="simplepractice", source_identifier="J.A.")
+        result = match_patient(hint, fresh)
+        assert result.patient_id is None
+        assert result.possible_ids == []
+        assert result.evidence is None
+
     def test_a_deleted_patient_is_never_a_candidate(self, patients, mappings) -> None:
         patients.create(_patient("p1", "Jane", "Adams"), USER)
         patients.create(_patient("p2", "Jane", "Adams"), USER)
