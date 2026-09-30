@@ -64,7 +64,12 @@ from ..services import AuditService, get_audit_service
 from ..services.google_calendar_service import (  # noqa: TC001 — resolved at runtime
     GoogleCalendarService,
 )
-from ..services.outside_sessions import OutsideSessions, Question
+from ..services.outside_sessions import (
+    ACTIVE,
+    ONE_SESSION_AT_A_TIME,
+    OutsideSessions,
+    Question,
+)
 from ..utcnow import utc_now
 from .calendar_import import (
     SEEN_BY_SOMEONE_ELSE,
@@ -164,7 +169,7 @@ def outside_session_questions(
     user_repo: UserRepository = Depends(get_user_repository),
     audit: AuditService = Depends(get_audit_service),
 ) -> OutsideQuestionsResponse:
-    """One "who is this?" per client, with who it might be."""
+    """One "who is this?" per client, or per event, with who it might be."""
     ctx = outside.context(user.id)
     seen_by = SeenBy(user_repo)
     questions = outside.questions(user.id, hidden=_not_followed(service, user.id))
@@ -180,7 +185,7 @@ def outside_session_questions(
         count=len(questions),
         questions=[
             OutsideQuestionResponse(
-                key=f"{q.source}|{q.source_identifier}",
+                key=_question_key(q),
                 source=q.source,
                 source_identifier=q.source_identifier,
                 title=q.title,
@@ -188,14 +193,23 @@ def outside_session_questions(
                 sessions=len(q.rows),
                 next_start_at=q.next_start_at,
                 match=_question_match(q, ctx, seen_by),
+                outside_session_id=q.outside_session_id,
+                client_inactive=q.client_inactive,
             )
             for q in questions
         ],
     )
 
 
+def _question_key(question: Question) -> str:
+    key = f"{question.source}|{question.source_identifier}"
+    if question.outside_session_id:
+        return f"{key}|{question.outside_session_id}"
+    return key
+
+
 def _question_match(question: Question, ctx: MatchContext, seen_by: SeenBy) -> SeriesMatchResponse:
-    """The match to show, with a remembered slot offered like a name: preselected."""
+    """The match to show, with whatever is known offered like a name: preselected."""
     match = series_match(question.match, ctx, seen_by)
     if question.suggested_patient_id:
         match.suggested_patient_id = question.suggested_patient_id
@@ -215,7 +229,9 @@ def _checked_client(
     named = ctx.candidate(item.patient_id) if item.patient_id else None
     if (named is not None and not named.visible) or (
         item.patient_id is None
-        and outside.seen_by_someone_else(user_id, item.source, item.source_identifier, ctx)
+        and outside.seen_by_someone_else(
+            user_id, item.source, item.source_identifier, ctx, row_id=item.outside_session_id
+        )
     ):
         raise BadRequestError(SEEN_BY_SOMEONE_ELSE)
     if item.patient_id is None:
@@ -243,23 +259,40 @@ def answer_outside_sessions(
 
     A client of the practice the clinician doesn't see is refused, whether the
     answer names that chart or asks for a new one.
+
+    A question asked per event (initials, a name two charts share) is answered
+    per event: the answer names its ``outside_session_id``, and one without
+    is refused rather than settling every event under the identifier at once.
+    An inactive client's chart is made active again when the answer asks.
     """
     ctx = outside.context(user.id)
     # Every named client is checked before anything is written.
     existing = [
         _checked_client(item, patient_repo, user.id, outside, ctx) for item in request.answers
     ]
+    for item in request.answers:
+        if item.outside_session_id is None and outside.asks_each_time(
+            user.id, item.source, item.source_identifier, ctx
+        ):
+            raise BadRequestError(ONE_SESSION_AT_A_TIME)
     answered = 0
     booked: list[AnsweredAppointment] = []
     not_added: list[NotAddedSession] = []
 
     for item, client in zip(request.answers, existing, strict=True):
-        if not outside.open_rows(user.id, item.source, item.source_identifier):
+        if not outside.open_rows(
+            user.id, item.source, item.source_identifier, row_id=item.outside_session_id
+        ):
             continue
         answered += 1
         if item.not_a_client:
             rows = outside.answer(
-                user.id, item.source, item.source_identifier, patient_id=None, ctx=ctx
+                user.id,
+                item.source,
+                item.source_identifier,
+                patient_id=None,
+                ctx=ctx,
+                row_id=item.outside_session_id,
             )
             audit.log(
                 AuditAction.CLIENT_RESOLVED,
@@ -271,8 +304,15 @@ def answer_outside_sessions(
             )
             continue
         patient = client or _new_client(item, patient_repo, user, http_request, audit)
+        if item.reactivate and patient.status != ACTIVE:
+            _reactivate(patient, patient_repo, user, http_request, audit)
         rows = outside.answer(
-            user.id, item.source, item.source_identifier, patient_id=patient.id, ctx=ctx
+            user.id,
+            item.source,
+            item.source_identifier,
+            patient_id=patient.id,
+            ctx=ctx,
+            row_id=item.outside_session_id,
         )
         audit.log(
             AuditAction.CLIENT_RESOLVED,
@@ -310,6 +350,26 @@ def answer_outside_sessions(
         appointments_created=len(booked),
         appointments=booked,
         not_added=not_added,
+    )
+
+
+def _reactivate(
+    patient: Patient,
+    patient_repo: PatientRepository,
+    user: User,
+    http_request: Request,
+    audit: AuditService,
+) -> None:
+    """A session confirmed for an inactive client is the cue they are back."""
+    was = patient.status
+    patient.status = ACTIVE
+    patient_repo.update(patient)
+    audit.log_patient_action(
+        AuditAction.PATIENT_UPDATED,
+        user,
+        http_request,
+        patient,
+        changes={"status": {"from": was, "to": ACTIVE}, "source": "outside_session"},
     )
 
 

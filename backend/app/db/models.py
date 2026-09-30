@@ -2209,6 +2209,9 @@ class PatientSourceMappingRow(Base):
     source_identifier: Mapped[str] = mapped_column(Text, nullable=False)
     answer: Mapped[str] = mapped_column(Text, nullable=False, server_default="client")
     patient_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    #: Keyed digest of the title the answer was given under; see
+    #: ``app.calendar_providers.source_identity.answered_title_digest``.
+    answered_title: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
@@ -2263,6 +2266,9 @@ class ICalSyncConfigRow(Base):
     last_sync_error: Mapped[str | None] = mapped_column(Text)
     connected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     consecutive_error_count: Mapped[int] = mapped_column(default=0)
+    #: How the feed's titles name clients, as of the last read: ``initials``,
+    #: ``names`` or ``codes``. Settings say so when it is initials.
+    title_style: Mapped[str | None] = mapped_column(String(16))
 
 
 class ComplianceItemRow(Base):

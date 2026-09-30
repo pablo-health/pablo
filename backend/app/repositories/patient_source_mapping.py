@@ -36,6 +36,10 @@ class PatientSourceMapping:
     patient_id: str | None
     created_at: datetime | None = None
     answer: str = ANSWER_CLIENT
+    answered_title: str | None = None
+    """A keyed digest of the title the answer was given under, when the
+    identifier can outlive the client it named (a provider's series id).
+    See ``app.calendar_providers.source_identity.answered_title_digest``."""
 
     @property
     def doc_id(self) -> str:

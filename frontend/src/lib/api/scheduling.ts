@@ -41,6 +41,9 @@ export interface ICalConnectionStatus {
   connected: boolean
   last_synced_at: string | null
   last_sync_error: string | null
+  /** How the feed names clients as of its last read: "initials", "names" or
+   * "codes". Initials never identify one client, so every session is asked about. */
+  title_style?: string | null
 }
 
 export interface ICalStatusResponse {

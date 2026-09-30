@@ -15,6 +15,7 @@ often) out of the table that remembers it.
 from __future__ import annotations
 
 import hashlib
+import hmac
 from typing import TYPE_CHECKING
 
 from ..patients.matching import normalize
@@ -31,6 +32,26 @@ SERIES_PREFIX = "series:"
 
 #: Prefix of a followed calendar feed's source: ``ical:<feed>``.
 ICAL_SOURCE_PREFIX = "ical:"
+
+#: What the answered-title key is derived for; see ``answered_title_digest``.
+_ANSWERED_TITLE_PURPOSE = "outside-session-answered-title"
+
+
+def answered_title_digest(title: str) -> str:
+    """A keyed digest of the title an answer was given under.
+
+    A provider's series id survives the series being handed to another
+    client (editing every event of a Google series to a new name keeps the
+    id), so a remembered answer for a series counts only while its title is
+    the one it was answered under. The title is often a client's name, so the
+    table that remembers it holds this digest, not the words: keyed under a
+    server-side secret, it can't be reversed by anyone holding the practice's
+    client list, and equality is all the check needs.
+    """
+    from ..services.token_encryption import derive_subkey
+
+    key = derive_subkey(_ANSWERED_TITLE_PURPOSE)
+    return hmac.new(key, normalize(title).encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def calendar_source_identifier(

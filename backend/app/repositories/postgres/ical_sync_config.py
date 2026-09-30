@@ -55,6 +55,7 @@ class PostgresICalSyncConfigRepository(ICalSyncConfigRepository):
         row.last_synced_at = config.last_synced_at
         row.last_sync_error = config.last_sync_error
         row.connected_at = config.connected_at
+        row.title_style = config.title_style
         self._session.flush()
 
     def delete(self, user_id: str, ehr_system: str) -> bool:
@@ -67,7 +68,12 @@ class PostgresICalSyncConfigRepository(ICalSyncConfigRepository):
         return True
 
     def update_sync_status(
-        self, user_id: str, ehr_system: str, *, error: str | None = None
+        self,
+        user_id: str,
+        ehr_system: str,
+        *,
+        error: str | None = None,
+        title_style: str | None = None,
     ) -> None:
         doc_id = f"{user_id}_{ehr_system}"
         row = self._session.get(ICalSyncConfigRow, doc_id)
@@ -75,6 +81,8 @@ class PostgresICalSyncConfigRepository(ICalSyncConfigRepository):
             row.last_synced_at = utc_now()
             row.last_sync_error = error
             row.consecutive_error_count = (row.consecutive_error_count or 0) + 1 if error else 0
+            if title_style is not None:
+                row.title_style = title_style
             self._session.flush()
 
 
@@ -87,4 +95,5 @@ def _row_to_config(row: ICalSyncConfigRow) -> ICalSyncConfig:
         last_sync_error=row.last_sync_error,
         connected_at=row.connected_at,
         consecutive_error_count=row.consecutive_error_count or 0,
+        title_style=row.title_style,
     )

@@ -26,7 +26,9 @@ export interface OutsideSessionList {
   events: OutsideSession[]
 }
 
-/** One "who is this?" question: a series, or every event with one title. */
+/** One "who is this?" question: a series, every event with one title, or —
+ * when the title can't say which client the next event is (initials, a name
+ * two charts share) — one event. */
 export interface OutsideQuestion {
   key: string
   source: string
@@ -37,6 +39,10 @@ export interface OutsideQuestion {
   sessions: number
   next_start_at: string
   match: SeriesMatch
+  /** Set when the question is about this one event; handed back with the answer. */
+  outside_session_id?: string | null
+  /** The suggested client's chart is inactive or on hold; confirming may reactivate it. */
+  client_inactive?: boolean
 }
 
 export interface OutsideQuestions {
@@ -52,6 +58,10 @@ export interface OutsideAnswer {
   patient_id: string | null
   new_client_name: string | null
   not_a_client: boolean
+  /** The one event this answers, when the question was about one event. */
+  outside_session_id?: string | null
+  /** Make an inactive client's chart active again while booking. */
+  reactivate?: boolean
 }
 
 /** An answered session that wasn't booked: another appointment was there. */

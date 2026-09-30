@@ -10,6 +10,8 @@ Postgres in ``tests_integration/database/test_practice_client_directory.py``.
 
 from __future__ import annotations
 
+import base64
+import os
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
@@ -19,6 +21,7 @@ from app.calendar_providers.practice_import import build_proposal
 from app.calendar_providers.provider import ImportCandidate
 from app.calendar_providers.source_identity import (
     GOOGLE_CALENDAR_SOURCE,
+    answered_title_digest,
     calendar_source_identifier,
 )
 from app.main import app
@@ -46,9 +49,12 @@ from app.routes.scheduling import (
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.scheduling_engine.services.scheduling import SchedulingService
 from app.services.outside_sessions import OutsideSessions
+from app.settings import get_settings
 from app.utcnow import utc_now
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
+
     from app.repositories import InMemoryUserRepository
     from fastapi.testclient import TestClient
 
@@ -57,6 +63,15 @@ COLLEAGUE = "colleague-456"
 COLLEAGUE_NAME = "Dr. Rivera"
 _REDIRECT = "http://localhost:3000/dashboard/settings/calendar"
 _SERIES = "rec-1"
+
+
+@pytest.fixture(autouse=True)
+def _calendar_key(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
+    """The secret the answered-title digest is keyed under; every answer needs it."""
+    monkeypatch.setenv("GOOGLE_CALENDAR_ENCRYPTION_KEY", base64.b64encode(os.urandom(32)).decode())
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 def _patient(patient_id: str, first: str, last: str, **fields: Any) -> Patient:
@@ -546,6 +561,7 @@ class TestUnattendedBooking:
             calendar_source_identifier("wk", "", 0, "00:00"),
             "mine",
             outside.context(ME),
+            answered_title=answered_title_digest("Weekly 1:1"),
         )
         start = (utc_now() + timedelta(days=2)).replace(minute=0, second=0, microsecond=0)
 

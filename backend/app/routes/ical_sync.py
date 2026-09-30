@@ -156,6 +156,7 @@ def ical_sync_status(
                 connected=s.connected,
                 last_synced_at=s.last_synced_at,
                 last_sync_error=s.last_sync_error,
+                title_style=s.title_style,
             )
             for s in statuses
         ]
@@ -183,13 +184,20 @@ def resolve_client(
     service: ICalSyncService = Depends(_get_service),
     audit: AuditService = Depends(get_audit_service),
 ) -> dict[str, str]:
-    """Manually map a client identifier to a Pablo patient."""
-    service.resolve_client(
-        ctx.user_id,
-        request.ehr_system,
-        request.client_identifier,
-        request.patient_id,
-    )
+    """Manually map a client identifier to a Pablo patient.
+
+    An identifier asked about per event (initials, a name two charts share)
+    is refused here: those are answered one event each in the calendar.
+    """
+    try:
+        service.resolve_client(
+            ctx.user_id,
+            request.ehr_system,
+            request.client_identifier,
+            request.patient_id,
+        )
+    except ValueError as exc:
+        raise BadRequestError(str(exc)) from exc
     audit.log(
         action=AuditAction.CLIENT_RESOLVED,
         user=user,

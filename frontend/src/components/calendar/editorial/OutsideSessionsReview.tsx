@@ -58,6 +58,7 @@ function toRow(question: OutsideQuestion): ClientQuestionRow {
     detail: detailFor(question),
     aside: `${question.sessions} session${question.sessions === 1 ? "" : "s"}`,
     match: question.match,
+    clientInactive: question.client_inactive ?? false,
   }
 }
 
@@ -93,6 +94,8 @@ export function OutsideSessionsReview({
     Object.fromEntries(questions.map((q) => [q.key, suggested(q)]))
   )
   const [notClient, setNotClient] = useState<Record<string, boolean>>({})
+  // An inactive client is made active again on confirm unless unticked.
+  const [reactivate, setReactivate] = useState<Record<string, boolean>>({})
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notAdded, setNotAdded] = useState<NotAddedSession[]>([])
@@ -100,6 +103,8 @@ export function OutsideSessionsReview({
   const answers: OutsideAnswer[] = questions
     .filter((q) => answerable(q) && (notClient[q.key] || checked[q.key]))
     .map((q) => {
+      // A question about one event answers that event alone.
+      const event = q.outside_session_id ? { outside_session_id: q.outside_session_id } : {}
       if (notClient[q.key]) {
         return {
           source: q.source,
@@ -107,15 +112,23 @@ export function OutsideSessionsReview({
           patient_id: null,
           new_client_name: null,
           not_a_client: true,
+          ...event,
         }
       }
       const patientId = clientFor[q.key] ?? null
+      const reactivating =
+        Boolean(q.client_inactive) &&
+        patientId !== null &&
+        patientId === q.match.suggested_patient_id &&
+        (reactivate[q.key] ?? true)
       return {
         source: q.source,
         source_identifier: q.source_identifier,
         patient_id: patientId,
         new_client_name: patientId ? null : q.title,
         not_a_client: false,
+        ...event,
+        ...(reactivating ? { reactivate: true } : {}),
       }
     })
   const canStartNote = Boolean(onStartNote) && answers.some((a) => !a.not_a_client)
@@ -169,6 +182,10 @@ export function OutsideSessionsReview({
             setNotClient((current) => ({ ...current, [key]: !current[key] }))
             setChecked((current) => ({ ...current, [key]: false }))
           }}
+          reactivate={reactivate}
+          onToggleReactivate={(key) =>
+            setReactivate((current) => ({ ...current, [key]: !(current[key] ?? true) }))
+          }
         />
         )}
 

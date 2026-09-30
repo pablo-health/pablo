@@ -887,6 +887,13 @@ class ICalConnectionStatus(BaseModel):
     connected: bool
     last_synced_at: datetime | None = None
     last_sync_error: str | None = None
+    title_style: str | None = Field(
+        default=None,
+        description=(
+            "How the feed names clients, as of its last read: initials, names or "
+            "codes. Initials never identify one client, so every session is asked about"
+        ),
+    )
 
 
 class ICalStatusResponse(BaseModel):

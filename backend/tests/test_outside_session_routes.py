@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import base64
+import os
 from datetime import UTC, timedelta
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
@@ -28,9 +30,12 @@ from app.routes.scheduling import (
 )
 from app.scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
+from app.settings import get_settings
 from app.utcnow import utc_now
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
+
     from app.repositories.patient import InMemoryPatientRepository
     from app.repositories.patient_source_mapping import (
         InMemoryPatientSourceMappingRepository,
@@ -38,6 +43,17 @@ if TYPE_CHECKING:
     from fastapi.testclient import TestClient
 
 USER_ID = "test-user-123"
+
+
+@pytest.fixture(autouse=True)
+def _calendar_key(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
+    """The secret the answered-title digest is keyed under; every answer needs it."""
+    monkeypatch.setenv("GOOGLE_CALENDAR_ENCRYPTION_KEY", base64.b64encode(os.urandom(32)).decode())
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 SERIES_KEY = calendar_source_identifier("wk", "", 0, "00:00")
 
 

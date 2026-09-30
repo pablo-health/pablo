@@ -12,8 +12,20 @@ HIPAA Compliance:
 
 An event whose client can't be matched is not an appointment — an appointment
 always has a patient. It is held as an open outside session
-(``outside_sessions``) and asked about once; the answer is remembered, and
-the feed's later events for that client are booked on their own.
+(``outside_sessions``) and asked about; the answer is remembered, and the
+feed's later events for that client are booked on their own when the title
+names one client. A title that can't — initials, or a name two charts share —
+is asked about every time, pre-filled. ``OutsideSessions.unattended`` is the
+one rule for that, shared with the calendars Pablo follows.
+
+What a SimplePractice feed carries (a real feed, 2026-09-30): UID, start and
+end, SUMMARY, an empty LOCATION, a telehealth URL per appointment, and
+DTSTAMP. No RRULE: a weekly series arrives as one VEVENT per occurrence,
+months ahead. The UID is the appointment number, so it follows when the
+appointment was booked, not the client. The calendar-sync setting changes
+SUMMARY only: initials ("J.A. Appointment") or a full name ("John Adams
+Appointment", a middle initial dropped, typed as typed). A cancelled
+appointment simply leaves the feed.
 """
 
 from __future__ import annotations
@@ -26,7 +38,7 @@ import uuid
 import zipfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
@@ -49,6 +61,8 @@ from .outside_sessions import OutsideSessions
 from .token_encryption import decrypt_tokens, encrypt_tokens
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from ..repositories.external_calendar_event import ExternalCalendarEventRepository
     from ..repositories.patient import PatientRepository
     from ..repositories.patient_source_mapping import PatientSourceMappingRepository
@@ -59,9 +73,23 @@ logger = logging.getLogger(__name__)
 FETCH_TIMEOUT_SECONDS = 30
 SP_APPOINTMENT_URL = "https://secure.simplepractice.com/appointments/{uid}"
 
-# SimplePractice SUMMARY patterns
-_SP_INITIALS_RE = re.compile(r"^([A-Z])\.([A-Z])\.\s+Appointment$")
+# SimplePractice SUMMARY patterns. Initials are two or more letters each
+# followed by a full stop ("J.A.", "J.Q.A."); anything else before
+# " Appointment" is a name as typed.
+_SP_INITIALS_RE = re.compile(r"^((?:[A-Z]\.){2,})\s+Appointment$")
 _SP_FULLNAME_RE = re.compile(r"^(.+?)\s+Appointment$")
+
+#: What a feed's title says about the client it names.
+#:
+#: * ``initials``: initials only. Never identify anyone: every event is asked.
+#: * ``name``: a full name. Identifies a client when exactly one of the
+#:   clinician's charts bears it.
+#: * ``code``: the feed's own client identifier (Sessions Health's
+#:   ``SH00001``), which is one client's for good once answered.
+FeedTitleKind = Literal["initials", "name", "code"]
+
+#: How a feed names clients across a whole read, for the settings screen.
+TitleStyle = Literal["initials", "names", "codes"]
 
 # Sessions Health client code pattern
 _SH_CODE_RE = re.compile(r"^SH(\d+)$")
@@ -93,6 +121,8 @@ class SyncResult:
     unchanged: int = 0
     unmatched_events: list[dict[str, str]] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    title_style: TitleStyle | None = None
+    """How the feed named clients in this read; None when it held no events."""
 
 
 @dataclass
@@ -111,6 +141,7 @@ class ConnectionStatus:
     connected: bool
     last_synced_at: datetime | None = None
     last_sync_error: str | None = None
+    title_style: str | None = None
 
 
 @dataclass
@@ -182,6 +213,7 @@ class ICalSyncService:
                 connected=True,
                 last_synced_at=c.last_synced_at,
                 last_sync_error=c.last_sync_error,
+                title_style=c.title_style,
             )
             for c in configs
         ]
@@ -196,7 +228,9 @@ class ICalSyncService:
         for config in configs:
             try:
                 result = self._sync_source(user_id, config)
-                self._config_repo.update_sync_status(user_id, config.ehr_system, error=None)
+                self._config_repo.update_sync_status(
+                    user_id, config.ehr_system, error=None, title_style=result.title_style
+                )
                 results.append(result)
             except Exception:
                 logger.exception("iCal sync failed for source")
@@ -213,7 +247,12 @@ class ICalSyncService:
         client_identifier: str,
         patient_id: str,
     ) -> None:
-        """Map a client identifier to a patient, booking the feed events waiting on it."""
+        """Map a client identifier to a patient, booking the feed events waiting on it.
+
+        An identifier that is asked about every time (initials, a shared
+        name) can't be answered for all its events at once; those are
+        answered one event each through the outside-sessions review.
+        """
         self._outside.answer(
             user_id, ical_source(ehr_system), client_identifier, patient_id=patient_id
         )
@@ -284,7 +323,7 @@ class ICalSyncService:
         # Patients and remembered identifiers load once for the whole feed
         ctx = self._match_context(user_id)
 
-        result = SyncResult()
+        result = SyncResult(title_style=_title_style(config.ehr_system, feed_events.values()))
 
         # Create or update
         for uid, event in feed_events.items():
@@ -295,7 +334,9 @@ class ICalSyncService:
                 # Re-attempt matching for previously unmatched appointments
                 if not existing.patient_id:
                     client_id = self._extract_client_identifier(config.ehr_system, event.summary)
-                    patient_id = self._match_patient(config.ehr_system, client_id, ctx)
+                    patient_id = self._outside.unattended(
+                        self._row(user_id, config.ehr_system, event), ctx
+                    )
                     if patient_id:
                         existing.patient_id = patient_id
                         existing.notes = f"ical_client:{client_id}"
@@ -338,18 +379,24 @@ class ICalSyncService:
         ctx: MatchContext,
         result: SyncResult,
     ) -> None:
-        """Book a feed event new to Pablo, or hold it until its client is known."""
+        """Book a feed event new to Pablo, or hold it until its client is known.
+
+        Whether the title names one client — and so whether a match books
+        without asking — is ``OutsideSessions.unattended``'s call, the same
+        one made for a calendar Pablo follows. A client of the practice this
+        clinician doesn't see is held as a question like any other unknown,
+        never booked onto that chart.
+        """
         source = ical_source(ehr_system)
         client_id = self._extract_client_identifier(ehr_system, event.summary)
-        match = self._match(ehr_system, client_id, ctx)
-        if match.evidence == "not_a_client":
+        row = self._row(user_id, ehr_system, event)
+        if self._outside.dismissed(row, ctx):
             # The clinician said this is not a client: skip it, don't ask.
             self._outside.drop(user_id, source, event.uid)
             return
-        # A client of the practice this clinician doesn't see is held as a
-        # question like any other unknown, never booked onto that chart.
-        if match.patient_id and match.visible:
-            appt = self._create_appointment(user_id, ehr_system, event, match.patient_id)
+        patient_id = self._outside.unattended(row, ctx)
+        if patient_id:
+            appt = self._create_appointment(user_id, ehr_system, event, patient_id)
             if client_id:
                 appt.notes = f"ical_client:{client_id}"
             self._appt_repo.create(appt)
@@ -358,17 +405,7 @@ class ICalSyncService:
             return
         # No patient, so not an appointment: held until the clinician says
         # who it is.
-        self._outside.hold(
-            ExternalCalendarEvent(
-                id=str(uuid.uuid4()),
-                user_id=user_id,
-                source=source,
-                source_event_id=event.uid,
-                start_at=event.start_at,
-                end_at=event.end_at,
-                title=event.summary,
-            )
-        )
+        self._outside.hold(row)
         result.unmatched_events.append(
             {
                 "ical_uid": event.uid,
@@ -379,6 +416,19 @@ class ICalSyncService:
                 )
                 or "",
             }
+        )
+
+    @staticmethod
+    def _row(user_id: str, ehr_system: str, event: ParsedEvent) -> ExternalCalendarEvent:
+        """The feed event as an outside session, for the booking rule and for holding."""
+        return ExternalCalendarEvent(
+            id=str(uuid.uuid4()),
+            user_id=user_id,
+            source=ical_source(ehr_system),
+            source_event_id=event.uid,
+            start_at=event.start_at,
+            end_at=event.end_at,
+            title=event.summary,
         )
 
     def _fetch_feed(self, feed_url: str) -> str:
@@ -441,7 +491,7 @@ class ICalSyncService:
             # Try initials first: "J.A. Appointment"
             m = _SP_INITIALS_RE.match(summary)
             if m:
-                return f"{m.group(1)}.{m.group(2)}."
+                return m.group(1)
             # Try full name: "Jane Adams Appointment"
             m = _SP_FULLNAME_RE.match(summary)
             if m:
@@ -462,12 +512,7 @@ class ICalSyncService:
         return MatchContext.for_practice(user_id, self._patient_repo, self._mapping_repo)
 
     def _match(self, ehr_system: str, client_identifier: str, ctx: MatchContext) -> MatchResult:
-        return match_patient(_hint(ehr_system, client_identifier), ctx)
-
-    def _match_patient(self, ehr_system: str, client_identifier: str, ctx: MatchContext) -> str:
-        """The clinician's own patient a client identifier is, or ``""``."""
-        match = self._match(ehr_system, client_identifier, ctx)
-        return match.patient_id if match.patient_id and match.visible else ""
+        return match_patient(_hint(ehr_system, client_identifier).hint, ctx)
 
     def _derive_appointment_url(
         self, ehr_system: str, uid: str, event_url: str | None
@@ -650,7 +695,16 @@ class ICalSyncService:
         )
 
 
-def _hint(ehr_system: str, client_identifier: str) -> PatientHint:
+@dataclass(frozen=True)
+class FeedIdentity:
+    """How a feed event's client is remembered, and what its title says about them."""
+
+    identifier: str
+    hint: PatientHint
+    kind: FeedTitleKind
+
+
+def _hint(ehr_system: str, client_identifier: str) -> FeedIdentity:
     """What a feed's client identifier says about the client.
 
     A remembered answer for the identifier always counts. Beyond that,
@@ -661,14 +715,36 @@ def _hint(ehr_system: str, client_identifier: str) -> PatientHint:
     hint = PatientHint(source=ehr_system, source_identifier=client_identifier)
     if ehr_system == EhrSystem.SIMPLEPRACTICE:
         if _SP_INITIALS_RE.match(client_identifier + " Appointment"):
-            return hint.model_copy(update={"initials": client_identifier})
-        return hint.model_copy(update={"full_name": client_identifier})
+            initials = hint.model_copy(update={"initials": client_identifier})
+            return FeedIdentity(client_identifier, initials, "initials")
+        return FeedIdentity(
+            client_identifier, hint.model_copy(update={"full_name": client_identifier}), "name"
+        )
     if ehr_system == EhrSystem.SESSIONS_HEALTH:
-        return hint.model_copy(update={"full_name": client_identifier})
-    return hint
+        if _SH_CODE_RE.match(client_identifier):
+            return FeedIdentity(client_identifier, hint, "code")
+        return FeedIdentity(
+            client_identifier, hint.model_copy(update={"full_name": client_identifier}), "name"
+        )
+    return FeedIdentity(client_identifier, hint, "code")
 
 
-def feed_identity(ehr_system: str, summary: str) -> tuple[str, PatientHint]:
+def feed_identity(ehr_system: str, summary: str) -> FeedIdentity:
     """How a feed event's client is remembered, and what its title says about them."""
-    identifier = ICalSyncService._extract_client_identifier(ehr_system, summary)
-    return identifier, _hint(ehr_system, identifier)
+    return _hint(ehr_system, ICalSyncService._extract_client_identifier(ehr_system, summary))
+
+
+def _title_style(ehr_system: str, events: Iterable[ParsedEvent]) -> TitleStyle | None:
+    """How a read's titles name clients, for the settings screen.
+
+    Initials only when every title is initials: a feed showing names is set
+    up as well as it can be, whatever a stray title looks like.
+    """
+    kinds = {feed_identity(ehr_system, event.summary).kind for event in events}
+    if not kinds:
+        return None
+    if kinds == {"initials"}:
+        return "initials"
+    if "name" in kinds:
+        return "names"
+    return "codes"
