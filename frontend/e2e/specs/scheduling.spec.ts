@@ -118,7 +118,10 @@ test("a clinician books and cancels an appointment", async ({ signedInPage: page
 
   const patientPicker = page.getByRole("combobox", { name: "Patient" })
   await patientPicker.click()
-  await patientPicker.fill(patient.last_name)
+  // Search by the first name, which is unique to this patient. Every
+  // patient the suite makes shares the last name, and the picker shows only
+  // the server's first page of matches, so on a long run this one fell off it.
+  await patientPicker.fill(patient.first_name)
   await page
     .getByRole("option", { name: `${patient.last_name}, ${patient.first_name}` })
     .click()
