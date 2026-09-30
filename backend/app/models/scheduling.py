@@ -648,13 +648,19 @@ class ImportPatientChoice(BaseModel):
 class SeriesMatchResponse(BaseModel):
     """Which existing patient a proposed series is, as far as Pablo can tell.
 
-    ``patient`` is set only when the match is certain. Otherwise
-    ``possible`` lists the patients it could be, for the therapist to choose
-    between; both empty means nobody matched and the series is a new client.
+    ``patient`` is set only when the match is certain on more than a name.
+    Otherwise ``possible`` lists the patients it could be, for the therapist
+    to choose between — with ``suggested_patient_id`` preselected when a name
+    alone pointed at one of them. Both empty means nobody matched and the
+    series is a new client.
     """
 
     patient: ImportPatientChoice | None = None
     possible: list[ImportPatientChoice] = Field(default_factory=list)
+    suggested_patient_id: str | None = Field(
+        default=None,
+        description="One of ``possible`` to preselect: it matched on name alone",
+    )
 
 
 class ProposedSeriesResponse(BaseModel):
@@ -782,6 +788,13 @@ class ConfirmImportResponse(BaseModel):
         description=(
             "Candidate keys whose recurring series could not be created — a "
             "collision with something already booked. Keys only, never titles."
+        ),
+    )
+    already_scheduled: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Candidate keys the patient already had booked in the same slot, so "
+            "nothing was added for them. Keys only, never titles."
         ),
     )
 

@@ -28,6 +28,7 @@ import hashlib
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta, tzinfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, Query, Request
 
@@ -63,6 +64,7 @@ from ..models.scheduling import (
     SeriesMatchResponse,
 )
 from ..patients.matching import (
+    NAME_ONLY,
     MatchContext,
     MatchResult,
     PatientHint,
@@ -157,6 +159,12 @@ def _series_match(result: MatchResult, ctx: MatchContext) -> SeriesMatchResponse
             if c is not None
         ]
 
+    if result.patient_id and result.evidence in NAME_ONLY:
+        # A name alone is never shown as settled: the chart is offered,
+        # preselected, beside "New client", so the therapist can say no.
+        return SeriesMatchResponse(
+            possible=choices([result.patient_id]), suggested_patient_id=result.patient_id
+        )
     if result.patient_id:
         return SeriesMatchResponse(patient=choices([result.patient_id])[0])
     return SeriesMatchResponse(possible=choices(result.possible_ids))
@@ -323,13 +331,37 @@ def _validate(item: ConfirmImportSeries, now: datetime) -> RecurrenceFrequency:
     return frequency
 
 
-def _has_appointments_ahead(
-    scheduling: SchedulingService, user_id: str, patient_id: str, now: datetime
+def _already_in_slot(
+    scheduling: SchedulingService,
+    user_id: str,
+    patient_id: str,
+    start: datetime,
+    timezone: str,
+    now: datetime,
 ) -> bool:
-    return any(
-        appt.start_at > now and appt.status != AppointmentStatus.CANCELLED
-        for appt in scheduling.list_patient_appointments(user_id, patient_id)
-    )
+    """Whether this patient already has this series booked.
+
+    That is an appointment ahead in the same slot — same weekday and start
+    time in the series' zone — that is either part of a recurring series or
+    falls on the first date this one would book. Anything else the patient
+    has ahead, such as a one-off intake, is not this series.
+    """
+    try:
+        zone: tzinfo = ZoneInfo(timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        zone = UTC
+    first = start.astimezone(zone)
+    slot = (first.weekday(), first.hour, first.minute)
+    for appt in scheduling.list_patient_appointments(user_id, patient_id):
+        at = appt.start_at if appt.start_at.tzinfo else appt.start_at.replace(tzinfo=UTC)
+        if at <= now or appt.status == AppointmentStatus.CANCELLED:
+            continue
+        local = at.astimezone(zone)
+        if (local.weekday(), local.hour, local.minute) != slot:
+            continue
+        if appt.recurring_appointment_id or local.date() == first.date():
+            return True
+    return False
 
 
 @router.post("/confirm", response_model=ConfirmImportResponse)
@@ -357,8 +389,9 @@ def confirm_calendar_import(
     can correct it in seconds. Either way the series is remembered against
     its patient, so the next scan shows it as that client.
 
-    An existing patient who already has appointments ahead is not scheduled
-    again: that is the same series imported twice.
+    A series an existing patient already has booked in the same slot is not
+    booked again — that is the same series imported twice — and is reported
+    in ``already_scheduled``.
 
     ``not_clients`` names series the therapist marked as not a client. They
     are remembered as such, so later scans leave them out.
@@ -388,6 +421,7 @@ def confirm_calendar_import(
 
     confirmed: list[ConfirmedSeriesResponse] = []
     skipped: list[str] = []
+    already_scheduled: list[str] = []
     patients_created = 0
     appointments_created = 0
 
@@ -422,14 +456,10 @@ def confirm_calendar_import(
         if item.source_identifier:
             remember_match(MATCH_SOURCE, item.source_identifier, patient.id, match_ctx)
 
-        if existing is not None and _has_appointments_ahead(
-            scheduling, ctx.user_id, patient.id, now
+        if existing is not None and _already_in_slot(
+            scheduling, ctx.user_id, patient.id, start, item.timezone, now
         ):
-            confirmed.append(
-                ConfirmedSeriesResponse(
-                    candidate_key=item.candidate_key, patient_id=patient.id, appointments_created=0
-                )
-            )
+            already_scheduled.append(item.candidate_key)
             continue
 
         try:
@@ -481,4 +511,5 @@ def confirm_calendar_import(
         patients_created=patients_created,
         appointments_created=appointments_created,
         skipped=skipped,
+        already_scheduled=already_scheduled,
     )
