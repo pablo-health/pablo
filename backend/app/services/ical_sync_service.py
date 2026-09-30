@@ -148,6 +148,15 @@ class ConnectionStatus:
     title_style: str | None = None
 
 
+class FeedUrlRefusedError(ValueError):
+    """A feed URL the allowlist does not accept.
+
+    Its own type so a sync can tell "this address isn't accepted" from any
+    other ValueError, such as a feed body the parser can't read, which
+    reconnecting would not fix.
+    """
+
+
 @dataclass
 class ImportResult:
     """Result of importing clients from a CSV/zip export."""
@@ -238,7 +247,7 @@ class ICalSyncService:
                     user_id, config.ehr_system, error=None, title_style=result.title_style
                 )
                 results.append(result)
-            except ValueError:
+            except FeedUrlRefusedError:
                 # The stored URL no longer passes the allowlist (a row kept
                 # as typed, before the validated form was what was stored).
                 # Nothing was fetched; reconnecting stores it properly.
@@ -626,12 +635,13 @@ class ICalSyncService:
         so the caller never passes raw user input to urlopen, and it is that
         rebuilt form that is stored and read from then on.
 
-        Only a plain path is accepted. A feed URL from either provider is
-        ``https://<host>/<prefix>/<token>`` and nothing else — no username,
-        port, query or fragment — so a URL carrying one is more likely
-        mistyped than exotic, and is refused rather than trimmed. Dot and
-        empty segments are refused after percent-decoding, so the path the
-        prefix check read is the path any origin (see ``_fetch_url``) sees.
+        A username, a port or a fragment is refused rather than trimmed:
+        none belongs in a provider's feed URL, so one is more likely mistyped
+        than exotic. A query string is kept. It only ever goes to the
+        provider's own host, and a provider that puts its token in one must
+        keep working. Dot and empty segments are refused after
+        percent-decoding, so the path the prefix check read is the path any
+        origin (see ``_fetch_url``) sees.
         """
         allowed_hosts: dict[str, tuple[str, str]] = {
             EhrSystem.SIMPLEPRACTICE: ("secure.simplepractice.com", "/ical/"),
@@ -640,31 +650,32 @@ class ICalSyncService:
 
         if ehr_system not in allowed_hosts:
             msg = f"Unsupported EHR system: {ehr_system}"
-            raise ValueError(msg)
+            raise FeedUrlRefusedError(msg)
 
         allowed_host, allowed_prefix = allowed_hosts[ehr_system]
         parsed = urlparse(feed_url)
 
         if parsed.scheme != "https":
             msg = f"Feed URL must use HTTPS (got {parsed.scheme!r})"
-            raise ValueError(msg)
+            raise FeedUrlRefusedError(msg)
         if parsed.hostname != allowed_host:
             msg = f"Feed URL hostname must be {allowed_host} (got {parsed.hostname!r})"
-            raise ValueError(msg)
+            raise FeedUrlRefusedError(msg)
         if parsed.username is not None or parsed.password is not None:
-            raise ValueError("Feed URL must not carry a username or password")
+            raise FeedUrlRefusedError("Feed URL must not carry a username or password")
         if parsed.port is not None:
-            raise ValueError("Feed URL must not name a port")
-        if parsed.query or parsed.fragment:
-            raise ValueError("Feed URL must not carry a query or fragment")
+            raise FeedUrlRefusedError("Feed URL must not name a port")
+        if parsed.fragment:
+            raise FeedUrlRefusedError("Feed URL must not carry a fragment")
         if not parsed.path.startswith(allowed_prefix):
             msg = f"Feed URL path must start with {allowed_prefix}"
-            raise ValueError(msg)
+            raise FeedUrlRefusedError(msg)
         if any(segment in ("", ".", "..") for segment in unquote(parsed.path).split("/")[1:]):
-            raise ValueError("Feed URL path must not contain empty or dot segments")
+            raise FeedUrlRefusedError("Feed URL path must not contain empty or dot segments")
 
         # Reconstruct from validated parts — never pass raw user input to urlopen
-        return f"https://{allowed_host}{parsed.path}"
+        query = f"?{parsed.query}" if parsed.query else ""
+        return f"https://{allowed_host}{parsed.path}{query}"
 
     def _extract_csv(self, file_content: bytes, filename: str) -> str | None:
         """Extract clients.csv from a zip file or return raw CSV content."""
@@ -745,8 +756,10 @@ def _fetch_url(feed_url: str) -> str:
     origin = get_settings().ical_feed_base_url
     if not origin:
         return feed_url
-    # A validated URL is scheme, host and a plain path; nothing else to carry.
-    return f"{origin.rstrip('/')}{urlparse(feed_url).path}"
+    # A validated URL is scheme, host, a plain path and perhaps a query.
+    parsed = urlparse(feed_url)
+    query = f"?{parsed.query}" if parsed.query else ""
+    return f"{origin.rstrip('/')}{parsed.path}{query}"
 
 
 @dataclass(frozen=True)

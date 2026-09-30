@@ -24,7 +24,12 @@ from app.repositories.patient_source_mapping import (
     PatientSourceMapping,
 )
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
-from app.services.ical_sync_service import FEED_URL_REFUSED, ICalSyncService, ParsedEvent
+from app.services.ical_sync_service import (
+    FEED_URL_REFUSED,
+    FeedUrlRefusedError,
+    ICalSyncService,
+    ParsedEvent,
+)
 from app.services.token_encryption import decrypt_tokens, encrypt_tokens
 from app.settings import get_settings
 from app.utcnow import utc_now
@@ -641,8 +646,7 @@ class TestUrlValidation:
         [
             ("https://secure.simplepractice.com:8443/ical/feed.ics", "port"),
             ("https://u:p@secure.simplepractice.com/ical/feed.ics", "username or password"),
-            ("https://secure.simplepractice.com/ical/feed.ics?x=1", "query or fragment"),
-            ("https://secure.simplepractice.com/ical/feed.ics#f", "query or fragment"),
+            ("https://secure.simplepractice.com/ical/feed.ics#f", "fragment"),
             ("https://secure.simplepractice.com/ical/../admin/feed.ics", "dot segments"),
             ("https://secure.simplepractice.com/ical/%2e%2e/admin/feed.ics", "dot segments"),
             ("https://secure.simplepractice.com/ical/./feed.ics", "dot segments"),
@@ -848,3 +852,43 @@ class TestCsvImport:
     def test_import_bad_file(self, service: ICalSyncService):
         result = service.import_clients("user1", "sessions_health", b"not a csv", "data.txt")
         assert len(result.errors) == 1
+
+
+class TestFeedUrlReviewFollowUps:
+    def test_a_query_string_is_kept_and_read(self, service: ICalSyncService) -> None:
+        url = "https://app.sessionshealth.com/calendars/abc.ics?token=t1"
+
+        assert service._validate_feed_url("sessions_health", url) == url
+
+    def test_a_refused_url_is_its_own_error_type(self, service: ICalSyncService) -> None:
+        with pytest.raises(FeedUrlRefusedError):
+            service._validate_feed_url("simplepractice", "https://evil.test/ical/x.ics")
+
+    @pytest.mark.usefixtures("_encryption_key")
+    @patch.object(ICalSyncService, "_fetch_feed", return_value="BEGIN:VCALENDAR\nnot a feed")
+    def test_a_feed_that_cant_be_read_is_not_blamed_on_its_address(self, fetch: MagicMock) -> None:
+        repo = InMemoryICalSyncConfigRepo()
+        repo.save(
+            ICalSyncConfig(
+                user_id="user1",
+                ehr_system="simplepractice",
+                encrypted_feed_url=encrypt_tokens(
+                    {"feed_url": "https://secure.simplepractice.com/ical/feed.ics"}
+                ),
+                connected_at=_now(),
+            )
+        )
+        feed = ICalSyncService(
+            config_repo=repo,  # type: ignore[arg-type]
+            appointment_repo=InMemoryAppointmentRepository(),
+            patient_repo=InMemoryPatientRepository(),
+            mapping_repo=InMemoryPatientSourceMappingRepository(),
+            external_events=InMemoryExternalCalendarEventRepository(),
+        )
+
+        [result] = feed.sync("user1")
+
+        assert result.errors == ["Sync failed — could not fetch or parse feed"]
+        stored = repo.get("user1", "simplepractice")
+        assert stored is not None
+        assert stored.last_sync_error == "Sync failed — could not fetch or parse feed"
