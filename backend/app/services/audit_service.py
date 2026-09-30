@@ -527,13 +527,14 @@ class AuditService:
         self,
         action: AuditAction | str,
         user: User,
-        request: Request,
+        request: Request | None,
         appointment_id: str,
         patient_id: str | None = None,
         changes: dict[str, Any] | None = None,
         actor_type: str = ACTOR_TYPE_CLINICIAN,
         actor_component: str | None = None,
     ) -> AuditLogEntry:
+        """``request`` is None when the system acted off-request (calendar sync)."""
         ip_address, user_agent = extract_request_context(request)
         entry = AuditLogEntry(
             user_id=user.id,

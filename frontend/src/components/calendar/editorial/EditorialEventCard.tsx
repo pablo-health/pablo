@@ -3,8 +3,8 @@
 "use client"
 
 import type { CSSProperties } from "react"
-import type { AppointmentResponse } from "@/types/scheduling"
-import { Repeat, Video } from "lucide-react"
+import { GOOGLE_SYNC_STATUS, type AppointmentResponse } from "@/types/scheduling"
+import { CalendarClock, Repeat, Video } from "lucide-react"
 import { format } from "date-fns"
 import { editorialStatusMeta } from "./status"
 
@@ -59,6 +59,10 @@ export function EditorialEventCard({
   const title = patientName ?? appointment.title
   const cancelled = appointment.status === "cancelled"
   const showMeta = !compact && !micro
+  // A move in Google Calendar that couldn't be followed. Shown at every size:
+  // it is the one thing on the card asking for a decision.
+  const googleDiffers =
+    appointment.google_sync_status === GOOGLE_SYNC_STATUS.externalChange
 
   return (
     <button
@@ -71,7 +75,9 @@ export function EditorialEventCard({
         color: meta.fg,
         textDecoration: cancelled ? "line-through" : undefined,
       }}
-      aria-label={`${title} at ${format(start, "h:mm a")} — ${meta.label}`}
+      aria-label={`${title} at ${format(start, "h:mm a")} — ${meta.label}${
+        googleDiffers ? " — Google Calendar has a different time" : ""
+      }`}
     >
       {/* 3px colored rail is the sole status cue on the card — icons removed. */}
       <span
@@ -88,6 +94,13 @@ export function EditorialEventCard({
             </div>
           )}
         </div>
+        {googleDiffers && (
+          <CalendarClock
+            data-testid="google-change-marker"
+            className="mt-px h-3 w-3 shrink-0"
+            aria-hidden
+          />
+        )}
         {appointment.recurring_appointment_id && showMeta && (
           <Repeat className="mt-px h-3 w-3 shrink-0 opacity-60" aria-hidden />
         )}

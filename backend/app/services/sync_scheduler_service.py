@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..settings import get_settings
+from .google_calendar_follow import GoogleChangeFollower
+from .google_calendar_service import CalendarGoneError
 
 if TYPE_CHECKING:
     from ..models.user import UserPreferences
@@ -27,6 +29,7 @@ if TYPE_CHECKING:
     from ..repositories.ical_sync_config import ICalSyncConfigRepository
     from ..repositories.user import UserRepository
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
+    from ..services.audit_service import AuditService
     from ..services.google_calendar_service import GoogleCalendarService
     from ..services.ical_sync_service import ICalSyncService
     from ..services.reminder_service import ReminderService
@@ -94,6 +97,7 @@ class SyncSchedulerService:
         google_calendar_service: GoogleCalendarService,
         reminder_service: ReminderService,
         appointment_repo: AppointmentRepository,
+        audit_service: AuditService | None = None,
     ) -> None:
         self._ical_config_repo = ical_config_repo
         self._google_token_repo = google_token_repo
@@ -102,6 +106,10 @@ class SyncSchedulerService:
         self._google_calendar_service = google_calendar_service
         self._reminder_service = reminder_service
         self._appointment_repo = appointment_repo
+        # Resolved when first needed, so a caller built before the follower
+        # existed keeps working without passing one.
+        self._audit_service = audit_service
+        self._follower = GoogleChangeFollower(appointment_repo, google_calendar_service)
 
     def dispatch(self) -> DispatchSummary:
         """Fan out sync tasks to Cloud Tasks — one per eligible user.
@@ -186,7 +194,13 @@ class SyncSchedulerService:
             try:
                 changes = self._google_calendar_service.sync_from_google(user_id)
                 summary.google_synced = True
-                summary.google_changes_processed = self._record_external_changes(user_id, changes)
+                summary.google_changes_processed = self._follow_google_changes(user_id, changes)
+            except CalendarGoneError:
+                try:
+                    summary.google_synced = self._rebuild_google_calendar(user_id)
+                except Exception:
+                    logger.exception("Recreating the Google calendar failed for scheduled run")
+                    summary.google_error = True
             except Exception:
                 logger.exception("Google Calendar sync failed for scheduled run")
                 summary.google_error = True
@@ -202,26 +216,37 @@ class SyncSchedulerService:
 
         return summary
 
-    def _record_external_changes(self, user_id: str, changes: list[dict[str, Any]]) -> int:
-        """Record drift for Google changes that reference a Pablo-owned appointment.
+    def _follow_google_changes(self, user_id: str, changes: list[dict[str, Any]]) -> int:
+        """Follow moves and deletions of the sessions Pablo pushed to Google.
 
-        Pablo stays source of truth: this only flags the appointment for
-        review (google_sync_status='external_change') — it never rewrites
-        appointment fields from Google data. Changes with no matching
-        appointment (events Pablo never pushed) are ignored.
+        Changes to events Pablo never pushed are ignored. See
+        ``google_calendar_follow`` for what is followed and what is held.
         """
-        processed = 0
-        for change in changes:
-            google_event_id = change.get("google_event_id")
-            if not google_event_id:
-                continue
-            appointment = self._appointment_repo.get_by_google_event_id(user_id, google_event_id)
-            if appointment is None:
-                continue
-            appointment.google_sync_status = "external_change"
-            self._appointment_repo.update(appointment)
-            processed += 1
-        return processed
+        if not changes:
+            return 0
+        user = self._user_repo.get(user_id)
+        if user is None:
+            return 0
+        return self._follower.follow(user, self._audit(), changes).changed
+
+    def _rebuild_google_calendar(self, user_id: str) -> bool:
+        """Recreate a deleted Pablo calendar and push upcoming sessions back.
+
+        Nothing is cancelled: every event vanishing at once says the calendar
+        went, not that any session did.
+        """
+        if not self._google_calendar_service.recreate_app_calendar(user_id):
+            return False
+        pushed = self._follower.repush_upcoming(user_id)
+        logger.info("Pushed %d sessions into the recreated Google calendar", pushed)
+        return True
+
+    def _audit(self) -> AuditService:
+        if self._audit_service is None:
+            from .audit_service import get_audit_service
+
+            self._audit_service = get_audit_service()
+        return self._audit_service
 
 
 @dataclass

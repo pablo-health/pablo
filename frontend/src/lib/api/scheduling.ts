@@ -12,6 +12,8 @@ import type {
   CreateAppointmentRequest,
   CreateRecurringAppointmentRequest,
   EditSeriesRequest,
+  GoogleChangeResolution,
+  HeldGoogleRemovals,
   UpdateAppointmentRequest,
 } from "@/types/scheduling"
 import { apiClient, del, get, patch, post, put } from "./client"
@@ -151,6 +153,36 @@ export async function cancelAppointmentSeries(
     `/api/appointments/${appointmentId}/cancel-series`,
     token
   )
+}
+
+// --- Google Calendar changes the sync left for the therapist ---
+
+/**
+ * Settle one session Google Calendar changed and Pablo did not follow on its
+ * own: keep (or restore) Pablo's version, or go with Google's.
+ */
+export async function resolveGoogleChange(
+  appointmentId: string,
+  resolution: GoogleChangeResolution,
+  token?: string
+): Promise<AppointmentResponse> {
+  return post<AppointmentResponse>(
+    `/api/appointments/${appointmentId}/google-change`,
+    { resolution },
+    token
+  )
+}
+
+/** Upcoming sessions removed from Google in bulk, held for the therapist. */
+export async function getHeldGoogleRemovals(token?: string): Promise<HeldGoogleRemovals> {
+  return get<HeldGoogleRemovals>("/api/google-calendar/held-removals", token)
+}
+
+export async function resolveHeldGoogleRemovals(
+  resolution: GoogleChangeResolution,
+  token?: string
+): Promise<HeldGoogleRemovals> {
+  return post<HeldGoogleRemovals>("/api/google-calendar/held-removals", { resolution }, token)
 }
 
 // --- iCal sync API ---

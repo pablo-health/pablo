@@ -595,6 +595,24 @@ class SetEventTitlingResponse(BaseModel):
     )
 
 
+class GoogleChangeResolutionRequest(BaseModel):
+    """How the therapist settles a Google Calendar change Pablo did not follow."""
+
+    resolution: Literal["keep_pablo", "accept_google"] = Field(
+        description=(
+            "keep_pablo: keep the session as Pablo has it (undoing a cancellation "
+            "and putting the event back in Google). accept_google: go with what "
+            "Google Calendar says."
+        )
+    )
+
+
+class HeldRemovalsResponse(BaseModel):
+    """Upcoming sessions deleted from Google Calendar in bulk and held for review."""
+
+    count: int
+
+
 class GoogleCalendarConsentOption(BaseModel):
     """One choice a therapist can make about what Pablo may do.
 

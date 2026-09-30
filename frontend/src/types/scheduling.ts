@@ -49,6 +49,27 @@ export interface AppointmentResponse {
   updated_at: string | null
 }
 
+/**
+ * `google_sync_status` values the calendar acts on. The sync writes them when
+ * a session Pablo pushed was changed in Google Calendar:
+ * - `external_change`: moved there to a time it couldn't follow; kept here.
+ * - `removed_in_google`: deleted there, so quietly cancelled here. Undoable.
+ * - `missing_in_google`: deleted there with many others at once; still booked
+ *   here until the therapist decides.
+ */
+export const GOOGLE_SYNC_STATUS = {
+  externalChange: "external_change",
+  removedInGoogle: "removed_in_google",
+  missingInGoogle: "missing_in_google",
+} as const
+
+/** Keep (or restore) Pablo's version, or go with what Google Calendar says. */
+export type GoogleChangeResolution = "keep_pablo" | "accept_google"
+
+export interface HeldGoogleRemovals {
+  count: number
+}
+
 export interface AppointmentListResponse {
   data: AppointmentResponse[]
   total: number
