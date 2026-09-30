@@ -1082,7 +1082,12 @@ class TestMatchOrAsk:
         appt_repo: InMemoryAppointmentRepository,
     ) -> None:
         [first] = self._scan(import_client)
-        assert first["match"] == {"patient": None, "possible": [], "suggested_patient_id": None}
+        assert first["match"] == {
+            "patient": None,
+            "possible": [],
+            "suggested_patient_id": None,
+            "seen_by": None,
+        }
         assert self._confirm(import_client, first, None).json()["patients_created"] == 1
         [patient] = _patients(mock_repo)
         booked = len(_appointments(appt_repo))

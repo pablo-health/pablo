@@ -13,6 +13,7 @@ import { CalendarHoursStep } from "./CalendarHoursStep"
 import { CalendarSessionsStep } from "./CalendarSessionsStep"
 import { CalendarClientsStep } from "./CalendarClientsStep"
 import { CalendarReviewStep } from "./CalendarReviewStep"
+import { seenElsewhere } from "./WhichClientsList"
 import {
   recallAndClearFollowWanted,
   recallAndClearImportPending,
@@ -470,7 +471,12 @@ export function CalendarSetupWizard({
     setConfirmError(null)
     try {
       const series = proposal.series
-        .filter((item) => checked[item.candidate_key] && !notClient[item.candidate_key])
+        .filter(
+          (item) =>
+            checked[item.candidate_key] &&
+            !notClient[item.candidate_key] &&
+            !seenElsewhere(item.match)
+        )
         .map((item) => ({
           candidate_key: item.candidate_key,
           display_name: item.summary,

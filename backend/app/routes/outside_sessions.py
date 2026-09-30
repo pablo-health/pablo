@@ -42,8 +42,11 @@ from ..models.outside_sessions import (
     OutsideSessionsResponse,
 )
 from ..models.patient import Patient
+from ..patients.seen_by import SeenBy
 from ..repositories import (
     PatientRepository,
+    UserRepository,
+    get_user_repository,
 )
 from ..repositories import (
     get_external_calendar_event_repository as _events_repo_factory,
@@ -63,7 +66,11 @@ from ..services.google_calendar_service import (  # noqa: TC001 — resolved at 
 )
 from ..services.outside_sessions import OutsideSessions, Question
 from ..utcnow import utc_now
-from .calendar_import import get_patient_source_mapping_repository, series_match
+from .calendar_import import (
+    SEEN_BY_SOMEONE_ELSE,
+    get_patient_source_mapping_repository,
+    series_match,
+)
 from .patients import get_patient_repository
 from .scheduling import (
     get_appointment_repository,
@@ -154,10 +161,12 @@ def outside_session_questions(
     user: User = Depends(require_baa_acceptance),
     outside: OutsideSessions = Depends(get_outside_sessions),
     service: GoogleCalendarService = Depends(get_google_calendar_service),
+    user_repo: UserRepository = Depends(get_user_repository),
     audit: AuditService = Depends(get_audit_service),
 ) -> OutsideQuestionsResponse:
     """One "who is this?" per client, with who it might be."""
     ctx = outside.context(user.id)
+    seen_by = SeenBy(user_repo)
     questions = outside.questions(user.id, hidden=_not_followed(service, user.id))
     audit.log(
         AuditAction.APPOINTMENT_LISTED,
@@ -178,24 +187,37 @@ def outside_session_questions(
                 recurring=q.recurring,
                 sessions=len(q.rows),
                 next_start_at=q.next_start_at,
-                match=_question_match(q, ctx),
+                match=_question_match(q, ctx, seen_by),
             )
             for q in questions
         ],
     )
 
 
-def _question_match(question: Question, ctx: MatchContext) -> SeriesMatchResponse:
+def _question_match(question: Question, ctx: MatchContext, seen_by: SeenBy) -> SeriesMatchResponse:
     """The match to show, with a remembered slot offered like a name: preselected."""
-    match = series_match(question.match, ctx)
+    match = series_match(question.match, ctx, seen_by)
     if question.suggested_patient_id:
         match.suggested_patient_id = question.suggested_patient_id
     return match
 
 
 def _checked_client(
-    item: OutsideAnswer, patient_repo: PatientRepository, user_id: str
+    item: OutsideAnswer,
+    patient_repo: PatientRepository,
+    user_id: str,
+    outside: OutsideSessions,
+    ctx: MatchContext,
 ) -> Patient | None:
+    """The chart an answer names, refused if it is a client the clinician doesn't see."""
+    if item.not_a_client:
+        return None
+    named = ctx.candidate(item.patient_id) if item.patient_id else None
+    if (named is not None and not named.visible) or (
+        item.patient_id is None
+        and outside.seen_by_someone_else(user_id, item.source, item.source_identifier, ctx)
+    ):
+        raise BadRequestError(SEEN_BY_SOMEONE_ELSE)
     if item.patient_id is None:
         return None
     patient = patient_repo.get(item.patient_id, user_id)
@@ -218,10 +240,15 @@ def answer_outside_sessions(
     Every answer is remembered, so the next event for the same client is
     booked without asking and a not-a-client is never asked about again. An
     answer for events already answered elsewhere does nothing.
+
+    A client of the practice the clinician doesn't see is refused, whether the
+    answer names that chart or asks for a new one.
     """
-    # Every named client is checked before anything is written.
-    existing = [_checked_client(item, patient_repo, user.id) for item in request.answers]
     ctx = outside.context(user.id)
+    # Every named client is checked before anything is written.
+    existing = [
+        _checked_client(item, patient_repo, user.id, outside, ctx) for item in request.answers
+    ]
     answered = 0
     booked: list[AnsweredAppointment] = []
     not_added: list[NotAddedSession] = []

@@ -403,6 +403,9 @@ export interface SeriesMatch {
   possible: ImportPatientChoice[]
   /** One of `possible` to preselect: it matched on name alone. */
   suggested_patient_id: string | null
+  /** Set when this is a client of the practice the clinician doesn't see:
+   * the clinicians who do. Such a series can't be added or made a new client. */
+  seen_by?: string[] | null
 }
 
 export interface ProposedSeries {

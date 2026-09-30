@@ -77,8 +77,11 @@ from ..patients.matching import (
     remember_match,
     remember_not_a_client,
 )
+from ..patients.seen_by import SeenBy
 from ..repositories import (
     PatientRepository,
+    UserRepository,
+    get_user_repository,
 )
 from ..repositories import (
     get_patient_source_mapping_repository as _mapping_repo_factory,
@@ -106,6 +109,7 @@ from ..utcnow import utc_now
 from .patients import get_patient_repository
 from .scheduling import (
     _is_valid_gcal_redirect_uri,
+    configured_timezone,
     get_google_calendar_service,
     get_owner_timezone,
     get_scheduling_service,
@@ -123,6 +127,12 @@ MAX_LOOKBACK_DAYS = 400
 PATIENT_ORIGIN = "calendar_import"
 #: The source a confirmed series is remembered under.
 MATCH_SOURCE = GOOGLE_CALENDAR_SOURCE
+#: Refusing to chart or book a client of the practice the caller doesn't see.
+#: The review already said who does; this is for a request that skipped it.
+#: Raised for one answer or for a batch of series, so it names no count.
+SEEN_BY_SOMEONE_ELSE = (
+    "Already a client of the practice. Ask their clinician or your practice owner for access."
+)
 
 
 def get_patient_source_mapping_repository(
@@ -143,7 +153,19 @@ def _source_identifier(series: ProposedSeries) -> str:
     )
 
 
-def series_match(result: MatchResult, ctx: MatchContext) -> SeriesMatchResponse:
+def series_match(result: MatchResult, ctx: MatchContext, seen_by: SeenBy) -> SeriesMatchResponse:
+    """What the clinician is shown about who a series is.
+
+    A certain match to a chart they cannot see is shown as the clinicians who
+    do see it, and nothing else: not the chart's name, not its birthday. A
+    possible match they cannot see is left out, because naming it would say
+    that a colleague sees someone by that name when nobody is sure it is this
+    person.
+    """
+    if result.patient_id and not result.visible:
+        candidate = ctx.candidate(result.patient_id)
+        return SeriesMatchResponse(seen_by=seen_by.names(candidate) if candidate else [])
+
     def choices(patient_ids: list[str]) -> list[ImportPatientChoice]:
         # Two charts can share a name, so a date of birth, when the chart has
         # one, is what lets the therapist tell them apart.
@@ -165,26 +187,39 @@ def series_match(result: MatchResult, ctx: MatchContext) -> SeriesMatchResponse:
         )
     if result.patient_id:
         return SeriesMatchResponse(patient=choices([result.patient_id])[0])
-    return SeriesMatchResponse(possible=choices(result.possible_ids))
+    return SeriesMatchResponse(possible=choices(result.visible_possible_ids))
 
 
-def _to_response(proposal: ImportProposal, ctx: MatchContext) -> ImportProposalResponse:
+def _series_hint(summary: str, identifier: str | None) -> PatientHint:
+    return PatientHint(full_name=summary, source=MATCH_SOURCE, source_identifier=identifier)
+
+
+def _seen_by_someone_else(item: ConfirmImportSeries, ctx: MatchContext) -> bool:
+    """Whether confirming this series would book or chart a colleague's client."""
+    if item.patient_id:
+        named = ctx.candidate(item.patient_id)
+        return named is not None and not named.visible
+    result = match_patient(_series_hint(item.display_name, item.source_identifier), ctx)
+    return result.patient_id is not None and not result.visible
+
+
+def _to_response(
+    proposal: ImportProposal, ctx: MatchContext, seen_by: SeenBy
+) -> ImportProposalResponse:
     series_out: list[ProposedSeriesResponse] = []
     for series in proposal.series:
         identifier = _source_identifier(series)
-        hint = PatientHint(
-            full_name=series.summary, source=MATCH_SOURCE, source_identifier=identifier
-        )
-        result = match_patient(hint, ctx)
+        result = match_patient(_series_hint(series.summary, identifier), ctx)
         if result.evidence == "not_a_client":
             # The therapist already said this series is not a client.
             continue
+        match = series_match(result, ctx, seen_by)
         series_out.append(
             ProposedSeriesResponse(
                 candidate_key=series.candidate_key,
                 summary=series.summary,
                 source_identifier=identifier,
-                match=series_match(result, ctx),
+                match=match,
                 weekday=series.weekday,
                 local_start_time=series.local_start_time,
                 duration_minutes=series.duration_minutes,
@@ -196,7 +231,8 @@ def _to_response(proposal: ImportProposal, ctx: MatchContext) -> ImportProposalR
                 recurrence_rule=series.recurrence_rule,
                 status=series.status.value,
                 confidence=series.confidence,
-                preselected=series.preselected,
+                # A colleague's client is never imported from here.
+                preselected=series.preselected and match.seen_by is None,
             )
         )
     return ImportProposalResponse(
@@ -254,6 +290,7 @@ def scan_calendar_for_practice(
     service: GoogleCalendarService = Depends(get_google_calendar_service),
     patient_repo: PatientRepository = Depends(get_patient_repository),
     mappings: PatientSourceMappingRepository = Depends(get_patient_source_mapping_repository),
+    user_repo: UserRepository = Depends(get_user_repository),
     audit: AuditService = Depends(get_audit_service),
 ) -> ImportProposalResponse | ImportConsentRequiredResponse:
     """Propose the practice the connected calendar describes.
@@ -266,6 +303,12 @@ def scan_calendar_for_practice(
     Nothing is written. The proposal is returned and forgotten. Each series
     carries which existing patient it is, or might be, so the therapist can
     say before anything is created.
+
+    The calendar is read in the clinician's own zone when they have set one,
+    and in the browser's (``timezone``) only when they have not. A series
+    without a provider id is remembered by its weekday and start time, so
+    the import and the sessions Pablo later follows must read it in the same
+    zone or they remember the same client twice.
     """
     if not _is_valid_gcal_redirect_uri(redirect_uri):
         raise BadRequestError("Invalid redirect_uri")
@@ -275,7 +318,7 @@ def scan_calendar_for_practice(
             ctx.user_id,
             lookback_days=lookback_days,
             horizon_days=horizon_days,
-            timezone=timezone,
+            timezone=configured_timezone(user_repo, ctx.user_id) or timezone,
         )
     except CalendarImportNotAuthorizedError:
         auth_url = service.get_auth_url(
@@ -288,7 +331,9 @@ def scan_calendar_for_practice(
         raise BadRequestError("Could not read the calendar with those settings") from exc
 
     response = _to_response(
-        proposal, MatchContext.for_clinician(ctx.user_id, patient_repo, mappings)
+        proposal,
+        MatchContext.for_practice(ctx.user_id, patient_repo, mappings),
+        SeenBy(user_repo),
     )
 
     # The proposal itself carries client names; the audit record carries
@@ -308,6 +353,7 @@ def scan_calendar_for_practice(
             "lookback_days": proposal.lookback_days,
             "horizon_days": proposal.horizon_days,
             "series_matched": sum(1 for s in response.series if s.match.patient),
+            "series_seen_by_others": sum(1 for s in response.series if s.match.seen_by is not None),
         },
     )
     return response
@@ -371,6 +417,7 @@ def confirm_calendar_import(
     patient_repo: PatientRepository = Depends(get_patient_repository),
     mappings: PatientSourceMappingRepository = Depends(get_patient_source_mapping_repository),
     scheduling: SchedulingService = Depends(get_scheduling_service),
+    user_repo: UserRepository = Depends(get_user_repository),
     audit: AuditService = Depends(get_audit_service),
     owner_tz: tzinfo = Depends(get_owner_timezone),
 ) -> ConfirmImportResponse:
@@ -393,8 +440,16 @@ def confirm_calendar_import(
 
     ``not_clients`` names series the therapist marked as not a client. They
     are remembered as such, so later scans leave them out.
+
+    A series that is a client of the practice the therapist does not see is
+    refused, whether it names that chart or asks for a new one: a new one
+    would be a second chart for the same person. The scan already said so.
+
+    Series are booked in the clinician's own zone when they have set one.
     """
     now = utc_now()
+    zone = configured_timezone(user_repo, ctx.user_id)
+    match_ctx = MatchContext.for_practice(ctx.user_id, patient_repo, mappings)
 
     # Everything is checked before anything is written.
     # Compared the way they are remembered, so case or spacing can't hide a clash.
@@ -404,8 +459,11 @@ def confirm_calendar_import(
     if confirming & {normalize(identifier) for identifier in request.not_clients}:
         raise BadRequestError("A series can't be both a client and not a client")
     checked: list[tuple[ConfirmImportSeries, RecurrenceFrequency, Patient | None]] = []
-    for item in request.series:
+    for requested in request.series:
+        item = requested.model_copy(update={"timezone": zone}) if zone else requested
         frequency = _validate(item, now)
+        if _seen_by_someone_else(item, match_ctx):
+            raise BadRequestError(SEEN_BY_SOMEONE_ELSE)
         existing = None
         if item.patient_id:
             existing = patient_repo.get(item.patient_id, ctx.user_id)
@@ -413,7 +471,6 @@ def confirm_calendar_import(
                 raise BadRequestError("One of those clients could not be found")
         checked.append((item, frequency, existing))
 
-    match_ctx = MatchContext.for_clinician(ctx.user_id, patient_repo, mappings)
     for identifier in request.not_clients:
         remember_not_a_client(MATCH_SOURCE, identifier, match_ctx)
 

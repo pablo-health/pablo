@@ -68,6 +68,9 @@ class _FakeResult:
     def fetchall(self) -> list[tuple[str, ...]]:
         return self._rows
 
+    def scalar(self) -> str | None:
+        return self._rows[0][0] if self._rows else None
+
 
 class _FakeSession:
     """Records executed SQL; answers the column query from a fixture.

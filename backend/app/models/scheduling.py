@@ -665,6 +665,11 @@ class SeriesMatchResponse(BaseModel):
     to choose between — with ``suggested_patient_id`` preselected when a name
     alone pointed at one of them. Both empty means nobody matched and the
     series is a new client.
+
+    ``seen_by`` is set instead when the series is certainly a client of the
+    practice whom the caller does not see: it names the clinicians who do,
+    and the series can be neither imported nor made a new client. Only
+    charts the caller sees are ever listed in ``patient`` or ``possible``.
     """
 
     patient: ImportPatientChoice | None = None
@@ -672,6 +677,13 @@ class SeriesMatchResponse(BaseModel):
     suggested_patient_id: str | None = Field(
         default=None,
         description="One of ``possible`` to preselect: it matched on name alone",
+    )
+    seen_by: list[str] | None = Field(
+        default=None,
+        description=(
+            "Set when this is a client of the practice the caller does not see: the "
+            "clinicians who do. Empty when nobody holds a grant"
+        ),
     )
 
 

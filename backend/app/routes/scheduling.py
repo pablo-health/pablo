@@ -269,6 +269,22 @@ def _owner_timezone(user_repo: UserRepository, user_id: str) -> tzinfo:
         return UTC
 
 
+def configured_timezone(user_repo: UserRepository, user_id: str) -> str | None:
+    """The zone the clinician chose, or ``None`` when they never chose one.
+
+    Unlike :func:`_owner_timezone` this does not default: a caller with a
+    better guess than the stored default — the browser's zone — uses it.
+    """
+    prefs = user_repo.get_preferences(user_id)
+    if "timezone" not in prefs.model_fields_set:
+        return None
+    try:
+        ZoneInfo(prefs.timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        return None
+    return prefs.timezone
+
+
 def get_owner_timezone(
     ctx: TenantContext = Depends(get_tenant_context),
     user_repo: UserRepository = Depends(get_user_repository),

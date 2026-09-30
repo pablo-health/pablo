@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import {
+  seenElsewhere,
   WhichClientsList,
   type ClientQuestionRow,
 } from "@/components/calendar/connect/WhichClientsList"
@@ -81,8 +82,12 @@ export function OutsideSessionsReview({
   // beside "New client", never as settled.
   const suggested = (q: OutsideQuestion) =>
     q.match.patient?.patient_id ?? q.match.suggested_patient_id ?? null
+  // A colleague's client is never answered from here: the row says who to ask.
+  const answerable = (q: OutsideQuestion) => !seenElsewhere(q.match)
   const [checked, setChecked] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(questions.map((q) => [q.key, single || suggested(q) !== null]))
+    Object.fromEntries(
+      questions.map((q) => [q.key, answerable(q) && (single || suggested(q) !== null)])
+    )
   )
   const [clientFor, setClientFor] = useState<Record<string, string | null>>(() =>
     Object.fromEntries(questions.map((q) => [q.key, suggested(q)]))
@@ -93,7 +98,7 @@ export function OutsideSessionsReview({
   const [notAdded, setNotAdded] = useState<NotAddedSession[]>([])
 
   const answers: OutsideAnswer[] = questions
-    .filter((q) => notClient[q.key] || checked[q.key])
+    .filter((q) => answerable(q) && (notClient[q.key] || checked[q.key]))
     .map((q) => {
       if (notClient[q.key]) {
         return {

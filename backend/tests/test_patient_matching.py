@@ -60,7 +60,7 @@ def _ctx(
 ) -> MatchContext:
     for row in rows:
         patients.create(row, USER)
-    return MatchContext.for_clinician(USER, patients, mappings)
+    return MatchContext.for_practice(USER, patients, mappings)
 
 
 class TestOrder:
@@ -215,7 +215,7 @@ class TestRemembered:
         )
         remember_match("google_calendar", "series:abc", "p2", ctx)
 
-        fresh = MatchContext.for_clinician(USER, patients, mappings)
+        fresh = MatchContext.for_practice(USER, patients, mappings)
         hint = PatientHint(
             full_name="Jane Adams", source="google_calendar", source_identifier="series:abc"
         )
@@ -245,7 +245,7 @@ class TestRemembered:
         mine = _ctx(patients, mappings, _patient("p1", "Jane", "Adams"))
         remember_match("simplepractice", "J.A.", "p1", mine)
         patients.grant_access("p1", "clinician-2")
-        theirs = MatchContext.for_clinician("clinician-2", patients, mappings)
+        theirs = MatchContext.for_practice("clinician-2", patients, mappings)
         hint = PatientHint(source="simplepractice", source_identifier="J.A.")
         assert match_patient(hint, theirs).evidence != "remembered"
 
@@ -264,7 +264,7 @@ class TestDeleted:
         remember_match("simplepractice", "J.A.", "john", ctx)
         patients.delete("john", USER)
 
-        fresh = MatchContext.for_clinician(USER, patients, mappings)
+        fresh = MatchContext.for_practice(USER, patients, mappings)
         hint = PatientHint(initials="J.A.", source="simplepractice", source_identifier="J.A.")
         result = match_patient(hint, fresh)
         assert result.patient_id is None
@@ -275,7 +275,7 @@ class TestDeleted:
         patients.create(_patient("p1", "Jane", "Adams"), USER)
         patients.create(_patient("p2", "Jane", "Adams"), USER)
         patients.delete("p1", USER)
-        ctx = MatchContext.for_clinician(USER, patients, mappings)
+        ctx = MatchContext.for_practice(USER, patients, mappings)
         result = match_patient(PatientHint(full_name="Jane Adams"), ctx)
         assert (result.patient_id, result.evidence) == ("p2", "full_name")
 
@@ -283,7 +283,7 @@ class TestDeleted:
         ctx = _ctx(patients, mappings, _patient("p1", "Jane", "Adams"))
         remember_match("simplepractice", "J.A.", "p1", ctx)
         patients.delete("p1", USER)
-        fresh = MatchContext.for_clinician(USER, patients, mappings)
+        fresh = MatchContext.for_practice(USER, patients, mappings)
         hint = PatientHint(initials="J.A.", source="simplepractice", source_identifier="J.A.")
         result = match_patient(hint, fresh)
         assert result.patient_id is None
@@ -298,7 +298,7 @@ class TestNotAClient:
         ctx = _ctx(patients, mappings, _patient("p1", "Team", "Meeting"))
         remember_not_a_client("google_calendar", "series:standup", ctx)
 
-        fresh = MatchContext.for_clinician(USER, patients, mappings)
+        fresh = MatchContext.for_practice(USER, patients, mappings)
         hint = PatientHint(
             full_name="Team Meeting", source="google_calendar", source_identifier="series:standup"
         )

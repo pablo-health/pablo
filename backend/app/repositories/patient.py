@@ -5,7 +5,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from datetime import datetime, timedelta
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from ..models.patient_facing import PATIENT_SELF_WRITABLE_COLUMNS, PatientFacingPatient
@@ -14,6 +15,22 @@ from .session import InMemoryTherapySessionRepository, TherapySessionRepository
 
 if TYPE_CHECKING:
     from ..models import Patient
+
+
+@dataclass(frozen=True)
+class PracticeClient:
+    """One live chart in the practice, as the patient matcher sees it.
+
+    The whole of what ``practice_client_directory()`` returns: enough to
+    recognise a client and say who sees them, and nothing else.
+    """
+
+    id: str
+    first_name: str
+    last_name: str
+    date_of_birth: date | None
+    email: str | None
+    clinician_ids: tuple[str, ...]
 
 
 class PatientRepository(ABC):
@@ -133,6 +150,16 @@ class PatientRepository(ABC):
         first and last name. Returns (paginated_patients, total_count).
         """
         pass
+
+    @abstractmethod
+    def practice_directory(self) -> list[PracticeClient]:
+        """Every live chart in the practice, whoever holds a grant on it.
+
+        For matching an outside record to a chart, and for nothing else: a
+        client belongs to the practice, so a colleague's client must be
+        recognised rather than made into a second chart. What a clinician
+        without a grant may learn from it is the caller's to limit.
+        """
 
     @abstractmethod
     def create(self, patient: Patient, user_id: str) -> Patient:
@@ -360,6 +387,20 @@ class InMemoryPatientRepository(PatientRepository):
         total = len(patients)
         offset = (page - 1) * page_size
         return patients[offset : offset + page_size], total
+
+    def practice_directory(self) -> list[PracticeClient]:
+        return [
+            PracticeClient(
+                id=p.id,
+                first_name=p.first_name,
+                last_name=p.last_name,
+                date_of_birth=date.fromisoformat(p.date_of_birth[:10]) if p.date_of_birth else None,
+                email=p.email,
+                clinician_ids=tuple(sorted(uid for pid, uid in self._access if pid == p.id)),
+            )
+            for p in self._patients.values()
+            if p.id not in self._deleted_at and p.status != "pending"
+        ]
 
     def create(self, patient: Patient, user_id: str) -> Patient:
         """Create the patient and auto-grant the creator primary access."""

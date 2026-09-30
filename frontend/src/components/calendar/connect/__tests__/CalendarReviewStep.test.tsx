@@ -399,6 +399,40 @@ describe("CalendarReviewStep", () => {
     expect(onFinish).toHaveBeenCalledOnce()
   })
 
+  it("shows a colleague's client as seen by them, and can't add it", () => {
+    const theirs = series({
+      candidate_key: "theirs",
+      summary: "Grace Hopper",
+      preselected: false,
+      match: {
+        patient: null,
+        possible: [],
+        suggested_patient_id: null,
+        seen_by: ["Dr. Rivera", "Dr. Okafor"],
+      },
+    })
+    render(
+      <CalendarReviewStep
+        {...baseProps()}
+        proposal={proposal([theirs])}
+        checked={{ theirs: true }}
+      />
+    )
+
+    expect(
+      screen.getByText("Already a client of the practice, seen by Dr. Rivera and Dr. Okafor.")
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText("Ask Dr. Rivera, Dr. Okafor, or your practice owner for access.")
+    ).toBeInTheDocument()
+    const box = screen.getByRole("checkbox", { name: "Grace Hopper" })
+    expect(box).not.toBeChecked()
+    expect(box).toBeDisabled()
+    expect(screen.queryByRole("button", { name: "Not a client" })).not.toBeInTheDocument()
+    // Nothing to add, so nothing to confirm.
+    expect(screen.getByRole("button", { name: "Add 0 clients" })).toBeDisabled()
+  })
+
   it("offers a way back to the week when jumped to before a scan", () => {
     render(<CalendarReviewStep {...baseProps()} proposal={null} />)
 

@@ -49,6 +49,9 @@ class _FakeResult:
     def fetchall(self) -> list[tuple[str, ...]]:
         return self._rows
 
+    def scalar(self) -> str | None:
+        return self._rows[0][0] if self._rows else None
+
 
 def _sql_type(column: str) -> str:
     """The type the real schema gives this column.

@@ -203,6 +203,45 @@ describe("sessions from the clinician's own calendar", () => {
     ])
   })
 
+  it("shows a colleague's client as seen by them, and never answers it", () => {
+    QUESTIONS.push(MATCHED, {
+      ...UNKNOWN,
+      key: "google_calendar|series:theirs",
+      source_identifier: "series:theirs",
+      title: "Grace Hopper",
+      match: { patient: null, possible: [], suggested_patient_id: null, seen_by: ["Dr. Rivera"] },
+    })
+
+    render(<EditorialCalendar {...defaults()} />, { wrapper: wrap() })
+    fireEvent.click(
+      within(screen.getByTestId("outside-sessions-line")).getByRole("button", { name: "Review" })
+    )
+
+    const dialog = screen.getByRole("dialog")
+    expect(
+      within(dialog).getByText("Already a client of the practice, seen by Dr. Rivera.")
+    ).toBeInTheDocument()
+    expect(
+      within(dialog).getByText("Ask Dr. Rivera or your practice owner for access.")
+    ).toBeInTheDocument()
+    const theirs = within(dialog).getByRole("checkbox", { name: "Grace Hopper" })
+    expect(theirs).not.toBeChecked()
+    expect(theirs).toBeDisabled()
+    // Only the clinician's own client has "Not a client" beside it.
+    expect(within(dialog).getAllByRole("button", { name: "Not a client" })).toHaveLength(1)
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }))
+    expect(answerMutateAsync).toHaveBeenCalledWith([
+      {
+        source: "google_calendar",
+        source_identifier: "series:abc",
+        patient_id: "p1",
+        new_client_name: null,
+        not_a_client: false,
+      },
+    ])
+  })
+
   it("says which sessions weren't added because another appointment was there", async () => {
     QUESTIONS.push(MATCHED)
     const start = new Date(2099, 0, 5, 14)

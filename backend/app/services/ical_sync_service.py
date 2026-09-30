@@ -346,7 +346,9 @@ class ICalSyncService:
             # The clinician said this is not a client: skip it, don't ask.
             self._outside.drop(user_id, source, event.uid)
             return
-        if match.patient_id:
+        # A client of the practice this clinician doesn't see is held as a
+        # question like any other unknown, never booked onto that chart.
+        if match.patient_id and match.visible:
             appt = self._create_appointment(user_id, ehr_system, event, match.patient_id)
             if client_id:
                 appt.notes = f"ical_client:{client_id}"
@@ -457,14 +459,15 @@ class ICalSyncService:
         return ""
 
     def _match_context(self, user_id: str) -> MatchContext:
-        return MatchContext.for_clinician(user_id, self._patient_repo, self._mapping_repo)
+        return MatchContext.for_practice(user_id, self._patient_repo, self._mapping_repo)
 
     def _match(self, ehr_system: str, client_identifier: str, ctx: MatchContext) -> MatchResult:
         return match_patient(_hint(ehr_system, client_identifier), ctx)
 
     def _match_patient(self, ehr_system: str, client_identifier: str, ctx: MatchContext) -> str:
-        """Match a client identifier to a Pablo patient ID, or ``""``."""
-        return self._match(ehr_system, client_identifier, ctx).patient_id or ""
+        """The clinician's own patient a client identifier is, or ``""``."""
+        match = self._match(ehr_system, client_identifier, ctx)
+        return match.patient_id if match.patient_id and match.visible else ""
 
     def _derive_appointment_url(
         self, ehr_system: str, uid: str, event_url: str | None

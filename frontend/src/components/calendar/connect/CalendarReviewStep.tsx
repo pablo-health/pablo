@@ -6,7 +6,7 @@ import { ArrowLeft, Calendar, Check, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SetupStepHead } from "@/components/setup"
 import type { ConfirmImportResult, ImportProposal, ProposedSeries } from "@/lib/api/scheduling"
-import { WhichClientsList } from "./WhichClientsList"
+import { seenElsewhere, WhichClientsList } from "./WhichClientsList"
 
 const VISIBLE_ROWS = 5
 
@@ -135,7 +135,10 @@ export function CalendarReviewStep({
   const visible = expanded ? proposal.series : proposal.series.slice(0, VISIBLE_ROWS)
   const hiddenCount = total - visible.length
   const checkedCount = proposal.series.filter(
-    (series) => checked[series.candidate_key] && !notClient[series.candidate_key]
+    (series) =>
+      checked[series.candidate_key] &&
+      !notClient[series.candidate_key] &&
+      !seenElsewhere(series.match)
   ).length
   const notClientCount = proposal.series.filter((series) => notClient[series.candidate_key]).length
   // Only "not a client" answers to keep: nothing to add, still something to save.
