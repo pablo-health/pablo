@@ -173,7 +173,8 @@ def as_directory_owner(db: Session | Connection, schema: str) -> Iterator[None]:
     """
     _require_role(db)
     db.execute(text(f"GRANT CREATE ON SCHEMA {schema} TO {DIRECTORY_ROLE}"))
-    db.execute(text(f"SET ROLE {DIRECTORY_ROLE}"))
+    # LOCAL: the role ends with the transaction, whatever the caller does next.
+    db.execute(text(f"SET LOCAL ROLE {DIRECTORY_ROLE}"))
     try:
         yield
     finally:

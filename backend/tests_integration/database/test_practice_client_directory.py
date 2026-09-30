@@ -419,6 +419,7 @@ class TestRewalkingTheRevision:
             _walk(engine, schema, "upgrade", "head")
 
             assert _owner(engine, schema) == _ROLE
+            assert _config(engine, schema) == [f"search_path=pg_catalog, {schema}, pg_temp"]
             mine = _chart(engine, schema, _A, _Chart("Ada", "Lovelace"))
             conn = _as(engine, schema, _A)
             try:
@@ -437,9 +438,20 @@ class TestRewalkingTheRevision:
 
             _walk(engine, schema, "upgrade", "head")
             assert _owner(engine, schema) == _ROLE
+            assert _config(engine, schema) == [f"search_path=pg_catalog, {schema}, pg_temp"]
             assert _directory_policies(engine, schema) == {"patients", "patient_clinicians"}
         finally:
             _drop(engine, schema)
+
+
+def _config(engine: Engine, schema: str) -> list[str] | None:
+    """The function's pinned settings, as Postgres stores them."""
+    with engine.connect() as conn:
+        config: list[str] | None = conn.execute(
+            text("SELECT proconfig FROM pg_proc WHERE oid = to_regprocedure(:fn)"),
+            {"fn": f"{schema}.practice_client_directory()"},
+        ).scalar()
+    return config
 
 
 def _walk(engine: Engine, schema: str, direction: str, target: str) -> None:
