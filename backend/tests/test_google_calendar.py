@@ -56,7 +56,9 @@ def _set_encryption_key(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
 
 @pytest.fixture
 def token_repo() -> MagicMock:
-    return MagicMock()
+    repo = MagicMock()
+    repo.get_app_calendar_id.return_value = None  # Pablo has made no calendar yet
+    return repo
 
 
 @pytest.fixture
@@ -427,6 +429,9 @@ class TestOAuthFlow:
         # `calendar.app.created` does not authorize calendarList.list — asking
         # is a 403 that no connect can recover from (PABLO-704i).
         mock_service.calendarList.assert_not_called()
+        token_repo.remember_app_calendar_id.assert_called_once_with(
+            "user-001", "pablo-made@group.calendar.google.com"
+        )
 
     @patch("app.services.google_calendar_service._build_calendar_service")
     @patch("app.services.google_calendar_service._build_flow")
@@ -443,12 +448,7 @@ class TestOAuthFlow:
         because the only scope this grant carries cannot answer.
         """
         mock_build_flow.return_value.credentials = _oauth_credentials()
-        token_repo.get.return_value = GoogleCalendarTokenDoc(
-            user_id="user-001",
-            encrypted_tokens="",
-            write_target="app_calendar",
-            calendar_id="already-made@group.calendar.google.com",
-        )
+        token_repo.get_app_calendar_id.return_value = "already-made@group.calendar.google.com"
 
         mock_service = MagicMock()
         mock_build_svc.return_value = mock_service
@@ -464,6 +464,153 @@ class TestOAuthFlow:
         assert saved_doc.calendar_id == "already-made@group.calendar.google.com"
         mock_service.calendars().insert.assert_not_called()
         mock_service.calendarList.assert_not_called()
+        token_repo.remember_app_calendar_id.assert_not_called()
+
+    @patch("app.services.google_calendar_service._build_calendar_service")
+    @patch("app.services.google_calendar_service._build_flow")
+    def test_reconnecting_after_a_disconnect_reuses_the_calendar(
+        self,
+        mock_build_flow: Mock,
+        mock_build_svc: Mock,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        """Disconnect drops the connection but not the calendar Pablo made.
+
+        With nothing connected there is no token record to read the id from,
+        which is how each disconnect-and-reconnect used to leave one more
+        "Pablo Sessions" calendar on the account.
+        """
+        mock_build_flow.return_value.credentials = _oauth_credentials()
+        token_repo.get.return_value = None  # disconnected
+        token_repo.get_app_calendar_id.return_value = "already-made@group.calendar.google.com"
+
+        mock_service = MagicMock()
+        mock_build_svc.return_value = mock_service
+
+        calendar_service.handle_callback(
+            "user-001",
+            "auth-code",
+            "http://localhost/callback",
+            state=_state_for("user-001"),
+        )
+
+        saved_doc = token_repo.save.call_args[0][0]
+        assert saved_doc.calendar_id == "already-made@group.calendar.google.com"
+        mock_service.calendars().get.assert_called_with(
+            calendarId="already-made@group.calendar.google.com"
+        )
+        mock_service.calendars().insert.assert_not_called()
+
+    @patch("app.services.google_calendar_service._build_calendar_service")
+    @patch("app.services.google_calendar_service._build_flow")
+    def test_switching_to_the_main_calendar_keeps_the_app_calendar_for_later(
+        self,
+        mock_build_flow: Mock,
+        mock_build_svc: Mock,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        """A main-calendar connect overwrites the token row, so the app id goes first.
+
+        This is a connection from before calendars were recorded: its app
+        calendar is known only from the token row the new connect replaces.
+        """
+        mock_build_flow.return_value.credentials = _oauth_credentials()
+        token_repo.get.return_value = GoogleCalendarTokenDoc(
+            user_id="user-001",
+            encrypted_tokens="",
+            write_target="app_calendar",
+            calendar_id="already-made@group.calendar.google.com",
+        )
+
+        mock_service = MagicMock()
+        mock_service.events().list().execute.return_value = {"summary": "therapist@gmail.com"}
+        mock_build_svc.return_value = mock_service
+
+        calendar_service.handle_callback(
+            "user-001",
+            "auth-code",
+            "http://localhost/callback",
+            state=_state_for("user-001"),
+            write_target=CalendarWriteTarget.PRIMARY,
+        )
+
+        saved_doc = token_repo.save.call_args[0][0]
+        assert saved_doc.calendar_id == "therapist@gmail.com"
+        token_repo.remember_app_calendar_id.assert_called_once_with(
+            "user-001", "already-made@group.calendar.google.com"
+        )
+        mock_service.calendars().insert.assert_not_called()
+
+    @patch("app.services.google_calendar_service._build_calendar_service")
+    @patch("app.services.google_calendar_service._build_flow")
+    def test_switching_back_to_the_app_calendar_reuses_the_original(
+        self,
+        mock_build_flow: Mock,
+        mock_build_svc: Mock,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        """The main calendar's id sits in ``calendar_id``; the app's is still known."""
+        mock_build_flow.return_value.credentials = _oauth_credentials()
+        token_repo.get.return_value = GoogleCalendarTokenDoc(
+            user_id="user-001",
+            encrypted_tokens="",
+            write_target="primary",
+            calendar_id="therapist@gmail.com",
+        )
+        token_repo.get_app_calendar_id.return_value = "already-made@group.calendar.google.com"
+
+        mock_service = MagicMock()
+        mock_build_svc.return_value = mock_service
+
+        calendar_service.handle_callback(
+            "user-001",
+            "auth-code",
+            "http://localhost/callback",
+            state=_state_for("user-001"),
+        )
+
+        saved_doc = token_repo.save.call_args[0][0]
+        assert saved_doc.calendar_id == "already-made@group.calendar.google.com"
+        assert saved_doc.write_target == "app_calendar"
+        mock_service.calendars().insert.assert_not_called()
+
+    @patch("app.services.google_calendar_service._build_calendar_service")
+    @patch("app.services.google_calendar_service._build_flow")
+    def test_a_calendar_the_therapist_named_pablo_sessions_is_never_adopted(
+        self,
+        mock_build_flow: Mock,
+        mock_build_svc: Mock,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        """Only an id Pablo created is reused — never a calendar found by its name."""
+        mock_build_flow.return_value.credentials = _oauth_credentials()
+        token_repo.get.return_value = None
+
+        mock_service = MagicMock()
+        mock_service.calendarList().list().execute.return_value = {
+            "items": [{"id": "theirs@group.calendar.google.com", "summary": "Pablo Sessions"}]
+        }
+        mock_service.calendars().insert().execute.return_value = {
+            "id": "pablo-made@group.calendar.google.com"
+        }
+        mock_build_svc.return_value = mock_service
+
+        calendar_service.handle_callback(
+            "user-001",
+            "auth-code",
+            "http://localhost/callback",
+            state=_state_for("user-001"),
+        )
+
+        saved_doc = token_repo.save.call_args[0][0]
+        assert saved_doc.calendar_id == "pablo-made@group.calendar.google.com"
+        token_repo.remember_app_calendar_id.assert_called_once_with(
+            "user-001", "pablo-made@group.calendar.google.com"
+        )
 
     @patch("app.services.google_calendar_service._build_calendar_service")
     @patch("app.services.google_calendar_service._build_flow")
@@ -528,6 +675,9 @@ class TestOAuthFlow:
             write_target="app_calendar",
             calendar_id="made-for-the-old-account@group.calendar.google.com",
         )
+        token_repo.get_app_calendar_id.return_value = (
+            "made-for-the-old-account@group.calendar.google.com"
+        )
 
         mock_service = MagicMock()
         # The new account cannot see the old account's calendar.
@@ -546,6 +696,35 @@ class TestOAuthFlow:
 
         saved_doc = token_repo.save.call_args[0][0]
         assert saved_doc.calendar_id == "made-for-the-new-account@group.calendar.google.com"
+        token_repo.remember_app_calendar_id.assert_called_with(
+            "user-001", "made-for-the-new-account@group.calendar.google.com"
+        )
+
+    def test_disconnect_records_an_unrecorded_app_calendar_before_deleting(
+        self,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        """A connection from before calendars were recorded keeps its calendar too.
+
+        Its id lives only on the token row the disconnect is about to delete.
+        """
+        events: list[str] = []
+        token_repo.get.return_value = GoogleCalendarTokenDoc(
+            user_id="user-001",
+            encrypted_tokens="",
+            write_target="app_calendar",
+            calendar_id="already-made@group.calendar.google.com",
+        )
+        token_repo.remember_app_calendar_id.side_effect = lambda *_: events.append("remember")
+        token_repo.delete.side_effect = lambda *_: events.append("delete") or True
+
+        assert calendar_service.disconnect("user-001") is True
+
+        token_repo.remember_app_calendar_id.assert_called_once_with(
+            "user-001", "already-made@group.calendar.google.com"
+        )
+        assert events == ["remember", "delete"]
 
 
 class TestStatusDisplayName:

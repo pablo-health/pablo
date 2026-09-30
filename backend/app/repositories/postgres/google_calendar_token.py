@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
-from ...db.models import GoogleCalendarTokenRow
+from ...db.models import GoogleCalendarSettingsRow, GoogleCalendarTokenRow
 from ...utcnow import utc_now
 from ..google_calendar_token import GoogleCalendarTokenDoc, GoogleCalendarTokenRepository
 
@@ -69,6 +69,21 @@ class PostgresGoogleCalendarTokenRepository(GoogleCalendarTokenRepository):
     def exists(self, user_id: str) -> bool:
         row = self._session.get(GoogleCalendarTokenRow, user_id)
         return row is not None
+
+    def get_app_calendar_id(self, user_id: str) -> str | None:
+        row = self._session.get(GoogleCalendarSettingsRow, user_id)
+        return row.app_calendar_id if row is not None else None
+
+    def remember_app_calendar_id(self, user_id: str, calendar_id: str) -> None:
+        row = self._session.get(GoogleCalendarSettingsRow, user_id)
+        if row is None:
+            self._session.add(
+                GoogleCalendarSettingsRow(user_id=user_id, app_calendar_id=calendar_id)
+            )
+        else:
+            row.app_calendar_id = calendar_id
+            row.updated_at = utc_now()
+        self._session.flush()
 
 
 def _row_to_doc(row: GoogleCalendarTokenRow) -> GoogleCalendarTokenDoc:
