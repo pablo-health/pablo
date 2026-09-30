@@ -1100,7 +1100,7 @@ class TestMatchOrAsk:
         assert body["confirmed"][0]["appointments_created"] == 0
         assert len(_appointments(appt_repo)) == booked
 
-    def test_a_series_without_a_provider_id_is_remembered_by_its_title_digest(
+    def test_a_series_without_a_provider_id_is_remembered_by_a_digest_of_its_shape(
         self,
         import_client: TestClient,
         mock_repo: InMemoryPatientRepository,
@@ -1110,7 +1110,7 @@ class TestMatchOrAsk:
         self._confirm(import_client, series, None)
 
         [stored] = mock_mapping_repo.list_by_source(_USER, "google_calendar")
-        assert stored.source_identifier.startswith("title:")
+        assert stored.source_identifier.startswith("shape:")
         assert CLIENT_TITLE.lower() not in stored.source_identifier.lower()
 
         [again] = self._scan(import_client, series_id=None)
@@ -1225,6 +1225,86 @@ class TestMatchOrAsk:
         response = import_client.post("/api/calendar/import/confirm", json={})
 
         assert response.status_code == 422, response.text
+
+    def test_two_series_with_one_title_on_different_days_stay_two_clients(
+        self,
+        import_client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+    ) -> None:
+        """Hand-entered "Therapy Session" on Monday and on Thursday are two people."""
+        gcal = MagicMock()
+        gcal.scan_for_practice_import.return_value = build_proposal(
+            _weekly(4, first=NOW - timedelta(days=20), summary="Therapy Session")
+            + _weekly(4, first=NOW - timedelta(days=17), summary="Therapy Session"),
+            now=NOW,
+            timezone="UTC",
+        )
+        app.dependency_overrides[get_google_calendar_service] = lambda: gcal
+
+        def scan() -> list[dict[str, Any]]:
+            response = import_client.post(
+                "/api/calendar/import/scan", params={"redirect_uri": _REDIRECT}
+            )
+            return sorted(response.json()["series"], key=lambda s: s["weekday"])
+
+        monday, thursday = scan()
+        assert monday["source_identifier"] != thursday["source_identifier"]
+
+        body = import_client.post(
+            "/api/calendar/import/confirm",
+            json={
+                "series": [
+                    _confirm_item(
+                        candidate_key=series["candidate_key"],
+                        display_name=series["summary"],
+                        source_identifier=series["source_identifier"],
+                        start_at=_ahead(days).isoformat(),
+                    )
+                    for series, days in ((monday, 3), (thursday, 4))
+                ]
+            },
+        ).json()
+        chart_for = {row["candidate_key"]: row["patient_id"] for row in body["confirmed"]}
+        assert len(set(chart_for.values())) == 2
+
+        again = scan()
+        assert [s["match"]["patient"]["patient_id"] for s in again] == [
+            chart_for[monday["candidate_key"]],
+            chart_for[thursday["candidate_key"]],
+        ]
+        assert len(_patients(mock_repo)) == 2
+
+    def test_a_long_provider_series_id_can_be_remembered(
+        self,
+        import_client: TestClient,
+        mock_mapping_repo: InMemoryPatientSourceMappingRepository,
+    ) -> None:
+        """Provider ids run to 1024 characters; the identifier must fit."""
+        identifier = "series:" + "x" * 1024
+        response = import_client.post(
+            "/api/calendar/import/confirm",
+            json={"series": [_confirm_item(source_identifier=identifier)]},
+        )
+
+        assert response.status_code == 200, response.text
+        [stored] = mock_mapping_repo.list_by_source(_USER, "google_calendar")
+        assert stored.source_identifier == identifier
+
+    def test_a_clash_is_caught_whatever_its_case_or_spacing(
+        self,
+        import_client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+    ) -> None:
+        response = import_client.post(
+            "/api/calendar/import/confirm",
+            json={
+                "series": [_confirm_item(source_identifier="series:Rec-1")],
+                "not_clients": [" SERIES:rec-1 "],
+            },
+        )
+
+        assert response.status_code == 400, response.text
+        assert _patients(mock_repo) == []
 
 
 def _chart(patient_id: str, first: str, last: str, *, dob: str | None = None) -> Patient:

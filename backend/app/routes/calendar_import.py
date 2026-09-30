@@ -19,7 +19,7 @@ Event titles carry client names. They travel to the person who owns them
 and nowhere else: not to a log line, not to an error message, not to a
 metric label, and not to any table other than the chart a therapist
 confirms. A series is remembered by the provider's series id, or by a
-digest of its title, never by the title itself.
+digest of its title, weekday and start time, never by the title itself.
 """
 
 from __future__ import annotations
@@ -131,13 +131,16 @@ def _source_identifier(series: ProposedSeries) -> str:
     """How a confirmed series is remembered.
 
     The provider's series id when the scan saw one. Otherwise a digest of the
-    normalised title: stable across scans, and it keeps the title out of the
-    table.
+    series' shape — normalised title, weekday and local start time, the same
+    things the scan groups a hand-entered series by. The title alone is not
+    enough: two "Therapy Session" series on Monday and Thursday are two
+    clients. The digest is stable across scans and keeps the title out of
+    the table.
     """
     if series.series_id:
         return f"series:{series.series_id}"
-    digest = hashlib.sha256(normalize(series.summary).encode()).hexdigest()[:32]
-    return f"title:{digest}"
+    shape = f"{normalize(series.summary)}|{series.weekday}|{series.local_start_time}"
+    return f"shape:{hashlib.sha256(shape.encode()).hexdigest()[:32]}"
 
 
 def _series_match(result: MatchResult, ctx: MatchContext) -> SeriesMatchResponse:
@@ -363,8 +366,11 @@ def confirm_calendar_import(
     now = utc_now()
 
     # Everything is checked before anything is written.
-    confirming = {item.source_identifier for item in request.series if item.source_identifier}
-    if confirming & set(request.not_clients):
+    # Compared the way they are remembered, so case or spacing can't hide a clash.
+    confirming = {
+        normalize(item.source_identifier) for item in request.series if item.source_identifier
+    }
+    if confirming & {normalize(identifier) for identifier in request.not_clients}:
         raise BadRequestError("A series can't be both a client and not a client")
     checked: list[tuple[ConfirmImportSeries, RecurrenceFrequency, Patient | None]] = []
     for item in request.series:

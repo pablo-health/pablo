@@ -25,8 +25,11 @@ meeting on a calendar — so it is never asked about again. That adds
 is what every existing row is) and makes ``patient_id`` nullable, with a
 check that a patient is present exactly when the answer is a client.
 
-The downgrade has to drop the not-a-client answers, since the old table has
-nowhere to keep them. The table is FORCE-RLS'd and this chain may run as a
+``source_identifier`` and ``doc_id`` become unbounded text: a calendar
+provider's series id can run to 1024 characters, past the old 255.
+
+The downgrade has to drop the not-a-client answers, and any identifier too
+long for the old columns, since the old table has nowhere to keep them. The table is FORCE-RLS'd and this chain may run as a
 role without BYPASSRLS, so that delete runs with row security suspended and
 restored — otherwise it would match nothing and ``SET NOT NULL`` would fail
 on the rows it could not see.
@@ -108,6 +111,8 @@ def upgrade() -> None:
         ALTER TABLE patient_source_mappings
             ADD COLUMN IF NOT EXISTS answer TEXT NOT NULL DEFAULT 'client';
         ALTER TABLE patient_source_mappings ALTER COLUMN patient_id DROP NOT NULL;
+        ALTER TABLE patient_source_mappings ALTER COLUMN source_identifier TYPE TEXT;
+        ALTER TABLE patient_source_mappings ALTER COLUMN doc_id TYPE TEXT;
         DO $$
         BEGIN
             IF NOT EXISTS (
@@ -152,7 +157,10 @@ def downgrade() -> None:
             FROM pg_class WHERE oid = to_regclass('patient_source_mappings');
             ALTER TABLE patient_source_mappings NO FORCE ROW LEVEL SECURITY;
             ALTER TABLE patient_source_mappings DISABLE ROW LEVEL SECURITY;
-            DELETE FROM patient_source_mappings WHERE patient_id IS NULL;
+            DELETE FROM patient_source_mappings
+            WHERE patient_id IS NULL
+               OR length(source_identifier) > 255
+               OR length(doc_id) > 500;
             IF was_enabled THEN
                 ALTER TABLE patient_source_mappings ENABLE ROW LEVEL SECURITY;
             END IF;
@@ -165,6 +173,9 @@ def downgrade() -> None:
                 DROP CONSTRAINT IF EXISTS ck_patient_source_mappings_answer;
             ALTER TABLE patient_source_mappings DROP COLUMN answer;
             ALTER TABLE patient_source_mappings ALTER COLUMN patient_id SET NOT NULL;
+            ALTER TABLE patient_source_mappings
+                ALTER COLUMN source_identifier TYPE VARCHAR(255);
+            ALTER TABLE patient_source_mappings ALTER COLUMN doc_id TYPE VARCHAR(500);
         END $$;
         """
     )

@@ -2188,10 +2188,10 @@ class PatientSourceMappingRow(Base):
         ),
     )
 
-    doc_id: Mapped[str] = mapped_column(String(500), primary_key=True)
+    doc_id: Mapped[str] = mapped_column(Text, primary_key=True)
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
     source: Mapped[str] = mapped_column(String(50), nullable=False)
-    source_identifier: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_identifier: Mapped[str] = mapped_column(Text, nullable=False)
     answer: Mapped[str] = mapped_column(Text, nullable=False, server_default="client")
     patient_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

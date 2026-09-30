@@ -714,6 +714,11 @@ class ImportConsentRequiredResponse(BaseModel):
     auth_url: str
 
 
+#: A provider's series id can run to 1024 characters; this leaves room for
+#: its prefix. The column is unbounded text; this only bounds a request.
+MAX_SOURCE_IDENTIFIER = 2048
+
+
 class ConfirmImportSeries(BaseModel):
     """One series a therapist chose to import.
 
@@ -728,7 +733,7 @@ class ConfirmImportSeries(BaseModel):
     )
     source_identifier: str | None = Field(
         default=None,
-        max_length=255,
+        max_length=MAX_SOURCE_IDENTIFIER,
         description="The scan's source_identifier for this series",
     )
     start_at: datetime = Field(description="First occurrence to create — must be in the future")
@@ -746,8 +751,8 @@ class ConfirmImportRequest(BaseModel):
     """
 
     series: list[ConfirmImportSeries] = Field(default_factory=list, max_length=200)
-    not_clients: list[Annotated[str, Field(min_length=1, max_length=255)]] = Field(
-        default_factory=list, max_length=200
+    not_clients: list[Annotated[str, Field(min_length=1, max_length=MAX_SOURCE_IDENTIFIER)]] = (
+        Field(default_factory=list, max_length=200)
     )
 
     @model_validator(mode="after")

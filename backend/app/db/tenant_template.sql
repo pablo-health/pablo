@@ -932,10 +932,10 @@ CREATE TABLE __TENANT_SCHEMA__.patient_payment_methods (
 
 
 CREATE TABLE __TENANT_SCHEMA__.patient_source_mappings (
-    doc_id character varying(500) NOT NULL,
+    doc_id text NOT NULL,
     user_id uuid NOT NULL,
     source character varying(50) NOT NULL,
-    source_identifier character varying(255) NOT NULL,
+    source_identifier text NOT NULL,
     patient_id uuid,
     created_at timestamp with time zone NOT NULL,
     answer text DEFAULT 'client'::text NOT NULL,
