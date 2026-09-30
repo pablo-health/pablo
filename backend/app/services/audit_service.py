@@ -63,6 +63,10 @@ _COALESCED_READ_ACTIONS: frozenset[AuditAction] = frozenset(
         # reads nobody made. Opening one thread is recorded the same way.
         AuditAction.PATIENT_MESSAGE_THREAD_VIEWED,
         AuditAction.PATIENT_MESSAGE_UNREAD_COUNTED,
+        # The Inbox and its badge poll every minute while open, for the same
+        # reason and with the same answer as the Messages rows above.
+        AuditAction.INBOX_VIEWED,
+        AuditAction.INBOX_COUNTED,
     }
 )
 _COALESCED_READ_ACTION_VALUES: frozenset[str] = frozenset(a.value for a in _COALESCED_READ_ACTIONS)
@@ -514,6 +518,37 @@ class AuditService:
             actor_type=ACTOR_TYPE_CLINICIAN,
             action=_action_value(action),
             resource_type=ResourceType.REFILL_REQUEST.value,
+            resource_id=resource_id,
+            patient_id=patient_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            changes=changes,
+        )
+        self._persist(entry)
+        return entry
+
+    def log_inbox_action(
+        self,
+        action: AuditAction | str,
+        user: User,
+        request: Request,
+        resource_id: str,
+        patient_id: str | None,
+        resource_type: ResourceType = ResourceType.INBOX_ITEM,
+        changes: dict[str, Any] | None = None,
+    ) -> AuditLogEntry:
+        """Record a CLINICIAN reading or acting on their Inbox.
+
+        An item is named as ``kind:source_id``; the list is recorded against
+        each patient on it. ``changes`` is counts, kinds and dispositions —
+        never a title or a message, which is the item's own content.
+        """
+        ip_address, user_agent = extract_request_context(request)
+        entry = AuditLogEntry(
+            user_id=user.id,
+            actor_type=ACTOR_TYPE_CLINICIAN,
+            action=_action_value(action),
+            resource_type=resource_type.value,
             resource_id=resource_id,
             patient_id=patient_id,
             ip_address=ip_address,

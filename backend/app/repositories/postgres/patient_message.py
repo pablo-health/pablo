@@ -27,6 +27,7 @@ from ...db.models import (
     PatientMessageThreadRow,
     PatientRow,
 )
+from ...models.inbox import KIND_PORTAL_MESSAGE
 from ...models.patient_message import (
     SENDER_PATIENT,
     THREAD_STATUS_CLOSED,
@@ -35,12 +36,13 @@ from ...models.patient_message import (
     InboxThread,
 )
 from ..patient_message import PatientMessageAccessDeniedError, PatientMessageRepository
+from .inbox_item_state import hidden_by_state
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import datetime
 
-    from sqlalchemy import ColumnElement, Row, ScalarSelect
+    from sqlalchemy import ColumnElement, Row, ScalarSelect, Select
     from sqlalchemy.orm import Session
 
     from ...models import MessageAttachment, PatientMessage, PatientMessageThread
@@ -256,15 +258,18 @@ class PostgresPatientMessageRepository(PatientMessageRepository):
             for row, count, first, last, preferred in rows
         ]
 
-    def list_inbox_messages(
-        self, user_id: str, *, unread_only: bool = False, limit: int = 100
-    ) -> list[InboxMessage]:
+    def _client_messages(self, user_id: str) -> Select[tuple]:
+        """Every message a client sent that this clinician may see, with its thread.
+
+        Carries the patient's name columns and whether the practice has read
+        the message, which every view of single messages shows.
+        """
         thread = PatientMessageThreadRow
         unread = or_(
             thread.clinician_last_read_at.is_(None),
             PatientMessageRow.created_at > thread.clinician_last_read_at,
         )
-        statement = (
+        return (
             select(
                 PatientMessageRow,
                 thread,
@@ -277,11 +282,9 @@ class PostgresPatientMessageRepository(PatientMessageRepository):
             .join(PatientRow, PatientRow.id == thread.patient_id)
             .where(*self._inbox_scope(user_id), PatientMessageRow.sender == SENDER_PATIENT)
         )
-        if unread_only:
-            statement = statement.where(unread)
-        rows = self._session.execute(
-            statement.order_by(PatientMessageRow.created_at.desc()).limit(limit)
-        ).all()
+
+    def _read_client_messages(self, statement: Select[tuple]) -> list[InboxMessage]:
+        rows = self._session.execute(statement).all()
         return [
             InboxMessage(
                 message=_message(message),
@@ -291,6 +294,52 @@ class PostgresPatientMessageRepository(PatientMessageRepository):
             )
             for message, thread_row, is_unread, first, last, preferred in rows
         ]
+
+    def list_inbox_messages(
+        self, user_id: str, *, unread_only: bool = False, limit: int = 100
+    ) -> list[InboxMessage]:
+        statement = self._client_messages(user_id)
+        if unread_only:
+            thread = PatientMessageThreadRow
+            statement = statement.where(
+                or_(
+                    thread.clinician_last_read_at.is_(None),
+                    PatientMessageRow.created_at > thread.clinician_last_read_at,
+                )
+            )
+        return self._read_client_messages(
+            statement.order_by(PatientMessageRow.created_at.desc()).limit(limit)
+        )
+
+    def list_awaiting_messages(
+        self,
+        user_id: str,
+        *,
+        now: datetime,
+        patient_id: str | None = None,
+        limit: int = 200,
+    ) -> list[InboxMessage]:
+        statement = self._client_messages(user_id).where(
+            PatientMessageThreadRow.status == THREAD_STATUS_OPEN,
+            ~hidden_by_state(
+                KIND_PORTAL_MESSAGE,
+                func.cast(PatientMessageRow.id, String()),
+                user_id,
+                now,
+            ),
+        )
+        if patient_id is not None:
+            statement = statement.where(PatientMessageThreadRow.patient_id == patient_id)
+        return self._read_client_messages(
+            statement.order_by(PatientMessageRow.created_at.desc()).limit(limit)
+        )
+
+    def get_inbox_messages(self, user_id: str, message_ids: list[str]) -> list[InboxMessage]:
+        if not message_ids:
+            return []
+        return self._read_client_messages(
+            self._client_messages(user_id).where(PatientMessageRow.id.in_(message_ids))
+        )
 
     def count_unread_threads(self, user_id: str) -> int:
         count = self._session.execute(

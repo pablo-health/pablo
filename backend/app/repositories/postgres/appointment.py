@@ -16,6 +16,8 @@ from ...scheduling_engine.repositories.appointment import AppointmentRepository
 from ...utcnow import utc_now
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
+
     from sqlalchemy.engine import CursorResult
     from sqlalchemy.orm import Session
 
@@ -273,6 +275,24 @@ class PostgresAppointmentRepository(AppointmentRepository):
                 .where(
                     AppointmentRow.user_id == user_id,
                     AppointmentRow.ical_source == ehr_system,
+                )
+                .order_by(AppointmentRow.start_at)
+            )
+            .scalars()
+            .all()
+        )
+        return [_row_to_appointment(r) for r in rows]
+
+    def list_by_google_sync_status(
+        self, user_id: str, statuses: Collection[str], *, starting_after: datetime
+    ) -> list[Appointment]:
+        rows = (
+            self._session.execute(
+                select(AppointmentRow)
+                .where(
+                    AppointmentRow.user_id == user_id,
+                    AppointmentRow.google_sync_status.in_(list(statuses)),
+                    AppointmentRow.start_at > starting_after,
                 )
                 .order_by(AppointmentRow.start_at)
             )

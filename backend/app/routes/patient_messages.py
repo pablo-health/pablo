@@ -98,6 +98,9 @@ from ..api_errors import ConflictError, NotFoundError, UnprocessableEntityError
 from ..auth.patient_context import PatientContext, get_patient_context
 from ..auth.route_access import subscription_exempt
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
+from ..inbox.registry import InboxContext
+from ..inbox.replies import replied_to, settle_reply
+from ..inbox.service import UnknownInboxItemError
 from ..models import (
     AssignThreadRequest,
     AuditAction,
@@ -126,6 +129,8 @@ from ..models.patient_message import (
     ThreadStatusFilter,
 )
 from ..models.patient_message_api import (
+    ClinicianReplyRequest,
+    ClinicianReplyResponse,
     InboxMessageListResponse,
     InboxMessageResponse,
     InboxThreadListResponse,
@@ -133,7 +138,15 @@ from ..models.patient_message_api import (
     UnreadThreadCountResponse,
 )
 from ..rate_limit import get_patient_message_send_limiter
-from ..repositories import PatientDocumentRepository, PatientMessageRepository, PatientRepository
+from ..repositories import (
+    InboxItemStateRepository,
+    PatientDocumentRepository,
+    PatientMessageRepository,
+    PatientRepository,
+    UserRepository,
+    get_inbox_item_state_repository,
+    get_user_repository,
+)
 from ..repositories import get_patient_document_repository as _document_repo_factory
 from ..repositories import get_patient_message_repository as _repo_factory
 from ..repositories import get_patient_repository as _patient_repo_factory
@@ -180,6 +193,13 @@ def get_clinician_patient_repository(
     that one is armed for a patient principal, which a clinician is not.
     """
     return _patient_repo_factory()
+
+
+def get_reply_inbox_state_repository(
+    _ctx: TenantContext = Depends(get_tenant_context),
+) -> InboxItemStateRepository:
+    """Where a reply records which client message it answered."""
+    return get_inbox_item_state_repository()
 
 
 def get_patient_document_repository() -> PatientDocumentRepository:
@@ -812,19 +832,21 @@ def get_thread(
 @message_threads_router.post(
     "/{thread_id}/replies",
     status_code=status.HTTP_201_CREATED,
-    response_model=PatientMessageResponse,
+    response_model=ClinicianReplyResponse,
 )
 def reply_to_thread(
     thread_id: str,
-    request_body: SendMessageRequest,
+    request_body: ClinicianReplyRequest,
     request: Request,
     background_tasks: BackgroundTasks,
     user: User = Depends(require_baa_acceptance),
     ctx: TenantContext = Depends(get_tenant_context),
     repo: PatientMessageRepository = Depends(get_patient_message_repository),
     documents: PatientDocumentRepository = Depends(get_patient_document_repository),
+    inbox_states: InboxItemStateRepository = Depends(get_reply_inbox_state_repository),
+    users: UserRepository = Depends(get_user_repository),
     audit: AuditService = Depends(get_audit_service),
-) -> PatientMessageResponse:
+) -> ClinicianReplyResponse:
     """Write back to the patient. This is the other half of the loop.
 
     Without it the store is somewhere a patient can write and nobody can
@@ -836,11 +858,31 @@ def reply_to_thread(
     facts about one request rather than two requests. A closed thread is
     therefore no obstacle to attaching: the reply is what reopens it, so
     there is nothing here for the attachment rules to refuse.
+
+    In the Inbox, the reply answers one client message: the one named by
+    ``in_reply_to_message_id``, or else the newest still waiting here. That
+    one is marked replied; the client's earlier ones are treated as the
+    clinician chose (see :mod:`app.inbox.replies`), and the response says
+    which. A named message that is not a client message in this thread is a
+    422, checked before anything is sent.
     """
     thread = _accessible_thread(thread_id, user, repo)
     was_closed = thread.status == THREAD_STATUS_CLOSED
     attached = _clinician_attachments(request_body.attachment_ids, user, thread, documents, repo)
     now = utc_now()
+    inbox_ctx = InboxContext(user_id=user.id, now=now)
+    try:
+        answering = replied_to(
+            inbox_ctx,
+            repo,
+            thread_id=thread.id,
+            patient_id=thread.patient_id,
+            in_reply_to=request_body.in_reply_to_message_id,
+        )
+    except UnknownInboxItemError as e:
+        raise UnprocessableEntityError(
+            "That message isn't in this conversation.", code="NOT_IN_THREAD"
+        ) from e
     message = repo.add_reply(
         PatientMessage(
             id=str(uuid.uuid4()),
@@ -859,6 +901,13 @@ def reply_to_thread(
         created_at=now,
     )
     message.attachments = _as_attachments(message.id, attached)
+    outcome = settle_reply(
+        inbox_ctx,
+        inbox_states,
+        repo,
+        answering,
+        users.get_preferences(user.id).inbox_reply_earlier_messages,
+    )
     audit.log_patient_message_action(
         action=AuditAction.PATIENT_MESSAGE_SENT,
         user=user,
@@ -869,6 +918,8 @@ def reply_to_thread(
             "message_id": message.id,
             "sender": SENDER_CLINICIAN,
             "attachment_count": len(attached),
+            "answered_count": len(outcome.resolved_ids),
+            "earlier_handled_count": len(outcome.earlier_handled_ids),
         },
     )
     if was_closed:
@@ -888,7 +939,9 @@ def reply_to_thread(
         thread=thread,
         message=message,
     )
-    return PatientMessageResponse.from_message(message)
+    return ClinicianReplyResponse(
+        **PatientMessageResponse.from_message(message).model_dump(), inbox=outcome
+    )
 
 
 @message_threads_router.post("/{thread_id}/close", response_model=PatientMessageThreadResponse)

@@ -2,17 +2,14 @@
 
 /**
  * The practice's side of client messaging (`app.routes.patient_messages`,
- * clinician surface).
+ * clinician surface): one conversation, read and answered.
  *
- * Two views of one inbox. Conversations are grouped, one row per thread,
- * unread first, and carry no message text. Messages are ungrouped: every
- * message a client sent, one row each, newest first. Opening either lands in
- * the thread, which is where replying, closing and reopening happen.
+ * Listing what clients wrote is the Inbox's job (`./inbox`), one item per
+ * client message. Opening one lands in its thread, which is where replying,
+ * closing and reopening happen.
  */
 
 import { get, post } from "./client"
-
-export type ThreadStatusFilter = "open" | "closed" | "all"
 
 export interface MessageAttachment {
   document_id: string
@@ -32,37 +29,21 @@ export interface ThreadMessage {
   attachments: MessageAttachment[]
 }
 
-export interface InboxThread {
-  id: string
-  subject: string | null
-  status: string
-  created_at: string
-  last_message_at: string
-  closed_at: string | null
-  assigned_user_id: string | null
-  unread_count: number | null
-  patient_id: string
-  patient_name: string
+/**
+ * What a reply did in the Inbox. The message replied to is resolved; the
+ * client's earlier unanswered messages are either offered (`earlier_open_ids`,
+ * when the clinician is asked) or already marked handled
+ * (`earlier_handled_ids`, when they chose "always"), depending on their
+ * preference.
+ */
+export interface ReplyInboxOutcome {
+  resolved_ids: string[]
+  earlier_open_ids: string[]
+  earlier_handled_ids: string[]
 }
 
-export interface InboxThreadList {
-  data: InboxThread[]
-  total: number
-  has_more: boolean
-}
-
-export interface InboxMessage extends ThreadMessage {
-  patient_id: string
-  patient_name: string
-  thread_subject: string | null
-  thread_status: string
-  unread: boolean
-}
-
-export interface InboxMessageList {
-  data: InboxMessage[]
-  total: number
-  has_more: boolean
+export interface ReplyMessage extends ThreadMessage {
+  inbox?: ReplyInboxOutcome | null
 }
 
 export interface ThreadDetail {
@@ -77,24 +58,18 @@ export interface ThreadDetail {
 
 const BASE = "/api/message-threads"
 
-export function listInboxThreads(status: ThreadStatusFilter, token?: string): Promise<InboxThreadList> {
-  return get<InboxThreadList>(`${BASE}?status=${status}`, token)
-}
-
-export function listInboxMessages(unreadOnly: boolean, token?: string): Promise<InboxMessageList> {
-  return get<InboxMessageList>(`${BASE}/messages?unread_only=${unreadOnly}`, token)
-}
-
-export function getUnreadThreadCount(token?: string): Promise<{ threads_with_unread: number }> {
-  return get<{ threads_with_unread: number }>(`${BASE}/unread-count`, token)
-}
-
 export function getThread(threadId: string, token?: string): Promise<ThreadDetail> {
   return get<ThreadDetail>(`${BASE}/${threadId}`, token)
 }
 
-export function replyToThread(threadId: string, body: string, token?: string): Promise<ThreadMessage> {
-  return post<ThreadMessage>(`${BASE}/${threadId}/replies`, { body }, token)
+export function replyToThread(
+  threadId: string,
+  body: string,
+  inReplyToMessageId?: string,
+  token?: string,
+): Promise<ReplyMessage> {
+  const payload = inReplyToMessageId ? { body, in_reply_to_message_id: inReplyToMessageId } : { body }
+  return post<ReplyMessage>(`${BASE}/${threadId}/replies`, payload, token)
 }
 
 export function markThreadRead(threadId: string, token?: string): Promise<unknown> {

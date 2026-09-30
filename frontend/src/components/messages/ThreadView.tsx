@@ -27,7 +27,7 @@ import {
   useThread,
 } from "@/hooks/useMessageInbox"
 import { getPatientDocumentDownloadUrl } from "@/lib/api/patientDocuments"
-import type { MessageAttachment, ThreadMessage } from "@/lib/api/messageInbox"
+import type { MessageAttachment, ReplyInboxOutcome, ThreadMessage } from "@/lib/api/messageInbox"
 
 const WHEN: Intl.DateTimeFormatOptions = {
   month: "short",
@@ -47,6 +47,12 @@ interface ThreadViewProps {
    * reply to go: what to do about it, shown in place of the reply box.
    */
   repliesOffNote?: string | null
+  /** The client message this view was opened for, marked in the conversation. */
+  highlightMessageId?: string
+  /** The client message a reply answers, so the Inbox resolves that one only. */
+  inReplyToMessageId?: string
+  /** What the reply did in the Inbox, once it is sent. */
+  onReplied?: (outcome: ReplyInboxOutcome | null) => void
 }
 
 export function ThreadView({
@@ -55,6 +61,9 @@ export function ThreadView({
   patientName,
   onBack,
   repliesOffNote = null,
+  highlightMessageId,
+  inReplyToMessageId,
+  onReplied,
 }: ThreadViewProps) {
   const { data: thread, isLoading, isError, refetch } = useThread(threadId)
   const markRead = useMarkThreadRead()
@@ -101,7 +110,7 @@ export function ThreadView({
             onClick={onBack}
             className="mb-2 inline-flex items-center gap-1 text-sm text-neutral-600 md:hidden"
           >
-            <ArrowLeft className="h-4 w-4" aria-hidden="true" /> All messages
+            <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Inbox
           </button>
           <h2 className="truncate text-lg font-semibold text-neutral-900">{patientName}</h2>
           <p className="truncate text-sm text-neutral-600">{thread.subject || "No subject"}</p>
@@ -119,7 +128,11 @@ export function ThreadView({
 
       <ol className="flex-1 space-y-3 overflow-y-auto p-4" data-testid="thread-messages">
         {thread.messages.map((message) => (
-          <MessageBubble key={message.id} message={message} />
+          <MessageBubble
+            key={message.id}
+            message={message}
+            highlighted={message.id === highlightMessageId}
+          />
         ))}
       </ol>
 
@@ -131,21 +144,27 @@ export function ThreadView({
           </Link>
         </p>
       ) : (
-        <ReplyBox threadId={thread.id} closed={closed} />
+        <ReplyBox
+          threadId={thread.id}
+          closed={closed}
+          inReplyToMessageId={inReplyToMessageId}
+          onReplied={onReplied}
+        />
       )}
     </div>
   )
 }
 
-function MessageBubble({ message }: { message: ThreadMessage }) {
+function MessageBubble({ message, highlighted }: { message: ThreadMessage; highlighted: boolean }) {
   const timeZone = useUserTimeZone()
   const fromClient = message.sender === "patient"
   return (
     <li
       className={`max-w-[85%] rounded-xl px-3 py-2 ${
         fromClient ? "bg-neutral-100 text-neutral-900" : "ml-auto bg-primary-50 text-neutral-900"
-      }`}
+      } ${highlighted ? "ring-2 ring-primary-400" : ""}`}
       data-testid={fromClient ? "thread-message-client" : "thread-message-practice"}
+      data-highlighted={highlighted ? "true" : undefined}
     >
       <p className="whitespace-pre-wrap text-sm">{message.body}</p>
       {message.attachments.length > 0 && (
@@ -196,13 +215,25 @@ function CloseOrReopen({ threadId, closed }: { threadId: string; closed: boolean
   )
 }
 
-function ReplyBox({ threadId, closed }: { threadId: string; closed: boolean }) {
-  const reply = useReplyToThread(threadId)
+interface ReplyBoxProps {
+  threadId: string
+  closed: boolean
+  inReplyToMessageId?: string
+  onReplied?: (outcome: ReplyInboxOutcome | null) => void
+}
+
+function ReplyBox({ threadId, closed, inReplyToMessageId, onReplied }: ReplyBoxProps) {
+  const reply = useReplyToThread(threadId, inReplyToMessageId)
   const [draft, setDraft] = useState("")
   const empty = draft.trim().length === 0
 
   function send() {
-    reply.mutate(draft.trim(), { onSuccess: () => setDraft("") })
+    reply.mutate(draft.trim(), {
+      onSuccess: (sent) => {
+        setDraft("")
+        onReplied?.(sent.inbox ?? null)
+      },
+    })
   }
 
   return (

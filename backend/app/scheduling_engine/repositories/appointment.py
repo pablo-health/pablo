@@ -17,6 +17,8 @@ from ...utcnow import utc_now
 from ..models.appointment import AppointmentStatus
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
+
     from ..models.appointment import Appointment
 
 
@@ -144,6 +146,17 @@ class AppointmentRepository(ABC):
         ehr_system: str,
     ) -> list[Appointment]:
         """List all appointments synced from a specific iCal source."""
+
+    @abstractmethod
+    def list_by_google_sync_status(
+        self, user_id: str, statuses: Collection[str], *, starting_after: datetime
+    ) -> list[Appointment]:
+        """Appointments on the clinician's calendar in one of these sync states.
+
+        Only those starting after ``starting_after``, soonest first: a change
+        Google Calendar made to a session already past is nothing left to
+        settle. The "my calendar" slice, like :meth:`list_by_range`.
+        """
 
     @abstractmethod
     def get_by_google_event_id(
@@ -348,6 +361,20 @@ class InMemoryAppointmentRepository(AppointmentRepository):
                 a
                 for a in self._appointments.values()
                 if a.user_id == user_id and a.ical_source == ehr_system
+            ],
+            key=lambda a: a.start_at,
+        )
+
+    def list_by_google_sync_status(
+        self, user_id: str, statuses: Collection[str], *, starting_after: datetime
+    ) -> list[Appointment]:
+        return sorted(
+            [
+                a
+                for a in self._appointments.values()
+                if a.user_id == user_id
+                and a.google_sync_status in statuses
+                and a.start_at > starting_after
             ],
             key=lambda a: a.start_at,
         )

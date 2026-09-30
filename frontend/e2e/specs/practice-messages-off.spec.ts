@@ -1,10 +1,10 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 /**
- * The Messages page when the practice has turned Messages off.
+ * Client messages in the Inbox when the practice has turned Messages off.
  *
  * Over the real stack, in a practice of its own (fixtures/freshPractice.ts):
- * a client writes, the practice turns Messages off, and the page still shows
+ * a client writes, the practice turns Messages off, and the Inbox still shows
  * what the client sent — it is the practice's to read — while offering no
  * reply, which would land somewhere the client can no longer open. The client
  * side of the same switch (their routes answering 404) is in
@@ -38,11 +38,11 @@ test("with Messages off, what clients sent stays readable and there is no reply 
 
     await api.put(SETTINGS, { modules: { messaging: false } })
 
-    await page.goto("/dashboard/messages")
+    await page.goto("/dashboard/inbox?filter=messages")
     await expect(page.getByTestId("messages-portal-off")).toContainText(
       "Messages are turned off in your client portal.",
     )
-    const row = page.getByTestId("conversation-row").filter({ hasText: `Before it went off ${tag}` })
+    const row = page.getByTestId("inbox-row").filter({ hasText: `sent while on ${tag}` })
     await row.click()
 
     const thread = page.getByTestId("thread-view")

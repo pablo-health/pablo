@@ -117,6 +117,25 @@ class PatientIntakeAssignmentRepository(ABC):
         """One assignment, or ``None`` when there is no such id or no grant."""
 
     @abstractmethod
+    def list_awaiting_review(self, user_id: str, *, limit: int = 200) -> list[dict[str, object]]:
+        """Every handed-in form across the clinician's patients, newest first.
+
+        The practice-wide review queue: ``submitted`` assignments on patients
+        the clinician holds a grant on, deleted patients left out. Each row
+        also carries ``patient_name`` and ``form_name`` so a list can say
+        whose form it is and which one without a read per row.
+        """
+
+    @abstractmethod
+    def get_review_entries(
+        self, user_id: str, assignment_ids: list[str]
+    ) -> list[dict[str, object]]:
+        """These assignments in the same shape, whatever their status now.
+
+        An id with no grant behind it is left out, like one that does not exist.
+        """
+
+    @abstractmethod
     def find_active_assignment(
         self, patient_id: str, version_id: str, user_id: str
     ) -> dict[str, object] | None:
@@ -379,6 +398,8 @@ class InMemoryPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
         self.review_events: dict[str, dict[str, object]] = {}
         self._access: set[tuple[str, str]] = set()
         self._allow_all = False
+        self._patient_names: dict[str, str] = {}
+        self._form_names: dict[str, str] = {}
 
     # --- test setup helpers ---
 
@@ -387,6 +408,21 @@ class InMemoryPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
 
     def grant_all_access(self) -> None:
         self._allow_all = True
+
+    def name_patient(self, patient_id: str, name: str) -> None:
+        """Stand in for the ``patients`` row the real review queue joins."""
+        self._patient_names[patient_id] = name
+
+    def name_form(self, version_id: str, name: str) -> None:
+        """Stand in for the template the real review queue joins for a name."""
+        self._form_names[version_id] = name
+
+    def _review_entry(self, row: dict[str, object]) -> dict[str, object]:
+        return {
+            **row,
+            "patient_name": self._patient_names.get(str(row["patient_id"]), ""),
+            "form_name": self._form_names.get(str(row["version_id"]), ""),
+        }
 
     def _can_access(self, patient_id: str, user_id: str) -> bool:
         return self._allow_all or (patient_id, user_id) in self._access
@@ -413,6 +449,25 @@ class InMemoryPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
         if row is None or not self._can_access(str(row["patient_id"]), user_id):
             return None
         return dict(row)
+
+    def list_awaiting_review(self, user_id: str, *, limit: int = 200) -> list[dict[str, object]]:
+        rows = [
+            self._review_entry(row)
+            for row in self.assignments.values()
+            if row["status"] == "submitted" and self._can_access(str(row["patient_id"]), user_id)
+        ]
+        rows.sort(key=lambda row: str(row.get("submitted_at") or ""), reverse=True)
+        return rows[:limit]
+
+    def get_review_entries(
+        self, user_id: str, assignment_ids: list[str]
+    ) -> list[dict[str, object]]:
+        return [
+            self._review_entry(row)
+            for assignment_id in assignment_ids
+            if (row := self.assignments.get(assignment_id)) is not None
+            and self._can_access(str(row["patient_id"]), user_id)
+        ]
 
     def find_active_assignment(
         self, patient_id: str, version_id: str, user_id: str

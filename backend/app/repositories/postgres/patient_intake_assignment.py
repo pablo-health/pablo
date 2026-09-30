@@ -24,9 +24,12 @@ from sqlalchemy import String, Uuid, bindparam, func, select, text
 from sqlalchemy.exc import IntegrityError
 
 from ...db.models import (
+    IntakePacketTemplateRow,
+    IntakePacketVersionRow,
     PatientIntakeAssignmentRow,
     PatientIntakeResponseRow,
     PatientIntakeReviewEventRow,
+    PatientRow,
 )
 from ..patient_intake_assignment import (
     ACTIVE_STATUSES,
@@ -40,6 +43,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import datetime
 
+    from sqlalchemy import Select
     from sqlalchemy.orm import Session
 
 _HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindparams(
@@ -147,6 +151,63 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
         if row is None or not self._has_access(row.patient_id, user_id):
             return None
         return _assignment_to_dict(row)
+
+    def _review_entries(self, user_id: str) -> Select[tuple]:
+        """Assignments on the clinician's patients, with whose and which form.
+
+        ``has_patient_access`` in the WHERE is the predicate the row policy
+        applies, stated here too so the query is right on a schema migrated
+        without its policies.
+        """
+        assignment = PatientIntakeAssignmentRow
+        return (
+            select(
+                assignment,
+                PatientRow.first_name,
+                PatientRow.last_name,
+                PatientRow.preferred_name,
+                IntakePacketTemplateRow.name,
+            )
+            .join(PatientRow, PatientRow.id == assignment.patient_id)
+            .join(IntakePacketVersionRow, IntakePacketVersionRow.id == assignment.version_id)
+            .join(
+                IntakePacketTemplateRow,
+                IntakePacketTemplateRow.id == IntakePacketVersionRow.template_id,
+            )
+            .where(
+                func.has_patient_access(
+                    assignment.patient_id, bindparam("review_uid", user_id, String())
+                ),
+                PatientRow.deleted_at.is_(None),
+            )
+        )
+
+    def _read_review_entries(self, statement: Select[tuple]) -> list[dict[str, object]]:
+        return [
+            {
+                **_assignment_to_dict(row),
+                "patient_name": f"{preferred or first} {last}".strip(),
+                "form_name": form_name,
+            }
+            for row, first, last, preferred, form_name in self._session.execute(statement).all()
+        ]
+
+    def list_awaiting_review(self, user_id: str, *, limit: int = 200) -> list[dict[str, object]]:
+        return self._read_review_entries(
+            self._review_entries(user_id)
+            .where(PatientIntakeAssignmentRow.status == "submitted")
+            .order_by(PatientIntakeAssignmentRow.submitted_at.desc())
+            .limit(limit)
+        )
+
+    def get_review_entries(
+        self, user_id: str, assignment_ids: list[str]
+    ) -> list[dict[str, object]]:
+        if not assignment_ids:
+            return []
+        return self._read_review_entries(
+            self._review_entries(user_id).where(PatientIntakeAssignmentRow.id.in_(assignment_ids))
+        )
 
     def find_active_assignment(
         self, patient_id: str, version_id: str, user_id: str

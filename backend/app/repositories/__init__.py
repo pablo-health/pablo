@@ -61,6 +61,10 @@ from .identity import (
     IdentityRepository,
     InMemoryIdentityRepository,
 )
+from .inbox_item_state import (
+    InboxItemStateRepository,
+    InMemoryInboxItemStateRepository,
+)
 from .instrument_license import (
     InMemoryInstrumentLicenseRepository,
     InstrumentLicenseRepository,
@@ -458,6 +462,13 @@ def get_medication_repository() -> MedicationRepository:
     return PostgresMedicationRepository(_get_pg_session())
 
 
+def get_inbox_item_state_repository() -> InboxItemStateRepository:
+    """Get the Inbox item state repository instance."""
+    from .postgres.inbox_item_state import PostgresInboxItemStateRepository
+
+    return PostgresInboxItemStateRepository(_get_pg_session())
+
+
 def get_supervision_repository() -> PostgresSupervisionRepository:
     """Get supervision-relationship repository instance (postgres only)."""
     from .postgres.supervision import PostgresSupervisionRepository
@@ -483,6 +494,7 @@ __all__ = [
     "InMemoryEhrPromptRepository",
     "InMemoryEhrRouteRepository",
     "InMemoryIdentityRepository",
+    "InMemoryInboxItemStateRepository",
     "InMemoryInstrumentLicenseRepository",
     "InMemoryIntakeBlankFormRepository",
     "InMemoryIntakeDocumentRepository",
@@ -501,6 +513,7 @@ __all__ = [
     "InMemoryRefillRequestRepository",
     "InMemoryTherapySessionRepository",
     "InMemoryUserRepository",
+    "InboxItemStateRepository",
     "InstrumentLicenseRepository",
     "IntakeBlankFormRepository",
     "IntakeDocumentRepository",
@@ -540,6 +553,7 @@ __all__ = [
     "get_ical_client_mapping_repository",
     "get_ical_sync_config_repository",
     "get_identity_repository",
+    "get_inbox_item_state_repository",
     "get_instrument_license_repository",
     "get_intake_blank_form_repository",
     "get_intake_document_repository",

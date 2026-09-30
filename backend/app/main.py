@@ -25,6 +25,7 @@ from .diagnostics.router import (
     diagnostic_definitions_router,
     patient_diagnostic_assessments_router,
 )
+from .inbox.sources import register_builtin_sources
 from .logging_config import configure_logging
 from .medications.router import medications_router
 from .middleware import (
@@ -70,6 +71,7 @@ from .routes import (
     ehr_routes,
     ext_auth,
     ical_sync,
+    inbox,
     instrument_licenses,
     intake_blank_forms,
     intake_documents,
@@ -358,6 +360,11 @@ app.include_router(patient_documents.patient_router)
 app.include_router(patient_messages.patient_threads_router)
 app.include_router(patient_messages.message_threads_router)
 app.include_router(refill_requests.refill_requests_router)
+# One list of everything that needs the clinician. Its sources are
+# registered here like a deployment's own would be; one a deployment already
+# registered for the same kind is kept.
+register_builtin_sources()
+app.include_router(inbox.router)
 app.include_router(patient_payments.router)
 app.include_router(patient_write_offs.router)
 app.include_router(payment_webhooks.router)

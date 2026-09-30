@@ -531,6 +531,22 @@ CREATE TABLE __TENANT_SCHEMA__.import_runs (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.inbox_item_states (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    source_kind character varying(40) NOT NULL,
+    source_id character varying(128) NOT NULL,
+    disposition character varying(40) NOT NULL,
+    snoozed_until timestamp with time zone,
+    resolved_by uuid,
+    resolved_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    superseded_by uuid,
+    superseded_at timestamp with time zone
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.instrument_license_attestations (
     id uuid NOT NULL,
     instrument_code character varying(32) NOT NULL,
@@ -1470,6 +1486,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.import_runs
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.inbox_item_states
+    ADD CONSTRAINT inbox_item_states_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.instrument_license_attestations
     ADD CONSTRAINT instrument_license_attestations_pkey PRIMARY KEY (id);
 
@@ -2263,6 +2284,10 @@ CREATE UNIQUE INDEX ux_chat_messages_conversation_sequence ON __TENANT_SCHEMA__.
 
 
 CREATE UNIQUE INDEX ux_compliance_items_source_ref ON __TENANT_SCHEMA__.compliance_items USING btree (user_id, item_type, source_ref) WHERE (source_ref IS NOT NULL);
+
+
+
+CREATE UNIQUE INDEX ux_inbox_item_states_live ON __TENANT_SCHEMA__.inbox_item_states USING btree (user_id, source_kind, source_id) WHERE (superseded_by IS NULL);
 
 
 
