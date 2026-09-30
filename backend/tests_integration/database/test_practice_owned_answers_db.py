@@ -612,7 +612,7 @@ class TestOldAnswersAreAdopted:
 
         PostgresPatientSourceMappingRepository(first).adopt_legacy(_A, SH, PRACTICE_SCOPE)
         done = threading.Event()
-        outcome: list[BaseException | int] = []
+        outcome: list[Exception | int] = []
 
         def race() -> None:
             try:
@@ -622,7 +622,7 @@ class TestOldAnswersAreAdopted:
                     )
                 )
                 second.commit()
-            except BaseException as exc:
+            except Exception as exc:
                 outcome.append(exc)
             finally:
                 done.set()
@@ -633,7 +633,7 @@ class TestOldAnswersAreAdopted:
         assert done.wait(timeout=10), "the second adoption never finished"
         thread.join()
 
-        assert not any(isinstance(o, BaseException) for o in outcome), outcome
+        assert not any(isinstance(o, Exception) for o in outcome), outcome
         [row] = _all_answers(engine, schema)
         assert row[1:4] == (PRACTICE_SCOPE, SH, identifier_digest("SH00001"))
 
@@ -788,7 +788,7 @@ class TestTwoFollowersOfOneCalendar:
             _appointment(_A, "e1", MAIN, practice["patient"])
         )
         done = threading.Event()
-        outcome: list[BaseException | Appointment] = []
+        outcome: list[Exception | Appointment] = []
 
         def race() -> None:
             try:
@@ -797,7 +797,7 @@ class TestTwoFollowersOfOneCalendar:
                         _appointment(_B, "e1", MAIN, practice["patient"])
                     )
                 )
-            except BaseException as exc:
+            except Exception as exc:
                 outcome.append(exc)
             finally:
                 done.set()
