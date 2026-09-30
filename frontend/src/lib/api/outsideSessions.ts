@@ -2,7 +2,7 @@
 
 // --- Sessions on the clinician's own calendar that nobody has answered yet ---
 //
-// When following is on, events on the main calendar that look like sessions
+// When following is on, events on the followed calendar that look like sessions
 // come in as open rows. Each asks "who is this?" once per client; an answer
 // turns that client's events into appointments that follow their event.
 // Titles are the calendar's own wording, shown to the clinician and nowhere
@@ -97,11 +97,30 @@ export async function answerOutsideSessions(
   return post<OutsideAnswerResult>("/api/calendar/outside-sessions/answer", { answers })
 }
 
-export async function setFollowMainCalendar(
-  enabled: boolean
-): Promise<{ follow_main_calendar: boolean }> {
-  return put<{ follow_main_calendar: boolean }>("/api/google-calendar/follow-main-calendar", {
-    enabled,
+/** A calendar the connection can read, offered to be followed. */
+export interface FollowableCalendar {
+  id: string
+  name: string
+  primary: boolean
+}
+
+export interface FollowableCalendars {
+  /** The main calendar first. */
+  calendars: FollowableCalendar[]
+  /** The calendar followed now, by the id it has in `calendars`. */
+  follow_calendar_id: string | null
+}
+
+export async function listFollowableCalendars(): Promise<FollowableCalendars> {
+  return get<FollowableCalendars>("/api/google-calendar/calendars")
+}
+
+/** Follow a calendar (`"primary"` for the main one), or stop with null. */
+export async function setFollowedCalendar(
+  calendarId: string | null
+): Promise<{ follow_calendar_id: string | null }> {
+  return put<{ follow_calendar_id: string | null }>("/api/google-calendar/followed-calendar", {
+    calendar_id: calendarId,
   })
 }
 

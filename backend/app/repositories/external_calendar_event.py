@@ -36,6 +36,8 @@ class ExternalCalendarEvent:
     end_at: datetime
     title: str = ""
     source_series_id: str | None = None
+    calendar_id: str | None = None
+    """The followed calendar the event is on; None for a feed."""
     answer: str = ANSWER_OPEN
     patient_id: str | None = None
     appointment_id: str | None = None

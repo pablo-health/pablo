@@ -534,9 +534,12 @@ class GoogleCalendarStatusResponse(BaseModel):
     """Response for Google Calendar connection status."""
 
     connected: bool
-    follow_main_calendar: bool = Field(
-        default=False,
-        description="Whether sessions on the main calendar are brought in and followed",
+    follow_calendar_id: str | None = Field(
+        default=None,
+        description=(
+            "The calendar whose sessions are brought in and followed, or none. "
+            "``primary`` is the main calendar before a read has resolved its id"
+        ),
     )
     import_granted: bool = Field(
         default=False,

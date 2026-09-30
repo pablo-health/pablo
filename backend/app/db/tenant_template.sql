@@ -174,7 +174,8 @@ CREATE TABLE __TENANT_SCHEMA__.appointments (
     telehealth_ended_at timestamp with time zone,
     note_inputs jsonb,
     outside_source character varying(64),
-    outside_event_id text
+    outside_event_id text,
+    outside_calendar_id text
 );
 
 
@@ -480,6 +481,7 @@ CREATE TABLE __TENANT_SCHEMA__.external_calendar_events (
     appointment_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    calendar_id text,
     CONSTRAINT ck_external_calendar_events_answer CHECK (((answer)::text = ANY ((ARRAY['open'::character varying, 'client'::character varying, 'not_a_client'::character varying])::text[])))
 );
 
@@ -490,7 +492,8 @@ CREATE TABLE __TENANT_SCHEMA__.google_calendar_settings (
     app_calendar_id text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    follow_main_calendar boolean DEFAULT false NOT NULL
+    follow_main_calendar boolean DEFAULT false NOT NULL,
+    follow_calendar_id text
 );
 
 

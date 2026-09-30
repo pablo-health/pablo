@@ -242,6 +242,10 @@ _SYNC_PAGE_SIZE = 250
 # account's own calendar, which is what the IMPORT grant reaches.
 _IMPORT_CALENDAR_ID = "primary"
 
+#: What following "the main calendar" stores until a read resolves it to the
+#: calendar's real id. Google accepts it as an id on every call.
+FOLLOW_MAIN_CALENDAR = "primary"
+
 # The private property every event Pablo writes carries, naming the
 # appointment behind it.
 _PABLO_APPOINTMENT_KEY = "pablo_appointment_id"
@@ -344,7 +348,7 @@ def _main_calendar_change(event: dict[str, Any]) -> dict[str, Any] | None:
 
 
 class MainCalendarRead(NamedTuple):
-    """One read of the clinician's own calendar."""
+    """One read of the calendar the clinician follows."""
 
     changes: list[dict[str, Any]]
     full: bool
@@ -354,6 +358,19 @@ class MainCalendarRead(NamedTuple):
     window: tuple[datetime, datetime] | None = None
     """What a full read covered: ``[start, end)``. Nothing outside it can be
     judged from the read."""
+    calendar_id: str | None = None
+    """The calendar read, by its real id. Only its own rows and sessions can
+    be judged from the read."""
+    main_calendar_id: str | None = None
+    """The main calendar's real id, when this read learned it."""
+
+
+class ReadableCalendar(NamedTuple):
+    """A calendar the connection can read, offered to be followed."""
+
+    id: str
+    name: str
+    primary: bool
 
 
 class CalendarScopeNotGrantedError(Exception):
@@ -938,20 +955,20 @@ class GoogleCalendarService:
         return True
 
     def read_event_times(
-        self, user_id: str, event_id: str, *, main_calendar: bool = False
+        self, user_id: str, event_id: str, *, followed_calendar: str | None = None
     ) -> tuple[datetime, datetime] | None:
         """Where Google has an event now, or None if it can't say.
 
-        One of Pablo's own by default; ``main_calendar`` reads a followed
-        session on the clinician's own calendar instead. None covers an event
-        that is gone, an all-day event, and a connection that is not there any
-        more — none of them is a time to move to.
+        One of Pablo's own by default; ``followed_calendar`` reads a followed
+        session on that calendar instead. None covers an event that is gone,
+        an all-day event, and a connection that is not there any more — none
+        of them is a time to move to.
         """
         credentials = self._get_credentials(user_id)
         token_doc = self._token_repo.get(user_id)
         if not credentials or not token_doc or not token_doc.calendar_id:
             return None
-        calendar_id = _IMPORT_CALENDAR_ID if main_calendar else token_doc.calendar_id
+        calendar_id = followed_calendar or token_doc.calendar_id
         service = _build_calendar_service(credentials)
         try:
             event = _read_event(service, calendar_id, event_id)
@@ -972,23 +989,72 @@ class GoogleCalendarService:
         granted = token_doc.granted_capabilities if token_doc else ""
         return CalendarCapability.IMPORT.value in _split_capabilities(granted)
 
-    def set_follow_main_calendar(self, user_id: str, *, follow: bool) -> None:
-        """Turn following the main calendar on or off.
+    def list_readable_calendars(self, user_id: str) -> list[ReadableCalendar]:
+        """The calendars this connection can read, the main one first.
 
-        Turning it on starts the read over, from now: whatever an earlier
-        stretch of following left behind is not replayed.
+        Needs the grant to read events (``calendar.readonly``, which covers
+        the calendar list); without it there is nothing to offer.
         """
-        if follow:
+        if not self.can_read_events(user_id):
+            return []
+        credentials = self._get_credentials(user_id)
+        if not credentials:
+            return []
+        service = _build_calendar_service(credentials)
+        found: list[ReadableCalendar] = []
+        page_token: str | None = None
+        while True:
+            kwargs: dict[str, Any] = {"minAccessRole": "reader"}
+            if page_token:
+                kwargs["pageToken"] = page_token
+            page = service.calendarList().list(**kwargs).execute()
+            for item in page.get("items", []):
+                calendar_id = str(item.get("id") or "")
+                if not calendar_id or item.get("deleted"):
+                    continue
+                found.append(
+                    ReadableCalendar(
+                        id=calendar_id,
+                        name=str(item.get("summaryOverride") or item.get("summary") or ""),
+                        primary=bool(item.get("primary")),
+                    )
+                )
+            page_token = page.get("nextPageToken")
+            if not page_token:
+                break
+        return sorted(found, key=lambda c: (not c.primary, c.name.lower()))
+
+    def set_followed_calendar(self, user_id: str, calendar_id: str | None) -> bool:
+        """Follow this calendar, or none. Returns whether that changed anything.
+
+        Choosing another calendar starts its read over, from now: whatever an
+        earlier stretch of following left behind is not replayed. The caller
+        checks the id is one the connection can read.
+        """
+        token_doc = self._token_repo.get(user_id)
+        current = token_doc.follow_calendar_id if token_doc else None
+        if calendar_id == current:
+            return False
+        if calendar_id is not None:
             self._token_repo.update_main_calendar_sync_token(user_id, None)
-        self._token_repo.set_follow_main_calendar(user_id, follow=follow)
+        self._token_repo.set_followed_calendar(user_id, calendar_id)
+        return True
+
+    def remember_followed_calendar_id(self, user_id: str, calendar_id: str) -> None:
+        """Store the followed calendar's real id in place of ``primary``; the read carries on."""
+        self._token_repo.set_followed_calendar(user_id, calendar_id)
 
     def read_main_calendar_changes(self, user_id: str) -> MainCalendarRead:
-        """What changed on the clinician's own calendar since the last read.
+        """What changed on the followed calendar since the last read.
 
         Read only — nothing here writes to that calendar. Resumes from its own
         sync token, separate from the one of the calendar Pablo writes to, and
         leaves out Pablo's own events and all-day events. Needs the grant to
-        read event content; without it there is nothing to read.
+        read event content; without it, or with nothing followed, there is
+        nothing to read.
+
+        A followed ``primary`` is resolved to the main calendar's real id and
+        stored, keeping its sync token: it is the same calendar.
 
         Without a token (the first read, or Google aged the token out) the
         read starts over from now, and says so: see ``MainCalendarRead.full``.
@@ -998,9 +1064,16 @@ class GoogleCalendarService:
             return nothing
         credentials = self._get_credentials(user_id)
         token_doc = self._token_repo.get(user_id)
-        if not credentials or not token_doc:
+        if not credentials or not token_doc or not token_doc.follow_calendar_id:
             return nothing
         service = _build_calendar_service(credentials)
+        calendar_id = token_doc.follow_calendar_id
+        main_calendar_id = None
+        if calendar_id == FOLLOW_MAIN_CALENDAR:
+            resolved = service.calendarList().get(calendarId=FOLLOW_MAIN_CALENDAR).execute()
+            calendar_id = main_calendar_id = str(resolved.get("id") or FOLLOW_MAIN_CALENDAR)
+            if calendar_id != FOLLOW_MAIN_CALENDAR:
+                self._token_repo.set_followed_calendar(user_id, calendar_id)
         full = token_doc.main_calendar_sync_token is None
         # Bounded like an import scan: past it, Google's expansion of a
         # repeating event may stop, and a missing instance proves nothing.
@@ -1009,18 +1082,16 @@ class GoogleCalendarService:
         try:
             page = self._list_all_events(
                 service,
-                _IMPORT_CALENDAR_ID,
+                calendar_id,
                 sync_token=token_doc.main_calendar_sync_token,
                 window=window,
             )
         except Exception as exc:
             if not _is_expired_sync_token(exc):
                 raise
-            logger.info("Main calendar sync token expired; re-reading from a fresh window")
+            logger.info("Followed calendar sync token expired; re-reading from a fresh window")
             self._token_repo.update_main_calendar_sync_token(user_id, None)
-            page = self._list_all_events(
-                service, _IMPORT_CALENDAR_ID, sync_token=None, window=window
-            )
+            page = self._list_all_events(service, calendar_id, sync_token=None, window=window)
             full = True
         if page.next_sync_token:
             self._token_repo.update_main_calendar_sync_token(user_id, page.next_sync_token)
@@ -1030,8 +1101,16 @@ class GoogleCalendarService:
             if change is not None
         ]
         # HIPAA: counts only.
-        logger.info("Read %d main calendar changes over %d page(s)", len(changes), page.page_count)
-        return MainCalendarRead(changes, full=full, window=window if full else None)
+        logger.info(
+            "Read %d followed calendar changes over %d page(s)", len(changes), page.page_count
+        )
+        return MainCalendarRead(
+            changes,
+            full=full,
+            window=window if full else None,
+            calendar_id=calendar_id,
+            main_calendar_id=main_calendar_id,
+        )
 
     @staticmethod
     def _list_all_events(
@@ -1100,7 +1179,7 @@ class GoogleCalendarService:
                 "busy": None,
                 "event_titling": None,
                 "titling_needs_attestation": False,
-                "follow_main_calendar": False,
+                "follow_calendar_id": None,
                 "import_granted": False,
             }
         return {
@@ -1121,7 +1200,7 @@ class GoogleCalendarService:
             in _split_capabilities(token_doc.granted_capabilities),
             "event_titling": self._effective_style(token_doc).value,
             "titling_needs_attestation": self._needs_reattestation(token_doc),
-            "follow_main_calendar": token_doc.follow_main_calendar,
+            "follow_calendar_id": token_doc.follow_calendar_id,
             "import_granted": CalendarCapability.IMPORT.value
             in _split_capabilities(token_doc.granted_capabilities),
         }

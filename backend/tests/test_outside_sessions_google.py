@@ -11,7 +11,7 @@ from __future__ import annotations
 import base64
 import os
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -47,6 +47,8 @@ if TYPE_CHECKING:
 
 USER_ID = "test-user-123"
 PABLO_CALENDAR = "pablo-made-calendar"
+#: The main calendar's real id, which ``primary`` resolves to.
+MAIN = "clinician@example.test"
 _WRITES = ("insert", "patch", "update", "delete", "move", "quickAdd")
 
 
@@ -92,6 +94,22 @@ class _GoneError(Exception):
     status_code = 410
 
 
+class _FakeCalendarList:
+    """The calendar list: the main calendar and one other the account can read."""
+
+    ITEMS: ClassVar[list[dict[str, Any]]] = [
+        {"id": MAIN, "summary": MAIN, "primary": True},
+        {"id": "team@group.calendar.google.test", "summary": "Team"},
+    ]
+
+    def get(self, calendarId: str) -> _Request:  # noqa: N803 — Google's name
+        wanted = MAIN if calendarId == "primary" else calendarId
+        return _Request(next(item for item in self.ITEMS if item["id"] == wanted))
+
+    def list(self, **_kwargs: Any) -> _Request:
+        return _Request({"items": list(self.ITEMS)})
+
+
 class _FakeGoogle:
     """Calendar v3, as far as a sync touches it. Records every call it gets."""
 
@@ -105,8 +123,11 @@ class _FakeGoogle:
     def events(self) -> _FakeGoogle:
         return self
 
+    def calendarList(self) -> _FakeCalendarList:  # noqa: N802 — Google's name
+        return _FakeCalendarList()
+
     def list(self, **kwargs: Any) -> _Request:
-        if self.expire_main_token and kwargs["calendarId"] == "primary" and kwargs.get("syncToken"):
+        if self.expire_main_token and kwargs["calendarId"] == MAIN and kwargs.get("syncToken"):
             self.expire_main_token = False
             raise _GoneError
         self.calls.append(("list", kwargs))
@@ -159,8 +180,8 @@ class _Tokens(GoogleCalendarTokenRepository):
     def remember_app_calendar_id(self, user_id: str, calendar_id: str) -> None:
         pass
 
-    def set_follow_main_calendar(self, user_id: str, *, follow: bool) -> None:
-        self.doc.follow_main_calendar = follow
+    def set_followed_calendar(self, user_id: str, calendar_id: str | None) -> None:
+        self.doc.follow_calendar_id = calendar_id
 
 
 class _Stack:
@@ -173,7 +194,7 @@ class _Stack:
                 write_target="app_calendar",
                 granted_capabilities="busy,import,push",
                 calendar_id=PABLO_CALENDAR,
-                follow_main_calendar=True,
+                follow_calendar_id="primary",
             )
         )
         self.appointments = InMemoryAppointmentRepository()
@@ -205,8 +226,8 @@ class _Stack:
             outside_sessions=self.outside,
         )
 
-    def poll(self, main_calendar: list[dict[str, Any]]) -> None:
-        self.google.next_items["primary"] = main_calendar
+    def poll(self, main_calendar: list[dict[str, Any]], *, calendar: str = MAIN) -> None:
+        self.google.next_items[calendar] = main_calendar
         self.scheduler.execute(USER_ID)
 
     def client(self, patient_id: str, series: str) -> None:
@@ -266,11 +287,11 @@ def test_open_questions_write_nothing_to_google(stack: _Stack) -> None:
 
 
 def test_nothing_is_read_while_following_is_off(stack: _Stack) -> None:
-    stack.tokens.doc.follow_main_calendar = False
+    stack.tokens.doc.follow_calendar_id = None
 
     stack.poll([_google_event("o1", _in(3))])
 
-    assert all(kwargs["calendarId"] != "primary" for _, kwargs in stack.google.calls)
+    assert all(kwargs["calendarId"] != MAIN for _, kwargs in stack.google.calls)
     assert stack.events.list_open(USER_ID) == []
 
 
@@ -279,7 +300,7 @@ def test_nothing_is_read_without_the_grant_to_read_events(stack: _Stack) -> None
 
     stack.poll([_google_event("o1", _in(3))])
 
-    assert all(kwargs["calendarId"] != "primary" for _, kwargs in stack.google.calls)
+    assert all(kwargs["calendarId"] != MAIN for _, kwargs in stack.google.calls)
 
 
 def test_the_main_calendar_resumes_from_its_own_sync_token(stack: _Stack) -> None:
@@ -291,9 +312,9 @@ def test_the_main_calendar_resumes_from_its_own_sync_token(stack: _Stack) -> Non
     resumed = [(kwargs["calendarId"], kwargs.get("syncToken")) for _, kwargs in stack.google.calls]
     assert resumed == [
         (PABLO_CALENDAR, None),
-        ("primary", None),
+        (MAIN, None),
         (PABLO_CALENDAR, "token-1"),
-        ("primary", "token-2"),
+        (MAIN, "token-2"),
     ]
 
 
@@ -397,9 +418,7 @@ class TestTheFullReadWindow:
         stack.poll([])
         stack.poll([])
 
-        main_reads = [
-            kwargs for _, kwargs in stack.google.calls if kwargs["calendarId"] == "primary"
-        ]
+        main_reads = [kwargs for _, kwargs in stack.google.calls if kwargs["calendarId"] == MAIN]
         first, resumed = main_reads
         read_to = datetime.fromisoformat(first["timeMax"])
         assert timedelta(days=399) < read_to - utc_now() <= timedelta(days=400)
@@ -433,3 +452,122 @@ class TestTheFullReadWindow:
         mid = self._followed(stack, "mid")
         assert mid.status == AppointmentStatus.CANCELLED
         assert mid.google_sync_status == GoogleSyncStatus.REMOVED_IN_GOOGLE
+
+
+TEAM = "team@group.calendar.google.test"
+
+
+def _reads_of(stack: _Stack, calendar_id: str) -> int:
+    return sum(1 for _, kwargs in stack.google.calls if kwargs["calendarId"] == calendar_id)
+
+
+class TestAChosenCalendar:
+    """Following reads the calendar the clinician chose, and only it."""
+
+    def test_the_calendars_on_offer_are_the_readable_ones_main_first(self, stack: _Stack) -> None:
+        calendars = stack.calendar.list_readable_calendars(USER_ID)
+
+        assert [(c.id, c.primary) for c in calendars] == [(MAIN, True), (TEAM, False)]
+
+    def test_nothing_is_on_offer_without_the_grant_to_read_events(self, stack: _Stack) -> None:
+        stack.tokens.doc.granted_capabilities = "busy,push"
+
+        assert stack.calendar.list_readable_calendars(USER_ID) == []
+
+    def test_primary_is_resolved_to_the_main_calendar_and_keeps_its_read(
+        self, stack: _Stack
+    ) -> None:
+        stack.tokens.doc.main_calendar_sync_token = "carried-on"
+
+        stack.poll([])
+
+        assert stack.tokens.doc.follow_calendar_id == MAIN
+        assert ("list", {"calendarId": MAIN, "syncToken": "carried-on"}) in [
+            (name, {k: kwargs[k] for k in ("calendarId", "syncToken") if k in kwargs})
+            for name, kwargs in stack.google.calls
+        ]
+
+    def test_the_read_targets_the_chosen_calendar(self, stack: _Stack) -> None:
+        stack.calendar.set_followed_calendar(USER_ID, TEAM)
+
+        stack.poll([_google_event("t1", _in(3))], calendar=TEAM)
+
+        assert _reads_of(stack, TEAM) == 1
+        assert _reads_of(stack, MAIN) == 0
+        [row] = stack.events.list_open(USER_ID)
+        assert (row.source_event_id, row.calendar_id) == ("t1", TEAM)
+
+    def test_choosing_another_calendar_starts_its_read_over(self, stack: _Stack) -> None:
+        stack.poll([])
+        assert stack.tokens.doc.main_calendar_sync_token is not None
+
+        assert stack.calendar.set_followed_calendar(USER_ID, TEAM) is True
+
+        assert stack.tokens.doc.main_calendar_sync_token is None
+        assert stack.calendar.set_followed_calendar(USER_ID, TEAM) is False
+
+    def test_a_session_booked_from_a_calendar_records_it(self, stack: _Stack) -> None:
+        stack.client("p1", "wk")
+
+        stack.poll([_google_event("o1", _in(3))])
+
+        booked = stack.appointments.get_by_outside_event(USER_ID, GOOGLE_CALENDAR_SOURCE, "o1")
+        assert booked is not None
+        assert booked.outside_calendar_id == MAIN
+
+    def test_switching_calendars_cancels_nothing_from_the_old_one(self, stack: _Stack) -> None:
+        stack.client("p1", "wk")
+        stack.poll([_google_event(f"o{n}", _in(3 + 7 * n)) for n in range(3)])
+        booked = [
+            stack.appointments.get_by_outside_event(USER_ID, GOOGLE_CALENDAR_SOURCE, f"o{n}")
+            for n in range(3)
+        ]
+        assert all(a is not None for a in booked)
+
+        stack.calendar.set_followed_calendar(USER_ID, TEAM)
+        # The first read of the new calendar is a full one, and holds none
+        # of the old calendar's events.
+        stack.poll([_google_event("t1", _in(4), series="team-wk")], calendar=TEAM)
+
+        for n in range(3):
+            kept = stack.appointments.get_by_outside_event(USER_ID, GOOGLE_CALENDAR_SOURCE, f"o{n}")
+            assert kept is not None
+            assert kept.status == AppointmentStatus.CONFIRMED
+            # Neither cancelled quietly nor held as a bulk deletion.
+            assert kept.google_sync_status not in {
+                GoogleSyncStatus.MISSING_IN_GOOGLE,
+                GoogleSyncStatus.REMOVED_IN_GOOGLE,
+            }
+
+    def test_rows_and_sessions_from_before_calendars_were_recorded_are_claimed(
+        self, stack: _Stack
+    ) -> None:
+        stack.client("p1", "wk")
+        stack.poll([_google_event("o1", _in(3))])
+        # As a schema from before this change left them.
+        [row] = stack.events.list_by_source(USER_ID, GOOGLE_CALENDAR_SOURCE)
+        row.calendar_id = None
+        stack.events.save(row)
+        booked = stack.appointments.get_by_outside_event(USER_ID, GOOGLE_CALENDAR_SOURCE, "o1")
+        assert booked is not None
+        booked.outside_calendar_id = None
+        stack.appointments.update(booked)
+        stack.tokens.doc.follow_calendar_id = "primary"
+
+        stack.poll([])
+
+        [row] = stack.events.list_by_source(USER_ID, GOOGLE_CALENDAR_SOURCE)
+        assert row.calendar_id == MAIN
+        claimed = stack.appointments.get_by_outside_event(USER_ID, GOOGLE_CALENDAR_SOURCE, "o1")
+        assert claimed is not None
+        assert claimed.outside_calendar_id == MAIN
+
+    def test_a_moved_session_is_read_from_its_own_calendar(self, stack: _Stack) -> None:
+        stack.calendar.set_followed_calendar(USER_ID, TEAM)
+        with patch(
+            "app.services.google_calendar_service._read_event",
+            return_value={"start": {}, "end": {}},
+        ) as read:
+            stack.calendar.read_event_times(USER_ID, "t1", followed_calendar=TEAM)
+
+        assert read.call_args.args[1] == TEAM
