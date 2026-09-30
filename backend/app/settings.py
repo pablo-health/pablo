@@ -542,6 +542,13 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "ICAL_FEED_BASE_URL must not be set outside ENVIRONMENT=development"
                 )
+            if self.google_calendar_base_url:
+                # Same reasoning: it redirects the OAuth exchange (the client
+                # secret with it) and every calendar read to whatever answers
+                # at that address, and exists for the end-to-end stack alone.
+                raise ValueError(
+                    "GOOGLE_CALENDAR_BASE_URL must not be set outside ENVIRONMENT=development"
+                )
         return self
 
     # Firebase Blocking Function OIDC Verification
@@ -1630,6 +1637,32 @@ class Settings(BaseSettings):
             "encrypting OAuth tokens at rest. HIPAA requirement."
         ),
     )
+    google_calendar_base_url: str | None = Field(
+        default=None,
+        description=(
+            "Origin that stands in for Google's OAuth and Calendar endpoints, "
+            "for a deployment that should not talk to Google — the "
+            "end-to-end harness's stand-in. The three hosts are then served "
+            "from this one origin under their usual paths: /o/oauth2/auth, "
+            "/token and /calendar/v3/. Refused outside a development "
+            "environment (see _validate_deployment_posture), and ignored by "
+            "the provider even then unless the environment is development. "
+            "A plain-HTTP origin also needs OAUTHLIB_INSECURE_TRANSPORT=1 in "
+            "the process environment, which relaxes EVERY oauthlib flow in "
+            "the process; neither belongs anywhere near a real deployment. "
+            "Unset (the ordinary case) means Google itself."
+        ),
+    )
+    calendar_sync_rate_per_min: int = Field(
+        default=2,
+        ge=1,
+        description=(
+            "Max on-demand calendar passes (POST /api/calendar/sync) per user "
+            "per minute. A pass reads Google and follows what it finds, so a "
+            "caller looping it would hold a worker and spend the account's "
+            "quota; the schedule already runs one every fifteen minutes."
+        ),
+    )
 
     # Telehealth
     #
@@ -1796,7 +1829,7 @@ def log_startup_posture(settings: Settings, logger: logging.Logger) -> None:
         "startup posture: mfa=%s restrict_signups=%s use_redis=%s "
         "test_identity_signup=%s dpop=%s cors_origins=%d "
         "nppes_origin_override=%s clearinghouse_origin_override=%s "
-        "ical_feed_origin_override=%s",
+        "ical_feed_origin_override=%s google_calendar_origin_override=%s",
         settings.require_mfa,
         settings.restrict_signups,
         settings.use_redis,
@@ -1806,6 +1839,7 @@ def log_startup_posture(settings: Settings, logger: logging.Logger) -> None:
         bool(settings.nppes_base_url),
         bool(settings.clearinghouse_base_url),
         bool(settings.ical_feed_base_url),
+        bool(settings.google_calendar_base_url),
     )
 
 

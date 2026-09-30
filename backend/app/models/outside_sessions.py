@@ -141,3 +141,15 @@ class ReadableCalendarsResponse(BaseModel):
         default=None,
         description="The calendar followed now, by the id it appears under in ``calendars``",
     )
+
+
+class CalendarSyncResponse(BaseModel):
+    """What one pass over the caller's calendars did, in counts."""
+
+    ical_sources_synced: int
+    ical_errors: int
+    google_synced: bool
+    google_error: bool
+    google_changes_processed: int
+    outside_sessions_followed: int
+    reminders_sent: int

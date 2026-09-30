@@ -30,6 +30,7 @@ from ..models import AuditAction, User
 from ..models.audit import ResourceType
 from ..models.outside_sessions import (
     AnsweredAppointment,
+    CalendarSyncResponse,
     FollowedCalendarRequest,
     FollowedCalendarResponse,
     NotAddedSession,
@@ -45,6 +46,7 @@ from ..models.outside_sessions import (
 )
 from ..models.patient import Patient
 from ..patients.seen_by import SeenBy
+from ..rate_limit import get_calendar_sync_limiter
 from ..repositories import (
     PatientRepository,
     UserRepository,
@@ -90,6 +92,7 @@ from .scheduling import (
 if TYPE_CHECKING:
     from ..models.scheduling import SeriesMatchResponse
     from ..patients.matching import MatchContext
+    from ..services.sync_scheduler_service import SyncSchedulerService
 
 router = APIRouter(tags=["outside-sessions"], dependencies=[Depends(require_active_subscription)])
 
@@ -117,6 +120,49 @@ def get_outside_sessions(
     zone: tzinfo = Depends(get_owner_timezone),
 ) -> OutsideSessions:
     return OutsideSessions(events, appointments, patients, mappings, zone=zone)
+
+
+def get_sync_scheduler(_ctx: TenantContext = Depends(get_tenant_context)) -> SyncSchedulerService:
+    """The scheduled pass, wired the way the background loop wires it."""
+    from ..background_sync import build_sync_scheduler
+
+    return build_sync_scheduler()
+
+
+@router.post("/api/calendar/sync", response_model=CalendarSyncResponse)
+def sync_calendars_now(
+    http_request: Request,
+    user: User = Depends(require_baa_acceptance),
+    scheduler: SyncSchedulerService = Depends(get_sync_scheduler),
+    audit: AuditService = Depends(get_audit_service),
+) -> CalendarSyncResponse:
+    """Read the caller's calendars now rather than at the next scheduled pass.
+
+    The same pass the schedule runs for every account, run for this one on
+    request: feeds, the calendar Pablo writes to, the calendar it follows,
+    and reminders. A clinician who has just started following a calendar
+    sees its sessions without waiting; a test can read a calendar it just
+    changed. Counts only reach the audit trail.
+
+    Per-user limited (``calendar_sync_rate_per_min``): a pass reaches Google
+    several times and follows what comes back, and the schedule already
+    runs one every fifteen minutes. Being on demand, it skips the loop's
+    working-hours and consecutive-failure guards on purpose. A Google
+    rate-limit answer is retried once after at most three seconds
+    (``reliability.HTTP_REQUEST``), so a pass never sleeps for long inside
+    the request.
+    """
+    get_calendar_sync_limiter().check(user.id)
+    summary = scheduler.execute(user.id)
+    audit.log(
+        AuditAction.CALENDAR_SYNCED,
+        user,
+        http_request,
+        resource_type=ResourceType.APPOINTMENT,
+        resource_id="calendar-sync",
+        changes=summary.to_dict(),
+    )
+    return CalendarSyncResponse(**summary.to_dict())
 
 
 def _not_followed(service: GoogleCalendarService, user_id: str) -> frozenset[str]:
