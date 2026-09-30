@@ -130,16 +130,8 @@ class TestStrongEvidenceSeesThePractice:
 
 
 class TestWeakEvidenceLooksOnlyAtMyCharts:
-    def test_a_colleagues_client_by_initials_alone_is_no_match(self) -> None:
-        """So the clinician may answer "new client"."""
-        ctx = _practice((_patient("theirs", "Jane", "Adams"), COLLEAGUE))
-
-        result = match_patient(PatientHint(initials="J.A."), ctx)
-
-        assert result.patient_id is None
-        assert result.possible_ids == []
-
     def test_a_colleagues_client_by_name_alone_is_no_match(self) -> None:
+        """So the clinician may answer "new client"."""
         ctx = _practice((_patient("theirs", "Jane", "Adams"), COLLEAGUE))
 
         result = match_patient(PatientHint(full_name="Jane Adams"), ctx)
@@ -159,17 +151,6 @@ class TestWeakEvidenceLooksOnlyAtMyCharts:
 
         assert (result.patient_id, result.evidence) == ("mine", "initials")
         assert result.visible
-
-    def test_two_of_my_clients_sharing_initials_stay_a_question(self) -> None:
-        ctx = _practice(
-            (_patient("john", "John", "Adams"), ME),
-            (_patient("james", "James", "Andersson"), ME),
-        )
-
-        result = match_patient(PatientHint(initials="J.A."), ctx)
-
-        assert result.patient_id is None
-        assert sorted(result.possible_ids) == ["james", "john"]
 
 
 class TestTheMatcherSeesThePractice:

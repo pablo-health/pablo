@@ -214,6 +214,37 @@ def test_a_new_client_gets_a_chart_named_as_the_calendar_names_them(
     assert (patient.first_name, patient.origin) == ("Jane Smith", "calendar_follow")
 
 
+@pytest.mark.parametrize(
+    "answer",
+    [{"patient_id": "p1"}, {"new_client_name": "Jane Smith"}, {"not_a_client": True}],
+    ids=["client", "new-client", "not-a-client"],
+)
+def test_an_answer_to_a_question_already_settled_changes_nothing(
+    client: TestClient, wired: _Wired, answer: dict[str, Any]
+) -> None:
+    """Another read settled it first: nothing to answer, and nothing is refused."""
+    wired.client_named("p1")
+
+    response = client.post(
+        "/api/calendar/outside-sessions/answer",
+        json={
+            "answers": [
+                {"source": GOOGLE_CALENDAR_SOURCE, "source_identifier": SERIES_KEY, **answer}
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "answered": 0,
+        "appointments_created": 0,
+        "appointments": [],
+        "not_added": [],
+    }
+    assert [c.id for c in wired.patients.practice_directory()] == ["p1"]
+    assert wired.mappings.list_by_source(USER_ID, GOOGLE_CALENDAR_SOURCE) == []
+
+
 def test_not_a_client_clears_the_question(client: TestClient, wired: _Wired) -> None:
     wired.hold("e1", 2)
 

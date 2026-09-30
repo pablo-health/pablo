@@ -279,7 +279,9 @@ class TestDeletions:
     def test_pablos_own_cancellation_coming_back_is_ignored(
         self, h: _Harness, mock_user: User
     ) -> None:
-        h.add("a", _in(3)).status = AppointmentStatus.CANCELLED
+        cancelled = h.add("a", _in(3))
+        cancelled.status = AppointmentStatus.CANCELLED
+        h.repo.update(cancelled)
 
         summary = h.follow(mock_user, [_change("evt-a", cancelled=True)])
 
@@ -432,7 +434,9 @@ class TestSettlingAFlaggedMove:
         self, h: _Harness, mock_user: User
     ) -> None:
         _, b_start = self._flagged(h, mock_user)
-        h.get("b").status = AppointmentStatus.CANCELLED
+        gone = h.get("b")
+        gone.status = AppointmentStatus.CANCELLED
+        h.repo.update(gone)
         h.calendar.read_event_times.return_value = (b_start, b_start + timedelta(minutes=50))
 
         taken = h.follower.resolve(USER_ID, "a", Resolution.ACCEPT_GOOGLE)
@@ -452,7 +456,9 @@ class TestRecreatedCalendar:
         h.add("past", _in(-2))
         h.add("a", _in(3))
         h.add("b", _in(5))
-        h.add("gone", _in(6)).status = AppointmentStatus.CANCELLED
+        gone = h.add("gone", _in(6))
+        gone.status = AppointmentStatus.CANCELLED
+        h.repo.update(gone)
 
         pushed = h.follower.repush_upcoming(USER_ID)
 
