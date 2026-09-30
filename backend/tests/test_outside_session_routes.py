@@ -289,30 +289,6 @@ def _follow(client: TestClient, calendar_id: str | None) -> Any:
     return client.put("/api/google-calendar/followed-calendar", json={"calendar_id": calendar_id})
 
 
-def test_following_needs_the_grant_to_read_events(client: TestClient, wired: _Wired) -> None:
-    wired.status["import_granted"] = False
-
-    response = _follow(client, "primary")
-
-    assert response.status_code == 400
-    wired.calendar.set_followed_calendar.assert_not_called()
-
-
-def test_following_is_turned_on_and_off(client: TestClient, wired: _Wired) -> None:
-    wired.status["follow_calendar_id"] = None
-
-    on = _follow(client, "primary")
-    off = _follow(client, None)
-
-    # The main calendar is stored by its real id.
-    assert on.json() == {"follow_calendar_id": MAIN}
-    assert off.json() == {"follow_calendar_id": None}
-    assert [(c.args, c.kwargs) for c in wired.calendar.set_followed_calendar.call_args_list] == [
-        ((USER_ID, MAIN), {"main_calendar": True}),
-        ((USER_ID, None), {}),
-    ]
-
-
 def _followed_appointment(wired: _Wired) -> Appointment:
     wired.client_named("p1")
     start = (utc_now() + timedelta(days=2)).replace(minute=0, second=0, microsecond=0)
@@ -448,67 +424,6 @@ def test_a_remembered_slot_is_offered_preselected(client: TestClient, wired: _Wi
 
 
 TEAM = "team@group.calendar.google.test"
-
-
-def test_the_calendars_on_offer_show_the_followed_one_by_its_real_id(
-    client: TestClient, wired: _Wired
-) -> None:
-    wired.status["follow_calendar_id"] = "primary"
-
-    body = client.get("/api/google-calendar/calendars").json()
-
-    assert [(c["id"], c["primary"]) for c in body["calendars"]] == [(MAIN, True), (TEAM, False)]
-    assert body["follow_calendar_id"] == MAIN
-
-
-def test_the_calendars_on_offer_need_the_grant_to_read_events(
-    client: TestClient, wired: _Wired
-) -> None:
-    wired.status["import_granted"] = False
-
-    assert client.get("/api/google-calendar/calendars").status_code == 400
-
-
-def test_a_calendar_the_connection_cant_read_is_refused(client: TestClient, wired: _Wired) -> None:
-    response = _follow(client, "someone-else@group.calendar.google.test")
-
-    assert response.status_code == 400
-    wired.calendar.set_followed_calendar.assert_not_called()
-
-
-def test_choosing_another_calendar_drops_the_old_questions_and_keeps_appointments(
-    client: TestClient, wired: _Wired
-) -> None:
-    kept = _followed_appointment(wired)
-    wired.hold("e1", 2)
-
-    response = _follow(client, TEAM)
-
-    assert response.json() == {"follow_calendar_id": TEAM}
-    assert wired.events.list_open(USER_ID) == []
-    still = wired.appointments.get(kept.id, USER_ID)
-    assert still is not None
-    assert still.status == AppointmentStatus.CONFIRMED
-
-
-def test_choosing_the_main_calendar_by_its_id_carries_the_read_on(
-    client: TestClient, wired: _Wired
-) -> None:
-    wired.status["follow_calendar_id"] = "primary"
-    wired.hold("e1", 2)
-
-    response = _follow(client, MAIN)
-
-    assert response.json() == {"follow_calendar_id": MAIN}
-    wired.calendar.remember_followed_calendar_id.assert_called_once_with(USER_ID, MAIN)
-    wired.calendar.set_followed_calendar.assert_not_called()
-    assert len(wired.events.list_open(USER_ID)) == 1
-
-
-def test_another_calendar_is_not_marked_as_the_main_one(client: TestClient, wired: _Wired) -> None:
-    _follow(client, TEAM)
-
-    wired.calendar.set_followed_calendar.assert_called_once_with(USER_ID, TEAM, main_calendar=False)
 
 
 def test_a_refused_choice_writes_nothing(client: TestClient, wired: _Wired) -> None:

@@ -20,6 +20,7 @@ from app.calendar_providers.source_identity import (
     answered_title_digest,
     calendar_source_identifier,
 )
+from app.main import app
 from app.models.patient import Patient
 from app.patients.matching import remember_match
 from app.repositories.audit import InMemoryAuditRepository
@@ -30,6 +31,8 @@ from app.repositories.google_calendar_token import (
 )
 from app.repositories.patient import InMemoryPatientRepository
 from app.repositories.patient_source_mapping import InMemoryPatientSourceMappingRepository
+from app.routes.outside_sessions import get_outside_sessions
+from app.routes.scheduling import get_google_calendar_service
 from app.scheduling_engine.models.appointment import AppointmentStatus
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.services.audit_service import AuditService
@@ -44,6 +47,7 @@ if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
 
     from app.models import User
+    from fastapi.testclient import TestClient
 
 USER_ID = "test-user-123"
 PABLO_CALENDAR = "pablo-made-calendar"
@@ -115,6 +119,8 @@ class _FakeGoogle:
 
     def __init__(self) -> None:
         self.next_items: dict[str, list[dict[str, Any]]] = {}
+        #: Events a single read by id finds, by calendar.
+        self.stored: dict[str, dict[str, dict[str, Any]]] = {}
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self._tokens = 0
         #: Answer the next resumed read of the main calendar with 410 Gone.
@@ -122,6 +128,9 @@ class _FakeGoogle:
 
     def events(self) -> _FakeGoogle:
         return self
+
+    def get(self, *, calendarId: str, eventId: str) -> _Request:  # noqa: N803 — Google's names
+        return _Request(self.stored[calendarId][eventId])
 
     def calendarList(self) -> _FakeCalendarList:  # noqa: N802 — Google's name
         return _FakeCalendarList()
@@ -180,10 +189,14 @@ class _Tokens(GoogleCalendarTokenRepository):
     def remember_app_calendar_id(self, user_id: str, calendar_id: str) -> None:
         pass
 
+    #: The kept flag an older image reads: "following the main calendar".
+    follows_main: bool = False
+
     def set_followed_calendar(
         self, user_id: str, calendar_id: str | None, *, main_calendar: bool = False
     ) -> None:
         self.doc.follow_calendar_id = calendar_id
+        self.follows_main = calendar_id is not None and main_calendar
 
     def resolve_followed_main_calendar(self, user_id: str, calendar_id: str) -> bool:
         if self.doc.follow_calendar_id != "primary":
@@ -571,14 +584,17 @@ class TestAChosenCalendar:
         assert claimed.outside_calendar_id == MAIN
 
     def test_a_moved_session_is_read_from_its_own_calendar(self, stack: _Stack) -> None:
-        stack.calendar.set_followed_calendar(USER_ID, TEAM)
-        with patch(
-            "app.services.google_calendar_service._read_event",
-            return_value={"start": {}, "end": {}},
-        ) as read:
-            stack.calendar.read_event_times(USER_ID, "t1", followed_calendar=TEAM)
+        # One event id on two calendars, at different times.
+        on_main, on_team = _in(3), _in(4)
+        stack.google.stored = {
+            MAIN: {"t1": _google_event("t1", on_main)},
+            TEAM: {"t1": _google_event("t1", on_team)},
+        }
 
-        assert read.call_args.args[1] == TEAM
+        times = stack.calendar.read_event_times(USER_ID, "t1", followed_calendar=TEAM)
+
+        assert times is not None
+        assert times[0] == on_team
 
 
 class TestChosenCalendarReviewFindings:
@@ -632,3 +648,96 @@ class TestChosenCalendarReviewFindings:
         assert booked.outside_calendar_id == TEAM
         [row] = stack.events.list_by_source(USER_ID, GOOGLE_CALENDAR_SOURCE)
         assert row.calendar_id == TEAM
+
+
+@pytest.fixture
+def api(client: TestClient, stack: _Stack) -> Iterator[_Stack]:
+    """The API, over the real calendar service and the fake Google."""
+    app.dependency_overrides[get_google_calendar_service] = lambda: stack.calendar
+    app.dependency_overrides[get_outside_sessions] = lambda: stack.outside
+    return stack
+
+
+def _follow(client: TestClient, calendar_id: str | None) -> Any:
+    return client.put("/api/google-calendar/followed-calendar", json={"calendar_id": calendar_id})
+
+
+def _followed(client: TestClient) -> Any:
+    return client.get("/api/google-calendar/status").json()["follow_calendar_id"]
+
+
+class TestChoosingACalendarOverTheApi:
+    def test_the_calendars_on_offer_are_readable_ones_with_the_followed_one_by_its_id(
+        self, client: TestClient, api: _Stack
+    ) -> None:
+        body = client.get("/api/google-calendar/calendars").json()
+
+        assert [(c["id"], c["primary"]) for c in body["calendars"]] == [(MAIN, True), (TEAM, False)]
+        assert body["follow_calendar_id"] == MAIN
+
+    def test_nothing_is_offered_or_followed_without_the_grant_to_read_events(
+        self, client: TestClient, api: _Stack
+    ) -> None:
+        api.tokens.doc.granted_capabilities = "busy,push"
+        api.tokens.doc.follow_calendar_id = None
+
+        assert client.get("/api/google-calendar/calendars").status_code == 400
+        assert _follow(client, "primary").status_code == 400
+        assert api.tokens.doc.follow_calendar_id is None
+
+    def test_following_is_turned_on_for_the_main_calendar_and_off(
+        self, client: TestClient, api: _Stack
+    ) -> None:
+        api.tokens.doc.follow_calendar_id = None
+
+        assert _follow(client, "primary").json() == {"follow_calendar_id": MAIN}
+        assert _followed(client) == MAIN
+        assert api.tokens.follows_main is True
+
+        assert _follow(client, None).json() == {"follow_calendar_id": None}
+        assert _followed(client) is None
+        assert api.tokens.follows_main is False
+
+    def test_a_calendar_the_connection_cant_read_is_refused_and_nothing_changes(
+        self, client: TestClient, api: _Stack
+    ) -> None:
+        api.tokens.doc.follow_calendar_id = MAIN
+
+        response = _follow(client, "someone-else@group.calendar.google.test")
+
+        assert response.status_code == 400
+        assert _followed(client) == MAIN
+
+    def test_another_calendar_starts_its_read_over_and_an_older_image_stops_following(
+        self, client: TestClient, api: _Stack
+    ) -> None:
+        api.client("p1", "wk")
+        api.poll([_google_event("o1", _in(3)), _google_event("q1", _in(5), series="other")])
+        assert api.tokens.doc.main_calendar_sync_token is not None
+        assert _open_ids(api) == ["q1"]
+
+        assert _follow(client, TEAM).json() == {"follow_calendar_id": TEAM}
+
+        assert _followed(client) == TEAM
+        assert api.tokens.doc.main_calendar_sync_token is None
+        assert api.tokens.follows_main is False
+        # The old calendar's question goes; its booked session stays.
+        assert _open_ids(api) == []
+        kept = api.appointments.get_by_outside_event(USER_ID, GOOGLE_CALENDAR_SOURCE, "o1")
+        assert kept is not None
+        assert kept.status == AppointmentStatus.CONFIRMED
+
+    def test_the_main_calendar_by_its_id_carries_the_read_on(
+        self, client: TestClient, api: _Stack
+    ) -> None:
+        api.tokens.doc.main_calendar_sync_token = "carried-on"
+        api.google.next_items[MAIN] = [_google_event("q1", _in(5))]
+        api.scheduler.execute(USER_ID)
+        api.tokens.doc.follow_calendar_id = "primary"
+        api.tokens.doc.main_calendar_sync_token = "carried-on"
+
+        assert _follow(client, MAIN).json() == {"follow_calendar_id": MAIN}
+
+        assert _followed(client) == MAIN
+        assert api.tokens.doc.main_calendar_sync_token == "carried-on"
+        assert _open_ids(api) == ["q1"]
