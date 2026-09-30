@@ -40,9 +40,9 @@ redis = "^8.0.1"
 reportlab = "^5.0.0"
 
 # PDF text extraction (patient document upload, THERAPY-ak6m.2).
-# Native-text PDFs pass through fitz.open(stream=...) → page.get_text().
+# Native-text PDFs pass through pymupdf.open(stream=...) → page.get_text().
 # Scanned PDFs return <100 chars and get OCR'd by a follow-up bead
-# (ak6m.2.3) — fitz is sufficient for v1.
+# (ak6m.2.3) — PyMuPDF is sufficient for v1.
 pymupdf = "^1.28.0"
 
 # Vectorized audio processing (VAD + channel downmix) for session

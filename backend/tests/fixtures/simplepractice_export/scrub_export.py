@@ -41,7 +41,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-import fitz  # type: ignore[import-untyped]  # PyMuPDF, as the engine imports it
+import pymupdf
 
 TITLES = {"Progress Note", "Psychotherapy Note", "Chart Note", "Administrative Note"}
 BODY_END_PREFIXES = ("Created on", "Signed by")
@@ -53,7 +53,7 @@ RIGHT_MARGIN = 36
 
 @dataclass(frozen=True)
 class SpanEdit:
-    rect: fitz.Rect
+    rect: pymupdf.Rect
     origin: tuple[float, float]
     size: float
     font: str
@@ -93,7 +93,7 @@ def font_for(span: dict) -> str:
 
 
 def collect_edits(
-    page: fitz.Page, mapping: dict, rewrite_body: bool
+    page: pymupdf.Page, mapping: dict, rewrite_body: bool
 ) -> tuple[list[SpanEdit], list[dict]]:
     """Walk the page once: span edits for identifiers, and the body's spans if asked."""
     edits: list[SpanEdit] = []
@@ -116,40 +116,42 @@ def collect_edits(
                 new = replace_text(s["text"], mapping, left_half=s["bbox"][0] < mid)
                 if new != s["text"]:
                     edits.append(
-                        SpanEdit(fitz.Rect(s["bbox"]), s["origin"], s["size"], font_for(s), new)
+                        SpanEdit(pymupdf.Rect(s["bbox"]), s["origin"], s["size"], font_for(s), new)
                     )
     return edits, body_spans
 
 
 def apply_edits(
-    page: fitz.Page, edits: list[SpanEdit], body_spans: list[dict], body: str | None
+    page: pymupdf.Page, edits: list[SpanEdit], body_spans: list[dict], body: str | None
 ) -> None:
     for e in edits:
         page.add_redact_annot(e.rect)
-    body_rect: fitz.Rect | None = None
+    body_rect: pymupdf.Rect | None = None
     if body_spans:
-        body_rect = fitz.Rect(body_spans[0]["bbox"])
+        body_rect = pymupdf.Rect(body_spans[0]["bbox"])
         for s in body_spans[1:]:
-            body_rect |= fitz.Rect(s["bbox"])
+            body_rect |= pymupdf.Rect(s["bbox"])
         page.add_redact_annot(body_rect)
-    page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
+    page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE)
     for e in edits:
         if e.text:
-            page.insert_text(fitz.Point(e.origin), e.text, fontsize=e.size, fontname=e.font)
+            page.insert_text(pymupdf.Point(e.origin), e.text, fontsize=e.size, fontname=e.font)
     if body_rect is not None and body is not None:
         size = body_spans[0]["size"]
         top = body_rect.y0 - 1
-        box = fitz.Rect(
+        box = pymupdf.Rect(
             body_rect.x0,
             top,
             page.rect.width - RIGHT_MARGIN,
             top + size * LINE_SPACING * BODY_BOX_LINES,
         )
-        page.insert_textbox(box, body, fontsize=size, fontname="helv", align=fitz.TEXT_ALIGN_LEFT)
+        page.insert_textbox(
+            box, body, fontsize=size, fontname="helv", align=pymupdf.TEXT_ALIGN_LEFT
+        )
 
 
 def scrub_pdf(src: Path, dst: Path, mapping: dict) -> None:
-    doc = fitz.open(src)
+    doc = pymupdf.open(src)
     body = mapping["bodies"].get(src.name)
     for page in doc:
         edits, body_spans = collect_edits(page, mapping, rewrite_body=body is not None)
