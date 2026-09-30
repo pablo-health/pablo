@@ -44,6 +44,7 @@ from ..calendar_providers.pkce_store import remember_verifier, take_verifier
 from ..calendar_providers.practice_import import (
     DEFAULT_HORIZON_DAYS,
     DEFAULT_LOOKBACK_DAYS,
+    MAX_HORIZON_DAYS,
     build_proposal,
 )
 from ..calendar_providers.provider import BusyWindow, ConsentSurface, ImportCandidate
@@ -269,9 +270,13 @@ class RetitleOutcome(NamedTuple):
 class _EventPage(NamedTuple):
     """The result of walking every page of one events().list call."""
 
-    changes: list[dict[str, Any]]
+    events: list[dict[str, Any]]
     next_sync_token: str | None
     page_count: int
+
+    @property
+    def changes(self) -> list[dict[str, Any]]:
+        return [_event_to_change(event) for event in self.events]
 
 
 def _http_status(exc: Exception) -> int | None:
@@ -301,6 +306,54 @@ def _event_to_change(event: dict[str, Any]) -> dict[str, Any]:
         "end": event.get("end", {}),
         "status": event.get("status", ""),
     }
+
+
+def _is_pablos_own(event: Mapping[str, Any]) -> bool:
+    private = (event.get("extendedProperties") or {}).get("private") or {}
+    return bool(private.get(_PABLO_APPOINTMENT_KEY))
+
+
+def _declined(event: Mapping[str, Any]) -> bool:
+    """Whether the calendar's owner said no to this event."""
+    return any(
+        attendee.get("self") and attendee.get("responseStatus") == "declined"
+        for attendee in event.get("attendees") or []
+    )
+
+
+def _main_calendar_change(event: dict[str, Any]) -> dict[str, Any] | None:
+    """A change on the clinician's own calendar, for following outside sessions.
+
+    None for an event Pablo wrote itself (followed as Pablo's own) and for an
+    all-day event, which is never a session. A declined event reads as gone:
+    the clinician is not going. A deletion carries no times or properties, so
+    it passes as a deletion and whoever holds its id decides what it was.
+    """
+    if _is_pablos_own(event):
+        return None
+    change = _event_to_change(event)
+    change["series_id"] = event.get("recurringEventId")
+    if change["status"] == "cancelled":
+        return change
+    if _declined(event):
+        change["status"] = "cancelled"
+        return change
+    if parse_event_time(change["start"]) is None or parse_event_time(change["end"]) is None:
+        return None
+    return change
+
+
+class MainCalendarRead(NamedTuple):
+    """One read of the clinician's own calendar."""
+
+    changes: list[dict[str, Any]]
+    full: bool
+    """Read from scratch rather than resumed. A full read holds every event
+    in its ``window``, so anything in that window missing from it is gone —
+    and deletions from before it are never reported on their own."""
+    window: tuple[datetime, datetime] | None = None
+    """What a full read covered: ``[start, end)``. Nothing outside it can be
+    judged from the read."""
 
 
 class CalendarScopeNotGrantedError(Exception):
@@ -847,7 +900,7 @@ class GoogleCalendarService:
 
             logger.info(
                 "Synced %d changes from Google Calendar over %d page(s)",
-                len(page.changes),
+                len(page.events),
                 page.page_count,
             )
         except Exception as exc:
@@ -884,19 +937,24 @@ class GoogleCalendarService:
         logger.info("Recreated the Pablo-owned Google calendar after it was deleted")
         return True
 
-    def read_event_times(self, user_id: str, event_id: str) -> tuple[datetime, datetime] | None:
-        """Where Google has one of Pablo's events now, or None if it can't say.
+    def read_event_times(
+        self, user_id: str, event_id: str, *, main_calendar: bool = False
+    ) -> tuple[datetime, datetime] | None:
+        """Where Google has an event now, or None if it can't say.
 
-        None covers an event that is gone, an all-day event, and a connection
-        that is not there any more — none of them is a time to move to.
+        One of Pablo's own by default; ``main_calendar`` reads a followed
+        session on the clinician's own calendar instead. None covers an event
+        that is gone, an all-day event, and a connection that is not there any
+        more — none of them is a time to move to.
         """
         credentials = self._get_credentials(user_id)
         token_doc = self._token_repo.get(user_id)
         if not credentials or not token_doc or not token_doc.calendar_id:
             return None
+        calendar_id = _IMPORT_CALENDAR_ID if main_calendar else token_doc.calendar_id
         service = _build_calendar_service(credentials)
         try:
-            event = _read_event(service, token_doc.calendar_id, event_id)
+            event = _read_event(service, calendar_id, event_id)
         except Exception:
             logger.warning("Could not read a Google Calendar event")
             return None
@@ -908,18 +966,88 @@ class GoogleCalendarService:
             return None
         return start, end
 
+    def can_read_events(self, user_id: str) -> bool:
+        """Whether the connection holds the grant to read event content."""
+        token_doc = self._token_repo.get(user_id)
+        granted = token_doc.granted_capabilities if token_doc else ""
+        return CalendarCapability.IMPORT.value in _split_capabilities(granted)
+
+    def set_follow_main_calendar(self, user_id: str, *, follow: bool) -> None:
+        """Turn following the main calendar on or off.
+
+        Turning it on starts the read over, from now: whatever an earlier
+        stretch of following left behind is not replayed.
+        """
+        if follow:
+            self._token_repo.update_main_calendar_sync_token(user_id, None)
+        self._token_repo.set_follow_main_calendar(user_id, follow=follow)
+
+    def read_main_calendar_changes(self, user_id: str) -> MainCalendarRead:
+        """What changed on the clinician's own calendar since the last read.
+
+        Read only — nothing here writes to that calendar. Resumes from its own
+        sync token, separate from the one of the calendar Pablo writes to, and
+        leaves out Pablo's own events and all-day events. Needs the grant to
+        read event content; without it there is nothing to read.
+
+        Without a token (the first read, or Google aged the token out) the
+        read starts over from now, and says so: see ``MainCalendarRead.full``.
+        """
+        nothing = MainCalendarRead([], full=False)
+        if not self.can_read_events(user_id):
+            return nothing
+        credentials = self._get_credentials(user_id)
+        token_doc = self._token_repo.get(user_id)
+        if not credentials or not token_doc:
+            return nothing
+        service = _build_calendar_service(credentials)
+        full = token_doc.main_calendar_sync_token is None
+        # Bounded like an import scan: past it, Google's expansion of a
+        # repeating event may stop, and a missing instance proves nothing.
+        start = _now()
+        window = (start, start + timedelta(days=MAX_HORIZON_DAYS))
+        try:
+            page = self._list_all_events(
+                service,
+                _IMPORT_CALENDAR_ID,
+                sync_token=token_doc.main_calendar_sync_token,
+                window=window,
+            )
+        except Exception as exc:
+            if not _is_expired_sync_token(exc):
+                raise
+            logger.info("Main calendar sync token expired; re-reading from a fresh window")
+            self._token_repo.update_main_calendar_sync_token(user_id, None)
+            page = self._list_all_events(
+                service, _IMPORT_CALENDAR_ID, sync_token=None, window=window
+            )
+            full = True
+        if page.next_sync_token:
+            self._token_repo.update_main_calendar_sync_token(user_id, page.next_sync_token)
+        changes = [
+            change
+            for change in (_main_calendar_change(event) for event in page.events)
+            if change is not None
+        ]
+        # HIPAA: counts only.
+        logger.info("Read %d main calendar changes over %d page(s)", len(changes), page.page_count)
+        return MainCalendarRead(changes, full=full, window=window if full else None)
+
     @staticmethod
     def _list_all_events(
         service: Any,
         calendar_id: str,
         *,
         sync_token: str | None,
+        window: tuple[datetime, datetime] | None = None,
     ) -> _EventPage:
         """Walk every page of events().list, collecting changes and the sync token.
 
         Google splits large result sets across pages and only returns
         nextSyncToken on the final one, so reading a single page both drops
         changes and leaves the next poll with nothing to resume from.
+
+        ``window`` bounds a read without a token; a resumed read takes none.
         """
         kwargs: dict[str, Any] = {
             "calendarId": calendar_id,
@@ -928,20 +1056,23 @@ class GoogleCalendarService:
         }
         if sync_token:
             kwargs["syncToken"] = sync_token
+        elif window is not None:
+            kwargs["timeMin"] = window[0].isoformat()
+            kwargs["timeMax"] = window[1].isoformat()
         else:
             # First sync: only get future events
             kwargs["timeMin"] = utc_now_iso()
 
-        changes: list[dict[str, Any]] = []
+        events: list[dict[str, Any]] = []
         page_count = 0
         while True:
             result = service.events().list(**kwargs).execute()
             page_count += 1
-            changes.extend(_event_to_change(event) for event in result.get("items", []))
+            events.extend(result.get("items", []))
 
             page_token = result.get("nextPageToken")
             if not page_token:
-                return _EventPage(changes, result.get("nextSyncToken"), page_count)
+                return _EventPage(events, result.get("nextSyncToken"), page_count)
             kwargs["pageToken"] = page_token
 
     def disconnect(self, user_id: str) -> bool:
@@ -969,6 +1100,8 @@ class GoogleCalendarService:
                 "busy": None,
                 "event_titling": None,
                 "titling_needs_attestation": False,
+                "follow_main_calendar": False,
+                "import_granted": False,
             }
         return {
             "connected": True,
@@ -988,6 +1121,9 @@ class GoogleCalendarService:
             in _split_capabilities(token_doc.granted_capabilities),
             "event_titling": self._effective_style(token_doc).value,
             "titling_needs_attestation": self._needs_reattestation(token_doc),
+            "follow_main_calendar": token_doc.follow_main_calendar,
+            "import_granted": CalendarCapability.IMPORT.value
+            in _split_capabilities(token_doc.granted_capabilities),
         }
 
     def list_busy_windows(

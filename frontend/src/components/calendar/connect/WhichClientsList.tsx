@@ -1,0 +1,161 @@
+// Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+
+"use client"
+
+import { Checkbox } from "@/components/ui/checkbox"
+import type { ImportPatientChoice, SeriesMatch } from "@/lib/api/scheduling"
+
+/** One thing on a calendar that may be a client. */
+export interface ClientQuestionRow {
+  key: string
+  /** The calendar's own wording for it. */
+  title: string
+  /** When it happens, in a line. */
+  detail: string
+  /** Right-hand note, such as how many are ahead. */
+  aside?: string
+  match: SeriesMatch
+}
+
+const NEW_CLIENT = "new"
+
+function choiceLabel(choice: ImportPatientChoice): string {
+  if (!choice.date_of_birth) return choice.display_name
+  const [year, month, day] = choice.date_of_birth.split("-")
+  return `${choice.display_name}, born ${Number(month)}/${Number(day)}/${year}`
+}
+
+/** Which client a row is: named when certain, a small choice when a few
+ * clients could be it, and a new client otherwise. */
+function ClientChoice({
+  row,
+  patientId,
+  onChoose,
+}: {
+  row: ClientQuestionRow
+  patientId: string | null
+  onChoose: (patientId: string | null) => void
+}) {
+  const { patient, possible } = row.match
+  if (patient) {
+    return (
+      <span className="block text-xs text-secondary-700">Matches {patient.display_name}</span>
+    )
+  }
+  if (possible.length === 0) {
+    return <span className="block text-xs text-muted-foreground">New client</span>
+  }
+  return (
+    <select
+      aria-label={`Which client is ${row.title}?`}
+      value={patientId ?? NEW_CLIENT}
+      onChange={(event) =>
+        onChoose(event.target.value === NEW_CLIENT ? null : event.target.value)
+      }
+      className="mt-1 rounded-md border border-border bg-card px-1.5 py-0.5 text-xs text-neutral-900"
+    >
+      {possible.map((choice) => (
+        <option key={choice.patient_id} value={choice.patient_id}>
+          {choiceLabel(choice)}
+        </option>
+      ))}
+      <option value={NEW_CLIENT}>New client</option>
+    </select>
+  )
+}
+
+interface WhichClientsListProps {
+  rows: ClientQuestionRow[]
+  checked: Record<string, boolean>
+  onToggle: (key: string) => void
+  /** The existing client each row is; null for a new client. */
+  clientFor: Record<string, string | null>
+  onChooseClient: (key: string, patientId: string | null) => void
+  /** Rows marked as not a client; remembered when saved. */
+  notClient: Record<string, boolean>
+  onToggleNotClient: (key: string) => void
+}
+
+/**
+ * The "which of these are clients?" list. Shared by the calendar import and
+ * by the review of sessions brought in from the clinician's own calendar, so
+ * both ask the question the same way.
+ */
+export function WhichClientsList({
+  rows,
+  checked,
+  onToggle,
+  clientFor,
+  onChooseClient,
+  notClient,
+  onToggleNotClient,
+}: WhichClientsListProps) {
+  return (
+    <div className="flex flex-col">
+      {rows.map((row) => {
+        const key = row.key
+        const isNotClient = notClient[key] ?? false
+        return (
+          // A div, not a label: the client choice sits in the row, and a
+          // label would turn every click on it into a tick or an untick.
+          <div
+            key={key}
+            className="grid grid-cols-[20px_1fr_auto] items-center gap-3 border-b border-border py-2.5 last:border-b-0"
+          >
+            <Checkbox
+              id={`series-${key}`}
+              checked={!isNotClient && (checked[key] ?? false)}
+              disabled={isNotClient}
+              onCheckedChange={() => onToggle(key)}
+              aria-label={row.title}
+            />
+            <span>
+              <label htmlFor={`series-${key}`} className="block cursor-pointer">
+                <span
+                  className={`block text-sm font-medium ${isNotClient ? "text-muted-foreground" : "text-neutral-900"}`}
+                >
+                  {row.title}
+                </span>
+                <span className="block text-xs tabular-nums text-muted-foreground">
+                  {row.detail}
+                </span>
+              </label>
+              {isNotClient ? (
+                // Leaving a row unticked only skips it for now; this answer
+                // is kept, so it is not asked about again.
+                <span className="block text-xs text-muted-foreground">
+                  Not a client. Pablo will remember.{" "}
+                  <button
+                    type="button"
+                    onClick={() => onToggleNotClient(key)}
+                    className="font-medium underline underline-offset-2 hover:text-neutral-700"
+                  >
+                    Undo
+                  </button>
+                </span>
+              ) : (
+                <>
+                  <ClientChoice
+                    row={row}
+                    patientId={clientFor[key] ?? null}
+                    onChoose={(patientId) => onChooseClient(key, patientId)}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => onToggleNotClient(key)}
+                    className="mt-0.5 block text-xs text-muted-foreground underline underline-offset-2 hover:text-neutral-700"
+                  >
+                    Not a client
+                  </button>
+                </>
+              )}
+            </span>
+            <span className="whitespace-nowrap text-xs tabular-nums text-muted-foreground">
+              {row.aside}
+            </span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}

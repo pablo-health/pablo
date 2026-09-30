@@ -150,7 +150,9 @@ CREATE TABLE __TENANT_SCHEMA__.appointments (
     telehealth_checked_in_at timestamp with time zone,
     telehealth_started_at timestamp with time zone,
     telehealth_ended_at timestamp with time zone,
-    note_inputs jsonb
+    note_inputs jsonb,
+    outside_source character varying(64),
+    outside_event_id text
 );
 
 
@@ -442,11 +444,31 @@ CREATE TABLE __TENANT_SCHEMA__.ehr_routes (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.external_calendar_events (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    source character varying(64) NOT NULL,
+    source_event_id text NOT NULL,
+    source_series_id text,
+    start_at timestamp with time zone NOT NULL,
+    end_at timestamp with time zone NOT NULL,
+    title text DEFAULT ''::text NOT NULL,
+    answer character varying(16) DEFAULT 'open'::character varying NOT NULL,
+    patient_id uuid,
+    appointment_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT ck_external_calendar_events_answer CHECK (((answer)::text = ANY ((ARRAY['open'::character varying, 'client'::character varying, 'not_a_client'::character varying])::text[])))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.google_calendar_settings (
     user_id uuid NOT NULL,
-    app_calendar_id text NOT NULL,
+    app_calendar_id text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    follow_main_calendar boolean DEFAULT false NOT NULL
 );
 
 
@@ -464,7 +486,8 @@ CREATE TABLE __TENANT_SCHEMA__.google_calendar_tokens (
     write_target character varying(32) DEFAULT 'primary'::character varying NOT NULL,
     granted_capabilities character varying(255) DEFAULT 'push,import'::character varying NOT NULL,
     event_titling character varying(16) DEFAULT 'generic'::character varying NOT NULL,
-    titling_attested_account character varying(255) DEFAULT ''::character varying NOT NULL
+    titling_attested_account character varying(255) DEFAULT ''::character varying NOT NULL,
+    main_calendar_sync_token text
 );
 
 
@@ -1448,6 +1471,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.ehr_routes
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.external_calendar_events
+    ADD CONSTRAINT external_calendar_events_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.google_calendar_settings
     ADD CONSTRAINT google_calendar_settings_pkey PRIMARY KEY (user_id);
 
@@ -1688,6 +1716,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.appointment_types
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.external_calendar_events
+    ADD CONSTRAINT uq_external_calendar_events_event UNIQUE (user_id, source, source_event_id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.intake_documents
     ADD CONSTRAINT uq_intake_documents_version UNIQUE (document_key, version);
 
@@ -1790,6 +1823,10 @@ CREATE INDEX ix_appointments_ical_source ON __TENANT_SCHEMA__.appointments USING
 
 
 CREATE INDEX ix_appointments_meeting_external_id ON __TENANT_SCHEMA__.appointments USING btree (meeting_external_id);
+
+
+
+CREATE INDEX ix_appointments_outside_event_id ON __TENANT_SCHEMA__.appointments USING btree (outside_event_id);
 
 
 
@@ -1946,6 +1983,10 @@ CREATE INDEX ix_diagnostic_assessments_session_id ON __TENANT_SCHEMA__.diagnosti
 
 
 CREATE INDEX ix_ehr_routes_ehr_system ON __TENANT_SCHEMA__.ehr_routes USING btree (ehr_system);
+
+
+
+CREATE INDEX ix_external_calendar_events_user_answer ON __TENANT_SCHEMA__.external_calendar_events USING btree (user_id, answer);
 
 
 

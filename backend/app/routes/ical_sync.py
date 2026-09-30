@@ -33,6 +33,9 @@ from ..repositories import (
     get_appointment_repository as _appt_repo_factory,
 )
 from ..repositories import (
+    get_external_calendar_event_repository,
+)
+from ..repositories import (
     get_ical_sync_config_repository as _config_repo_factory,
 )
 from ..repositories import (
@@ -62,6 +65,7 @@ def _get_service(
         appointment_repo=_appt_repo_factory(),
         patient_repo=_patient_repo_factory(),
         mapping_repo=_mapping_repo_factory(),
+        external_events=get_external_calendar_event_repository(),
     )
 
 

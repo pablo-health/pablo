@@ -79,6 +79,7 @@ from .routes import (
     migration,
     note_types,
     notes,
+    outside_sessions,
     passkey,
     patient_appointments,
     patient_booking,
@@ -367,6 +368,7 @@ app.include_router(ehr_routes.route_router)
 app.include_router(ehr_routes.navigate_router)
 app.include_router(ical_sync.router)
 app.include_router(calendar_import.router)
+app.include_router(outside_sessions.router)
 app.include_router(migration.router)
 app.include_router(note_types.router)
 app.include_router(compliance.router)

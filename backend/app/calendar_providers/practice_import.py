@@ -52,6 +52,12 @@ DEFAULT_HORIZON_DAYS = 90
 """Forward reach. Occurrences ahead of now are the importable records —
 the past only supplies the pattern."""
 
+MAX_HORIZON_DAYS = 400
+"""The furthest ahead a calendar is ever read, by an import scan or by a
+full read of the calendar Pablo follows. Google expands a repeating event
+into instances only so far, so beyond an explicit bound an absent instance
+says nothing about whether it was deleted."""
+
 _SESSION_MINUTES = (45, 60)
 _PLAUSIBLE_SESSION_MINUTES = range(40, 91)
 """Wider band that still earns partial credit — a 30-minute standup and a

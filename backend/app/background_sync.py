@@ -16,6 +16,7 @@ import logging
 
 from .repositories import (
     get_appointment_repository,
+    get_external_calendar_event_repository,
     get_google_calendar_token_repository,
     get_ical_sync_config_repository,
     get_patient_repository,
@@ -64,6 +65,7 @@ def _run_sync_cycle() -> None:
             appointment_repo=appointment_repo,
             patient_repo=get_patient_repository(),
             mapping_repo=get_patient_source_mapping_repository(),
+            external_events=get_external_calendar_event_repository(),
         ),
         google_calendar_service=GoogleCalendarService.from_surface(
             google_consent_surface(settings),

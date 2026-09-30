@@ -24,6 +24,12 @@ The guards are what make that safe to do without asking:
 * **A deleted calendar cancels nothing.** It is made again and the upcoming
   sessions pushed back into it (see the sync scheduler).
 
+The same guards apply to the sessions another service puts on the
+clinician's main calendar once they are answered (``outside_sessions``): those
+appointments follow their event's time and existence the same way, except
+that Pablo never writes to an event it did not create — keeping Pablo's side
+of a change never pushes anything back.
+
 Every automatic move and cancellation is audited as the system acting for
 Google Calendar sync. HIPAA: logs carry counts only.
 """
@@ -49,6 +55,8 @@ from .google_calendar_service import parse_event_time
 from .telehealth import GOOGLE_MEET
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from ..models import User
     from ..scheduling_engine.models.appointment import Appointment
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
@@ -114,8 +122,24 @@ class _Move:
     end: datetime
 
 
+def _pablos_own(appointment: Appointment) -> bool:
+    return bool(appointment.google_event_id)
+
+
+def _following(source: str) -> Callable[[Appointment], bool]:
+    return lambda appointment: appointment.outside_source == source
+
+
+def _on_google(appointment: Appointment) -> bool:
+    return bool(appointment.google_event_id or appointment.outside_event_id)
+
+
 class GoogleChangeFollower:
-    """Applies Google-side moves and deletions to the sessions Pablo pushed."""
+    """Applies Google-side moves and deletions to the sessions Pablo follows.
+
+    Pablo's own pushed events by default; ``outside_source`` switches to the
+    appointments made for sessions on another service's events.
+    """
 
     def __init__(
         self,
@@ -133,16 +157,26 @@ class GoogleChangeFollower:
     # --- Inbound -----------------------------------------------------------
 
     def follow(
-        self, user: User, audit: AuditService, changes: list[dict[str, Any]]
+        self,
+        user: User,
+        audit: AuditService,
+        changes: list[dict[str, Any]],
+        *,
+        outside_source: str | None = None,
     ) -> FollowSummary:
-        """Apply one poll's worth of Google changes."""
+        """Apply one poll's worth of Google changes.
+
+        ``outside_source`` follows the appointments made for another
+        service's events from that source instead of Pablo's own.
+        """
         summary = FollowSummary()
         now = utc_now()
         moves: list[_Move] = []
         removals: list[Appointment] = []
+        tracks = _following(outside_source) if outside_source else _pablos_own
 
         for change in changes:
-            appointment = self._followable(user.id, change, now)
+            appointment = self._followable(user.id, change, now, outside_source)
             if appointment is None:
                 continue
             if change.get("status") == "cancelled":
@@ -165,7 +199,7 @@ class GoogleChangeFollower:
 
         # Deletions first: a slot they free may be exactly where a move in the
         # same poll is going.
-        if self._is_bulk_removal(user.id, removals, now):
+        if self._is_bulk_removal(user.id, removals, now, tracks):
             for appointment in removals:
                 self._set_status(appointment, GoogleSyncStatus.MISSING_IN_GOOGLE)
             summary.held = len(removals)
@@ -190,22 +224,32 @@ class GoogleChangeFollower:
         return summary
 
     def _followable(
-        self, user_id: str, change: dict[str, Any], now: datetime
+        self, user_id: str, change: dict[str, Any], now: datetime, outside_source: str | None
     ) -> Appointment | None:
         event_id = change.get("google_event_id")
         if not event_id:
             return None
-        appointment = self._repo.get_by_google_event_id(user_id, str(event_id))
+        appointment = (
+            self._repo.get_by_outside_event(user_id, outside_source, str(event_id))
+            if outside_source
+            else self._repo.get_by_google_event_id(user_id, str(event_id))
+        )
         if appointment is None or appointment.status != AppointmentStatus.CONFIRMED:
             return None
         if appointment.session_id or appointment.start_at <= now:
             return None
         return appointment
 
-    def _is_bulk_removal(self, user_id: str, removals: list[Appointment], now: datetime) -> bool:
+    def _is_bulk_removal(
+        self,
+        user_id: str,
+        removals: list[Appointment],
+        now: datetime,
+        tracks: Callable[[Appointment], bool],
+    ) -> bool:
         if len(removals) <= BULK_MIN_REMOVALS:
             return False
-        upcoming = len(self._upcoming(user_id, now))
+        upcoming = len(self._upcoming(user_id, now, tracks))
         return len(removals) > BULK_MIN_SHARE * upcoming
 
     def _apply_moves(self, user: User, audit: AuditService, moves: list[_Move]) -> list[_Move]:
@@ -297,7 +341,7 @@ class GoogleChangeFollower:
         """
         return sum(
             self._push_new_event(user_id, appointment).google_sync_status == GoogleSyncStatus.SYNCED
-            for appointment in self._upcoming(user_id, utc_now())
+            for appointment in self._upcoming(user_id, utc_now(), _pablos_own)
         )
 
     # --- The therapist settling a change -----------------------------------
@@ -307,22 +351,26 @@ class GoogleChangeFollower:
 
         ``keep_pablo`` undoes a quiet cancellation or writes Pablo's time back
         over a move; ``accept_google`` accepts the cancellation or takes
-        Google's time.
+        Google's time. A session followed from another service's event keeps
+        Pablo's side without writing anything back: that event is not Pablo's.
         """
         appointment = self._scheduling.get_appointment(appointment_id, user_id)
         keep = resolution is Resolution.KEEP_PABLO
+        outside = appointment.outside_event_id is not None
         if appointment.google_sync_status == GoogleSyncStatus.REMOVED_IN_GOOGLE:
             if keep:
                 restored = self._scheduling.restore_appointment(appointment_id, user_id)
+                if outside:
+                    return self._settled(restored)
                 return self._push_new_event(user_id, restored)
-            appointment.google_sync_status = None  # accepted; stops asking to be undone
-            return self._repo.update(appointment)
+            return self._settled(appointment)  # accepted; stops asking to be undone
         if appointment.google_sync_status == GoogleSyncStatus.EXTERNAL_CHANGE:
             if keep:
-                return self._push(user_id, appointment)
+                return self._settled(appointment) if outside else self._push(user_id, appointment)
+            event_id = appointment.outside_event_id or appointment.google_event_id
             times = (
-                self._calendar.read_event_times(user_id, appointment.google_event_id)
-                if appointment.google_event_id
+                self._calendar.read_event_times(user_id, event_id, main_calendar=outside)
+                if event_id
                 else None
             )
             if times is None:
@@ -334,15 +382,24 @@ class GoogleChangeFollower:
         """Sessions a bulk deletion left waiting on the therapist."""
         return [
             appointment
-            for appointment in self._upcoming(user_id, utc_now())
+            for appointment in self._upcoming(user_id, utc_now(), _on_google)
             if appointment.google_sync_status == GoogleSyncStatus.MISSING_IN_GOOGLE
         ]
 
     def resolve_held(self, user_id: str, resolution: Resolution) -> list[Appointment]:
-        """Settle a held bulk deletion all at once: push them back, or cancel them."""
+        """Settle a held bulk deletion all at once: push them back, or cancel them.
+
+        A held session followed from another service's event stays booked
+        without being pushed anywhere: that event is not Pablo's to recreate.
+        """
         held = self.held_removals(user_id)
         if resolution is Resolution.KEEP_PABLO:
-            return [self._push_new_event(user_id, appointment) for appointment in held]
+            return [
+                self._settled(appointment)
+                if appointment.outside_event_id
+                else self._push_new_event(user_id, appointment)
+                for appointment in held
+            ]
         cancelled: list[Appointment] = []
         for appointment in held:
             row = self._scheduling.cancel_appointment(
@@ -357,16 +414,23 @@ class GoogleChangeFollower:
 
     # --- Helpers ------------------------------------------------------------
 
-    def _upcoming(self, user_id: str, now: datetime) -> list[Appointment]:
+    def _upcoming(
+        self, user_id: str, now: datetime, tracks: Callable[[Appointment], bool]
+    ) -> list[Appointment]:
         return [
             appointment
             for appointment in self._repo.list_by_range(user_id, now, now + UPCOMING_HORIZON)
-            if appointment.status == AppointmentStatus.CONFIRMED and appointment.google_event_id
+            if appointment.status == AppointmentStatus.CONFIRMED and tracks(appointment)
         ]
 
     def _set_status(self, appointment: Appointment, status: GoogleSyncStatus) -> None:
         appointment.google_sync_status = status
         self._repo.update(appointment)
+
+    def _settled(self, appointment: Appointment) -> Appointment:
+        """Nothing left to ask about, and nothing written anywhere else."""
+        appointment.google_sync_status = None
+        return self._repo.update(appointment)
 
     def _push_new_event(self, user_id: str, appointment: Appointment) -> Appointment:
         """Push as a new event. The old one is gone, so updating it would fail."""

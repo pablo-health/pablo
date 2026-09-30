@@ -11,6 +11,7 @@ import {
   useResolveHeldGoogleRemovals,
 } from "@/hooks/useGoogleCalendarChanges"
 import { usePatientList } from "@/hooks/usePatients"
+import { useOutsideSessions } from "@/hooks/useOutsideSessions"
 import { useAvailabilityRules, useFreeSlots } from "@/hooks/useAvailability"
 import { summarize } from "@/components/settings/AvailabilitySettings"
 import { useToast } from "@/components/ui/Toast"
@@ -33,6 +34,7 @@ import { EditorialEventPeek } from "./EditorialEventPeek"
 import { EditorialEventContextMenu } from "./EditorialEventContextMenu"
 import { GoogleChangesBanner } from "./GoogleChangesBanner"
 import { needsGoogleDecision } from "./GoogleChangeNotice"
+import { useOutsideReview } from "./useOutsideReview"
 import { matchWholeDayBlockRule } from "./unavailability"
 import {
   DENSITY_PRESETS,
@@ -141,6 +143,14 @@ export function EditorialCalendar({
     },
     [resolveHeldGoogleRemovals, handleUpdateError],
   )
+
+  // Events from the clinician's own calendar still waiting for a client.
+  const { data: outsideData } = useOutsideSessions(
+    range.start.toISOString(),
+    range.end.toISOString(),
+  )
+  const outsideSessions = useMemo(() => outsideData?.events ?? [], [outsideData])
+  const outsideReview = useOutsideReview()
 
   const { data: availabilityRulesData } = useAvailabilityRules()
   const availabilityRules = useMemo(
@@ -335,6 +345,9 @@ export function EditorialCalendar({
           heldCount={heldGoogleRemovals?.count ?? 0}
           onResolve={handleResolveGoogleChange}
           onResolveHeld={handleResolveHeld}
+          outsideCount={outsideReview.count}
+          outsideFromGoogle={outsideReview.fromGoogleOnly}
+          onReviewOutside={outsideReview.openAll}
           pending={googleChangePending}
         />
 
@@ -366,6 +379,8 @@ export function EditorialCalendar({
             dayStart={dayStart}
             dayEnd={dayEnd}
             rowHeightPx={preset.rowPx}
+            outsideSessions={outsideSessions}
+            onOpenOutside={outsideReview.openSingle}
           />
         )}
         {view === "day" && (
@@ -384,6 +399,8 @@ export function EditorialCalendar({
             dayStart={dayStart}
             dayEnd={dayEnd}
             rowHeightPx={preset.rowPx}
+            outsideSessions={outsideSessions}
+            onOpenOutside={outsideReview.openSingle}
           />
         )}
         {view === "month" && (
@@ -398,7 +415,6 @@ export function EditorialCalendar({
           />
         )}
 
-        <UnmatchedBanner appointments={filteredAppointments} />
         <StatusFooter statusFilters={statusFilters} />
       </div>
 
@@ -416,6 +432,8 @@ export function EditorialCalendar({
         />
       )}
 
+      {outsideReview.dialog}
+
       {ctxMenu && (
         <EditorialEventContextMenu
           appointment={ctxMenu.appointment}
@@ -426,25 +444,6 @@ export function EditorialCalendar({
           onEdit={handleEdit}
         />
       )}
-    </div>
-  )
-}
-
-function UnmatchedBanner({ appointments }: { appointments: AppointmentResponse[] }) {
-  const count = appointments.filter(
-    (a) => a.patient_id === "" && a.notes?.startsWith("ical_client:"),
-  ).length
-  if (count === 0) return null
-  return (
-    <div
-      className="rounded-lg px-4 py-2.5 text-sm font-medium"
-      style={{
-        backgroundColor: "var(--ed-status-confirmed-bg)",
-        color: "var(--ed-status-confirmed-fg)",
-      }}
-      role="status"
-    >
-      {count} appointment{count === 1 ? "" : "s"} from your EHR need patient matching
     </div>
   )
 }

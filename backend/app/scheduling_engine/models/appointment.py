@@ -138,6 +138,12 @@ class Appointment:
     ical_sync_status: str | None = None  # "synced" | "deleted"
     ehr_appointment_url: str | None = None
 
+    # Followed from someone else's calendar — see outside_sessions. Where the
+    # event lives ("google_calendar", "ical:<source>") and its id there; the
+    # time comes from that event, and nothing is ever pushed back to it.
+    outside_source: str | None = None
+    outside_event_id: str | None = None
+
     # Clinical link
     session_id: str | None = None
 
@@ -252,6 +258,8 @@ class Appointment:
             ical_source=data.get("ical_source"),
             ical_sync_status=data.get("ical_sync_status"),
             ehr_appointment_url=data.get("ehr_appointment_url"),
+            outside_source=data.get("outside_source"),
+            outside_event_id=data.get("outside_event_id"),
             session_id=data.get("session_id"),
             service_code=data.get("service_code"),
             modifiers=data.get("modifiers"),
@@ -306,6 +314,8 @@ class Appointment:
             "ical_source": self.ical_source,
             "ical_sync_status": self.ical_sync_status,
             "ehr_appointment_url": self.ehr_appointment_url,
+            "outside_source": self.outside_source,
+            "outside_event_id": self.outside_event_id,
             "session_id": self.session_id,
             "service_code": self.service_code,
             "modifiers": self.modifiers,

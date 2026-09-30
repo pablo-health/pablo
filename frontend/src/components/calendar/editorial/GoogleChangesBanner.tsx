@@ -18,6 +18,12 @@ interface GoogleChangesBannerProps {
   heldCount: number
   onResolve: ResolveGoogleChange
   onResolveHeld: (resolution: GoogleChangeResolution) => void
+  /** Clients still to name for sessions brought in from the clinician's own
+   * calendar — one per series, or per title for a one-off event. */
+  outsideCount?: number
+  /** All of those came from Google Calendar, none from a calendar feed. */
+  outsideFromGoogle?: boolean
+  onReviewOutside?: () => void
   pending?: boolean
   now?: Date
 }
@@ -35,6 +41,9 @@ export function GoogleChangesBanner({
   heldCount,
   onResolve,
   onResolveHeld,
+  outsideCount = 0,
+  outsideFromGoogle = true,
+  onReviewOutside,
   pending = false,
   now = new Date(),
 }: GoogleChangesBannerProps) {
@@ -43,7 +52,8 @@ export function GoogleChangesBanner({
       a.google_sync_status === GOOGLE_SYNC_STATUS.removedInGoogle &&
       new Date(a.start_at) > now,
   )
-  if (heldCount === 0 && removed.length === 0) return null
+  if (heldCount === 0 && removed.length === 0 && outsideCount === 0) return null
+  const outsideFrom = outsideFromGoogle ? "your Google Calendar" : "your calendars"
 
   return (
     <div
@@ -54,6 +64,18 @@ export function GoogleChangesBanner({
         color: "var(--ed-status-noshow-fg)",
       }}
     >
+      {outsideCount > 0 && (
+        <div data-testid="outside-sessions-line" className="flex flex-wrap items-center gap-2">
+          <p className="mr-auto font-medium">
+            {outsideCount === 1
+              ? `1 session from ${outsideFrom} needs a client`
+              : `${outsideCount} sessions from ${outsideFrom} need a client`}
+          </p>
+          <NoticeButton disabled={pending} onClick={() => onReviewOutside?.()}>
+            Review
+          </NoticeButton>
+        </div>
+      )}
       {heldCount > 0 && (
         <div data-testid="google-held-removals" className="flex flex-wrap items-center gap-2">
           <p className="mr-auto font-medium">
