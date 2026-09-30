@@ -28,6 +28,8 @@ Extends the existing `docker-compose.yml` (`backend`, `postgres`) with:
 | `firebase-auth` | `ghcr.io/…/firebase-tools` emulator, `auth` only | the backend already honours `FIREBASE_AUTH_EMULATOR_HOST` (`backend/app/auth/firebase_init.py`); the frontend gains `connectAuthEmulator` behind `NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST` |
 | `fake-clearinghouse` | `scripts/fake_clearinghouse.py` (FastAPI) | serves the recorded responses in `backend/tests/fixtures/clearinghouse/` for payer search, eligibility, claim submission, enrollment, polling and reports, and posts `transaction processed` webhooks back to the backend on a scripted delay |
 | `fake-mail` | `scripts/fake_mail.py` (aiosmtpd + FastAPI) | the mail the product sends, catchable. A booking link is born requiring the booker to confirm by email and the booking is refused outright when nothing can deliver that mail, so a silent drain is not enough |
+| `fake-google` | `scripts/e2e/fake_google.py` (FastAPI) | Google's OAuth and Calendar v3 endpoints for one account: a connect through the real setup page, an import scan, a followed calendar's incremental reads (sync tokens, 410 when one is aged out), and the sessions the backend pushes. Every call is checked against the token's scopes, so a grant that reaches only the calendar the app made is refused the calendar list, as Google refuses it. A spec seeds and changes events below `/_fake/` |
+| `fake-ical` | `scripts/fake_ical.py` (FastAPI) | the calendar feed a clinician follows: the two captured SimplePractice reads in `backend/tests/fixtures/simplepractice_feed/`, every event moved forward by whole weeks to start after today. The backend reads feeds from it through `ICAL_FEED_BASE_URL`; the URL typed into Settings still has to pass the provider's allowlist |
 
 The fake clearinghouse is deterministic: a claim whose control number
 starts `REJ` gets the recorded edit rejection; anything else gets the
@@ -51,6 +53,30 @@ deployment — means the vendor's own four hosts, so this changes nothing
 outside the harness. The origin replaces the hostname only: each API keeps
 its version path (`/2024-04-01/payers/search` and friends), which is why one
 fake can answer for all four hosts.
+
+**Where the Google calls go.** `GOOGLE_CALENDAR_BASE_URL` points the OAuth
+flow (`google_auth_oauthlib`) and the Calendar client (`googleapiclient`,
+through its `api_endpoint` option) at `fake-google`. Outside
+`ENVIRONMENT=development` the backend refuses to boot with it set, like
+`ICAL_FEED_BASE_URL`, and the provider ignores it even then unless the
+environment is development. The browser is sent to the stand-in's
+authorization page and the backend exchanges the code with it, so it has to
+be one address on both sides: like `fake-gcs`, it shares the backend's
+network namespace and listens on the port it is published on. The setting
+replaces the hostname only — the OAuth paths and `/calendar/v3/` are
+Google's, which is why one origin answers for three hosts. The token
+exchange is plain HTTP, which the OAuth library refuses without
+`OAUTHLIB_INSECURE_TRANSPORT`, set on the backend container for the same
+development-only reason.
+
+The stack also runs Redis (`USE_REDIS=true`), because connecting a calendar
+keeps its PKCE verifier there between the two halves of the OAuth round trip
+and refuses to run without a store rather than drop the verifier
+(`app.calendar_providers.pkce_store`).
+
+A read of a followed calendar is triggered from a spec through
+`POST /api/calendar/sync`, which runs the pass the background schedule runs
+for one account, rather than waiting for the fifteen-minute loop.
 
 **One setting that looks like a seam and is not.** A clinician's rendering
 NPI is written by `_upsert_clinician_profile`, which no-ops when the caller's

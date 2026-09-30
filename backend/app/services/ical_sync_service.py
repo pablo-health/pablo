@@ -39,7 +39,7 @@ import zipfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 from urllib.request import Request, urlopen
 
 from icalendar import Calendar
@@ -57,6 +57,7 @@ from ..patients.matching import (
 from ..repositories.external_calendar_event import ANSWER_OPEN, ExternalCalendarEvent
 from ..repositories.ical_sync_config import ICalSyncConfig, ICalSyncConfigRepository
 from ..scheduling_engine.models.appointment import Appointment, AppointmentStatus
+from ..settings import get_settings
 from ..utcnow import utc_now
 from .outside_sessions import OutsideSessions
 from .token_encryption import decrypt_tokens, encrypt_tokens
@@ -73,6 +74,9 @@ logger = logging.getLogger(__name__)
 
 FETCH_TIMEOUT_SECONDS = 30
 SP_APPOINTMENT_URL = "https://secure.simplepractice.com/appointments/{uid}"
+
+#: What the settings card says when a stored feed URL fails the allowlist.
+FEED_URL_REFUSED = "This feed's address isn't accepted. Disconnect it and connect again."
 
 # SimplePractice SUMMARY patterns. Initials are two or more letters each
 # followed by a full stop ("J.A.", "J.Q.A."); anything else before
@@ -145,6 +149,15 @@ class ConnectionStatus:
     title_style: str | None = None
 
 
+class FeedUrlRefusedError(ValueError):
+    """A feed URL the allowlist does not accept.
+
+    Its own type so a sync can tell "this address isn't accepted" from any
+    other ValueError, such as a feed body the parser can't read, which
+    reconnecting would not fix.
+    """
+
+
 @dataclass
 class ImportResult:
     """Result of importing clients from a CSV/zip export."""
@@ -189,7 +202,9 @@ class ICalSyncService:
         ical_data = self._fetch_feed(safe_url)
         events = self._parse_events(ical_data)
 
-        encrypted = encrypt_tokens({"feed_url": feed_url})
+        # The validated form is what is kept, so every later read fetches
+        # exactly what the allowlist accepted, never the string as typed.
+        encrypted = encrypt_tokens({"feed_url": safe_url})
         config = ICalSyncConfig(
             user_id=user_id,
             ehr_system=ehr_system,
@@ -233,6 +248,14 @@ class ICalSyncService:
                     user_id, config.ehr_system, error=None, title_style=result.title_style
                 )
                 results.append(result)
+            except FeedUrlRefusedError:
+                # The stored URL no longer passes the allowlist (a row kept
+                # as typed, before the validated form was what was stored).
+                # Nothing was fetched; reconnecting stores it properly.
+                logger.warning("iCal feed URL refused by the allowlist; not fetched")
+                error_msg = FEED_URL_REFUSED
+                self._config_repo.update_sync_status(user_id, config.ehr_system, error=error_msg)
+                results.append(SyncResult(errors=[error_msg]))
             except Exception:
                 logger.exception("iCal sync failed for source")
                 error_msg = "Sync failed — could not fetch or parse feed"
@@ -313,7 +336,10 @@ class ICalSyncService:
     def _sync_source(self, user_id: str, config: ICalSyncConfig) -> SyncResult:
         """Sync a single iCal source."""
         tokens = decrypt_tokens(config.encrypted_feed_url)
-        feed_url = tokens["feed_url"]
+        # Held to the allowlist on every read, not only when connected: a
+        # row stored before the validated form was kept holds the URL as
+        # typed, and a stored URL must not be a way past the check.
+        feed_url = self._validate_feed_url(config.ehr_system, tokens["feed_url"])
 
         ical_data = self._fetch_feed(feed_url)
         feed_events = {e.uid: e for e in self._parse_events(ical_data)}
@@ -438,8 +464,9 @@ class ICalSyncService:
 
     def _fetch_feed(self, feed_url: str) -> str:
         """Fetch iCal feed data via HTTP GET."""
-        req = Request(feed_url, headers={"User-Agent": "Pablo/1.0"})  # noqa: S310
+        req = Request(_fetch_url(feed_url), headers={"User-Agent": "Pablo/1.0"})  # noqa: S310
         # feed_url pre-validated by _validate_feed_url() (https + host allowlist) — no SSRF.
+        # The origin it is read from is the operator's setting, never the URL's.
         # nosemgrep
         with urlopen(req, timeout=FETCH_TIMEOUT_SECONDS) as resp:  # noqa: S310
             raw: bytes = resp.read()
@@ -606,7 +633,16 @@ class ICalSyncService:
         """Validate and reconstruct feed URL to prevent SSRF.
 
         Returns a URL rebuilt from validated components (scheme + host + path)
-        so the caller never passes raw user input to urlopen.
+        so the caller never passes raw user input to urlopen, and it is that
+        rebuilt form that is stored and read from then on.
+
+        A username, a port or a fragment is refused rather than trimmed:
+        none belongs in a provider's feed URL, so one is more likely mistyped
+        than exotic. A query string is kept. It only ever goes to the
+        provider's own host, and a provider that puts its token in one must
+        keep working. Dot and empty segments are refused after
+        percent-decoding, so the path the prefix check read is the path any
+        origin (see ``_fetch_url``) sees.
         """
         allowed_hosts: dict[str, tuple[str, str]] = {
             EhrSystem.SIMPLEPRACTICE: ("secure.simplepractice.com", "/ical/"),
@@ -615,23 +651,32 @@ class ICalSyncService:
 
         if ehr_system not in allowed_hosts:
             msg = f"Unsupported EHR system: {ehr_system}"
-            raise ValueError(msg)
+            raise FeedUrlRefusedError(msg)
 
         allowed_host, allowed_prefix = allowed_hosts[ehr_system]
         parsed = urlparse(feed_url)
 
         if parsed.scheme != "https":
             msg = f"Feed URL must use HTTPS (got {parsed.scheme!r})"
-            raise ValueError(msg)
+            raise FeedUrlRefusedError(msg)
         if parsed.hostname != allowed_host:
             msg = f"Feed URL hostname must be {allowed_host} (got {parsed.hostname!r})"
-            raise ValueError(msg)
+            raise FeedUrlRefusedError(msg)
+        if parsed.username is not None or parsed.password is not None:
+            raise FeedUrlRefusedError("Feed URL must not carry a username or password")
+        if parsed.port is not None:
+            raise FeedUrlRefusedError("Feed URL must not name a port")
+        if parsed.fragment:
+            raise FeedUrlRefusedError("Feed URL must not carry a fragment")
         if not parsed.path.startswith(allowed_prefix):
             msg = f"Feed URL path must start with {allowed_prefix}"
-            raise ValueError(msg)
+            raise FeedUrlRefusedError(msg)
+        if any(segment in ("", ".", "..") for segment in unquote(parsed.path).split("/")[1:]):
+            raise FeedUrlRefusedError("Feed URL path must not contain empty or dot segments")
 
         # Reconstruct from validated parts — never pass raw user input to urlopen
-        return f"https://{allowed_host}{parsed.path}"
+        query = f"?{parsed.query}" if parsed.query else ""
+        return f"https://{allowed_host}{parsed.path}{query}"
 
     def _extract_csv(self, file_content: bytes, filename: str) -> str | None:
         """Extract clients.csv from a zip file or return raw CSV content."""
@@ -698,6 +743,24 @@ class ICalSyncService:
             created_at=now,
             updated_at=now,
         )
+
+
+def _fetch_url(feed_url: str) -> str:
+    """Where a feed URL that has passed the allowlist is actually read from.
+
+    Ordinarily the URL itself. A deployment that must not reach the provider
+    — the end-to-end stack, whose feeds are served by a stand-in — names an
+    origin in ``ical_feed_base_url``, and the feed's own path is read from
+    there instead. The URL has already been held to the provider's host and
+    path; this swaps only the origin, so the check stays exactly as strict.
+    """
+    origin = get_settings().ical_feed_base_url
+    if not origin:
+        return feed_url
+    # A validated URL is scheme, host, a plain path and perhaps a query.
+    parsed = urlparse(feed_url)
+    query = f"?{parsed.query}" if parsed.query else ""
+    return f"{origin.rstrip('/')}{parsed.path}{query}"
 
 
 @dataclass(frozen=True)

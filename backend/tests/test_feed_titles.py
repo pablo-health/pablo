@@ -105,7 +105,9 @@ class _Feed:
             ICalSyncConfig(
                 user_id=USER,
                 ehr_system=SP,
-                encrypted_feed_url=encrypt_tokens({"feed_url": "https://x.test/ical"}),
+                encrypted_feed_url=encrypt_tokens(
+                    {"feed_url": "https://secure.simplepractice.com/ical/test/feed.ics"}
+                ),
                 connected_at=utc_now(),
             )
         )
@@ -387,7 +389,9 @@ class TestWhatStillBooks:
             ICalSyncConfig(
                 user_id=USER,
                 ehr_system=sh,
-                encrypted_feed_url=encrypt_tokens({"feed_url": "https://x.test/sh"}),
+                encrypted_feed_url=encrypt_tokens(
+                    {"feed_url": "https://app.sessionshealth.com/calendars/test/calendar.ics"}
+                ),
                 connected_at=utc_now(),
             )
         )
@@ -672,7 +676,9 @@ def test_the_status_route_says_how_a_feed_names_clients(client: TestClient) -> N
         ICalSyncConfig(
             user_id="test-user-123",
             ehr_system=SP,
-            encrypted_feed_url=encrypt_tokens({"feed_url": "https://x.test/ical"}),
+            encrypted_feed_url=encrypt_tokens(
+                {"feed_url": "https://secure.simplepractice.com/ical/test/feed.ics"}
+            ),
             connected_at=utc_now(),
             title_style="initials",
         )

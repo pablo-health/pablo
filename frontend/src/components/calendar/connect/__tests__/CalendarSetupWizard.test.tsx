@@ -740,7 +740,10 @@ describe("CalendarSetupWizard returning from Google", () => {
     authState = { user: null, loading: true }
     const { rerender } = renderWizard()
 
-    await waitFor(() => expect(getStatus).toHaveBeenCalled())
+    // Mounted, and holding everything until sign-in settles: the exchange,
+    // and the status read that would otherwise go out with no token.
+    await screen.findByRole("button", { name: "Connect Google Calendar" })
+    expect(getStatus).not.toHaveBeenCalled()
     expect(completeConnect).not.toHaveBeenCalled()
     // Scrubbing the code now would strip it before anyone could spend it.
     expect(routerReplace).not.toHaveBeenCalled()
@@ -754,6 +757,7 @@ describe("CalendarSetupWizard returning from Google", () => {
 
     await waitFor(() => expect(completeConnect).toHaveBeenCalledTimes(1))
     expect(completeConnect.mock.calls[0][0]).toBe("auth-code")
+    await waitFor(() => expect(getStatus).toHaveBeenCalled())
   })
 
   it("leaves the code alone when auth settles signed out", async () => {
