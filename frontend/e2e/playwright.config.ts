@@ -39,6 +39,9 @@ export default defineConfig({
 
   use: {
     baseURL: BASE_URL,
+    // The stack runs in UTC. A browser in UTC too hides every place the
+    // client's zone fails to reach the server, so run it where a clinician is.
+    timezoneId: "America/New_York",
     trace: "on-first-retry",
     screenshot: "only-on-failure",
   },
