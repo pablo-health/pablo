@@ -4,7 +4,8 @@
 
 import Link from "next/link"
 import { useState } from "react"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useAuthQuery } from "@/hooks/useAuthQuery"
 import { AlertCircle, Check } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { disconnectGoogleCalendar, getGoogleCalendarStatus } from "@/lib/api/scheduling"
@@ -16,7 +17,9 @@ const STATUS_QUERY_KEY = ["google-calendar", "status"]
 export function GoogleCalendarSettings() {
   const queryClient = useQueryClient()
   const [disconnectError, setDisconnectError] = useState<string | null>(null)
-  const { data: status } = useQuery({
+  // Waits for sign-in, so a full page load of Settings never asks with no
+  // token and shows "Not connected" for a connection that is there.
+  const { data: status } = useAuthQuery({
     queryKey: STATUS_QUERY_KEY,
     queryFn: getGoogleCalendarStatus,
   })

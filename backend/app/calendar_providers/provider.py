@@ -36,6 +36,10 @@ class ConsentSurface:
     redirect_uri: str | None = None
     """Configured default. Callers that carry their own validated redirect
     URI (the OAuth routes do) pass it per request instead."""
+    base_url: str | None = None
+    """Origin that answers the provider's OAuth and API endpoints in place
+    of the provider itself — a stand-in for a deployment that must not reach
+    the real one. None, the ordinary case, means the provider's own hosts."""
 
 
 @dataclass(frozen=True)

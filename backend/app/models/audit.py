@@ -59,6 +59,10 @@ class AuditAction(StrEnum):
     # PHI-adjacent. The `changes` payload stays PHI-free (counts only); the
     # identifiers themselves are never recorded.
     ICAL_CALENDAR_SYNCED = "ical_calendar_synced"
+    # One pass over everything a clinician's calendars can bring in — feeds,
+    # the Google calendar Pablo writes to, the one it follows — run on
+    # request rather than by the schedule. Counts only, as above.
+    CALENDAR_SYNCED = "calendar_synced"
     # A therapist attesting that the Google account they connected is
     # covered by an agreement their own practice holds, which is what
     # permits a patient's name to be written onto that calendar. Recorded

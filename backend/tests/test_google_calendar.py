@@ -297,16 +297,58 @@ class TestPkceVerifier:
 
         mock_build_flow.return_value.fetch_token.assert_not_called()
 
-    def test_no_store_is_an_error_not_a_flow_without_pkce(
+    def test_without_redis_the_verifier_is_kept_in_memory_and_read_once(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # idle_session treats a missing Redis as "skip the check". Copying
-        # that here would drop PKCE with nothing in the logs to say so.
         monkeypatch.setattr(pkce_store, "get_redis_client", lambda: None)
 
+        pkce_store.remember_verifier("nonce-mem", "verifier-mem")
+
+        assert pkce_store.take_verifier("nonce-mem") == "verifier-mem"
+        # Read once: a replayed state finds nothing, and the flow stops.
         with pytest.raises(PkceStoreUnavailableError):
+            pkce_store.take_verifier("nonce-mem")
+
+    def test_an_in_memory_verifier_expires_with_its_state(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(pkce_store, "get_redis_client", lambda: None)
+        clock = [1000.0]
+        monkeypatch.setattr(pkce_store.time, "monotonic", lambda: clock[0])
+        pkce_store.remember_verifier("nonce-old", "verifier-old")
+
+        clock[0] += pkce_store.TTL_SECONDS + 1
+
+        with pytest.raises(PkceStoreUnavailableError):
+            pkce_store.take_verifier("nonce-old")
+
+    def test_outside_development_no_redis_is_a_503(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(pkce_store, "get_redis_client", lambda: None)
+        monkeypatch.setenv("ENVIRONMENT", "production")
+        get_settings.cache_clear()
+        try:
+            with pytest.raises(pkce_store.PkceStoreDownError) as raised:
+                pkce_store.remember_verifier("nonce", "verifier")
+        finally:
+            get_settings.cache_clear()
+        assert raised.value.status_code == 503
+
+    def test_a_redis_that_is_down_is_a_503_not_a_flow_without_pkce(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class _Down:
+            def setex(self, *_args: object) -> None:
+                raise ConnectionError
+
+            def getdel(self, *_args: object) -> None:
+                raise ConnectionError
+
+        monkeypatch.setattr(pkce_store, "get_redis_client", _Down)
+
+        with pytest.raises(pkce_store.PkceStoreDownError) as raised:
             pkce_store.remember_verifier("nonce", "verifier")
-        with pytest.raises(PkceStoreUnavailableError):
+        assert raised.value.status_code == 503
+        with pytest.raises(pkce_store.PkceStoreDownError):
             pkce_store.take_verifier("nonce")
 
 

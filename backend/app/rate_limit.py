@@ -403,6 +403,26 @@ def get_availability_parse_limiter() -> RateLimiter:
     return _availability_parse_limiter
 
 
+# On-demand calendar pass: per user. One pass reads the clinician's Google
+# calendars and follows what it finds, so a caller looping it would hold a
+# worker and spend the account's quota.
+_calendar_sync_limiter: RateLimiter | None = None
+
+
+def get_calendar_sync_limiter() -> RateLimiter:
+    """Get the per-user rate limiter for the on-demand calendar pass."""
+    global _calendar_sync_limiter  # noqa: PLW0603
+    if _calendar_sync_limiter is None:
+        from .settings import get_settings  # noqa: PLC0415
+
+        settings = get_settings()
+        _calendar_sync_limiter = _create_windowed_limiter(
+            "calendar-sync", max_requests=settings.calendar_sync_rate_per_min, window_seconds=60
+        )
+        logger.info("Calendar sync rate limiter: %s", type(_calendar_sync_limiter).__name__)
+    return _calendar_sync_limiter
+
+
 # Chat send: per-user burst limit (per-minute + per-hour sliding windows).
 _chat_send_limiter: RateLimiter | None = None
 

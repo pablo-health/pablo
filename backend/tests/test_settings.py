@@ -140,6 +140,17 @@ def test_feed_origin_override_allowed_in_development() -> None:
     assert settings.ical_feed_base_url == "http://fake-ical:8082"
 
 
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_google_origin_override_rejected_outside_development(environment: str) -> None:
+    with pytest.raises(ValueError, match="GOOGLE_CALENDAR_BASE_URL must not be set"):
+        _make(environment=environment, google_calendar_base_url="http://localhost:8090")
+
+
+def test_google_origin_override_allowed_in_development() -> None:
+    settings = _make(environment="development", google_calendar_base_url="http://localhost:8090")
+    assert settings.google_calendar_base_url == "http://localhost:8090"
+
+
 def test_proxyable_origins_are_allowed_in_production_and_reported(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -158,6 +169,7 @@ def test_proxyable_origins_are_allowed_in_production_and_reported(
     assert "nppes_origin_override=True" in message
     assert "clearinghouse_origin_override=True" in message
     assert "ical_feed_origin_override=False" in message
+    assert "google_calendar_origin_override=False" in message
 
 
 def test_log_startup_posture_emits_summary_line(caplog: pytest.LogCaptureFixture) -> None:
@@ -177,3 +189,4 @@ def test_log_startup_posture_emits_summary_line(caplog: pytest.LogCaptureFixture
     assert "nppes_origin_override=False" in message
     assert "clearinghouse_origin_override=False" in message
     assert "ical_feed_origin_override=False" in message
+    assert "google_calendar_origin_override=False" in message
