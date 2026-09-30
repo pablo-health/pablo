@@ -753,6 +753,31 @@ class TestSyncStatus:
         assert result["calendar_id"] == "user@gmail.com"
         assert result["last_synced_at"] == datetime.fromisoformat("2026-01-01T00:00:00+00:00")
 
+    @pytest.mark.parametrize(("granted", "busy"), [("push,busy", True), ("push", False)])
+    def test_status_says_whether_busy_times_were_granted(
+        self,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+        granted: str,
+        busy: bool,
+    ) -> None:
+        """The setup screen needs it to tell a change that needs Google from one that doesn't."""
+        token_repo.get.return_value = GoogleCalendarTokenDoc(
+            user_id="user-001",
+            encrypted_tokens="encrypted-data",
+            calendar_id="user@gmail.com",
+            granted_capabilities=granted,
+        )
+        assert calendar_service.get_sync_status("user-001")["busy"] is busy
+
+    def test_status_has_no_busy_answer_when_not_connected(
+        self,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        token_repo.get.return_value = None
+        assert calendar_service.get_sync_status("user-001")["busy"] is None
+
 
 # Push Appointment Tests
 

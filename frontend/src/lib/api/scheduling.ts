@@ -254,6 +254,10 @@ export interface GoogleCalendarStatus {
   calendar_name: string | null
   last_synced_at: string | null
   write_target: CalendarWriteTarget | null
+  /** Whether Google granted free/busy. With `write_target`, what Google has
+   * granted — so the setup screen can tell a change that needs Google again
+   * from one Pablo can save on its own. Optional: an older backend omits it. */
+  busy?: boolean | null
   /** How events will actually read — the stored choice, unless it is being
    * held back for want of a fresh confirmation. */
   event_titling: EventTitling | null

@@ -847,6 +847,7 @@ class GoogleCalendarService:
                 "calendar_name": None,
                 "last_synced_at": None,
                 "write_target": None,
+                "busy": None,
                 "event_titling": None,
                 "titling_needs_attestation": False,
             }
@@ -864,6 +865,8 @@ class GoogleCalendarService:
             ),
             "last_synced_at": token_doc.last_synced_at,
             "write_target": token_doc.write_target,
+            "busy": CalendarCapability.BUSY.value
+            in _split_capabilities(token_doc.granted_capabilities),
             "event_titling": self._effective_style(token_doc).value,
             "titling_needs_attestation": self._needs_reattestation(token_doc),
         }

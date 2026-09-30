@@ -542,6 +542,14 @@ class GoogleCalendarStatusResponse(BaseModel):
     )
     last_synced_at: datetime | None = None
     write_target: str | None = None
+    busy: bool | None = Field(
+        default=None,
+        description=(
+            "Whether the connection holds the free/busy grant. With "
+            "write_target, what Google has granted — so the setup screen can "
+            "tell a change that needs Google again from one that does not"
+        ),
+    )
     event_titling: str | None = Field(
         default=None,
         description=(
