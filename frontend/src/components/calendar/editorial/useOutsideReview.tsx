@@ -29,7 +29,7 @@ function questionFor(session: OutsideSession, questions: OutsideQuestion[]): Out
       recurring: false,
       sessions: 1,
       next_start_at: session.start_at,
-      match: { patient: null, possible: [] },
+      match: { patient: null, possible: [], suggested_patient_id: null },
     }
   )
 }

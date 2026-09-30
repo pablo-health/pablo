@@ -13,7 +13,7 @@ the calendar and nowhere else — the audit trail records counts and sources.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, tzinfo
 
 from fastapi import APIRouter, Depends, Query, Request
 
@@ -62,7 +62,11 @@ from ..services.outside_sessions import OutsideSessions
 from ..utcnow import utc_now
 from .calendar_import import get_patient_source_mapping_repository, series_match
 from .patients import get_patient_repository
-from .scheduling import get_appointment_repository, get_google_calendar_service
+from .scheduling import (
+    get_appointment_repository,
+    get_google_calendar_service,
+    get_owner_timezone,
+)
 
 router = APIRouter(tags=["outside-sessions"], dependencies=[Depends(require_active_subscription)])
 
@@ -85,8 +89,9 @@ def get_outside_sessions(
     appointments: AppointmentRepository = Depends(get_appointment_repository),
     patients: PatientRepository = Depends(get_patient_repository),
     mappings: PatientSourceMappingRepository = Depends(get_patient_source_mapping_repository),
+    zone: tzinfo = Depends(get_owner_timezone),
 ) -> OutsideSessions:
-    return OutsideSessions(events, appointments, patients, mappings)
+    return OutsideSessions(events, appointments, patients, mappings, zone=zone)
 
 
 @router.get("/api/calendar/outside-sessions", response_model=OutsideSessionsResponse)

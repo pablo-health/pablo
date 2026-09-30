@@ -10,7 +10,7 @@ from typing import Self
 from pydantic import BaseModel, Field, model_validator
 
 # Runtime import: Pydantic resolves this annotation at runtime.
-from .scheduling import SeriesMatchResponse  # noqa: TC001
+from .scheduling import MAX_SOURCE_IDENTIFIER, SeriesMatchResponse
 
 
 class OutsideSessionResponse(BaseModel):
@@ -50,7 +50,7 @@ class OutsideAnswer(BaseModel):
     """Exactly one of: an existing client, a new client's name, or not a client."""
 
     source: str = Field(min_length=1, max_length=64)
-    source_identifier: str = Field(min_length=1, max_length=255)
+    source_identifier: str = Field(min_length=1, max_length=MAX_SOURCE_IDENTIFIER)
     patient_id: str | None = None
     new_client_name: str | None = Field(
         default=None,

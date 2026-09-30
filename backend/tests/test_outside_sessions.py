@@ -4,16 +4,20 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
+from app.calendar_providers.practice_import import Cadence, ProposedSeries, SeriesStatus
 from app.calendar_providers.source_identity import (
     GOOGLE_CALENDAR_SOURCE,
     calendar_source_identifier,
+    event_source_identifier,
 )
 from app.models.patient import Patient
+from app.patients.matching import remember_match
 from app.repositories.audit import InMemoryAuditRepository
 from app.repositories.external_calendar_event import (
     ANSWER_CLIENT,
@@ -21,6 +25,7 @@ from app.repositories.external_calendar_event import (
 )
 from app.repositories.patient import InMemoryPatientRepository
 from app.repositories.patient_source_mapping import InMemoryPatientSourceMappingRepository
+from app.routes.calendar_import import _source_identifier
 from app.scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.services.audit_service import AuditService
@@ -103,7 +108,7 @@ class _Harness:
         self.outside.answer(
             USER_ID,
             GOOGLE_CALENDAR_SOURCE,
-            calendar_source_identifier(series, ""),
+            calendar_source_identifier(series, "", 0, "00:00"),
             patient_id=patient_id,
         )
 
@@ -144,6 +149,92 @@ class TestWhatBecomesAQuestion:
         # clinician only has to confirm it.
         assert question.match.patient_id == "p1"
         assert h.followed("x") is None
+
+    def test_same_titled_events_without_a_series_id_are_one_client_per_slot(
+        self, h: _Harness, mock_user: User
+    ) -> None:
+        h.patient("p1", "Jane", "Smith")
+        monday = _in(7 - utc_now().weekday())  # a Monday ahead, 14:00 UTC
+
+        h.poll(
+            mock_user,
+            [
+                _event("mon-1", monday, title="Jane Smith", series=None),
+                _event("mon-2", monday + timedelta(days=7), title="Jane Smith", series=None),
+                _event("thu-1", monday + timedelta(days=3), title="Jane Smith", series=None),
+            ],
+        )
+
+        # The same weekday and time is one series, stable week to week; the
+        # Thursday slot is a separate question.
+        questions = h.outside.questions(USER_ID)
+        assert sorted(len(q.rows) for q in questions) == [1, 2]
+
+    def test_a_remembered_client_whose_chart_is_gone_is_asked_again(
+        self, h: _Harness, mock_user: User
+    ) -> None:
+        start = _in(2)
+        remember_match(
+            GOOGLE_CALENDAR_SOURCE,
+            event_source_identifier(None, "Dentist", start, UTC),
+            "deleted-patient",
+            h.outside.context(USER_ID),
+        )
+
+        h.poll(mock_user, [_event("x", start, title="Dentist", series=None)])
+
+        assert h.open_ids() == ["x"]
+        assert h.followed("x") is None
+
+
+class TestSharedIdentifier:
+    def test_a_series_the_import_remembered_is_followed_in_the_clinicians_zone(
+        self, h: _Harness, mock_user: User
+    ) -> None:
+        zone = ZoneInfo("America/New_York")
+        h.outside = h.outside.in_zone(zone)
+        h.patient("p1", "Jane", "Smith")
+        start = _in(3, hour=19)  # an evening slot: its local weekday can differ from UTC's
+        local = start.astimezone(zone)
+        # What the import stores for a hand-entered weekly series.
+        remember_match(
+            GOOGLE_CALENDAR_SOURCE,
+            calendar_source_identifier(
+                None, "Weekly 1:1", local.weekday(), local.strftime("%H:%M")
+            ),
+            "p1",
+            h.outside.context(USER_ID),
+        )
+
+        h.poll(mock_user, [_event("e1", start, series=None)])
+
+        booked = h.followed("e1")
+        assert booked is not None
+        assert booked.patient_id == "p1"
+        assert h.open_ids() == []
+
+    def test_the_import_and_following_share_one_identifier(self) -> None:
+        series = ProposedSeries(
+            candidate_key="k",
+            summary="Weekly 1:1",
+            weekday=0,
+            local_start_time="09:00",
+            duration_minutes=50,
+            cadence=Cadence.WEEKLY,
+            occurrences_in_window=4,
+            occurrences_ahead=4,
+            first_future_start=None,
+            last_seen=utc_now(),
+            recurrence_rule="RRULE:FREQ=WEEKLY",
+            status=SeriesStatus.ACTIVE,
+            confidence=1.0,
+            preselected=True,
+        )
+
+        assert _source_identifier(series) == calendar_source_identifier(
+            None, "weekly  1:1", 0, "09:00"
+        )
+        assert _source_identifier(series).startswith("shape:")
 
 
 class TestAnswering:

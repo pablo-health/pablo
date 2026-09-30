@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime, tzinfo
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -262,7 +262,8 @@ class SyncSchedulerService:
         if user is None:
             return 0
         audit = self._audit()
-        ingested = self._outside().ingest_google(user_id, changes)
+        outside = self._outside().in_zone(self._zone(user_id))
+        ingested = outside.ingest_google(user_id, changes)
         for appointment in ingested.booked:
             audit.log_appointment_action(
                 AuditAction.APPOINTMENT_CREATED,
@@ -278,6 +279,12 @@ class SyncSchedulerService:
             user, audit, changes, outside_source=GOOGLE_CALENDAR_SOURCE
         )
         return ingested.held + followed.changed
+
+    def _zone(self, user_id: str) -> tzinfo:
+        try:
+            return ZoneInfo(self._user_repo.get_preferences(user_id).timezone)
+        except (ZoneInfoNotFoundError, KeyError, ValueError, TypeError):
+            return UTC
 
     def _outside(self) -> OutsideSessions:
         if self._outside_sessions is None:

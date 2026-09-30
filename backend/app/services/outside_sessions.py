@@ -32,11 +32,12 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
+from datetime import UTC
 from typing import TYPE_CHECKING, Any
 
 from ..calendar_providers.source_identity import (
     GOOGLE_CALENDAR_SOURCE,
-    calendar_source_identifier,
+    event_source_identifier,
     ical_feed,
 )
 from ..patients.matching import (
@@ -44,6 +45,7 @@ from ..patients.matching import (
     MatchResult,
     PatientHint,
     match_patient,
+    normalize,
     remember_match,
     remember_not_a_client,
 )
@@ -57,7 +59,7 @@ from ..utcnow import utc_now
 from .google_calendar_service import parse_event_time
 
 if TYPE_CHECKING:
-    from datetime import datetime
+    from datetime import datetime, tzinfo
 
     from ..repositories.external_calendar_event import ExternalCalendarEventRepository
     from ..repositories.patient import PatientRepository
@@ -110,11 +112,22 @@ class OutsideSessions:
         appointments: AppointmentRepository,
         patients: PatientRepository,
         mappings: PatientSourceMappingRepository,
+        *,
+        zone: tzinfo = UTC,
     ) -> None:
         self._events = events
         self._appointments = appointments
         self._patients = patients
         self._mappings = mappings
+        # The clinician's own zone: an event without a series is remembered
+        # by the weekday and time it falls on there, as the import does.
+        self._zone = zone
+
+    def in_zone(self, zone: tzinfo) -> OutsideSessions:
+        """The same sessions, read in one clinician's zone."""
+        return OutsideSessions(
+            self._events, self._appointments, self._patients, self._mappings, zone=zone
+        )
 
     def context(self, user_id: str) -> MatchContext:
         return MatchContext.for_clinician(user_id, self._patients, self._mappings)
@@ -165,7 +178,7 @@ class OutsideSessions:
         ctx: MatchContext,
         booked: list[Appointment],
     ) -> int:
-        identity = _identity(incoming)
+        identity = self._identity(incoming)
         match = match_patient(identity.hint, ctx, name_alone_is_enough=False)
         if match.evidence == "not_a_client":
             if row is not None:
@@ -187,7 +200,13 @@ class OutsideSessions:
                     booked.append(appointment)
             self._events.save(incoming)
             return 1
-        qualifies = bool(incoming.source_series_id or match.patient_id or match.possible_ids)
+        qualifies = bool(
+            incoming.source_series_id
+            or match.patient_id
+            or match.possible_ids
+            # Remembered as a client whose chart is gone: ask again.
+            or _remembered(ctx, identity)
+        )
         if incoming.answer == ANSWER_OPEN and not qualifies:
             if row is not None:
                 self._events.delete(incoming.user_id, row.id)
@@ -236,7 +255,8 @@ class OutsideSessions:
     ) -> list[tuple[ExternalCalendarEvent, str]]:
         """Open rows, each with the identifier its answer is remembered under."""
         return [
-            (row, _identity(row).identifier) for row in self._events.list_open(user_id, start, end)
+            (row, self._identity(row).identifier)
+            for row in self._events.list_open(user_id, start, end)
         ]
 
     def questions(self, user_id: str) -> list[Question]:
@@ -248,7 +268,7 @@ class OutsideSessions:
         ctx = self.context(user_id)
         by_key: dict[tuple[str, str], Question] = {}
         for row in self._events.list_open(user_id):
-            identity = _identity(row)
+            identity = self._identity(row)
             question = by_key.get((row.source, identity.identifier))
             if question is None:
                 question = Question(
@@ -270,7 +290,7 @@ class OutsideSessions:
         return [
             row
             for row in self._events.list_by_source(user_id, source)
-            if row.answer == ANSWER_OPEN and _identity(row).identifier == source_identifier
+            if row.answer == ANSWER_OPEN and self._identity(row).identifier == source_identifier
         ]
 
     def answer(
@@ -303,6 +323,22 @@ class OutsideSessions:
             self._book(row)
             self._events.save(row)
         return rows
+
+    def _identity(self, row: ExternalCalendarEvent) -> _Identity:
+        feed = ical_feed(row.source)
+        if feed is not None:
+            from .ical_sync_service import feed_identity
+
+            identifier, hint = feed_identity(feed, row.title)
+            return _Identity(feed, identifier, hint)
+        identifier = event_source_identifier(
+            row.source_series_id, row.title, row.start_at, self._zone
+        )
+        return _Identity(
+            row.source,
+            identifier,
+            PatientHint(full_name=row.title, source=row.source, source_identifier=identifier),
+        )
 
     def _book(self, row: ExternalCalendarEvent) -> Appointment | None:
         """Make the appointment an answered row follows.
@@ -344,6 +380,10 @@ class OutsideSessions:
         return appointment
 
 
+def _remembered(ctx: MatchContext, identity: _Identity) -> bool:
+    return normalize(identity.identifier) in ctx.remembered(identity.mapping_source)
+
+
 def _mapping_source(source: str) -> str:
     """Where an answer for this source is remembered.
 
@@ -351,21 +391,6 @@ def _mapping_source(source: str) -> str:
     answers given before it was followed still count.
     """
     return ical_feed(source) or source
-
-
-def _identity(row: ExternalCalendarEvent) -> _Identity:
-    feed = ical_feed(row.source)
-    if feed is not None:
-        from .ical_sync_service import feed_identity
-
-        identifier, hint = feed_identity(feed, row.title)
-        return _Identity(feed, identifier, hint)
-    identifier = calendar_source_identifier(row.source_series_id, row.title)
-    return _Identity(
-        row.source,
-        identifier,
-        PatientHint(full_name=row.title, source=row.source, source_identifier=identifier),
-    )
 
 
 __all__ = ["APPOINTMENT_TITLE", "Ingested", "OutsideSessions", "Question"]

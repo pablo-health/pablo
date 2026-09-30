@@ -195,7 +195,7 @@ class _Stack:
         self.appointments.grant_access(patient_id, USER_ID)
         remember_match(
             GOOGLE_CALENDAR_SOURCE,
-            calendar_source_identifier(series, ""),
+            calendar_source_identifier(series, "", 0, "00:00"),
             patient_id,
             self.outside.context(USER_ID),
         )

@@ -69,11 +69,16 @@ export function OutsideSessionsReview({
   single = false,
   onStartNote,
 }: OutsideSessionsReviewProps) {
+  // A certain match, or a name-only suggestion, starts on that chart and
+  // checked: one confirm settles it. A name is shown as a preselected choice
+  // beside "New client", never as settled.
+  const suggested = (q: OutsideQuestion) =>
+    q.match.patient?.patient_id ?? q.match.suggested_patient_id ?? null
   const [checked, setChecked] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(questions.map((q) => [q.key, single || q.match.patient !== null]))
+    Object.fromEntries(questions.map((q) => [q.key, single || suggested(q) !== null]))
   )
   const [clientFor, setClientFor] = useState<Record<string, string | null>>(() =>
-    Object.fromEntries(questions.map((q) => [q.key, q.match.patient?.patient_id ?? null]))
+    Object.fromEntries(questions.map((q) => [q.key, suggested(q)]))
   )
   const [notClient, setNotClient] = useState<Record<string, boolean>>({})
   const [saving, setSaving] = useState(false)

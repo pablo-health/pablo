@@ -100,6 +100,7 @@ function drag(element: HTMLElement) {
   fireEvent.pointerUp(window, { clientX: 0, clientY: 54, pointerId: 1 })
 }
 
+// A name alone: offered as a preselected choice, never as settled.
 const MATCHED: OutsideQuestion = {
   key: "google_calendar|series:abc",
   source: "google_calendar",
@@ -109,8 +110,9 @@ const MATCHED: OutsideQuestion = {
   sessions: 4,
   next_start_at: todayAt(14).toISOString(),
   match: {
-    patient: { patient_id: "p1", display_name: "Jane Doe", date_of_birth: null },
-    possible: [],
+    patient: null,
+    possible: [{ patient_id: "p1", display_name: "Jane Doe", date_of_birth: null }],
+    suggested_patient_id: "p1",
   },
 }
 
@@ -121,7 +123,7 @@ const UNKNOWN: OutsideQuestion = {
   title: "R.K.",
   recurring: false,
   sessions: 1,
-  match: { patient: null, possible: [] },
+  match: { patient: null, possible: [], suggested_patient_id: null },
 }
 
 beforeEach(() => {
@@ -172,12 +174,16 @@ describe("sessions from the clinician's own calendar", () => {
 
     const dialog = screen.getByRole("dialog")
     expect(within(dialog).getByText("Which of these are clients?")).toBeInTheDocument()
-    // A certain match is named and starts checked: one confirm.
-    expect(within(dialog).getByText("Matches Jane Doe")).toBeInTheDocument()
+    // A name match starts on that chart, beside "New client", and checked:
+    // one confirm, but never shown as settled.
+    expect(within(dialog).queryByText("Matches Jane Doe")).not.toBeInTheDocument()
+    expect(within(dialog).getByRole("combobox", { name: "Which client is Jane Doe?" })).toHaveValue(
+      "p1"
+    )
     expect(within(dialog).getByRole("checkbox", { name: "Jane Doe" })).toBeChecked()
     // Anyone else starts unchecked, as a new client, with "Not a client" beside it.
     expect(within(dialog).getByRole("checkbox", { name: "R.K." })).not.toBeChecked()
-    expect(within(dialog).getByText("New client")).toBeInTheDocument()
+    expect(within(dialog).getByText("New client", { selector: "span" })).toBeInTheDocument()
     expect(within(dialog).getAllByRole("button", { name: "Not a client" })).toHaveLength(2)
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Save" }))

@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from fastapi.testclient import TestClient
 
 USER_ID = "test-user-123"
-SERIES_KEY = calendar_source_identifier("wk", "")
+SERIES_KEY = calendar_source_identifier("wk", "", 0, "00:00")
 
 
 class _Wired:
@@ -108,7 +108,10 @@ def test_questions_are_one_per_client_with_the_match_offered(
     [question] = body["questions"]
     assert question["sessions"] == 2
     assert question["recurring"] is True
-    assert question["match"]["patient"]["patient_id"] == "p1"
+    # A name alone is offered preselected, never shown as settled.
+    assert question["match"]["patient"] is None
+    assert question["match"]["suggested_patient_id"] == "p1"
+    assert [c["patient_id"] for c in question["match"]["possible"]] == ["p1"]
 
 
 def test_confirming_a_client_books_each_session(client: TestClient, wired: _Wired) -> None:
