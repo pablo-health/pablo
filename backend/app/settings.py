@@ -1606,6 +1606,18 @@ class Settings(BaseSettings):
             "encrypting OAuth tokens at rest. HIPAA requirement."
         ),
     )
+    google_calendar_base_url: str | None = Field(
+        default=None,
+        description=(
+            "Origin that stands in for Google's OAuth and Calendar endpoints, "
+            "for a deployment that should not talk to Google — the "
+            "end-to-end harness's stand-in. The three hosts are then served "
+            "from this one origin under their usual paths: /o/oauth2/auth, "
+            "/token and /calendar/v3/. Honoured only in a development "
+            "environment; anywhere else it is ignored and Google's own hosts "
+            "answer. Unset (the ordinary case) means Google itself."
+        ),
+    )
 
     # Telehealth
     #

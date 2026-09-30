@@ -12,8 +12,8 @@
 #
 # Host ports default to the ones the browser-facing design fixes (frontend
 # 3000, backend 8000, auth emulator 9099). Override E2E_FRONTEND_PORT,
-# E2E_BACKEND_PORT, E2E_CLEARINGHOUSE_PORT, E2E_MAIL_PORT, E2E_SMS_PORT or
-# E2E_STORAGE_PORT when something already listens there. The emulator port is baked into the
+# E2E_BACKEND_PORT, E2E_CLEARINGHOUSE_PORT, E2E_MAIL_PORT, E2E_SMS_PORT,
+# E2E_STORAGE_PORT or E2E_GOOGLE_PORT when something already listens there. The emulator port is baked into the
 # frontend bundle at build time, so changing E2E_AUTH_EMULATOR_PORT needs
 # `make e2e-up` to rebuild.
 name: pablo-e2e
@@ -35,6 +35,20 @@ services:
     networks:
       - e2e-net
 
+  # Connecting Google Calendar carries its PKCE verifier between the two
+  # halves of the OAuth round trip in Redis, and refuses to run without one
+  # rather than drop the verifier (app.calendar_providers.pkce_store). So
+  # the stack runs one, as a deployment does.
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+    networks:
+      - e2e-net
+
   backend:
     build:
       context: .
@@ -46,6 +60,8 @@ services:
       - "${E2E_FRONTEND_PORT:-3000}:3000"
       # And so does fake-gcs, for the reason the storage env block gives.
       - "${E2E_STORAGE_PORT:-9000}:${E2E_STORAGE_PORT:-9000}"
+      # And fake-google, for the reason the Google block gives.
+      - "${E2E_GOOGLE_PORT:-8090}:${E2E_GOOGLE_PORT:-8090}"
     environment:
       - DEBUG=true
       - LOG_LEVEL=INFO
@@ -112,6 +128,23 @@ services:
       # reads as the fixture it is; it only ever encrypts this stack's
       # throwaway database.
       - GOOGLE_CALENDAR_ENCRYPTION_KEY=e2eplaceholderkeyplaceholderkeyplaceholderA=
+      # Google Calendar, answered by the stand-in (scripts/e2e/fake_google.py)
+      # rather than Google. The browser is sent to its authorization page and
+      # the backend exchanges the code and reads calendars from it, so it has
+      # to be ONE address on both sides: it shares this network namespace and
+      # listens on the port it is published on, as fake-gcs does. Honoured by
+      # the backend only under ENVIRONMENT=development. The client id and
+      # secret are what the stand-in checks for; they name no real client.
+      - GOOGLE_CALENDAR_BASE_URL=http://localhost:${E2E_GOOGLE_PORT:-8090}
+      - GOOGLE_CALENDAR_CLIENT_ID=e2e-google-client-id
+      - GOOGLE_CALENDAR_CLIENT_SECRET=e2e-google-client-secret
+      # Where the OAuth round trip keeps its PKCE verifier (see the redis
+      # service). Without a store the connect is refused, not weakened.
+      - USE_REDIS=true
+      - REDIS_HOST=redis
+      # The token exchange goes over plain HTTP to the stand-in, which the
+      # OAuth library refuses by default. Development only, like the URL.
+      - OAUTHLIB_INSECURE_TRANSPORT=1
       # A client's charge ledger is 503 until the deployment has card
       # payments configured, and what a payer says a client owes lands on
       # that ledger — so without a key no end-to-end test can see the one
@@ -191,6 +224,8 @@ services:
       - e2e-gcs-credentials:/srv/gcs-credentials:ro
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       fake-gcs-key:
         condition: service_completed_successfully
@@ -393,6 +428,9 @@ services:
       # REPLACES the list in .env.e2e rather than adding to it, so it has to
       # carry everything that file turns on too: keep the two in step.
       - FEATURES_ENABLED=patient_portal,refill_requests
+      # The backend answers Google Calendar here (through the stand-in), so
+      # the settings link and the setup page are shown.
+      - GOOGLE_CALENDAR_ENABLED=true
       # The portal is served on a host of its own. One server answers both
       # names: localhost is the clinician app, 127.0.0.1 the portal, whose
       # `/{slug}` addresses are rewritten to the portal route and where
@@ -438,6 +476,51 @@ services:
       # ready" rather than a race a document spec loses occasionally.
       fake-gcs:
         condition: service_healthy
+      # Same shape as the store: in the backend's namespace, so tied to the
+      # suite's readiness here rather than to the backend's boot.
+      fake-google:
+        condition: service_healthy
+
+  # Google Calendar: a stand-in for its OAuth and Calendar v3 endpoints
+  # (scripts/e2e/fake_google.py). In the backend's network namespace for the
+  # reason the storage fake is — the browser is sent to its authorization
+  # page and the backend calls it, and one address serves both. A spec puts
+  # events on it through /_fake/; see frontend/e2e/fixtures/google.ts.
+  fake-google:
+    build:
+      context: .
+      dockerfile: scripts/e2e/fake-google.Dockerfile
+    network_mode: "service:backend"
+    command:
+      [
+        "uvicorn",
+        "fake_google:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "${E2E_GOOGLE_PORT:-8090}",
+        "--log-level",
+        "warning",
+      ]
+    environment:
+      # What the backend's GOOGLE_CALENDAR_CLIENT_ID / _SECRET must match.
+      - FAKE_GOOGLE_CLIENT_ID=e2e-google-client-id
+      - FAKE_GOOGLE_CLIENT_SECRET=e2e-google-client-secret
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://localhost:${E2E_GOOGLE_PORT:-8090}/_fake/health').getcode() == 200 else 1)",
+        ]
+      interval: 3s
+      timeout: 5s
+      start_period: 5s
+      retries: 20
+    depends_on:
+      backend:
+        condition: service_started
 
   firebase-auth:
     build:

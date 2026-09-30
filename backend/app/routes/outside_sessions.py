@@ -30,6 +30,7 @@ from ..models import AuditAction, User
 from ..models.audit import ResourceType
 from ..models.outside_sessions import (
     AnsweredAppointment,
+    CalendarSyncResponse,
     FollowedCalendarRequest,
     FollowedCalendarResponse,
     NotAddedSession,
@@ -90,6 +91,7 @@ from .scheduling import (
 if TYPE_CHECKING:
     from ..models.scheduling import SeriesMatchResponse
     from ..patients.matching import MatchContext
+    from ..services.sync_scheduler_service import SyncSchedulerService
 
 router = APIRouter(tags=["outside-sessions"], dependencies=[Depends(require_active_subscription)])
 
@@ -117,6 +119,40 @@ def get_outside_sessions(
     zone: tzinfo = Depends(get_owner_timezone),
 ) -> OutsideSessions:
     return OutsideSessions(events, appointments, patients, mappings, zone=zone)
+
+
+def get_sync_scheduler(_ctx: TenantContext = Depends(get_tenant_context)) -> SyncSchedulerService:
+    """The scheduled pass, wired the way the background loop wires it."""
+    from ..background_sync import build_sync_scheduler
+
+    return build_sync_scheduler()
+
+
+@router.post("/api/calendar/sync", response_model=CalendarSyncResponse)
+def sync_calendars_now(
+    http_request: Request,
+    user: User = Depends(require_baa_acceptance),
+    scheduler: SyncSchedulerService = Depends(get_sync_scheduler),
+    audit: AuditService = Depends(get_audit_service),
+) -> CalendarSyncResponse:
+    """Read the caller's calendars now rather than at the next scheduled pass.
+
+    The same pass the schedule runs for every account, run for this one on
+    request: feeds, the calendar Pablo writes to, the calendar it follows,
+    and reminders. A clinician who has just started following a calendar
+    sees its sessions without waiting; a test can read a calendar it just
+    changed. Counts only reach the audit trail.
+    """
+    summary = scheduler.execute(user.id)
+    audit.log(
+        AuditAction.ICAL_CALENDAR_SYNCED,
+        user,
+        http_request,
+        resource_type=ResourceType.APPOINTMENT,
+        resource_id="calendar-sync",
+        changes=summary.to_dict(),
+    )
+    return CalendarSyncResponse(**summary.to_dict())
 
 
 def _not_followed(service: GoogleCalendarService, user_id: str) -> frozenset[str]:
