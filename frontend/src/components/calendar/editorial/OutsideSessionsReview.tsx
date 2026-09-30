@@ -18,6 +18,7 @@ import {
   type ClientQuestionRow,
 } from "@/components/calendar/connect/WhichClientsList"
 import type {
+  NotAddedSession,
   OutsideAnswer,
   OutsideAnswerResult,
   OutsideQuestion,
@@ -34,8 +35,14 @@ interface OutsideSessionsReviewProps {
   /** One event's question, asked from its block rather than the banner:
    * checked from the start, and offering to start its note. */
   single?: boolean
-  /** Answer, then start the note for this event. Single mode only. */
-  onStartNote?: (answers: OutsideAnswer[]) => Promise<void>
+  /** Answer, then start the note for this event. Single mode only.
+   * Resolves with the answer's result when there was no session to start. */
+  onStartNote?: (answers: OutsideAnswer[]) => Promise<OutsideAnswerResult | void>
+}
+
+function notAddedLine(session: NotAddedSession): string {
+  const day = format(new Date(session.start_at), "EEE MMM d")
+  return `${session.client_name}'s session on ${day} overlaps another appointment, so it wasn't added.`
 }
 
 function detailFor(question: OutsideQuestion): string {
@@ -83,6 +90,7 @@ export function OutsideSessionsReview({
   const [notClient, setNotClient] = useState<Record<string, boolean>>({})
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [notAdded, setNotAdded] = useState<NotAddedSession[]>([])
 
   const answers: OutsideAnswer[] = questions
     .filter((q) => notClient[q.key] || checked[q.key])
@@ -107,12 +115,14 @@ export function OutsideSessionsReview({
     })
   const canStartNote = Boolean(onStartNote) && answers.some((a) => !a.not_a_client)
 
-  const run = async (action: () => Promise<unknown>) => {
+  const run = async (action: () => Promise<OutsideAnswerResult | void>) => {
     setSaving(true)
     setError(null)
     try {
-      await action()
-      onClose()
+      const result = await action()
+      // Something already booked over a session: say so before closing.
+      if (result && result.not_added.length > 0) setNotAdded(result.not_added)
+      else onClose()
     } catch {
       setError("Could not save that. Try again in a moment.")
     } finally {
@@ -134,7 +144,14 @@ export function OutsideSessionsReview({
           </DialogDescription>
         </DialogHeader>
 
-        <WhichClientsList
+        {notAdded.length > 0 ? (
+          <div data-testid="outside-not-added" className="space-y-1 text-sm text-amber-700">
+            {notAdded.map((session) => (
+              <p key={session.outside_session_id}>{notAddedLine(session)}</p>
+            ))}
+          </div>
+        ) : (
+          <WhichClientsList
           rows={questions.map(toRow)}
           checked={checked}
           onToggle={(key) => setChecked((current) => ({ ...current, [key]: !current[key] }))}
@@ -148,11 +165,15 @@ export function OutsideSessionsReview({
             setChecked((current) => ({ ...current, [key]: false }))
           }}
         />
+        )}
 
         {error ? <p className="text-sm text-red-600">{error}</p> : null}
 
         <div className="flex items-center justify-end gap-2 pt-2">
-          {single && onStartNote ? (
+          {notAdded.length > 0 ? (
+            <Button onClick={onClose}>Done</Button>
+          ) : null}
+          {notAdded.length === 0 && single && onStartNote ? (
             <Button
               variant="outline"
               disabled={saving || !canStartNote}
@@ -161,13 +182,15 @@ export function OutsideSessionsReview({
               Start note
             </Button>
           ) : null}
-          <Button
-            disabled={saving || answers.length === 0}
-            onClick={() => run(() => onSubmit(answers))}
-          >
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            Save
-          </Button>
+          {notAdded.length === 0 ? (
+            <Button
+              disabled={saving || answers.length === 0}
+              onClick={() => run(() => onSubmit(answers))}
+            >
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              Save
+            </Button>
+          ) : null}
         </div>
       </DialogContent>
     </Dialog>

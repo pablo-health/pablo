@@ -30,6 +30,7 @@ from app.repositories.patient_source_mapping import InMemoryPatientSourceMapping
 from app.scheduling_engine.models.appointment import AppointmentStatus
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.services.audit_service import AuditService
+from app.services.google_calendar_follow import GoogleSyncStatus
 from app.services.google_calendar_service import GoogleCalendarService
 from app.services.outside_sessions import OutsideSessions
 from app.services.sync_scheduler_service import SyncSchedulerService
@@ -72,6 +73,12 @@ class _Request:
         return self._result
 
 
+class _GoneError(Exception):
+    """Google's answer to a sync token it no longer honours."""
+
+    status_code = 410
+
+
 class _FakeGoogle:
     """Calendar v3, as far as a sync touches it. Records every call it gets."""
 
@@ -79,11 +86,16 @@ class _FakeGoogle:
         self.next_items: dict[str, list[dict[str, Any]]] = {}
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self._tokens = 0
+        #: Answer the next resumed read of the main calendar with 410 Gone.
+        self.expire_main_token = False
 
     def events(self) -> _FakeGoogle:
         return self
 
     def list(self, **kwargs: Any) -> _Request:
+        if self.expire_main_token and kwargs["calendarId"] == "primary" and kwargs.get("syncToken"):
+            self.expire_main_token = False
+            raise _GoneError
         self.calls.append(("list", kwargs))
         self._tokens += 1
         items = self.next_items.pop(kwargs["calendarId"], [])
@@ -287,3 +299,75 @@ def test_pablos_own_all_day_and_declined_events_are_left_out(stack: _Stack) -> N
     stack.poll([mine, all_day, declined, _google_event("yes", _in(5))])
 
     assert [row.source_event_id for row in stack.events.list_open(USER_ID)] == ["yes"]
+
+
+def _open_ids(stack: _Stack) -> list[str]:
+    return sorted(row.source_event_id for row in stack.events.list_open(USER_ID))
+
+
+class TestAFullReRead:
+    """A lapsed sync token means reading everything again, from now on.
+
+    That read never reports what was deleted while the token lapsed, so what
+    it leaves out is what is gone.
+    """
+
+    def test_an_event_deleted_in_the_gap_takes_its_question_with_it(self, stack: _Stack) -> None:
+        stack.poll([_google_event("o1", _in(3)), _google_event("o2", _in(10))])
+
+        stack.google.expire_main_token = True
+        stack.poll([_google_event("o2", _in(10))])
+
+        assert _open_ids(stack) == ["o2"]
+
+    def test_answering_afterwards_books_nothing_for_the_vanished_event(self, stack: _Stack) -> None:
+        stack.poll([_google_event("o1", _in(3)), _google_event("o2", _in(10))])
+        stack.google.expire_main_token = True
+        stack.poll([_google_event("o2", _in(10))])
+        stack.client("p1", "other-series")
+
+        stack.outside.answer(
+            USER_ID,
+            GOOGLE_CALENDAR_SOURCE,
+            calendar_source_identifier("wk", "", 0, "00:00"),
+            patient_id="p1",
+        )
+
+        assert (
+            stack.appointments.get_by_outside_event(USER_ID, GOOGLE_CALENDAR_SOURCE, "o1") is None
+        )
+        assert stack.appointments.get_by_outside_event(USER_ID, GOOGLE_CALENDAR_SOURCE, "o2")
+
+    def _six_booked(self, stack: _Stack) -> list[str]:
+        stack.client("p1", "wk")
+        ids = [f"o{i}" for i in range(6)]
+        stack.poll([_google_event(i, _in(3 + 7 * n)) for n, i in enumerate(ids)])
+        return ids
+
+    def test_losing_most_answered_sessions_at_once_is_held_not_cancelled(
+        self, stack: _Stack
+    ) -> None:
+        ids = self._six_booked(stack)
+
+        stack.google.expire_main_token = True
+        stack.poll([_google_event("o0", _in(3))])
+
+        for event_id in ids[1:]:
+            held = stack.appointments.get_by_outside_event(
+                USER_ID, GOOGLE_CALENDAR_SOURCE, event_id
+            )
+            assert held is not None
+            assert held.status == AppointmentStatus.CONFIRMED
+            assert held.google_sync_status == GoogleSyncStatus.MISSING_IN_GOOGLE
+        assert stack.google.writes() == []
+
+    def test_one_session_gone_in_the_gap_is_cancelled_quietly(self, stack: _Stack) -> None:
+        ids = self._six_booked(stack)
+
+        stack.google.expire_main_token = True
+        stack.poll([_google_event(i, _in(3 + 7 * n)) for n, i in enumerate(ids) if i != "o5"])
+
+        gone = stack.appointments.get_by_outside_event(USER_ID, GOOGLE_CALENDAR_SOURCE, "o5")
+        assert gone is not None
+        assert gone.status == AppointmentStatus.CANCELLED
+        assert gone.google_sync_status == GoogleSyncStatus.REMOVED_IN_GOOGLE

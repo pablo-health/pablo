@@ -188,7 +188,7 @@ class TestWhatBecomesAQuestion:
 
 
 class TestSharedIdentifier:
-    def test_a_series_the_import_remembered_is_followed_in_the_clinicians_zone(
+    def test_a_slot_the_import_remembered_is_offered_in_the_clinicians_zone(
         self, h: _Harness, mock_user: User
     ) -> None:
         zone = ZoneInfo("America/New_York")
@@ -208,10 +208,53 @@ class TestSharedIdentifier:
 
         h.poll(mock_user, [_event("e1", start, series=None)])
 
-        booked = h.followed("e1")
+        # Found under the same key the import stored — read in the
+        # clinician's zone — and offered for one confirm.
+        [question] = h.outside.questions(USER_ID)
+        assert question.suggested_patient_id == "p1"
+        assert h.followed("e1") is None
+
+
+class TestRememberedSlots:
+    def _remember_monday_ten(self, h: _Harness) -> datetime:
+        monday = _in(7 - utc_now().weekday(), hour=10)
+        remember_match(
+            GOOGLE_CALENDAR_SOURCE,
+            calendar_source_identifier(None, "Session", monday.weekday(), monday.strftime("%H:%M")),
+            "p1",
+            h.outside.context(USER_ID),
+        )
+        return monday
+
+    def test_a_reused_slot_is_asked_about_not_booked_to_the_old_client(
+        self, h: _Harness, mock_user: User
+    ) -> None:
+        h.patient("p1", "Jane", "Smith")
+        h.patient("p2", "Bob", "Jones")
+        monday = self._remember_monday_ten(h)
+
+        # A year on, someone else has Monday 10:00, typed the same way.
+        h.poll(
+            mock_user,
+            [_event("bob-1", monday + timedelta(days=364), title="Session", series=None)],
+        )
+
+        assert h.followed("bob-1") is None
+        [question] = h.outside.questions(USER_ID)
+        assert question.suggested_patient_id == "p1"
+        assert question.match.patient_id is None
+
+    def test_a_remembered_provider_series_still_books_without_asking(
+        self, h: _Harness, mock_user: User
+    ) -> None:
+        h.patient("p1", "Jane", "Smith")
+        h.answer("p1")
+
+        h.poll(mock_user, [_event("e9", _in(30))])
+
+        booked = h.followed("e9")
         assert booked is not None
         assert booked.patient_id == "p1"
-        assert h.open_ids() == []
 
     def test_the_import_and_following_share_one_identifier(self) -> None:
         series = ProposedSeries(

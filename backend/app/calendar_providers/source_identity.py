@@ -25,6 +25,10 @@ if TYPE_CHECKING:
 #: The source a Google Calendar event's answer is remembered under.
 GOOGLE_CALENDAR_SOURCE = "google_calendar"
 
+#: Prefix of an identifier the calendar provider itself issued for a series.
+#: Unlike a ``shape:`` identifier, it cannot be reused by a different client.
+SERIES_PREFIX = "series:"
+
 #: Prefix of a followed calendar feed's source: ``ical:<feed>``.
 ICAL_SOURCE_PREFIX = "ical:"
 
@@ -38,7 +42,7 @@ def calendar_source_identifier(
     clinician's own zone.
     """
     if series_id:
-        return f"series:{series_id}"
+        return f"{SERIES_PREFIX}{series_id}"
     shape = f"{normalize(title)}|{weekday}|{local_start_time}"
     return f"shape:{hashlib.sha256(shape.encode()).hexdigest()[:32]}"
 

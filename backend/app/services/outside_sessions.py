@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..calendar_providers.source_identity import (
     GOOGLE_CALENDAR_SOURCE,
+    SERIES_PREFIX,
     event_source_identifier,
     ical_feed,
 )
@@ -56,6 +57,7 @@ from ..repositories.external_calendar_event import (
 )
 from ..scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from ..utcnow import utc_now
+from .google_calendar_follow import UPCOMING_HORIZON
 from .google_calendar_service import parse_event_time
 
 if TYPE_CHECKING:
@@ -83,6 +85,8 @@ class Question:
     next_start_at: datetime
     recurring: bool
     match: MatchResult
+    suggested_patient_id: str | None = None
+    """A remembered answer offered for confirmation rather than acted on."""
     rows: list[ExternalCalendarEvent] = field(default_factory=list)
 
 
@@ -191,7 +195,11 @@ class OutsideSessions:
             incoming.patient_id = row.patient_id
             incoming.appointment_id = row.appointment_id
             incoming.created_at = row.created_at
-        if match.evidence == "remembered" and match.patient_id:
+        if (
+            match.evidence == "remembered"
+            and match.patient_id
+            and _books_unattended(incoming, identity)
+        ):
             if incoming.answer == ANSWER_OPEN:
                 incoming.answer = ANSWER_CLIENT
                 incoming.patient_id = match.patient_id
@@ -243,6 +251,36 @@ class OutsideSessions:
             if row.source_event_id not in keep:
                 self._events.delete(user_id, row.id)
 
+    def reconcile_full_read(self, user_id: str, present: set[str]) -> list[dict[str, Any]]:
+        """Catch up with a full read of the main calendar.
+
+        A full read (see ``MainCalendarRead.full``) holds every event still to
+        come, and never reports what was deleted before it. So a row for an
+        upcoming event it doesn't hold is for an event that is gone, and goes.
+        An appointment following such an event is not cancelled here: it comes
+        back as a deletion for the follower, so the bulk guard decides — a
+        reset that seems to lose everything is held, never mass-cancelled.
+        """
+        now = utc_now()
+        for row in self._events.list_by_source(user_id, GOOGLE_CALENDAR_SOURCE):
+            if row.end_at > now and row.source_event_id not in present:
+                self._events.delete(user_id, row.id)
+        return [
+            {"google_event_id": appointment.outside_event_id, "status": "cancelled"}
+            for appointment in self._appointments.list_by_range(
+                user_id, now, now + UPCOMING_HORIZON
+            )
+            if appointment.outside_source == GOOGLE_CALENDAR_SOURCE
+            and appointment.status == AppointmentStatus.CONFIRMED
+            and appointment.outside_event_id not in present
+        ]
+
+    def drop_open(self, user_id: str, source: str) -> None:
+        """Drop every question from a source, leaving answered sessions as they are."""
+        for row in self._events.list_by_source(user_id, source):
+            if row.answer == ANSWER_OPEN:
+                self._events.delete(user_id, row.id)
+
     def drop(self, user_id: str, source: str, event_id: str) -> None:
         row = self._events.get(user_id, source, event_id)
         if row is not None:
@@ -251,33 +289,52 @@ class OutsideSessions:
     # --- Asking and answering ----------------------------------------------
 
     def open_sessions(
-        self, user_id: str, start: datetime | None = None, end: datetime | None = None
+        self,
+        user_id: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        *,
+        hidden: frozenset[str] = frozenset(),
     ) -> list[tuple[ExternalCalendarEvent, str]]:
-        """Open rows, each with the identifier its answer is remembered under."""
+        """Open rows, each with the identifier its answer is remembered under.
+
+        ``hidden`` leaves out the sources not being followed right now.
+        """
         return [
             (row, self._identity(row).identifier)
             for row in self._events.list_open(user_id, start, end)
+            if row.source not in hidden
         ]
 
-    def questions(self, user_id: str) -> list[Question]:
+    def questions(self, user_id: str, *, hidden: frozenset[str] = frozenset()) -> list[Question]:
         """One question per identifier with open rows, soonest first.
 
         A unique name match is offered as the answer to confirm — here it is
-        a suggestion, and the clinician still says yes.
+        a suggestion, and the clinician still says yes. So is a remembered
+        answer for a slot rather than a provider series (``suggested``): the
+        same weekday and time can be someone else now.
         """
         ctx = self.context(user_id)
         by_key: dict[tuple[str, str], Question] = {}
         for row in self._events.list_open(user_id):
+            if row.source in hidden:
+                continue
             identity = self._identity(row)
             question = by_key.get((row.source, identity.identifier))
             if question is None:
+                match = match_patient(identity.hint, ctx)
+                suggested = None
+                if match.evidence == "remembered" and match.patient_id:
+                    suggested = match.patient_id
+                    match = MatchResult(possible_ids=[match.patient_id])
                 question = Question(
                     source=row.source,
                     source_identifier=identity.identifier,
                     title=row.title,
                     next_start_at=row.start_at,
                     recurring=bool(row.source_series_id),
-                    match=match_patient(identity.hint, ctx),
+                    match=match,
+                    suggested_patient_id=suggested,
                 )
                 by_key[(row.source, identity.identifier)] = question
             question.rows.append(row)
@@ -378,6 +435,17 @@ class OutsideSessions:
         )
         row.appointment_id = appointment.id
         return appointment
+
+
+def _books_unattended(row: ExternalCalendarEvent, identity: _Identity) -> bool:
+    """Whether a remembered answer may book this event without asking.
+
+    Only when the identifier can't be reused by someone else: a provider's
+    own series id, or a feed's own client identifier. A slot (``shape:``) is
+    reused — a year on, Monday 10:00 "Session" may be a different client — so
+    a remembered slot is offered for one confirm, never booked unattended.
+    """
+    return identity.identifier.startswith(SERIES_PREFIX) or ical_feed(row.source) is not None
 
 
 def _remembered(ctx: MatchContext, identity: _Identity) -> bool:

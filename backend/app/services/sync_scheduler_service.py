@@ -255,15 +255,19 @@ class SyncSchedulerService:
         already made for answered events follow their moves and deletions,
         under the same guards as Pablo's own sessions.
         """
-        changes = self._google_calendar_service.read_main_calendar_changes(user_id)
-        if not changes:
+        read = self._google_calendar_service.read_main_calendar_changes(user_id)
+        if not read.changes and not read.full:
             return 0
         user = self._user_repo.get(user_id)
         if user is None:
             return 0
         audit = self._audit()
         outside = self._outside().in_zone(self._zone(user_id))
+        changes = read.changes
         ingested = outside.ingest_google(user_id, changes)
+        if read.full:
+            present = {str(change.get("google_event_id")) for change in changes}
+            changes = changes + outside.reconcile_full_read(user_id, present)
         for appointment in ingested.booked:
             audit.log_appointment_action(
                 AuditAction.APPOINTMENT_CREATED,

@@ -132,7 +132,12 @@ beforeEach(() => {
   QUESTIONS.length = 0
   updateMutate.mockReset()
   answerMutateAsync.mockReset()
-  answerMutateAsync.mockResolvedValue({ answered: 1, appointments_created: 1, appointments: [] })
+  answerMutateAsync.mockResolvedValue({
+    answered: 1,
+    appointments_created: 1,
+    appointments: [],
+    not_added: [],
+  })
 })
 
 describe("sessions from the clinician's own calendar", () => {
@@ -196,6 +201,32 @@ describe("sessions from the clinician's own calendar", () => {
         not_a_client: false,
       },
     ])
+  })
+
+  it("says which sessions weren't added because another appointment was there", async () => {
+    QUESTIONS.push(MATCHED)
+    const start = new Date(2099, 0, 5, 14)
+    answerMutateAsync.mockResolvedValue({
+      answered: 1,
+      appointments_created: 3,
+      appointments: [],
+      not_added: [
+        { outside_session_id: "o1", client_name: "Jane Doe", start_at: start.toISOString() },
+      ],
+    })
+    render(<EditorialCalendar {...defaults()} />, { wrapper: wrap() })
+    fireEvent.click(
+      within(screen.getByTestId("outside-sessions-line")).getByRole("button", { name: "Review" })
+    )
+
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Save" }))
+
+    const line = await screen.findByTestId("outside-not-added")
+    expect(line).toHaveTextContent(
+      "Jane Doe's session on Mon Jan 5 overlaps another appointment, so it wasn't added."
+    )
+    // Still open, so it can be read, until the clinician is done with it.
+    expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Done" })).toBeVisible()
   })
 
   it("says 1 session in the singular", () => {

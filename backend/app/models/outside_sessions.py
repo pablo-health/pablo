@@ -77,10 +77,19 @@ class AnsweredAppointment(BaseModel):
     appointment_id: str
 
 
+class NotAddedSession(BaseModel):
+    """An answered session that wasn't booked: something was already there."""
+
+    outside_session_id: str
+    client_name: str
+    start_at: datetime
+
+
 class OutsideAnswerResponse(BaseModel):
     answered: int
     appointments_created: int
     appointments: list[AnsweredAppointment]
+    not_added: list[NotAddedSession] = Field(default_factory=list)
 
 
 class FollowMainCalendarRequest(BaseModel):

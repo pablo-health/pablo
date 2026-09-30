@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, timedelta
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
@@ -15,18 +15,26 @@ from app.calendar_providers.source_identity import (
 )
 from app.main import app
 from app.models.patient import Patient
+from app.patients.matching import MatchContext, remember_match
 from app.repositories.external_calendar_event import (
     ExternalCalendarEvent,
     InMemoryExternalCalendarEventRepository,
 )
 from app.routes.outside_sessions import get_external_calendar_events
-from app.routes.scheduling import get_appointment_repository, get_google_calendar_service
+from app.routes.scheduling import (
+    get_appointment_repository,
+    get_google_calendar_service,
+    get_owner_timezone,
+)
 from app.scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.utcnow import utc_now
 
 if TYPE_CHECKING:
     from app.repositories.patient import InMemoryPatientRepository
+    from app.repositories.patient_source_mapping import (
+        InMemoryPatientSourceMappingRepository,
+    )
     from fastapi.testclient import TestClient
 
 USER_ID = "test-user-123"
@@ -34,12 +42,21 @@ SERIES_KEY = calendar_source_identifier("wk", "", 0, "00:00")
 
 
 class _Wired:
-    def __init__(self, patients: InMemoryPatientRepository) -> None:
+    def __init__(
+        self,
+        patients: InMemoryPatientRepository,
+        mappings: InMemoryPatientSourceMappingRepository,
+    ) -> None:
         self.events = InMemoryExternalCalendarEventRepository()
         self.appointments = InMemoryAppointmentRepository()
         self.patients = patients
+        self.mappings = mappings
         self.calendar = MagicMock()
-        self.status: dict[str, Any] = {"connected": True, "import_granted": True}
+        self.status: dict[str, Any] = {
+            "connected": True,
+            "import_granted": True,
+            "follow_main_calendar": True,
+        }
         self.calendar.get_sync_status.side_effect = lambda _user_id: self.status
 
     def hold(self, event_id: str, days: int, *, series: str | None = "wk") -> None:
@@ -69,9 +86,14 @@ class _Wired:
 
 
 @pytest.fixture
-def wired(client: TestClient, mock_repo: InMemoryPatientRepository) -> _Wired:
+def wired(
+    client: TestClient,
+    mock_repo: InMemoryPatientRepository,
+    mock_mapping_repo: InMemoryPatientSourceMappingRepository,
+) -> _Wired:
     """Overrides on top of ``client``, whose teardown clears them."""
-    w = _Wired(mock_repo)
+    w = _Wired(mock_repo, mock_mapping_repo)
+    app.dependency_overrides[get_owner_timezone] = lambda: UTC
     app.dependency_overrides[get_external_calendar_events] = lambda: w.events
     app.dependency_overrides[get_appointment_repository] = lambda: w.appointments
     app.dependency_overrides[get_google_calendar_service] = lambda: w.calendar
@@ -184,7 +206,12 @@ def test_not_a_client_clears_the_question(client: TestClient, wired: _Wired) -> 
         },
     )
 
-    assert response.json() == {"answered": 1, "appointments_created": 0, "appointments": []}
+    assert response.json() == {
+        "answered": 1,
+        "appointments_created": 0,
+        "appointments": [],
+        "not_added": [],
+    }
     assert wired.events.list_open(USER_ID) == []
 
 
@@ -299,3 +326,91 @@ def test_editing_a_followed_session_puts_nothing_on_google(
     assert response.json()["outside_event_id"] == "e1"
     wired.calendar.push_appointment.assert_not_called()
     wired.calendar.push_appointment_event.assert_not_called()
+
+
+def _answer_series(client: TestClient, **answer: Any) -> Any:
+    return client.post(
+        "/api/calendar/outside-sessions/answer",
+        json={
+            "answers": [
+                {"source": GOOGLE_CALENDAR_SOURCE, "source_identifier": SERIES_KEY, **answer}
+            ]
+        },
+    )
+
+
+def test_a_session_already_booked_over_is_reported_not_added(
+    client: TestClient, wired: _Wired
+) -> None:
+    wired.client_named("p1")
+    wired.hold("e1", 2)
+    wired.hold("e2", 9)
+    [row] = [r for r in wired.events.list_open(USER_ID) if r.source_event_id == "e1"]
+    wired.appointments.create(
+        Appointment(
+            id="booked-here",
+            user_id=USER_ID,
+            patient_id="p1",
+            title="Session",
+            start_at=row.start_at,
+            end_at=row.end_at,
+            duration_minutes=50,
+            status=AppointmentStatus.CONFIRMED,
+            session_type="individual",
+        )
+    )
+
+    body = _answer_series(client, patient_id="p1").json()
+
+    assert body["appointments_created"] == 1
+    [skipped] = body["not_added"]
+    assert skipped["outside_session_id"] == "row-e1"
+    assert skipped["client_name"] == "Jane Smith"
+
+
+def test_turning_following_off_drops_its_questions_and_hides_the_rest(
+    client: TestClient, wired: _Wired
+) -> None:
+    wired.hold("e1", 2)
+
+    client.put("/api/google-calendar/follow-main-calendar", json={"enabled": False})
+    wired.status["follow_main_calendar"] = False
+
+    assert wired.events.list_open(USER_ID) == []
+    # A question held while following was off (a read already under way)
+    # stays out of sight.
+    wired.hold("e2", 3)
+    assert client.get("/api/calendar/outside-sessions", params=_window()).json() == {"events": []}
+    assert client.get("/api/calendar/outside-sessions/questions").json()["count"] == 0
+
+
+def test_turning_following_off_leaves_answered_sessions_alone(
+    client: TestClient, wired: _Wired
+) -> None:
+    wired.client_named("p1")
+    wired.hold("e1", 2)
+    _answer_series(client, patient_id="p1")
+
+    client.put("/api/google-calendar/follow-main-calendar", json={"enabled": False})
+
+    assert wired.appointments.get_by_outside_event(USER_ID, GOOGLE_CALENDAR_SOURCE, "e1")
+    [row] = wired.events.list_by_source(USER_ID, GOOGLE_CALENDAR_SOURCE)
+    assert row.answer == "client"
+
+
+def test_a_remembered_slot_is_offered_preselected(client: TestClient, wired: _Wired) -> None:
+    wired.client_named("p1")
+    wired.hold("e1", 2, series=None)
+    [row] = wired.events.list_open(USER_ID)
+    local = row.start_at.astimezone(UTC)
+    remember_match(
+        GOOGLE_CALENDAR_SOURCE,
+        calendar_source_identifier(None, row.title, local.weekday(), local.strftime("%H:%M")),
+        "p1",
+        MatchContext.for_clinician(USER_ID, wired.patients, wired.mappings),
+    )
+
+    [question] = client.get("/api/calendar/outside-sessions/questions").json()["questions"]
+
+    assert question["match"]["patient"] is None
+    assert question["match"]["suggested_patient_id"] == "p1"

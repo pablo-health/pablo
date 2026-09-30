@@ -342,6 +342,16 @@ def _main_calendar_change(event: dict[str, Any]) -> dict[str, Any] | None:
     return change
 
 
+class MainCalendarRead(NamedTuple):
+    """One read of the clinician's own calendar."""
+
+    changes: list[dict[str, Any]]
+    full: bool
+    """Read from scratch (from now on) rather than resumed. A full read holds
+    every event still to come, so anything missing from it is gone — and
+    deletions from before it are never reported on their own."""
+
+
 class CalendarScopeNotGrantedError(Exception):
     """Google's answer is missing a permission this request asked for."""
 
@@ -968,21 +978,26 @@ class GoogleCalendarService:
             self._token_repo.update_main_calendar_sync_token(user_id, None)
         self._token_repo.set_follow_main_calendar(user_id, follow=follow)
 
-    def read_main_calendar_changes(self, user_id: str) -> list[dict[str, Any]]:
+    def read_main_calendar_changes(self, user_id: str) -> MainCalendarRead:
         """What changed on the clinician's own calendar since the last read.
 
         Read only — nothing here writes to that calendar. Resumes from its own
         sync token, separate from the one of the calendar Pablo writes to, and
         leaves out Pablo's own events and all-day events. Needs the grant to
         read event content; without it there is nothing to read.
+
+        Without a token (the first read, or Google aged the token out) the
+        read starts over from now, and says so: see ``MainCalendarRead.full``.
         """
+        nothing = MainCalendarRead([], full=False)
         if not self.can_read_events(user_id):
-            return []
+            return nothing
         credentials = self._get_credentials(user_id)
         token_doc = self._token_repo.get(user_id)
         if not credentials or not token_doc:
-            return []
+            return nothing
         service = _build_calendar_service(credentials)
+        full = token_doc.main_calendar_sync_token is None
         try:
             page = self._list_all_events(
                 service, _IMPORT_CALENDAR_ID, sync_token=token_doc.main_calendar_sync_token
@@ -993,6 +1008,7 @@ class GoogleCalendarService:
             logger.info("Main calendar sync token expired; re-reading from a fresh window")
             self._token_repo.update_main_calendar_sync_token(user_id, None)
             page = self._list_all_events(service, _IMPORT_CALENDAR_ID, sync_token=None)
+            full = True
         if page.next_sync_token:
             self._token_repo.update_main_calendar_sync_token(user_id, page.next_sync_token)
         changes = [
@@ -1002,7 +1018,7 @@ class GoogleCalendarService:
         ]
         # HIPAA: counts only.
         logger.info("Read %d main calendar changes over %d page(s)", len(changes), page.page_count)
-        return changes
+        return MainCalendarRead(changes, full=full)
 
     @staticmethod
     def _list_all_events(

@@ -54,10 +54,18 @@ export interface OutsideAnswer {
   not_a_client: boolean
 }
 
+/** An answered session that wasn't booked: another appointment was there. */
+export interface NotAddedSession {
+  outside_session_id: string
+  client_name: string
+  start_at: string
+}
+
 export interface OutsideAnswerResult {
   answered: number
   appointments_created: number
   appointments: { outside_session_id: string; appointment_id: string }[]
+  not_added: NotAddedSession[]
 }
 
 export async function listOutsideSessions(

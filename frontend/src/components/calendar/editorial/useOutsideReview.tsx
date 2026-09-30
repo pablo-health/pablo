@@ -51,6 +51,8 @@ function SingleOutsideReview({
   const startNote = async (answers: OutsideAnswer[]) => {
     const result = await onSubmit(answers)
     const created = result.appointments.find((a) => a.outside_session_id === session.id)
+    // Booked over by something else: the review says so instead.
+    if (!created && result.not_added.length > 0) return result
     if (!created) throw new Error("No appointment was made for this session")
     const started = await startSessionFromAppointment(created.appointment_id)
     router.push(`/dashboard/sessions/${started.id}`)
