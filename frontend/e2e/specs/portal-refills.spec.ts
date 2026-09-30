@@ -31,6 +31,7 @@ import {
   openPortalSection,
   signInToPortal,
 } from "../fixtures/portal"
+import { BROWSER_TIME_ZONE } from "../fixtures/clock"
 import { givePatient } from "../fixtures/scenarios"
 import { BACKEND_URL, BASE_URL } from "../fixtures/stack"
 
@@ -51,9 +52,10 @@ async function openRefills(page: Page): Promise<void> {
 const PATIENT_REFILLS = "/api/patient/refills"
 const CLINICIAN_REFILLS = "/api/refill-requests"
 
-/** A date as the portal shows it on a request row. */
+/** A date as the portal shows it on a request row, in the browser's zone. */
 function shownDate(value: string | Date): string {
   return new Date(value).toLocaleDateString("en-US", {
+    timeZone: BROWSER_TIME_ZONE,
     month: "short",
     day: "numeric",
     year: "numeric",

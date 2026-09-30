@@ -115,3 +115,13 @@ class GoogleCalendarTokenRepository(ABC):
     @abstractmethod
     def exists(self, user_id: str) -> bool:
         raise NotImplementedError
+
+    @abstractmethod
+    def get_app_calendar_id(self, user_id: str) -> str | None:
+        """The calendar Pablo created for this user, connected or not."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def remember_app_calendar_id(self, user_id: str, calendar_id: str) -> None:
+        """Record a calendar Pablo just created. Survives a disconnect."""
+        raise NotImplementedError
