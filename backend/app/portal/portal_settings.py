@@ -211,9 +211,8 @@ def portal_settings_for_schema(schema: str) -> PortalSettings:
 
 #: Modules a practice does not choose for itself.
 #:
-#: * ``chat`` has a gate of its own that predates the portal
-#:   (``enable_patient_chat``), so a practice's module list neither adds nor
-#:   removes it.
+#: * ``chat`` has a gate of its own (``enable_patient_portal_chat``), so a
+#:   practice's module list neither adds nor removes it.
 #: * ``documents`` is the upload and download route the modules that DO gate
 #:   share — a form asking for a file, a message carrying one — so it is never
 #:   gated per practice (``app.main``), and offering a switch for it would be a

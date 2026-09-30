@@ -180,7 +180,7 @@ def test_every_patient_route_of_a_module_is_refused_when_the_practice_turned_it_
 
 #: Patient-facing prefixes that are deliberately NOT a module's: the client's
 #: own account (sign-in, the capability document, the profile), chat (its own
-#: gate, ``enable_patient_chat``) and documents (the upload/download route
+#: gate, ``enable_patient_portal_chat``) and documents (the upload/download route
 #: intake and messaging share, so gating it would turn one module off from
 #: under another).
 NOT_A_MODULE_PREFIXES: tuple[str, ...] = (

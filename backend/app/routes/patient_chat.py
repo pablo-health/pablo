@@ -21,8 +21,9 @@ between visits, and three things follow from that:
   this person talked to it is itself the reviewable fact. Ids only, never
   content.
 
-Mounted behind the same ``settings.enable_patient_chat`` flag as the
-clinician router; the flag off means every URL here is a 404.
+Mounted behind its own ``settings.enable_patient_portal_chat`` flag,
+separate from the clinician router's; the flag off means every URL here is
+a 404.
 """
 
 from __future__ import annotations
