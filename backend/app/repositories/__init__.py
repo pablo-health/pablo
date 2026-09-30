@@ -302,6 +302,10 @@ def get_patient_source_mapping_repository() -> PatientSourceMappingRepository:
     return PostgresPatientSourceMappingRepository(_get_pg_session())
 
 
+# Former name, kept so existing callers keep working; remove once none remain.
+get_ical_client_mapping_repository = get_patient_source_mapping_repository
+
+
 def get_ical_sync_config_repository() -> ICalSyncConfigRepository:
     """Get iCal sync config repository instance."""
     from .postgres.ical_sync_config import PostgresICalSyncConfigRepository
@@ -535,6 +539,7 @@ __all__ = [
     "get_ehr_prompt_repository",
     "get_ehr_route_repository",
     "get_google_calendar_token_repository",
+    "get_ical_client_mapping_repository",
     "get_ical_sync_config_repository",
     "get_identity_repository",
     "get_instrument_license_repository",

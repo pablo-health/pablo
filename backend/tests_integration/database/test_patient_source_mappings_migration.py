@@ -294,3 +294,43 @@ def test_the_downgrade_drops_not_a_client_answers_it_cannot_hold(
         "SELECT client_identifier, patient_id::text FROM ical_client_mappings",
     )
     assert [tuple(r) for r in rows] == [("J.A.", patient_id)]
+
+
+def _visible_not_a_client_rows(engine, schema: str, user_id: str) -> int:
+    """Count through the row policy, as the given clinician."""
+    with engine.begin() as conn:
+        conn.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
+        conn.execute(text("SELECT set_config('app.current_user_id', :uid, true)"), {"uid": user_id})
+        return conn.execute(
+            text("SELECT count(*) FROM patient_source_mappings WHERE answer = 'not_a_client'")
+        ).scalar_one()
+
+
+def test_a_not_a_client_row_is_visible_to_its_clinician_and_nobody_else(
+    engine, tenant_with_a_mapping
+) -> None:
+    """A row with no patient must not fall through the policy either way.
+
+    The table is owned per clinician (``user_id``), so a not-a-client answer
+    is its author's alone: a patient-access policy would hide it from them,
+    and no policy at all would show it to everyone.
+    """
+    schema, _ = tenant_with_a_mapping
+    upgrade_tenant_schema(engine, schema)
+    _insert(engine, schema, "series:standup", "not_a_client", None)
+
+    with engine.connect() as conn:
+        policies = {
+            row[0]
+            for row in conn.execute(
+                text(
+                    "SELECT policyname FROM pg_policies"
+                    " WHERE schemaname = :s AND tablename = 'patient_source_mappings'"
+                ),
+                {"s": schema},
+            )
+        }
+    assert "rls_user_isolation" in policies
+
+    assert _visible_not_a_client_rows(engine, schema, _USER_ID) == 1
+    assert _visible_not_a_client_rows(engine, schema, str(uuid.uuid4())) == 0
