@@ -84,6 +84,8 @@ GRANT pablo_practice_directory TO pablo WITH INHERIT FALSE, SET TRUE;
 
 `INHERIT FALSE` matters: it lets Pablo hand the role ownership of each practice's function without Pablo's own reads gaining anything from it.
 
+Migrations grant the role only to the user running them. If you run migrations as a different user from the one Pablo connects as (as `postgres`, for example), run the `GRANT` line for Pablo's user too. Setting up a new practice needs it, and stops with an error naming the role until it has it.
+
 ## 3. Encryption
 
 | | Self-Hosted | Pablo Solo |

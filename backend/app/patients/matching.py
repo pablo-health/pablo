@@ -14,11 +14,20 @@ is invisible here and becomes a second chart. Each answer says which of its
 charts the caller can see (``hidden_ids``); a caller never creates a chart or
 books anything for one it cannot see, and tells the clinician who does see it.
 
+How far a check looks depends on how strong its evidence is. The first three
+are strong, and look across the whole practice: a certain match to a
+colleague's client on any of them is that client. The last two rest on a name
+alone, and look only at the charts the caller sees. Two clinicians can each
+have a "J.A." without either being the other's; a colleague's chart that
+matches only by name or initials never makes the caller's own match
+uncertain, and never stands in the way of a new client.
+
 The checks run in a fixed order, strongest first:
 
 1. ``remembered`` — the clinician already said which patient this source's
    identifier means (``patient_source_mappings``).
-2. ``name_and_dob`` — exactly one patient has this name and date of birth.
+2. ``name_and_dob`` — exactly one patient in the practice has this name and
+   date of birth.
 3. ``email`` — exactly one patient in the practice has this email. Some
    systems treat an email as unique to one client; Pablo does not, because
    families often share one address. So an email settles the question only
@@ -26,9 +35,11 @@ The checks run in a fixed order, strongest first:
    name and date of birth: a child's record carrying a parent's email must
    land on the child's chart, and a shared family email must never outrank a
    unique name and date of birth.
-4. ``full_name`` — exactly one patient has this whole name, and no other
-   patient shares its first and last word.
-5. ``initials`` — exactly one patient has these initials.
+4. ``full_name`` — exactly one of the caller's patients has this whole name,
+   and no other of theirs shares its first and last word.
+5. ``initials`` — exactly one of the caller's patients has these initials.
+   Two of theirs sharing initials stay a question; the answer is remembered,
+   so it is asked once per series.
 
 A name that agrees only on its first and last word ("Mary Ann Smith" and a
 chart for Mary Smith) is never certain: it may be someone else, so it is
@@ -284,8 +295,9 @@ def match_patient(
     a question rather than an answer, for callers that merge records and must
     not do it on a name.
 
-    Whether the caller can see each chart named does not change the answer —
-    the rules run over the whole practice — only ``hidden_ids``.
+    Strong evidence is judged across the whole practice and weak evidence
+    among the charts the caller sees; ``hidden_ids`` says which charts named
+    in the answer the caller does not see.
     """
     result = _match(hint, ctx, name_alone_is_enough=name_alone_is_enough)
     named = [result.patient_id, *result.possible_ids] if result.patient_id else result.possible_ids
@@ -310,15 +322,23 @@ def _match(hint: PatientHint, ctx: MatchContext, *, name_alone_is_enough: bool) 
             # the initials or name; ask instead.
             return MatchResult()
 
-    whole_name, by_name = (
+    # A name alone is weak evidence, so it is judged among the charts the
+    # caller can see: a colleague's same-named client neither blocks nor
+    # unsettles the caller's own.
+    seen = [c for c in candidates if c.visible]
+    _, by_name_in_practice = (
         _full_name_matches(hint.full_name, candidates) if hint.full_name else ([], [])
     )
-    by_initials = _initials_matches(hint.initials, candidates) if hint.initials else []
+    whole_name, by_name = _full_name_matches(hint.full_name, seen) if hint.full_name else ([], [])
+    by_initials = _initials_matches(hint.initials, seen) if hint.initials else []
 
     steps: list[tuple[Evidence, list[Candidate]]] = []
     if hint.full_name and hint.date_of_birth is not None:
         steps.append(
-            ("name_and_dob", [c for c in by_name if c.date_of_birth == hint.date_of_birth])
+            (
+                "name_and_dob",
+                [c for c in by_name_in_practice if c.date_of_birth == hint.date_of_birth],
+            )
         )
     if hint.email and normalize(hint.email):
         wanted = normalize(hint.email)

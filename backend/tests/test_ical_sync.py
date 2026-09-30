@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 
 import pytest
 from app.models.patient import Patient
-from app.patients.matching import remember_not_a_client
+from app.patients.matching import remember_match, remember_not_a_client
 from app.repositories.external_calendar_event import InMemoryExternalCalendarEventRepository
 from app.repositories.ical_sync_config import ICalSyncConfig
 from app.repositories.patient import InMemoryPatientRepository
@@ -288,13 +288,45 @@ class TestClientMatching:
         result = service._match_patient("sessions_health", "SH00001", ctx)
         assert result == "patient-abc"
 
-    def test_a_colleagues_client_is_never_booked_from_a_feed(self, service: ICalSyncService):
-        """Matched practice-wide, but only the clinician's own chart gets the booking."""
+    def test_two_clients_sharing_initials_are_asked_about_once(self, service: ICalSyncService):
+        """John Adams and James Andersson are both "J.A.": a question, answered once."""
+        ctx = _context(
+            service,
+            [_make_patient("john", "John", "Adams"), _make_patient("james", "James", "Andersson")],
+        )
+        first = service._match("simplepractice", "J.A.", ctx)
+        assert first.patient_id is None
+        assert sorted(first.possible_ids) == ["james", "john"]
+
+        # The clinician picks John; that is remembered for the feed's "J.A.".
+        remember_match("simplepractice", "J.A.", "john", ctx)
+
+        later = service._match("simplepractice", "J.A.", service._match_context("user1"))
+        assert (later.patient_id, later.evidence) == ("john", "remembered")
+        assert service._match_patient(
+            "simplepractice", "J.A.", service._match_context("user1")
+        ) == ("john")
+
+    def test_a_colleagues_client_sharing_initials_is_not_matched(self, service: ICalSyncService):
+        """Initials are weak evidence: only the clinician's own charts count."""
         service._patient_repo.create(_make_patient("theirs", "Jane", "Adams"), "colleague")
         ctx = service._match_context("user1")
 
-        assert service._match("simplepractice", "Jane Adams", ctx).patient_id == "theirs"
-        assert service._match_patient("simplepractice", "Jane Adams", ctx) == ""
+        assert service._match("simplepractice", "J.A.", ctx).patient_id is None
+        assert service._match_patient("simplepractice", "J.A.", ctx) == ""
+
+    def test_a_remembered_colleagues_client_is_never_booked_from_a_feed(
+        self, service: ICalSyncService
+    ):
+        """Matched on strong evidence, but only the clinician's own chart gets the booking."""
+        service._patient_repo.create(_make_patient("theirs", "Jane", "Adams"), "colleague")
+        service._mapping_repo.save(
+            PatientSourceMapping("user1", "sessions_health", "SH00001", "theirs")
+        )
+        ctx = service._match_context("user1")
+
+        assert service._match("sessions_health", "SH00001", ctx).patient_id == "theirs"
+        assert service._match_patient("sessions_health", "SH00001", ctx) == ""
 
 
 def _context(service: ICalSyncService, patients: list[Patient]) -> MatchContext:

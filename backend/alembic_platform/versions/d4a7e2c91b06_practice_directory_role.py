@@ -23,6 +23,13 @@ role that could log in or bypass RLS, and a membership that inherits.
 
 A superuser passes the membership check trivially, and is not RLS-bound anyway.
 
+**Only the role running this is granted it.** Each practice's function is
+handed to the directory role when that practice is provisioned, and
+provisioning runs as the user the app connects as. When migrations run as a
+different user (``postgres``, say), the app's user needs the same grant, made
+by hand: ``GRANT pablo_practice_directory TO <app user> WITH INHERIT FALSE, SET
+TRUE``. Without it provisioning stops, naming the role.
+
 Revision ID: d4a7e2c91b06
 Revises: b5f1c8d3a702
 Create Date: 2026-09-30
@@ -71,7 +78,14 @@ ENSURE_ROLE_SQL = """
             END;
           END IF;
 
-          IF NOT pg_has_role(current_user, 'pablo_practice_directory', 'SET') THEN
+          SELECT rolsuper INTO me_super FROM pg_roles WHERE rolname = current_user;
+
+          -- Granted again when it already inherits, too: a membership made by
+          -- createrole_self_grant or by hand may carry INHERIT TRUE, and a
+          -- grant from the same grantor replaces its options.
+          IF NOT pg_has_role(current_user, 'pablo_practice_directory', 'SET')
+             OR (NOT me_super
+                 AND pg_has_role(current_user, 'pablo_practice_directory', 'USAGE')) THEN
             BEGIN
               EXECUTE 'GRANT pablo_practice_directory TO ' || quote_ident(current_user)
                    || ' WITH INHERIT FALSE, SET TRUE';
@@ -92,7 +106,8 @@ ENSURE_ROLE_SQL = """
               || how_to;
           END IF;
 
-          SELECT rolsuper INTO me_super FROM pg_roles WHERE rolname = current_user;
+          -- Still inheriting means another grantor's membership carries
+          -- INHERIT TRUE, which this role cannot change.
           IF NOT me_super
              AND pg_has_role(current_user, 'pablo_practice_directory', 'USAGE') THEN
             RAISE EXCEPTION USING MESSAGE =

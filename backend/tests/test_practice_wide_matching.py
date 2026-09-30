@@ -10,7 +10,7 @@ Postgres in ``tests_integration/database/test_practice_client_directory.py``.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
@@ -79,20 +79,85 @@ def colleague(mock_user_repo: InMemoryUserRepository) -> None:
     )
 
 
-class TestTheMatcherSeesThePractice:
-    def test_a_colleagues_client_is_matched_and_marked_as_not_seen(self) -> None:
-        patients = InMemoryPatientRepository()
-        patients.create(_patient("theirs", "Jane", "Adams"), COLLEAGUE)
-        ctx = MatchContext.for_practice(ME, patients, InMemoryPatientSourceMappingRepository())
+def _practice(*charts: tuple[Patient, str]) -> MatchContext:
+    patients = InMemoryPatientRepository()
+    for chart, clinician in charts:
+        patients.create(chart, clinician)
+    return MatchContext.for_practice(ME, patients, InMemoryPatientSourceMappingRepository())
 
-        result = match_patient(PatientHint(full_name="Jane Adams"), ctx)
 
-        assert result.patient_id == "theirs"
+class TestStrongEvidenceSeesThePractice:
+    def test_a_colleagues_client_by_name_and_birthday_is_matched_and_not_seen(self) -> None:
+        ctx = _practice(
+            (_patient("theirs", "Jane", "Adams", date_of_birth="1980-01-02"), COLLEAGUE)
+        )
+
+        result = match_patient(
+            PatientHint(full_name="Jane Adams", date_of_birth=date(1980, 1, 2)), ctx
+        )
+
+        assert (result.patient_id, result.evidence) == ("theirs", "name_and_dob")
         assert not result.visible
         candidate = ctx.candidate("theirs")
         assert candidate is not None
         assert candidate.clinician_ids == (COLLEAGUE,)
 
+    def test_a_remembered_colleagues_client_is_matched_and_not_seen(self) -> None:
+        ctx = _practice((_patient("theirs", "Jane", "Adams"), COLLEAGUE))
+        remember_match("simplepractice", "J.A.", "theirs", ctx)
+
+        result = match_patient(
+            PatientHint(initials="J.A.", source="simplepractice", source_identifier="J.A."), ctx
+        )
+
+        assert (result.patient_id, result.evidence) == ("theirs", "remembered")
+        assert not result.visible
+
+
+class TestWeakEvidenceLooksOnlyAtMyCharts:
+    def test_a_colleagues_client_by_initials_alone_is_no_match(self) -> None:
+        """So the clinician may answer "new client"."""
+        ctx = _practice((_patient("theirs", "Jane", "Adams"), COLLEAGUE))
+
+        result = match_patient(PatientHint(initials="J.A."), ctx)
+
+        assert result.patient_id is None
+        assert result.possible_ids == []
+
+    def test_a_colleagues_client_by_name_alone_is_no_match(self) -> None:
+        ctx = _practice((_patient("theirs", "Jane", "Adams"), COLLEAGUE))
+
+        result = match_patient(PatientHint(full_name="Jane Adams"), ctx)
+
+        assert result.patient_id is None
+        assert result.possible_ids == []
+
+    def test_my_initials_match_stays_certain_when_a_colleague_has_the_same_initials(
+        self,
+    ) -> None:
+        ctx = _practice(
+            (_patient("mine", "Jane", "Adams"), ME),
+            (_patient("theirs", "Joe", "Amato"), COLLEAGUE),
+        )
+
+        result = match_patient(PatientHint(initials="J.A."), ctx)
+
+        assert (result.patient_id, result.evidence) == ("mine", "initials")
+        assert result.visible
+
+    def test_two_of_my_clients_sharing_initials_stay_a_question(self) -> None:
+        ctx = _practice(
+            (_patient("john", "John", "Adams"), ME),
+            (_patient("james", "James", "Andersson"), ME),
+        )
+
+        result = match_patient(PatientHint(initials="J.A."), ctx)
+
+        assert result.patient_id is None
+        assert sorted(result.possible_ids) == ["james", "john"]
+
+
+class TestTheMatcherSeesThePractice:
     def test_my_own_client_still_matches_and_is_seen(self) -> None:
         patients = InMemoryPatientRepository()
         patients.create(_patient("mine", "Jane", "Adams"), ME)
@@ -182,13 +247,29 @@ def import_client(
     return client, appointments
 
 
+def _remembered_as_theirs(mappings: InMemoryPatientSourceMappingRepository) -> None:
+    """This series was answered as the colleague's client (the strong evidence)."""
+    mappings.save(
+        PatientSourceMapping(
+            ME,
+            GOOGLE_CALENDAR_SOURCE,
+            calendar_source_identifier(_SERIES, "", 0, "00:00"),
+            "theirs",
+        )
+    )
+
+
 @pytest.mark.usefixtures("colleague")
 class TestImportOfAColleaguesClient:
     def test_the_scan_says_who_sees_them_and_offers_nothing_to_import(
-        self, import_client: tuple[TestClient, Any], mock_repo: InMemoryPatientRepository
+        self,
+        import_client: tuple[TestClient, Any],
+        mock_repo: InMemoryPatientRepository,
+        mock_mapping_repo: InMemoryPatientSourceMappingRepository,
     ) -> None:
         client, _ = import_client
-        mock_repo.create(_patient("theirs", "Jane", "Adams", date_of_birth="1980-01-02"), COLLEAGUE)
+        mock_repo.create(_patient("theirs", "Jane", "Adams"), COLLEAGUE)
+        _remembered_as_theirs(mock_mapping_repo)
 
         series = _scan(client, "Jane Adams")
 
@@ -204,15 +285,17 @@ class TestImportOfAColleaguesClient:
         self,
         import_client: tuple[TestClient, InMemoryAppointmentRepository],
         mock_repo: InMemoryPatientRepository,
+        mock_mapping_repo: InMemoryPatientSourceMappingRepository,
     ) -> None:
         client, appointments = import_client
         mock_repo.create(_patient("theirs", "Jane", "Adams"), COLLEAGUE)
+        _remembered_as_theirs(mock_mapping_repo)
         series = _scan(client, "Jane Adams")
 
         response = _confirm(client, series, None)
 
         assert response.status_code == 400
-        assert "already a client of the practice" in response.text
+        assert "Already a client of the practice" in response.text
         assert [c.id for c in mock_repo.practice_directory()] == ["theirs"]
         assert appointments.list_by_range(ME, utc_now(), utc_now() + timedelta(days=60)) == []
 
@@ -229,6 +312,27 @@ class TestImportOfAColleaguesClient:
 
         assert response.status_code == 400
         assert appointments.list_by_range(ME, utc_now(), utc_now() + timedelta(days=60)) == []
+
+    def test_a_colleagues_client_sharing_only_a_name_does_not_stop_a_new_client(
+        self,
+        import_client: tuple[TestClient, InMemoryAppointmentRepository],
+        mock_repo: InMemoryPatientRepository,
+    ) -> None:
+        """A name alone is not that client: it may be someone else entirely."""
+        client, _ = import_client
+        mock_repo.create(_patient("theirs", "Jane", "Adams"), COLLEAGUE)
+        series = _scan(client, "Jane Adams")
+        assert series["match"] == {
+            "patient": None,
+            "possible": [],
+            "suggested_patient_id": None,
+            "seen_by": None,
+        }
+
+        response = _confirm(client, series, None)
+
+        assert response.status_code == 200, response.text
+        assert response.json()["patients_created"] == 1
 
     def test_my_own_client_still_imports_onto_my_chart(
         self,
@@ -332,11 +436,18 @@ def _answer(client: TestClient, identifier: str, **answer: Any) -> Any:
 @pytest.mark.usefixtures("colleague")
 class TestOutsideSessionsForAColleaguesClient:
     def test_the_question_says_who_sees_them(
-        self, client: TestClient, outside: Any, mock_repo: InMemoryPatientRepository
+        self,
+        client: TestClient,
+        outside: Any,
+        mock_repo: InMemoryPatientRepository,
+        mock_mapping_repo: InMemoryPatientSourceMappingRepository,
     ) -> None:
         events, _ = outside
         mock_repo.create(_patient("theirs", "Jane", "Adams"), COLLEAGUE)
-        _hold(events, "Jane Adams")
+        identifier = _hold(events, "Jane Adams")
+        mock_mapping_repo.save(
+            PatientSourceMapping(ME, GOOGLE_CALENDAR_SOURCE, identifier, "theirs")
+        )
 
         [question] = client.get("/api/calendar/outside-sessions/questions").json()["questions"]
 
@@ -344,17 +455,39 @@ class TestOutsideSessionsForAColleaguesClient:
         assert question["match"]["possible"] == []
 
     def test_answering_with_a_new_client_is_refused(
-        self, client: TestClient, outside: Any, mock_repo: InMemoryPatientRepository
+        self,
+        client: TestClient,
+        outside: Any,
+        mock_repo: InMemoryPatientRepository,
+        mock_mapping_repo: InMemoryPatientSourceMappingRepository,
     ) -> None:
         events, _ = outside
         mock_repo.create(_patient("theirs", "Jane", "Adams"), COLLEAGUE)
         identifier = _hold(events, "Jane Adams")
+        mock_mapping_repo.save(
+            PatientSourceMapping(ME, GOOGLE_CALENDAR_SOURCE, identifier, "theirs")
+        )
 
         response = _answer(client, identifier, new_client_name="Jane Adams")
 
         assert response.status_code == 400
         assert len(events.list_open(ME)) == 1
         assert [c.id for c in mock_repo.practice_directory()] == ["theirs"]
+
+    def test_a_colleagues_client_sharing_only_a_name_can_be_answered_as_new(
+        self, client: TestClient, outside: Any, mock_repo: InMemoryPatientRepository
+    ) -> None:
+        events, _ = outside
+        mock_repo.create(_patient("theirs", "Jane", "Adams"), COLLEAGUE)
+        identifier = _hold(events, "Jane Adams")
+
+        [question] = client.get("/api/calendar/outside-sessions/questions").json()["questions"]
+        assert question["match"]["seen_by"] is None
+
+        response = _answer(client, identifier, new_client_name="Jane Adams")
+
+        assert response.status_code == 200, response.text
+        assert events.list_open(ME) == []
 
     def test_answering_with_their_chart_is_refused(
         self, client: TestClient, outside: Any, mock_repo: InMemoryPatientRepository
@@ -431,3 +564,46 @@ class TestUnattendedBooking:
         )
 
         assert [a.patient_id for a in result.booked] == ["mine"]
+
+
+def _slot_event(event_id: str, start: datetime) -> dict[str, Any]:
+    """A one-off event with no provider series: remembered by weekday and time."""
+    return {
+        "google_event_id": event_id,
+        "status": "confirmed",
+        "summary": "Jane Adams",
+        "series_id": None,
+        "start": {"dateTime": start.isoformat()},
+        "end": {"dateTime": (start + timedelta(minutes=50)).isoformat()},
+    }
+
+
+def test_two_of_my_clients_sharing_a_name_are_picked_once_per_slot() -> None:
+    """Asked once; the next session at the same weekday and time is remembered."""
+    events = InMemoryExternalCalendarEventRepository()
+    patients = InMemoryPatientRepository()
+    patients.create(_patient("first", "Jane", "Adams"), ME)
+    patients.create(_patient("second", "Jane", "Adams"), ME)
+    outside = OutsideSessions(
+        events, InMemoryAppointmentRepository(), patients, InMemoryPatientSourceMappingRepository()
+    )
+    start = (utc_now() + timedelta(days=2)).replace(hour=14, minute=0, second=0, microsecond=0)
+    outside.ingest_google(ME, [_slot_event("e1", start)])
+    [question] = outside.questions(ME)
+    assert question.match.patient_id is None
+    assert sorted(question.match.possible_ids) == ["first", "second"]
+
+    outside.answer(ME, GOOGLE_CALENDAR_SOURCE, question.source_identifier, patient_id="first")
+    outside.ingest_google(ME, [_slot_event("e2", start + timedelta(days=7))])
+
+    [row] = events.list_open(ME)
+    assert row.source_event_id == "e2"
+    [identifier] = {identifier for _, identifier in outside.open_sessions(ME)}
+    assert identifier == question.source_identifier
+    match = match_patient(
+        PatientHint(
+            full_name="Jane Adams", source=GOOGLE_CALENDAR_SOURCE, source_identifier=identifier
+        ),
+        outside.context(ME),
+    )
+    assert (match.patient_id, match.evidence) == ("first", "remembered")

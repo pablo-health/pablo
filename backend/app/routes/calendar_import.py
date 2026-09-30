@@ -129,9 +129,9 @@ PATIENT_ORIGIN = "calendar_import"
 MATCH_SOURCE = GOOGLE_CALENDAR_SOURCE
 #: Refusing to chart or book a client of the practice the caller doesn't see.
 #: The review already said who does; this is for a request that skipped it.
+#: Raised for one answer or for a batch of series, so it names no count.
 SEEN_BY_SOMEONE_ELSE = (
-    "One of those is already a client of the practice. "
-    "Ask their clinician or your practice owner for access."
+    "Already a client of the practice. Ask their clinician or your practice owner for access."
 )
 
 
