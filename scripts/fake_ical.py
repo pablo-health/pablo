@@ -23,7 +23,10 @@ earliest event lands after today. A whole number of weeks keeps each event's
 weekday and time of day, so a Tuesday 10:00 series is still one, and it keeps
 the two feeds aligned with each other, since both start on the same day.
 Nothing else changes: UIDs, titles, the telehealth links and DTSTAMP are as
-captured.
+captured. A capture with CRLF line ends, which is how a feed arrives on the
+wire, is shifted the same way. Both providers write local times with a TZID,
+as the captures do; a feed writing UTC (``...Z``) is shifted by whole weeks
+of UTC, which moves an event's local hour across a daylight-saving change.
 
 Run locally with ``uvicorn scripts.fake_ical:app --port 8082``; the compose
 stack builds it from ``scripts/e2e/fake-ical.Dockerfile``.
@@ -72,7 +75,8 @@ def _event_times(lines: list[str]) -> list[tuple[int, re.Match[str]]]:
     """
     found = []
     in_event = False
-    for number, line in enumerate(lines):
+    for number, raw in enumerate(lines):
+        line = raw.rstrip("\r")
         if line == "BEGIN:VEVENT":
             in_event = True
         elif line == "END:VEVENT":
@@ -103,9 +107,10 @@ def shifted(ical: str, *, today: date | None = None) -> str:
     days = timedelta(weeks=_weeks_to_add(earliest, today))
     for number, match in times:
         moved = date.fromisoformat(match.group("date")) + days
+        ending = "\r" if lines[number].endswith("\r") else ""
         lines[number] = (
             f"{match.group('name')}{match.group('params')}:"
-            f"{moved.strftime('%Y%m%d')}{match.group('time')}"
+            f"{moved.strftime('%Y%m%d')}{match.group('time')}{ending}"
         )
     return "\n".join(lines)
 

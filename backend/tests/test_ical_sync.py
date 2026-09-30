@@ -24,8 +24,8 @@ from app.repositories.patient_source_mapping import (
     PatientSourceMapping,
 )
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
-from app.services.ical_sync_service import ICalSyncService, ParsedEvent
-from app.services.token_encryption import encrypt_tokens
+from app.services.ical_sync_service import FEED_URL_REFUSED, ICalSyncService, ParsedEvent
+from app.services.token_encryption import decrypt_tokens, encrypt_tokens
 from app.settings import get_settings
 from app.utcnow import utc_now
 
@@ -499,7 +499,7 @@ class TestSyncDiff:
 
 # A feed that names its clients in a way nothing matches until the clinician
 # says who they are.
-_PLAIN_FEED = "test_feed"
+_PLAIN_FEED = "sessions_health"
 _PLAIN_ICAL = """\
 BEGIN:VCALENDAR
 VERSION:2.0
@@ -507,13 +507,13 @@ BEGIN:VEVENT
 UID:feed-event-1
 DTSTART:20990105T150000Z
 DTEND:20990105T155000Z
-SUMMARY:Client 7
+SUMMARY:SH00007
 END:VEVENT
 BEGIN:VEVENT
 UID:feed-event-2
 DTSTART:20990112T150000Z
 DTEND:20990112T155000Z
-SUMMARY:Client 7
+SUMMARY:SH00007
 END:VEVENT
 END:VCALENDAR"""
 
@@ -528,7 +528,9 @@ class TestUnmatchedFeedEvents:
             ICalSyncConfig(
                 user_id="user1",
                 ehr_system=_PLAIN_FEED,
-                encrypted_feed_url=encrypt_tokens({"feed_url": "https://feed.test/cal"}),
+                encrypted_feed_url=encrypt_tokens(
+                    {"feed_url": "https://app.sessionshealth.com/calendars/test/calendar.ics"}
+                ),
                 connected_at=_now(),
             )
         )
@@ -553,7 +555,7 @@ class TestUnmatchedFeedEvents:
         assert result.created == 0
         assert feed._appt_repo.list_by_ical_source("user1", _PLAIN_FEED) == []
         assert self._open(feed) == ["feed-event-1", "feed-event-2"]
-        assert {e["client_identifier"] for e in result.unmatched_events} == {"Client 7"}
+        assert {e["client_identifier"] for e in result.unmatched_events} == {"SH00007"}
 
     @patch.object(ICalSyncService, "_fetch_feed", return_value=_PLAIN_ICAL)
     def test_no_appointment_is_ever_written_without_a_patient(
@@ -571,7 +573,7 @@ class TestUnmatchedFeedEvents:
         feed._patient_repo.create(_make_patient("p7", "Seven", "Client"), "user1")
         feed.sync("user1")
 
-        feed.resolve_client("user1", _PLAIN_FEED, "Client 7", "p7")
+        feed.resolve_client("user1", _PLAIN_FEED, "SH00007", "p7")
 
         booked = feed._appt_repo.list_by_ical_source("user1", _PLAIN_FEED)
         assert sorted(a.ical_uid or "" for a in booked) == ["feed-event-1", "feed-event-2"]
@@ -625,6 +627,34 @@ class TestUrlValidation:
     def test_unsupported_ehr(self, service: ICalSyncService):
         with pytest.raises(ValueError, match="Unsupported"):
             service._validate_feed_url("unknown_ehr", "https://example.com")
+
+    def test_the_validated_form_is_scheme_host_and_path_only(self, service: ICalSyncService):
+        assert (
+            service._validate_feed_url(
+                "simplepractice", "HTTPS://Secure.SimplePractice.com/ical/Ab1"
+            )
+            == "https://secure.simplepractice.com/ical/Ab1"
+        )
+
+    @pytest.mark.parametrize(
+        ("feed_url", "refused_for"),
+        [
+            ("https://secure.simplepractice.com:8443/ical/feed.ics", "port"),
+            ("https://u:p@secure.simplepractice.com/ical/feed.ics", "username or password"),
+            ("https://secure.simplepractice.com/ical/feed.ics?x=1", "query or fragment"),
+            ("https://secure.simplepractice.com/ical/feed.ics#f", "query or fragment"),
+            ("https://secure.simplepractice.com/ical/../admin/feed.ics", "dot segments"),
+            ("https://secure.simplepractice.com/ical/%2e%2e/admin/feed.ics", "dot segments"),
+            ("https://secure.simplepractice.com/ical/./feed.ics", "dot segments"),
+            ("https://secure.simplepractice.com/ical//feed.ics", "empty or dot"),
+            ("https://secure.simplepractice.com/ical/", "empty or dot"),
+        ],
+    )
+    def test_anything_beyond_a_plain_path_is_refused(
+        self, service: ICalSyncService, feed_url: str, refused_for: str
+    ):
+        with pytest.raises(ValueError, match=refused_for):
+            service._validate_feed_url("simplepractice", feed_url)
 
 
 SP_FEED_URL = "https://secure.simplepractice.com/ical/abc123/feed.ics"
@@ -687,6 +717,45 @@ class TestFeedOrigin:
 
         assert result.event_count == 2
         assert _fetched(opened) == "http://fake-ical:8082/ical/abc123/feed.ics"
+
+    @pytest.mark.usefixtures("_no_origin", "_encryption_key")
+    def test_connecting_stores_the_validated_url_and_reads_it_from_then_on(
+        self, service: ICalSyncService
+    ):
+        typed = "HTTPS://Secure.SimplePractice.com/ical/abc123/feed.ics"
+        with patch("app.services.ical_sync_service.urlopen", _serving(SP_ICAL_DATA)):
+            service.configure("user1", "simplepractice", typed)
+        [config] = service._config_repo.list_by_user("user1")
+        assert decrypt_tokens(config.encrypted_feed_url) == {"feed_url": SP_FEED_URL}
+
+        with patch("app.services.ical_sync_service.urlopen", _serving(SP_ICAL_DATA)) as opened:
+            [result] = service.sync("user1", "simplepractice")
+
+        assert result.errors == []
+        assert _fetched(opened) == SP_FEED_URL
+
+    @pytest.mark.usefixtures("_fake_origin", "_encryption_key")
+    def test_a_stored_url_off_the_allowlist_is_refused_at_every_read(
+        self, service: ICalSyncService
+    ):
+        # A row from before the validated form was stored: the URL as typed.
+        service._config_repo.save(
+            ICalSyncConfig(
+                user_id="user1",
+                ehr_system="simplepractice",
+                encrypted_feed_url=encrypt_tokens(
+                    {"feed_url": "https://secure.simplepractice.com/ical/../admin/feed.ics"}
+                ),
+                connected_at=_now(),
+            )
+        )
+        with patch("app.services.ical_sync_service.urlopen", _serving(SP_ICAL_DATA)) as opened:
+            [result] = service.sync("user1", "simplepractice")
+
+        opened.assert_not_called()
+        assert result.errors == [FEED_URL_REFUSED]
+        [config] = service._config_repo.list_by_user("user1")
+        assert config.last_sync_error == FEED_URL_REFUSED
 
     @pytest.mark.usefixtures("_fake_origin")
     def test_the_allowlist_still_refuses_a_url_off_the_provider(self, service: ICalSyncService):

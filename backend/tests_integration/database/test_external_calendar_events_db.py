@@ -64,7 +64,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 # A feed whose titles name nobody on the caseload.
-_FEED = "test_feed"
+_FEED = "sessions_health"
 _ICAL = """\
 BEGIN:VCALENDAR
 VERSION:2.0
@@ -72,13 +72,13 @@ BEGIN:VEVENT
 UID:feed-event-1
 DTSTART:20990105T150000Z
 DTEND:20990105T155000Z
-SUMMARY:Client 7
+SUMMARY:SH00007
 END:VEVENT
 BEGIN:VEVENT
 UID:feed-event-2
 DTSTART:20990112T150000Z
 DTEND:20990112T155000Z
-SUMMARY:Client 7
+SUMMARY:SH00007
 END:VEVENT
 END:VCALENDAR"""
 
@@ -199,7 +199,9 @@ def _feed_service(sess: Session, user_id: str) -> ICalSyncService:
     config = ICalSyncConfig(
         user_id=user_id,
         ehr_system=_FEED,
-        encrypted_feed_url=encrypt_tokens({"feed_url": "https://feed.test/cal"}),
+        encrypted_feed_url=encrypt_tokens(
+            {"feed_url": "https://app.sessionshealth.com/calendars/test/calendar.ics"}
+        ),
         connected_at=datetime.now(UTC),
     )
     configs = MagicMock()
@@ -256,7 +258,7 @@ def test_resolving_the_client_books_the_held_events(
     with patch.object(ICalSyncService, "_fetch_feed", return_value=_ICAL):
         feed.sync(user_id)
 
-        feed.resolve_client(user_id, _FEED, "Client 7", patient.id)
+        feed.resolve_client(user_id, _FEED, "SH00007", patient.id)
         [again] = feed.sync(user_id)
 
     booked = PostgresAppointmentRepository(sess).list_by_ical_source(user_id, _FEED)

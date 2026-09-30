@@ -29,6 +29,9 @@
  * feed puts a season of sessions on the calendar and a question on each. The
  * tests run in file order and build on each other's reads, so a failure stops
  * the file rather than retrying against a practice that has already answered.
+ * The practice is emptied at every stack bring-up (the seeder truncates what
+ * these tests leave), so `docker compose up --wait` between runs is enough to
+ * run the file again; no teardown needed.
  */
 
 import { expect, test } from "../fixtures/auth"
@@ -222,7 +225,12 @@ test("an initials feed books nothing and asks about each session, one at a time"
     expect(await booked(api)).toHaveLength(before.length)
 
     // Every J.A. session is its own question, none of them answered yet.
-    const asked = (await questions(api)).filter((q) => q.title === "J.A. Appointment")
+    // Soonest first here by choice: the endpoint happens to order that way,
+    // but nothing below should rest on it.
+    const bySoonest = (a: Question, b: Question) => a.next_start_at.localeCompare(b.next_start_at)
+    const asked = (await questions(api))
+      .filter((q) => q.title === "J.A. Appointment")
+      .sort(bySoonest)
     expect(asked).toHaveLength(FEED.initialsEvents)
     for (const question of asked) {
       expect(question.outside_session_id).toBeTruthy()
@@ -246,7 +254,8 @@ test("an initials feed books nothing and asks about each session, one at a time"
     const pickers = review.getByRole("combobox", { name: "Which client is J.A. Appointment?" })
     await expect(pickers).toHaveCount(FEED.initialsEvents)
 
-    // Answer the soonest one with one client.
+    // Answer the first one listed with one client. Its checkbox and its
+    // picker are the same row: each J.A. row has exactly one of each.
     await rows.first().click()
     await pickers.first().selectOption(jordan.id)
     const answered = page.waitForResponse(
@@ -257,18 +266,24 @@ test("an initials feed books nothing and asks about each session, one at a time"
     await answered
     await expect(review).toBeHidden()
 
-    // Exactly that one session is booked, to that client.
+    // Exactly one session is booked, one of those asked about, to that client.
     const after = await booked(api)
     expect(after).toHaveLength(before.length + 1)
     const added = after.find((a) => !before.some((b) => b.id === a.id))
     expect(added?.patient_id).toBe(jordan.id)
-    expect(added?.start_at).toBe(asked[0].next_start_at)
+    expect(asked.map((q) => q.next_start_at)).toContain(added?.start_at)
 
-    // The next J.A. session is pre-filled with that client, and still asked.
-    const remaining = (await questions(api)).filter((q) => q.title === "J.A. Appointment")
-    expect(remaining).toHaveLength(FEED.initialsEvents - 1)
-    expect(remaining[0].next_start_at).toBe(asked[1].next_start_at)
-    expect(remaining[0].match.suggested_patient_id).toBe(jordan.id)
+    // Every other J.A. session is still asked, each pre-filled with that
+    // client: the next one, whichever it is, offers the last answer.
+    const remaining = (await questions(api))
+      .filter((q) => q.title === "J.A. Appointment")
+      .sort(bySoonest)
+    expect(remaining.map((q) => q.next_start_at)).toEqual(
+      asked.map((q) => q.next_start_at).filter((start) => start !== added?.start_at),
+    )
+    for (const question of remaining) {
+      expect(question.match.suggested_patient_id).toBe(jordan.id)
+    }
 
     review = await openReview(page)
     await expect(review.getByRole("checkbox", { name: "J.A. Appointment" })).toHaveCount(
@@ -297,18 +312,24 @@ test("settings say when a feed shows initials, and stop once it shows names", as
     await page.goto("/dashboard/settings/calendars")
     await expect(page.getByTestId("feed-initials-note")).toHaveText(note)
 
-    // Switch to the full-name feed through Settings.
+    // Switch to the full-name feed through Settings. Connecting is not a
+    // read, so the card has no last sync and nothing to say about names yet.
     await page.getByRole("button", { name: "Disconnect SimplePractice" }).click()
     await expect(page.getByTestId("feed-initials-note")).toHaveCount(0)
     await page.getByLabel("iCal Feed URL").fill(FULL_NAMES_FEED)
     await page.getByRole("button", { name: "Connect", exact: true }).click()
     await expect(page.getByText(/Connected! Found \d+ appointments/)).toBeVisible()
+    await expect(page.getByText("SimplePractice", { exact: true })).toBeVisible()
+    await expect(page.getByText("Last synced:")).toHaveCount(0)
+    await expect(page.getByTestId("feed-initials-note")).toHaveCount(0)
 
-    // A read of the full-name feed, and the note is gone for good.
+    // After a read of the full-name feed the card shows the read happened,
+    // and still no note: names, not "never read".
     await readFeed(api)
     expect((await connections(api))[0].title_style).toBe("names")
     await page.reload()
     await expect(page.getByText("SimplePractice", { exact: true })).toBeVisible()
+    await expect(page.getByText("Last synced:")).toBeVisible()
     await expect(page.getByTestId("feed-initials-note")).toHaveCount(0)
   } finally {
     await context.close()
