@@ -72,6 +72,7 @@ from ..services.google_calendar_service import (
 )
 from ..services.outside_sessions import (
     ACTIVE,
+    CALENDAR_NOT_KNOWN,
     ONE_SESSION_AT_A_TIME,
     OutsideSessions,
     Question,
@@ -92,6 +93,7 @@ from .scheduling import (
 if TYPE_CHECKING:
     from ..models.scheduling import SeriesMatchResponse
     from ..patients.matching import MatchContext
+    from ..repositories.external_calendar_event import ExternalCalendarEvent
     from ..services.sync_scheduler_service import SyncSchedulerService
 
 router = APIRouter(tags=["outside-sessions"], dependencies=[Depends(require_active_subscription)])
@@ -113,13 +115,40 @@ def get_external_calendar_events(
 
 
 def get_outside_sessions(
+    ctx: TenantContext = Depends(get_tenant_context),
     events: ExternalCalendarEventRepository = Depends(get_external_calendar_events),
     appointments: AppointmentRepository = Depends(get_appointment_repository),
     patients: PatientRepository = Depends(get_patient_repository),
     mappings: PatientSourceMappingRepository = Depends(get_patient_source_mapping_repository),
     zone: tzinfo = Depends(get_owner_timezone),
+    service: GoogleCalendarService = Depends(get_google_calendar_service),
 ) -> OutsideSessions:
-    return OutsideSessions(events, appointments, patients, mappings, zone=zone)
+    return OutsideSessions(
+        events,
+        appointments,
+        patients,
+        mappings,
+        zone=zone,
+        main_calendar_id=service.known_main_calendar_id(ctx.user_id),
+    )
+
+
+def _knowing_the_main_calendar(
+    outside: OutsideSessions, service: GoogleCalendarService, user_id: str
+) -> OutsideSessions:
+    """The sessions with the main calendar known, when a row still needs it.
+
+    A row from before calendars were recorded is on the main calendar, and
+    its answer is remembered under that calendar's id. Until a read has
+    learned the id, it is asked for here — once, only when such a row exists.
+    """
+    if outside.main_calendar_id is not None or not outside.has_unrecorded(user_id):
+        return outside
+    main = next((c for c in service.list_readable_calendars(user_id) if c.primary), None)
+    if main is None:
+        return outside
+    outside.claim_unrecorded(user_id, main.id)
+    return outside.with_main_calendar(main.id)
 
 
 def get_sync_scheduler(_ctx: TenantContext = Depends(get_tenant_context)) -> SyncSchedulerService:
@@ -222,6 +251,7 @@ def outside_session_questions(
     audit: AuditService = Depends(get_audit_service),
 ) -> OutsideQuestionsResponse:
     """One "who is this?" per client, or per event, with who it might be."""
+    outside = _knowing_the_main_calendar(outside, service, user.id)
     ctx = outside.context(user.id)
     seen_by = SeenBy(user_repo)
     questions = outside.questions(user.id, hidden=_not_followed(service, user.id))
@@ -301,6 +331,7 @@ def answer_outside_sessions(
     user: User = Depends(require_baa_acceptance),
     outside: OutsideSessions = Depends(get_outside_sessions),
     patient_repo: PatientRepository = Depends(get_patient_repository),
+    service: GoogleCalendarService = Depends(get_google_calendar_service),
     audit: AuditService = Depends(get_audit_service),
 ) -> OutsideAnswerResponse:
     """Say who each question is: a client, a new client, or not a client.
@@ -317,6 +348,7 @@ def answer_outside_sessions(
     is refused rather than settling every event under the identifier at once.
     An inactive client's chart is made active again when the answer asks.
     """
+    outside = _knowing_the_main_calendar(outside, service, user.id)
     ctx = outside.context(user.id)
     # Every named client is checked before anything is written.
     existing = [
@@ -338,7 +370,8 @@ def answer_outside_sessions(
             continue
         answered += 1
         if item.not_a_client:
-            rows = outside.answer(
+            rows = _answer(
+                outside,
                 user.id,
                 item.source,
                 item.source_identifier,
@@ -358,7 +391,8 @@ def answer_outside_sessions(
         patient = client or _new_client(item, patient_repo, user, http_request, audit)
         if item.reactivate and patient.status in REACTIVATABLE:
             _reactivate(patient, patient_repo, user, http_request, audit)
-        rows = outside.answer(
+        rows = _answer(
+            outside,
             user.id,
             item.source,
             item.source_identifier,
@@ -403,6 +437,27 @@ def answer_outside_sessions(
         appointments=booked,
         not_added=not_added,
     )
+
+
+def _answer(
+    outside: OutsideSessions,
+    user_id: str,
+    source: str,
+    source_identifier: str,
+    *,
+    patient_id: str | None,
+    ctx: MatchContext,
+    row_id: str | None,
+) -> list[ExternalCalendarEvent]:
+    """Answer, turning "which calendar isn't known yet" into a refusal, not a 500."""
+    try:
+        return outside.answer(
+            user_id, source, source_identifier, patient_id=patient_id, ctx=ctx, row_id=row_id
+        )
+    except ValueError as exc:
+        if str(exc) == CALENDAR_NOT_KNOWN:
+            raise BadRequestError(CALENDAR_NOT_KNOWN) from exc
+        raise
 
 
 def _reactivate(

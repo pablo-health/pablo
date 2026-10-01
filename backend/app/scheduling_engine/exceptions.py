@@ -30,6 +30,15 @@ class AppointmentConflictError(SchedulingError):
         super().__init__(message)
 
 
+class OutsideEventAlreadyBookedError(SchedulingError):
+    """The outside event this appointment would follow already has a live appointment.
+
+    One outside event is at most one live appointment in the practice; the
+    database's unique index refuses a second, and the caller links to the
+    first instead.
+    """
+
+
 class InvalidAppointmentError(SchedulingError):
     """Raised when appointment data is invalid."""
 

@@ -83,6 +83,30 @@ class TestWhereTheSurfacePoints:
 
 
 class TestWhereTheCallsGo:
+    def test_every_calendar_client_is_built_where_the_surface_points(self) -> None:
+        """Only ``_calendar`` builds a client, so none can skip the stand-in.
+
+        A call built straight from ``_build_calendar_service`` goes to Google
+        whatever the surface says: on the end-to-end stack that is a 401 from
+        the real API in the middle of a read of the stand-in.
+        """
+        import ast  # noqa: PLC0415
+        import inspect  # noqa: PLC0415
+
+        from app.services import google_calendar_service  # noqa: PLC0415
+
+        tree = ast.parse(inspect.getsource(google_calendar_service))
+        callers = {
+            function.name
+            for function in ast.walk(tree)
+            if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
+            for call in ast.walk(function)
+            if isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Name)
+            and call.func.id == "_build_calendar_service"
+        }
+        assert callers == {"_calendar"}
+
     def test_flow_uses_googles_hosts_by_default(self) -> None:
         flow = _build_flow("id", "secret", "http://localhost:3000/x", ["scope"])
         assert flow.client_config["auth_uri"] == "https://accounts.google.com/o/oauth2/auth"

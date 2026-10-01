@@ -573,6 +573,19 @@ def _with_calendar_retry[T](call: Callable[[], T]) -> T:
     )
 
 
+def _resolve_main_calendar(service: Any) -> str:
+    """The main calendar's real id, from the calendar list.
+
+    Asked of the calendar list, which the grant to read events covers. The
+    id is what a followed ``primary`` is stored as and what the import keys
+    its answers by; ``primary`` itself stands in when nothing comes back.
+    """
+    resolved: dict[str, Any] = _with_calendar_retry(
+        lambda: service.calendarList().get(calendarId=FOLLOW_MAIN_CALENDAR).execute()
+    )
+    return str(resolved.get("id") or FOLLOW_MAIN_CALENDAR)
+
+
 def _patch_event_summary(service: Any, calendar_id: str, event_id: str, summary: str) -> None:
     """Change one event's title, leaving everything else about it alone."""
     _with_calendar_retry(
@@ -1079,6 +1092,38 @@ class GoogleCalendarService:
         """Store the main calendar's real id in place of ``primary``; the read carries on."""
         self._token_repo.resolve_followed_main_calendar(user_id, calendar_id)
 
+    def known_main_calendar_id(self, user_id: str) -> str | None:
+        """The main calendar's real id, when a read has already learned it.
+
+        Known once the clinician follows the main calendar and a read has
+        resolved ``primary`` to its id; nothing is asked of the provider. A
+        clinician following another calendar, or none, gets None.
+        """
+        token_doc = self._token_repo.get(user_id)
+        if (
+            token_doc is None
+            or not token_doc.follows_main_calendar
+            or not token_doc.follow_calendar_id
+            or token_doc.follow_calendar_id == FOLLOW_MAIN_CALENDAR
+        ):
+            return None
+        return token_doc.follow_calendar_id
+
+    def main_calendar_id(self, user_id: str) -> str | None:
+        """The main calendar's real id, asked of the provider.
+
+        The import reads the main calendar, and what it remembers is keyed
+        by that calendar's id — the same id a read of a followed ``primary``
+        resolves to, so the import and following remember one calendar under
+        one name. Needs the grant to read events; None without it.
+        """
+        if not self.can_read_events(user_id):
+            return None
+        credentials = self._get_credentials(user_id)
+        if not credentials:
+            return None
+        return _resolve_main_calendar(self._calendar(credentials))
+
     def read_main_calendar_changes(self, user_id: str) -> MainCalendarRead:
         """What changed on the followed calendar since the last read.
 
@@ -1105,10 +1150,7 @@ class GoogleCalendarService:
         calendar_id = token_doc.follow_calendar_id
         main_calendar_id = None
         if calendar_id == FOLLOW_MAIN_CALENDAR:
-            resolved: dict[str, Any] = _with_calendar_retry(
-                lambda: service.calendarList().get(calendarId=FOLLOW_MAIN_CALENDAR).execute()
-            )
-            calendar_id = main_calendar_id = str(resolved.get("id") or FOLLOW_MAIN_CALENDAR)
+            calendar_id = main_calendar_id = _resolve_main_calendar(service)
             if calendar_id != FOLLOW_MAIN_CALENDAR and not (
                 self._token_repo.resolve_followed_main_calendar(user_id, calendar_id)
             ):

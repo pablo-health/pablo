@@ -22,6 +22,7 @@ from app.calendar_providers.source_identity import (
 )
 from app.main import app
 from app.models.patient import Patient
+from app.patients.identifiers import calendar_scope
 from app.patients.matching import remember_match
 from app.repositories.audit import InMemoryAuditRepository
 from app.repositories.external_calendar_event import InMemoryExternalCalendarEventRepository
@@ -265,6 +266,7 @@ class _Stack:
             calendar_source_identifier(series, "", 0, "00:00"),
             patient_id,
             self.outside.context(USER_ID),
+            scope=calendar_scope(MAIN),
             answered_title=answered_title_digest("Weekly 1:1"),
         )
 

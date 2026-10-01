@@ -37,11 +37,23 @@ answer), or when its identifier is already remembered as a client. Anything
 else stays a busy block. An identifier remembered as not a client never
 becomes a row.
 
+**Whose answer it is.** A feed's client code or name is the clinician's own:
+a Sessions Health code is numbered from their export, and two clinicians'
+clients can share a name. A calendar's series is that calendar's, keyed by the
+calendar the row was read from (``answer_scope``); a personal calendar has
+one follower, and a shared calendar's answer is shared. A row from before
+calendars were recorded came from the main calendar, so it falls back to
+the main calendar the caller says it knows (``main_calendar_id``).
+
 An open row is not an appointment: ``appointments.patient_id`` stays required,
-and nothing here writes an appointment without one. An answered row's
-appointment follows its event — see ``google_calendar_follow`` for the guards
-on moves and deletions. Nothing here ever writes to the calendar the event
-came from.
+and nothing here writes an appointment without one. **One outside event is
+at most one live appointment in the practice**: an answer that finds the
+event already booked — by a colleague following the same calendar, or by a
+request that got there first — links its row to that appointment instead of
+making another; the database's unique index is the race guard. An answered
+row's appointment follows its event — see ``google_calendar_follow`` for the
+guards on moves and deletions. Nothing here ever writes to the calendar the
+event came from.
 
 HIPAA: event titles often carry a client's name. They stay on the row and the
 chart they are confirmed to; the title an answer was given under is kept as a
@@ -60,6 +72,7 @@ from ..calendar_providers.practice_import import MAX_HORIZON_DAYS
 from ..calendar_providers.source_identity import (
     GOOGLE_CALENDAR_SOURCE,
     SERIES_PREFIX,
+    answer_scope,
     answered_title_digest,
     event_source_identifier,
     ical_feed,
@@ -70,7 +83,6 @@ from ..patients.matching import (
     MatchResult,
     PatientHint,
     match_patient,
-    normalize,
     remember_match,
     remember_not_a_client,
     same_name_charts,
@@ -81,6 +93,7 @@ from ..repositories.external_calendar_event import (
     ANSWER_OPEN,
     ExternalCalendarEvent,
 )
+from ..scheduling_engine.exceptions import OutsideEventAlreadyBookedError
 from ..scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from ..utcnow import utc_now
 from .google_calendar_service import parse_event_time
@@ -108,6 +121,10 @@ ACTIVE = "active"
 #: Refusing an answer that would settle every event under initials, or under a
 #: name two charts share, at once. Those are answered one event at a time.
 ONE_SESSION_AT_A_TIME = "Say which session this answer is for"
+
+#: Refusing to remember a calendar's answer without knowing which calendar:
+#: the row predates calendars being recorded and the main one is not known.
+CALENDAR_NOT_KNOWN = "Which calendar this session is on isn't known yet; try again shortly"
 
 #: What kind of thing an identifier is, which is what decides whether a
 #: remembered answer for it may book without asking. See the module docstring.
@@ -152,6 +169,8 @@ class _Identity:
     identifier: str
     hint: PatientHint
     kind: IdentityKind
+    scope: str | None
+    """Whose answer this is remembered as; None when the calendar isn't known."""
 
 
 class OutsideSessions:
@@ -163,6 +182,7 @@ class OutsideSessions:
         mappings: PatientSourceMappingRepository,
         *,
         zone: tzinfo = UTC,
+        main_calendar_id: str | None = None,
     ) -> None:
         self._events = events
         self._appointments = appointments
@@ -171,15 +191,41 @@ class OutsideSessions:
         # The clinician's own zone: an event without a series is remembered
         # by the weekday and time it falls on there, as the import does.
         self._zone = zone
+        # The clinician's main calendar, when the caller knows it: what a row
+        # from before calendars were recorded is on, and where that
+        # clinician's answers from before answers were the practice's belong.
+        self._main_calendar_id = main_calendar_id
+
+    @property
+    def main_calendar_id(self) -> str | None:
+        return self._main_calendar_id
 
     def in_zone(self, zone: tzinfo) -> OutsideSessions:
         """The same sessions, read in one clinician's zone."""
         return OutsideSessions(
-            self._events, self._appointments, self._patients, self._mappings, zone=zone
+            self._events,
+            self._appointments,
+            self._patients,
+            self._mappings,
+            zone=zone,
+            main_calendar_id=self._main_calendar_id,
+        )
+
+    def with_main_calendar(self, calendar_id: str | None) -> OutsideSessions:
+        """The same sessions, knowing which calendar is the clinician's main one."""
+        return OutsideSessions(
+            self._events,
+            self._appointments,
+            self._patients,
+            self._mappings,
+            zone=self._zone,
+            main_calendar_id=calendar_id,
         )
 
     def context(self, user_id: str) -> MatchContext:
-        return MatchContext.for_practice(user_id, self._patients, self._mappings)
+        return MatchContext.for_practice(
+            user_id, self._patients, self._mappings, main_calendar_id=self._main_calendar_id
+        )
 
     # --- The one booking rule ------------------------------------------------
 
@@ -264,7 +310,7 @@ class OutsideSessions:
         An answer with no title on record (from before titles were kept) is
         asked about once, pre-filled; the answer records the title.
         """
-        known = ctx.remembered(identity.mapping_source).get(normalize(identity.identifier))
+        known = _known(ctx, identity)
         if known is None or known.answered_title is None:
             return False
         return known.answered_title == answered_title_digest(row.title)
@@ -453,9 +499,7 @@ class OutsideSessions:
         did the appointment booked for it. Returns how many rows it recorded.
         """
         claimed = 0
-        for row in self._events.list_by_source(user_id, GOOGLE_CALENDAR_SOURCE):
-            if row.calendar_id is not None:
-                continue
+        for row in self._unrecorded(user_id):
             row.calendar_id = main_calendar_id
             self._events.save(row)
             claimed += 1
@@ -470,14 +514,39 @@ class OutsideSessions:
                 and appointment.outside_calendar_id is None
             ):
                 appointment.outside_calendar_id = main_calendar_id
-                self._appointments.update(appointment)
+                self._keep_unless_booked_elsewhere(appointment)
         return claimed
+
+    def has_unrecorded(self, user_id: str) -> bool:
+        """Whether any followed row still has no calendar recorded on it."""
+        return bool(self._unrecorded(user_id))
+
+    def _unrecorded(self, user_id: str) -> list[ExternalCalendarEvent]:
+        return [
+            row
+            for row in self._events.list_by_source(user_id, GOOGLE_CALENDAR_SOURCE)
+            if row.calendar_id is None
+        ]
 
     def _record_calendar(self, appointment_id: str, user_id: str, calendar_id: str) -> None:
         appointment = self._appointments.get(appointment_id, user_id)
         if appointment is not None and appointment.outside_calendar_id != calendar_id:
             appointment.outside_calendar_id = calendar_id
+            self._keep_unless_booked_elsewhere(appointment)
+
+    def _keep_unless_booked_elsewhere(self, appointment: Appointment) -> None:
+        """Save a session's new calendar, unless a colleague already books that event there.
+
+        Then this session is the second for one event, and recording the
+        calendar would break the one-live-booking rule: it is left exactly as
+        it was rather than failing the whole read, which would fail again on
+        every read after.
+        """
+        try:
             self._appointments.update(appointment)
+        except OutsideEventAlreadyBookedError:
+            # HIPAA: nothing that identifies the session or its client.
+            logger.warning("A session's event is already booked on that calendar; left as it was")
 
     def drop_open(self, user_id: str, source: str) -> None:
         """Drop every question from a source, leaving answered sessions as they are."""
@@ -677,6 +746,11 @@ class OutsideSessions:
         ctx = ctx or self.context(user_id)
         rows = self.open_rows(user_id, source, source_identifier, row_id=row_id)
         mapping_source = _mapping_source(source)
+        scope = (
+            self._identity(rows[0]).scope
+            if rows
+            else answer_scope(mapping_source, self._main_calendar_id, user_id)
+        )
         each_time = bool(rows) and self._asks_each_time(self._identity(rows[0]), ctx)
         if each_time and row_id is None:
             raise ValueError(ONE_SESSION_AT_A_TIME)
@@ -686,15 +760,20 @@ class OutsideSessions:
                     row.answer = ANSWER_NOT_A_CLIENT
                     self._events.save(row)
                 return rows
-            remember_not_a_client(mapping_source, source_identifier, ctx)
+            if scope is None:
+                raise ValueError(CALENDAR_NOT_KNOWN)
+            remember_not_a_client(mapping_source, source_identifier, ctx, scope=scope)
             for row in rows:
                 self._events.delete(user_id, row.id)
             return rows
+        if scope is None:
+            raise ValueError(CALENDAR_NOT_KNOWN)
         remember_match(
             mapping_source,
             source_identifier,
             patient_id,
             ctx,
+            scope=scope,
             # The title the question showed: the soonest row's.
             answered_title=(
                 answered_title_digest(min(rows, key=lambda r: r.start_at).title) if rows else None
@@ -712,66 +791,94 @@ class OutsideSessions:
         if feed is not None:
             from .ical_sync_service import feed_identity
 
-            named = feed_identity(feed, row.title)
-            return _Identity(feed, named.identifier, named.hint, named.kind)
+            named = feed_identity(feed, row.title, row.user_id)
+            return _Identity(feed, named.identifier, named.hint, named.kind, named.hint.scope)
         identifier = event_source_identifier(
             row.source_series_id, row.title, row.start_at, self._zone
         )
+        # The calendar the row was read from; a row from before calendars were
+        # recorded came from the main one.
+        scope = answer_scope(row.source, row.calendar_id or self._main_calendar_id, row.user_id)
         return _Identity(
             row.source,
             identifier,
-            PatientHint(full_name=row.title, source=row.source, source_identifier=identifier),
+            PatientHint(
+                full_name=row.title, source=row.source, source_identifier=identifier, scope=scope
+            ),
             "series" if identifier.startswith(SERIES_PREFIX) else "slot",
+            scope,
         )
 
     def _book(self, row: ExternalCalendarEvent) -> Appointment | None:
-        """Make the appointment an answered row follows.
+        """Make the appointment an answered row follows, or link to the one already made.
 
-        Skipped when something is already booked over it — most often the
-        same session booked in Pablo as well — so the practice isn't double
-        booked. The row is still answered, and so never asked about again.
+        One outside event is at most one live appointment in the practice.
+        A colleague following the same calendar may have answered first, so
+        the row links to their appointment rather than making another; and
+        when two requests race, the database's unique index refuses the
+        second, which then links the same way.
+
+        Skipped when something else is already booked over it — most often
+        the same session booked in Pablo as well — so the practice isn't
+        double booked. The row is still answered, and so never asked about again.
         """
         if row.patient_id is None or row.appointment_id is not None:
+            return None
+        already = self._already_booked(row)
+        if already is not None:
+            row.appointment_id = already
             return None
         if self._appointments.list_overlapping(row.user_id, row.start_at, row.end_at):
             logger.info("An answered outside session overlaps a booking; not booked twice")
             return None
         feed = ical_feed(row.source)
         now = utc_now()
-        appointment = self._appointments.create(
-            Appointment(
-                id=str(uuid.uuid4()),
-                user_id=row.user_id,
-                patient_id=row.patient_id,
-                title=APPOINTMENT_TITLE,
-                start_at=row.start_at,
-                end_at=row.end_at,
-                duration_minutes=int((row.end_at - row.start_at).total_seconds() // 60),
-                status=AppointmentStatus.CONFIRMED,
-                session_type="individual",
-                outside_source=row.source,
-                outside_event_id=row.source_event_id,
-                outside_calendar_id=row.calendar_id,
-                # A feed's own sync follows these by uid, as it does the
-                # sessions it matched itself.
-                ical_uid=row.source_event_id if feed else None,
-                ical_source=feed,
-                ical_sync_status="synced" if feed else None,
-                created_at=now,
-                updated_at=now,
+        try:
+            appointment = self._appointments.create(
+                Appointment(
+                    id=str(uuid.uuid4()),
+                    user_id=row.user_id,
+                    patient_id=row.patient_id,
+                    title=APPOINTMENT_TITLE,
+                    start_at=row.start_at,
+                    end_at=row.end_at,
+                    duration_minutes=int((row.end_at - row.start_at).total_seconds() // 60),
+                    status=AppointmentStatus.CONFIRMED,
+                    session_type="individual",
+                    outside_source=row.source,
+                    outside_event_id=row.source_event_id,
+                    outside_calendar_id=row.calendar_id,
+                    # A feed's own sync follows these by uid, as it does the
+                    # sessions it matched itself.
+                    ical_uid=row.source_event_id if feed else None,
+                    ical_source=feed,
+                    ical_sync_status="synced" if feed else None,
+                    created_at=now,
+                    updated_at=now,
+                )
             )
-        )
+        except OutsideEventAlreadyBookedError:
+            logger.info("An outside session was booked by another request first; linked to it")
+            row.appointment_id = self._already_booked(row)
+            return None
         row.appointment_id = appointment.id
         return appointment
 
+    def _already_booked(self, row: ExternalCalendarEvent) -> str | None:
+        return self._appointments.outside_appointment_id(
+            row.source, row.calendar_id, row.source_event_id, row.user_id
+        )
+
 
 def _remembered(ctx: MatchContext, identity: _Identity) -> bool:
-    return normalize(identity.identifier) in ctx.remembered(identity.mapping_source)
+    return _known(ctx, identity) is not None
 
 
 def _known(ctx: MatchContext, identity: _Identity) -> PatientSourceMapping | None:
     """The answer on record under this identifier, whatever became of its chart."""
-    return ctx.remembered(identity.mapping_source).get(normalize(identity.identifier))
+    if identity.scope is None:
+        return None
+    return ctx.lookup(identity.mapping_source, identity.scope, identity.identifier)
 
 
 def _title_only(hint: PatientHint) -> PatientHint:
@@ -796,6 +903,7 @@ def _mapping_source(source: str) -> str:
 __all__ = [
     "ACTIVE",
     "APPOINTMENT_TITLE",
+    "CALENDAR_NOT_KNOWN",
     "ONE_SESSION_AT_A_TIME",
     "Ingested",
     "OutsideSessions",

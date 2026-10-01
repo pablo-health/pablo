@@ -48,6 +48,7 @@ from ..calendar_providers.practice_import import (
 )
 from ..calendar_providers.source_identity import (
     GOOGLE_CALENDAR_SOURCE,
+    answer_scope,
     calendar_source_identifier,
 )
 from ..models import AuditAction, User
@@ -133,6 +134,9 @@ MATCH_SOURCE = GOOGLE_CALENDAR_SOURCE
 SEEN_BY_SOMEONE_ELSE = (
     "Already a client of the practice. Ask their clinician or your practice owner for access."
 )
+#: Refusing to confirm when the calendar the series are on can't be named:
+#: what is remembered is keyed by it, and reading it needs the grant.
+CALENDAR_NOT_READABLE = "Reading the calendar needs access that isn't granted"
 
 
 def get_patient_source_mapping_repository(
@@ -190,26 +194,47 @@ def series_match(result: MatchResult, ctx: MatchContext, seen_by: SeenBy) -> Ser
     return SeriesMatchResponse(possible=choices(result.visible_possible_ids))
 
 
-def _series_hint(summary: str, identifier: str | None) -> PatientHint:
-    return PatientHint(full_name=summary, source=MATCH_SOURCE, source_identifier=identifier)
+def _series_hint(summary: str, identifier: str | None, scope: str | None) -> PatientHint:
+    """What a series says about its client. ``scope`` is the main calendar's, when known."""
+    return PatientHint(
+        full_name=summary, source=MATCH_SOURCE, source_identifier=identifier, scope=scope
+    )
 
 
-def _seen_by_someone_else(item: ConfirmImportSeries, ctx: MatchContext) -> bool:
+def _seen_by_someone_else(item: ConfirmImportSeries, ctx: MatchContext, scope: str) -> bool:
     """Whether confirming this series would book or chart a colleague's client."""
     if item.patient_id:
         named = ctx.candidate(item.patient_id)
         return named is not None and not named.visible
-    result = match_patient(_series_hint(item.display_name, item.source_identifier), ctx)
+    result = match_patient(_series_hint(item.display_name, item.source_identifier, scope), ctx)
     return result.patient_id is not None and not result.visible
 
 
+def _main_calendar_scope(service: GoogleCalendarService, user_id: str) -> str | None:
+    """Whose answers a scan of the main calendar consults: that calendar's.
+
+    Asked of the provider only when no read has learned the id already.
+    None when the calendar can't be read, which a scan that just read it
+    never sees; a confirm refuses, since what it remembers is keyed by it.
+    """
+    main = service.known_main_calendar_id(user_id) or service.main_calendar_id(user_id)
+    return answer_scope(MATCH_SOURCE, main, user_id)
+
+
+def _required_main_calendar_scope(service: GoogleCalendarService, user_id: str) -> str:
+    scope = _main_calendar_scope(service, user_id)
+    if scope is None:
+        raise BadRequestError(CALENDAR_NOT_READABLE)
+    return scope
+
+
 def _to_response(
-    proposal: ImportProposal, ctx: MatchContext, seen_by: SeenBy
+    proposal: ImportProposal, ctx: MatchContext, seen_by: SeenBy, scope: str | None
 ) -> ImportProposalResponse:
     series_out: list[ProposedSeriesResponse] = []
     for series in proposal.series:
         identifier = _source_identifier(series)
-        result = match_patient(_series_hint(series.summary, identifier), ctx)
+        result = match_patient(_series_hint(series.summary, identifier, scope), ctx)
         if result.evidence == "not_a_client":
             # The therapist already said this series is not a client.
             continue
@@ -330,10 +355,17 @@ def scan_calendar_for_practice(
     except ValueError as exc:
         raise BadRequestError("Could not read the calendar with those settings") from exc
 
+    # What is remembered about this calendar is keyed by its id, which the
+    # scan learns after the read has proved the grant.
+    scope = _main_calendar_scope(service, ctx.user_id)
+    main_calendar_id = scope.removeprefix("calendar:") if scope else None
     response = _to_response(
         proposal,
-        MatchContext.for_practice(ctx.user_id, patient_repo, mappings),
+        MatchContext.for_practice(
+            ctx.user_id, patient_repo, mappings, main_calendar_id=main_calendar_id
+        ),
         SeenBy(user_repo),
+        scope,
     )
 
     # The proposal itself carries client names; the audit record carries
@@ -420,6 +452,7 @@ def confirm_calendar_import(
     user_repo: UserRepository = Depends(get_user_repository),
     audit: AuditService = Depends(get_audit_service),
     owner_tz: tzinfo = Depends(get_owner_timezone),
+    service: GoogleCalendarService = Depends(get_google_calendar_service),
 ) -> ConfirmImportResponse:
     """Create recurring appointments for the confirmed series, and any new patients.
 
@@ -449,7 +482,11 @@ def confirm_calendar_import(
     """
     now = utc_now()
     zone = configured_timezone(user_repo, ctx.user_id)
-    match_ctx = MatchContext.for_practice(ctx.user_id, patient_repo, mappings)
+    # Every answer given here is the main calendar's, under its id.
+    scope = _required_main_calendar_scope(service, ctx.user_id)
+    match_ctx = MatchContext.for_practice(
+        ctx.user_id, patient_repo, mappings, main_calendar_id=scope.removeprefix("calendar:")
+    )
 
     # Everything is checked before anything is written.
     # Compared the way they are remembered, so case or spacing can't hide a clash.
@@ -462,7 +499,7 @@ def confirm_calendar_import(
     for requested in request.series:
         item = requested.model_copy(update={"timezone": zone}) if zone else requested
         frequency = _validate(item, now)
-        if _seen_by_someone_else(item, match_ctx):
+        if _seen_by_someone_else(item, match_ctx, scope):
             raise BadRequestError(SEEN_BY_SOMEONE_ELSE)
         existing = None
         if item.patient_id:
@@ -472,7 +509,7 @@ def confirm_calendar_import(
         checked.append((item, frequency, existing))
 
     for identifier in request.not_clients:
-        remember_not_a_client(MATCH_SOURCE, identifier, match_ctx)
+        remember_not_a_client(MATCH_SOURCE, identifier, match_ctx, scope=scope)
 
     confirmed: list[ConfirmedSeriesResponse] = []
     skipped: list[str] = []
@@ -509,7 +546,7 @@ def confirm_calendar_import(
             )
 
         if item.source_identifier:
-            remember_match(MATCH_SOURCE, item.source_identifier, patient.id, match_ctx)
+            remember_match(MATCH_SOURCE, item.source_identifier, patient.id, match_ctx, scope=scope)
 
         if existing is not None and _already_in_slot(
             scheduling, ctx.user_id, patient.id, start, item.timezone, now

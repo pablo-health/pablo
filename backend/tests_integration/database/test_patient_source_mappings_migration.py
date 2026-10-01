@@ -311,9 +311,9 @@ def test_a_not_a_client_row_is_visible_to_its_clinician_and_nobody_else(
 ) -> None:
     """A row with no patient must not fall through the policy either way.
 
-    The table is owned per clinician (``user_id``), so a not-a-client answer
-    is its author's alone: a patient-access policy would hide it from them,
-    and no policy at all would show it to everyone.
+    A row from before answers were the practice's (no ``scope``) is its
+    author's alone: a patient-access policy would hide it from them, and no
+    policy at all would show it to everyone.
     """
     schema, _ = tenant_with_a_mapping
     upgrade_tenant_schema(engine, schema)
@@ -330,7 +330,7 @@ def test_a_not_a_client_row_is_visible_to_its_clinician_and_nobody_else(
                 {"s": schema},
             )
         }
-    assert "rls_user_isolation" in policies
+    assert "rls_practice_answers" in policies
 
     assert _visible_not_a_client_rows(engine, schema, _USER_ID) == 1
     assert _visible_not_a_client_rows(engine, schema, str(uuid.uuid4())) == 0

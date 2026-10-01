@@ -32,6 +32,7 @@ class PostgresGoogleCalendarTokenRepository(GoogleCalendarTokenRepository):
         doc = _row_to_doc(row)
         settings = self._session.get(GoogleCalendarSettingsRow, user_id)
         doc.follow_calendar_id = settings.follow_calendar_id if settings else None
+        doc.follows_main_calendar = bool(settings and settings.follow_main_calendar)
         return doc
 
     def list_all(self) -> list[GoogleCalendarTokenDoc]:

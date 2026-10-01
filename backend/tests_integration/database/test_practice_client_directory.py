@@ -28,6 +28,7 @@ Run: ``make test-integration``.
 
 from __future__ import annotations
 
+import base64
 import importlib.util
 import os
 import uuid
@@ -68,6 +69,27 @@ pytestmark = pytest.mark.skipif(
 _ROLE = "pablo_practice_directory"
 # The tenant revision before the one that adds the directory.
 _PARENT_REVISION = "a9c3e7d2b518"
+#: The main calendar an import's answers are remembered under.
+_MAIN = "clinician@example.test"
+_CALENDAR = f"calendar:{_MAIN}"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _calendar_key() -> Iterator[None]:
+    """The secret identifiers are digested under; the remembered answer needs it.
+
+    One key for the module: ``remembered_as_theirs`` stores a digest once,
+    and every test after it has to read that digest back under the same key.
+    """
+    from app.settings import get_settings  # noqa: PLC0415
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("GOOGLE_CALENDAR_ENCRYPTION_KEY", base64.b64encode(os.urandom(32)).decode())
+        get_settings.cache_clear()
+        yield
+    get_settings.cache_clear()
+
+
 _A = "0b5c2e81-3f6d-5a47-9c18-4e7d2a90b1c3"
 _B = "7e14a9d2-6c0b-5f83-a2d5-91b6c3e8f047"
 _FAMILY = "family@example.com"
@@ -377,7 +399,11 @@ class TestNothingElseWidens:
                 "SELECT address_line1 FROM patients",
                 "SELECT role FROM patient_clinicians",
                 "SELECT id FROM notes",
-                "SELECT id FROM appointments",
+                # The outside-event lookup reads appointment ids and their
+                # outside links, and nothing that says whose session it is.
+                "SELECT patient_id FROM appointments",
+                "SELECT title FROM appointments",
+                "SELECT user_id FROM appointments",
             ):
                 conn.execute(text(f"SET ROLE {_ROLE}"))
                 with pytest.raises(ProgrammingError, match="permission denied"):
@@ -439,7 +465,11 @@ class TestRewalkingTheRevision:
             _walk(engine, schema, "upgrade", "head")
             assert _owner(engine, schema) == _ROLE
             assert _config(engine, schema) == [f"search_path=pg_catalog, {schema}, pg_temp"]
-            assert _directory_policies(engine, schema) == {"patients", "patient_clinicians"}
+            assert _directory_policies(engine, schema) == {
+                "patients",
+                "patient_clinicians",
+                "appointments",
+            }
         finally:
             _drop(engine, schema)
 
@@ -510,6 +540,14 @@ def _repos(
     return PostgresPatientRepository(session), PostgresPatientSourceMappingRepository(session)
 
 
+def _calendar_service() -> MagicMock:
+    """A connected calendar whose main calendar is ``_MAIN``."""
+    service = MagicMock()
+    service.known_main_calendar_id.return_value = _MAIN
+    service.main_calendar_id.return_value = _MAIN
+    return service
+
+
 def _users() -> MagicMock:
     from app.models import User  # noqa: PLC0415
 
@@ -566,13 +604,20 @@ def _series_key() -> str:
 def remembered_as_theirs(engine: Engine, practice: dict[str, str]) -> None:
     """A answered the "rec-1" series as B's client: the strong evidence a block rests on."""
     from app.calendar_providers.source_identity import GOOGLE_CALENDAR_SOURCE  # noqa: PLC0415
+    from app.patients.identifiers import identifier_digest  # noqa: PLC0415
     from app.repositories.patient_source_mapping import PatientSourceMapping  # noqa: PLC0415
 
     conn, session = _tenant_session(engine, practice["schema"], _A)
     try:
         _, mappings = _repos(session)
         mappings.save(
-            PatientSourceMapping(_A, GOOGLE_CALENDAR_SOURCE, _series_key(), practice["theirs"])
+            PatientSourceMapping(
+                _CALENDAR,
+                GOOGLE_CALENDAR_SOURCE,
+                identifier_digest(_series_key()),
+                practice["theirs"],
+                _A,
+            )
         )
         # The session joined the connection's transaction; the connection commits it.
         session.flush()
@@ -643,8 +688,8 @@ class TestMatchingAColleaguesClient:
         conn, session = _tenant_session(engine, practice["schema"], _A)
         try:
             patients, mappings = _repos(session)
-            ctx = MatchContext.for_practice(_A, patients, mappings)
-            response = _to_response(_proposal("Grace Hopper"), ctx, SeenBy(_users()))
+            ctx = MatchContext.for_practice(_A, patients, mappings, main_calendar_id=_MAIN)
+            response = _to_response(_proposal("Grace Hopper"), ctx, SeenBy(_users()), _CALENDAR)
         finally:
             session.close()
             conn.close()
@@ -699,6 +744,7 @@ class TestMatchingAColleaguesClient:
                         user_repo=_users(),
                         audit=MagicMock(),
                         owner_tz=UTC,
+                        service=_calendar_service(),
                     )
         finally:
             session.close()
