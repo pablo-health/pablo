@@ -29,6 +29,7 @@ from app.calendar_providers.source_identity import (
 )
 from app.main import app
 from app.models.patient import Patient
+from app.patients.identifiers import calendar_scope, clinician_scope
 from app.patients.matching import remember_match, remember_not_a_client
 from app.repositories.external_calendar_event import (
     ANSWER_CLIENT,
@@ -65,8 +66,12 @@ INITIALS = (FIXTURES / "initials.ics").read_text()
 FULL_NAMES = (FIXTURES / "full_names.ics").read_text()
 
 USER = "user1"
+#: Where USER's answers about their own feed are remembered.
+SCOPE = clinician_scope(USER)
 SP = "simplepractice"
 FEED_SOURCE = ical_source(SP)
+#: The followed main calendar's real id.
+MAIN = "clinician@example.test"
 
 
 @pytest.fixture(autouse=True)
@@ -201,13 +206,17 @@ class TestCapturedFeeds:
         assert all(e.uid.isdigit() for e in tuesdays)
 
     def test_every_title_is_read_as_initials_or_a_name(self, feed: _Feed) -> None:
-        kinds = {feed_identity(SP, e.summary).kind for e in feed.service._parse_events(INITIALS)}
+        kinds = {
+            feed_identity(SP, e.summary, USER).kind for e in feed.service._parse_events(INITIALS)
+        }
         assert kinds == {"initials"}
-        kinds = {feed_identity(SP, e.summary).kind for e in feed.service._parse_events(FULL_NAMES)}
+        kinds = {
+            feed_identity(SP, e.summary, USER).kind for e in feed.service._parse_events(FULL_NAMES)
+        }
         assert kinds == {"name"}
-        assert feed_identity(SP, "J.A. Appointment").identifier == "J.A."
-        assert feed_identity(SP, "J.Q.A. Appointment").kind == "initials"
-        assert feed_identity(SP, "jane smith Appointment").identifier == "jane smith"
+        assert feed_identity(SP, "J.A. Appointment", USER).identifier == "J.A."
+        assert feed_identity(SP, "J.Q.A. Appointment", USER).kind == "initials"
+        assert feed_identity(SP, "jane smith Appointment", USER).identifier == "jane smith"
 
     def test_a_read_records_how_the_feed_names_clients(self, feed: _Feed) -> None:
         assert feed.sync(INITIALS).title_style == "initials"
@@ -347,7 +356,7 @@ class TestInitialsFeed:
         assert row.answer == ANSWER_NOT_A_CLIENT
         # Nothing was remembered for the title, and the next read asks the
         # rest again without bringing this one back.
-        assert four.mappings.list_by_source(USER, SP) == []
+        assert four.mappings.list_by_source(SCOPE, SP) == []
         four.sync(INITIALS)
         assert len(four.questions_titled("J.A. Appointment")) == 37
 
@@ -388,7 +397,7 @@ class TestFullNameFeed:
     def test_an_event_dismissed_after_it_was_held_loses_its_row(self, feed: _Feed) -> None:
         feed.sync(FULL_NAMES)
         assert len(feed.questions_titled("James Anderson Appointment")) == 1
-        remember_not_a_client(SP, "James Anderson", feed.outside.context(USER))
+        remember_not_a_client(SP, "James Anderson", feed.outside.context(USER), scope=SCOPE)
 
         result = feed.sync(FULL_NAMES)
 
@@ -497,7 +506,7 @@ class TestWhatStillBooks:
             )
         )
         feed.chart("p1", "Pablo", "Bear")
-        remember_match(sh, "SH00001", "p1", feed.outside.context(USER))
+        remember_match(sh, "SH00001", "p1", feed.outside.context(USER), scope=SCOPE)
 
         with patch.object(ICalSyncService, "_fetch_feed", return_value=SH_ICAL_DATA):
             [result] = feed.service.sync(USER, sh)
@@ -535,8 +544,8 @@ class TestASessionsHealthFeedShowingNames:
         names = SH_ICAL_DATA.replace("SUMMARY:SH00001", "SUMMARY:Jane Adams").replace(
             "SUMMARY:SH00002", "SUMMARY:Bo Li"
         )
-        assert feed_identity(sh, "Jane Adams").kind == "name"
-        assert feed_identity(sh, "SH00001").kind == "code"
+        assert feed_identity(sh, "Jane Adams", USER).kind == "name"
+        assert feed_identity(sh, "SH00001", USER).kind == "code"
 
         with patch.object(ICalSyncService, "_fetch_feed", return_value=names):
             [result] = feed.service.sync(USER, sh)
@@ -561,7 +570,9 @@ class _Google:
         self.appointments = InMemoryAppointmentRepository()
         self.patients = InMemoryPatientRepository()
         self.mappings = InMemoryPatientSourceMappingRepository()
-        self.outside = OutsideSessions(self.events, self.appointments, self.patients, self.mappings)
+        self.outside = OutsideSessions(
+            self.events, self.appointments, self.patients, self.mappings, main_calendar_id=MAIN
+        )
 
     def chart(self, patient_id: str, first: str, last: str, *, status: str = "active") -> None:
         self.patients.create(_patient(patient_id, first, last, status=status), USER)
@@ -573,6 +584,7 @@ class _Google:
             calendar_source_identifier(series, "", 0, "00:00"),
             patient_id,
             self.outside.context(USER),
+            scope=calendar_scope(MAIN),
             answered_title=answered_title_digest(title) if title is not None else None,
         )
 
@@ -635,7 +647,9 @@ class TestAnInactiveChart:
     def test_is_asked_whatever_the_evidence(self, feed: _Feed) -> None:
         feed.chart("jane", "Jane", "Smith", status="inactive")
         feed.chart("john", "John", "Adams", status="on_hold")
-        remember_match("simplepractice", "John Adams", "john", feed.outside.context(USER))
+        remember_match(
+            "simplepractice", "John Adams", "john", feed.outside.context(USER), scope=SCOPE
+        )
 
         feed.sync(FULL_NAMES)
 
@@ -844,7 +858,7 @@ class TestWhatIsRememberedNeverStandsInForIdentity:
     ) -> None:
         feed.chart("first", "Jane", "Smith")
         feed.chart("second", "Jane", "Smith")
-        remember_match(SP, "jane smith", "first", feed.outside.context(USER))
+        remember_match(SP, "jane smith", "first", feed.outside.context(USER), scope=SCOPE)
         feed.patients.delete("first", USER)
 
         feed.sync(FULL_NAMES)
@@ -855,7 +869,7 @@ class TestWhatIsRememberedNeverStandsInForIdentity:
 
     def test_a_name_said_to_be_no_client_is_never_booked(self, feed: _Feed) -> None:
         feed.chart("jane", "Jane", "Smith")
-        remember_not_a_client(SP, "jane smith", feed.outside.context(USER))
+        remember_not_a_client(SP, "jane smith", feed.outside.context(USER), scope=SCOPE)
         start = utc_now()
         event = ParsedEvent(
             uid="u1",
@@ -875,7 +889,7 @@ class TestWhatIsRememberedNeverStandsInForIdentity:
         feed.patients.create(_patient("theirs", "Jack", "Ames"), "colleague")
         feed.chart("john", "John", "Adams")
         feed.chart("james", "James", "Anderson")
-        remember_match(SP, "J.A.", "theirs", feed.outside.context(USER))
+        remember_match(SP, "J.A.", "theirs", feed.outside.context(USER), scope=SCOPE)
 
         feed.sync(INITIALS)
 
@@ -894,7 +908,7 @@ class TestWhatIsRememberedNeverStandsInForIdentity:
     ) -> None:
         feed.chart("john", "John", "Adams")
         feed.chart("james", "James", "Anderson")
-        remember_not_a_client(SP, "J.A.", feed.outside.context(USER))
+        remember_not_a_client(SP, "J.A.", feed.outside.context(USER), scope=SCOPE)
 
         feed.sync(INITIALS)
 

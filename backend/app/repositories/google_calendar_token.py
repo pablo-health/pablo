@@ -58,6 +58,10 @@ class GoogleCalendarTokenDoc:
     ``primary`` stands for the main calendar until a read resolves it. Read
     from the settings that outlive a connection and written through
     :meth:`GoogleCalendarTokenRepository.set_followed_calendar`."""
+    follows_main_calendar: bool = False
+    """Whether ``follow_calendar_id`` is the account's main calendar. With
+    the id resolved, that is how the main calendar's id is known without
+    asking the provider again."""
 
     last_synced_at: datetime | None = None
     connected_at: datetime | None = None
@@ -77,6 +81,7 @@ class GoogleCalendarTokenDoc:
             "sync_token": self.sync_token,
             "main_calendar_sync_token": self.main_calendar_sync_token,
             "follow_calendar_id": self.follow_calendar_id,
+            "follows_main_calendar": self.follows_main_calendar,
             "last_synced_at": self.last_synced_at,
             "connected_at": self.connected_at,
             "last_sync_error": self.last_sync_error,
@@ -97,6 +102,7 @@ class GoogleCalendarTokenDoc:
             sync_token=data.get("sync_token"),
             main_calendar_sync_token=data.get("main_calendar_sync_token"),
             follow_calendar_id=data.get("follow_calendar_id"),
+            follows_main_calendar=bool(data.get("follows_main_calendar", False)),
             last_synced_at=data.get("last_synced_at"),
             connected_at=data.get("connected_at"),
             last_sync_error=data.get("last_sync_error"),

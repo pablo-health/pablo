@@ -8,20 +8,23 @@ import base64
 import os
 from datetime import UTC, timedelta
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from app.calendar_providers.source_identity import (
     GOOGLE_CALENDAR_SOURCE,
     calendar_source_identifier,
+    ical_source,
 )
 from app.main import app
 from app.models.patient import Patient
+from app.patients.identifiers import calendar_scope
 from app.patients.matching import MatchContext, remember_match
 from app.repositories.external_calendar_event import (
     ExternalCalendarEvent,
     InMemoryExternalCalendarEventRepository,
 )
+from app.repositories.ical_sync_config import ICalSyncConfig
 from app.routes.outside_sessions import get_external_calendar_events
 from app.routes.scheduling import (
     get_appointment_repository,
@@ -31,6 +34,9 @@ from app.routes.scheduling import (
 from app.scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.services.google_calendar_service import ReadableCalendar
+from app.services.ical_sync_service import ICalSyncService
+from app.services.outside_sessions import CALENDAR_NOT_KNOWN
+from app.services.token_encryption import encrypt_tokens
 from app.settings import get_settings
 from app.utcnow import utc_now
 
@@ -77,6 +83,7 @@ class _Wired:
             "follow_calendar_id": MAIN,
         }
         self.calendar.get_sync_status.side_effect = lambda _user_id: self.status
+        self.calendar.known_main_calendar_id.return_value = MAIN
         self.calendar.list_readable_calendars.return_value = [
             ReadableCalendar(MAIN, MAIN, primary=True),
             ReadableCalendar("team@group.calendar.google.test", "Team", primary=False),
@@ -446,6 +453,7 @@ def test_a_remembered_slot_is_offered_preselected(client: TestClient, wired: _Wi
         calendar_source_identifier(None, row.title, local.weekday(), local.strftime("%H:%M")),
         "p1",
         MatchContext.for_practice(USER_ID, wired.patients, wired.mappings),
+        scope=calendar_scope(MAIN),
     )
 
     [question] = client.get("/api/calendar/outside-sessions/questions").json()["questions"]
@@ -468,3 +476,119 @@ def test_a_refused_choice_writes_nothing(client: TestClient, wired: _Wired) -> N
     unchanged = wired.appointments.get(kept.id, USER_ID)
     assert unchanged is not None
     assert unchanged.outside_calendar_id is None
+
+
+# --- Whose answer it is -----------------------------------------------------------
+
+COLLEAGUE = "colleague-456"
+SH = "sessions_health"
+SH_ICAL = """\
+BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:sh-1
+DTSTART:20990105T150000Z
+DTEND:20990105T155000Z
+SUMMARY:SH00001
+END:VEVENT
+END:VCALENDAR"""
+
+
+def _hold_feed_code(wired: _Wired, user_id: str) -> None:
+    start = (utc_now() + timedelta(days=2)).replace(minute=0, second=0, microsecond=0)
+    wired.events.save(
+        ExternalCalendarEvent(
+            id=f"row-{user_id}",
+            user_id=user_id,
+            source=ical_source(SH),
+            source_event_id="sh-1",
+            start_at=start,
+            end_at=start + timedelta(minutes=50),
+            title="SH00001",
+        )
+    )
+
+
+def _colleagues_feed(wired: _Wired) -> ICalSyncService:
+    configs = MagicMock()
+    configs.list_by_user.return_value = [
+        ICalSyncConfig(
+            user_id=COLLEAGUE,
+            ehr_system=SH,
+            encrypted_feed_url=encrypt_tokens(
+                {"feed_url": "https://app.sessionshealth.com/calendars/sh"}
+            ),
+            connected_at=utc_now(),
+        )
+    ]
+    return ICalSyncService(
+        config_repo=configs,
+        appointment_repo=wired.appointments,
+        patient_repo=wired.patients,
+        mapping_repo=wired.mappings,
+        external_events=wired.events,
+    )
+
+
+def test_a_feed_code_answered_here_books_nothing_for_a_colleague(
+    client: TestClient, wired: _Wired
+) -> None:
+    """The answer is this clinician's: the colleague's own SH00001 is still asked about."""
+    wired.client_named("p1")
+    wired.patients.grant_access("p1", COLLEAGUE)
+    wired.appointments.grant_access("p1", COLLEAGUE)
+    _hold_feed_code(wired, USER_ID)
+
+    response = client.post(
+        "/api/calendar/outside-sessions/answer",
+        json={
+            "answers": [
+                {"source": ical_source(SH), "source_identifier": "SH00001", "patient_id": "p1"}
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["appointments_created"] == 1
+
+    with patch.object(ICalSyncService, "_fetch_feed", return_value=SH_ICAL):
+        [result] = _colleagues_feed(wired).sync(COLLEAGUE, SH)
+
+    assert result.created == 0
+    assert wired.appointments.list_by_ical_source(COLLEAGUE, SH) == []
+    [asked] = wired.events.list_open(COLLEAGUE)
+    assert asked.source == ical_source(SH)
+
+
+def test_a_row_from_before_calendars_were_recorded_is_answered_under_the_main_one(
+    client: TestClient, wired: _Wired
+) -> None:
+    """Nothing has learned the main calendar's id yet, so it is asked for once."""
+    wired.calendar.known_main_calendar_id.return_value = None
+    wired.client_named("p1")
+    wired.hold("e1", 2)
+
+    response = _answer_series(client, patient_id="p1")
+
+    assert response.status_code == 200, response.text
+    wired.calendar.list_readable_calendars.assert_called_once_with(USER_ID)
+    [stored] = wired.mappings.list_by_source(calendar_scope(MAIN), GOOGLE_CALENDAR_SOURCE)
+    assert stored.patient_id == "p1"
+    row = wired.events.get(USER_ID, GOOGLE_CALENDAR_SOURCE, "e1")
+    assert row is not None
+    assert row.calendar_id == MAIN
+
+
+def test_an_answer_is_refused_while_the_calendar_is_not_known(
+    client: TestClient, wired: _Wired
+) -> None:
+    wired.calendar.known_main_calendar_id.return_value = None
+    wired.calendar.list_readable_calendars.return_value = []
+    wired.client_named("p1")
+    wired.hold("e1", 2)
+
+    response = _answer_series(client, patient_id="p1")
+
+    assert response.status_code == 400
+    assert response.json()["error"]["message"] == CALENDAR_NOT_KNOWN
+    assert wired.mappings.list_by_source(calendar_scope(MAIN), GOOGLE_CALENDAR_SOURCE) == []
+    assert len(wired.events.list_open(USER_ID)) == 1

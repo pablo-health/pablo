@@ -82,6 +82,23 @@ CREATE FUNCTION __TENANT_SCHEMA__.practice_client_directory() RETURNS TABLE(id u
 
 
 
+CREATE FUNCTION __TENANT_SCHEMA__.practice_outside_appointment(p_source text, p_calendar_id text, p_event_id text) RETURNS uuid
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $$
+        SELECT a.id
+        FROM __TENANT_SCHEMA__.appointments a
+        WHERE a.outside_source = p_source
+          AND a.outside_calendar_id = p_calendar_id
+          AND a.outside_event_id = p_event_id
+          AND a.status <> 'cancelled'
+          AND coalesce(current_setting('app.current_user_id', true), '') <> ''
+        ORDER BY a.created_at, a.id
+        LIMIT 1
+    $$;
+
+
+
 
 CREATE TABLE __TENANT_SCHEMA__.alembic_version (
     version_num character varying(32) NOT NULL
@@ -989,6 +1006,9 @@ CREATE TABLE __TENANT_SCHEMA__.patient_source_mappings (
     created_at timestamp with time zone NOT NULL,
     answer text DEFAULT 'client'::text NOT NULL,
     answered_title text,
+    scope text,
+    answered_by_user_id uuid,
+    session_clinician_user_id uuid,
     CONSTRAINT ck_patient_source_mappings_answer CHECK ((answer = ANY (ARRAY['client'::text, 'not_a_client'::text]))),
     CONSTRAINT ck_patient_source_mappings_patient_when_client CHECK (((answer = 'client'::text) = (patient_id IS NOT NULL)))
 );
@@ -2293,6 +2313,14 @@ CREATE INDEX ix_therapy_sessions_user_id ON __TENANT_SCHEMA__.therapy_sessions U
 
 
 
+CREATE UNIQUE INDEX uq_appointments_outside_event_per_calendar ON __TENANT_SCHEMA__.appointments USING btree (outside_source, outside_calendar_id, outside_event_id) WHERE (((status)::text <> 'cancelled'::text) AND (outside_calendar_id IS NOT NULL));
+
+
+
+CREATE UNIQUE INDEX uq_appointments_outside_event_per_clinician ON __TENANT_SCHEMA__.appointments USING btree (outside_source, user_id, outside_event_id) WHERE (((status)::text <> 'cancelled'::text) AND (outside_calendar_id IS NULL) AND (outside_event_id IS NOT NULL));
+
+
+
 CREATE UNIQUE INDEX uq_appointments_user_start_active ON __TENANT_SCHEMA__.appointments USING btree (user_id, start_at) WHERE ((status)::text <> 'cancelled'::text);
 
 
@@ -2326,6 +2354,10 @@ CREATE UNIQUE INDEX uq_patient_intake_responses_live_draft ON __TENANT_SCHEMA__.
 
 
 CREATE UNIQUE INDEX uq_patient_intake_signatures_live ON __TENANT_SCHEMA__.patient_intake_signatures USING btree (assignment_id, item_id, signer_role) WHERE (superseded_at IS NULL);
+
+
+
+CREATE UNIQUE INDEX uq_patient_source_mappings_scoped ON __TENANT_SCHEMA__.patient_source_mappings USING btree (scope, source, source_identifier) WHERE (scope IS NOT NULL);
 
 
 

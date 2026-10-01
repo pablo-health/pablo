@@ -73,7 +73,7 @@ HIPAA requires that only authorized individuals can access PHI.
 
 ### Database roles
 
-Row-level security shows each clinician only the clients they hold a grant on. One narrow read sees past that: when a calendar or a feed names a client, Pablo checks the whole practice so a colleague's client is recognised instead of getting a second chart. That read is a database function owned by a role named `pablo_practice_directory`, which cannot log in, cannot bypass row-level security, and may read only a client's id, name, date of birth and email, and who sees them.
+Row-level security shows each clinician only the clients they hold a grant on. Two narrow reads see past that. When a calendar or a feed names a client, Pablo checks the whole practice so a colleague's client is recognised instead of getting a second chart. And when two clinicians follow one shared calendar, the second to confirm a session finds the appointment the first already made instead of booking it twice. Both reads are database functions owned by a role named `pablo_practice_directory`, which cannot log in, cannot bypass row-level security, and may read only a client's id, name, date of birth and email, who sees them, and which appointment follows which outside event.
 
 Migrations create the role when the database user running them has `CREATEROLE`, and stop with an error naming this section when it doesn't. PostgreSQL 16 or later is required. To create it by hand, run this as an administrator, replacing `pablo` with the user Pablo connects as, then run the migrations again:
 
