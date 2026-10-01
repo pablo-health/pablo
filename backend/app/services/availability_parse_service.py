@@ -200,7 +200,8 @@ _NO_APPOINTMENT_TYPES_PROMPT = (
     "applies to every kind of appointment: leave appointment_type null on "
     "every proposal. If the sentence names a kind of appointment, leave "
     'proposals empty and refuse with refusal_reason "unknown_appointment_'
-    'type".\n'
+    'type", setting unknown_appointment_type to that kind in the singular '
+    '("intakes" -> "Intake").\n'
 )
 
 _APPOINTMENT_TYPES_PROMPT = (
@@ -211,11 +212,21 @@ _APPOINTMENT_TYPES_PROMPT = (
     "appointment_type to that name copied exactly as spelled above. A "
     "sentence naming no kind of appointment leaves appointment_type null, "
     "which applies the rule to every kind -- the ordinary case.\n\n"
+    "The everyday words for a visit -- session, appointment, meeting, "
+    "visit -- name no kind on their own, even when one of "
+    'the types above shares the word. "No sessions on Fridays" and "at '
+    'most six appointments a day" apply to every kind, so '
+    "appointment_type stays null. Scope a rule to a type only when "
+    'the sentence singles that kind out from the others ("intakes", '
+    '"consultations", "regular sessions but not intakes"). Leaving a rule '
+    "unscoped by mistake is safe; scoping one by mistake leaves every other "
+    "kind of appointment unblocked.\n\n"
     "Never write an appointment_type that is not on the list. If the "
     "sentence names a kind of appointment this practice does not have, "
     'leave proposals empty and refuse with refusal_reason "unknown_'
     'appointment_type", naming in could_not_parse the kind you could not '
-    "find.\n\n"
+    "find and setting unknown_appointment_type to that kind in the "
+    'singular ("groups" -> "Group").\n\n'
     "Set type_exclusive to true only on a working_hours proposal that is "
     "scoped to a type AND whose sentence hands that window to that type "
     'alone ("Tuesday afternoons are for intakes only"): no other kind of '
@@ -227,10 +238,13 @@ _APPOINTMENT_TYPES_PROMPT = (
     'either as a narrowing ("intakes happen on Tuesdays and nowhere else") '
     'or as a claim ("Tuesdays are for intakes and nothing else"), and "two '
     'intakes a week on Tuesdays" reads either as one weekly cap or as a '
-    "weekly cap plus Tuesday hours. When both readings are live, propose "
-    "the reading you think likeliest, give every proposal a confidence of "
-    "0.3 or below, and write could_not_parse as a short question naming "
-    "the two readings, so the therapist is the one who decides.\n"
+    "weekly cap plus Tuesday hours. When both readings are live, leave "
+    'proposals empty, refuse with refusal_reason "ambiguous", write '
+    "could_not_parse as a short question naming the two readings, and put "
+    "both readings in readings: exactly two entries, each with a short "
+    "label the therapist would recognise as their meaning and the complete "
+    "proposals for that reading, at the confidence you have in each rule "
+    "given that reading. The therapist picks one; you do not.\n"
 )
 
 
@@ -290,8 +304,27 @@ _RESPONSE_SCHEMA: dict[str, Any] = {
             "enum": [*REFUSAL_REASONS],
         },
         "exclusive": {"type": "boolean"},
+        "unknown_appointment_type": {"type": "string", "nullable": True},
     },
     "required": ["proposals"],
+}
+
+# Two readings of one sentence, offered for the therapist to choose between.
+# Each reading's proposals have exactly the shape of a top-level proposal.
+_RESPONSE_SCHEMA["properties"]["readings"] = {
+    "type": "array",
+    "nullable": True,
+    "items": {
+        "type": "object",
+        "properties": {
+            "label": {"type": "string"},
+            "proposals": {
+                "type": "array",
+                "items": _RESPONSE_SCHEMA["properties"]["proposals"]["items"],
+            },
+        },
+        "required": ["label", "proposals"],
+    },
 }
 
 
@@ -315,6 +348,15 @@ class ProposedRule:
 
 
 @dataclass(frozen=True)
+class ParseReading:
+    """One of two meanings a sentence supports, with the rules that meaning
+    would store. Offered for the therapist to choose; never applied unasked."""
+
+    label: str
+    proposals: list[ProposedRule]
+
+
+@dataclass(frozen=True)
 class AvailabilityParseResult:
     """Result of parsing one natural-language availability sentence."""
 
@@ -327,9 +369,20 @@ class AvailabilityParseResult:
     ``could_not_parse`` says it in the therapist's words; this says it in
     a form a caller can branch on. ``None`` on a successful parse, and on
     a refusal whose reason the model didn't name."""
+    unknown_appointment_type: str | None = None
+    """On an ``unknown_appointment_type`` refusal, the kind of appointment
+    the sentence named, so a caller can offer to create it. Only ever a
+    name to show the therapist -- never bound to a rule."""
+    readings: list[ParseReading] = field(default_factory=list)
+    """On an ``ambiguous`` refusal between two meanings, both meanings,
+    each fully validated, for the therapist to pick from. Empty otherwise,
+    and always empty alongside proposals."""
 
 
 _MAX_DAY_OF_WEEK = 6
+
+#: An ambiguous sentence is offered as exactly this many readings.
+_READING_COUNT = 2
 
 
 def _is_valid_day(value: object) -> bool:
@@ -618,6 +671,7 @@ class AvailabilityRuleParseService:
                 return AvailabilityParseResult(
                     could_not_parse=_UNKNOWN_TYPE_COULD_NOT_PARSE.format(name=exc.name),
                     refusal_reason="unknown_appointment_type",
+                    unknown_appointment_type=exc.name,
                 )
             except _DateIntentUnresolvableError as exc:
                 # Unlike a malformed proposal, an unresolvable-but-well-formed
@@ -659,9 +713,21 @@ class AvailabilityRuleParseService:
             )
 
         if not proposals:
+            unknown_type: str | None = None
+            if refusal_reason == "unknown_appointment_type":
+                named = data.get("unknown_appointment_type")
+                if isinstance(named, str) and named.strip():
+                    unknown_type = " ".join(named.split())[:100]
+            readings = (
+                self._coerce_readings(data, reference_date, type_index, floor)
+                if refusal_reason == "ambiguous"
+                else []
+            )
             return AvailabilityParseResult(
                 could_not_parse=could_not_parse or _DEFAULT_COULD_NOT_PARSE,
                 refusal_reason=refusal_reason,
+                unknown_appointment_type=unknown_type,
+                readings=readings,
             )
 
         return AvailabilityParseResult(
@@ -669,6 +735,59 @@ class AvailabilityRuleParseService:
             could_not_parse=None,
             exclusive=bool(data.get("exclusive", False)),
         )
+
+    def _coerce_readings(
+        self,
+        data: dict[str, Any],
+        reference_date: date | None,
+        type_index: dict[str, str],
+        floor: float,
+    ) -> list[ParseReading]:
+        """Both meanings of an ambiguous sentence, or none at all.
+
+        Exactly two, each labelled, each with at least one proposal, and
+        every proposal valid and confident under its own reading. Anything
+        less and the therapist gets the question alone, as before: a choice
+        with one broken side is not a choice worth offering.
+        """
+        raw_readings = data.get("readings")
+        if not isinstance(raw_readings, list) or len(raw_readings) != _READING_COUNT:
+            return []
+        readings = [
+            self._coerce_reading(raw, reference_date, type_index, floor) for raw in raw_readings
+        ]
+        return [r for r in readings if r is not None] if all(readings) else []
+
+    def _coerce_reading(
+        self,
+        raw: object,
+        reference_date: date | None,
+        type_index: dict[str, str],
+        floor: float,
+    ) -> ParseReading | None:
+        """One labelled reading, or None if any part of it is unusable."""
+        if not isinstance(raw, dict):
+            return None
+        label = raw.get("label")
+        raw_proposals = raw.get("proposals")
+        if not isinstance(label, str) or not label.strip():
+            return None
+        if not isinstance(raw_proposals, list) or not raw_proposals:
+            return None
+        proposals: list[ProposedRule] = []
+        for raw_proposal in raw_proposals:
+            try:
+                proposal = (
+                    self._coerce_one(raw_proposal, reference_date, type_index)
+                    if isinstance(raw_proposal, dict)
+                    else None
+                )
+            except (_UnknownAppointmentTypeError, _DateIntentUnresolvableError):
+                return None
+            if proposal is None or proposal.confidence < floor:
+                return None
+            proposals.append(proposal)
+        return ParseReading(label=" ".join(label.split())[:120], proposals=proposals)
 
     def _confidence_floor(self) -> float:
         return get_settings().availability_parse_confidence_floor

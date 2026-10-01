@@ -791,3 +791,180 @@ class TestMaxPerWeek:
 
         assert result.proposals == []
         assert result.could_not_parse
+
+
+class TestMissingTypeName:
+    """An unknown-type refusal names the kind, so the caller can offer it."""
+
+    def test_the_server_side_refusal_carries_the_name(self) -> None:
+        service = _fake_service(TestAppointmentTypeBinding._response("Group"))
+
+        result = service.parse(
+            "only two groups a week",
+            reference_date=REFERENCE_DATE,
+            appointment_types=PRACTICE_TYPES,
+        )
+
+        assert result.refusal_reason == "unknown_appointment_type"
+        assert result.unknown_appointment_type == "Group"
+
+    def test_the_model_s_own_refusal_carries_the_name(self) -> None:
+        service = _fake_service(
+            {
+                "proposals": [],
+                "could_not_parse": "This practice has no group appointments.",
+                "refusal_reason": "unknown_appointment_type",
+                "unknown_appointment_type": "  Group  ",
+            }
+        )
+
+        result = service.parse("only two groups a week", reference_date=REFERENCE_DATE)
+
+        assert result.unknown_appointment_type == "Group"
+
+    def test_any_other_refusal_names_no_type(self) -> None:
+        service = _fake_service(
+            {
+                "proposals": [],
+                "could_not_parse": "Not sure.",
+                "refusal_reason": "ambiguous",
+                "unknown_appointment_type": "Group",
+            }
+        )
+
+        result = service.parse("hmm", reference_date=REFERENCE_DATE)
+
+        assert result.unknown_appointment_type is None
+
+
+def _intake_cap(confidence: float = 0.95, appointment_type: str = "Intake") -> dict[str, Any]:
+    return {
+        "rule_type": "max_per_week",
+        "enforcement": "hard",
+        "max": 2,
+        "appointment_type": appointment_type,
+        "human_summary": "Two intakes a week.",
+        "confidence": confidence,
+    }
+
+
+def _intake_tuesdays() -> dict[str, Any]:
+    return {
+        "rule_type": "working_hours",
+        "enforcement": "hard",
+        "day_of_week": 1,
+        "start": "09:00",
+        "end": "17:00",
+        "appointment_type": "Intake",
+        "human_summary": "Intakes on Tuesdays, 9 to 5.",
+        "confidence": 0.9,
+    }
+
+
+def _ambiguous(readings: object, refusal_reason: str = "ambiguous") -> dict[str, Any]:
+    return {
+        "proposals": [],
+        "could_not_parse": "A weekly cap, or a cap plus Tuesday hours?",
+        "refusal_reason": refusal_reason,
+        "readings": readings,
+    }
+
+
+class TestTwoReadings:
+    """An ambiguous sentence is offered as both of its meanings, or as the
+    question alone -- never as one meaning picked for the therapist."""
+
+    def test_both_readings_reach_the_caller_validated(self) -> None:
+        service = _fake_service(
+            _ambiguous(
+                [
+                    {"label": "Just a weekly cap", "proposals": [_intake_cap()]},
+                    {
+                        "label": "A cap, and intakes only on Tuesdays",
+                        "proposals": [_intake_cap(), _intake_tuesdays()],
+                    },
+                ]
+            )
+        )
+
+        result = service.parse(
+            "two intakes a week on Tuesdays",
+            reference_date=REFERENCE_DATE,
+            appointment_types=PRACTICE_TYPES,
+        )
+
+        assert result.proposals == []
+        assert result.refusal_reason == "ambiguous"
+        assert [r.label for r in result.readings] == [
+            "Just a weekly cap",
+            "A cap, and intakes only on Tuesdays",
+        ]
+        assert [len(r.proposals) for r in result.readings] == [1, 2]
+        assert all(
+            p.appointment_type_id == "type-intake" for r in result.readings for p in r.proposals
+        )
+
+    @pytest.mark.parametrize(
+        "readings",
+        [
+            pytest.param(
+                [{"label": "Just a weekly cap", "proposals": [_intake_cap()]}], id="one-reading"
+            ),
+            pytest.param(
+                [
+                    {"label": "Just a weekly cap", "proposals": [_intake_cap()]},
+                    {"label": "Nothing", "proposals": []},
+                ],
+                id="empty-reading",
+            ),
+            pytest.param(
+                [
+                    {"label": "Just a weekly cap", "proposals": [_intake_cap()]},
+                    {"label": "Groups", "proposals": [_intake_cap(appointment_type="Group")]},
+                ],
+                id="unknown-type-in-a-reading",
+            ),
+            pytest.param(
+                [
+                    {"label": "Just a weekly cap", "proposals": [_intake_cap()]},
+                    {"label": "Unsure", "proposals": [_intake_cap(confidence=0.2)]},
+                ],
+                id="unsure-reading",
+            ),
+            pytest.param(
+                [
+                    {"label": "Just a weekly cap", "proposals": [_intake_cap()]},
+                    {"label": " ", "proposals": [_intake_cap()]},
+                ],
+                id="blank-label",
+            ),
+        ],
+    )
+    def test_a_broken_choice_falls_back_to_the_question(self, readings: object) -> None:
+        service = _fake_service(_ambiguous(readings))
+
+        result = service.parse(
+            "two intakes a week on Tuesdays",
+            reference_date=REFERENCE_DATE,
+            appointment_types=PRACTICE_TYPES,
+        )
+
+        assert result.readings == []
+        assert result.could_not_parse == "A weekly cap, or a cap plus Tuesday hours?"
+
+    def test_readings_are_ignored_on_a_non_ambiguous_refusal(self) -> None:
+        service = _fake_service(
+            _ambiguous(
+                [
+                    {"label": "A", "proposals": [_intake_cap()]},
+                    {"label": "B", "proposals": [_intake_cap()]},
+                ],
+                refusal_reason="out_of_scope",
+            )
+        )
+
+        result = service.parse(
+            "two intakes a week", reference_date=REFERENCE_DATE, appointment_types=PRACTICE_TYPES
+        )
+
+        assert result.readings == []

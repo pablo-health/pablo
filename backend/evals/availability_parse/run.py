@@ -155,7 +155,7 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
-        results.append(_grade(case, produced, result.exclusive))
+        results.append(_grade(case, produced, result.exclusive, result))
         if not args.json:
             _print_case(results[-1])
 
@@ -168,17 +168,39 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _grade(
-    case: EvalCase, produced: list[ExpectedRule] | None, produced_exclusive: bool
+    case: EvalCase,
+    produced: list[ExpectedRule] | None,
+    produced_exclusive: bool,
+    result: AvailabilityParseResult | None = None,
 ) -> dict[str, Any]:
     hard: list[str] = []
     soft: list[str] = []
     refused_parseable = False
+    offered_readings = len(result.readings) if result is not None else 0
+    # Whether the parser named the expected missing type, as a yes/no. The
+    # model's own wording stays out of the report: it is free text, and the
+    # report is printed.
+    named_expected_type: bool | None = None
+    if case.expected_unknown_type is not None:
+        named = (result.unknown_appointment_type if result is not None else None) or ""
+        want = case.expected_unknown_type.casefold().split()[0]
+        named_expected_type = want in named.casefold()
 
     if case.expected is None:
         if produced:
             hard.append(
                 f"must refuse ({case.category}) but produced {[r.rule_type for r in produced]}"
             )
+        else:
+            # Helpfulness of a correct refusal: soft, never gated. A refusal
+            # that asks without offering the choice, or refuses a missing
+            # type without naming it, is still safe.
+            if case.expects_two_readings and offered_readings != 2:
+                soft.append(f"refused, but offered {offered_readings} readings, not 2")
+            if named_expected_type is False:
+                soft.append(
+                    f"refused, but did not name the missing type {case.expected_unknown_type!r}"
+                )
     elif not produced:
         refused_parseable = True
     else:
@@ -207,6 +229,8 @@ def _grade(
         "must_refuse": case.expected is None,
         "produced": [r.rule_type for r in produced] if produced else [],
         "refused_parseable_case": refused_parseable,
+        "offered_readings": offered_readings,
+        "named_expected_type": named_expected_type,
         "hard_failures": hard,
         "soft_findings": soft,
         "clean": not hard and not soft,

@@ -66,6 +66,31 @@ describe("WorkingHoursGrid", () => {
     })
   })
 
+  it("leaves a window scoped to one appointment type out of the general hours", async () => {
+    rulesData = [
+      makeRule({
+        id: "intake-tue",
+        params: { day_of_week: 1, start: "13:00", end: "17:00" },
+        appointment_type_id: "type-intake",
+      }),
+    ]
+    const user = userEvent.setup()
+    render(<WorkingHoursGrid />)
+
+    // Tuesday reads as off: the intake window is not the practice's hours.
+    const tuesday = screen.getByRole("switch", { name: "Tuesday on" })
+    expect(tuesday).toHaveAttribute("aria-checked", "false")
+
+    // Turning Tuesday on adds general hours; it never touches the intake rule.
+    await user.click(tuesday)
+    expect(mutateDelete).not.toHaveBeenCalled()
+    expect(mutateCreate).toHaveBeenCalledWith({
+      rule_type: "working_hours",
+      enforcement: "hard",
+      params: { day_of_week: 1, start: "09:00", end: "17:00" },
+    })
+  })
+
   it("deletes the day's rule when toggled off", async () => {
     rulesData = [makeRule({ id: "mon", params: { day_of_week: 0, start: "09:00", end: "17:00" } })]
     const user = userEvent.setup()

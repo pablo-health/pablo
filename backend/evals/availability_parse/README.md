@@ -18,10 +18,16 @@ the `params` keys the checkers in
 `app/scheduling_engine/services/availability.py` actually read — so
 nothing in the corpus asks for a rule the engine can't evaluate.
 
-The corpus is 82 cases: the original 14, a 60-case expansion drafted in
+The corpus is 84 cases: the original 14, a 60-case expansion drafted in
 two independent passes and merged by arbitration (see "On this expansion"
-below), and 8 cases covering appointment types and weekly caps. 46 are
-parseable, 36 must refuse (56.1% / 43.9%).
+below), and 10 cases covering appointment types and weekly caps. 46 are
+parseable, 38 must refuse (54.8% / 45.2%).
+
+Two soft checks grade how helpful a correct refusal is, never gated: an
+ambiguous case marked `expects_two_readings` should come back with both
+readings for the therapist to pick from, and an unknown-type case with
+`expected_unknown_type` should name the missing kind so the screen can
+offer to add it.
 
 ### Case matrix
 
@@ -444,6 +450,6 @@ scripts/run-availability-parse-eval.sh --case friday
 scripts/run-availability-parse-eval.sh --json
 ```
 
-Every case is a real model call, so a full run over all 82 cases takes
+Every case is a real model call, so a full run over all 84 cases takes
 roughly two minutes and costs what seventy-four flash-tier calls cost.
 `--list` needs neither credentials nor a project.

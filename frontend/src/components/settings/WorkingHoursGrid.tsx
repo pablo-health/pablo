@@ -19,7 +19,7 @@ import {
   useDeleteAvailabilityRule,
 } from "@/hooks/useAvailability"
 import { usePreferences } from "@/hooks/usePreferences"
-import type { AvailabilityRule } from "@/types/availability"
+import { isPracticeWide, type AvailabilityRule } from "@/types/availability"
 import { deriveWorkingHoursWindow, formatClockTime, timezoneAbbreviation } from "@/lib/workingHours"
 import { Toggle } from "./ui"
 import { cn } from "@/lib/utils"
@@ -74,7 +74,11 @@ export function WorkingHoursGrid() {
   const deleteMutation = useDeleteAvailabilityRule()
 
   const rules = data?.data ?? []
-  const workingHoursRules = rules.filter((r) => r.rule_type === "working_hours")
+  // Practice-wide hours only: a window scoped to one appointment type is
+  // listed on its own card, and toggling a day here must never delete it.
+  const workingHoursRules = rules.filter(
+    (r) => r.rule_type === "working_hours" && isPracticeWide(r)
+  )
   const ruleByDay: DayRuleMap = {}
   for (const rule of workingHoursRules) {
     const day = Number(rule.params.day_of_week)

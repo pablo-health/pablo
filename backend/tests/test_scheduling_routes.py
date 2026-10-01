@@ -18,6 +18,7 @@ from app.models.session import TherapySession, Transcript
 from app.notes import get_note_type_authorizer
 from app.routes.scheduling import (
     _get_session_service,
+    get_appointment_type_repository,
     get_availability_rule_parse_service,
     get_availability_rule_repository,
     get_google_calendar_service,
@@ -29,6 +30,9 @@ from app.routes.scheduling import (
 from app.scheduling_engine.models.appointment import Appointment
 from app.scheduling_engine.models.availability import AvailabilityRule, RuleType
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
+from app.scheduling_engine.repositories.appointment_type import (
+    InMemoryAppointmentTypeRepository,
+)
 from app.scheduling_engine.repositories.availability_rule import (
     InMemoryAvailabilityRuleRepository,
 )
@@ -2121,3 +2125,84 @@ def test_slots_honour_a_claimed_window(write_client: TestClient) -> None:
     assert not set(intake) & set(follow_up)
     # No type named lists against practice-wide rules and loses the claim.
     assert starts() == follow_up
+
+
+def test_parse_seeds_the_default_types_so_a_first_sentence_can_name_one(
+    write_client: TestClient,
+) -> None:
+    """A practice whose first stop is its hours has never listed its types,
+    so none are seeded yet. The parse route seeds them the same way the type
+    list does, which is what lets "only two intakes a week" bind to Intake."""
+    type_repo = InMemoryAppointmentTypeRepository()
+    app.dependency_overrides[get_appointment_type_repository] = lambda: type_repo
+    _wire_parse_service(
+        {
+            "proposals": [
+                {
+                    "rule_type": "max_per_week",
+                    "enforcement": "hard",
+                    "max": 2,
+                    "appointment_type": "Intake",
+                    "human_summary": "Two intakes a week.",
+                    "confidence": 0.95,
+                }
+            ],
+            "could_not_parse": None,
+            "exclusive": False,
+        }
+    )
+    assert type_repo.list_by_user("test-user-123") == []
+
+    response = write_client.post(
+        "/api/availability/rules/parse", json={"text": "only two intakes a week"}
+    )
+
+    assert response.status_code == 200, response.text
+    seeded = {t.name: t.id for t in type_repo.list_by_user("test-user-123")}
+    assert "Intake" in seeded
+    assert response.json()["proposals"][0]["appointment_type_id"] == seeded["Intake"]
+
+
+def test_parse_passes_both_readings_through(write_client: TestClient) -> None:
+    _wire_parse_service(
+        {
+            "proposals": [],
+            "could_not_parse": "A weekly cap, or no Tuesdays?",
+            "refusal_reason": "ambiguous",
+            "readings": [
+                {
+                    "label": "Just a weekly cap",
+                    "proposals": [
+                        {
+                            "rule_type": "max_per_week",
+                            "enforcement": "hard",
+                            "max": 2,
+                            "human_summary": "Two a week.",
+                            "confidence": 0.9,
+                        }
+                    ],
+                },
+                {
+                    "label": "No Tuesdays at all",
+                    "proposals": [
+                        {
+                            "rule_type": "block_day_of_week",
+                            "enforcement": "hard",
+                            "day_of_week": 1,
+                            "human_summary": "No Tuesdays.",
+                            "confidence": 0.9,
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+
+    response = write_client.post("/api/availability/rules/parse", json={"text": "hmm"})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["proposals"] == []
+    assert [r["label"] for r in body["readings"]] == ["Just a weekly cap", "No Tuesdays at all"]
+    assert body["readings"][1]["proposals"][0]["params"] == {"day_of_week": 1}
+    assert body["unknown_appointment_type"] is None
