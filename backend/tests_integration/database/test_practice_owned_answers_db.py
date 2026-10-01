@@ -111,8 +111,14 @@ def _set_rls(conn, schema: str, table: str, *, on: bool) -> None:
 
 
 def _past_rls(engine: Engine, schema: str, table: str, sql: str, **params):
-    """Read or write past the row policy — the suite's role is NOBYPASSRLS."""
+    """Read or write past the row policy — the suite's role is NOBYPASSRLS.
+
+    Turning the policy off is an ALTER TABLE, so it waits for every open
+    transaction that has touched the table. A test that left one open would
+    wait on itself forever; the lock timeout makes that a failure instead.
+    """
     with engine.begin() as conn:
+        conn.execute(text("SET LOCAL lock_timeout = '10s'"))
         conn.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
         _set_rls(conn, schema, table, on=False)
         try:
@@ -249,6 +255,24 @@ def _all_answers(engine: Engine, schema: str) -> list[tuple]:
     ]
 
 
+def _answers_at_parent(engine: Engine, schema: str) -> list[tuple]:
+    """The answers as the parent revision can read them: no scope column yet.
+
+    Shaped like the first seven columns of :func:`_all_answers`, with the
+    scope as NULL, so the two compare directly.
+    """
+    return [
+        tuple(r)
+        for r in _past_rls(
+            engine,
+            schema,
+            "patient_source_mappings",
+            "SELECT doc_id, NULL, source, source_identifier, patient_id::text, answer, "
+            "user_id::text FROM patient_source_mappings ORDER BY doc_id",
+        )
+    ]
+
+
 def _session(engine: Engine, schema: str, user_id: str) -> Session:
     sess = Session(bind=engine)
     set_tenant_schema(sess, schema)
@@ -313,6 +337,10 @@ def tenant_at_parent(engine: Engine) -> Iterator[dict[str, str]]:
     Of the three appointments following event ``e1`` on the main calendar for
     clinician A, one is cancelled (left alone), and two are live: the older
     ``kept`` and the newer ``dup``, whose open row points at ``dup``.
+
+    ``dup`` is an hour later, as when the event moved and was booked again:
+    one clinician cannot have two live appointments at the same start
+    (``uq_appointments_user_start_active``), so real duplicates differ in time.
     """
     schema = f"practice_test_owned_{uuid.uuid4().hex[:8]}"
     create_practice_schema(engine, schema)
@@ -329,18 +357,22 @@ def tenant_at_parent(engine: Engine) -> Iterator[dict[str, str]]:
         conn.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
         for table in ("appointments", "external_calendar_events"):
             _set_rls(conn, schema, table, on=False)
-        for name, status, minutes_ago in (
-            ("cancelled", "cancelled", 30),
-            ("kept", "confirmed", 20),
-            ("dup", "confirmed", 10),
+        for name, status, minutes_ago, hour in (
+            ("cancelled", "cancelled", 30, 15),
+            ("kept", "confirmed", 20, 15),
+            ("dup", "confirmed", 10, 16),
         ):
             conn.execute(
                 text(
+                    # The three flags default in the ORM, not in the table, so
+                    # a row written in SQL has to say them.
                     "INSERT INTO appointments (id, user_id, patient_id, title, start_at, end_at, "
                     "duration_minutes, status, session_type, outside_source, outside_event_id, "
-                    "outside_calendar_id, created_at, updated_at) VALUES (:id, :u, :p, 'Session', "
-                    "'2099-01-05T15:00:00Z', '2099-01-05T15:50:00Z', 50, :status, 'individual', "
-                    "'google_calendar', 'e1', :cal, now() - make_interval(mins => :ago), now())"
+                    "outside_calendar_id, is_exception, reminder_24h_sent, reminder_1h_sent, "
+                    "created_at, updated_at) VALUES (:id, :u, :p, 'Session', "
+                    ":start, :end, 50, :status, 'individual', "
+                    "'google_calendar', 'e1', :cal, false, false, false, "
+                    "now() - make_interval(mins => :ago), now())"
                 ),
                 {
                     "id": ids[name],
@@ -349,6 +381,8 @@ def tenant_at_parent(engine: Engine) -> Iterator[dict[str, str]]:
                     "status": status,
                     "cal": MAIN,
                     "ago": minutes_ago,
+                    "start": f"2099-01-05T{hour}:00:00Z",
+                    "end": f"2099-01-05T{hour}:50:00Z",
                 },
             )
         conn.execute(
@@ -356,7 +390,7 @@ def tenant_at_parent(engine: Engine) -> Iterator[dict[str, str]]:
                 "INSERT INTO external_calendar_events (id, user_id, source, source_event_id, "
                 "source_series_id, calendar_id, start_at, end_at, title, answer, patient_id, "
                 "appointment_id) VALUES (:id, :u, 'google_calendar', 'e1', 'wk', :cal, "
-                "'2099-01-05T15:00:00Z', '2099-01-05T15:50:00Z', 'Jane Smith', 'client', :p, :appt)"
+                "'2099-01-05T16:00:00Z', '2099-01-05T16:50:00Z', 'Jane Smith', 'client', :p, :appt)"
             ),
             {"id": str(uuid.uuid4()), "u": _A, "cal": MAIN, "p": patient_id, "appt": ids["dup"]},
         )
@@ -382,7 +416,7 @@ def _outside_links(engine: Engine, schema: str) -> dict[str, tuple[str | None, s
 
 def test_the_revision_only_adds(engine: Engine, tenant_at_parent: dict[str, str]) -> None:
     schema = tenant_at_parent["schema"]
-    before = _all_answers(engine, schema)
+    before = _answers_at_parent(engine, schema)
 
     result = upgrade_tenant_schema(engine, schema)
 
@@ -402,7 +436,7 @@ def test_the_revision_only_adds(engine: Engine, tenant_at_parent: dict[str, str]
     assert _function_owner(engine, schema) == _ROLE
     # The old rows are exactly as they were, with no scope: still their owner's.
     after = _all_answers(engine, schema)
-    assert [row[:7] for row in after] == [row[:7] for row in before]
+    assert [row[:7] for row in after] == before
     assert {row[1] for row in after} == {None}
 
 
@@ -463,16 +497,7 @@ def test_the_downgrade_takes_only_what_it_added(
     assert _function_owner(engine, schema) is None
     assert "rls_practice_directory_read" not in _policies(engine, schema, "appointments")
     assert _policies(engine, schema, "patient_source_mappings") == {"rls_user_isolation"}
-    assert [
-        tuple(r)
-        for r in _past_rls(
-            engine,
-            schema,
-            "patient_source_mappings",
-            "SELECT doc_id, NULL, source, source_identifier, patient_id::text, answer, "
-            "user_id::text FROM patient_source_mappings ORDER BY doc_id",
-        )
-    ] == before
+    assert _answers_at_parent(engine, schema) == before
 
 
 # --- The policy, and adoption -----------------------------------------------------
@@ -532,6 +557,9 @@ class TestOldAnswersAreAdopted:
         theirs = _session(engine, schema, _B)
         opened.append(theirs)
         assert _match_feed_code(theirs, _B, "SH00001") == practice["patient"]
+        # Reading past the policy alters the table, which waits on any open
+        # transaction that touched it: close B's first.
+        theirs.commit()
         [row] = _all_answers(engine, schema)
         doc_id, scope, source, stored, patient_id, answer, user_id, answered_by, session_for = row
         assert (scope, source, stored, patient_id, answer) == (
@@ -661,7 +689,11 @@ class TestTheTableHoldsDigests:
         )
         outside.answer(_A, ical_source(SH), title, patient_id=practice["patient"])
         sess.commit()
-        under_one_key = {row[3] for row in _all_answers(engine, schema) if row[1] is not None}
+        # The fixture's old SH00001 answer is adopted on the way; it is not this one.
+        adopted = identifier_digest("SH00001")
+        under_one_key = {row[3] for row in _all_answers(engine, schema) if row[1] is not None} - {
+            adopted
+        }
 
         monkeypatch.setenv("GOOGLE_CALENDAR_ENCRYPTION_KEY", _new_key())
         get_settings.cache_clear()
@@ -669,7 +701,9 @@ class TestTheTableHoldsDigests:
         opened.append(again)
         _outside(again).answer(_A, ical_source(SH), title, patient_id=practice["patient"])
         again.commit()
-        under_another = {row[3] for row in _all_answers(engine, schema) if row[1] is not None}
+        under_another = {row[3] for row in _all_answers(engine, schema) if row[1] is not None} - {
+            adopted
+        }
 
         assert len(under_one_key) == 1
         assert under_another > under_one_key
@@ -745,6 +779,7 @@ class TestTwoFollowersOfOneCalendar:
             )
             == a_row.appointment_id
         )
+        theirs.commit()  # the reads above hold a lock _past_rls's ALTER TABLE waits on
         live = _past_rls(
             engine,
             schema,
