@@ -490,6 +490,19 @@ class AuditAction(StrEnum):
     REFILL_REQUEST_QUEUE_VIEWED = "refill_request_queue_viewed"
     REFILL_REQUEST_DECIDED = "refill_request_decided"
 
+    # The Inbox. VIEWED is the list, one row per patient on it — what it
+    # discloses is per patient: that something of theirs waits, and what.
+    # COUNTED is the nav badge's one number, about the clinician rather than
+    # any chart. The item actions record which item and nothing it says;
+    # EARLIER_HANDLED is marking a client's earlier messages handled in one
+    # go, with how many.
+    INBOX_VIEWED = "inbox_viewed"
+    INBOX_COUNTED = "inbox_counted"
+    INBOX_ITEM_DISMISSED = "inbox_item_dismissed"
+    INBOX_ITEM_SNOOZED = "inbox_item_snoozed"
+    INBOX_ITEM_RESTORED = "inbox_item_restored"
+    INBOX_EARLIER_HANDLED = "inbox_earlier_handled"
+
     # Companion audio signed-URL upload (additive to the existing
     # multipart /upload-audio surface — companion app migrates at its
     # own pace). INIT fires when channel signed URLs are minted;
@@ -669,6 +682,7 @@ class ResourceType(StrEnum):
     PATIENT_COVERAGE = "patient_coverage"
     PATIENT_MESSAGE_THREAD = "patient_message_thread"
     REFILL_REQUEST = "refill_request"
+    INBOX_ITEM = "inbox_item"
     INVITATION = "invitation"
     PRACTICE_PORTAL = "practice_portal"
     CLAIM = "claim"

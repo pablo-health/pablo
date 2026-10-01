@@ -1593,6 +1593,66 @@ if _MODEL_SOURCE_VALUES != _ENUM_SOURCE_VALUES:
     )
 
 
+class InboxItemStateRow(Base):
+    """What a clinician did with one Inbox item, outside the item's own table.
+
+    The Inbox copies nothing: each item is a row in its source's table (a
+    refill, a client message, an appointment), and that table says whether it
+    still needs somebody. This row holds the facts that belong to the Inbox
+    instead — dismissed, snoozed until a time, marked handled, replied to —
+    keyed by ``(source_kind, source_id)`` so one shape serves every kind.
+
+    **Supersede, never mutate.** A change inserts a new row and points the
+    previous live one at it through ``superseded_by``, so the history of how
+    an item was handled survives an undo. The partial unique index keeps one
+    live row per clinician per item.
+
+    **Per clinician.** ``user_id`` carries the row, so ``enable_rls_on_schema``
+    gives it the direct-ownership policy: a clinician reads and writes only
+    their own. Dismissing something clears it from one person's Inbox, not a
+    colleague's.
+
+    ``disposition`` is an open vocabulary on purpose (no CHECK): a deployment
+    may record its own kinds of handling in the same table. The rule that
+    reads it does not need the list — a live row hides its item unless it is
+    ``restored``, or ``snoozed`` with the time already past (see
+    :func:`app.models.inbox.hides`).
+
+    ``source_id`` is text rather than a uuid because a source's ids are its
+    own business. No ``patient_id`` column: the row is about the clinician's
+    work, and the item's source already scopes the patient.
+    """
+
+    __tablename__ = "inbox_item_states"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    source_kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    source_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    disposition: Mapped[str] = mapped_column(String(40), nullable=False)
+    snoozed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Who acted. NULL when the system did; otherwise the same as ``user_id``
+    # for anything this engine writes.
+    resolved_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    resolved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    superseded_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index(
+            "ux_inbox_item_states_live",
+            "user_id",
+            "source_kind",
+            "source_id",
+            unique=True,
+            postgresql_where=text("superseded_by IS NULL"),
+        ),
+    )
+
+
 class DiagnosticAssessmentRow(Base):
     """A structured diagnostic determination for a patient (PABLO-6xj).
 

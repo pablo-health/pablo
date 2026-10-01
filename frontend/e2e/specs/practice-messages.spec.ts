@@ -1,23 +1,29 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 /**
- * The practice's Messages page, over the real stack: a client writes through
- * the portal, and the practice reads it grouped as a conversation or one
- * message at a time, answers it, and the client sees the answer.
+ * Client messages in the Inbox, over the real stack: a client writes through
+ * the portal, and the practice reads each message as its own Inbox item,
+ * inside the conversation around it, answers one, and the client sees the
+ * answer.
  *
  * What only a browser against the stack can prove:
  *
- *   1. **Both views show what the client sent** — the conversation, with
- *      whose it is and its unread count, and each message on its own row.
- *   2. **The badge counts it**, and opening the conversation clears it.
- *   3. **A reply typed here reaches the client's portal thread.**
+ *   1. **Each client message is its own item**, under the Messages filter,
+ *      and the one Inbox badge counts them.
+ *   2. **A reply typed here reaches the client's portal thread**, and it
+ *      resolves the message replied to and no other: the earlier one stays
+ *      open until the clinician says so ("Also mark … handled?" → Yes).
+ *   3. **Handled messages move to Done**, not away.
  *   4. **A patient without a grant is absent** — the second practice's
  *      clinician sees none of it, over real HTTP.
  *
- * Every worker shares one practice, so rows are found by text this test
- * wrote, never by position or by total counts.
+ * Every worker shares one practice, so items are found by their own ids and
+ * by text this test wrote, never by position or by total counts. Nothing here
+ * changes the shared clinician's "earlier messages" preference, which stays
+ * at its default of asking.
  */
 
+import type { Locator, Page } from "@playwright/test"
 import { expect, test } from "../fixtures/auth"
 import { givePortalContactDetails, givePortalSession } from "../fixtures/portal"
 import { givePatient } from "../fixtures/scenarios"
@@ -27,7 +33,11 @@ const PATIENT_THREADS = `${BACKEND_URL}/api/patient/messages/threads`
 
 interface ThreadDetail {
   id: string
-  messages: { sender: string; body: string }[]
+  messages: { id: string; sender: string; body: string }[]
+}
+
+interface InboxList {
+  data: { kind: string; source_id: string; detail: string | null }[]
 }
 
 let sequence = 0
@@ -35,7 +45,11 @@ function stamp(): string {
   return `${Date.now().toString(36)}${(sequence++).toString(36)}`
 }
 
-test("a client's messages show grouped and one by one, and a reply reaches the portal @portal", async ({
+function inboxRow(page: Page, sourceId: string): Locator {
+  return page.locator(`[data-testid="inbox-row"][data-source-id="${sourceId}"]`)
+}
+
+test("each client message is its own Inbox item, and a reply answers the one replied to @portal", async ({
   api,
   request,
   signedInPage: page,
@@ -54,58 +68,63 @@ test("a client's messages show grouped and one by one, and a reply reaches the p
     data: { subject: `Question ${tag}`, body: first },
   })
   expect(started.status()).toBe(201)
-  const threadId = ((await started.json()) as ThreadDetail).id
-  const followUp = await request.post(`${PATIENT_THREADS}/${threadId}/messages`, {
+  const thread = (await started.json()) as ThreadDetail
+  const firstId = thread.messages[0].id
+  const followUp = await request.post(`${PATIENT_THREADS}/${thread.id}/messages`, {
     ...asClient,
     data: { body: second },
   })
   expect(followUp.status()).toBe(201)
+  const secondId = ((await followUp.json()) as { id: string }).id
 
-  await page.goto("/dashboard/messages")
+  await page.goto("/dashboard/inbox?filter=messages")
 
-  // The badge counts at least this conversation.
+  // One nav item, one badge; Messages is not a nav item of its own.
   const nav = page.getByRole("navigation", { name: "Main navigation" })
-  await expect(nav.getByRole("link", { name: /Messages/ })).toBeVisible()
-  await expect(nav.getByTestId("nav-badge-unread-messages")).toBeVisible()
+  await expect(nav.getByRole("link", { name: /Inbox/ })).toBeVisible()
+  await expect(nav.getByTestId("nav-badge-inbox")).toBeVisible()
+  await expect(nav.getByRole("link", { name: /^Messages/ })).toHaveCount(0)
 
-  // Grouped: one row for the conversation, with whose it is and two unread.
-  const conversation = page.getByTestId("conversation-row").filter({ hasText: `Question ${tag}` })
-  await expect(conversation).toHaveCount(1)
-  await expect(conversation).toContainText(patientName)
-  await expect(conversation.getByLabel("2 unread")).toBeVisible()
-  // No message text in the grouped view.
-  await expect(page.getByTestId("conversation-list")).not.toContainText(first)
+  // Two messages, two items, each with whose it is and what it said.
+  await expect(inboxRow(page, firstId)).toContainText(patientName)
+  await expect(inboxRow(page, firstId)).toContainText(first)
+  await expect(inboxRow(page, secondId)).toContainText(second)
 
-  // Ungrouped: each message on its own row, newest first.
-  await page.getByRole("tab", { name: "Messages" }).click()
-  const mine = page.getByTestId("message-row").filter({ hasText: tag })
-  await expect(mine).toHaveCount(2)
-  await expect(mine.nth(0)).toContainText(second)
-  await expect(mine.nth(1)).toContainText(first)
-  await expect(mine.nth(0)).toHaveAttribute("data-unread", "true")
+  // Opening the newer one shows it inside the conversation, marked.
+  await inboxRow(page, secondId).click()
+  const view = page.getByTestId("thread-view")
+  await expect(view).toContainText(patientName)
+  const clientMessages = view.getByTestId("thread-message-client")
+  await expect(clientMessages).toHaveCount(2)
+  await expect(clientMessages.nth(1)).toHaveAttribute("data-highlighted", "true")
 
-  // Opening one lands in the conversation and marks it read.
-  await mine.nth(1).click()
-  const thread = page.getByTestId("thread-view")
-  await expect(thread).toContainText(patientName)
-  await expect(thread.getByTestId("thread-message-client")).toHaveCount(2)
-  await expect(mine.nth(0)).toHaveAttribute("data-unread", "false")
-
-  // A reply typed here goes into the client's thread.
+  // A reply goes into the client's thread and resolves that message only.
   const answer = `reply ${tag}`
-  await thread.getByTestId("thread-reply-input").fill(answer)
-  await thread.getByTestId("thread-reply-send").click()
-  await expect(thread.getByTestId("thread-message-practice")).toContainText(answer)
+  await view.getByTestId("thread-reply-input").fill(answer)
+  await view.getByTestId("thread-reply-send").click()
+  await expect(view.getByTestId("thread-message-practice")).toContainText(answer)
+  await expect(inboxRow(page, secondId)).toHaveCount(0)
+  await expect(inboxRow(page, firstId)).toBeVisible()
 
   const seen = (await (
-    await request.get(`${PATIENT_THREADS}/${threadId}`, asClient)
+    await request.get(`${PATIENT_THREADS}/${thread.id}`, asClient)
   ).json()) as ThreadDetail
   expect(seen.messages.map((m) => m.body)).toEqual([first, second, answer])
   expect(seen.messages[2].sender).toBe("clinician")
 
-  // Back in the grouped view, the conversation has nothing unread.
-  await page.getByRole("tab", { name: "Conversations" }).click()
-  await expect(conversation).toHaveAttribute("data-unread", "false")
+  // Asked once about the earlier one; Yes marks it handled this time.
+  const prompt = page.getByTestId("inbox-earlier-prompt")
+  await expect(prompt).toContainText(`Also mark ${patientName}'s earlier message handled?`)
+  await prompt.getByRole("button", { name: "Yes" }).click()
+  await expect(page.getByTestId("inbox-earlier-handled")).toContainText(
+    "1 earlier message marked handled",
+  )
+  await expect(inboxRow(page, firstId)).toHaveCount(0)
+
+  // Both are in Done, not gone.
+  await page.goto("/dashboard/inbox?filter=messages&view=done")
+  await expect(inboxRow(page, secondId)).toContainText("Replied")
+  await expect(inboxRow(page, firstId)).toContainText("Marked handled")
 })
 
 test("another practice's clinician sees none of it @portal", async ({
@@ -117,17 +136,18 @@ test("another practice's clinician sees none of it @portal", async ({
   const { email, phone } = givePortalContactDetails()
   const patient = await givePatient(api, { email, phone })
   const session = await givePortalSession(api, request, patient.id, email, phone)
-  await request.post(PATIENT_THREADS, {
+  const sent = await request.post(PATIENT_THREADS, {
     headers: { Authorization: `Bearer ${session}` },
     data: { subject: `Private ${tag}`, body: `only for my practice ${tag}` },
   })
+  const messageId = ((await sent.json()) as ThreadDetail).messages[0].id
 
-  const theirThreads = await otherPracticeApi.get<{ data: { subject: string | null }[] }>(
-    "/api/message-threads?status=all",
+  const ours = await api.get<InboxList>("/api/inbox?view=open&kinds=portal_message")
+  expect(ours.data.map((item) => item.source_id), "control: the practice sees it").toContain(
+    messageId,
   )
-  expect(theirThreads.data.map((t) => t.subject)).not.toContain(`Private ${tag}`)
-  const theirMessages = await otherPracticeApi.get<{ data: { body: string }[] }>(
-    "/api/message-threads/messages",
-  )
-  expect(theirMessages.data.map((m) => m.body)).not.toContain(`only for my practice ${tag}`)
+
+  const theirs = await otherPracticeApi.get<InboxList>("/api/inbox?view=open&kinds=portal_message")
+  expect(theirs.data.map((item) => item.source_id)).not.toContain(messageId)
+  expect(theirs.data.map((item) => item.detail)).not.toContain(`only for my practice ${tag}`)
 })

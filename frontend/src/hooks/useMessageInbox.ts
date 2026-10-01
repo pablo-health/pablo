@@ -5,58 +5,22 @@
 import {
   closeThread,
   getThread,
-  getUnreadThreadCount,
-  listInboxMessages,
-  listInboxThreads,
   markThreadRead,
   reopenThread,
   replyToThread,
-  type InboxMessageList,
-  type InboxThreadList,
+  type ReplyMessage,
   type ThreadDetail,
-  type ThreadMessage,
-  type ThreadStatusFilter,
 } from "@/lib/api/messageInbox"
+import { inboxKeys } from "./inboxKeys"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
 
 export const messageInboxKeys = {
   all: ["messageInbox"] as const,
-  threads: (status: ThreadStatusFilter) => [...messageInboxKeys.all, "threads", status] as const,
-  messages: (unreadOnly: boolean) => [...messageInboxKeys.all, "messages", unreadOnly] as const,
   thread: (threadId: string) => [...messageInboxKeys.all, "thread", threadId] as const,
-  unread: () => [...messageInboxKeys.all, "unread"] as const,
 }
 
-/** How often the badge and the lists look for new messages. */
+/** How often an open conversation looks for new messages. */
 const POLL_MS = 60_000
-
-export function useInboxThreads(status: ThreadStatusFilter) {
-  return useAuthQuery<InboxThreadList>({
-    queryKey: messageInboxKeys.threads(status),
-    queryFn: () => listInboxThreads(status),
-    refetchInterval: POLL_MS,
-  })
-}
-
-export function useInboxMessages(unreadOnly: boolean) {
-  return useAuthQuery<InboxMessageList>({
-    queryKey: messageInboxKeys.messages(unreadOnly),
-    queryFn: () => listInboxMessages(unreadOnly),
-    refetchInterval: POLL_MS,
-  })
-}
-
-/** The nav badge. `retry: false`: a deployment without the portal answers
- * 404, and the badge simply does not show. */
-export function useUnreadThreadCount(enabled = true) {
-  return useAuthQuery<{ threads_with_unread: number }>({
-    queryKey: messageInboxKeys.unread(),
-    queryFn: () => getUnreadThreadCount(),
-    refetchInterval: POLL_MS,
-    retry: false,
-    enabled,
-  })
-}
 
 export function useThread(threadId: string | null) {
   return useAuthQuery<ThreadDetail>({
@@ -68,12 +32,16 @@ export function useThread(threadId: string | null) {
   })
 }
 
-/** Every write re-reads the whole inbox: counts, order and status all move. */
-const EVERYTHING = [messageInboxKeys.all]
+/** Every write re-reads the conversation and the Inbox: what is open moves. */
+const EVERYTHING = [messageInboxKeys.all, inboxKeys.all]
 
-export function useReplyToThread(threadId: string) {
-  return useAuthMutation<ThreadMessage, string>({
-    mutationFn: (body) => replyToThread(threadId, body),
+/**
+ * Reply into a thread. `inReplyToMessageId` names the client message being
+ * answered, so the Inbox resolves that one and no other.
+ */
+export function useReplyToThread(threadId: string, inReplyToMessageId?: string) {
+  return useAuthMutation<ReplyMessage, string>({
+    mutationFn: (body) => replyToThread(threadId, body, inReplyToMessageId),
     invalidateKeys: EVERYTHING,
   })
 }

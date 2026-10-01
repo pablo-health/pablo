@@ -5,7 +5,7 @@ import {
   ClipboardCheck,
   CreditCard,
   Home,
-  MessageSquare,
+  Inbox,
   Pill,
   Settings,
   Users,
@@ -36,7 +36,7 @@ export interface NavItem {
   requiresCapability?: string
   requiresFlag?: string
   /** A count to show beside the label, by name (see `NavBadge`). */
-  badge?: "unreadMessages"
+  badge?: "inbox"
 }
 
 /**
@@ -65,18 +65,13 @@ export interface NavExtensions {
 
 const baseClinicianNavigation: NavItem[] = [
   { name: "Dashboard", href: "/dashboard", icon: Home },
+  // Everything waiting on the clinician, client messages included, in one
+  // list with one count. Not gated: a practice with no portal still has notes
+  // to sign and calendar changes to settle.
+  { name: "Inbox", href: "/dashboard/inbox", icon: Inbox, badge: "inbox" },
   { name: "Calendar", href: "/dashboard/calendar", icon: Calendar },
   { name: "Patients", href: "/dashboard/patients", icon: Users },
   { name: "Review", href: "/dashboard/sessions", icon: ClipboardCheck },
-  // What clients wrote through the portal. Dark where the deployment serves
-  // no portal, like the portal's own settings page.
-  {
-    name: "Messages",
-    href: "/dashboard/messages",
-    icon: MessageSquare,
-    requiresFlag: "patient_portal",
-    badge: "unreadMessages",
-  },
   // Only a deployment that serves the portal's refills module has requests
   // to answer, so the item is dark until FEATURES_ENABLED names it.
   { name: "Refills", href: "/dashboard/refills", icon: Pill, requiresFlag: "refill_requests" },

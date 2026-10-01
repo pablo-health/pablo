@@ -29,6 +29,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
+from ..models.inbox import KIND_PORTAL_MESSAGE, hides
 from ..models.patient_message import (
     SENDER_PATIENT,
     THREAD_STATUS_CLOSED,
@@ -42,6 +43,7 @@ if TYPE_CHECKING:
 
     from ..models import MessageAttachment, PatientMessage, PatientMessageThread
     from ..models.patient_message import ThreadAssignmentFilter, ThreadStatusFilter
+    from .inbox_item_state import InboxItemStateRepository
 
 
 class PatientMessageAccessDeniedError(Exception):
@@ -107,6 +109,28 @@ class PatientMessageRepository(ABC):
         practice. ``unread_only`` keeps the ones sent since the practice last
         marked their thread read. At most ``limit`` rows.
         """
+
+    @abstractmethod
+    def list_awaiting_messages(
+        self,
+        user_id: str,
+        *,
+        now: datetime,
+        patient_id: str | None = None,
+        limit: int = 200,
+    ) -> list[InboxMessage]:
+        """Client messages still waiting on this clinician, newest first.
+
+        A message waits while its conversation is open and the clinician has
+        nothing in the Inbox that hides it (a reply to it, a dismissal, a
+        snooze still running). Each message is its own item: answering one
+        leaves the others from the same client waiting. ``patient_id``
+        narrows it to one client. Scoped exactly as :meth:`list_inbox_messages`.
+        """
+
+    @abstractmethod
+    def get_inbox_messages(self, user_id: str, message_ids: list[str]) -> list[InboxMessage]:
+        """These client messages, if the clinician may see them, in no order."""
 
     @abstractmethod
     def count_unread_threads(self, user_id: str) -> int:
@@ -320,6 +344,7 @@ class InMemoryPatientMessageRepository(PatientMessageRepository):
         self._attachments: dict[str, tuple[str, str]] = {}
         self._patient_names: dict[str, str] = {}
         self._deleted_patients: set[str] = set()
+        self._inbox_states: InboxItemStateRepository | None = None
 
     # --- test setup helpers (mirror has_patient_access semantics) ---
 
@@ -331,6 +356,10 @@ class InMemoryPatientMessageRepository(PatientMessageRepository):
     ) -> None:
         """Stand in for the ``patient_documents`` row the real join reads."""
         self._documents[document_id] = (filename, mime_type, size_bytes)
+
+    def use_inbox_states(self, states: InboxItemStateRepository) -> None:
+        """Stand in for the ``inbox_item_states`` rows the real query reads."""
+        self._inbox_states = states
 
     def revoke_access(self, patient_id: str, user_id: str) -> None:
         self._access.discard((patient_id, user_id))
@@ -425,6 +454,45 @@ class InMemoryPatientMessageRepository(PatientMessageRepository):
                 )
         found.sort(key=lambda row: row.message.created_at, reverse=True)
         return found[:limit]
+
+    def list_awaiting_messages(
+        self,
+        user_id: str,
+        *,
+        now: datetime,
+        patient_id: str | None = None,
+        limit: int = 200,
+    ) -> list[InboxMessage]:
+        rows = [
+            row
+            for row in self.list_inbox_messages(user_id, limit=len(self._all_messages()))
+            if row.thread.status == THREAD_STATUS_OPEN
+            and (patient_id is None or row.thread.patient_id == patient_id)
+        ]
+        if self._inbox_states is not None:
+            states = self._inbox_states.live_states(
+                user_id, [(KIND_PORTAL_MESSAGE, row.message.id) for row in rows]
+            )
+            rows = [
+                row
+                for row in rows
+                if not (
+                    (state := states.get((KIND_PORTAL_MESSAGE, row.message.id)))
+                    and hides(state, now)
+                )
+            ]
+        return rows[:limit]
+
+    def get_inbox_messages(self, user_id: str, message_ids: list[str]) -> list[InboxMessage]:
+        wanted = set(message_ids)
+        return [
+            row
+            for row in self.list_inbox_messages(user_id, limit=len(self._all_messages()))
+            if row.message.id in wanted
+        ]
+
+    def _all_messages(self) -> list[PatientMessage]:
+        return [m for messages in self._messages.values() for m in messages]
 
     def count_unread_threads(self, user_id: str) -> int:
         return sum(

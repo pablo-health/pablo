@@ -29,6 +29,7 @@ describe("settings registry merge", () => {
     expect(settingsGroups[0].items.map((item) => item.id)).toEqual([
       "profile",
       "appearance",
+      "inbox",
       "security",
       "activity",
     ])
@@ -92,6 +93,7 @@ describe("settings registry merge", () => {
     expect(you?.items.map((item) => item.id)).toEqual([
       "profile",
       "appearance",
+      "inbox",
       "security",
       "activity",
       "notifications",

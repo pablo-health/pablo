@@ -9,6 +9,7 @@ import {
   Clock,
   FileArchive,
   FileInput,
+  Inbox,
   Mic,
   Palette,
   Receipt,
@@ -29,6 +30,7 @@ import { CalendarsPage } from "./pages/CalendarsPage"
 import { CredentialingPage } from "./pages/CredentialingPage"
 import { CredentialingStartPage } from "./pages/CredentialingStartPage"
 import { ImportPage } from "./pages/ImportPage"
+import { InboxPage } from "./pages/InboxPage"
 import { InsurancePage } from "./pages/InsurancePage"
 import { PatientPortalPage } from "./pages/PatientPortalPage"
 import { PracticeExportPage } from "./pages/PracticeExportPage"
@@ -118,6 +120,7 @@ const baseGroups: SettingsGroup[] = [
     items: [
       { id: "profile", label: "Profile", icon: User, page: ProfilePage, desc: "Your name, timezone and clinician type." },
       { id: "appearance", label: "Appearance", icon: Palette, page: AppearancePage, desc: "How your workspace looks." },
+      { id: "inbox", label: "Inbox", icon: Inbox, page: InboxPage, desc: "What happens to earlier messages when you reply." },
       { id: "security", label: "Sign-in & security", icon: ShieldCheck, page: SecurityPage, desc: "Passkeys and second factors." },
       {
         id: "activity",
