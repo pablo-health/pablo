@@ -64,6 +64,11 @@ export interface UserStatusBase {
    * user; the phone is null when the step left it blank.
    */
   practice_name?: string
+  /**
+   * Whether this user owns the practice, and so may rename it or sign its
+   * BAA again. Undefined when no practice resolves for the user.
+   */
+  is_practice_owner?: boolean
   practice_phone?: string | null
   /**
    * The practice's address, one free-text line as it was typed rather than
@@ -191,6 +196,8 @@ export interface ProfessionalInfoUpdate {
   license_number?: string
   /** Two-letter state or territory that issued the licence. */
   license_state?: string
+  /** The practice's display name. Only the practice owner may change it. */
+  practice_name?: string
 }
 
 export async function updateProfessionalInfo(
@@ -275,6 +282,19 @@ export async function acceptBAA(
   token?: string
 ): Promise<BAAStatusResponse> {
   return post<BAAStatusResponse>("/api/users/me/accept-baa", data, token)
+}
+
+/**
+ * Sign the current BAA again, as the practice owner, outside onboarding —
+ * typically after renaming the practice, so the agreement names it as it is
+ * called now. Requires a session that has passed the second factor.
+ */
+export async function resignBAA(version: string, token?: string): Promise<BAAStatusResponse> {
+  return post<BAAStatusResponse>(
+    "/api/users/me/practice/baa/resign",
+    { version, accepted: true },
+    token,
+  )
 }
 
 export interface UserPreferences {

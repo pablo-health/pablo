@@ -2,6 +2,7 @@
 
 "use client"
 
+import { PracticeNameSettings } from "../PracticeNameSettings"
 import { ProfileSettings } from "../ProfileSettings"
 import { ProviderTypeSettings } from "../ProviderTypeSettings"
 import { SettingsCard } from "../ui"
@@ -10,9 +11,9 @@ import { useSettingsPreferences, useSettingsUserStatus } from "../useSettingsPre
 /**
  * You > Profile.
  *
- * Today this edits a display name and the clinician type. The full profile —
- * licence, NPI, practice name, address, phone and timezone — arrives with the
- * backend fields that back them.
+ * Edits a display name, the clinician type, and — for the practice owner —
+ * the practice name. The rest of the profile (licence, NPI, address, phone,
+ * timezone) lives on the billing pages or arrives with the fields behind it.
  */
 export function ProfilePage() {
   const { preferences, save, isSaving } = useSettingsPreferences()
@@ -32,6 +33,18 @@ export function ProfilePage() {
       >
         <ProviderTypeSettings currentValue={userStatus?.provider_type ?? null} />
       </SettingsCard>
+
+      {userStatus?.practice_name !== undefined && (
+        <SettingsCard
+          title="Practice"
+          description="The name your clients see in the portal and on forms."
+        >
+          <PracticeNameSettings
+            currentName={userStatus.practice_name}
+            canEdit={userStatus.is_practice_owner === true}
+          />
+        </SettingsCard>
+      )}
     </>
   )
 }

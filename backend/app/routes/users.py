@@ -18,6 +18,7 @@ import httpx
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
+from sqlalchemy import update
 
 from ..api_errors import BadRequestError, ForbiddenError, NotFoundError, ServerError
 from ..auth.providers import VerifiedIdentity
@@ -43,7 +44,7 @@ from ..models import (
     User,
     UserPreferences,
 )
-from ..models.audit import AuditAction, AuditCursor
+from ..models.audit import AuditAction, AuditCursor, ResourceType
 from ..repositories import (
     ClinicianProfile,
     ClinicianProfileRepository,
@@ -216,6 +217,9 @@ def get_user_status(
         practice_row = get_db_session().get(PracticeRow, practice[0])
         if practice_row is not None:
             result["practice_name"] = practice_row.name
+            # Who may rename the practice or sign its BAA again. Same rule
+            # the write routes enforce (_is_practice_owner).
+            result["is_practice_owner"] = _is_practice_owner(practice_row, user)
             result["practice_phone"] = practice_row.phone
             # Free text as the professional-info step captured it: one
             # line, unparsed. A practice that never filled it in reads
@@ -564,10 +568,12 @@ def _resolve_practice_id_for(user: User) -> str | None:
 
 @router.patch("/me/professional-info")
 def update_professional_info(
+    http_request: Request,
     request: UpdateProfessionalInfoRequest,
     user: User = Depends(get_current_user_no_mfa),
     user_repo: UserRepository = Depends(get_user_repository),
     profile_repo: ClinicianProfileRepository = Depends(get_clinician_profile_repository),
+    audit: AuditService = Depends(get_audit_service),
 ) -> dict:
     """Persist professional credentials collected at the onboarding
     professional-info step.
@@ -580,10 +586,25 @@ def update_professional_info(
     - ``business_address`` → practice row (the covered entity's address,
       reused to build the BAA snapshot at acceptance time).
 
+    - ``practice_name`` → practice row, and only from the practice owner.
+      A rename never touches the BAA snapshot; signing again under the
+      new name is the owner's separate choice (``/me/practice/baa/resign``).
+
     Posture: pre-MFA onboarding (route_security.py #2), same as the
     other onboarding-gate writes. PATCH semantics — a None field leaves
     the stored value untouched.
     """
+    new_practice_name: str | None = None
+    if request.practice_name is not None:
+        new_practice_name = request.practice_name.strip()
+        if not new_practice_name:
+            raise BadRequestError("Practice name cannot be blank")
+        # Refuse before writing anything else, so a non-owner's request
+        # fails whole rather than half-applied. Address and phone are not
+        # gated here: the onboarding step sends the address for every
+        # clinician, owner or not.
+        _get_own_practice_as_owner(user)
+
     if request.legal_name is not None:
         user.legal_name = request.legal_name
         user_repo.update(user)
@@ -620,8 +641,28 @@ def update_professional_info(
             if practice is not None:
                 if request.business_address is not None:
                     practice.address = request.business_address
-                if request.practice_name is not None:
-                    practice.name = request.practice_name
+                if new_practice_name is not None and new_practice_name != practice.name:
+                    old_name = practice.name
+                    practice.name = new_practice_name
+                    # The portal reads its header name from the slug row,
+                    # captured when the address was minted. Carry the new
+                    # name there too; the slug itself (the URL clients
+                    # already hold) stays as it is.
+                    from ..db.platform_models import PortalPracticeSlugRow
+
+                    session.execute(
+                        update(PortalPracticeSlugRow)
+                        .where(PortalPracticeSlugRow.practice_id == practice.id)
+                        .values(display_name=new_practice_name)
+                    )
+                    audit.log(
+                        AuditAction.PRACTICE_RENAMED,
+                        user,
+                        http_request,
+                        resource_type=ResourceType.PRACTICE,
+                        resource_id=practice.id,
+                        changes={"from": old_name, "to": new_practice_name},
+                    )
                 if request.practice_phone is not None:
                     practice.phone = request.practice_phone
                 session.flush()
@@ -642,6 +683,11 @@ def update_professional_info(
         "practice_name": request.practice_name,
         "practice_phone": request.practice_phone,
     }
+
+
+def _is_practice_owner(practice: "PracticeRow", user: User) -> bool:
+    """Whether ``user`` owns ``practice``; see ``_get_own_practice_as_owner``."""
+    return not practice.owner_email or practice.owner_email.lower() == user.email.lower()
 
 
 def _get_own_practice_as_owner(user: User) -> "PracticeRow":
@@ -666,7 +712,7 @@ def _get_own_practice_as_owner(user: User) -> "PracticeRow":
     if practice is None:
         raise NotFoundError("Practice not found", {"practice_id": practice_id})
 
-    if practice.owner_email and practice.owner_email.lower() != user.email.lower():
+    if not _is_practice_owner(practice, user):
         raise ForbiddenError(
             "Only the practice owner can view or change this setting",
             code="NOT_PRACTICE_OWNER",
@@ -737,12 +783,25 @@ def get_baa_status(
         - accepted_at: Timestamp of acceptance (if accepted)
         - version: Version they accepted (if accepted)
         - current_version: The current BAA version
+        - signed_practice_name: The practice name the agreement on file
+          was signed under (if a practice-level acceptance exists)
     """
+    signed_practice_name: str | None = None
+    practice_id = _resolve_practice_id_for(user)
+    if practice_id is not None:
+        from ..db import get_db_session
+        from ..db.platform_models import PracticeRow
+
+        practice = get_db_session().get(PracticeRow, practice_id)
+        if practice is not None:
+            signed_practice_name = practice.baa_practice_name
+
     return BAAStatusResponse(
         accepted=user.baa_accepted_at is not None,
         accepted_at=user.baa_accepted_at,
         version=user.baa_version,
         current_version=current_version,
+        signed_practice_name=signed_practice_name,
     )
 
 
@@ -781,40 +840,9 @@ def accept_baa(
     if not request.accepted:
         raise BadRequestError("BAA must be accepted")
 
-    # Load the full BAA text for the audit-trail snapshot.
-    baa_path = _resolve_baa_path(request.version)
-    baa_full_text = baa_path.read_text()
-
-    now = utc_now()
-
-    # Snapshot onto the practice row (the covered entity). PracticeRow is
-    # schema-qualified to ``platform`` so it writes through the same
-    # request-scoped session as the user update — one transaction, one
-    # commit at request end.
-    profile = profile_repo.get(user.id)
-    practice_id = _resolve_practice_id_for(user)
-    if practice_id is not None:
-        from ..db import get_db_session
-        from ..db.platform_models import PracticeRow
-
-        session = get_db_session()
-        practice = session.get(PracticeRow, practice_id)
-        if practice is not None:
-            practice.baa_accepted_at = now
-            practice.baa_version = request.version
-            practice.baa_legal_name = user.legal_name
-            practice.baa_license_number = profile.license_number if profile else None
-            practice.baa_license_state = profile.license_state if profile else None
-            practice.baa_practice_name = practice.name
-            practice.baa_business_address = practice.address
-            practice.baa_full_text = baa_full_text
-            session.flush()
-
-    # Stamp the fast-path gate fields on the user row regardless of
-    # whether a practice exists (self-hosted single-tenant has none).
-    user.baa_accepted_at = now
-    user.baa_version = request.version
-    user_repo.update(user)
+    now, signed_practice_name = _record_baa_acceptance(
+        user, request.version, user_repo, profile_repo
+    )
     audit.log_onboarding_milestone(
         AuditAction.ONBOARDING_BAA_ACCEPTED,
         user,
@@ -827,7 +855,114 @@ def accept_baa(
         accepted_at=now,
         version=request.version,
         current_version=request.version,
+        signed_practice_name=signed_practice_name,
     )
+
+
+@router.post("/me/practice/baa/resign")
+def resign_baa(
+    http_request: Request,
+    request: AcceptBAARequest,
+    user: User = Depends(get_current_user),
+    # The agreement is not a paid feature: a lapsed practice may still need
+    # its BAA to name it correctly.
+    _: None = Depends(subscription_exempt),
+    current_version: str = Depends(get_baa_version),
+    user_repo: UserRepository = Depends(get_user_repository),
+    profile_repo: ClinicianProfileRepository = Depends(get_clinician_profile_repository),
+    audit: AuditService = Depends(get_audit_service),
+) -> BAAStatusResponse:
+    """Sign the current BAA again, by the practice owner's choice.
+
+    Outside onboarding, so unlike ``accept_baa`` this requires a session
+    that has satisfied MFA. Typically used after the practice is renamed,
+    so the agreement names the practice as it is now called. Only the
+    current version can be signed. The new snapshot replaces the one on
+    the practice row; earlier acceptances stay in the audit trail.
+    """
+    if not request.accepted:
+        raise BadRequestError("BAA must be accepted")
+    if request.version != current_version:
+        raise BadRequestError(
+            "Only the current BAA version can be signed",
+            {"current_version": current_version},
+        )
+    _get_own_practice_as_owner(user)
+
+    now, signed_practice_name = _record_baa_acceptance(
+        user, request.version, user_repo, profile_repo
+    )
+    audit.log(
+        AuditAction.BAA_RESIGNED,
+        user,
+        http_request,
+        resource_type=ResourceType.PRACTICE,
+        resource_id=_resolve_practice_id_for(user) or "",
+        changes={"version": request.version, "practice_name": signed_practice_name},
+    )
+
+    return BAAStatusResponse(
+        accepted=True,
+        accepted_at=now,
+        version=request.version,
+        current_version=current_version,
+        signed_practice_name=signed_practice_name,
+    )
+
+
+def _record_baa_acceptance(
+    user: User,
+    version: str,
+    user_repo: UserRepository,
+    profile_repo: ClinicianProfileRepository,
+) -> tuple[datetime, str | None]:
+    """Snapshot an acceptance onto the practice and stamp the user row.
+
+    Returns the acceptance time and the practice name the snapshot
+    recorded (None when the user has no practice).
+
+    The BAA is between Pablo and the *covered entity* (the practice), so
+    the legal snapshot (signer name, license, address, full text) goes on
+    the practice row, built from the professional-info already stored.
+    ``baa_accepted_at`` + ``baa_version`` are ALSO stamped on the user
+    row so ``require_baa_acceptance`` can gate every PHI request without
+    a per-request practice lookup.
+    """
+    # Load the full BAA text for the audit-trail snapshot.
+    baa_full_text = _resolve_baa_path(version).read_text()
+
+    now = utc_now()
+    signed_practice_name: str | None = None
+
+    # PracticeRow is schema-qualified to ``platform`` so it writes through
+    # the same request-scoped session as the user update — one
+    # transaction, one commit at request end.
+    profile = profile_repo.get(user.id)
+    practice_id = _resolve_practice_id_for(user)
+    if practice_id is not None:
+        from ..db import get_db_session
+        from ..db.platform_models import PracticeRow
+
+        session = get_db_session()
+        practice = session.get(PracticeRow, practice_id)
+        if practice is not None:
+            practice.baa_accepted_at = now
+            practice.baa_version = version
+            practice.baa_legal_name = user.legal_name
+            practice.baa_license_number = profile.license_number if profile else None
+            practice.baa_license_state = profile.license_state if profile else None
+            practice.baa_practice_name = practice.name
+            practice.baa_business_address = practice.address
+            practice.baa_full_text = baa_full_text
+            signed_practice_name = practice.name
+            session.flush()
+
+    # Stamp the fast-path gate fields on the user row regardless of
+    # whether a practice exists.
+    user.baa_accepted_at = now
+    user.baa_version = version
+    user_repo.update(user)
+    return now, signed_practice_name
 
 
 @router.get("/me/security-guide-status")

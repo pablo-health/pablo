@@ -14,6 +14,8 @@ export interface BAAStatusResponse {
   version: string | null
   current_version: string | null
   needs_update: boolean
+  /** The practice name the agreement on file was signed under. */
+  signed_practice_name?: string | null
 }
 
 export interface AcceptBAARequest {
