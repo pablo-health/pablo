@@ -45,11 +45,18 @@ from ..repositories.practice_domain import (
 )
 from ..settings import get_settings
 from ..utcnow import utc_now
+from .practice_domain_cloud import serving_configured
 from .practice_domain_dns import DnsChecker, DnsLookup
-from .practice_domain_hosts import HostnameError, apex_of, deployment_hosts, normalize_host
+from .practice_domain_hosts import (
+    HostnameError,
+    apex_of,
+    apex_or_none,
+    deployment_hosts,
+    normalize_host,
+)
 
 if TYPE_CHECKING:
-    from ..models.practice_domain import DomainPurpose
+    from ..models.practice_domain import DomainPurpose, DomainStatus, HostStatus
 
 DOMAIN_TAKEN_MESSAGE = "That domain is already in use."
 
@@ -75,18 +82,24 @@ class PracticeDomainService:
         cname_target: str = "",
         apex_ips: tuple[str, ...] = (),
         dkim_cname_suffix: str = "dkim.amazonses.com",
+        deferred_removal: bool = False,
     ) -> None:
+        """*deferred_removal*: the deployment serves hosts through the domain
+        reconciler job, so a removed host is marked ``removing`` and the job
+        deletes the row once it has stopped serving it."""
         self._repo = repo
+        self._deferred_removal = deferred_removal
         self._reserved = reserved_hosts
         self._cname_target = cname_target.strip().lower().rstrip(".")
         self._apex_ips = apex_ips
         self._dkim_suffix = dkim_cname_suffix.strip().lower().strip(".")
 
     def for_practice(self, practice_id: str) -> list[PracticeDomain]:
-        return self._repo.list_for_practice(practice_id)
+        """The practice's hosts, less any it removed that are still being taken down."""
+        return [d for d in self._repo.list_for_practice(practice_id) if d.status != "removing"]
 
     def _is_bare(self, domain: PracticeDomain) -> bool:
-        return _apex_or_none(domain.domain) == domain.domain
+        return apex_or_none(domain.domain) == domain.domain
 
     def dns_records(self, domain: PracticeDomain) -> list[DnsRecord]:
         """The record that points this host here.
@@ -150,9 +163,9 @@ class PracticeDomainService:
         the oldest host under it. Every host under the domain still reports
         the domain and when its ownership was last confirmed.
         """
-        domains = self._repo.list_for_practice(practice_id)
+        domains = self.for_practice(practice_id)
         apexes = {a.apex: a for a in self._repo.list_apexes_for_practice(practice_id)}
-        apex_by_host = {d.domain: _apex_or_none(d.domain) for d in domains}
+        apex_by_host = {d.domain: apex_or_none(d.domain) for d in domains}
         carriers: dict[str, str] = {}
         for d in domains:
             apex = apex_by_host[d.domain]
@@ -170,7 +183,7 @@ class PracticeDomainService:
                 PracticeDomainResponse(
                     domain=d.domain,
                     purpose=d.purpose,
-                    status=d.status,
+                    status=_shown_status(d.status),
                     is_primary=d.is_primary,
                     verified_at=d.verified_at,
                     created_at=d.created_at,
@@ -249,22 +262,11 @@ class PracticeDomainService:
         if existing_apex is not None and existing_apex.practice_id != practice_id:
             raise ConflictError(DOMAIN_TAKEN_MESSAGE, {"domain": host}, code="DOMAIN_TAKEN")
 
-        to_add: list[str] = []
-        for candidate in hosts:
-            existing = self._repo.get(candidate)
-            if existing is None:
-                to_add.append(candidate)
-            elif existing.practice_id != practice_id:
-                raise ConflictError(
-                    DOMAIN_TAKEN_MESSAGE, {"domain": candidate}, code="DOMAIN_TAKEN"
-                )
-            elif candidate == host:
-                raise ConflictError(
-                    "You've already added that domain.",
-                    {"domain": candidate},
-                    code="DOMAIN_ALREADY_ADDED",
-                )
-            # An alias the practice already holds is left as it is.
+        to_add = [
+            candidate
+            for candidate in hosts
+            if self._addable(practice_id, candidate, alias=candidate != host)
+        ]
 
         now = utc_now()
         created_apex = False
@@ -306,6 +308,30 @@ class PracticeDomainService:
                 ) from e
         return added
 
+    def _addable(self, practice_id: str, candidate: str, *, alias: bool) -> bool:
+        """Whether *candidate* is still to be added; raises when it can't be.
+
+        An alias the practice already holds is left as it is.
+        """
+        existing = self._repo.get(candidate)
+        if existing is None:
+            return True
+        if existing.practice_id != practice_id:
+            raise ConflictError(DOMAIN_TAKEN_MESSAGE, {"domain": candidate}, code="DOMAIN_TAKEN")
+        if existing.status == "removing":
+            raise ConflictError(
+                "That domain is still being removed. Try adding it again later.",
+                {"domain": candidate},
+                code="DOMAIN_REMOVING",
+            )
+        if not alias:
+            raise ConflictError(
+                "You've already added that domain.",
+                {"domain": candidate},
+                code="DOMAIN_ALREADY_ADDED",
+            )
+        return False
+
     def make_primary(self, practice_id: str, raw_domain: str) -> PracticeDomain:
         """Make an active host the practice's primary for its purpose."""
         domain = self._own(practice_id, raw_domain)
@@ -323,13 +349,19 @@ class PracticeDomainService:
     def remove(self, practice_id: str, raw_domain: str) -> PracticeDomain:
         """Remove a host. Removing the primary leaves that purpose with none.
 
-        Removing the last host under a domain releases the domain too.
+        Removing the last host under a domain releases the domain too. Where
+        the deployment serves hosts through the reconciler job, the host is
+        marked ``removing`` instead and leaves the practice's list at once; the
+        job stops serving it, then deletes it and releases the domain.
         """
         domain = self._own(practice_id, raw_domain)
+        if self._deferred_removal:
+            self._repo.mark_removing(domain.domain, practice_id)
+            return domain
         self._repo.remove(domain.domain, practice_id)
-        apex = _apex_or_none(domain.domain)
+        apex = apex_or_none(domain.domain)
         if apex is not None and not any(
-            _apex_or_none(d.domain) == apex for d in self._repo.list_for_practice(practice_id)
+            apex_or_none(d.domain) == apex for d in self._repo.list_for_practice(practice_id)
         ):
             self._repo.remove_apex(apex, practice_id)
         return domain
@@ -338,8 +370,8 @@ class PracticeDomainService:
         """Give every host's domain its row, for hosts added before domains
         had one. A domain another practice already holds is left to them."""
         held = {a.apex for a in self._repo.list_apexes_for_practice(practice_id)}
-        for d in self._repo.list_for_practice(practice_id):
-            apex = _apex_or_none(d.domain)
+        for d in self.for_practice(practice_id):
+            apex = apex_or_none(d.domain)
             if apex is None or apex in held:
                 continue
             held.add(apex)
@@ -373,18 +405,19 @@ class PracticeDomainService:
     def _own(self, practice_id: str, raw_domain: str) -> PracticeDomain:
         host = raw_domain.strip().lower().removesuffix(".")
         domain = self._repo.get(host)
-        if domain is None or domain.practice_id != practice_id:
+        if domain is None or domain.practice_id != practice_id or domain.status == "removing":
             raise NotFoundError(
                 "That domain isn't set up for this practice.", code="DOMAIN_NOT_FOUND"
             )
         return domain
 
 
-def _apex_or_none(host: str) -> str | None:
-    try:
-        return apex_of(host)
-    except HostnameError:
-        return None
+def _shown_status(status: HostStatus) -> DomainStatus:
+    if status == "removing":
+        # for_practice() leaves removing hosts out of everything shown.
+        msg = "a removing host is never shown"
+        raise ValueError(msg)
+    return status
 
 
 def _new_apex(apex: str, practice_id: str) -> PracticeDomainApex:
@@ -420,4 +453,5 @@ def get_practice_domain_service(
         cname_target=settings.practice_domain_cname_target,
         apex_ips=apex_ips,
         dkim_cname_suffix=settings.practice_domain_dkim_cname_suffix,
+        deferred_removal=serving_configured(settings),
     )

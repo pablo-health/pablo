@@ -1,0 +1,358 @@
+# Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+
+"""Serving a practice's hosts: bringing what the load balancer serves into line
+with ``platform.practice_domains``.
+
+One sweep visits every host, practice by practice, and takes it one step
+further each time — every step is safe to repeat, so a sweep that stops half
+way loses nothing:
+
+1. Look the practice's records up (``PracticeDomainService.check``, the same
+   check Settings > Domains runs), which also records a domain's ownership
+   when its ``_pablo-verify`` TXT is found.
+2. Per host, ask for its DNS authorisation (storing the ``_acme-challenge``
+   value, so the practice is shown the record at once) and its certificate.
+   ``pending`` becomes ``verifying``: the records are known and the job is
+   waiting on the practice's DNS and on the certificate.
+3. When the domain's ownership is confirmed, the host's own record points
+   here, and the certificate is active: add the certificate-map entry and the
+   URL-map host rule, and the host becomes ``active``.
+4. A certificate that failed, or a request the cloud refused, puts a host that
+   is not yet served in ``error`` with the reason in ``last_error``.
+5. An ``active`` host is checked again every sweep. If its record stops
+   pointing here, or its certificate stops being active, it goes to ``error``
+   with the reason — and its host rule stays: taking a working site down over
+   a DNS blip would be worse than the blip. No answer in time changes nothing.
+   It comes back to ``active`` by itself once both are right again.
+6. A ``removing`` host has its host rule, map entry, certificate and DNS
+   authorisation removed, in that order, and then its row is deleted; with the
+   last host under a domain, the domain's row (and its email identity) go too.
+
+Then, when the deployment registered one, each domain whose ownership is
+confirmed has its email sending identity ensured (see
+``practice_domain_email``).
+
+Every status change is audited with the system as the actor, scoped to the
+practice. Status writes are guarded on the status the sweep read, so a removal
+the practice makes meanwhile is never overwritten. Cloud calls happen outside
+any database transaction.
+
+No PHI: hostnames, practice ids and setup state.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any, Literal, Protocol
+
+from ..models.audit import AuditAction
+from ..models.practice_domain import ServingState
+from ..utcnow import utc_now
+from .practice_domain_cloud import DomainServingError
+from .practice_domain_hosts import apex_or_none
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from contextlib import AbstractContextManager
+    from datetime import datetime
+
+    from ..models.practice_domain import (
+        DnsRecord,
+        HostStatus,
+        PracticeDomain,
+        PracticeDomainApex,
+    )
+    from ..repositories.practice_domain import PracticeDomainRepository
+    from .practice_domain_cloud import CertificateStatus, DomainServing
+    from .practice_domain_dns import DnsLookup
+    from .practice_domain_email import EmailIdentityProvisioner
+    from .practice_domain_service import PracticeDomainService
+
+logger = logging.getLogger(__name__)
+
+#: ``last_error`` is VARCHAR(500).
+_LAST_ERROR_MAX = 500
+_POINTING_TYPES = frozenset({"A", "AAAA", "CNAME"})
+
+PointingVerdict = Literal["ok", "bad", "unknown"]
+
+POINTING_LAPSED = "The host's DNS record no longer points here."
+CERTIFICATE_LAPSED = "The host's certificate is no longer active."
+
+
+class PracticeScope(Protocol):
+    """One unit of work for one practice: its hosts' writes and their audit."""
+
+    @property
+    def repo(self) -> PracticeDomainRepository: ...
+
+    def audit(self, action: AuditAction, changes: dict[str, Any]) -> None: ...
+
+
+class ReconcileStore(Protocol):
+    def all_hosts(self) -> list[PracticeDomain]:
+        """Every host of every practice, ``removing`` ones included."""
+        ...
+
+    def practice(self, practice_id: str) -> AbstractContextManager[PracticeScope]:
+        """A unit of work for *practice_id*, committed when it closes cleanly."""
+        ...
+
+
+@dataclass
+class SweepReport:
+    hosts: int = 0
+    #: Status changes written.
+    changed: int = 0
+    #: Removed hosts whose serving was taken down and whose row was deleted.
+    released: int = 0
+    #: Practices a sweep could not finish; their hosts are retried next sweep.
+    failed_practices: int = 0
+
+
+def pointing_verdict(host: str, records: list[DnsRecord]) -> PointingVerdict:
+    """Whether a check found the host's own record(s) pointing here.
+
+    A bare domain may be shown both an A and an AAAA record; one of them in
+    place is enough, but any found pointing elsewhere sends some visitors
+    there, so that counts against it. No answer in time is ``unknown``.
+    """
+    checks = {r.check for r in records if r.type in _POINTING_TYPES and r.name == host}
+    if not checks or checks <= {"unknown", None}:
+        return "unknown"
+    if "wrong" in checks:
+        return "bad"
+    return "ok" if "ok" in checks else "bad"
+
+
+class PracticeDomainReconciler:
+    def __init__(
+        self,
+        *,
+        serving: DomainServing,
+        store: ReconcileStore,
+        lookup: DnsLookup,
+        service_for: Callable[[PracticeDomainRepository], PracticeDomainService],
+        email: EmailIdentityProvisioner | None = None,
+        now: Callable[[], datetime] = utc_now,
+    ) -> None:
+        self._serving = serving
+        self._store = store
+        self._lookup = lookup
+        self._service_for = service_for
+        self._email = email
+        self._now = now
+
+    def sweep(self) -> SweepReport:
+        report = SweepReport()
+        by_practice: dict[str, list[PracticeDomain]] = {}
+        for host in self._store.all_hosts():
+            by_practice.setdefault(host.practice_id, []).append(host)
+        for practice_id, hosts in by_practice.items():
+            report.hosts += len(hosts)
+            try:
+                self._practice(practice_id, hosts, report)
+            except Exception:
+                # One practice's failure must not keep the others from being
+                # served; whatever it had left is retried next sweep.
+                logger.exception(
+                    "practice_domain_reconcile_practice_failed practice_id=%s", practice_id
+                )
+                report.failed_practices += 1
+        return report
+
+    def _practice(self, practice_id: str, hosts: list[PracticeDomain], report: SweepReport) -> None:
+        live = [h for h in hosts if h.status != "removing"]
+        records: dict[str, list[DnsRecord]] = {}
+        apexes: dict[str, PracticeDomainApex] = {}
+        if live:
+            records, apexes = self._check_dns(practice_id)
+        for host in hosts:
+            if host.status == "removing":
+                self._take_down(host, report)
+            else:
+                apex = apex_or_none(host.domain)
+                self._bring_up(host, records.get(host.domain, []), apexes.get(apex or ""), report)
+        if self._email is not None and live:
+            self._email_identities(self._email, practice_id, live, apexes)
+
+    def _check_dns(
+        self, practice_id: str
+    ) -> tuple[dict[str, list[DnsRecord]], dict[str, PracticeDomainApex]]:
+        with self._store.practice(practice_id) as scope:
+            before = {
+                a.apex for a in scope.repo.list_apexes_for_practice(practice_id) if a.verified_at
+            }
+            responses, found = self._service_for(scope.repo).check(practice_id, self._lookup)
+            confirmed = sorted(set(found) - before)
+            if confirmed:
+                scope.audit(AuditAction.PRACTICE_DOMAIN_OWNERSHIP_CONFIRMED, {"domains": confirmed})
+            apexes = {a.apex: a for a in scope.repo.list_apexes_for_practice(practice_id)}
+        return {r.domain: r.dns_records for r in responses}, apexes
+
+    # --- one host ------------------------------------------------------------
+
+    def _bring_up(
+        self,
+        host: PracticeDomain,
+        records: list[DnsRecord],
+        apex: PracticeDomainApex | None,
+        report: SweepReport,
+    ) -> None:
+        try:
+            auth_value = self._serving.ensure_dns_authorization(host.domain)
+            certificate = self._serving.ensure_certificate(host.domain)
+        except DomainServingError as e:
+            self._refused(host, e, report)
+            return
+        found = replace(
+            ServingState.of(host), cert_auth_value=auth_value, cert_status=certificate.state
+        )
+
+        if certificate.state == "FAILED" and not _served_before(host):
+            detail = certificate.detail or "no reason given"
+            failure = f"The certificate could not be issued ({detail})."
+            self._write(host, replace(found, status="error", last_error=failure), report)
+            return
+
+        pointing = pointing_verdict(host.domain, records)
+        owned = apex is not None and apex.verified_at is not None
+        if owned and pointing == "ok" and certificate.state == "ACTIVE":
+            try:
+                self._serving.ensure_map_entry(host.domain)
+                self._serving.ensure_host_rule(host.domain)
+            except DomainServingError as e:
+                self._refused(host, e, report)
+                return
+            verified_at = host.verified_at if host.status == "active" else self._now()
+            active = replace(found, status="active", last_error=None, verified_at=verified_at)
+            self._write(host, active, report)
+            return
+
+        status, reason = _waiting(host, pointing, certificate)
+        self._write(host, replace(found, status=status, last_error=reason), report)
+
+    def _refused(
+        self, host: PracticeDomain, error: DomainServingError, report: SweepReport
+    ) -> None:
+        """A cloud call that did not go through.
+
+        A transient failure is retried next sweep. A refusal puts a host that
+        is not served yet in ``error``; a served host keeps its status, since
+        the site still answers and the fault is the deployment's to fix.
+        """
+        logger.warning(
+            "practice_domain_reconcile_call_failed domain=%s transient=%s: %s",
+            host.domain,
+            error.transient,
+            error,
+        )
+        if error.transient or _served_before(host):
+            return
+        self._write(
+            host, replace(ServingState.of(host), status="error", last_error=str(error)), report
+        )
+
+    def _take_down(self, host: PracticeDomain, report: SweepReport) -> None:
+        try:
+            # Host rule first, so the name stops routing before its
+            # certificate goes; the map entry before the certificate it names.
+            self._serving.remove_host_rule(host.domain)
+            self._serving.remove_map_entry(host.domain)
+            self._serving.remove_certificate(host.domain)
+            self._serving.remove_dns_authorization(host.domain)
+        except DomainServingError as e:
+            logger.warning(
+                "practice_domain_reconcile_take_down_failed domain=%s transient=%s: %s",
+                host.domain,
+                e.transient,
+                e,
+            )
+            if not e.transient:
+                self._write(host, replace(ServingState.of(host), last_error=str(e)), report)
+            return
+
+        apex = apex_or_none(host.domain)
+        with self._store.practice(host.practice_id) as scope:
+            if not scope.repo.delete_removing(host.domain):
+                return
+            scope.audit(AuditAction.PRACTICE_DOMAIN_RELEASED, {"domain": host.domain})
+            report.released += 1
+            remaining = scope.repo.list_for_practice(host.practice_id)
+            if apex is None or any(apex_or_none(d.domain) == apex for d in remaining):
+                return
+            apex_row = scope.repo.get_apex(apex)
+            if apex_row is None or apex_row.practice_id != host.practice_id:
+                return
+            if self._email is not None and apex_row.email_identity_status is not None:
+                self._email.remove(apex)
+            scope.repo.remove_apex(apex, host.practice_id)
+
+    def _write(self, host: PracticeDomain, state: ServingState, report: SweepReport) -> None:
+        if state.last_error is not None:
+            state = replace(state, last_error=state.last_error[:_LAST_ERROR_MAX])
+        if state == ServingState.of(host):
+            return
+        with self._store.practice(host.practice_id) as scope:
+            if not scope.repo.record_serving(host.domain, expected_status=host.status, state=state):
+                # Removed or changed since the sweep read it; the next sweep
+                # starts from what it is now.
+                logger.info("practice_domain_reconcile_skipped domain=%s", host.domain)
+                return
+            if state.status != host.status:
+                scope.audit(
+                    AuditAction.PRACTICE_DOMAIN_STATUS_CHANGED,
+                    {"domain": host.domain, "status": state.status, "previous": host.status},
+                )
+                report.changed += 1
+                logger.info(
+                    "practice_domain_reconcile_status domain=%s %s -> %s",
+                    host.domain,
+                    host.status,
+                    state.status,
+                )
+
+    # --- email identities ----------------------------------------------------
+
+    def _email_identities(
+        self,
+        email: EmailIdentityProvisioner,
+        practice_id: str,
+        live: list[PracticeDomain],
+        apexes: dict[str, PracticeDomainApex],
+    ) -> None:
+        held = {apex_or_none(h.domain) for h in live}
+        for name in sorted(a for a in held if a is not None):
+            apex = apexes.get(name)
+            if apex is None or apex.practice_id != practice_id or apex.verified_at is None:
+                continue
+            identity = email.ensure(name)
+            tokens = list(identity.dkim_tokens) or None
+            if (identity.status, tokens) == (apex.email_identity_status, apex.email_dkim_tokens):
+                continue
+            with self._store.practice(practice_id) as scope:
+                scope.repo.set_email_identity(name, practice_id, identity.status, tokens)
+                if identity.status != apex.email_identity_status:
+                    scope.audit(
+                        AuditAction.PRACTICE_DOMAIN_EMAIL_IDENTITY_CHANGED,
+                        {"domain": name, "status": identity.status},
+                    )
+
+
+def _served_before(host: PracticeDomain) -> bool:
+    """Whether the host has been active: ``verified_at`` is set when it first is."""
+    return host.status == "active" or (host.status == "error" and host.verified_at is not None)
+
+
+def _waiting(
+    host: PracticeDomain, pointing: PointingVerdict, certificate: CertificateStatus
+) -> tuple[HostStatus, str | None]:
+    """Where a host stands while something it needs is missing."""
+    if not _served_before(host):
+        return "verifying", None
+    if pointing == "bad":
+        return "error", POINTING_LAPSED
+    if certificate.state != "ACTIVE":
+        return "error", CERTIFICATE_LAPSED
+    return host.status, host.last_error

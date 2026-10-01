@@ -137,3 +137,11 @@ def apex_of(host: str) -> str:
     if not parts.domain:
         raise HostnameError("That isn't a domain you can own. Enter your own domain.")
     return f"{parts.domain}.{parts.suffix}"
+
+
+def apex_or_none(host: str) -> str | None:
+    """:func:`apex_of` for a host already stored, where a refusal means none."""
+    try:
+        return apex_of(host)
+    except HostnameError:
+        return None

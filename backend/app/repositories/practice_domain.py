@@ -22,7 +22,14 @@ from ..utcnow import utc_now
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from ..models.practice_domain import DomainPurpose, PracticeDomain, PracticeDomainApex
+    from ..models.practice_domain import (
+        DomainPurpose,
+        EmailIdentityStatus,
+        HostStatus,
+        PracticeDomain,
+        PracticeDomainApex,
+        ServingState,
+    )
 
 
 class DomainTakenError(Exception):
@@ -77,6 +84,48 @@ class PracticeDomainRepository(ABC):
     @abstractmethod
     def mark_apex_verified(self, apex: str, practice_id: str, at: datetime) -> None:
         """Record that the domain's ownership record was found at *at*."""
+
+    # --- Serving the hosts (app.services.practice_domain_reconciler) ---------
+
+    @abstractmethod
+    def list_all(self) -> list[PracticeDomain]:
+        """Every host of every practice, ``removing`` ones included, oldest first."""
+
+    @abstractmethod
+    def mark_removing(self, domain: str, practice_id: str) -> bool:
+        """Set this practice's host ``removing`` and no longer primary.
+
+        Returns whether a row changed.
+        """
+
+    @abstractmethod
+    def record_serving(
+        self,
+        domain: str,
+        *,
+        expected_status: HostStatus,
+        state: ServingState,
+    ) -> bool:
+        """Write what serving the host found, only if its status is still
+        *expected_status*.
+
+        The guard is what keeps a removal the practice made while the job was
+        working from being overwritten. Returns whether the row was written.
+        """
+
+    @abstractmethod
+    def delete_removing(self, domain: str) -> bool:
+        """Delete the host if it is ``removing``. Returns whether a row went."""
+
+    @abstractmethod
+    def set_email_identity(
+        self,
+        apex: str,
+        practice_id: str,
+        status: EmailIdentityStatus,
+        dkim_tokens: list[str] | None,
+    ) -> None:
+        """Record the state and DKIM tokens of the domain's email sending identity."""
 
 
 class InMemoryPracticeDomainRepository(PracticeDomainRepository):
@@ -151,6 +200,62 @@ class InMemoryPracticeDomainRepository(PracticeDomainRepository):
             if row is not None and row.practice_id == practice_id:
                 row.verified_at = at
                 row.updated_at = at
+
+    def list_all(self) -> list[PracticeDomain]:
+        with self._lock:
+            rows = [replace(r) for r in self._rows.values()]
+        return sorted(rows, key=lambda r: (r.created_at, r.domain))
+
+    def mark_removing(self, domain: str, practice_id: str) -> bool:
+        with self._lock:
+            row = self._rows.get(domain)
+            if row is None or row.practice_id != practice_id:
+                return False
+            row.status = "removing"
+            row.is_primary = False
+            row.updated_at = utc_now()
+            return True
+
+    def record_serving(
+        self,
+        domain: str,
+        *,
+        expected_status: HostStatus,
+        state: ServingState,
+    ) -> bool:
+        with self._lock:
+            row = self._rows.get(domain)
+            if row is None or row.status != expected_status:
+                return False
+            row.status = state.status
+            row.cert_auth_value = state.cert_auth_value
+            row.cert_status = state.cert_status
+            row.last_error = state.last_error
+            row.verified_at = state.verified_at
+            row.updated_at = utc_now()
+            return True
+
+    def delete_removing(self, domain: str) -> bool:
+        with self._lock:
+            row = self._rows.get(domain)
+            if row is None or row.status != "removing":
+                return False
+            del self._rows[domain]
+            return True
+
+    def set_email_identity(
+        self,
+        apex: str,
+        practice_id: str,
+        status: EmailIdentityStatus,
+        dkim_tokens: list[str] | None,
+    ) -> None:
+        with self._lock:
+            row = self._apexes.get(apex)
+            if row is not None and row.practice_id == practice_id:
+                row.email_identity_status = status
+                row.email_dkim_tokens = list(dkim_tokens) if dkim_tokens else None
+                row.updated_at = utc_now()
 
     def put(self, domain: PracticeDomain) -> None:
         """Test seam: record a row as-is, status and all."""

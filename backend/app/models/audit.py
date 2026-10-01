@@ -285,6 +285,14 @@ class AuditAction(StrEnum):
     # A DNS check found a domain's ownership record. The payload is the
     # domains, nothing else.
     PRACTICE_DOMAIN_OWNERSHIP_CONFIRMED = "practice_domain_ownership_confirmed"
+    # The domain reconciler job serving the hosts: a host's status moved
+    # (payload: the host, its status before and after), a removed host's
+    # serving was taken down and its row deleted (payload: the host), and a
+    # domain's email sending identity changed state (payload: the domain and
+    # the state). Recorded with the system as the actor.
+    PRACTICE_DOMAIN_STATUS_CHANGED = "practice_domain_status_changed"
+    PRACTICE_DOMAIN_RELEASED = "practice_domain_released"
+    PRACTICE_DOMAIN_EMAIL_IDENTITY_CHANGED = "practice_domain_email_identity_changed"
 
     # A patient signed themselves out. The mirror image of
     # PATIENT_PORTAL_SESSION_REDEEMED and recorded for the same reason:

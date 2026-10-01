@@ -11,6 +11,7 @@ from ..models.audit import (
     ACTOR_COMPONENT_MAX_LENGTH,
     ACTOR_TYPE_CLINICIAN,
     ACTOR_TYPE_PATIENT,
+    ACTOR_TYPE_SYSTEM,
     PHI_FIELD_NAMES,
     AuditAction,
     AuditCursor,
@@ -662,6 +663,34 @@ class AuditService:
             ip_address=ip_address,
             user_agent=user_agent,
             changes={"returned_count": returned_count},
+        )
+        self._persist(entry)
+        return entry
+
+    def log_system_action(
+        self,
+        action: AuditAction | str,
+        *,
+        scope_user_id: str,
+        resource_type: ResourceType,
+        resource_id: str,
+        actor_component: str,
+        changes: dict[str, Any] | None = None,
+    ) -> AuditLogEntry:
+        """Log something a job did on its own: no request, nobody signed in.
+
+        ``scope_user_id`` is the principal the row is scoped to, and must be
+        the id the write's session is armed with. A job acting on a practice's
+        behalf scopes the row to whoever the practice would ask about it.
+        """
+        entry = AuditLogEntry(
+            user_id=scope_user_id,
+            actor_type=ACTOR_TYPE_SYSTEM,
+            actor_component=actor_component,
+            action=_action_value(action),
+            resource_type=resource_type.value,
+            resource_id=resource_id,
+            changes=changes,
         )
         self._persist(entry)
         return entry

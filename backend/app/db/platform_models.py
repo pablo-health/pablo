@@ -419,6 +419,9 @@ class PracticeDomainRow(PlatformBase):
     one the practice owns (``vanity``). ``status`` moves
     ``pending → verifying → active`` (or ``error``) as whatever serves the host
     confirms it; nothing in the engine marks a host active on its own say-so.
+    Where the deployment serves hosts itself (``app.jobs.practice_domain_reconcile``),
+    removing one sets ``removing`` and the row goes once nothing serves it any
+    more; ``last_error`` says why a host is in ``error``.
 
     No PHI: a public hostname and its setup state.
 
@@ -435,7 +438,7 @@ class PracticeDomainRow(PlatformBase):
             name="practice_domains_kind_check",
         ),
         CheckConstraint(
-            "status IN ('pending', 'verifying', 'active', 'error')",
+            "status IN ('pending', 'verifying', 'active', 'error', 'removing')",
             name="practice_domains_status_check",
         ),
         CheckConstraint(
@@ -474,6 +477,9 @@ class PracticeDomainRow(PlatformBase):
     #: authorised with: the part before ``.authorize.certificatemanager.goog``.
     #: Set by whatever requests the certificate; ``None`` until then.
     cert_auth_value: Mapped[str | None] = mapped_column(String(255))
+    #: Why the host is in ``error``: what the last attempt to serve it found.
+    #: For whoever runs the deployment.
+    last_error: Mapped[str | None] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

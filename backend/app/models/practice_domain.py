@@ -17,6 +17,10 @@ from pydantic import BaseModel, Field
 
 DomainPurpose = Literal["portal", "site"]
 DomainStatus = Literal["pending", "verifying", "active", "error"]
+#: A stored host's status: the shown ones, plus ``removing`` — the practice
+#: removed it and what serves it is still being taken down. A removing host is
+#: no longer the practice's, as far as anything it is shown goes.
+HostStatus = Literal["pending", "verifying", "active", "error", "removing"]
 DomainKind = Literal["subdomain", "vanity"]
 EmailIdentityStatus = Literal["pending", "verified", "failed"]
 #: What a DNS check found for one record: there and matching (``ok``), not
@@ -31,7 +35,7 @@ class PracticeDomain:
     practice_id: str
     purpose: DomainPurpose
     kind: DomainKind
-    status: DomainStatus
+    status: HostStatus
     is_primary: bool
     created_at: datetime
     verified_at: datetime | None = None
@@ -40,6 +44,32 @@ class PracticeDomain:
     #: ``.authorize.certificatemanager.goog``. ``None`` until a certificate is
     #: requested for the host.
     cert_auth_value: str | None = None
+    #: The certificate's state as its issuer last reported it (``PROVISIONING``,
+    #: ``ACTIVE``, ``FAILED``); ``None`` until one is requested.
+    cert_status: str | None = None
+    #: Why the host is in ``error``, in words for whoever runs the deployment.
+    last_error: str | None = None
+
+
+@dataclass(frozen=True)
+class ServingState:
+    """What serving a host found: the columns the domain reconciler writes."""
+
+    status: HostStatus
+    cert_auth_value: str | None
+    cert_status: str | None
+    last_error: str | None
+    verified_at: datetime | None
+
+    @classmethod
+    def of(cls, host: PracticeDomain) -> ServingState:
+        return cls(
+            status=host.status,
+            cert_auth_value=host.cert_auth_value,
+            cert_status=host.cert_status,
+            last_error=host.last_error,
+            verified_at=host.verified_at,
+        )
 
 
 @dataclass

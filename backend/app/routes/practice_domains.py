@@ -14,7 +14,9 @@
   its TXT is found. Changes no host's status.
 * ``POST /api/practice/domains/{domain}/primary`` — make an active host the
   primary for its purpose.
-* ``DELETE /api/practice/domains/{domain}`` — remove a host.
+* ``DELETE /api/practice/domains/{domain}`` — remove a host. Where the
+  deployment serves hosts through the domain reconciler job, the host leaves
+  the list at once and the job takes it down before its row goes.
 
 The writes are the practice owner's (see :func:`_manageable_practice_id`).
 The practice is always the caller's own, resolved from the caller, never taken
