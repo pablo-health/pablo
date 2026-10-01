@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-import { NextResponse } from 'next/server'
+import { type NextRequest, NextResponse } from 'next/server'
 import { IS_DEV_MODE } from '@/lib/devMode'
+import { practiceHostApiOrigin } from '@/lib/portal-host/practice-host-api'
 
 const IS_PRODUCTION = process.env.NODE_ENV === 'production'
 
@@ -25,7 +26,13 @@ function enabledFeatures(): Record<string, boolean> {
   )
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  // On a practice's own portal host, the API is on that host's own origin
+  // (see practice-host-api.ts); everywhere else, the configured address.
+  const ownOrigin = await practiceHostApiOrigin({
+    headers: request.headers,
+    protocol: request.nextUrl.protocol,
+  })
   // In production, force safe defaults for dev/mock flags
   // to prevent exposing internal configuration to unauthenticated users
   return NextResponse.json({
@@ -36,7 +43,7 @@ export async function GET() {
     // inside), while the browser can only reach the published host port.
     // Those coincide whenever the published port equals the container port,
     // which is why one variable served both for so long.
-    apiUrl: process.env.PUBLIC_API_URL || process.env.API_URL || 'http://localhost:8000',
+    apiUrl: ownOrigin || process.env.PUBLIC_API_URL || process.env.API_URL || 'http://localhost:8000',
     devMode: IS_DEV_MODE,
     dataMode: IS_PRODUCTION ? 'api' : (process.env.DATA_MODE || 'api'),
     enableLocalAuth: IS_PRODUCTION ? false : process.env.ENABLE_LOCAL_AUTH === 'true',

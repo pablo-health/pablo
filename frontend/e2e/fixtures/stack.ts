@@ -15,6 +15,13 @@ export const BASE_URL = process.env.E2E_BASE_URL || `http://localhost:${port("E2
  */
 export const PORTAL_URL =
   process.env.E2E_PORTAL_URL || `http://127.0.0.1:${port("E2E_FRONTEND_PORT", "3000")}`
+/**
+ * The stand-in load balancer in front of practices' own hosts
+ * (practice-host-lb in docker-compose.e2e.yml): reached under a practice's
+ * hostname, it splits `/api` between the frontend and the backend as a
+ * deployed balancer does.
+ */
+export const PRACTICE_HOST_PORT = port("E2E_PRACTICE_HOST_PORT", "3080")
 export const BACKEND_URL =
   process.env.E2E_BACKEND_URL || `http://localhost:${port("E2E_BACKEND_PORT", "8000")}`
 export const AUTH_EMULATOR_URL =
