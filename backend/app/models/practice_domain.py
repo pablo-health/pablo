@@ -21,6 +21,8 @@ DomainStatus = Literal["pending", "verifying", "active", "error"]
 #: removed it and what serves it is still being taken down. A removing host is
 #: no longer the practice's, as far as anything it is shown goes.
 HostStatus = Literal["pending", "verifying", "active", "error", "removing"]
+#: The statuses the domain reconciler still has work to do on.
+IN_PROGRESS_STATUSES: frozenset[HostStatus] = frozenset({"pending", "verifying", "removing"})
 DomainKind = Literal["subdomain", "vanity"]
 EmailIdentityStatus = Literal["pending", "verified", "failed"]
 #: What a DNS check found for one record: there and matching (``ok``), not

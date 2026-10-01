@@ -56,6 +56,9 @@ OPERATION_TIMEOUT_SECONDS = 120.0
 URL_MAP_EDIT_ATTEMPTS = 5
 
 _TRANSIENT = (
+    # Another run created the same resource between our read and our create;
+    # the next sweep finds and adopts it.
+    api_exceptions.AlreadyExists,
     api_exceptions.ServiceUnavailable,
     api_exceptions.DeadlineExceeded,
     api_exceptions.InternalServerError,

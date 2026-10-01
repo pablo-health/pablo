@@ -32,6 +32,7 @@ from fastapi import Depends
 
 from ..api_errors import ConflictError, ForbiddenError, NotFoundError, UnprocessableEntityError
 from ..models.practice_domain import (
+    IN_PROGRESS_STATUSES,
     DnsRecord,
     DomainNameResponse,
     PracticeDomain,
@@ -101,6 +102,13 @@ class PracticeDomainService:
         self._cname_target = cname_target.strip().lower().rstrip(".")
         self._apex_ips = apex_ips
         self._dkim_suffix = dkim_cname_suffix.strip().lower().strip(".")
+
+    def serving_work_left(self, practice_id: str) -> bool:
+        """Whether any of the practice's hosts is still the reconciler's to
+        move on: ``pending``, ``verifying`` or ``removing``."""
+        return any(
+            d.status in IN_PROGRESS_STATUSES for d in self._repo.list_for_practice(practice_id)
+        )
 
     def for_practice(self, practice_id: str) -> list[PracticeDomain]:
         """The practice's hosts, less any it removed that are still being taken down."""

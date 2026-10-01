@@ -19,12 +19,13 @@ import logging
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import select
+from sqlalchemy import exists, select
 
 from ..db import create_standalone_session
-from ..db.platform_models import PracticeRow
+from ..db.platform_models import PracticeDomainRow, PracticeRow
 from ..db.tenant_session import tenant_db_session
 from ..models.audit import ResourceType
+from ..models.practice_domain import IN_PROGRESS_STATUSES
 from ..repositories.postgres.audit import PostgresAuditRepository
 from ..repositories.postgres.practice_domain import PostgresPracticeDomainRepository
 from .audit_service import AuditService
@@ -84,6 +85,17 @@ class PostgresReconcileStore:
         session = create_standalone_session()
         try:
             return PostgresPracticeDomainRepository(session).list_all()
+        finally:
+            session.close()
+
+    def any_in_progress(self) -> bool:
+        session = create_standalone_session()
+        try:
+            return bool(
+                session.execute(
+                    select(exists().where(PracticeDomainRow.status.in_(IN_PROGRESS_STATUSES)))
+                ).scalar()
+            )
         finally:
             session.close()
 

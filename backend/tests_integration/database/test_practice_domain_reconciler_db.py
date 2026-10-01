@@ -39,6 +39,7 @@ from app.services.practice_domain_reconcile_store import (
 )
 from app.services.practice_domain_reconciler import (
     CERTIFICATE_LAPSED,
+    CERTIFICATE_PENDING,
     CERTIFICATE_RATE_LIMITED,
     POINTING_LAPSED,
     REISSUE_INTERVAL,
@@ -419,6 +420,63 @@ def test_a_certificate_is_requested_again_at_most_once_per_interval(harness: Har
     harness.now += timedelta(minutes=1)
     harness.sweep()
     assert harness.serving.calls.count(("recreate_certificate", host)) == 2
+
+
+def test_two_runs_at_once_request_a_stuck_certificate_again_only_once(
+    harness: Harness,
+) -> None:
+    """A second run starts while the first is between reading the host and
+    acting on it. Both see the same stuck certificate; one re-requests it."""
+    host = f"portal.{_apex()}"
+    harness.add(host)
+    harness.serving.certificate_state[host] = _attempt_failed()
+    harness.serving.after_reissue[host] = _attempt_failed()
+    harness.sweep()
+    harness.add_challenge(host)
+    real_ensure = harness.serving.ensure_certificate
+    overlapped: list[bool] = []
+
+    def second_run_starts(name: str) -> Any:
+        status = real_ensure(name)
+        if not overlapped:
+            overlapped.append(True)
+            harness.sweep()
+        return status
+
+    harness.serving.ensure_certificate = second_run_starts  # type: ignore[method-assign]  # one-off interleaving
+    harness.sweep()
+
+    assert overlapped == [True]
+    assert harness.serving.calls.count(("recreate_certificate", host)) == 1
+
+
+def test_a_reissue_claim_is_won_once(harness: Harness) -> None:
+    host = f"portal.{_apex()}"
+    harness.add(host)
+    with tenant_db_session(harness.practice.schema, harness.practice.owner) as session:
+        repo = PostgresPracticeDomainRepository(session)
+        assert repo.claim_reissue(host, last=None, at=harness.now) is True
+        assert repo.claim_reissue(host, last=None, at=harness.now) is False
+        later = harness.now + REISSUE_INTERVAL
+        assert repo.claim_reissue(host, last=harness.now, at=later) is True
+
+
+def test_a_sweep_says_which_hosts_are_left_and_who_they_wait_on(harness: Harness) -> None:
+    on_practice, apex = f"portal.{_apex()}", _apex()
+    on_issuer = f"portal.{apex}"
+    harness.add(on_practice)
+    harness.add(on_issuer)
+    harness.sweep()
+    harness.add_challenge(on_issuer)
+    harness.publish_ownership(apex)
+    harness.point(on_issuer)
+
+    report = harness.sweep()
+
+    assert report.in_progress == {on_practice, on_issuer}
+    assert report.awaiting_practice == {on_practice}
+    assert harness.host(on_issuer).last_error == CERTIFICATE_PENDING  # type: ignore[union-attr]  # added above
+    assert PostgresReconcileStore().any_in_progress() is True
 
 
 def test_a_rate_limited_certificate_is_left_to_wait(harness: Harness) -> None:

@@ -240,6 +240,18 @@ class PostgresPracticeDomainRepository(PracticeDomainRepository):
             )
         )
 
+    def claim_reissue(self, domain: str, *, last: datetime | None, at: datetime) -> bool:
+        unchanged = (
+            PracticeDomainRow.cert_reissued_at.is_(None)
+            if last is None
+            else PracticeDomainRow.cert_reissued_at == last
+        )
+        return self._changed(
+            update(PracticeDomainRow)
+            .where(PracticeDomainRow.domain == domain, unchanged)
+            .values(cert_reissued_at=at)
+        )
+
     def delete_removing(self, domain: str) -> bool:
         return self._changed(
             delete(PracticeDomainRow).where(

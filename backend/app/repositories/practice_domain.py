@@ -114,6 +114,15 @@ class PracticeDomainRepository(ABC):
         """
 
     @abstractmethod
+    def claim_reissue(self, domain: str, *, last: datetime | None, at: datetime) -> bool:
+        """Record that the host's certificate is being requested again at *at*,
+        only if the last time recorded is still *last*.
+
+        Two runs at once both see a stuck certificate; this is what lets only
+        one of them request it again. Returns whether this one may.
+        """
+
+    @abstractmethod
     def delete_removing(self, domain: str) -> bool:
         """Delete the host if it is ``removing``. Returns whether a row went."""
 
@@ -234,6 +243,14 @@ class InMemoryPracticeDomainRepository(PracticeDomainRepository):
             row.cert_reissued_at = state.cert_reissued_at
             row.verified_at = state.verified_at
             row.updated_at = utc_now()
+            return True
+
+    def claim_reissue(self, domain: str, *, last: datetime | None, at: datetime) -> bool:
+        with self._lock:
+            row = self._rows.get(domain)
+            if row is None or row.cert_reissued_at != last:
+                return False
+            row.cert_reissued_at = at
             return True
 
     def delete_removing(self, domain: str) -> bool:
