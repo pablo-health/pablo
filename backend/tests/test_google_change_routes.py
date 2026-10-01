@@ -72,6 +72,7 @@ def test_undo_restores_a_session_removed_in_google(client: TestClient, wired: _W
     appt.status = AppointmentStatus.CANCELLED
     appt.cancelled_by = CancellationActor.SYSTEM
     appt.late_cancellation = False
+    wired.repo.update(appt)
 
     response = client.post("/api/appointments/a/google-change", json={"resolution": "keep_pablo"})
 

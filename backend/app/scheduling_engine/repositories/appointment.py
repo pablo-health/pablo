@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import copy
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -230,6 +231,12 @@ class InMemoryAppointmentRepository(AppointmentRepository):
     methods (``list_by_range``, ``list_by_recurring_id``,
     ``list_by_ical_source``) keep the original ``appointment.user_id``
     filter — those are "my calendar" slices, not patient queries.
+
+    Rows are copied on the way in and on the way out, as a database would
+    hand back a fresh row for every read. Otherwise a caller that changes an
+    appointment it was handed and forgets to ``update`` it still sees the
+    change on the next read, and a test cannot tell a forgotten update from
+    a made one.
     """
 
     def __init__(self) -> None:
@@ -249,7 +256,7 @@ class InMemoryAppointmentRepository(AppointmentRepository):
             return None
         if not self._can_access(appt.patient_id, user_id):
             return None
-        return appt
+        return copy.deepcopy(appt)
 
     def list_by_range(
         self,
@@ -268,7 +275,7 @@ class InMemoryAppointmentRepository(AppointmentRepository):
         )
         return sorted(
             [
-                a
+                copy.deepcopy(a)
                 for a in self._appointments.values()
                 if a.user_id == user_id and a.start_at >= start_dt and a.start_at < end_dt
             ],
@@ -283,7 +290,7 @@ class InMemoryAppointmentRepository(AppointmentRepository):
         if not self._can_access(patient_id, user_id):
             return []
         return sorted(
-            [a for a in self._appointments.values() if a.patient_id == patient_id],
+            [copy.deepcopy(a) for a in self._appointments.values() if a.patient_id == patient_id],
             key=lambda a: a.start_at,
         )
 
@@ -305,7 +312,7 @@ class InMemoryAppointmentRepository(AppointmentRepository):
     def get_by_session_ids(self, session_ids: list[str], user_id: str) -> dict[str, Appointment]:
         wanted = set(session_ids)
         return {
-            a.session_id: a
+            a.session_id: copy.deepcopy(a)
             for a in self._appointments.values()
             if a.session_id in wanted and self._can_access(a.patient_id, user_id)
         }
@@ -329,7 +336,7 @@ class InMemoryAppointmentRepository(AppointmentRepository):
         )
         return sorted(
             [
-                a
+                copy.deepcopy(a)
                 for a in self._appointments.values()
                 if a.user_id == user_id
                 and a.status != "cancelled"
@@ -358,7 +365,7 @@ class InMemoryAppointmentRepository(AppointmentRepository):
                 else datetime.fromisoformat(after.replace("Z", "+00:00"))
             )
             results = [a for a in results if a.start_at >= after_dt]
-        return sorted(results, key=lambda a: a.start_at)
+        return sorted((copy.deepcopy(a) for a in results), key=lambda a: a.start_at)
 
     def list_by_ical_source(
         self,
@@ -367,7 +374,7 @@ class InMemoryAppointmentRepository(AppointmentRepository):
     ) -> list[Appointment]:
         return sorted(
             [
-                a
+                copy.deepcopy(a)
                 for a in self._appointments.values()
                 if a.user_id == user_id and a.ical_source == ehr_system
             ],
@@ -395,7 +402,7 @@ class InMemoryAppointmentRepository(AppointmentRepository):
     ) -> Appointment | None:
         for a in self._appointments.values():
             if a.user_id == user_id and a.google_event_id == google_event_id:
-                return a
+                return copy.deepcopy(a)
         return None
 
     def get_by_outside_event(
@@ -406,12 +413,12 @@ class InMemoryAppointmentRepository(AppointmentRepository):
     ) -> Appointment | None:
         for a in self._appointments.values():
             if (a.user_id, a.outside_source, a.outside_event_id) == (user_id, source, event_id):
-                return a
+                return copy.deepcopy(a)
         return None
 
     def list_expired_pending(self, user_id: str, now: datetime) -> list[Appointment]:
         return [
-            appt
+            copy.deepcopy(appt)
             for appt in self._appointments.values()
             if appt.user_id == user_id
             and appt.status == AppointmentStatus.PENDING
@@ -422,11 +429,11 @@ class InMemoryAppointmentRepository(AppointmentRepository):
     def get_by_confirmation_token_hash(self, user_id: str, token_hash: str) -> Appointment | None:
         for appt in self._appointments.values():
             if appt.user_id == user_id and appt.confirmation_token_hash == token_hash:
-                return appt
+                return copy.deepcopy(appt)
         return None
 
     def create(self, appointment: Appointment) -> Appointment:
-        self._appointments[appointment.id] = appointment
+        self._appointments[appointment.id] = copy.deepcopy(appointment)
         # Auto-grant the creator access to the patient — mirrors the
         # Postgres guarantee that callers verified patient access
         # before reaching this point.
@@ -435,12 +442,12 @@ class InMemoryAppointmentRepository(AppointmentRepository):
 
     def create_batch(self, appointments: list[Appointment]) -> list[Appointment]:
         for appt in appointments:
-            self._appointments[appt.id] = appt
+            self._appointments[appt.id] = copy.deepcopy(appt)
             self._access.add((appt.patient_id, appt.user_id))
         return appointments
 
     def update(self, appointment: Appointment) -> Appointment:
-        self._appointments[appointment.id] = appointment
+        self._appointments[appointment.id] = copy.deepcopy(appointment)
         return appointment
 
     def bulk_set_patient(self, appointment_ids: list[str], patient_id: str) -> int:

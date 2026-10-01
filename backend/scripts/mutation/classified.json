@@ -1,0 +1,4207 @@
+{
+ "about": "Surviving mutants that have been judged, keyed by content (see score.py). First judged on the calendar preset's modules. A survivor not listed here scores as '?' until someone judges it and adds it.",
+ "classes": {
+  "A": "real gap: models a bug no test notices",
+  "D": "untested: the function or path is never run by these tests",
+  "B": "equivalent: cannot change behaviour",
+  "C": "harmless: log or message text, logged counts, performance only",
+  "E": "dead code: nothing calls it",
+  "F": "hidden by an in-memory repository sharing objects with its caller"
+ },
+ "survivors": [
+  {
+   "class": "C",
+   "file": "app/patients/matching.py",
+   "func": "<module>",
+   "op": "const_bool",
+   "desc": "`True` -> `False`",
+   "snippet": "True",
+   "occurrence": 1
+  },
+  {
+   "class": "B",
+   "file": "app/patients/matching.py",
+   "func": "<module>",
+   "op": "const_int",
+   "desc": "`2` -> `1`",
+   "snippet": "2",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/patients/matching.py",
+   "func": "<module>",
+   "op": "drop_kwarg",
+   "desc": "drop keyword `frozen=True`",
+   "snippet": "dataclass(frozen=True)",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/patients/matching.py",
+   "func": "Candidate.from_patient",
+   "op": "early_return",
+   "desc": "insert `return None` at top of Candidate.from_patient",
+   "snippet": "@classmethod",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/patients/matching.py",
+   "func": "Candidate.from_patient",
+   "op": "return_none",
+   "desc": "`return cls(id=patient.id, first_name=patient.first_name, ` -> `return None`",
+   "snippet": "return cls(id=patient.id, first_name=patient.first_name, last_name=patient.last_",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/patients/matching.py",
+   "func": "MatchContext.__init__",
+   "op": "const_str",
+   "desc": "`''` -> `'XX'`",
+   "snippet": "''",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/patients/matching.py",
+   "func": "MatchContext.candidates",
+   "op": "cond_const",
+   "desc": "condition `self._candidates is None` -> `True`",
+   "snippet": "if self._candidates is None:",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/patients/matching.py",
+   "func": "MatchContext.remembered",
+   "op": "cond_const",
+   "desc": "condition `self._mappings` -> `True`",
+   "snippet": "self._mappings.list_by_source(self.user_id, source) if self._mappings else []",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/patients/matching.py",
+   "func": "MatchContext.remembered",
+   "op": "cond_const",
+   "desc": "condition `source not in self._remembered` -> `True`",
+   "snippet": "if source not in self._remembered:",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/patients/matching.py",
+   "func": "MatchContext.save",
+   "op": "cond_const",
+   "desc": "condition `self._mappings is None` -> `False`",
+   "snippet": "if self._mappings is None:",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/patients/matching.py",
+   "func": "MatchContext.save",
+   "op": "const_str",
+   "desc": "`'This context has nowhere to remember a match'` -> `'This context has nowhere to remember a matchXX'`",
+   "snippet": "'This context has nowhere to remember a match'",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/patients/matching.py",
+   "func": "MatchContext.save",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `msg = 'This context has nowhere to remember a match'`",
+   "snippet": "msg = 'This context has nowhere to remember a match'",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/patients/matching.py",
+   "func": "MatchContext.save",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `raise RuntimeError(msg)`",
+   "snippet": "raise RuntimeError(msg)",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/patients/matching.py",
+   "func": "_first_and_last_word",
+   "op": "cond_const",
+   "desc": "condition `first` -> `True`",
+   "snippet": "first[0] if first else ''",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/patients/matching.py",
+   "func": "_first_and_last_word",
+   "op": "cond_const",
+   "desc": "condition `last` -> `True`",
+   "snippet": "last[-1] if last else ''",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/patients/matching.py",
+   "func": "_first_and_last_word",
+   "op": "const_int",
+   "desc": "`1` -> `0`",
+   "snippet": "1",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/patients/matching.py",
+   "func": "_first_and_last_word",
+   "op": "const_str",
+   "desc": "`''` -> `'XX'`",
+   "snippet": "''",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/patients/matching.py",
+   "func": "_first_and_last_word",
+   "op": "const_str",
+   "desc": "`''` -> `'XX'`",
+   "snippet": "''",
+   "occurrence": 1
+  },
+  {
+   "class": "B",
+   "file": "app/patients/matching.py",
+   "func": "_full_name_matches",
+   "op": "cond_const",
+   "desc": "condition `len(parts) < _MIN_NAME_PARTS` -> `False`",
+   "snippet": "if len(parts) < _MIN_NAME_PARTS:",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/patients/matching.py",
+   "func": "_full_name_matches",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `return ([], [])`",
+   "snippet": "return ([], [])",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/patients/matching.py",
+   "func": "_initials_matches",
+   "op": "boolop",
+   "desc": "`and` -> `or`",
+   "snippet": "normalize(c.first_name)[:1] == first and normalize(c.last_name)[:1] == last",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/patients/matching.py",
+   "func": "_initials_matches",
+   "op": "cond_const",
+   "desc": "condition `len(letters) != _INITIALS_LEN` -> `False`",
+   "snippet": "if len(letters) != _INITIALS_LEN:",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/patients/matching.py",
+   "func": "_initials_matches",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `return []`",
+   "snippet": "return []",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/patients/matching.py",
+   "func": "_initials_matches",
+   "op": "return_none",
+   "desc": "`return []` -> `return None`",
+   "snippet": "return []",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/patients/matching.py",
+   "func": "_match",
+   "op": "boolop",
+   "desc": "`and` -> `or`",
+   "snippet": "hint.source and hint.source_identifier",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/patients/matching.py",
+   "func": "_match",
+   "op": "boolop",
+   "desc": "`and` -> `or`",
+   "snippet": "hint.email and normalize(hint.email)",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/patients/matching.py",
+   "func": "_match",
+   "op": "comp_if_true",
+   "desc": "comprehension filter `found` -> `True`",
+   "snippet": " for _, found in steps if found",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/patients/matching.py",
+   "func": "_match",
+   "op": "cond_const",
+   "desc": "condition `hint.full_name` -> `True`",
+   "snippet": "_full_name_matches(hint.full_name, candidates) if hint.full_name else ([], [])",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/patients/matching.py",
+   "func": "_match",
+   "op": "cond_const",
+   "desc": "condition `hint.full_name` -> `True`",
+   "snippet": "_full_name_matches(hint.full_name, seen) if hint.full_name else ([], [])",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/patients/matching.py",
+   "func": "_match",
+   "op": "cond_const",
+   "desc": "condition `hint.full_name` -> `True`",
+   "snippet": "if hint.full_name:",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/patients/matching.py",
+   "func": "_match",
+   "op": "cond_const",
+   "desc": "condition `hint.initials` -> `True`",
+   "snippet": "if hint.initials:",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/patients/matching.py",
+   "func": "_match",
+   "op": "cond_const",
+   "desc": "condition `hint.source and hint.source_identifier` -> `True`",
+   "snippet": "if hint.source and hint.source_identifier:",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/patients/matching.py",
+   "func": "_match",
+   "op": "const_int",
+   "desc": "`0` -> `-1`",
+   "snippet": "0",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/patients/matching.py",
+   "func": "_parse_date",
+   "op": "cond_const",
+   "desc": "condition `not value` -> `False`",
+   "snippet": "if not value:",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/patients/matching.py",
+   "func": "_parse_date",
+   "op": "cond_const",
+   "desc": "condition `not value` -> `True`",
+   "snippet": "if not value:",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/patients/matching.py",
+   "func": "_parse_date",
+   "op": "const_int",
+   "desc": "`10` -> `11`",
+   "snippet": "10",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/patients/matching.py",
+   "func": "_parse_date",
+   "op": "const_int",
+   "desc": "`10` -> `9`",
+   "snippet": "10",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/patients/matching.py",
+   "func": "_parse_date",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `return None`",
+   "snippet": "return None",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/patients/matching.py",
+   "func": "_parse_date",
+   "op": "drop_not",
+   "desc": "remove `not`",
+   "snippet": "not value",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/patients/matching.py",
+   "func": "_parse_date",
+   "op": "early_return",
+   "desc": "insert `return None` at top of _parse_date",
+   "snippet": "def _parse_date(value: str | None) -> date | None:",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/patients/matching.py",
+   "func": "_parse_date",
+   "op": "return_none",
+   "desc": "`return date.fromisoformat(value[:10])` -> `return None`",
+   "snippet": "return date.fromisoformat(value[:10])",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/patients/matching.py",
+   "func": "_remember",
+   "op": "cond_const",
+   "desc": "condition `same == (mapping.answer, mapping.patient_id, mappi` -> `False`",
+   "snippet": "if same == (mapping.answer, mapping.patient_id, mapping.answered_title):",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/patients/matching.py",
+   "func": "_remember",
+   "op": "delete_stmt",
+   "desc": "delete body statement `mapping.source_identifier = ' '.join(mapping.source_identifier.split()`",
+   "snippet": "mapping.source_identifier = ' '.join(mapping.source_identifier.split())",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/patients/matching.py",
+   "func": "_remember",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `if same == (mapping.answer, mapping.patient_id, mapping.answered_title`",
+   "snippet": "if same == (mapping.answer, mapping.patient_id, mapping.answered_title):",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/patients/matching.py",
+   "func": "_remember",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `return`",
+   "snippet": "return",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/patients/matching.py",
+   "func": "match_patient",
+   "op": "cond_const",
+   "desc": "condition `result.patient_id` -> `True`",
+   "snippet": "[result.patient_id, *result.possible_ids] if result.patient_id else result.possi",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/patients/matching.py",
+   "func": "same_name_charts",
+   "op": "comp_if_true",
+   "desc": "comprehension filter `c.visible` -> `True`",
+   "snippet": " for c in ctx.candidates if c.visible",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/ical_sync_service.py",
+   "func": "<module>",
+   "op": "const_bool",
+   "desc": "`True` -> `False`",
+   "snippet": "True",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "<module>",
+   "op": "const_int",
+   "desc": "`0` -> `-1`",
+   "snippet": "0",
+   "occurrence": 4
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "<module>",
+   "op": "const_int",
+   "desc": "`0` -> `-1`",
+   "snippet": "0",
+   "occurrence": 6
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "<module>",
+   "op": "const_int",
+   "desc": "`0` -> `1`",
+   "snippet": "0",
+   "occurrence": 4
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "<module>",
+   "op": "const_int",
+   "desc": "`0` -> `1`",
+   "snippet": "0",
+   "occurrence": 6
+  },
+  {
+   "class": "C",
+   "file": "app/services/ical_sync_service.py",
+   "func": "<module>",
+   "op": "const_int",
+   "desc": "`30` -> `29`",
+   "snippet": "30",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/ical_sync_service.py",
+   "func": "<module>",
+   "op": "const_int",
+   "desc": "`30` -> `31`",
+   "snippet": "30",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "<module>",
+   "op": "const_str",
+   "desc": "`''` -> `'XX'`",
+   "snippet": "''",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "<module>",
+   "op": "const_str",
+   "desc": "`'Birth Date'` -> `'Birth DateXX'`",
+   "snippet": "'Birth Date'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "<module>",
+   "op": "const_str",
+   "desc": "`'Diagnosis'` -> `'DiagnosisXX'`",
+   "snippet": "'Diagnosis'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "<module>",
+   "op": "const_str",
+   "desc": "`'Email'` -> `'EmailXX'`",
+   "snippet": "'Email'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "<module>",
+   "op": "const_str",
+   "desc": "`'Phone Number'` -> `'Phone NumberXX'`",
+   "snippet": "'Phone Number'",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/ical_sync_service.py",
+   "func": "<module>",
+   "op": "const_str",
+   "desc": "`'code'` -> `'codeXX'`",
+   "snippet": "'code'",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/ical_sync_service.py",
+   "func": "<module>",
+   "op": "const_str",
+   "desc": "`'codes'` -> `'codesXX'`",
+   "snippet": "'codes'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "<module>",
+   "op": "const_str",
+   "desc": "`'date_of_birth'` -> `'date_of_birthXX'`",
+   "snippet": "'date_of_birth'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "<module>",
+   "op": "const_str",
+   "desc": "`'diagnosis'` -> `'diagnosisXX'`",
+   "snippet": "'diagnosis'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "<module>",
+   "op": "const_str",
+   "desc": "`'email'` -> `'emailXX'`",
+   "snippet": "'email'",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/ical_sync_service.py",
+   "func": "<module>",
+   "op": "const_str",
+   "desc": "`'initials'` -> `'initialsXX'`",
+   "snippet": "'initials'",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/ical_sync_service.py",
+   "func": "<module>",
+   "op": "const_str",
+   "desc": "`'initials'` -> `'initialsXX'`",
+   "snippet": "'initials'",
+   "occurrence": 1
+  },
+  {
+   "class": "C",
+   "file": "app/services/ical_sync_service.py",
+   "func": "<module>",
+   "op": "const_str",
+   "desc": "`'name'` -> `'nameXX'`",
+   "snippet": "'name'",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/ical_sync_service.py",
+   "func": "<module>",
+   "op": "const_str",
+   "desc": "`'names'` -> `'namesXX'`",
+   "snippet": "'names'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "<module>",
+   "op": "const_str",
+   "desc": "`'phone'` -> `'phoneXX'`",
+   "snippet": "'phone'",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/ical_sync_service.py",
+   "func": "<module>",
+   "op": "drop_kwarg",
+   "desc": "drop keyword `frozen=True`",
+   "snippet": "dataclass(frozen=True)",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.__init__",
+   "op": "cond_const",
+   "desc": "condition `external_events is None` -> `False`",
+   "snippet": "if external_events is None:",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.__init__",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `external_events = get_external_calendar_event_repository()`",
+   "snippet": "external_events = get_external_calendar_event_repository()",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._add_event",
+   "op": "boolop",
+   "desc": "`or` -> `and`",
+   "snippet": "self._derive_appointment_url(ehr_system, event.uid, event.url) or ''",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._add_event",
+   "op": "cond_const",
+   "desc": "condition `client_id` -> `False`",
+   "snippet": "if client_id:",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._add_event",
+   "op": "cond_const",
+   "desc": "condition `client_id` -> `True`",
+   "snippet": "if client_id:",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._add_event",
+   "op": "const_str",
+   "desc": "`''` -> `'XX'`",
+   "snippet": "''",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._add_event",
+   "op": "const_str",
+   "desc": "`'ehr_appointment_url'` -> `'ehr_appointment_urlXX'`",
+   "snippet": "'ehr_appointment_url'",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._add_event",
+   "op": "const_str",
+   "desc": "`'ical_client:'` -> `'ical_client:XX'`",
+   "snippet": "'ical_client:'",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._add_event",
+   "op": "const_str",
+   "desc": "`'ical_uid'` -> `'ical_uidXX'`",
+   "snippet": "'ical_uid'",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._add_event",
+   "op": "const_str",
+   "desc": "`'start_at'` -> `'start_atXX'`",
+   "snippet": "'start_at'",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._add_event",
+   "op": "const_str",
+   "desc": "`'unknown'` -> `'unknownXX'`",
+   "snippet": "'unknown'",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._add_event",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `appt.notes = f'ical_client:{client_id}'`",
+   "snippet": "appt.notes = f'ical_client:{client_id}'",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._add_event",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `if client_id:`",
+   "snippet": "if client_id:",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._add_event",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `self._outside.drop(user_id, source, event.uid)`",
+   "snippet": "self._outside.drop(user_id, source, event.uid)",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._add_event",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `self._outside.settle(user_id, source, event.uid, appt)`",
+   "snippet": "self._outside.settle(user_id, source, event.uid, appt)",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_appointment",
+   "op": "boolop",
+   "desc": "`and` -> `or`",
+   "snippet": "ehr_system == EhrSystem.SIMPLEPRACTICE and event.url",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_appointment",
+   "op": "cond_const",
+   "desc": "condition `ehr_system == EhrSystem.SIMPLEPRACTICE and event.u` -> `True`",
+   "snippet": "if ehr_system == EhrSystem.SIMPLEPRACTICE and event.url:",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_appointment",
+   "op": "const_str",
+   "desc": "`'Session'` -> `'SessionXX'`",
+   "snippet": "'Session'",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_appointment",
+   "op": "const_str",
+   "desc": "`'individual'` -> `'individualXX'`",
+   "snippet": "'individual'",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_appointment",
+   "op": "const_str",
+   "desc": "`'simplepractice'` -> `'simplepracticeXX'`",
+   "snippet": "'simplepractice'",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_appointment",
+   "op": "const_str",
+   "desc": "`'synced'` -> `'syncedXX'`",
+   "snippet": "'synced'",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_appointment",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `video_platform = 'simplepractice'`",
+   "snippet": "video_platform = 'simplepractice'",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_appointment",
+   "op": "drop_kwarg",
+   "desc": "drop keyword `ical_sync_status='synced'`",
+   "snippet": "Appointment(id=str(uuid.uuid4()), user_id=user_id, patient_id=patient_id, title=",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "attr_swap",
+   "desc": "`.strip` -> `.lstrip`",
+   "snippet": "row.get('First Name', '').strip",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "attr_swap",
+   "desc": "`.strip` -> `.lstrip`",
+   "snippet": "row.get('Last Name', '').strip",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "attr_swap",
+   "desc": "`.strip` -> `.lstrip`",
+   "snippet": "row.get('Email', '').strip",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "attr_swap",
+   "desc": "`.strip` -> `.lstrip`",
+   "snippet": "row.get('Phone Number', '').strip",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "attr_swap",
+   "desc": "`.strip` -> `.lstrip`",
+   "snippet": "row.get('Birth Date', '').strip",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "attr_swap",
+   "desc": "`.strip` -> `.lstrip`",
+   "snippet": "row.get('Diagnosis', '').strip",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "attr_swap",
+   "desc": "`.strip` -> `.lstrip`",
+   "snippet": "row.get('Active', 'Y').strip",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "attr_swap",
+   "desc": "`.upper` -> `.lower`",
+   "snippet": "row.get('Active', 'Y').strip().upper",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "boolop",
+   "desc": "`or` -> `and`",
+   "snippet": "row.get('Email', '').strip() or None",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "boolop",
+   "desc": "`or` -> `and`",
+   "snippet": "row.get('Phone Number', '').strip() or None",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "boolop",
+   "desc": "`or` -> `and`",
+   "snippet": "row.get('Birth Date', '').strip() or None",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "boolop",
+   "desc": "`or` -> `and`",
+   "snippet": "row.get('Diagnosis', '').strip() or None",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "compare",
+   "desc": "`==` -> `!=`",
+   "snippet": "row.get('Active', 'Y').strip().upper() == 'Y'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "cond_const",
+   "desc": "condition `row.get('Active', 'Y').strip().upper() == 'Y'` -> `False`",
+   "snippet": "'active' if row.get('Active', 'Y').strip().upper() == 'Y' else 'inactive'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "cond_const",
+   "desc": "condition `row.get('Active', 'Y').strip().upper() == 'Y'` -> `True`",
+   "snippet": "'active' if row.get('Active', 'Y').strip().upper() == 'Y' else 'inactive'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "const_str",
+   "desc": "`''` -> `'XX'`",
+   "snippet": "''",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "const_str",
+   "desc": "`''` -> `'XX'`",
+   "snippet": "''",
+   "occurrence": 1
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "const_str",
+   "desc": "`''` -> `'XX'`",
+   "snippet": "''",
+   "occurrence": 2
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "const_str",
+   "desc": "`''` -> `'XX'`",
+   "snippet": "''",
+   "occurrence": 3
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "const_str",
+   "desc": "`''` -> `'XX'`",
+   "snippet": "''",
+   "occurrence": 4
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "const_str",
+   "desc": "`''` -> `'XX'`",
+   "snippet": "''",
+   "occurrence": 5
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "const_str",
+   "desc": "`'Active'` -> `'ActiveXX'`",
+   "snippet": "'Active'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "const_str",
+   "desc": "`'Birth Date'` -> `'Birth DateXX'`",
+   "snippet": "'Birth Date'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "const_str",
+   "desc": "`'Diagnosis'` -> `'DiagnosisXX'`",
+   "snippet": "'Diagnosis'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "const_str",
+   "desc": "`'Email'` -> `'EmailXX'`",
+   "snippet": "'Email'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "const_str",
+   "desc": "`'First Name'` -> `'First NameXX'`",
+   "snippet": "'First Name'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "const_str",
+   "desc": "`'Last Name'` -> `'Last NameXX'`",
+   "snippet": "'Last Name'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "const_str",
+   "desc": "`'Phone Number'` -> `'Phone NumberXX'`",
+   "snippet": "'Phone Number'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "const_str",
+   "desc": "`'Y'` -> `'YXX'`",
+   "snippet": "'Y'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "const_str",
+   "desc": "`'Y'` -> `'YXX'`",
+   "snippet": "'Y'",
+   "occurrence": 1
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "const_str",
+   "desc": "`'active'` -> `'activeXX'`",
+   "snippet": "'active'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._create_patient_from_csv",
+   "op": "const_str",
+   "desc": "`'inactive'` -> `'inactiveXX'`",
+   "snippet": "'inactive'",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._derive_appointment_url",
+   "op": "compare",
+   "desc": "`==` -> `!=`",
+   "snippet": "ehr_system == EhrSystem.SESSIONS_HEALTH",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._derive_appointment_url",
+   "op": "cond_const",
+   "desc": "condition `ehr_system == EhrSystem.SESSIONS_HEALTH` -> `False`",
+   "snippet": "if ehr_system == EhrSystem.SESSIONS_HEALTH:",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._derive_appointment_url",
+   "op": "cond_const",
+   "desc": "condition `ehr_system == EhrSystem.SESSIONS_HEALTH` -> `True`",
+   "snippet": "if ehr_system == EhrSystem.SESSIONS_HEALTH:",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._derive_appointment_url",
+   "op": "cond_const",
+   "desc": "condition `ehr_system == EhrSystem.SIMPLEPRACTICE` -> `True`",
+   "snippet": "if ehr_system == EhrSystem.SIMPLEPRACTICE:",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._derive_appointment_url",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `return event_url`",
+   "snippet": "return event_url",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._derive_appointment_url",
+   "op": "return_none",
+   "desc": "`return event_url` -> `return None`",
+   "snippet": "return event_url",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._extract_client_identifier",
+   "op": "attr_swap",
+   "desc": "`.strip` -> `.lstrip`",
+   "snippet": "summary.strip",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._extract_client_identifier",
+   "op": "attr_swap",
+   "desc": "`.strip` -> `.lstrip`",
+   "snippet": "m.group(1).strip",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._extract_client_identifier",
+   "op": "compare",
+   "desc": "`==` -> `!=`",
+   "snippet": "ehr_system == EhrSystem.SESSIONS_HEALTH",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._extract_client_identifier",
+   "op": "cond_const",
+   "desc": "condition `ehr_system == EhrSystem.SESSIONS_HEALTH` -> `False`",
+   "snippet": "if ehr_system == EhrSystem.SESSIONS_HEALTH:",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._extract_client_identifier",
+   "op": "cond_const",
+   "desc": "condition `ehr_system == EhrSystem.SESSIONS_HEALTH` -> `True`",
+   "snippet": "if ehr_system == EhrSystem.SESSIONS_HEALTH:",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._extract_client_identifier",
+   "op": "cond_const",
+   "desc": "condition `ehr_system == EhrSystem.SIMPLEPRACTICE` -> `True`",
+   "snippet": "if ehr_system == EhrSystem.SIMPLEPRACTICE:",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._extract_client_identifier",
+   "op": "cond_const",
+   "desc": "condition `m` -> `False`",
+   "snippet": "if m:",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._extract_client_identifier",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `if m:`",
+   "snippet": "if m:",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._extract_client_identifier",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `return m.group(1)`",
+   "snippet": "return m.group(1)",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._extract_client_identifier",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `return summary.strip()`",
+   "snippet": "return summary.strip()",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._extract_client_identifier",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `return summary`",
+   "snippet": "return summary",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._extract_csv",
+   "op": "cond_const",
+   "desc": "condition `name.endswith('clients.csv')` -> `True`",
+   "snippet": "if name.endswith('clients.csv'):",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._fetch_feed",
+   "op": "const_str",
+   "desc": "`'Pablo/1.0'` -> `'Pablo/1.0XX'`",
+   "snippet": "'Pablo/1.0'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._fetch_feed",
+   "op": "const_str",
+   "desc": "`'User-Agent'` -> `'User-AgentXX'`",
+   "snippet": "'User-Agent'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._fetch_feed",
+   "op": "const_str",
+   "desc": "`'utf-8'` -> `'utf-8XX'`",
+   "snippet": "'utf-8'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._fetch_feed",
+   "op": "delete_stmt",
+   "desc": "delete body statement `raw: bytes = resp.read()`",
+   "snippet": "raw: bytes = resp.read()",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._fetch_feed",
+   "op": "delete_stmt",
+   "desc": "delete body statement `req = Request(feed_url, headers={'User-Agent': 'Pablo/1.0'})`",
+   "snippet": "req = Request(feed_url, headers={'User-Agent': 'Pablo/1.0'})",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._fetch_feed",
+   "op": "early_return",
+   "desc": "insert `return None` at top of ICalSyncService._fetch_feed",
+   "snippet": "def _fetch_feed(self, feed_url: str) -> str:",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._fetch_feed",
+   "op": "return_none",
+   "desc": "`return raw.decode('utf-8')` -> `return None`",
+   "snippet": "return raw.decode('utf-8')",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._get_client_identifier",
+   "op": "attr_swap",
+   "desc": "`.startswith` -> `.endswith`",
+   "snippet": "notes.startswith",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._get_client_identifier",
+   "op": "cond_const",
+   "desc": "condition `notes.startswith('ical_client:')` -> `False`",
+   "snippet": "if notes.startswith('ical_client:'):",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._get_client_identifier",
+   "op": "cond_const",
+   "desc": "condition `notes.startswith('ical_client:')` -> `True`",
+   "snippet": "if notes.startswith('ical_client:'):",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._get_client_identifier",
+   "op": "const_str",
+   "desc": "`''` -> `'XX'`",
+   "snippet": "''",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._get_client_identifier",
+   "op": "const_str",
+   "desc": "`'ical_client:'` -> `'ical_client:XX'`",
+   "snippet": "'ical_client:'",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._get_client_identifier",
+   "op": "const_str",
+   "desc": "`'ical_client:'` -> `'ical_client:XX'`",
+   "snippet": "'ical_client:'",
+   "occurrence": 1
+  },
+  {
+   "class": "E",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._get_client_identifier",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `return notes[len('ical_client:'):]`",
+   "snippet": "return notes[len('ical_client:'):]",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._get_client_identifier",
+   "op": "early_return",
+   "desc": "insert `return None` at top of ICalSyncService._get_client_identifier",
+   "snippet": "def _get_client_identifier(self, _ehr_system: str, notes: str) -> str:",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._get_client_identifier",
+   "op": "return_none",
+   "desc": "`return ''` -> `return None`",
+   "snippet": "return ''",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._get_client_identifier",
+   "op": "return_none",
+   "desc": "`return notes[len('ical_client:'):]` -> `return None`",
+   "snippet": "return notes[len('ical_client:'):]",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._parse_events",
+   "op": "boolop",
+   "desc": "`or` -> `and`",
+   "snippet": "not dtstart or not dtend",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._parse_events",
+   "op": "cond_const",
+   "desc": "condition `component.name != 'VEVENT'` -> `False`",
+   "snippet": "if component.name != 'VEVENT':",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._parse_events",
+   "op": "cond_const",
+   "desc": "condition `hasattr(start_dt, 'astimezone')` -> `True`",
+   "snippet": "if hasattr(start_dt, 'astimezone'):",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._parse_events",
+   "op": "cond_const",
+   "desc": "condition `not dtstart or not dtend` -> `False`",
+   "snippet": "if not dtstart or not dtend:",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._parse_events",
+   "op": "const_str",
+   "desc": "`''` -> `'XX'`",
+   "snippet": "''",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._parse_events",
+   "op": "const_str",
+   "desc": "`''` -> `'XX'`",
+   "snippet": "''",
+   "occurrence": 1
+  },
+  {
+   "class": "B",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._parse_events",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `continue`",
+   "snippet": "continue",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._parse_events",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `continue`",
+   "snippet": "continue",
+   "occurrence": 1
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._parse_events",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `continue`",
+   "snippet": "continue",
+   "occurrence": 2
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._sync_source",
+   "op": "augassign",
+   "desc": "`+=` -> `-=`",
+   "snippet": "result.updated += 1",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._sync_source",
+   "op": "comp_if_true",
+   "desc": "comprehension filter `a.ical_uid` -> `True`",
+   "snippet": " for a in existing_appts if a.ical_uid",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._sync_source",
+   "op": "compare",
+   "desc": "`not in` -> `in`",
+   "snippet": "uid not in feed_events",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._sync_source",
+   "op": "cond_const",
+   "desc": "condition `not existing.patient_id` -> `False`",
+   "snippet": "if not existing.patient_id:",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._sync_source",
+   "op": "cond_const",
+   "desc": "condition `patient_id` -> `False`",
+   "snippet": "if patient_id:",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._sync_source",
+   "op": "cond_const",
+   "desc": "condition `patient_id` -> `True`",
+   "snippet": "if patient_id:",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._sync_source",
+   "op": "cond_const",
+   "desc": "condition `updated` -> `False`",
+   "snippet": "if updated:",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._sync_source",
+   "op": "const_bool",
+   "desc": "`True` -> `False`",
+   "snippet": "True",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._sync_source",
+   "op": "const_int",
+   "desc": "`1` -> `0`",
+   "snippet": "1",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._sync_source",
+   "op": "const_int",
+   "desc": "`1` -> `2`",
+   "snippet": "1",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._sync_source",
+   "op": "const_str",
+   "desc": "`'deleted'` -> `'deletedXX'`",
+   "snippet": "'deleted'",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._sync_source",
+   "op": "const_str",
+   "desc": "`'deleted'` -> `'deletedXX'`",
+   "snippet": "'deleted'",
+   "occurrence": 1
+  },
+  {
+   "class": "C",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._sync_source",
+   "op": "const_str",
+   "desc": "`'iCal sync complete (created=%d, updated=%d, deleted=%d, unchanged=%d)'` -> `'iCal sync complete (created=%d, updated=%d, deleted=%d, unchanged=%d)XX'`",
+   "snippet": "'iCal sync complete (created=%d, updated=%d, deleted=%d, unchanged=%d)'",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._sync_source",
+   "op": "const_str",
+   "desc": "`'ical_client:'` -> `'ical_client:XX'`",
+   "snippet": "'ical_client:'",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._sync_source",
+   "op": "delete_stmt",
+   "desc": "delete body statement `logger.info('iCal sync complete (created=%d, updated=%d, deleted=%d, u`",
+   "snippet": "logger.info('iCal sync complete (created=%d, updated=%d, deleted=%d, unchanged=%",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._sync_source",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `appt.ical_sync_status = 'deleted'`",
+   "snippet": "appt.ical_sync_status = 'deleted'",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._sync_source",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `appt.status = AppointmentStatus.CANCELLED`",
+   "snippet": "appt.status = AppointmentStatus.CANCELLED",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._sync_source",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `appt.updated_at = _now()`",
+   "snippet": "appt.updated_at = _now()",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._sync_source",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `client_id = self._extract_client_identifier(config.ehr_system, event.s`",
+   "snippet": "client_id = self._extract_client_identifier(config.ehr_system, event.summary)",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._sync_source",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `existing.notes = f'ical_client:{client_id}'`",
+   "snippet": "existing.notes = f'ical_client:{client_id}'",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._sync_source",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `existing.patient_id = patient_id`",
+   "snippet": "existing.patient_id = patient_id",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._sync_source",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `existing.updated_at = _now()`",
+   "snippet": "existing.updated_at = _now()",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._sync_source",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `if not existing.patient_id:`",
+   "snippet": "if not existing.patient_id:",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._sync_source",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `if patient_id:`",
+   "snippet": "if patient_id:",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._sync_source",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `patient_id = self._outside.unattended(self._row(user_id, config.ehr_sy`",
+   "snippet": "patient_id = self._outside.unattended(self._row(user_id, config.ehr_system, even",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._sync_source",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `result.updated += 1`",
+   "snippet": "result.updated += 1",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._sync_source",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `self._appt_repo.update(appt)`",
+   "snippet": "self._appt_repo.update(appt)",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._sync_source",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `self._appt_repo.update(existing)`",
+   "snippet": "self._appt_repo.update(existing)",
+   "occurrence": 0
+  },
+  {
+   "class": "E",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._sync_source",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `updated = True`",
+   "snippet": "updated = True",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_if_changed",
+   "op": "cond_const",
+   "desc": "condition `changed` -> `False`",
+   "snippet": "if changed:",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_if_changed",
+   "op": "cond_const",
+   "desc": "condition `changed` -> `True`",
+   "snippet": "if changed:",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_if_changed",
+   "op": "cond_const",
+   "desc": "condition `existing.duration_minutes != event.duration_minute` -> `False`",
+   "snippet": "if existing.duration_minutes != event.duration_minutes:",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_if_changed",
+   "op": "cond_const",
+   "desc": "condition `existing.ehr_appointment_url != new_url` -> `False`",
+   "snippet": "if existing.ehr_appointment_url != new_url:",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_if_changed",
+   "op": "cond_const",
+   "desc": "condition `existing.end_at != event.end_at` -> `False`",
+   "snippet": "if existing.end_at != event.end_at:",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_if_changed",
+   "op": "cond_const",
+   "desc": "condition `existing.ical_sync_status == 'deleted'` -> `False`",
+   "snippet": "if existing.ical_sync_status == 'deleted':",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_if_changed",
+   "op": "cond_const",
+   "desc": "condition `existing.start_at != event.start_at` -> `False`",
+   "snippet": "if existing.start_at != event.start_at:",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_if_changed",
+   "op": "const_bool",
+   "desc": "`True` -> `False`",
+   "snippet": "True",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_if_changed",
+   "op": "const_bool",
+   "desc": "`True` -> `False`",
+   "snippet": "True",
+   "occurrence": 1
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_if_changed",
+   "op": "const_bool",
+   "desc": "`True` -> `False`",
+   "snippet": "True",
+   "occurrence": 2
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_if_changed",
+   "op": "const_bool",
+   "desc": "`True` -> `False`",
+   "snippet": "True",
+   "occurrence": 3
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_if_changed",
+   "op": "const_bool",
+   "desc": "`True` -> `False`",
+   "snippet": "True",
+   "occurrence": 4
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_if_changed",
+   "op": "const_str",
+   "desc": "`'deleted'` -> `'deletedXX'`",
+   "snippet": "'deleted'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_if_changed",
+   "op": "const_str",
+   "desc": "`'synced'` -> `'syncedXX'`",
+   "snippet": "'synced'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_if_changed",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `changed = True`",
+   "snippet": "changed = True",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_if_changed",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `changed = True`",
+   "snippet": "changed = True",
+   "occurrence": 1
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_if_changed",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `changed = True`",
+   "snippet": "changed = True",
+   "occurrence": 2
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_if_changed",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `changed = True`",
+   "snippet": "changed = True",
+   "occurrence": 3
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_if_changed",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `changed = True`",
+   "snippet": "changed = True",
+   "occurrence": 4
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_if_changed",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `existing.duration_minutes = event.duration_minutes`",
+   "snippet": "existing.duration_minutes = event.duration_minutes",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_if_changed",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `existing.ehr_appointment_url = new_url`",
+   "snippet": "existing.ehr_appointment_url = new_url",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_if_changed",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `existing.end_at = event.end_at`",
+   "snippet": "existing.end_at = event.end_at",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_if_changed",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `existing.ical_sync_status = 'synced'`",
+   "snippet": "existing.ical_sync_status = 'synced'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_if_changed",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `existing.start_at = event.start_at`",
+   "snippet": "existing.start_at = event.start_at",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_if_changed",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `existing.status = AppointmentStatus.CONFIRMED`",
+   "snippet": "existing.status = AppointmentStatus.CONFIRMED",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_if_changed",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `existing.updated_at = _now()`",
+   "snippet": "existing.updated_at = _now()",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_if_changed",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `self._appt_repo.update(existing)`",
+   "snippet": "self._appt_repo.update(existing)",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_if_changed",
+   "op": "early_return",
+   "desc": "insert `return None` at top of ICalSyncService._update_if_changed",
+   "snippet": "def _update_if_changed(self, existing: Appointment, event: ParsedEvent, ehr_syst",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_if_changed",
+   "op": "return_none",
+   "desc": "`return changed` -> `return None`",
+   "snippet": "return changed",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_patient_from_csv",
+   "op": "attr_swap",
+   "desc": "`.strip` -> `.lstrip`",
+   "snippet": "row.get(csv_col, '').strip",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_patient_from_csv",
+   "op": "attr_swap",
+   "desc": "`.strip` -> `.lstrip`",
+   "snippet": "row.get('Active', 'Y').strip",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_patient_from_csv",
+   "op": "attr_swap",
+   "desc": "`.upper` -> `.lower`",
+   "snippet": "row.get('Active', 'Y').strip().upper",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_patient_from_csv",
+   "op": "boolop",
+   "desc": "`or` -> `and`",
+   "snippet": "row.get(csv_col, '').strip() or None",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_patient_from_csv",
+   "op": "compare",
+   "desc": "`==` -> `!=`",
+   "snippet": "row.get('Active', 'Y').strip().upper() == 'Y'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_patient_from_csv",
+   "op": "cond_const",
+   "desc": "condition `changed` -> `False`",
+   "snippet": "if changed:",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_patient_from_csv",
+   "op": "cond_const",
+   "desc": "condition `changed` -> `True`",
+   "snippet": "if changed:",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_patient_from_csv",
+   "op": "cond_const",
+   "desc": "condition `csv_active and patient.status == 'inactive'` -> `False`",
+   "snippet": "if csv_active and patient.status == 'inactive':",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_patient_from_csv",
+   "op": "cond_const",
+   "desc": "condition `csv_val and (not getattr(patient, attr))` -> `False`",
+   "snippet": "if csv_val and (not getattr(patient, attr)):",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_patient_from_csv",
+   "op": "const_bool",
+   "desc": "`True` -> `False`",
+   "snippet": "True",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_patient_from_csv",
+   "op": "const_bool",
+   "desc": "`True` -> `False`",
+   "snippet": "True",
+   "occurrence": 1
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_patient_from_csv",
+   "op": "const_str",
+   "desc": "`''` -> `'XX'`",
+   "snippet": "''",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_patient_from_csv",
+   "op": "const_str",
+   "desc": "`'Active'` -> `'ActiveXX'`",
+   "snippet": "'Active'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_patient_from_csv",
+   "op": "const_str",
+   "desc": "`'Y'` -> `'YXX'`",
+   "snippet": "'Y'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_patient_from_csv",
+   "op": "const_str",
+   "desc": "`'Y'` -> `'YXX'`",
+   "snippet": "'Y'",
+   "occurrence": 1
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_patient_from_csv",
+   "op": "const_str",
+   "desc": "`'active'` -> `'activeXX'`",
+   "snippet": "'active'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_patient_from_csv",
+   "op": "const_str",
+   "desc": "`'inactive'` -> `'inactiveXX'`",
+   "snippet": "'inactive'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_patient_from_csv",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `changed = True`",
+   "snippet": "changed = True",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_patient_from_csv",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `changed = True`",
+   "snippet": "changed = True",
+   "occurrence": 1
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_patient_from_csv",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `patient.status = 'active'`",
+   "snippet": "patient.status = 'active'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_patient_from_csv",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `patient.updated_at = _now()`",
+   "snippet": "patient.updated_at = _now()",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_patient_from_csv",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `self._patient_repo.update(patient)`",
+   "snippet": "self._patient_repo.update(patient)",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_patient_from_csv",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `setattr(patient, attr, csv_val)`",
+   "snippet": "setattr(patient, attr, csv_val)",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_patient_from_csv",
+   "op": "drop_not",
+   "desc": "remove `not`",
+   "snippet": "not getattr(patient, attr)",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_patient_from_csv",
+   "op": "early_return",
+   "desc": "insert `return None` at top of ICalSyncService._update_patient_from_csv",
+   "snippet": "def _update_patient_from_csv(self, patient: Any, row: dict[str, str]) -> bool:",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._update_patient_from_csv",
+   "op": "return_none",
+   "desc": "`return changed` -> `return None`",
+   "snippet": "return changed",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._validate_feed_url",
+   "op": "cond_const",
+   "desc": "condition `not parsed.path.startswith(allowed_prefix)` -> `False`",
+   "snippet": "if not parsed.path.startswith(allowed_prefix):",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._validate_feed_url",
+   "op": "const_str",
+   "desc": "`' (got '` -> `' (got XX'`",
+   "snippet": "' (got '",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._validate_feed_url",
+   "op": "const_str",
+   "desc": "`')'` -> `')XX'`",
+   "snippet": "')'",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._validate_feed_url",
+   "op": "const_str",
+   "desc": "`')'` -> `')XX'`",
+   "snippet": "')'",
+   "occurrence": 1
+  },
+  {
+   "class": "C",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._validate_feed_url",
+   "op": "const_str",
+   "desc": "`'Feed URL hostname must be '` -> `'Feed URL hostname must be XX'`",
+   "snippet": "'Feed URL hostname must be '",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._validate_feed_url",
+   "op": "const_str",
+   "desc": "`'Feed URL must use HTTPS (got '` -> `'Feed URL must use HTTPS (got XX'`",
+   "snippet": "'Feed URL must use HTTPS (got '",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._validate_feed_url",
+   "op": "const_str",
+   "desc": "`'Feed URL path must start with '` -> `'Feed URL path must start with XX'`",
+   "snippet": "'Feed URL path must start with '",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._validate_feed_url",
+   "op": "const_str",
+   "desc": "`'Unsupported EHR system: '` -> `'Unsupported EHR system: XX'`",
+   "snippet": "'Unsupported EHR system: '",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._validate_feed_url",
+   "op": "const_str",
+   "desc": "`'https://'` -> `'https://XX'`",
+   "snippet": "'https://'",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._validate_feed_url",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `msg = f'Feed URL path must start with {allowed_prefix}'`",
+   "snippet": "msg = f'Feed URL path must start with {allowed_prefix}'",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._validate_feed_url",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `raise ValueError(msg)`",
+   "snippet": "raise ValueError(msg)",
+   "occurrence": 3
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService._validate_feed_url",
+   "op": "return_none",
+   "desc": "`return f'https://{allowed_host}{parsed.path}'` -> `return None`",
+   "snippet": "return f'https://{allowed_host}{parsed.path}'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.configure",
+   "op": "const_str",
+   "desc": "`'feed_url'` -> `'feed_urlXX'`",
+   "snippet": "'feed_url'",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.configure",
+   "op": "const_str",
+   "desc": "`'iCal feed configured for user (events=%d)'` -> `'iCal feed configured for user (events=%d)XX'`",
+   "snippet": "'iCal feed configured for user (events=%d)'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.configure",
+   "op": "delete_stmt",
+   "desc": "delete body statement `config = ICalSyncConfig(user_id=user_id, ehr_system=ehr_system, encryp`",
+   "snippet": "config = ICalSyncConfig(user_id=user_id, ehr_system=ehr_system, encrypted_feed_u",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.configure",
+   "op": "delete_stmt",
+   "desc": "delete body statement `encrypted = encrypt_tokens({'feed_url': feed_url})`",
+   "snippet": "encrypted = encrypt_tokens({'feed_url': feed_url})",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.configure",
+   "op": "delete_stmt",
+   "desc": "delete body statement `events = self._parse_events(ical_data)`",
+   "snippet": "events = self._parse_events(ical_data)",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.configure",
+   "op": "delete_stmt",
+   "desc": "delete body statement `ical_data = self._fetch_feed(safe_url)`",
+   "snippet": "ical_data = self._fetch_feed(safe_url)",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.configure",
+   "op": "delete_stmt",
+   "desc": "delete body statement `logger.info('iCal feed configured for user (events=%d)', len(events))`",
+   "snippet": "logger.info('iCal feed configured for user (events=%d)', len(events))",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.configure",
+   "op": "delete_stmt",
+   "desc": "delete body statement `safe_url = self._validate_feed_url(ehr_system, feed_url)`",
+   "snippet": "safe_url = self._validate_feed_url(ehr_system, feed_url)",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.configure",
+   "op": "delete_stmt",
+   "desc": "delete body statement `self._config_repo.save(config)`",
+   "snippet": "self._config_repo.save(config)",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.configure",
+   "op": "early_return",
+   "desc": "insert `return None` at top of ICalSyncService.configure",
+   "snippet": "def configure(self, user_id: str, ehr_system: str, feed_url: str) -> ConfigureRe",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.configure",
+   "op": "return_none",
+   "desc": "`return ConfigureResult(event_count=len(events), ehr_syste` -> `return None`",
+   "snippet": "return ConfigureResult(event_count=len(events), ehr_system=ehr_system)",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.disconnect",
+   "op": "early_return",
+   "desc": "insert `return None` at top of ICalSyncService.disconnect",
+   "snippet": "def disconnect(self, user_id: str, ehr_system: str) -> bool:",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.disconnect",
+   "op": "return_none",
+   "desc": "`return self._config_repo.delete(user_id, ehr_system)` -> `return None`",
+   "snippet": "return self._config_repo.delete(user_id, ehr_system)",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.get_status",
+   "op": "const_bool",
+   "desc": "`True` -> `False`",
+   "snippet": "True",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.import_clients",
+   "op": "attr_swap",
+   "desc": "`.strip` -> `.lstrip`",
+   "snippet": "row.get('First Name', '').strip",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.import_clients",
+   "op": "attr_swap",
+   "desc": "`.strip` -> `.lstrip`",
+   "snippet": "row.get('Last Name', '').strip",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.import_clients",
+   "op": "augassign",
+   "desc": "`+=` -> `-=`",
+   "snippet": "result.updated += 1",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.import_clients",
+   "op": "boolop",
+   "desc": "`or` -> `and`",
+   "snippet": "not first_name or not last_name",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.import_clients",
+   "op": "cond_const",
+   "desc": "condition `ehr_system == EhrSystem.SESSIONS_HEALTH` -> `True`",
+   "snippet": "if ehr_system == EhrSystem.SESSIONS_HEALTH:",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.import_clients",
+   "op": "cond_const",
+   "desc": "condition `not first_name or not last_name` -> `False`",
+   "snippet": "if not first_name or not last_name:",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.import_clients",
+   "op": "cond_const",
+   "desc": "condition `patient_id` -> `True`",
+   "snippet": "if patient_id:",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.import_clients",
+   "op": "cond_const",
+   "desc": "condition `patient` -> `True`",
+   "snippet": "patient.id if patient else None",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.import_clients",
+   "op": "cond_const",
+   "desc": "condition `self._update_patient_from_csv(existing_by_name[key` -> `False`",
+   "snippet": "if self._update_patient_from_csv(existing_by_name[key], row):",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.import_clients",
+   "op": "const_int",
+   "desc": "`10000` -> `10001`",
+   "snippet": "10000",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.import_clients",
+   "op": "const_int",
+   "desc": "`10000` -> `9999`",
+   "snippet": "10000",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.import_clients",
+   "op": "const_int",
+   "desc": "`1` -> `0`",
+   "snippet": "1",
+   "occurrence": 1
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.import_clients",
+   "op": "const_int",
+   "desc": "`1` -> `0`",
+   "snippet": "1",
+   "occurrence": 2
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.import_clients",
+   "op": "const_int",
+   "desc": "`1` -> `2`",
+   "snippet": "1",
+   "occurrence": 2
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.import_clients",
+   "op": "const_str",
+   "desc": "`''` -> `'XX'`",
+   "snippet": "''",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.import_clients",
+   "op": "const_str",
+   "desc": "`''` -> `'XX'`",
+   "snippet": "''",
+   "occurrence": 1
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.import_clients",
+   "op": "const_str",
+   "desc": "`': missing name'` -> `': missing nameXX'`",
+   "snippet": "': missing name'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.import_clients",
+   "op": "const_str",
+   "desc": "`'Could not find clients.csv in upload'` -> `'Could not find clients.csv in uploadXX'`",
+   "snippet": "'Could not find clients.csv in upload'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.import_clients",
+   "op": "const_str",
+   "desc": "`'Row '` -> `'Row XX'`",
+   "snippet": "'Row '",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.import_clients",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `continue`",
+   "snippet": "continue",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.import_clients",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `result.errors.append(f'Row {row_num}: missing name')`",
+   "snippet": "result.errors.append(f'Row {row_num}: missing name')",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.import_clients",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `result.updated += 1`",
+   "snippet": "result.updated += 1",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.import_clients",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `self._patient_repo.create(patient, user_id)`",
+   "snippet": "self._patient_repo.create(patient, user_id)",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.import_clients",
+   "op": "drop_kwarg",
+   "desc": "drop keyword `page=1`",
+   "snippet": "self._patient_repo.list_by_user(user_id, page=1, page_size=10000)",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.import_clients",
+   "op": "drop_kwarg",
+   "desc": "drop keyword `page_size=10000`",
+   "snippet": "self._patient_repo.list_by_user(user_id, page=1, page_size=10000)",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.import_clients",
+   "op": "drop_kwarg",
+   "desc": "drop keyword `start=1`",
+   "snippet": "enumerate(reader, start=1)",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.sync",
+   "op": "const_str",
+   "desc": "`'Sync failed \u2014 could not fetch or parse feed'` -> `'Sync failed \u2014 could not fetch or parse feedXX'`",
+   "snippet": "'Sync failed \u2014 could not fetch or parse feed'",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.sync",
+   "op": "const_str",
+   "desc": "`'iCal sync failed for source'` -> `'iCal sync failed for sourceXX'`",
+   "snippet": "'iCal sync failed for source'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.sync",
+   "op": "delete_stmt",
+   "desc": "delete body statement `error_msg = 'Sync failed \u2014 could not fetch or parse feed'`",
+   "snippet": "error_msg = 'Sync failed \u2014 could not fetch or parse feed'",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.sync",
+   "op": "delete_stmt",
+   "desc": "delete body statement `error_result = SyncResult(errors=[error_msg])`",
+   "snippet": "error_result = SyncResult(errors=[error_msg])",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.sync",
+   "op": "delete_stmt",
+   "desc": "delete body statement `logger.exception('iCal sync failed for source')`",
+   "snippet": "logger.exception('iCal sync failed for source')",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.sync",
+   "op": "delete_stmt",
+   "desc": "delete body statement `results.append(error_result)`",
+   "snippet": "results.append(error_result)",
+   "occurrence": 0
+  },
+  {
+   "class": "D",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.sync",
+   "op": "delete_stmt",
+   "desc": "delete body statement `self._config_repo.update_sync_status(user_id, config.ehr_system, error`",
+   "snippet": "self._config_repo.update_sync_status(user_id, config.ehr_system, error=error_msg",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/ical_sync_service.py",
+   "func": "ICalSyncService.sync",
+   "op": "drop_kwarg",
+   "desc": "drop keyword `error=None`",
+   "snippet": "self._config_repo.update_sync_status(user_id, config.ehr_system, error=None, tit",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "_hint",
+   "op": "compare",
+   "desc": "`==` -> `!=`",
+   "snippet": "ehr_system == EhrSystem.SESSIONS_HEALTH",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "_hint",
+   "op": "cond_const",
+   "desc": "condition `_SH_CODE_RE.match(client_identifier)` -> `True`",
+   "snippet": "if _SH_CODE_RE.match(client_identifier):",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "_hint",
+   "op": "cond_const",
+   "desc": "condition `ehr_system == EhrSystem.SESSIONS_HEALTH` -> `False`",
+   "snippet": "if ehr_system == EhrSystem.SESSIONS_HEALTH:",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "_hint",
+   "op": "cond_const",
+   "desc": "condition `ehr_system == EhrSystem.SESSIONS_HEALTH` -> `True`",
+   "snippet": "if ehr_system == EhrSystem.SESSIONS_HEALTH:",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "_hint",
+   "op": "const_str",
+   "desc": "`'code'` -> `'codeXX'`",
+   "snippet": "'code'",
+   "occurrence": 1
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "_hint",
+   "op": "const_str",
+   "desc": "`'full_name'` -> `'full_nameXX'`",
+   "snippet": "'full_name'",
+   "occurrence": 1
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "_hint",
+   "op": "const_str",
+   "desc": "`'name'` -> `'nameXX'`",
+   "snippet": "'name'",
+   "occurrence": 1
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "_hint",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `return FeedIdentity(client_identifier, hint.model_copy(update={'full_n`",
+   "snippet": "return FeedIdentity(client_identifier, hint.model_copy(update={'full_name': clie",
+   "occurrence": 1
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "_hint",
+   "op": "return_none",
+   "desc": "`return FeedIdentity(client_identifier, hint.model_copy(up` -> `return None`",
+   "snippet": "return FeedIdentity(client_identifier, hint.model_copy(update={'full_name': clie",
+   "occurrence": 1
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "_now",
+   "op": "early_return",
+   "desc": "insert `return None` at top of _now",
+   "snippet": "def _now() -> datetime:",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "_now",
+   "op": "return_none",
+   "desc": "`return utc_now()` -> `return None`",
+   "snippet": "return utc_now()",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "_title_style",
+   "op": "cond_const",
+   "desc": "condition `not kinds` -> `False`",
+   "snippet": "if not kinds:",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/ical_sync_service.py",
+   "func": "_title_style",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `return None`",
+   "snippet": "return None",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "<module>",
+   "op": "const_bool",
+   "desc": "`False` -> `True`",
+   "snippet": "False",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "<module>",
+   "op": "const_bool",
+   "desc": "`True` -> `False`",
+   "snippet": "True",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "<module>",
+   "op": "const_int",
+   "desc": "`0` -> `-1`",
+   "snippet": "0",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "<module>",
+   "op": "const_int",
+   "desc": "`0` -> `1`",
+   "snippet": "0",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "<module>",
+   "op": "const_str",
+   "desc": "`'Say which session this answer is for'` -> `'Say which session this answer is forXX'`",
+   "snippet": "'Say which session this answer is for'",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "<module>",
+   "op": "const_str",
+   "desc": "`'Session'` -> `'SessionXX'`",
+   "snippet": "'Session'",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "<module>",
+   "op": "const_str",
+   "desc": "`'code'` -> `'codeXX'`",
+   "snippet": "'code'",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "<module>",
+   "op": "const_str",
+   "desc": "`'initials'` -> `'initialsXX'`",
+   "snippet": "'initials'",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "<module>",
+   "op": "const_str",
+   "desc": "`'name'` -> `'nameXX'`",
+   "snippet": "'name'",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "<module>",
+   "op": "const_str",
+   "desc": "`'series'` -> `'seriesXX'`",
+   "snippet": "'series'",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "<module>",
+   "op": "const_str",
+   "desc": "`'slot'` -> `'slotXX'`",
+   "snippet": "'slot'",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "<module>",
+   "op": "drop_kwarg",
+   "desc": "drop keyword `frozen=True`",
+   "snippet": "dataclass(frozen=True)",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._answered_under_this_title",
+   "op": "boolop",
+   "desc": "`or` -> `and`",
+   "snippet": "known is None or known.answered_title is None",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._answered_under_this_title",
+   "op": "cond_const",
+   "desc": "condition `known is None or known.answered_title is None` -> `False`",
+   "snippet": "if known is None or known.answered_title is None:",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._answered_under_this_title",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `return False`",
+   "snippet": "return False",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._answered_under_this_title",
+   "op": "return_none",
+   "desc": "`return False` -> `return None`",
+   "snippet": "return False",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._asks_each_time",
+   "op": "return_none",
+   "desc": "`return False` -> `return None`",
+   "snippet": "return False",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._book",
+   "op": "binop",
+   "desc": "`//` -> `/`",
+   "snippet": "(row.end_at - row.start_at).total_seconds() // 60",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._book",
+   "op": "boolop",
+   "desc": "`or` -> `and`",
+   "snippet": "row.patient_id is None or row.appointment_id is not None",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._book",
+   "op": "cond_const",
+   "desc": "condition `feed` -> `False`",
+   "snippet": "'synced' if feed else None",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._book",
+   "op": "cond_const",
+   "desc": "condition `feed` -> `True`",
+   "snippet": "row.source_event_id if feed else None",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._book",
+   "op": "cond_const",
+   "desc": "condition `feed` -> `True`",
+   "snippet": "'synced' if feed else None",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._book",
+   "op": "cond_const",
+   "desc": "condition `row.patient_id is None or row.appointment_id is no` -> `False`",
+   "snippet": "if row.patient_id is None or row.appointment_id is not None:",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._book",
+   "op": "const_int",
+   "desc": "`60` -> `59`",
+   "snippet": "60",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._book",
+   "op": "const_int",
+   "desc": "`60` -> `61`",
+   "snippet": "60",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._book",
+   "op": "const_str",
+   "desc": "`'An answered outside session overlaps a booking; not booked twice'` -> `'An answered outside session overlaps a booking; not booked twiceXX'`",
+   "snippet": "'An answered outside session overlaps a booking; not booked twice'",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._book",
+   "op": "const_str",
+   "desc": "`'individual'` -> `'individualXX'`",
+   "snippet": "'individual'",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._book",
+   "op": "const_str",
+   "desc": "`'synced'` -> `'syncedXX'`",
+   "snippet": "'synced'",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._book",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `logger.info('An answered outside session overlaps a booking; not booke`",
+   "snippet": "logger.info('An answered outside session overlaps a booking; not booked twice')",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._book",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `return None`",
+   "snippet": "return None",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._each_time_question",
+   "op": "boolop",
+   "desc": "`or` -> `and`",
+   "snippet": "suggested or match.patient_id",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._each_time_question",
+   "op": "compare",
+   "desc": "`!=` -> `==`",
+   "snippet": "patient.status != ACTIVE",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._each_time_question",
+   "op": "compare",
+   "desc": "`is` -> `is not`",
+   "snippet": "suggested is None",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._each_time_question",
+   "op": "cond_const",
+   "desc": "condition `by_title.patient_id` -> `False`",
+   "snippet": "[by_title.patient_id] if by_title.patient_id else by_title.possible_ids",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._each_time_question",
+   "op": "cond_const",
+   "desc": "condition `shown` -> `False`",
+   "snippet": "self._patients.get(shown, row.user_id) if shown else None",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._each_time_question",
+   "op": "cond_const",
+   "desc": "condition `shown` -> `True`",
+   "snippet": "self._patients.get(shown, row.user_id) if shown else None",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._each_time_question",
+   "op": "cond_const",
+   "desc": "condition `suggested is None and by_title.patient_id and (by_` -> `False`",
+   "snippet": "if suggested is None and by_title.patient_id and (by_title.evidence not in NAME_",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._each_time_question",
+   "op": "cond_const",
+   "desc": "condition `suggested is not None` -> `False`",
+   "snippet": "if suggested is not None:",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._each_time_question",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `suggested = by_title.patient_id`",
+   "snippet": "suggested = by_title.patient_id",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._identity",
+   "op": "const_str",
+   "desc": "`'slot'` -> `'slotXX'`",
+   "snippet": "'slot'",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._one_client",
+   "op": "boolop",
+   "desc": "`or` -> `and`",
+   "snippet": "match.patient_id is None or match.evidence != 'remembered'",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._one_client",
+   "op": "cond_const",
+   "desc": "condition `match.patient_id is None or match.evidence != 'rem` -> `False`",
+   "snippet": "if match.patient_id is None or match.evidence != 'remembered':",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._one_client",
+   "op": "const_int",
+   "desc": "`0` -> `-1`",
+   "snippet": "0",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._one_client",
+   "op": "const_int",
+   "desc": "`0` -> `-1`",
+   "snippet": "0",
+   "occurrence": 1
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._one_client",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `return None`",
+   "snippet": "return None",
+   "occurrence": 1
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._place",
+   "op": "boolop",
+   "desc": "`and` -> `or`",
+   "snippet": "row.appointment_id and incoming.calendar_id and (incoming.calendar_id != row.cal",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._place",
+   "op": "cond_const",
+   "desc": "condition `appointment is not None` -> `True`",
+   "snippet": "if appointment is not None:",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._place",
+   "op": "cond_const",
+   "desc": "condition `incoming.answer == ANSWER_OPEN` -> `True`",
+   "snippet": "if incoming.answer == ANSWER_OPEN:",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._place",
+   "op": "cond_const",
+   "desc": "condition `row is not None` -> `False`",
+   "snippet": "if row is not None:",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._place",
+   "op": "cond_const",
+   "desc": "condition `row is not None` -> `False`",
+   "snippet": "if row is not None:",
+   "occurrence": 2
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._place",
+   "op": "cond_const",
+   "desc": "condition `row.appointment_id and incoming.calendar_id and (i` -> `True`",
+   "snippet": "if row.appointment_id and incoming.calendar_id and (incoming.calendar_id != row.",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._place",
+   "op": "const_bool",
+   "desc": "`False` -> `True`",
+   "snippet": "False",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._place",
+   "op": "const_int",
+   "desc": "`0` -> `-1`",
+   "snippet": "0",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._place",
+   "op": "const_int",
+   "desc": "`0` -> `-1`",
+   "snippet": "0",
+   "occurrence": 1
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._place",
+   "op": "const_int",
+   "desc": "`0` -> `1`",
+   "snippet": "0",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._place",
+   "op": "const_int",
+   "desc": "`0` -> `1`",
+   "snippet": "0",
+   "occurrence": 1
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._place",
+   "op": "const_int",
+   "desc": "`1` -> `0`",
+   "snippet": "1",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._place",
+   "op": "const_int",
+   "desc": "`1` -> `0`",
+   "snippet": "1",
+   "occurrence": 1
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._place",
+   "op": "const_int",
+   "desc": "`1` -> `2`",
+   "snippet": "1",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._place",
+   "op": "const_int",
+   "desc": "`1` -> `2`",
+   "snippet": "1",
+   "occurrence": 1
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._place",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `if row is not None:`",
+   "snippet": "if row is not None:",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._place",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `if row is not None:`",
+   "snippet": "if row is not None:",
+   "occurrence": 1
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._place",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `incoming.answer = row.answer`",
+   "snippet": "incoming.answer = row.answer",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._place",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `incoming.appointment_id = row.appointment_id`",
+   "snippet": "incoming.appointment_id = row.appointment_id",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._place",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `incoming.created_at = row.created_at`",
+   "snippet": "incoming.created_at = row.created_at",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._place",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `incoming.patient_id = row.patient_id`",
+   "snippet": "incoming.patient_id = row.patient_id",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._place",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `return 1`",
+   "snippet": "return 1",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._place",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `self._events.delete(incoming.user_id, row.id)`",
+   "snippet": "self._events.delete(incoming.user_id, row.id)",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._place",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `self._events.delete(incoming.user_id, row.id)`",
+   "snippet": "self._events.delete(incoming.user_id, row.id)",
+   "occurrence": 1
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._place",
+   "op": "drop_kwarg",
+   "desc": "drop keyword `name_alone_is_enough=False`",
+   "snippet": "match_patient(identity.hint, ctx, name_alone_is_enough=False)",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._question",
+   "op": "boolop",
+   "desc": "`and` -> `or`",
+   "snippet": "patient is not None and patient.status != ACTIVE",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._question",
+   "op": "comp_if_true",
+   "desc": "comprehension filter `o != suggested` -> `True`",
+   "snippet": " for o in others if o != suggested",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._question",
+   "op": "compare",
+   "desc": "`!=` -> `==`",
+   "snippet": "o != suggested",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._question",
+   "op": "cond_const",
+   "desc": "condition `by_title.patient_id` -> `False`",
+   "snippet": "[by_title.patient_id] if by_title.patient_id else by_title.possible_ids",
+   "occurrence": 1
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._question",
+   "op": "cond_const",
+   "desc": "condition `each_time` -> `False`",
+   "snippet": "row.id if each_time else None",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._question",
+   "op": "const_bool",
+   "desc": "`False` -> `True`",
+   "snippet": "False",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._question",
+   "op": "const_str",
+   "desc": "`'source_identifier'` -> `'source_identifierXX'`",
+   "snippet": "'source_identifier'",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._record_calendar",
+   "op": "boolop",
+   "desc": "`and` -> `or`",
+   "snippet": "appointment is not None and appointment.outside_calendar_id != calendar_id",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._record_calendar",
+   "op": "cond_const",
+   "desc": "condition `appointment is not None and appointment.outside_ca` -> `True`",
+   "snippet": "if appointment is not None and appointment.outside_calendar_id != calendar_id:",
+   "occurrence": 0
+  },
+  {
+   "class": "F",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._record_calendar",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `self._appointments.update(appointment)`",
+   "snippet": "self._appointments.update(appointment)",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._unattended",
+   "op": "boolop",
+   "desc": "`or` -> `and`",
+   "snippet": "match.evidence == 'not_a_client' or (match.patient_id and (not match.visible))",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._unattended",
+   "op": "cond_const",
+   "desc": "condition `match.evidence == 'not_a_client' or (match.patient` -> `False`",
+   "snippet": "if match.evidence == 'not_a_client' or (match.patient_id and (not match.visible)",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._unattended",
+   "op": "cond_const",
+   "desc": "condition `patient_id is None` -> `False`",
+   "snippet": "if patient_id is None:",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._unattended",
+   "op": "const_str",
+   "desc": "`'not_a_client'` -> `'not_a_clientXX'`",
+   "snippet": "'not_a_client'",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._unattended",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `return None`",
+   "snippet": "return None",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions._unattended",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `return None`",
+   "snippet": "return None",
+   "occurrence": 1
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.answer",
+   "op": "const_int",
+   "desc": "`0` -> `-1`",
+   "snippet": "0",
+   "occurrence": 0
+  },
+  {
+   "class": "F",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.answer",
+   "op": "delete_stmt",
+   "desc": "delete body statement `self._events.save(row)`",
+   "snippet": "self._events.save(row)",
+   "occurrence": 0
+  },
+  {
+   "class": "F",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.answer",
+   "op": "delete_stmt",
+   "desc": "delete body statement `self._events.save(row)`",
+   "snippet": "self._events.save(row)",
+   "occurrence": 1
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.answer",
+   "op": "return_none",
+   "desc": "`return rows` -> `return None`",
+   "snippet": "return rows",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.asks_each_time",
+   "op": "boolop",
+   "desc": "`or` -> `and`",
+   "snippet": "ctx or self.context(user_id)",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.asks_each_time",
+   "op": "cond_const",
+   "desc": "condition `not rows` -> `False`",
+   "snippet": "if not rows:",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.asks_each_time",
+   "op": "const_bool",
+   "desc": "`False` -> `True`",
+   "snippet": "False",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.asks_each_time",
+   "op": "const_int",
+   "desc": "`0` -> `-1`",
+   "snippet": "0",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.asks_each_time",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `return False`",
+   "snippet": "return False",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.asks_each_time",
+   "op": "return_none",
+   "desc": "`return False` -> `return None`",
+   "snippet": "return False",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.claim_unrecorded",
+   "op": "augassign",
+   "desc": "`+=` -> `-=`",
+   "snippet": "claimed += 1",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.claim_unrecorded",
+   "op": "boolop",
+   "desc": "`and` -> `or`",
+   "snippet": "appointment.outside_source == GOOGLE_CALENDAR_SOURCE and appointment.outside_cal",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.claim_unrecorded",
+   "op": "cond_const",
+   "desc": "condition `appointment.outside_source == GOOGLE_CALENDAR_SOUR` -> `True`",
+   "snippet": "if appointment.outside_source == GOOGLE_CALENDAR_SOURCE and appointment.outside_",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.claim_unrecorded",
+   "op": "cond_const",
+   "desc": "condition `row.calendar_id is not None` -> `False`",
+   "snippet": "if row.calendar_id is not None:",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.claim_unrecorded",
+   "op": "const_int",
+   "desc": "`0` -> `-1`",
+   "snippet": "0",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.claim_unrecorded",
+   "op": "const_int",
+   "desc": "`0` -> `1`",
+   "snippet": "0",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.claim_unrecorded",
+   "op": "const_int",
+   "desc": "`1` -> `0`",
+   "snippet": "1",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.claim_unrecorded",
+   "op": "const_int",
+   "desc": "`1` -> `2`",
+   "snippet": "1",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.claim_unrecorded",
+   "op": "delete_stmt",
+   "desc": "delete body statement `claimed += 1`",
+   "snippet": "claimed += 1",
+   "occurrence": 0
+  },
+  {
+   "class": "F",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.claim_unrecorded",
+   "op": "delete_stmt",
+   "desc": "delete body statement `self._events.save(row)`",
+   "snippet": "self._events.save(row)",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.claim_unrecorded",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `continue`",
+   "snippet": "continue",
+   "occurrence": 0
+  },
+  {
+   "class": "F",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.claim_unrecorded",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `self._appointments.update(appointment)`",
+   "snippet": "self._appointments.update(appointment)",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.claim_unrecorded",
+   "op": "return_none",
+   "desc": "`return claimed` -> `return None`",
+   "snippet": "return claimed",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.dismissed",
+   "op": "return_none",
+   "desc": "`return False` -> `return None`",
+   "snippet": "return False",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.drop",
+   "op": "cond_const",
+   "desc": "condition `row is not None` -> `False`",
+   "snippet": "if row is not None:",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.drop",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `self._events.delete(user_id, row.id)`",
+   "snippet": "self._events.delete(user_id, row.id)",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.drop",
+   "op": "early_return",
+   "desc": "insert `return None` at top of OutsideSessions.drop",
+   "snippet": "def drop(self, user_id: str, source: str, event_id: str) -> None:",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.hold",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `event.appointment_id = row.appointment_id`",
+   "snippet": "event.appointment_id = row.appointment_id",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.hold",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `event.created_at = row.created_at`",
+   "snippet": "event.created_at = row.created_at",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.hold",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `event.patient_id = row.patient_id`",
+   "snippet": "event.patient_id = row.patient_id",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.ingest_google",
+   "op": "augassign",
+   "desc": "`+=` -> `-=`",
+   "snippet": "result.held += self._place(incoming, row, ctx, result.booked)",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.ingest_google",
+   "op": "cond_const",
+   "desc": "condition `not event_id` -> `False`",
+   "snippet": "if not event_id:",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.ingest_google",
+   "op": "const_str",
+   "desc": "`''` -> `'XX'`",
+   "snippet": "''",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.ingest_google",
+   "op": "const_str",
+   "desc": "`''` -> `'XX'`",
+   "snippet": "''",
+   "occurrence": 1
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.ingest_google",
+   "op": "const_str",
+   "desc": "`'Followed %d outside sessions from a followed calendar, booked %d'` -> `'Followed %d outside sessions from a followed calendar, booked %dXX'`",
+   "snippet": "'Followed %d outside sessions from a followed calendar, booked %d'",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.ingest_google",
+   "op": "delete_stmt",
+   "desc": "delete body statement `logger.info('Followed %d outside sessions from a followed calendar, bo`",
+   "snippet": "logger.info('Followed %d outside sessions from a followed calendar, booked %d', ",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.ingest_google",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `continue`",
+   "snippet": "continue",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.reconcile_full_read",
+   "op": "boolop",
+   "desc": "`and` -> `or`",
+   "snippet": "row.end_at > start and row.start_at < end",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.reconcile_full_read",
+   "op": "compare",
+   "desc": "`<` -> `<=`",
+   "snippet": "row.start_at < end",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.reconcile_full_read",
+   "op": "compare",
+   "desc": "`>` -> `>=`",
+   "snippet": "row.end_at > start",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.seen_by_someone_else",
+   "op": "boolop",
+   "desc": "`and` -> `or`",
+   "snippet": "match.patient_id is not None and (not match.visible)",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.seen_by_someone_else",
+   "op": "cond_const",
+   "desc": "condition `not rows` -> `False`",
+   "snippet": "if not rows:",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.seen_by_someone_else",
+   "op": "const_bool",
+   "desc": "`False` -> `True`",
+   "snippet": "False",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.seen_by_someone_else",
+   "op": "const_int",
+   "desc": "`0` -> `-1`",
+   "snippet": "0",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.seen_by_someone_else",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `return False`",
+   "snippet": "return False",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.seen_by_someone_else",
+   "op": "return_none",
+   "desc": "`return False` -> `return None`",
+   "snippet": "return False",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.settle",
+   "op": "cond_const",
+   "desc": "condition `row is None` -> `True`",
+   "snippet": "if row is None:",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.settle",
+   "op": "delete_stmt",
+   "desc": "delete body statement `row.answer = ANSWER_CLIENT`",
+   "snippet": "row.answer = ANSWER_CLIENT",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.settle",
+   "op": "delete_stmt",
+   "desc": "delete body statement `row.appointment_id = appointment.id`",
+   "snippet": "row.appointment_id = appointment.id",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.settle",
+   "op": "delete_stmt",
+   "desc": "delete body statement `row.patient_id = appointment.patient_id`",
+   "snippet": "row.patient_id = appointment.patient_id",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.settle",
+   "op": "delete_stmt",
+   "desc": "delete body statement `self._events.save(row)`",
+   "snippet": "self._events.save(row)",
+   "occurrence": 0
+  },
+  {
+   "class": "A",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.settle",
+   "op": "early_return",
+   "desc": "insert `return None` at top of OutsideSessions.settle",
+   "snippet": "def settle(self, user_id: str, source: str, event_id: str, appointment: Appointm",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.unattended",
+   "op": "compare",
+   "desc": "`==` -> `!=`",
+   "snippet": "identity.kind == 'name'",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/services/outside_sessions.py",
+   "func": "OutsideSessions.unattended",
+   "op": "const_str",
+   "desc": "`'name'` -> `'nameXX'`",
+   "snippet": "'name'",
+   "occurrence": 0
+  }
+ ]
+}

@@ -12,6 +12,7 @@ written through ``app.patients.matching``.
 
 from __future__ import annotations
 
+import copy
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -63,16 +64,25 @@ class PatientSourceMappingRepository(ABC):
 
 
 class InMemoryPatientSourceMappingRepository(PatientSourceMappingRepository):
-    """In-memory implementation for tests."""
+    """In-memory implementation for tests.
+
+    Mappings are copied on the way in and on the way out, as a database
+    would hand back a fresh row for every read, so a change made to one and
+    never saved is not seen by the next read.
+    """
 
     def __init__(self) -> None:
         self._mappings: dict[str, PatientSourceMapping] = {}
 
     def get(self, user_id: str, source: str, source_identifier: str) -> PatientSourceMapping | None:
-        return self._mappings.get(f"{user_id}_{source}_{source_identifier}")
+        return copy.deepcopy(self._mappings.get(f"{user_id}_{source}_{source_identifier}"))
 
     def list_by_source(self, user_id: str, source: str) -> list[PatientSourceMapping]:
-        return [m for m in self._mappings.values() if m.user_id == user_id and m.source == source]
+        return [
+            copy.deepcopy(m)
+            for m in self._mappings.values()
+            if m.user_id == user_id and m.source == source
+        ]
 
     def save(self, mapping: PatientSourceMapping) -> None:
-        self._mappings[mapping.doc_id] = mapping
+        self._mappings[mapping.doc_id] = copy.deepcopy(mapping)
