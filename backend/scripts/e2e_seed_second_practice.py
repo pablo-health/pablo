@@ -127,7 +127,18 @@ FRESH_FEED = SeededPractice(
         "patients",
     ),
 )
-SEEDED = (SECOND_PRACTICE, FRESH_YES, FRESH_NO, FRESH_MESSAGES, FRESH_FEED)
+# Its own practice for the specs about a practice's own domains: once one of
+# its portal hosts is the working primary, every portal link the practice
+# sends goes to that host, which the specs sharing the default practice's
+# invitations should never see. Its hosts are written by
+# e2e_seed_practice_domains.py.
+FRESH_DOMAINS = SeededPractice(
+    id="e2e-fresh-domains",
+    schema="practice_e2e_fresh_domains",
+    email="e2e-fresh-domains@example.com",
+    name="Fresh Practice Domains",
+)
+SEEDED = (SECOND_PRACTICE, FRESH_YES, FRESH_NO, FRESH_MESSAGES, FRESH_FEED, FRESH_DOMAINS)
 
 # Kept for anything that still reads the second practice by its old names.
 SECOND_PRACTICE_ID = SECOND_PRACTICE.id

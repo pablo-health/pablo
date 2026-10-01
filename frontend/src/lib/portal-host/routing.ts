@@ -40,6 +40,8 @@ export type PortalHostDecision =
   | { kind: "not-found" }
   /** Off a portal host: the portal moved; send the visitor there. */
   | { kind: "redirect"; location: string }
+  /** On a practice's own host: whether the host serves anything could not be found out. */
+  | { kind: "unavailable" }
 
 export interface PortalHostRequest {
   /** The `Host` header as the request carried it, port included when present. */
@@ -99,7 +101,7 @@ export const CLINICIAN_ROUTE_SEGMENTS: ReadonlySet<string> = new Set([
  */
 export const PORTAL_FRONTEND_API_ROUTES: ReadonlySet<string> = new Set(["/api/config"])
 
-const LOOPBACK_HOSTNAMES =new Set(["localhost", "127.0.0.1", "[::1]"])
+export const LOOPBACK_HOSTNAMES: ReadonlySet<string> = new Set(["localhost", "127.0.0.1", "[::1]"])
 
 /**
  * The portal hosts a deployment names in `PORTAL_HOSTS`, normalized:
@@ -123,7 +125,7 @@ export function parsePortalHosts(raw: string | undefined): string[] {
 }
 
 /** `host` without its port; brackets kept on an IPv6 literal. */
-function hostnameOf(host: string): string {
+export function hostnameOf(host: string): string {
   if (host.startsWith("[")) {
     const end = host.indexOf("]")
     return end === -1 ? host : host.slice(0, end + 1)
@@ -152,11 +154,11 @@ export function isPortalHost(host: string | null, portalHosts: readonly string[]
  * dot anywhere counts, the same test the proxy matcher applies before a
  * request ever gets here; a practice slug never contains one.
  */
-function hasFileExtension(pathname: string): boolean {
+export function hasFileExtension(pathname: string): boolean {
   return pathname.includes(".")
 }
 
-function isUnder(pathname: string, prefix: string): boolean {
+export function isUnder(pathname: string, prefix: string): boolean {
   return pathname === prefix || pathname.startsWith(`${prefix}/`)
 }
 
@@ -187,9 +189,8 @@ function routeOnPortalHost(pathname: string): PortalHostDecision {
   if (pathname === "/favicon.ico" || hasFileExtension(pathname)) return { kind: "pass" }
   if (isUnder(pathname, PORTAL_PREFIX)) return { kind: "portal" }
 
-  // A later per-practice host (one host → one practice, no slug in the path)
-  // slots in here, ahead of the `/{slug}` rule: look the host up, and when it
-  // names a practice, rewrite `/{rest}` to `/portal/{thatSlug}/{rest}`.
+  // A practice's own host (one host, one practice, no slug in the path) never
+  // reaches here: the proxy looks it up first, see `./practice-host`.
   const segment = pathname.split("/")[1] ?? ""
   if (!isSlugSegment(segment)) return { kind: "not-found" }
   return { kind: "rewrite", pathname: `${PORTAL_PREFIX}${pathname}` }

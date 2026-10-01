@@ -131,6 +131,7 @@ DPOP_UNCOVERABLE: dict[str, str] = {
     # --- The portal shell's first call, made before any session exists: a
     # slug in, a practice's own display name out. ---
     "GET /api/portal/practices/{slug}": "public: resolves a practice slug to its display name",
+    "GET /api/portal/hosts/{host}": "public: resolves a practice's own host to its portal slug",
     # --- Account recovery, reached by someone who has lost the only
     # credential they had. Binding a device proof would require the
     # enrolment this route exists to restore. It answers 202 to everyone,

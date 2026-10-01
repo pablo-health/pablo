@@ -68,7 +68,9 @@ services:
       - ENVIRONMENT=development
       # The second origin is the portal's own host on this stack (the
       # frontend's PORTAL_HOSTS): the same server, reached by another name,
-      # and a portal page there calls this API cross-origin.
+      # and a portal page there calls this API cross-origin. A practice's own
+      # host needs no entry: its page calls the API on its own origin
+      # (practice-host-lb below).
       - CORS_ORIGINS=http://localhost:${E2E_FRONTEND_PORT:-3000},http://127.0.0.1:${E2E_FRONTEND_PORT:-3000}
       - CORS_ALLOW_CREDENTIALS=true
       - DATABASE_BACKEND=postgres
@@ -467,6 +469,10 @@ services:
       # The backend's CORS_ORIGINS and fake-gcs's allowed origins name this
       # host as well; change the three together.
       - PORTAL_HOSTS=127.0.0.1:${E2E_FRONTEND_PORT:-3000}
+      # The clinician app's own host. Naming it turns on serving a practice's
+      # portal from the practice's own hosts: any other name is looked up,
+      # and serves that practice's portal at its root or answers 404.
+      - APP_HOSTS=localhost
     healthcheck:
       # Distroless runtime: no shell, node at a fixed path.
       test:
@@ -703,6 +709,30 @@ services:
   # The name server Settings > Domains asks when a practice checks its records.
   # It answers from a table a spec fills over HTTP; see scripts/fake_dns.py and
   # frontend/e2e/fixtures/dns.ts.
+  # The load balancer in front of a practice's own hosts: the frontend's own
+  # API routes to the frontend, every other /api path to the backend, the
+  # rest to the frontend, Host passed through (scripts/e2e/practice-host-lb.conf).
+  # practice-own-host.spec.ts drives a browser at it under a practice's name,
+  # so the portal page there calls the API on its own origin as it does when
+  # deployed.
+  practice-host-lb:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./scripts/e2e/practice-host-lb.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "${E2E_PRACTICE_HOST_PORT:-3080}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/api/config"]
+      interval: 3s
+      timeout: 5s
+      start_period: 5s
+      retries: 20
+    depends_on:
+      frontend:
+        condition: service_healthy
+    networks:
+      - e2e-net
+
   fake-dns:
     build:
       context: .

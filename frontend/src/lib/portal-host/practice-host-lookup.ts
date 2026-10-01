@@ -1,0 +1,109 @@
+// Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+
+/**
+ * Asking the backend which practice's portal a host serves, and remembering
+ * the answer for a minute.
+ *
+ * `GET {API_URL}/api/portal/hosts/{host}` answers `{slug, primary_host}` for
+ * an active portal host and 404 for every other. Both are kept for
+ * `ttlMs`, at most `maxEntries` hosts at once with the oldest dropped first,
+ * so a visitor sending made-up hostnames costs one backend call per name and
+ * bounded memory. A failure to ask — the backend unreachable, slow, or
+ * answering anything else — is not kept: the request answers 503 and the
+ * next one asks again. Concurrent requests for the same host share one call.
+ *
+ * The backend keeps its answers for the same minute, so a host that starts
+ * or stops working is noticed here within about two.
+ */
+
+import type { PracticeHost, PracticeHostAnswer } from "./practice-host"
+
+export interface PracticeHostLookupOptions {
+  /** The backend's origin, as the server reaches it. Read per call. */
+  apiUrl: () => string
+  fetch?: typeof fetch
+  /** Milliseconds; injectable so tests can move time. */
+  now?: () => number
+  ttlMs?: number
+  maxEntries?: number
+  timeoutMs?: number
+}
+
+export type PracticeHostLookup = (hostname: string) => Promise<PracticeHostAnswer>
+
+const TTL_MS = 60_000
+const MAX_ENTRIES = 5_000
+const TIMEOUT_MS = 3_000
+
+function parse(body: unknown): PracticeHost | "unavailable" {
+  if (typeof body !== "object" || body === null) return "unavailable"
+  const { slug, primary_host: primaryHost } = body as Record<string, unknown>
+  if (typeof slug !== "string" || !slug) return "unavailable"
+  if (primaryHost !== null && typeof primaryHost !== "string") return "unavailable"
+  return { slug, primaryHost }
+}
+
+export function createPracticeHostLookup(options: PracticeHostLookupOptions): PracticeHostLookup {
+  const fetchFn = options.fetch ?? fetch
+  const now = options.now ?? Date.now
+  const ttlMs = options.ttlMs ?? TTL_MS
+  const maxEntries = options.maxEntries ?? MAX_ENTRIES
+  const timeoutMs = options.timeoutMs ?? TIMEOUT_MS
+  const kept = new Map<string, { until: number; answer: PracticeHost | null }>()
+  const inFlight = new Map<string, Promise<PracticeHostAnswer>>()
+
+  async function ask(hostname: string): Promise<PracticeHostAnswer> {
+    const base = options.apiUrl().replace(/\/+$/, "")
+    let response: Response
+    try {
+      response = await fetchFn(`${base}/api/portal/hosts/${encodeURIComponent(hostname)}`, {
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+        signal: AbortSignal.timeout(timeoutMs),
+      })
+    } catch {
+      return "unavailable"
+    }
+    if (response.status === 404) return null
+    if (!response.ok) return "unavailable"
+    try {
+      return parse(await response.json())
+    } catch {
+      return "unavailable"
+    }
+  }
+
+  function keep(hostname: string, answer: PracticeHost | null): void {
+    kept.delete(hostname)
+    kept.set(hostname, { until: now() + ttlMs, answer })
+    while (kept.size > maxEntries) {
+      const oldest = kept.keys().next().value
+      if (oldest === undefined) break
+      kept.delete(oldest)
+    }
+  }
+
+  return async (hostname) => {
+    const entry = kept.get(hostname)
+    if (entry && entry.until > now()) return entry.answer
+
+    const pending = inFlight.get(hostname)
+    if (pending) return pending
+
+    const call = ask(hostname).then((answer) => {
+      if (answer !== "unavailable") keep(hostname, answer)
+      return answer
+    })
+    inFlight.set(hostname, call)
+    try {
+      return await call
+    } finally {
+      inFlight.delete(hostname)
+    }
+  }
+}
+
+/** The process-wide lookup the proxy uses, against the server-side `API_URL`. */
+export const lookupPracticeHost: PracticeHostLookup = createPracticeHostLookup({
+  apiUrl: () => process.env.API_URL || "http://localhost:8000",
+})

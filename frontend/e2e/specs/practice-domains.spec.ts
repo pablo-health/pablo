@@ -11,9 +11,10 @@
  * name server (scripts/fake_dns.py), filled from here — and reports each record
  * found only once it is published, without moving the host's status.
  *
- * The two working hosts are written by backend/scripts/e2e_seed_practice_domains.py:
- * nothing in the product marks a host working on a practice's say-so, so a
- * browser cannot make one.
+ * The two working hosts are written by backend/scripts/e2e_seed_practice_domains.py,
+ * for a practice of their own: nothing in the product marks a host working on
+ * a practice's say-so, so a browser cannot make one. What those hosts serve is
+ * practice-own-host.spec.ts.
  *
  * Deliberately not here: hostname validation, another practice's host, the
  * non-owner refusal and the audit rows, which cost milliseconds in
@@ -21,9 +22,10 @@
  */
 
 import type { Page } from "@playwright/test"
-import { test, expect } from "../fixtures/auth"
+import { test as base, expect } from "../fixtures/auth"
 import type { ApiClient } from "../fixtures/api"
 import { dns } from "../fixtures/dns"
+import { type FreshPractice, signInToFreshPractice } from "../fixtures/freshPractice"
 
 const SETTINGS_PATH = "/dashboard/settings/domains"
 const CNAME_TARGET = "sites.e2e-stack.example"
@@ -56,18 +58,28 @@ function row(page: Page, host: string) {
   return page.getByTestId(`domain-row-${host}`)
 }
 
+/**
+ * Signed in as the owner of the practice these hosts belong to — a practice of
+ * its own, so moving its primary never moves the shared practice's portal
+ * links (see fixtures/freshPractice.ts). Hosts an interrupted earlier run
+ * added are removed before and after.
+ */
+const test = base.extend<{ practice: FreshPractice }>({
+  practice: async ({ browser }, provide) => {
+    const practice = await signInToFreshPractice(browser, "domains")
+    await removeAddedHosts(practice.api)
+    try {
+      await provide(practice)
+    } finally {
+      await removeAddedHosts(practice.api)
+      await practice.context.close()
+    }
+  },
+})
+
 test.describe("A practice's own domains", () => {
-  test.beforeEach(async ({ api }) => {
-    await removeAddedHosts(api)
-  })
-
-  test.afterEach(async ({ api }) => {
-    await removeAddedHosts(api)
-  })
-
   test("the owner adds a website with its www alias, sees the record, and removes both", async ({
-    api,
-    signedInPage: page,
+    practice: { api, page },
   }) => {
     const host = `site${Date.now()}${ADDED_SUFFIX}`
     const www = `www.${host}`
@@ -112,8 +124,7 @@ test.describe("A practice's own domains", () => {
   })
 
   test("the owner checks a new address's records and sees each one found once it is published", async ({
-    api,
-    signedInPage: page,
+    practice: { api, page },
   }) => {
     const host = `portal${Date.now()}${ADDED_SUFFIX}`
     const verifyName = `_pablo-verify${ADDED_SUFFIX}`
@@ -154,8 +165,7 @@ test.describe("A practice's own domains", () => {
   })
 
   test("the owner moves the primary portal address between two that work", async ({
-    api,
-    signedInPage: page,
+    practice: { api, page },
   }) => {
     await page.goto(SETTINGS_PATH)
     for (const host of WORKING) {
