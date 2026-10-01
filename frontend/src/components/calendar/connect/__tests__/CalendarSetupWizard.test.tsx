@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type {
@@ -285,8 +285,33 @@ describe("CalendarSetupWizard", () => {
     expect(screen.getByText("A calendar Pablo made for your sessions")).toBeInTheDocument()
 
     await user.click(screen.getByRole("button", { name: /disconnect/i }))
+    // Nothing happens until the clinician confirms.
+    const dialog = await screen.findByRole("dialog", { name: "Disconnect Google Calendar?" })
+    expect(disconnect).not.toHaveBeenCalled()
+    await user.click(within(dialog).getByRole("button", { name: "Disconnect" }))
 
-    await waitFor(() => expect(disconnect).toHaveBeenCalled())
+    await waitFor(() => expect(disconnect).toHaveBeenCalledTimes(1))
+  })
+
+  it("keeps the connection when the disconnect is cancelled", async () => {
+    getStatus.mockResolvedValue({
+      connected: true,
+      calendar_id: "pablo-made@group.calendar.google.com",
+      calendar_name: "Pablo Sessions",
+      last_synced_at: null,
+      write_target: "app_calendar",
+      event_titling: null,
+      titling_needs_attestation: false,
+    })
+    const user = userEvent.setup()
+    renderWizard()
+
+    await user.click(await screen.findByRole("button", { name: /disconnect/i }))
+    const dialog = await screen.findByRole("dialog", { name: "Disconnect Google Calendar?" })
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }))
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument())
+    expect(disconnect).not.toHaveBeenCalled()
   })
 
   it("surfaces a failure to start the connection instead of leaving a dead button", async () => {

@@ -56,12 +56,9 @@ let stamp = 0
  * the sessions an earlier spec booked from a calendar of the same name.
  */
 async function freshGoogle(api: ApiClient): Promise<string> {
-  // Following outlives a disconnect (and a reconnect to another account),
-  // so it is turned off first, while the connection that can still answer
-  // for it is there. Without this the wizard's checkbox starts checked
-  // and a click on it turns following OFF.
+  // A disconnect also turns following off, so the wizard's checkbox starts
+  // unchecked and a click on it turns following on.
   try {
-    await api.put("/api/google-calendar/followed-calendar", { calendar_id: null })
     await api.delete("/api/google-calendar/disconnect")
   } catch (error) {
     if (!(error instanceof ApiError) || error.status !== 404) throw error
@@ -264,7 +261,15 @@ async function showTomorrow(page: Page): Promise<void> {
 test.describe.configure({ mode: "serial" })
 
 /** Every client these specs make, so the diary and the client list are put back after each. */
-const CLIENTS = ["Jordan Rivera", "Casey Morgan", "Riley Chen", "Avery Kim", "Morgan Lee", "Sam Patel"]
+const CLIENTS = [
+  "Jordan Rivera",
+  "Casey Morgan",
+  "Riley Chen",
+  "Avery Kim",
+  "Morgan Lee",
+  "Sam Patel",
+  "Dana Brooks",
+]
 
 let addedRules: string[] = []
 
@@ -509,4 +514,71 @@ test("an expired sync token is read over from the start without losing a session
   expect(refreshed.at(-1)?.status).toBe(200)
   expect(await questions(api)).toHaveLength(0)
   expect(await upcomingFor(api, samId)).toHaveLength(4)
+})
+
+test("disconnecting takes Pablo off the account and forgets what it read, keeping the sessions", async ({
+  signedInPage: page,
+  api,
+}) => {
+  await freshGoogle(api)
+  await forgetClients(api, ["Dana Brooks"])
+  await connectThroughSetup(page, { follow: true })
+  await seedWeekly("primary", "Dana Brooks", localDateTime(1, "13:00"), 3)
+  await readCalendarsNow(api)
+  await answerAsNewClient(api, "Dana Brooks")
+  const danaId = await patientNamed(api, "Dana Brooks")
+  const booked = await upcomingFor(api, danaId)
+  expect(booked).toHaveLength(3)
+  const before = (await google.requests()).length
+
+  await page.goto("/dashboard/settings/calendars")
+  await page.getByRole("button", { name: "Disconnect", exact: true }).click()
+  const confirm = page.getByRole("dialog", { name: "Disconnect Google Calendar?" })
+  await expect(
+    confirm.getByText("Pablo will stop using your Google Calendar and remove what it read from it.", {
+      exact: false,
+    }),
+  ).toBeVisible()
+  await confirm.getByRole("button", { name: "Disconnect", exact: true }).click()
+  await expect(page.getByText("Not connected.")).toBeVisible()
+
+  // Google was asked to withdraw the grant, and did: the account no longer
+  // lists Pablo.
+  const revokes = (await google.requests())
+    .slice(before)
+    .filter((r) => r.method === "POST" && r.path === "/revoke")
+  expect(revokes.map((r) => r.status)).toEqual([200])
+  expect(await google.grant()).toEqual([])
+
+  // The sessions booked in Pablo stay.
+  expect((await upcomingFor(api, danaId)).map((a) => a.id).sort()).toEqual(
+    booked.map((a) => a.id).sort(),
+  )
+
+  // Connecting again starts from the grant it asks for, not the old one,
+  // with following off until it is turned on again (the helper checks the
+  // box starts unchecked). The answer about who the series is was forgotten
+  // with the rest of what was read: the series is asked about again.
+  await connectThroughSetup(page, { follow: true })
+  await readCalendarsNow(api)
+  const [asked] = (await questions(api)).filter((q) => q.title === "Dana Brooks")
+  expect(asked).toBeDefined()
+
+  // Answering it again books nothing new: the sessions kept their link to
+  // the events, so the same appointments are picked back up.
+  await api.post("/api/calendar/outside-sessions/answer", {
+    answers: [
+      {
+        source: asked.source,
+        source_identifier: asked.source_identifier,
+        patient_id: danaId,
+        new_client_name: null,
+        not_a_client: false,
+      },
+    ],
+  })
+  expect(await questions(api)).toHaveLength(0)
+  expect((await upcomingFor(api, danaId)).map((a) => a.id).sort()).toEqual(
+    booked.map((a) => a.id).sort(),
+  )
 })

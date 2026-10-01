@@ -9,6 +9,7 @@ import importlib
 import json
 import logging
 import os
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, Mock, patch
@@ -16,6 +17,7 @@ from unittest.mock import MagicMock, Mock, patch
 if TYPE_CHECKING:
     from collections.abc import Generator
 
+import httpx
 import pytest
 from app.calendar_providers import pkce_store
 from app.calendar_providers.capabilities import CalendarWriteTarget
@@ -32,6 +34,7 @@ from app.services.google_calendar_service import (
     CalendarGoneError,
     GoogleCalendarService,
     _build_flow,
+    google_consent_surface,
 )
 from app.services.reminder_service import ReminderService
 from app.services.token_encryption import (
@@ -1411,14 +1414,27 @@ class TestSyncFromGoogle:
 # Disconnect Tests
 
 
+_REFRESH_TOKEN = "1//refresh-secret-value"
+_ACCESS_TOKEN = "ya29.access-secret-value"
+
+
+def _connected(token_repo: MagicMock, *, refresh_token: str = _REFRESH_TOKEN) -> None:
+    token_repo.get.return_value = GoogleCalendarTokenDoc(
+        user_id="user-001",
+        encrypted_tokens=encrypt_tokens({"token": _ACCESS_TOKEN, "refresh_token": refresh_token}),
+    )
+    token_repo.delete.return_value = True
+
+
 class TestDisconnect:
-    """Token removal on disconnect."""
+    """Revoking the grant at Google, then removing the tokens."""
 
     def test_disconnect_deletes_tokens(
         self,
         calendar_service: GoogleCalendarService,
         token_repo: MagicMock,
     ) -> None:
+        token_repo.get.return_value = None
         token_repo.delete.return_value = True
         assert calendar_service.disconnect("user-001") is True
         token_repo.delete.assert_called_once_with("user-001")
@@ -1428,8 +1444,107 @@ class TestDisconnect:
         calendar_service: GoogleCalendarService,
         token_repo: MagicMock,
     ) -> None:
+        token_repo.get.return_value = None
         token_repo.delete.return_value = False
-        assert calendar_service.disconnect("user-001") is False
+        with patch("httpx.post") as post:
+            assert calendar_service.disconnect("user-001") is False
+        post.assert_not_called()
+        token_repo.set_followed_calendar.assert_not_called()
+
+    def test_disconnect_turns_following_off(
+        self,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        _connected(token_repo)
+        with patch("httpx.post", return_value=MagicMock(status_code=200)):
+            calendar_service.disconnect("user-001")
+        token_repo.set_followed_calendar.assert_called_once_with("user-001", None)
+
+    def test_disconnect_revokes_the_refresh_token_and_never_logs_it(
+        self,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        _connected(token_repo)
+        caplog.set_level(logging.DEBUG)
+        with patch("httpx.post", return_value=MagicMock(status_code=200)) as post:
+            assert calendar_service.disconnect("user-001") is True
+
+        post.assert_called_once()
+        assert post.call_args.args[0] == "https://oauth2.googleapis.com/revoke"
+        assert post.call_args.kwargs["data"] == {"token": _REFRESH_TOKEN}
+        token_repo.delete.assert_called_once_with("user-001")
+        assert _REFRESH_TOKEN not in caplog.text
+        assert _ACCESS_TOKEN not in caplog.text
+
+    def test_disconnect_revokes_the_access_token_when_there_is_no_refresh_token(
+        self,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        _connected(token_repo, refresh_token="")
+        with patch("httpx.post", return_value=MagicMock(status_code=200)) as post:
+            calendar_service.disconnect("user-001")
+        assert post.call_args.kwargs["data"] == {"token": _ACCESS_TOKEN}
+
+    @pytest.mark.parametrize(
+        "outcome",
+        [
+            MagicMock(status_code=400),  # invalid_token: already revoked at Google
+            httpx.ConnectError("unreachable"),
+        ],
+        ids=["already-revoked", "unreachable"],
+    )
+    def test_a_failed_revoke_still_disconnects(
+        self,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+        outcome: object,
+    ) -> None:
+        _connected(token_repo)
+        kwargs = (
+            {"side_effect": outcome}
+            if isinstance(outcome, Exception)
+            else {"return_value": outcome}
+        )
+        with patch("httpx.post", **kwargs):
+            assert calendar_service.disconnect("user-001") is True
+        token_repo.delete.assert_called_once_with("user-001")
+        assert "revoke" in caplog.text
+        assert _REFRESH_TOKEN not in caplog.text
+
+    def test_tokens_that_do_not_decrypt_still_disconnect(
+        self,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        token_repo.get.return_value = GoogleCalendarTokenDoc(
+            user_id="user-001", encrypted_tokens="not-a-ciphertext"
+        )
+        token_repo.delete.return_value = True
+        with patch("httpx.post") as post:
+            assert calendar_service.disconnect("user-001") is True
+        post.assert_not_called()
+        token_repo.delete.assert_called_once_with("user-001")
+
+    def test_a_stand_in_for_google_is_revoked_at_the_stand_in(
+        self,
+        token_repo: MagicMock,
+        appointment_repo: MagicMock,
+    ) -> None:
+        surface = google_consent_surface(get_settings())
+        service = GoogleCalendarService.from_surface(
+            replace(surface, base_url="http://fake-google.test/"),
+            token_repo=token_repo,
+            appointment_repo=appointment_repo,
+        )
+        _connected(token_repo)
+        with patch("httpx.post", return_value=MagicMock(status_code=200)) as post:
+            service.disconnect("user-001")
+        assert post.call_args.args[0] == "http://fake-google.test/revoke"
 
 
 # Reminder Service Tests

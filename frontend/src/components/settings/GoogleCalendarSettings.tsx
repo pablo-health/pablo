@@ -9,6 +9,7 @@ import { useAuthQuery } from "@/hooks/useAuthQuery"
 import { AlertCircle, Check } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { disconnectGoogleCalendar, getGoogleCalendarStatus } from "@/lib/api/scheduling"
+import { DisconnectCalendarDialog } from "@/components/calendar/connect/DisconnectCalendarDialog"
 import { FollowCalendarSetting } from "./FollowCalendarSetting"
 
 const STATUS_QUERY_KEY = ["google-calendar", "status"]
@@ -17,6 +18,7 @@ const STATUS_QUERY_KEY = ["google-calendar", "status"]
 export function GoogleCalendarSettings() {
   const queryClient = useQueryClient()
   const [disconnectError, setDisconnectError] = useState<string | null>(null)
+  const [confirmingDisconnect, setConfirmingDisconnect] = useState(false)
   // Waits for sign-in, so a full page load of Settings never asks with no
   // token and shows "Not connected" for a connection that is there.
   const { data: status } = useAuthQuery({
@@ -66,7 +68,7 @@ export function GoogleCalendarSettings() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => disconnect.mutate()}
+              onClick={() => setConfirmingDisconnect(true)}
               disabled={disconnect.isPending}
             >
               {disconnect.isPending ? "Disconnecting..." : "Disconnect"}
@@ -81,6 +83,11 @@ export function GoogleCalendarSettings() {
           onChanged={() => queryClient.invalidateQueries({ queryKey: STATUS_QUERY_KEY })}
         />
       )}
+      <DisconnectCalendarDialog
+        open={confirmingDisconnect}
+        onOpenChange={setConfirmingDisconnect}
+        onConfirm={() => disconnect.mutate()}
+      />
       {disconnectError && (
         <p className="flex items-center gap-1.5 text-xs text-red-600">
           <AlertCircle className="h-4 w-4" />

@@ -70,6 +70,9 @@ class AuditAction(StrEnum):
     # and which calendar account it covered, and it outlives the
     # connection it was made about.
     CALENDAR_NAME_DISCLOSURE_ATTESTED = "calendar_name_disclosure_attested"
+    # Google Calendar disconnected: the grant revoked, the tokens and what
+    # Pablo read from the calendar deleted. Counts of what went, nothing else.
+    GOOGLE_CALENDAR_DISCONNECTED = "google_calendar_disconnected"
 
     # Appointment operations
     APPOINTMENT_CREATED = "appointment_created"

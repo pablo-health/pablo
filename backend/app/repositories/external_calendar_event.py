@@ -75,6 +75,10 @@ class ExternalCalendarEventRepository(ABC):
     def delete(self, user_id: str, event_id: str) -> None:
         pass
 
+    @abstractmethod
+    def delete_by_source(self, user_id: str, source: str) -> int:
+        """Delete every row from one source, answered or not; how many went."""
+
 
 class InMemoryExternalCalendarEventRepository(ExternalCalendarEventRepository):
     """In-memory implementation for tests.
@@ -129,3 +133,11 @@ class InMemoryExternalCalendarEventRepository(ExternalCalendarEventRepository):
     def delete(self, user_id: str, event_id: str) -> None:
         if self.get_by_id(user_id, event_id) is not None:
             del self._events[event_id]
+
+    def delete_by_source(self, user_id: str, source: str) -> int:
+        doomed = [
+            key for key, e in self._events.items() if e.user_id == user_id and e.source == source
+        ]
+        for key in doomed:
+            del self._events[key]
+        return len(doomed)

@@ -2228,7 +2228,9 @@ class GoogleCalendarSettingsRow(Base):
     puts there are brought in (``outside_sessions``), or None when nothing is
     followed. ``primary`` stands for the account's main calendar until a read
     resolves it to the calendar's real id. It only takes effect while the
-    connection can read events.
+    connection can read events, and a disconnect turns it off: unlike the
+    calendar Pablo made, it is a choice about reading the clinician's
+    calendar, which a disconnect withdraws.
     """
 
     __tablename__ = "google_calendar_settings"

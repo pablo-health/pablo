@@ -103,6 +103,15 @@ class PatientSourceMappingRepository(ABC):
         Returns how many rows were moved.
         """
 
+    @abstractmethod
+    def forget_answers_by(self, user_id: str, source: str) -> int:
+        """Forget every answer this clinician gave under one source; how many went.
+
+        In every scope: their own, and a shared calendar's, where a colleague
+        following the calendar is asked again. Their answers from before
+        scopes go too. An answer a colleague gave stays.
+        """
+
 
 class InMemoryPatientSourceMappingRepository(PatientSourceMappingRepository):
     """In-memory implementation for tests.
@@ -127,6 +136,19 @@ class InMemoryPatientSourceMappingRepository(PatientSourceMappingRepository):
         if mapping.created_at is None:
             mapping.created_at = utc_now()
         self._mappings[mapping.doc_id] = copy.deepcopy(mapping)
+
+    def forget_answers_by(self, user_id: str, source: str) -> int:
+        doomed = [
+            key
+            for key, m in self._mappings.items()
+            if (m.answered_by_user_id, m.source) == (user_id, source)
+        ]
+        for key in doomed:
+            del self._mappings[key]
+        legacy = [a for a in self._legacy if (a.user_id, a.source) == (user_id, source)]
+        for answer in legacy:
+            self._legacy.remove(answer)
+        return len(doomed) + len(legacy)
 
     def remember_legacy(self, answer: LegacyAnswer) -> None:
         """Test helper: a row as the table held it before answers were the practice's."""
