@@ -23,10 +23,11 @@ from typing import TYPE_CHECKING
 import pytest
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
-from app.api_errors import ConflictError
+from app.api_errors import ConflictError, ForbiddenError
 from app.models.practice_domain import PracticeDomain, PracticeDomainApex
 from app.repositories.postgres.practice_domain import PostgresPracticeDomainRepository
 from app.repositories.practice_domain import DomainTakenError
+from app.services.practice_domain_allowance import DomainAllowance
 from app.services.practice_domain_service import PracticeDomainService
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
@@ -199,6 +200,28 @@ def test_a_check_records_ownership_and_leaves_the_host_alone(
     assert {r.check for r in responses[0].dns_records} == {"ok"}
     assert repo.get_apex(apex).verified_at is not None  # type: ignore[union-attr]  # added above
     assert repo.get(f"portal.{apex}").status == "pending"  # type: ignore[union-attr]  # added above
+
+
+def test_a_domain_past_the_allowance_writes_nothing(
+    repo: PostgresPracticeDomainRepository,
+) -> None:
+    service = PracticeDomainService(
+        repo,
+        cname_target=TARGET,
+        allowance=lambda _practice_id: DomainAllowance(limit=1, message="Limit reached."),
+    )
+    first, second, practice = _apex_name(), _apex_name(), _practice()
+    service.add(practice, first, "site")
+    service.add(practice, f"portal.{first}", "portal")
+
+    with pytest.raises(ForbiddenError) as refused:
+        service.add(practice, second, "site")
+
+    assert (refused.value.code, refused.value.message) == ("DOMAIN_LIMIT", "Limit reached.")
+    assert repo.get(second) is None
+    assert repo.get(f"www.{second}") is None
+    assert repo.get_apex(second) is None
+    assert [a.apex for a in repo.list_apexes_for_practice(practice)] == [first]
 
 
 def _migration(direction: str, engine: Engine) -> None:

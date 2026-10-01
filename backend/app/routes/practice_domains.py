@@ -14,7 +14,9 @@
   its TXT is found. Changes no host's status.
 * ``POST /api/practice/domains/{domain}/primary`` — make an active host the
   primary for its purpose.
-* ``DELETE /api/practice/domains/{domain}`` — remove a host.
+* ``DELETE /api/practice/domains/{domain}`` — remove a host. Where the
+  deployment serves hosts through the domain reconciler job, the host leaves
+  the list at once and the job takes it down before its row goes.
 
 The writes are the practice owner's (see :func:`_manageable_practice_id`).
 The practice is always the caller's own, resolved from the caller, never taken
@@ -22,12 +24,16 @@ from the request. Writes are audited: not PHI, but the primary portal host is
 where clients' links lead, so who changed it belongs on the record.
 
 Nothing here marks a host as working. See
-:mod:`app.services.practice_domain_service`.
+:mod:`app.services.practice_domain_service`. What does is the domain reconciler
+job, and a change that leaves it work to do asks for a run
+(:func:`app.services.practice_domain_trigger.request_reconcile`) once the
+request's writes have committed: as a background task, which runs after the
+response, by when the session middleware has committed.
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 
 from ..api_errors import NotFoundError
 from ..auth.service import require_active_subscription
@@ -44,6 +50,7 @@ from ..services.practice_domain_service import (
     PracticeDomainService,
     get_practice_domain_service,
 )
+from ..services.practice_domain_trigger import request_reconcile
 from .users import _get_own_practice_as_owner, _resolve_practice_id_for
 
 router = APIRouter(prefix="/api/practice/domains", tags=["practice"])
@@ -93,11 +100,14 @@ def describe_practice_domain(
 def add_practice_domain(
     body: AddPracticeDomainRequest,
     http_request: Request,
+    background: BackgroundTasks,
     user: User = Depends(require_active_subscription),
     service: PracticeDomainService = Depends(get_practice_domain_service),
     audit: AuditService = Depends(get_audit_service),
 ) -> PracticeDomainListResponse:
-    """Add a host. 409 if it is already in use; 422 with what to fix."""
+    """Add a host. 409 if it is already in use; 422 with what to fix; 403
+    (``DOMAIN_LIMIT``) if it would bring the practice past its allowance of
+    domains, with the deployment's words for it."""
     practice_id = _manageable_practice_id(user)
     added = service.add(practice_id, body.domain, body.purpose, include_www=body.include_www)
     for domain in added:
@@ -109,12 +119,15 @@ def add_practice_domain(
             resource_id=practice_id,
             changes={"domain": domain.domain, "purpose": domain.purpose},
         )
+    if added:
+        background.add_task(request_reconcile)
     return _list(service, practice_id)
 
 
 @router.post("/check", response_model=PracticeDomainListResponse)
 def check_practice_domains(
     http_request: Request,
+    background: BackgroundTasks,
     user: User = Depends(require_active_subscription),
     service: PracticeDomainService = Depends(get_practice_domain_service),
     lookup: DnsLookup = Depends(get_dns_lookup),
@@ -135,6 +148,10 @@ def check_practice_domains(
             resource_id=practice_id,
             changes={"domains": confirmed},
         )
+    # Only when a host is still waiting: a check over hosts that all work
+    # gives the job nothing to do.
+    if service.serving_work_left(practice_id):
+        background.add_task(request_reconcile)
     return PracticeDomainListResponse(domains=domains)
 
 
@@ -173,6 +190,7 @@ def make_practice_domain_primary(
 def remove_practice_domain(
     domain: str,
     http_request: Request,
+    background: BackgroundTasks,
     user: User = Depends(require_active_subscription),
     service: PracticeDomainService = Depends(get_practice_domain_service),
     audit: AuditService = Depends(get_audit_service),
@@ -192,4 +210,5 @@ def remove_practice_domain(
             "was_primary": removed.is_primary,
         },
     )
+    background.add_task(request_reconcile)
     return _list(service, practice_id)

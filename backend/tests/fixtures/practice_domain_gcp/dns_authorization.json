@@ -1,0 +1,14 @@
+{
+  "name": "projects/example-project/locations/global/dnsAuthorizations/dnsauth-portal-example-org",
+  "createTime": "2026-10-01T14:29:22.655142243Z",
+  "updateTime": "2026-10-01T14:29:22.990759983Z",
+  "domain": "portal.example.org",
+  "dnsResourceRecord": {
+    "name": "_acme-challenge.portal.example.org.",
+    "type": "CNAME",
+    "data": "test-auth.10.authorize.certificatemanager.goog."
+  },
+  "type": 1,
+  "labels": {},
+  "description": ""
+}

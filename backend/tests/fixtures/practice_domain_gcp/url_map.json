@@ -1,0 +1,47 @@
+{
+  "id": "1000000000000000001",
+  "kind": "compute#urlMap",
+  "name": "sites-urlmap",
+  "creationTimestamp": "2026-10-01T07:27:28.861-07:00",
+  "fingerprint": "test-fingerprint-1",
+  "pathMatchers": [
+    {
+      "name": "sites-paths",
+      "pathRules": [
+        {
+          "paths": [
+            "/api/*"
+          ],
+          "service": "https://www.googleapis.com/compute/v1/projects/example-project/global/backendServices/sites-backend-bes"
+        },
+        {
+          "paths": [
+            "/api/config",
+            "/api/login",
+            "/api/logout"
+          ],
+          "service": "https://www.googleapis.com/compute/v1/projects/example-project/global/backendServices/sites-frontend-bes"
+        }
+      ],
+      "defaultService": "https://www.googleapis.com/compute/v1/projects/example-project/global/backendServices/sites-frontend-bes",
+      "routeRules": []
+    }
+  ],
+  "hostRules": [
+    {
+      "hosts": [
+        "portal.example.org"
+      ],
+      "pathMatcher": "sites-paths"
+    }
+  ],
+  "defaultUrlRedirect": {
+    "stripQuery": true,
+    "hostRedirect": "www.example.com",
+    "httpsRedirect": true,
+    "pathRedirect": "/",
+    "redirectResponseCode": "FOUND"
+  },
+  "selfLink": "https://www.googleapis.com/compute/v1/projects/example-project/global/urlMaps/sites-urlmap",
+  "tests": []
+}

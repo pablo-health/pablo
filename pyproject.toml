@@ -121,6 +121,11 @@ webauthn = "^3.0.0"
 # fetches one at runtime.
 dnspython = "^2.8.0"
 tldextract = "^5.3.0"
+# Serving a practice's hosts (backend/app/services/practice_domain_gcp.py):
+# certificates, their DNS authorisations and certificate-map entries, and the
+# load balancer's URL map. Imported only by the domain reconciler job.
+google-cloud-certificate-manager = "^1.14.0"
+google-cloud-compute = "^1.54.0"
 # One-click DNS setup (backend/app/services/domain_connect_signing.py): signs
 # the Domain Connect apply link with a Cloud KMS key, so the private key never
 # leaves KMS. Imported lazily; an install that leaves the feature off never

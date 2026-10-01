@@ -25,10 +25,19 @@ from app.models.practice_domain import PracticeDomain, PracticeDomainApex
 from app.repositories.practice_domain import InMemoryPracticeDomainRepository
 from app.routes import practice_domains
 from app.services.audit_service import get_audit_service
+from app.services.practice_domain_allowance import (
+    DomainAllowance,
+    register_domain_allowance,
+    reset_domain_allowance,
+)
 from app.services.practice_domain_dns import get_dns_lookup
 from app.services.practice_domain_service import (
     PracticeDomainService,
     get_practice_domain_service,
+)
+from app.services.practice_domain_trigger import (
+    register_reconcile_trigger,
+    reset_reconcile_trigger,
 )
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -76,12 +85,20 @@ def zone() -> dict[tuple[str, str], list[str] | None]:
 
 
 @pytest.fixture
+def deferred_removal() -> bool:
+    """Whether the deployment serves hosts through the reconciler job, which
+    takes a removed host down before its row goes."""
+    return False
+
+
+@pytest.fixture
 def client(
     mock_user: User,
     repo: InMemoryPracticeDomainRepository,
     audit: _RecordingAudit,
     owner_email: str,
     zone: dict[tuple[str, str], list[str] | None],
+    deferred_removal: bool,
 ) -> Iterator[TestClient]:
     app = FastAPI()
     register_exception_handlers(app)
@@ -90,6 +107,7 @@ def client(
         repo,
         reserved_hosts=frozenset({"app.example.org", CNAME_TARGET}),
         cname_target=CNAME_TARGET,
+        deferred_removal=deferred_removal,
     )
     app.dependency_overrides[require_active_subscription] = lambda: mock_user
     app.dependency_overrides[get_practice_domain_service] = lambda: service
@@ -310,6 +328,166 @@ class TestAdd:
         assert repo.get("ours.example") is None
 
 
+LIMIT_MESSAGE = "Message supplied by the deployment."
+
+
+@pytest.fixture
+def one_domain_allowed() -> Iterator[list[str]]:
+    """A deployment policy allowing one registrable domain; records who it was asked about."""
+    asked: list[str] = []
+
+    def policy(practice_id: str) -> DomainAllowance:
+        asked.append(practice_id)
+        return DomainAllowance(limit=1, message=LIMIT_MESSAGE)
+
+    register_domain_allowance(policy)
+    yield asked
+    reset_domain_allowance()
+
+
+class TestAllowance:
+    def test_with_no_policy_there_is_no_limit(
+        self, client: TestClient, repo: InMemoryPracticeDomainRepository
+    ) -> None:
+        for apex in ("one.example", "two.example", "three.example"):
+            assert (
+                client.post(URL, json={"domain": f"portal.{apex}", "purpose": "portal"}).status_code
+                == 201
+            )
+        assert len(repo.list_apexes_for_practice(PRACTICE_ID)) == 3
+
+    def test_hosts_under_one_domain_count_once(
+        self,
+        client: TestClient,
+        repo: InMemoryPracticeDomainRepository,
+        one_domain_allowed: list[str],
+    ) -> None:
+        site = client.post(URL, json={"domain": "ours.example", "purpose": "site"})
+        portal = client.post(URL, json={"domain": "portal.ours.example", "purpose": "portal"})
+
+        assert (site.status_code, portal.status_code) == (201, 201)
+        assert {d.domain for d in repo.list_for_practice(PRACTICE_ID)} == {
+            "ours.example",
+            "www.ours.example",
+            "portal.ours.example",
+        }
+        assert one_domain_allowed == [PRACTICE_ID, PRACTICE_ID]
+
+    def test_a_domain_past_the_limit_is_refused_with_the_deployments_words(
+        self,
+        client: TestClient,
+        repo: InMemoryPracticeDomainRepository,
+        one_domain_allowed: list[str],
+    ) -> None:
+        client.post(URL, json={"domain": "portal.ours.example", "purpose": "portal"})
+
+        response = client.post(URL, json={"domain": "another.example", "purpose": "site"})
+
+        assert response.status_code == 403
+        assert _code(response) == "DOMAIN_LIMIT"
+        assert response.json()["error"]["message"] == LIMIT_MESSAGE
+        assert repo.get("another.example") is None
+        assert repo.get("www.another.example") is None
+        assert repo.get_apex("another.example") is None
+
+    def test_a_domain_being_removed_no_longer_counts(
+        self,
+        client: TestClient,
+        repo: InMemoryPracticeDomainRepository,
+        one_domain_allowed: list[str],
+    ) -> None:
+        repo.put(_row("portal.old.example", status="removing"))
+        repo.put_apex(_apex("old.example"))
+
+        response = client.post(URL, json={"domain": "portal.new.example", "purpose": "portal"})
+
+        assert response.status_code == 201
+
+
+@pytest.fixture
+def kicks() -> Iterator[list[str]]:
+    """A registered reconcile trigger; one entry per run asked for."""
+    asked: list[str] = []
+    register_reconcile_trigger(lambda: asked.append("run"))
+    yield asked
+    reset_reconcile_trigger()
+
+
+class TestReconcileTrigger:
+    """The backend asks for a reconciler run when it leaves the job work."""
+
+    def test_adding_a_host_asks_for_a_run(self, client: TestClient, kicks: list[str]) -> None:
+        response = client.post(URL, json={"domain": "ours.example", "purpose": "site"})
+
+        assert response.status_code == 201
+        assert kicks == ["run"]
+
+    def test_a_refused_add_asks_for_nothing(
+        self, client: TestClient, repo: InMemoryPracticeDomainRepository, kicks: list[str]
+    ) -> None:
+        repo.put(_row("theirs.example", practice_id=OTHER_PRACTICE))
+
+        response = client.post(URL, json={"domain": "theirs.example", "purpose": "site"})
+        assert response.status_code == 409
+        assert kicks == []
+
+    @pytest.mark.parametrize("deferred_removal", [True, False])
+    def test_removing_a_host_asks_for_a_run(
+        self, client: TestClient, repo: InMemoryPracticeDomainRepository, kicks: list[str]
+    ) -> None:
+        repo.put(_row("portal.ours.example"))
+
+        assert client.delete(f"{URL}/portal.ours.example").status_code == 200
+        assert kicks == ["run"]
+
+    @pytest.mark.parametrize("status", ["pending", "verifying", "removing"])
+    def test_a_check_asks_for_a_run_while_a_host_is_in_progress(
+        self,
+        client: TestClient,
+        repo: InMemoryPracticeDomainRepository,
+        kicks: list[str],
+        status: str,
+    ) -> None:
+        repo.put(_row("portal.ours.example"))
+        repo.put(_row("book.ours.example", status=status))
+
+        assert client.post(f"{URL}/check").status_code == 200
+        assert kicks == ["run"]
+
+    @pytest.mark.parametrize("status", ["active", "error"])
+    def test_a_check_asks_for_nothing_when_no_host_is_in_progress(
+        self,
+        client: TestClient,
+        repo: InMemoryPracticeDomainRepository,
+        kicks: list[str],
+        status: str,
+    ) -> None:
+        repo.put(_row("portal.ours.example", status=status))
+
+        assert client.post(f"{URL}/check").status_code == 200
+        assert kicks == []
+
+    def test_a_trigger_that_fails_does_not_fail_the_request(
+        self, client: TestClient, repo: InMemoryPracticeDomainRepository
+    ) -> None:
+        def broken() -> None:
+            msg = "the job could not be started"
+            raise RuntimeError(msg)
+
+        register_reconcile_trigger(broken)
+        try:
+            response = client.post(URL, json={"domain": "ours.example", "purpose": "site"})
+        finally:
+            reset_reconcile_trigger()
+
+        assert response.status_code == 201
+        assert repo.get("ours.example") is not None
+
+    def test_with_no_trigger_registered_asking_does_nothing(self, client: TestClient) -> None:
+        response = client.post(URL, json={"domain": "ours.example", "purpose": "site"})
+        assert response.status_code == 201
+
+
 class TestPrimary:
     def test_an_active_host_becomes_the_only_primary_for_its_purpose(
         self,
@@ -401,6 +579,63 @@ class TestRemove:
 
         assert client.delete(f"{URL}/ours.example").status_code == 403
         assert repo.get("ours.example") is not None
+
+    def test_without_a_reconciler_the_host_and_its_domain_go_at_once(
+        self, client: TestClient, repo: InMemoryPracticeDomainRepository
+    ) -> None:
+        repo.put(_row("portal.ours.example"))
+        repo.put_apex(_apex("ours.example"))
+
+        assert client.delete(f"{URL}/portal.ours.example").status_code == 200
+
+        assert repo.get("portal.ours.example") is None
+        assert repo.get_apex("ours.example") is None
+
+
+@pytest.mark.parametrize("deferred_removal", [True])
+class TestRemoveWhileServed:
+    """Where the reconciler job serves hosts, removal marks the host and the
+    job takes it down; to the practice it is gone at once."""
+
+    def test_the_host_leaves_the_list_and_waits_for_the_job(
+        self,
+        client: TestClient,
+        repo: InMemoryPracticeDomainRepository,
+        audit: _RecordingAudit,
+    ) -> None:
+        repo.put(_row("portal.ours.example", is_primary=True))
+        repo.put(_row("book.ours.example"))
+        repo.put_apex(_apex("ours.example"))
+
+        response = client.delete(f"{URL}/portal.ours.example")
+
+        assert response.status_code == 200
+        assert [d["domain"] for d in response.json()["domains"]] == ["book.ours.example"]
+        assert [d["domain"] for d in client.get(URL).json()["domains"]] == ["book.ours.example"]
+        stored = repo.get("portal.ours.example")
+        assert stored is not None
+        assert (stored.status, stored.is_primary) == ("removing", False)
+        assert repo.get_apex("ours.example") is not None
+        assert audit.entries[-1]["action"] == AuditAction.PRACTICE_DOMAIN_REMOVED
+        assert audit.entries[-1]["changes"]["was_primary"] is True
+
+    def test_a_host_being_removed_cannot_be_added_back_yet(
+        self, client: TestClient, repo: InMemoryPracticeDomainRepository
+    ) -> None:
+        repo.put(_row("portal.ours.example", status="removing"))
+
+        response = client.post(URL, json={"domain": "portal.ours.example", "purpose": "portal"})
+
+        assert response.status_code == 409
+        assert _code(response) == "DOMAIN_REMOVING"
+
+    def test_a_host_being_removed_is_not_the_practices_to_change(
+        self, client: TestClient, repo: InMemoryPracticeDomainRepository
+    ) -> None:
+        repo.put(_row("portal.ours.example", status="removing"))
+
+        assert client.post(f"{URL}/portal.ours.example/primary").status_code == 404
+        assert client.delete(f"{URL}/portal.ours.example").status_code == 404
 
 
 def _apex(apex: str, **overrides: Any) -> PracticeDomainApex:

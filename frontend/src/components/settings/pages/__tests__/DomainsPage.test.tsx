@@ -250,6 +250,19 @@ describe("DomainsPage", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("That domain is already in use.")
   })
 
+  it("shows the deployment's words when a domain is past the practice's allowance", async () => {
+    mockList.mockResolvedValue({ domains: [] })
+    mockAdd.mockRejectedValue(
+      new ApiError("DOMAIN_LIMIT", "Message supplied by the deployment.", { domain: "another.example" }, 403),
+    )
+    const user = userEvent.setup()
+    renderWithProviders(<DomainsPage />)
+
+    await user.type(await screen.findByLabelText("Domain"), "another.example")
+    await user.click(screen.getByRole("button", { name: "Add domain" }))
+    expect(await screen.findByRole("alert")).toHaveTextContent("Message supplied by the deployment.")
+  })
+
   it("shows the domain's ownership record beside the host's own", async () => {
     mockList.mockResolvedValue({
       domains: [
