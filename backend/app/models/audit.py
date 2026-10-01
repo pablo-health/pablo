@@ -282,6 +282,9 @@ class AuditAction(StrEnum):
     PRACTICE_DOMAIN_ADDED = "practice_domain_added"
     PRACTICE_DOMAIN_MADE_PRIMARY = "practice_domain_made_primary"
     PRACTICE_DOMAIN_REMOVED = "practice_domain_removed"
+    # A DNS check found a domain's ownership record. The payload is the
+    # domains, nothing else.
+    PRACTICE_DOMAIN_OWNERSHIP_CONFIRMED = "practice_domain_ownership_confirmed"
 
     # A patient signed themselves out. The mirror image of
     # PATIENT_PORTAL_SESSION_REDEEMED and recorded for the same reason:

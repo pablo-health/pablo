@@ -484,6 +484,18 @@ CREATE TABLE platform.portal_welcome_messages (
     updated_at timestamp with time zone NOT NULL
 );
 
+CREATE TABLE platform.practice_domain_apexes (
+    apex character varying(253) NOT NULL,
+    practice_id character varying(128) NOT NULL,
+    verify_token character varying(64) NOT NULL,
+    verified_at timestamp with time zone,
+    email_identity_status character varying(20),
+    email_dkim_tokens jsonb,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone,
+    CONSTRAINT practice_domain_apexes_email_identity_status_check CHECK (((email_identity_status)::text = ANY (ARRAY[('pending'::character varying)::text, ('verified'::character varying)::text, ('failed'::character varying)::text])))
+);
+
 CREATE TABLE platform.practice_domains (
     domain character varying(255) NOT NULL,
     practice_id character varying(128) NOT NULL,
@@ -496,6 +508,7 @@ CREATE TABLE platform.practice_domains (
     dns_auth_record text,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone,
+    cert_auth_value character varying(255),
     CONSTRAINT practice_domains_kind_check CHECK (((kind)::text = ANY (ARRAY[('subdomain'::character varying)::text, ('vanity'::character varying)::text]))),
     CONSTRAINT practice_domains_purpose_check CHECK (((purpose)::text = ANY (ARRAY[('portal'::character varying)::text, ('site'::character varying)::text]))),
     CONSTRAINT practice_domains_status_check CHECK (((status)::text = ANY (ARRAY[('pending'::character varying)::text, ('verifying'::character varying)::text, ('active'::character varying)::text, ('error'::character varying)::text])))
@@ -711,6 +724,9 @@ ALTER TABLE ONLY platform.portal_invite_templates
 ALTER TABLE ONLY platform.portal_welcome_messages
     ADD CONSTRAINT portal_welcome_messages_pkey PRIMARY KEY (practice_id);
 
+ALTER TABLE ONLY platform.practice_domain_apexes
+    ADD CONSTRAINT practice_domain_apexes_pkey PRIMARY KEY (apex);
+
 ALTER TABLE ONLY platform.practice_domains
     ADD CONSTRAINT practice_domains_pkey PRIMARY KEY (domain);
 
@@ -846,6 +862,8 @@ CREATE INDEX ix_platform_platform_audit_logs_tenant_schema ON platform.platform_
 CREATE INDEX ix_platform_platform_audit_logs_timestamp ON platform.platform_audit_logs USING btree ("timestamp");
 
 CREATE INDEX ix_platform_user_identities_user_id ON platform.user_identities USING btree (user_id);
+
+CREATE INDEX ix_practice_domain_apexes_practice_id ON platform.practice_domain_apexes USING btree (practice_id);
 
 CREATE INDEX ix_practice_domains_practice_id ON platform.practice_domains USING btree (practice_id);
 

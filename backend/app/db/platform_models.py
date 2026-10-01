@@ -470,6 +470,52 @@ class PracticeDomainRow(PlatformBase):
     cert_status: Mapped[str | None] = mapped_column(String(20))
     #: A DNS record the practice adds so a certificate can be issued for the host.
     dns_auth_record: Mapped[str | None] = mapped_column(Text)
+    #: The value of the ``_acme-challenge.<host>`` CNAME a certificate is
+    #: authorised with: the part before ``.authorize.certificatemanager.goog``.
+    #: Set by whatever requests the certificate; ``None`` until then.
+    cert_auth_value: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PracticeDomainApexRow(PlatformBase):
+    """A registrable domain (``example.co.uk``) a practice's hosts sit under.
+
+    Keyed on the domain, so the domain and every host under it belong to one
+    practice: a host under a domain another practice holds is refused the way
+    a taken host is. The row is written with the first host under it and
+    removed with the last.
+
+    Holds what is set up once per domain rather than per host: the token the
+    practice publishes as ``pablo-verify=<token>`` at ``_pablo-verify.<apex>``
+    to show it controls the domain, when that record was last found, and the
+    domain's email sending identity (its state and the three DKIM tokens the
+    practice publishes as CNAMEs).
+
+    No PHI: a public domain, a token that is published in DNS by design, and
+    setup state.
+    """
+
+    __tablename__ = "practice_domain_apexes"
+    # See PracticeDomainRow for why the tuple form needs the ignore.
+    __table_args__ = (  # type: ignore[assignment]
+        CheckConstraint(
+            "email_identity_status IN ('pending', 'verified', 'failed')",
+            name="practice_domain_apexes_email_identity_status_check",
+        ),
+        Index("ix_practice_domain_apexes_practice_id", "practice_id"),
+        {"schema": PLATFORM_SCHEMA},
+    )
+
+    apex: Mapped[str] = mapped_column(String(253), primary_key=True)
+    practice_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    verify_token: Mapped[str] = mapped_column(String(64), nullable=False)
+    #: When the ownership record was last found carrying ``verify_token``.
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    email_identity_status: Mapped[str | None] = mapped_column(String(20))
+    #: The three DKIM tokens of the domain's email sending identity, once it
+    #: has one.
+    email_dkim_tokens: Mapped[list[str] | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

@@ -4,6 +4,7 @@
 
 import {
   addPracticeDomain,
+  checkPracticeDomains,
   listPracticeDomains,
   makePracticeDomainPrimary,
   removePracticeDomain,
@@ -27,6 +28,19 @@ export function useAddPracticeDomain() {
   return useAuthMutation<PracticeDomainList, AddPracticeDomain>({
     mutationFn: (body) => addPracticeDomain(body),
     invalidateKeys: [practiceDomainKeys.all],
+  })
+}
+
+/**
+ * Check the practice's DNS. The answer replaces the cached list rather than
+ * invalidating it, since only this answer carries what was found per record.
+ */
+export function useCheckPracticeDomains() {
+  return useAuthMutation<PracticeDomainList, void>({
+    mutationFn: () => checkPracticeDomains(),
+    onSuccess: (data, _variables, queryClient) => {
+      queryClient.setQueryData(practiceDomainKeys.all, data)
+    },
   })
 }
 

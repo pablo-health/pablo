@@ -1181,6 +1181,22 @@ class Settings(BaseSettings):
             "ANAME alternative. Empty: bare domains are shown the CNAME too."
         ),
     )
+    practice_domain_dkim_cname_suffix: str = Field(
+        default="dkim.amazonses.com",
+        description=(
+            "Where a domain's DKIM CNAMEs point: each token t is published as "
+            "t._domainkey.<domain> CNAME t.<this suffix>. Only shown once the "
+            "domain has an email sending identity with tokens."
+        ),
+    )
+    practice_domain_dns_nameservers: str = Field(
+        default="",
+        description=(
+            "Comma-separated DNS servers (host or host:port) Settings > Domains "
+            "asks when a practice checks its records. Empty uses the system's "
+            "resolver."
+        ),
+    )
 
     # ── Patient portal sign-in (app.portal) ──────────────────────────────
     # Off by default: turning it on publishes a surface that mints

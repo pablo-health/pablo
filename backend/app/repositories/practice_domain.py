@@ -1,11 +1,13 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Repository abstraction for the hosts a practice serves from.
+"""Repository abstraction for the hosts a practice serves from, and the
+registrable domains they sit under.
 
-The table is in the shared ``platform`` schema (no RLS): the ``practice_id``
-argument on every write is the access-control boundary. ``get`` is deliberately
-unscoped — a host belongs to exactly one practice, and the service has to see
-whose it is to tell "already yours" from "belongs to someone else".
+The tables are in the shared ``platform`` schema (no RLS): the ``practice_id``
+argument on every write is the access-control boundary. ``get`` and
+``get_apex`` are deliberately unscoped — a host or domain belongs to exactly
+one practice, and the service has to see whose it is to tell "already yours"
+from "belongs to someone else".
 """
 
 from __future__ import annotations
@@ -18,11 +20,13 @@ from typing import TYPE_CHECKING
 from ..utcnow import utc_now
 
 if TYPE_CHECKING:
-    from ..models.practice_domain import DomainPurpose, PracticeDomain
+    from datetime import datetime
+
+    from ..models.practice_domain import DomainPurpose, PracticeDomain, PracticeDomainApex
 
 
 class DomainTakenError(Exception):
-    """The host is already recorded, for this practice or another."""
+    """The host or domain is already recorded, for this practice or another."""
 
 
 class PracticeDomainRepository(ABC):
@@ -50,12 +54,37 @@ class PracticeDomainRepository(ABC):
     def set_primary(self, domain: str, practice_id: str, purpose: DomainPurpose) -> None:
         """Make this host the practice's primary for its purpose, unsetting any other."""
 
+    @abstractmethod
+    def get_apex(self, apex: str) -> PracticeDomainApex | None:
+        """The row for this registrable domain, whichever practice holds it."""
+
+    @abstractmethod
+    def list_apexes_for_practice(self, practice_id: str) -> list[PracticeDomainApex]:
+        """Every registrable domain this practice holds."""
+
+    @abstractmethod
+    def add_apex(self, apex: PracticeDomainApex) -> PracticeDomainApex:
+        """Insert a registrable domain.
+
+        Raises:
+            DomainTakenError: the domain is already recorded.
+        """
+
+    @abstractmethod
+    def remove_apex(self, apex: str, practice_id: str) -> bool:
+        """Delete this practice's registrable domain. Returns whether a row existed."""
+
+    @abstractmethod
+    def mark_apex_verified(self, apex: str, practice_id: str, at: datetime) -> None:
+        """Record that the domain's ownership record was found at *at*."""
+
 
 class InMemoryPracticeDomainRepository(PracticeDomainRepository):
     """In-memory implementation for tests."""
 
     def __init__(self) -> None:
         self._rows: dict[str, PracticeDomain] = {}
+        self._apexes: dict[str, PracticeDomainApex] = {}
         self._lock = Lock()
 
     def get(self, domain: str) -> PracticeDomain | None:
@@ -91,10 +120,47 @@ class InMemoryPracticeDomainRepository(PracticeDomainRepository):
                     row.is_primary = row.domain == domain
                     row.updated_at = now
 
+    def get_apex(self, apex: str) -> PracticeDomainApex | None:
+        with self._lock:
+            row = self._apexes.get(apex)
+            return replace(row) if row else None
+
+    def list_apexes_for_practice(self, practice_id: str) -> list[PracticeDomainApex]:
+        with self._lock:
+            rows = [replace(r) for r in self._apexes.values() if r.practice_id == practice_id]
+        return sorted(rows, key=lambda r: r.apex)
+
+    def add_apex(self, apex: PracticeDomainApex) -> PracticeDomainApex:
+        with self._lock:
+            if apex.apex in self._apexes:
+                raise DomainTakenError(apex.apex)
+            self._apexes[apex.apex] = replace(apex)
+        return apex
+
+    def remove_apex(self, apex: str, practice_id: str) -> bool:
+        with self._lock:
+            row = self._apexes.get(apex)
+            if row is None or row.practice_id != practice_id:
+                return False
+            del self._apexes[apex]
+            return True
+
+    def mark_apex_verified(self, apex: str, practice_id: str, at: datetime) -> None:
+        with self._lock:
+            row = self._apexes.get(apex)
+            if row is not None and row.practice_id == practice_id:
+                row.verified_at = at
+                row.updated_at = at
+
     def put(self, domain: PracticeDomain) -> None:
         """Test seam: record a row as-is, status and all."""
         with self._lock:
             self._rows[domain.domain] = replace(domain)
+
+    def put_apex(self, apex: PracticeDomainApex) -> None:
+        """Test seam: record a registrable domain as-is."""
+        with self._lock:
+            self._apexes[apex.apex] = replace(apex)
 
 
 def get_practice_domain_repository() -> PracticeDomainRepository:

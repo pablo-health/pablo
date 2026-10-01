@@ -2,7 +2,9 @@
 
 "use client"
 
+import { Button } from "@/components/ui/button"
 import {
+  useCheckPracticeDomains,
   useMakePracticeDomainPrimary,
   usePracticeDomains,
   useRemovePracticeDomain,
@@ -34,16 +36,19 @@ export function DomainsPage() {
   const { data, isLoading, isError } = usePracticeDomains()
   const makePrimary = useMakePracticeDomainPrimary()
   const remove = useRemovePracticeDomain()
+  const check = useCheckPracticeDomains()
 
   const canManage = canManageDomains(userStatus)
-  const busy = makePrimary.isPending || remove.isPending
-  const failure = makePrimary.error ?? remove.error
+  const busy = makePrimary.isPending || remove.isPending || check.isPending
+  const failure = makePrimary.error ?? remove.error ?? check.error
   const failureMessage =
     failure instanceof ApiError && failure.message
       ? failure.message
-      : failure
-        ? "That change couldn't be saved. Try again."
-        : null
+      : failure === check.error && failure
+        ? "Your records couldn't be checked. Try again."
+        : failure
+          ? "That change couldn't be saved. Try again."
+          : null
 
   if (isLoading) return null
   if (isError || !data) {
@@ -68,6 +73,14 @@ export function DomainsPage() {
         <p role="alert" className="mb-3 text-[12.5px] text-red-700">
           {failureMessage}
         </p>
+      )}
+      {canManage && data.domains.length > 0 && (
+        <div className="mb-3 flex items-center gap-3">
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => check.mutate()}>
+            {check.isPending ? "Checking…" : "Check now"}
+          </Button>
+          <span className="text-[12.5px] text-muted-foreground">Looks up your DNS records.</span>
+        </div>
       )}
       {SECTIONS.map(({ purpose, title, description }) => {
         const domains = byPurpose(purpose)

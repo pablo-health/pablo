@@ -10,14 +10,20 @@ the hosts this deployment itself answers on.
 
 Internationalised names are stored in their ASCII (punycode) form, which is the
 form DNS and certificates use.
+
+Also here: the registrable domain a host sits under (:func:`apex_of`), from the
+Public Suffix List.
 """
 
 from __future__ import annotations
 
 import ipaddress
 import re
+from functools import cache
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
+
+import tldextract
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -102,3 +108,32 @@ def normalize_host(raw: str, *, reserved: frozenset[str] = frozenset()) -> str:
     if host in reserved:
         raise HostnameError("That address is part of this service. Enter a domain you own.")
     return host
+
+
+@cache
+def _suffix_list() -> tldextract.TLDExtract:
+    # No URLs and no cache directory: the list snapshot that ships with the
+    # package is the only source, so nothing is fetched or written at runtime.
+    # Private suffixes count (github.io and the like), since names under one
+    # belong to different people.
+    return tldextract.TLDExtract(
+        suffix_list_urls=(), cache_dir=None, include_psl_private_domains=True
+    )
+
+
+def apex_of(host: str) -> str:
+    """The registrable domain *host* sits under: ``portal.example.co.uk`` →
+    ``example.co.uk``.
+
+    *host* is already normalised (:func:`normalize_host`). A name whose last
+    label is not on the Public Suffix List is taken to end in a one-label
+    suffix, which is the list's own default rule. A host that is itself a
+    public suffix (``co.uk``) has no apex anyone can own, and is refused.
+    """
+    parts = _suffix_list()(host)
+    if not parts.suffix:
+        labels = host.split(".")
+        return ".".join(labels[-2:])
+    if not parts.domain:
+        raise HostnameError("That isn't a domain you can own. Enter your own domain.")
+    return f"{parts.domain}.{parts.suffix}"

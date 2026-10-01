@@ -7,6 +7,7 @@ from __future__ import annotations
 import pytest
 from app.services.practice_domain_hosts import (
     HostnameError,
+    apex_of,
     deployment_hosts,
     normalize_host,
 )
@@ -71,3 +72,31 @@ def test_the_deployments_own_hosts_are_refused_but_names_under_them_are_not() ->
         with pytest.raises(HostnameError, match="part of this service"):
             normalize_host(own, reserved=reserved)
     assert normalize_host("clinic.app.example.org", reserved=reserved) == "clinic.app.example.org"
+
+
+@pytest.mark.parametrize(
+    ("host", "apex"),
+    [
+        ("example.com", "example.com"),
+        ("www.example.com", "example.com"),
+        ("portal.clinic.example.com", "example.com"),
+        ("portal.example.co.uk", "example.co.uk"),
+        ("example.co.uk", "example.co.uk"),
+        ("clinic.example.com.au", "example.com.au"),
+        # Private suffixes count: names under one belong to different people.
+        ("someone.github.io", "someone.github.io"),
+        ("www.someone.github.io", "someone.github.io"),
+        # Not on the list at all: the list's default rule, a one-label suffix.
+        ("portal.ours.example", "ours.example"),
+        ("ours.example", "ours.example"),
+        ("xn--bcher-kva.example", "xn--bcher-kva.example"),
+    ],
+)
+def test_apex_follows_the_public_suffix_list(host: str, apex: str) -> None:
+    assert apex_of(host) == apex
+
+
+@pytest.mark.parametrize("suffix", ["co.uk", "github.io", "com.au"])
+def test_a_public_suffix_has_no_apex(suffix: str) -> None:
+    with pytest.raises(HostnameError, match="isn't a domain you can own"):
+        apex_of(suffix)
