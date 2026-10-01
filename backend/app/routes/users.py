@@ -586,7 +586,8 @@ def update_professional_info(
     - ``business_address`` → practice row (the covered entity's address,
       reused to build the BAA snapshot at acceptance time).
 
-    - ``practice_name`` → practice row, and only from the practice owner.
+    - ``practice_name`` / ``practice_phone`` → practice row; like the
+      address, only the practice owner may change them.
       A rename never touches the BAA snapshot; signing again under the
       new name is the owner's separate choice (``/me/practice/baa/resign``).
 
@@ -599,10 +600,16 @@ def update_professional_info(
         new_practice_name = request.practice_name.strip()
         if not new_practice_name:
             raise BadRequestError("Practice name cannot be blank")
-        # Refuse before writing anything else, so a non-owner's request
-        # fails whole rather than half-applied. Address and phone are not
-        # gated here: the onboarding step sends the address for every
-        # clinician, owner or not.
+
+    practice_fields_sent = (
+        request.business_address is not None
+        or request.practice_name is not None
+        or request.practice_phone is not None
+    )
+    if practice_fields_sent and _resolve_practice_id_for(user) is not None:
+        # Name, address and phone belong to the practice, so only its owner
+        # may change them. Refuse before writing anything else, so a
+        # non-owner's request fails whole rather than half-applied.
         _get_own_practice_as_owner(user)
 
     if request.legal_name is not None:
@@ -626,11 +633,7 @@ def update_professional_info(
             taxonomy_code=request.taxonomy_code,
         )
 
-    if (
-        request.business_address is not None
-        or request.practice_name is not None
-        or request.practice_phone is not None
-    ):
+    if practice_fields_sent:
         practice_id = _resolve_practice_id_for(user)
         if practice_id is not None:
             from ..db import get_db_session
@@ -924,6 +927,8 @@ def _record_baa_acceptance(
     The BAA is between Pablo and the *covered entity* (the practice), so
     the legal snapshot (signer name, license, address, full text) goes on
     the practice row, built from the professional-info already stored.
+    Only the practice owner's acceptance writes that snapshot; another
+    clinician's acceptance stamps just their own user row.
     ``baa_accepted_at`` + ``baa_version`` are ALSO stamped on the user
     row so ``require_baa_acceptance`` can gate every PHI request without
     a per-request practice lookup.
@@ -945,7 +950,12 @@ def _record_baa_acceptance(
 
         session = get_db_session()
         practice = session.get(PracticeRow, practice_id)
-        if practice is not None:
+        if practice is not None and not _is_practice_owner(practice, user):
+            # The agreement is the practice's, signed by its owner. Another
+            # clinician accepting it at onboarding clears their own gate
+            # (below) but must not replace the owner's signed snapshot.
+            signed_practice_name = practice.baa_practice_name
+        elif practice is not None:
             practice.baa_accepted_at = now
             practice.baa_version = version
             practice.baa_legal_name = user.legal_name
