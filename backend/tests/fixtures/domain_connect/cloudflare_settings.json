@@ -1,0 +1,7 @@
+{
+  "captured": "2026-10-01",
+  "request": "GET https://api.cloudflare.com/client/v4/dns/domainconnect/v2/example.net/settings",
+  "status": 200,
+  "content_type": "application/json",
+  "body": "{\n    \"providerId\": \"cloudflare.com\",\n    \"providerName\": \"cloudflare\",\n    \"providerDisplayName\": \"Cloudflare\",\n    \"urlSyncUX\": \"https://dash.cloudflare.com/domainconnect\",\n    \"urlAPI\": \"https://api.cloudflare.com/client/v4/dns/domainconnect\"\n}\n"
+}

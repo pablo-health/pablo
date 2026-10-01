@@ -293,6 +293,11 @@ class AuditAction(StrEnum):
     PRACTICE_DOMAIN_STATUS_CHANGED = "practice_domain_status_changed"
     PRACTICE_DOMAIN_RELEASED = "practice_domain_released"
     PRACTICE_DOMAIN_EMAIL_IDENTITY_CHANGED = "practice_domain_email_identity_changed"
+    # One-click DNS setup: signed links to a domain's DNS provider were
+    # handed out, and the practice came back from one. The payload is the
+    # domains, nothing else.
+    PRACTICE_DOMAIN_CONNECT_LINK_ISSUED = "practice_domain_connect_link_issued"
+    PRACTICE_DOMAIN_CONNECT_RETURNED = "practice_domain_connect_returned"
 
     # A patient signed themselves out. The mirror image of
     # PATIENT_PORTAL_SESSION_REDEEMED and recorded for the same reason:

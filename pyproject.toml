@@ -126,6 +126,11 @@ tldextract = "^5.3.0"
 # load balancer's URL map. Imported only by the domain reconciler job.
 google-cloud-certificate-manager = "^1.14.0"
 google-cloud-compute = "^1.54.0"
+# One-click DNS setup (backend/app/services/domain_connect_signing.py): signs
+# the Domain Connect apply link with a Cloud KMS key, so the private key never
+# leaves KMS. Imported lazily; an install that leaves the feature off never
+# loads it.
+google-cloud-kms = "^3.0.0"
 
 
 [tool.poetry.group.pii]
