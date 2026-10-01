@@ -159,10 +159,10 @@ def test_a_hosts_certificate_authorisation_value_is_stored(
             status="pending",
             is_primary=False,
             created_at=datetime.now(UTC),
-            cert_auth_value="0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b.7",
+            cert_auth_value="test-auth.5",
         )
     )
-    assert repo.get(host).cert_auth_value == "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b.7"  # type: ignore[union-attr]  # added above
+    assert repo.get(host).cert_auth_value == "test-auth.5"  # type: ignore[union-attr]  # added above
 
 
 def test_a_host_under_another_practices_domain_writes_nothing(

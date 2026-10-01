@@ -51,21 +51,21 @@ def _check(
     return checker.check(record, host=host)
 
 
-VERIFY = DnsRecord(type="TXT", name="_pablo-verify.ours.example", value="pablo-verify=Tok_en-1")
+VERIFY = DnsRecord(type="TXT", name="_pablo-verify.ours.example", value="pablo-verify=Test-Token")
 POINT = DnsRecord(type="CNAME", name=HOST, value=TARGET)
 CERT = DnsRecord(
     type="CNAME",
     name=f"_acme-challenge.{HOST}",
-    value="uuid-1.7.authorize.certificatemanager.goog",
+    value="test-auth.7.authorize.certificatemanager.goog",
 )
 DKIM = DnsRecord(type="CNAME", name="k1._domainkey.ours.example", value="k1.dkim.amazonses.com")
 
 
 class TestOwnershipTxt:
     def test_found(self) -> None:
-        table = {(VERIFY.name, "TXT"): ["v=spf1 -all", "pablo-verify=Tok_en-1"]}
+        table = {(VERIFY.name, "TXT"): ["v=spf1 -all", "pablo-verify=Test-Token"]}
         result = _check(table, VERIFY)
-        assert (result.check, result.found) == ("ok", ["v=spf1 -all", "pablo-verify=Tok_en-1"])
+        assert (result.check, result.found) == ("ok", ["v=spf1 -all", "pablo-verify=Test-Token"])
 
     def test_missing(self) -> None:
         assert _check({}, VERIFY).check == "missing"
@@ -75,7 +75,7 @@ class TestOwnershipTxt:
         assert (result.check, result.found) == ("wrong", ["pablo-verify=old"])
 
     def test_the_token_is_case_sensitive(self) -> None:
-        assert _check({(VERIFY.name, "TXT"): ["pablo-verify=tok_en-1"]}, VERIFY).check == "wrong"
+        assert _check({(VERIFY.name, "TXT"): ["pablo-verify=test-token"]}, VERIFY).check == "wrong"
 
     def test_no_answer_in_time_is_unknown_not_missing(self) -> None:
         result = _check({(VERIFY.name, "TXT"): None}, VERIFY)
@@ -114,7 +114,7 @@ class TestCertAuthCname:
     def test_wrong(self) -> None:
         assert (
             _check(
-                {(CERT.name, "CNAME"): ["uuid-0.1.authorize.certificatemanager.goog"]}, CERT
+                {(CERT.name, "CNAME"): ["test-other.1.authorize.certificatemanager.goog"]}, CERT
             ).check
             == "wrong"
         )

@@ -4,6 +4,9 @@
 
 * ``GET /api/practice/domains`` — any clinician of the practice: the hosts,
   their status, which is primary, and the DNS records to set.
+* ``GET /api/practice/domains/describe?domain=`` — any clinician of the
+  practice: what a name would be stored as, its registrable domain, and
+  whether it is bare (which decides a website's ``www.`` default).
 * ``POST /api/practice/domains`` — add a host (and, for a website, its
   ``www.`` alias).
 * ``POST /api/practice/domains/check`` — look the records up in DNS and answer
@@ -24,7 +27,7 @@ Nothing here marks a host as working. See
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 
 from ..api_errors import NotFoundError
 from ..auth.service import require_active_subscription
@@ -32,6 +35,7 @@ from ..models import User  # noqa: TC001 — fastapi resolves the annotation at 
 from ..models.audit import AuditAction, ResourceType
 from ..models.practice_domain import (
     AddPracticeDomainRequest,
+    DomainNameResponse,
     PracticeDomainListResponse,
 )
 from ..services.audit_service import AuditService, get_audit_service
@@ -72,6 +76,17 @@ def list_practice_domains(
 ) -> PracticeDomainListResponse:
     """Every host the caller's practice serves from."""
     return _list(service, _practice_id(user))
+
+
+@router.get("/describe", response_model=DomainNameResponse)
+def describe_practice_domain(
+    domain: str = Query(max_length=512),
+    _user: User = Depends(require_active_subscription),
+    service: PracticeDomainService = Depends(get_practice_domain_service),
+) -> DomainNameResponse:
+    """What a name would be stored as, its registrable domain, and whether it
+    is bare. Reads nothing stored; 422 with what to fix."""
+    return service.describe(domain)
 
 
 @router.post("", response_model=PracticeDomainListResponse, status_code=201)

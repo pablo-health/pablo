@@ -101,6 +101,18 @@ class PracticeDomainListResponse(BaseModel):
     domains: list[PracticeDomainResponse]
 
 
+class DomainNameResponse(BaseModel):
+    """What the server makes of a name before it is added."""
+
+    #: The name as it would be stored.
+    domain: str
+    #: The registrable domain it sits under.
+    apex: str
+    #: Whether it is the registrable domain itself, which is when a website
+    #: gets its ``www.`` alias unless told otherwise.
+    bare: bool
+
+
 class AddPracticeDomainRequest(BaseModel):
     # Generous outer bound; the hostname rules are checked by the service so
     # the reader gets words rather than a schema error.

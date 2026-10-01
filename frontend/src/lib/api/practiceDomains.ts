@@ -58,8 +58,21 @@ export interface PracticeDomainList {
 export interface AddPracticeDomain {
   domain: string
   purpose: DomainPurpose
-  /** Website only. Left out, the server adds `www.` for a bare domain. */
+  /**
+   * Website only. Left out, the server adds `www.` for a bare domain — so the
+   * form sends it only when the reader changed the box.
+   */
   include_www?: boolean
+}
+
+/** What the server makes of a name before it is added. */
+export interface DomainName {
+  /** The name as it would be stored. */
+  domain: string
+  /** The registrable domain it sits under, from the Public Suffix List. */
+  apex: string
+  /** Whether it is that domain itself: a website gets `www.` by default then. */
+  bare: boolean
 }
 
 const DOMAINS = "/api/practice/domains"
@@ -68,6 +81,11 @@ const one = (domain: string) => `${DOMAINS}/${encodeURIComponent(domain)}`
 
 export function listPracticeDomains(): Promise<PracticeDomainList> {
   return get<PracticeDomainList>(DOMAINS)
+}
+
+/** Ask the server how it reads `domain`, so the form's `www.` default matches its own. */
+export function describePracticeDomain(domain: string): Promise<DomainName> {
+  return get<DomainName>(`${DOMAINS}/describe?domain=${encodeURIComponent(domain)}`)
 }
 
 export function addPracticeDomain(body: AddPracticeDomain): Promise<PracticeDomainList> {
@@ -85,10 +103,4 @@ export function makePracticeDomainPrimary(domain: string): Promise<PracticeDomai
 
 export function removePracticeDomain(domain: string): Promise<PracticeDomainList> {
   return del<PracticeDomainList>(one(domain))
-}
-
-/** Whether adding `domain` as a website brings `www.` by default: a two-label name. */
-export function suggestsWww(domain: string): boolean {
-  const host = domain.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/[/.]+$/, "")
-  return !host.startsWith("www.") && host.split(".").filter(Boolean).length === 2
 }

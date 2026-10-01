@@ -22,6 +22,7 @@ const mockAdd = vi.fn()
 const mockPrimary = vi.fn()
 const mockRemove = vi.fn()
 const mockCheck = vi.fn()
+const mockDescribe = vi.fn()
 const mockStatus = vi.fn()
 
 vi.mock("@/lib/api/practiceDomains", async (importOriginal) => ({
@@ -31,7 +32,18 @@ vi.mock("@/lib/api/practiceDomains", async (importOriginal) => ({
   makePracticeDomainPrimary: (...a: unknown[]) => mockPrimary(...a),
   removePracticeDomain: (...a: unknown[]) => mockRemove(...a),
   checkPracticeDomains: (...a: unknown[]) => mockCheck(...a),
+  describePracticeDomain: (...a: unknown[]) => mockDescribe(...a),
 }))
+
+/** The www box waits for the server's answer after a pause in typing. */
+const WWW_ANSWER_MS = 3000
+
+/** The server's reading of a name: bare when it is the registrable domain. */
+const REGISTRABLE = new Set(["example.com", "example.org", "example.co.uk"])
+function describeLikeTheServer(domain: string) {
+  const apex = REGISTRABLE.has(domain) ? domain : domain.split(".").slice(1).join(".")
+  return Promise.resolve({ domain, apex, bare: domain === apex })
+}
 
 vi.mock("@/lib/api/users", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api/users")>()),
@@ -61,6 +73,7 @@ describe("DomainsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockStatus.mockResolvedValue({ is_practice_owner: true })
+    mockDescribe.mockImplementation(describeLikeTheServer)
   })
 
   it("names each status, and calls only an active domain active", async () => {
@@ -170,15 +183,48 @@ describe("DomainsPage", () => {
     const input = await screen.findByLabelText("Domain")
     await user.type(input, "example.com")
     await user.click(screen.getByRole("radio", { name: "Website" }))
-    const www = screen.getByRole("checkbox", { name: "Also add www.example.com" })
+    const www = await screen.findByRole("checkbox", { name: "Also add www.example.com" }, { timeout: WWW_ANSWER_MS })
     expect(www).toBeChecked()
     await user.click(screen.getByRole("button", { name: "Add domain" }))
-    expect(mockAdd).toHaveBeenCalledWith({ domain: "example.com", purpose: "site", include_www: true })
+    // Untouched, the box showed the server's default, so the server applies it.
+    expect(mockAdd).toHaveBeenCalledWith({ domain: "example.com", purpose: "site" })
 
     await user.type(screen.getByLabelText("Domain"), "example.org")
-    await user.click(screen.getByRole("checkbox", { name: "Also add www.example.org" }))
+    await user.click(await screen.findByRole("checkbox", { name: "Also add www.example.org" }, { timeout: WWW_ANSWER_MS }))
     await user.click(screen.getByRole("button", { name: "Add domain" }))
     expect(mockAdd).toHaveBeenLastCalledWith({ domain: "example.org", purpose: "site", include_www: false })
+  })
+
+  it("shows the server's www default for a bare domain under a two-part suffix, and leaves it to the server", async () => {
+    mockList.mockResolvedValue({ domains: [] })
+    mockAdd.mockResolvedValue({ domains: [] })
+    const user = userEvent.setup()
+    renderWithProviders(<DomainsPage />)
+
+    await user.click(await screen.findByRole("radio", { name: "Website" }))
+    await user.type(screen.getByLabelText("Domain"), "example.co.uk")
+    // Three labels, but the server reads it as a bare domain: ticked.
+    expect(await screen.findByRole("checkbox", { name: "Also add www.example.co.uk" }, { timeout: WWW_ANSWER_MS })).toBeChecked()
+    expect(mockDescribe).toHaveBeenLastCalledWith("example.co.uk")
+
+    await user.click(screen.getByRole("button", { name: "Add domain" }))
+    expect(mockAdd).toHaveBeenCalledWith({ domain: "example.co.uk", purpose: "site" })
+    expect(mockAdd.mock.calls[0][0]).not.toHaveProperty("include_www")
+  })
+
+  it("leaves a name under a domain unticked, and sends a tick the reader adds", async () => {
+    mockList.mockResolvedValue({ domains: [] })
+    mockAdd.mockResolvedValue({ domains: [] })
+    const user = userEvent.setup()
+    renderWithProviders(<DomainsPage />)
+
+    await user.click(await screen.findByRole("radio", { name: "Website" }))
+    await user.type(screen.getByLabelText("Domain"), "clinic.example.co.uk")
+    const www = await screen.findByRole("checkbox", { name: "Also add www.clinic.example.co.uk" }, { timeout: WWW_ANSWER_MS })
+    expect(www).not.toBeChecked()
+    await user.click(www)
+    await user.click(screen.getByRole("button", { name: "Add domain" }))
+    expect(mockAdd).toHaveBeenCalledWith({ domain: "clinic.example.co.uk", purpose: "site", include_www: true })
   })
 
   it("adds a portal domain with no www question", async () => {
@@ -211,7 +257,7 @@ describe("DomainsPage", () => {
           status: "pending",
           dns_records: [
             { ...RECORD, name: "portal.example.com" },
-            { type: "TXT", name: "_pablo-verify.example.com", value: "pablo-verify=tok123" },
+            { type: "TXT", name: "_pablo-verify.example.com", value: "pablo-verify=test-token" },
           ],
         }),
       ],
@@ -222,7 +268,7 @@ describe("DomainsPage", () => {
     expect(screen.getByText("Add these records at your DNS provider:")).toBeVisible()
     expect(within(table).getByText("TXT")).toBeVisible()
     expect(within(table).getByText("_pablo-verify.example.com")).toBeVisible()
-    expect(within(table).getByText("pablo-verify=tok123")).toBeVisible()
+    expect(within(table).getByText("pablo-verify=test-token")).toBeVisible()
     // No check has run, so nothing claims a record was found.
     expect(within(table).queryByText("Check")).toBeNull()
   })
@@ -233,7 +279,7 @@ describe("DomainsPage", () => {
         domain("portal.example.com", {
           dns_records: [
             { ...RECORD, name: "portal.example.com" },
-            { type: "TXT", name: "_pablo-verify.example.com", value: "pablo-verify=tok123" },
+            { type: "TXT", name: "_pablo-verify.example.com", value: "pablo-verify=test-token" },
           ],
         }),
       ],
@@ -250,11 +296,11 @@ describe("DomainsPage", () => {
       status: "pending",
       dns_records: [
         { ...RECORD, name: "portal.example.com" },
-        { type: "TXT", name: "_pablo-verify.example.com", value: "pablo-verify=tok123" },
+        { type: "TXT", name: "_pablo-verify.example.com", value: "pablo-verify=test-token" },
         {
           type: "CNAME",
           name: "_acme-challenge.portal.example.com",
-          value: "u-1.7.authorize.certificatemanager.goog",
+          value: "test-auth.7.authorize.certificatemanager.goog",
         },
         { type: "CNAME", name: "k1._domainkey.example.com", value: "k1.dkim.example.net" },
       ],

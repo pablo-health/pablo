@@ -33,6 +33,7 @@ from fastapi import Depends
 from ..api_errors import ConflictError, NotFoundError, UnprocessableEntityError
 from ..models.practice_domain import (
     DnsRecord,
+    DomainNameResponse,
     PracticeDomain,
     PracticeDomainApex,
     PracticeDomainResponse,
@@ -212,6 +213,16 @@ class PracticeDomainService:
             if response.apex in verified:
                 response.apex_verified_at = now
         return responses, sorted(verified)
+
+    def describe(self, raw_domain: str) -> DomainNameResponse:
+        """The stored form of *raw_domain*, its domain, and whether it is bare.
+
+        Lets a form show the ``www.`` default the server will apply without
+        keeping its own copy of the Public Suffix List.
+        """
+        host = self._normalize(raw_domain)
+        apex = self._apex(host)
+        return DomainNameResponse(domain=host, apex=apex, bare=host == apex)
 
     def add(
         self,

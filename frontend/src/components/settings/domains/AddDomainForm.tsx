@@ -7,9 +7,9 @@ import type { FormEvent } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { useAddPracticeDomain } from "@/hooks/usePracticeDomains"
+import { useAddPracticeDomain, useDescribePracticeDomain } from "@/hooks/usePracticeDomains"
 import { ApiError } from "@/lib/api/client"
-import { suggestsWww, type DomainPurpose } from "@/lib/api/practiceDomains"
+import type { DomainPurpose } from "@/lib/api/practiceDomains"
 import { SegmentedControl } from "../ui"
 
 const PURPOSES = [
@@ -26,19 +26,27 @@ function displayHost(raw: string): string {
 export function AddDomainForm() {
   const [domain, setDomain] = useState("")
   const [purpose, setPurpose] = useState<DomainPurpose>("portal")
-  // null follows the suggestion for whatever is typed; a click makes it the reader's.
+  // null leaves www. to the server's default for the name; a click makes it the reader's.
   const [wwwChoice, setWwwChoice] = useState<boolean | null>(null)
   const add = useAddPracticeDomain()
 
   const host = displayHost(domain)
   const offersWww = purpose === "site" && host.length > 0 && !host.startsWith("www.")
-  const includeWww = wwwChoice ?? suggestsWww(domain)
+  // The default is the server's: a bare domain under the Public Suffix List
+  // (example.com, example.co.uk) gets www., anything under one does not. The
+  // box waits for that answer rather than guess it.
+  const described = useDescribePracticeDomain(host, offersWww && wwwChoice === null)
+  const includeWww = wwwChoice ?? described?.bare
+  const showWww = offersWww && includeWww !== undefined
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault()
     if (!host) return
+    // Sent only when the reader changed the box; otherwise the server applies
+    // the same default the box showed.
+    const wwwOverride = purpose === "site" && offersWww && wwwChoice !== null ? { include_www: wwwChoice } : {}
     add.mutate(
-      { domain, purpose, ...(purpose === "site" ? { include_www: offersWww && includeWww } : {}) },
+      { domain, purpose, ...wwwOverride },
       {
         onSuccess: () => {
           setDomain("")
@@ -72,7 +80,7 @@ export function AddDomainForm() {
         />
       </div>
       <SegmentedControl label="Use for" value={purpose} onChange={setPurpose} options={PURPOSES} />
-      {offersWww && (
+      {showWww && (
         <label htmlFor="practice-domain-www" className="flex items-center gap-2 text-sm text-foreground">
           <input
             type="checkbox"

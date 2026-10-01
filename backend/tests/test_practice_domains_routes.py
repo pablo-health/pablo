@@ -522,15 +522,56 @@ class TestDomainRows:
     def test_a_requested_certificate_shows_its_authorisation_record(
         self, client: TestClient, repo: InMemoryPracticeDomainRepository
     ) -> None:
-        repo.put(_row("portal.ours.example", cert_auth_value="0f1e2d3c-aaaa.7"))
+        repo.put(_row("portal.ours.example", cert_auth_value="test-auth.7"))
 
         (domain,) = client.get(URL).json()["domains"]
 
         assert (
             "CNAME",
             "_acme-challenge.portal.ours.example",
-            "0f1e2d3c-aaaa.7.authorize.certificatemanager.goog",
+            "test-auth.7.authorize.certificatemanager.goog",
         ) in _records(domain)
+
+
+class TestDescribe:
+    """What the add form asks so its www default matches the server's."""
+
+    @pytest.mark.parametrize(
+        ("raw", "domain", "apex", "bare"),
+        [
+            ("Example.co.uk.", "example.co.uk", "example.co.uk", True),
+            ("https://ours.example/", "ours.example", "ours.example", True),
+            ("portal.example.co.uk", "portal.example.co.uk", "example.co.uk", False),
+        ],
+    )
+    def test_names_the_domain_and_whether_it_is_bare(
+        self,
+        client: TestClient,
+        repo: InMemoryPracticeDomainRepository,
+        raw: str,
+        domain: str,
+        apex: str,
+        bare: bool,
+    ) -> None:
+        response = client.get(f"{URL}/describe", params={"domain": raw})
+
+        assert response.status_code == 200
+        assert response.json() == {"domain": domain, "apex": apex, "bare": bare}
+        # Describing writes nothing.
+        assert repo.get(domain) is None
+        assert repo.get_apex(apex) is None
+
+    @pytest.mark.parametrize("raw", ["co.uk", "192.0.2.1", "app.example.org"])
+    def test_an_unusable_name_is_422(self, client: TestClient, raw: str) -> None:
+        response = client.get(f"{URL}/describe", params={"domain": raw})
+
+        assert response.status_code == 422
+        assert _code(response) == "DOMAIN_INVALID"
+
+    @pytest.mark.parametrize("owner_email", ["someone-else@example.com"])
+    def test_a_non_owner_can_ask(self, client: TestClient) -> None:
+        response = client.get(f"{URL}/describe", params={"domain": "example.com"})
+        assert response.status_code == 200
 
 
 class TestCheck:

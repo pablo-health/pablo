@@ -2,16 +2,21 @@
 
 "use client"
 
+import { useEffect, useState } from "react"
 import {
   addPracticeDomain,
   checkPracticeDomains,
+  describePracticeDomain,
   listPracticeDomains,
   makePracticeDomainPrimary,
   removePracticeDomain,
   type AddPracticeDomain,
+  type DomainName,
   type PracticeDomainList,
 } from "@/lib/api/practiceDomains"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
+
+const DESCRIBE_DELAY_MS = 250
 
 export const practiceDomainKeys = {
   all: ["practiceDomains"] as const,
@@ -22,6 +27,31 @@ export function usePracticeDomains() {
     queryKey: practiceDomainKeys.all,
     queryFn: () => listPracticeDomains(),
   })
+}
+
+/**
+ * How the server reads a typed name, asked once typing pauses. `enabled` off,
+ * or an empty name, asks nothing. `undefined` until there is an answer for
+ * the name as it stands, including when the server refuses the name.
+ */
+export function useDescribePracticeDomain(domain: string, enabled: boolean) {
+  const [settled, setSettled] = useState(domain)
+  useEffect(() => {
+    const timer = setTimeout(() => setSettled(domain), DESCRIBE_DELAY_MS)
+    return () => clearTimeout(timer)
+  }, [domain])
+
+  const query = useAuthQuery<DomainName>({
+    // Not under practiceDomainKeys.all: changing the list says nothing new
+    // about how a name is read.
+    queryKey: ["practiceDomainName", settled],
+    queryFn: () => describePracticeDomain(settled),
+    enabled: enabled && settled.length > 0 && settled === domain,
+    retry: false,
+    staleTime: Infinity,
+  })
+  // While typing, the last answer is about a name that is no longer there.
+  return settled === domain ? query.data : undefined
 }
 
 export function useAddPracticeDomain() {
