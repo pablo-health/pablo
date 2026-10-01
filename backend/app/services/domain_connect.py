@@ -170,6 +170,10 @@ class DomainConnectService:
         signing = _Signing(self._signer, self._state_key)
         hosts_by_apex: dict[str, dict[str, PracticeDomain]] = {}
         for domain in self._repo.list_for_practice(practice_id):
+            # A host the practice removed is being taken down; setting up its
+            # records would point DNS at something about to stop serving it.
+            if domain.status == "removing":
+                continue
             apex = _apex_or_none(domain.domain)
             if apex is not None:
                 hosts_by_apex.setdefault(apex, {})[domain.domain] = domain
