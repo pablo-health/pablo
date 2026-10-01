@@ -74,14 +74,19 @@ _MAIN = "clinician@example.test"
 _CALENDAR = f"calendar:{_MAIN}"
 
 
-@pytest.fixture(autouse=True)
-def _calendar_key(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """The secret identifiers are digested under; the remembered answer needs it."""
+@pytest.fixture(scope="module", autouse=True)
+def _calendar_key() -> Iterator[None]:
+    """The secret identifiers are digested under; the remembered answer needs it.
+
+    One key for the module: ``remembered_as_theirs`` stores a digest once,
+    and every test after it has to read that digest back under the same key.
+    """
     from app.settings import get_settings  # noqa: PLC0415
 
-    monkeypatch.setenv("GOOGLE_CALENDAR_ENCRYPTION_KEY", base64.b64encode(os.urandom(32)).decode())
-    get_settings.cache_clear()
-    yield
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("GOOGLE_CALENDAR_ENCRYPTION_KEY", base64.b64encode(os.urandom(32)).decode())
+        get_settings.cache_clear()
+        yield
     get_settings.cache_clear()
 
 
@@ -394,7 +399,11 @@ class TestNothingElseWidens:
                 "SELECT address_line1 FROM patients",
                 "SELECT role FROM patient_clinicians",
                 "SELECT id FROM notes",
-                "SELECT id FROM appointments",
+                # The outside-event lookup reads appointment ids and their
+                # outside links, and nothing that says whose session it is.
+                "SELECT patient_id FROM appointments",
+                "SELECT title FROM appointments",
+                "SELECT user_id FROM appointments",
             ):
                 conn.execute(text(f"SET ROLE {_ROLE}"))
                 with pytest.raises(ProgrammingError, match="permission denied"):
@@ -456,7 +465,11 @@ class TestRewalkingTheRevision:
             _walk(engine, schema, "upgrade", "head")
             assert _owner(engine, schema) == _ROLE
             assert _config(engine, schema) == [f"search_path=pg_catalog, {schema}, pg_temp"]
-            assert _directory_policies(engine, schema) == {"patients", "patient_clinicians"}
+            assert _directory_policies(engine, schema) == {
+                "patients",
+                "patient_clinicians",
+                "appointments",
+            }
         finally:
             _drop(engine, schema)
 
