@@ -1,17 +1,19 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""The row policy on ``patient_source_mappings``: the practice's answers, and the old ones.
+"""The row policy on ``patient_source_mappings``: shared calendar answers, and one's own.
 
-A remembered answer belongs to the practice (``scope IS NOT NULL``), so any
-clinician with a session armed reads and writes it: a feed code answered by
-one clinician books for a colleague, and two followers of one calendar share
-its answers. What such a row holds is a patient id, an answer and keyed
-digests — nothing a practice member could not learn by matching.
+* A calendar's answer (``scope`` ``calendar:<id>``) is shared by everyone
+  who follows that calendar, so any clinician with a session armed reads and
+  writes it: two followers of one calendar answer it once. What such a row
+  holds is a patient id, an answer and keyed digests.
+* A clinician's own answer (``scope`` ``clinician:<their id>``) — a feed's
+  client code or name, which is numbered or spelled from their own records —
+  is theirs alone.
+* A row from before scopes (``scope IS NULL``) carries the identifier in
+  plain text, and stays its owner's alone until the app adopts it.
 
-A row from before that (``scope IS NULL``) carries the identifier in plain
-text, so it stays its owner's alone until the app adopts it. Both arms
-require an armed clinician: with nothing armed the table reads empty, like
-every other tenant table.
+Every arm needs an armed clinician: with nothing armed the table reads
+empty, like every other tenant table.
 
 One definition, applied at provisioning and on every migrate fan-out by
 ``enable_rls_on_schema``, and by the revision that adds the columns, so the
@@ -35,7 +37,10 @@ OWNER_POLICY = "rls_user_isolation"
 
 _ARMED = "coalesce(current_setting('app.current_user_id', true), '') <> ''"
 _OWN = "user_id::text = current_setting('app.current_user_id', true)"
-PREDICATE = f"((scope IS NOT NULL AND {_ARMED}) OR (scope IS NULL AND {_OWN}))"
+# ``identifiers.calendar_scope`` and ``identifiers.clinician_scope``, as SQL.
+_SHARED = f"(scope LIKE 'calendar:%' AND {_ARMED})"
+_MINE = f"({_ARMED} AND scope = 'clinician:' || current_setting('app.current_user_id', true))"
+PREDICATE = f"({_SHARED} OR {_MINE} OR (scope IS NULL AND {_OWN}))"
 
 
 def apply_practice_answers_policy(db: Session | Connection, schema: str) -> None:

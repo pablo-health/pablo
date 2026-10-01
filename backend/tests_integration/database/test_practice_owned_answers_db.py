@@ -39,7 +39,7 @@ from app.calendar_providers.source_identity import (
 from app.db import PLATFORM_SCHEMA, _current_tenant_schema, arm_current_user_id, set_tenant_schema
 from app.db.migrate_tenants import TenantStatus, _alembic_config_for, upgrade_tenant_schema
 from app.db.provisioning import create_practice_schema
-from app.patients.identifiers import PRACTICE_SCOPE, calendar_scope, identifier_digest
+from app.patients.identifiers import calendar_scope, clinician_scope, identifier_digest
 from app.patients.matching import MatchContext, PatientHint, match_patient
 from app.repositories.external_calendar_event import ANSWER_CLIENT, ExternalCalendarEvent
 from app.repositories.patient_source_mapping import PatientSourceMapping
@@ -56,6 +56,7 @@ from app.scheduling_engine.models.appointment import Appointment, AppointmentSta
 from app.services.outside_sessions import OutsideSessions
 from app.settings import get_settings
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
 if TYPE_CHECKING:
@@ -523,7 +524,7 @@ def _match_feed_code(sess: Session, user_id: str, code: str) -> str | None:
     ctx = MatchContext.for_practice(
         user_id, PostgresPatientRepository(sess), PostgresPatientSourceMappingRepository(sess)
     )
-    hint = PatientHint(source=SH, source_identifier=code, scope=PRACTICE_SCOPE)
+    hint = PatientHint(source=SH, source_identifier=code, scope=clinician_scope(user_id))
     return match_patient(hint, ctx).patient_id
 
 
@@ -540,11 +541,10 @@ class TestOldAnswersAreAdopted:
         assert _visible_rows(theirs) == 0
         # Read as B, with nothing adopted: the old row is not B's to consult.
         assert _match_feed_code(theirs, _B, "SH00001") is None
-        assert (
-            PostgresPatientSourceMappingRepository(theirs).list_by_source(PRACTICE_SCOPE, SH) == []
-        )
+        mapping_repo = PostgresPatientSourceMappingRepository(theirs)
+        assert mapping_repo.list_by_source(clinician_scope(_B), SH) == []
 
-    def test_the_owners_first_read_adopts_it_for_the_practice(
+    def test_the_owners_first_read_adopts_it_as_theirs(
         self, engine: Engine, practice: dict[str, str], opened: list[Session]
     ) -> None:
         schema = practice["schema"]
@@ -554,16 +554,18 @@ class TestOldAnswersAreAdopted:
         assert _match_feed_code(mine, _A, "SH00001") == practice["patient"]
         mine.commit()
 
+        # Adopted into A's own scope: B neither sees it nor is matched by it.
         theirs = _session(engine, schema, _B)
         opened.append(theirs)
-        assert _match_feed_code(theirs, _B, "SH00001") == practice["patient"]
+        assert _visible_rows(theirs) == 0
+        assert _match_feed_code(theirs, _B, "SH00001") is None
         # Reading past the policy alters the table, which waits on any open
         # transaction that touched it: close B's first.
         theirs.commit()
         [row] = _all_answers(engine, schema)
         doc_id, scope, source, stored, patient_id, answer, user_id, answered_by, session_for = row
         assert (scope, source, stored, patient_id, answer) == (
-            PRACTICE_SCOPE,
+            clinician_scope(_A),
             SH,
             identifier_digest("SH00001"),
             practice["patient"],
@@ -595,23 +597,25 @@ class TestOldAnswersAreAdopted:
     def test_the_newer_answer_stands(
         self, engine: Engine, practice: dict[str, str], opened: list[Session]
     ) -> None:
-        """B answered SH00001 for the practice after A's old row: B's answer holds."""
+        """A's scoped answer and A's own old row for one code: the newer holds."""
         schema = practice["schema"]
+        mine_scope = clinician_scope(_A)
         other = _chart(engine, schema, "Lulu", "Niemi", _A, _B)
-        theirs = _session(engine, schema, _B)
-        opened.append(theirs)
-        PostgresPatientSourceMappingRepository(theirs).save(
-            PatientSourceMapping(PRACTICE_SCOPE, SH, identifier_digest("SH00001"), other, _B)
+        early = _session(engine, schema, _A)
+        opened.append(early)
+        # Answered under scopes after A's old SH00001 row was written.
+        PostgresPatientSourceMappingRepository(early).save(
+            PatientSourceMapping(mine_scope, SH, identifier_digest("SH00001"), other, _A)
         )
-        theirs.commit()
-        # And an older practice answer for SH00002, which A's newer old row replaces.
+        early.commit()
+        # And an older scoped answer for SH00002, which A's newer old row replaces.
         older = datetime.now(UTC) - timedelta(days=90)
-        PostgresPatientSourceMappingRepository(theirs).save(
+        PostgresPatientSourceMappingRepository(early).save(
             PatientSourceMapping(
-                PRACTICE_SCOPE, SH, identifier_digest("SH00002"), other, _B, created_at=older
+                mine_scope, SH, identifier_digest("SH00002"), other, _A, created_at=older
             )
         )
-        theirs.commit()
+        early.commit()
         _legacy_answer(engine, schema, _A, SH, "SH00002", practice["patient"], days_ago=10)
 
         mine = _session(engine, schema, _A)
@@ -621,7 +625,7 @@ class TestOldAnswersAreAdopted:
         mine.commit()
 
         by_digest = {row[3]: row for row in _all_answers(engine, schema)}
-        assert by_digest[identifier_digest("SH00001")][4:8] == (other, "client", _B, _B)
+        assert by_digest[identifier_digest("SH00001")][4:8] == (other, "client", _A, _A)
         assert by_digest[identifier_digest("SH00002")][4:8] == (
             practice["patient"],
             "client",
@@ -638,7 +642,7 @@ class TestOldAnswersAreAdopted:
         second = _session(engine, schema, _A)
         opened.extend([first, second])
 
-        PostgresPatientSourceMappingRepository(first).adopt_legacy(_A, SH, PRACTICE_SCOPE)
+        PostgresPatientSourceMappingRepository(first).adopt_legacy(_A, SH, clinician_scope(_A))
         done = threading.Event()
         outcome: list[Exception | int] = []
 
@@ -646,7 +650,7 @@ class TestOldAnswersAreAdopted:
             try:
                 outcome.append(
                     PostgresPatientSourceMappingRepository(second).adopt_legacy(
-                        _A, SH, PRACTICE_SCOPE
+                        _A, SH, clinician_scope(_A)
                     )
                 )
                 second.commit()
@@ -663,7 +667,54 @@ class TestOldAnswersAreAdopted:
 
         assert not any(isinstance(o, Exception) for o in outcome), outcome
         [row] = _all_answers(engine, schema)
-        assert row[1:4] == (PRACTICE_SCOPE, SH, identifier_digest("SH00001"))
+        assert row[1:4] == (clinician_scope(_A), SH, identifier_digest("SH00001"))
+
+
+class TestWhoSeesAnAnswer:
+    """The policy, under the app's own NOBYPASSRLS role: a calendar's answer is
+    shared, a clinician's own is not, even to a colleague who shares the chart."""
+
+    def test_a_colleague_sees_the_calendars_answer_and_not_mine(
+        self, engine: Engine, practice: dict[str, str], opened: list[Session]
+    ) -> None:
+        schema = practice["schema"]
+        mine = _session(engine, schema, _A)
+        opened.append(mine)
+        repo = PostgresPatientSourceMappingRepository(mine)
+        repo.save(
+            PatientSourceMapping(
+                clinician_scope(_A), SH, identifier_digest("SH00009"), practice["patient"], _A
+            )
+        )
+        repo.save(
+            PatientSourceMapping(
+                calendar_scope(MAIN),
+                GOOGLE_CALENDAR_SOURCE,
+                identifier_digest(calendar_source_identifier("wk", "", 0, "00:00")),
+                practice["patient"],
+                _A,
+            )
+        )
+        mine.commit()
+
+        theirs = _session(engine, schema, _B)
+        opened.append(theirs)
+        theirs_repo = PostgresPatientSourceMappingRepository(theirs)
+        assert theirs_repo.list_by_source(clinician_scope(_A), SH) == []
+        [shared] = theirs_repo.list_by_source(calendar_scope(MAIN), GOOGLE_CALENDAR_SOURCE)
+        assert shared.answered_by_user_id == _A
+
+    def test_a_colleague_cannot_write_into_my_scope(
+        self, engine: Engine, practice: dict[str, str], opened: list[Session]
+    ) -> None:
+        theirs = _session(engine, practice["schema"], _B)
+        opened.append(theirs)
+        forged = PatientSourceMapping(
+            clinician_scope(_A), SH, identifier_digest("SH00010"), practice["patient"], _B
+        )
+        # save() flushes, so the policy's WITH CHECK is met right here.
+        with pytest.raises(DBAPIError, match="row-level security"):
+            PostgresPatientSourceMappingRepository(theirs).save(forged)
 
 
 class TestTheTableHoldsDigests:

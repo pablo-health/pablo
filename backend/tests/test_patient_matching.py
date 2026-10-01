@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from app.models.patient import Patient
-from app.patients.identifiers import PRACTICE_SCOPE, calendar_scope, identifier_digest
+from app.patients.identifiers import calendar_scope, clinician_scope, identifier_digest
 from app.patients.matching import (
     Candidate,
     MatchContext,
@@ -29,6 +29,8 @@ if TYPE_CHECKING:
     from collections.abc import Generator
 
 USER = "clinician-1"
+#: Where USER's answers about their own feed are remembered.
+SCOPE = clinician_scope(USER)
 #: The calendar answers about a series are remembered under.
 CALENDAR = calendar_scope("me@example.test")
 
@@ -246,25 +248,23 @@ class TestRemembered:
 
     def test_remembering_twice_stores_one_answer(self, patients, mappings) -> None:
         ctx = _ctx(patients, mappings, _patient("p1", "Jane", "Adams"))
-        remember_match("simplepractice", "J.A.", "p1", ctx, scope=PRACTICE_SCOPE)
-        remember_match("simplepractice", " j.a. ", "p1", ctx, scope=PRACTICE_SCOPE)
-        assert len(mappings.list_by_source(PRACTICE_SCOPE, "simplepractice")) == 1
+        remember_match("simplepractice", "J.A.", "p1", ctx, scope=SCOPE)
+        remember_match("simplepractice", " j.a. ", "p1", ctx, scope=SCOPE)
+        assert len(mappings.list_by_source(SCOPE, "simplepractice")) == 1
 
     def test_remembering_a_different_patient_replaces_the_answer(self, patients, mappings) -> None:
         ctx = _ctx(patients, mappings, _patient("p1", "Jane", "Adams"), _patient("p2", "Bo", "Li"))
-        remember_match("simplepractice", "J.A.", "p1", ctx, scope=PRACTICE_SCOPE)
-        remember_match("simplepractice", "j.a.", "p2", ctx, scope=PRACTICE_SCOPE)
-        stored = mappings.list_by_source(PRACTICE_SCOPE, "simplepractice")
+        remember_match("simplepractice", "J.A.", "p1", ctx, scope=SCOPE)
+        remember_match("simplepractice", "j.a.", "p2", ctx, scope=SCOPE)
+        stored = mappings.list_by_source(SCOPE, "simplepractice")
         assert [(m.identifier_digest, m.patient_id) for m in stored] == [
             (identifier_digest("J.A."), "p2")
         ]
 
     def test_an_answer_for_one_source_does_not_leak_into_another(self, patients, mappings) -> None:
         ctx = _ctx(patients, mappings, _patient("p1", "Jane", "Adams"), _patient("p2", "Bo", "Li"))
-        remember_match("simplepractice", "SH00001", "p1", ctx, scope=PRACTICE_SCOPE)
-        hint = PatientHint(
-            source="sessions_health", source_identifier="SH00001", scope=PRACTICE_SCOPE
-        )
+        remember_match("simplepractice", "SH00001", "p1", ctx, scope=SCOPE)
+        hint = PatientHint(source="sessions_health", source_identifier="SH00001", scope=SCOPE)
         assert match_patient(hint, ctx).patient_id is None
 
     def test_an_answer_for_one_calendar_does_not_leak_into_another(
@@ -279,21 +279,24 @@ class TestRemembered:
         )
         assert match_patient(hint, ctx).evidence != "remembered"
 
-    def test_a_colleagues_answer_for_a_feed_is_the_practices(self, patients, mappings) -> None:
-        """A feed code names the practice's client, whoever said so."""
+    def test_a_colleagues_answer_for_their_feed_is_theirs(self, patients, mappings) -> None:
+        """A feed's "J.A." is one clinician's client: a colleague's J.A. may be anyone."""
         mine = _ctx(patients, mappings, _patient("p1", "Jane", "Adams"))
-        remember_match("simplepractice", "J.A.", "p1", mine, scope=PRACTICE_SCOPE)
+        remember_match("simplepractice", "J.A.", "p1", mine, scope=SCOPE)
         patients.grant_access("p1", "clinician-2")
         theirs = MatchContext.for_practice("clinician-2", patients, mappings)
-        hint = PatientHint(source="simplepractice", source_identifier="J.A.", scope=PRACTICE_SCOPE)
-        result = match_patient(hint, theirs)
-        assert (result.patient_id, result.evidence) == ("p1", "remembered")
-        [stored] = mappings.list_by_source(PRACTICE_SCOPE, "simplepractice")
+        hint = PatientHint(
+            source="simplepractice",
+            source_identifier="J.A.",
+            scope=clinician_scope("clinician-2"),
+        )
+        assert match_patient(hint, theirs).evidence != "remembered"
+        [stored] = mappings.list_by_source(SCOPE, "simplepractice")
         assert stored.answered_by_user_id == USER
 
     def test_a_hint_with_no_scope_consults_nothing_remembered(self, patients, mappings) -> None:
         ctx = _ctx(patients, mappings, _patient("p1", "Jane", "Adams"))
-        remember_match("simplepractice", "J.A.", "p1", ctx, scope=PRACTICE_SCOPE)
+        remember_match("simplepractice", "J.A.", "p1", ctx, scope=SCOPE)
         hint = PatientHint(source="simplepractice", source_identifier="J.A.")
         assert match_patient(hint, ctx).evidence != "remembered"
 
@@ -309,12 +312,12 @@ class TestDeleted:
             _patient("john", "John", "Adams"),
             _patient("jane", "Jane", "Anderson"),
         )
-        remember_match("simplepractice", "J.A.", "john", ctx, scope=PRACTICE_SCOPE)
+        remember_match("simplepractice", "J.A.", "john", ctx, scope=SCOPE)
         patients.delete("john", USER)
 
         fresh = MatchContext.for_practice(USER, patients, mappings)
         hint = PatientHint(
-            initials="J.A.", source="simplepractice", source_identifier="J.A.", scope=PRACTICE_SCOPE
+            initials="J.A.", source="simplepractice", source_identifier="J.A.", scope=SCOPE
         )
         result = match_patient(hint, fresh)
         assert result.patient_id is None
@@ -331,11 +334,11 @@ class TestDeleted:
 
     def test_a_remembered_deleted_patient_is_not_matched(self, patients, mappings) -> None:
         ctx = _ctx(patients, mappings, _patient("p1", "Jane", "Adams"))
-        remember_match("simplepractice", "J.A.", "p1", ctx, scope=PRACTICE_SCOPE)
+        remember_match("simplepractice", "J.A.", "p1", ctx, scope=SCOPE)
         patients.delete("p1", USER)
         fresh = MatchContext.for_practice(USER, patients, mappings)
         hint = PatientHint(
-            initials="J.A.", source="simplepractice", source_identifier="J.A.", scope=PRACTICE_SCOPE
+            initials="J.A.", source="simplepractice", source_identifier="J.A.", scope=SCOPE
         )
         result = match_patient(hint, fresh)
         assert result.patient_id is None

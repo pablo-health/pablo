@@ -218,7 +218,7 @@ def _main_calendar_scope(service: GoogleCalendarService, user_id: str) -> str | 
     never sees; a confirm refuses, since what it remembers is keyed by it.
     """
     main = service.known_main_calendar_id(user_id) or service.main_calendar_id(user_id)
-    return answer_scope(MATCH_SOURCE, main)
+    return answer_scope(MATCH_SOURCE, main, user_id)
 
 
 def _required_main_calendar_scope(service: GoogleCalendarService, user_id: str) -> str:

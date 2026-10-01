@@ -16,10 +16,12 @@ keyed by that identifier. Two things are settled here for every source:
   ``series:``, ``shape:``, ``feed:`` — because what kind of identifier an
   answer is under decides whether it may book without asking.
 
-An answer belongs to a **scope**: the practice, for a feed's or an export's
-client codes, which name the practice's client in the other system; or one
-calendar, for a calendar's series, since a personal calendar has one
-follower and a shared calendar's answer is shared.
+An answer belongs to a **scope**: one calendar, for a calendar's series,
+since a personal calendar has one follower and a shared calendar's answer is
+shared; or one clinician, for a feed's or an export's client codes and
+names. Those are not the practice's: a Sessions Health code is numbered from
+the clinician's own export, and two clinicians' clients can share a name, so
+one clinician's ``SH00001`` or "Jane Smith" says nothing about another's.
 """
 
 from __future__ import annotations
@@ -27,9 +29,9 @@ from __future__ import annotations
 import hashlib
 import hmac
 
-#: The scope of an answer that holds for the whole practice.
-PRACTICE_SCOPE = "practice"
 _CALENDAR_SCOPE_PREFIX = "calendar:"
+#: Spelled out again in ``db.practice_answers``: the row policy matches it.
+CLINICIAN_SCOPE_PREFIX = "clinician:"
 
 #: The prefixes an identifier's kind is read from; anything else is a feed's
 #: own client identifier.
@@ -54,6 +56,11 @@ def is_calendar_scope(scope: str) -> bool:
     return scope.startswith(_CALENDAR_SCOPE_PREFIX)
 
 
+def clinician_scope(user_id: str) -> str:
+    """The scope of one clinician's answers about their own feed's client codes and names."""
+    return f"{CLINICIAN_SCOPE_PREFIX}{user_id}"
+
+
 def identifier_digest(identifier: str) -> str:
     """The keyed digest an identifier is remembered under: ``<kind>:<hmac>``.
 
@@ -72,8 +79,9 @@ def identifier_digest(identifier: str) -> str:
 
 
 __all__ = [
-    "PRACTICE_SCOPE",
+    "CLINICIAN_SCOPE_PREFIX",
     "calendar_scope",
+    "clinician_scope",
     "identifier_digest",
     "is_calendar_scope",
     "normalize",

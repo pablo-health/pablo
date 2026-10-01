@@ -37,9 +37,9 @@ answer), or when its identifier is already remembered as a client. Anything
 else stays a busy block. An identifier remembered as not a client never
 becomes a row.
 
-**Whose answer it is.** A feed's client code names the practice's client in
-the other system, so its answer is the practice's: answered once, it books
-for every clinician. A calendar's series is that calendar's, keyed by the
+**Whose answer it is.** A feed's client code or name is the clinician's own:
+a Sessions Health code is numbered from their export, and two clinicians'
+clients can share a name. A calendar's series is that calendar's, keyed by the
 calendar the row was read from (``answer_scope``); a personal calendar has
 one follower, and a shared calendar's answer is shared. A row from before
 calendars were recorded came from the main calendar, so it falls back to
@@ -77,7 +77,6 @@ from ..calendar_providers.source_identity import (
     event_source_identifier,
     ical_feed,
 )
-from ..patients.identifiers import PRACTICE_SCOPE
 from ..patients.matching import (
     NAME_ONLY,
     MatchContext,
@@ -736,7 +735,7 @@ class OutsideSessions:
         scope = (
             self._identity(rows[0]).scope
             if rows
-            else answer_scope(mapping_source, self._main_calendar_id)
+            else answer_scope(mapping_source, self._main_calendar_id, user_id)
         )
         each_time = bool(rows) and self._asks_each_time(self._identity(rows[0]), ctx)
         if each_time and row_id is None:
@@ -778,14 +777,14 @@ class OutsideSessions:
         if feed is not None:
             from .ical_sync_service import feed_identity
 
-            named = feed_identity(feed, row.title)
-            return _Identity(feed, named.identifier, named.hint, named.kind, PRACTICE_SCOPE)
+            named = feed_identity(feed, row.title, row.user_id)
+            return _Identity(feed, named.identifier, named.hint, named.kind, named.hint.scope)
         identifier = event_source_identifier(
             row.source_series_id, row.title, row.start_at, self._zone
         )
         # The calendar the row was read from; a row from before calendars were
         # recorded came from the main one.
-        scope = answer_scope(row.source, row.calendar_id or self._main_calendar_id)
+        scope = answer_scope(row.source, row.calendar_id or self._main_calendar_id, row.user_id)
         return _Identity(
             row.source,
             identifier,

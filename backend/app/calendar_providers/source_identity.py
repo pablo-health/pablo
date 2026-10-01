@@ -18,7 +18,7 @@ import hashlib
 import hmac
 from typing import TYPE_CHECKING
 
-from ..patients.identifiers import PRACTICE_SCOPE, calendar_scope, normalize
+from ..patients.identifiers import calendar_scope, clinician_scope, normalize
 
 if TYPE_CHECKING:
     from datetime import datetime, tzinfo
@@ -76,16 +76,16 @@ def event_source_identifier(
     return calendar_source_identifier(series_id, title, local.weekday(), local.strftime("%H:%M"))
 
 
-def answer_scope(source: str, calendar_id: str | None) -> str | None:
+def answer_scope(source: str, calendar_id: str | None, user_id: str) -> str | None:
     """Whose answer an identifier from this source is remembered as.
 
-    A feed's or an export's client code names the practice's client in the
-    other system, so its answer is the practice's. A calendar's series is
-    that calendar's: a personal calendar has one follower, and a shared
-    calendar's answer is shared. None when the calendar is not known.
+    A calendar's series is that calendar's: a personal calendar has one
+    follower, and a shared calendar's answer is shared. A feed's or an
+    export's client code or name is the clinician's, since it is numbered or
+    spelled from their own records. None when the calendar is not known.
     """
     if source != GOOGLE_CALENDAR_SOURCE:
-        return PRACTICE_SCOPE
+        return clinician_scope(user_id)
     return calendar_scope(calendar_id) if calendar_id else None
 
 

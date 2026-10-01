@@ -28,7 +28,7 @@ from app.main import app
 from app.models import User
 from app.models.patient import Patient
 from app.models.user import UserPreferences
-from app.patients.identifiers import PRACTICE_SCOPE, calendar_scope, identifier_digest
+from app.patients.identifiers import calendar_scope, clinician_scope, identifier_digest
 from app.patients.matching import MatchContext, PatientHint, match_patient, remember_match
 from app.repositories.external_calendar_event import (
     ExternalCalendarEvent,
@@ -123,14 +123,14 @@ class TestStrongEvidenceSeesThePractice:
 
     def test_a_remembered_colleagues_client_is_matched_and_not_seen(self) -> None:
         ctx = _practice((_patient("theirs", "Jane", "Adams"), COLLEAGUE))
-        remember_match("simplepractice", "J.A.", "theirs", ctx, scope=PRACTICE_SCOPE)
+        remember_match("simplepractice", "J.A.", "theirs", ctx, scope=clinician_scope(ME))
 
         result = match_patient(
             PatientHint(
                 initials="J.A.",
                 source="simplepractice",
                 source_identifier="J.A.",
-                scope=PRACTICE_SCOPE,
+                scope=clinician_scope(ME),
             ),
             ctx,
         )

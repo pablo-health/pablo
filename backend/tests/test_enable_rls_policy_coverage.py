@@ -198,20 +198,22 @@ def test_user_id_table_still_gets_isolation_policy() -> None:
     assert "CREATE POLICY rls_patient_self_read" not in ddl
 
 
-def test_remembered_answers_are_the_practices_and_old_rows_their_owners() -> None:
+def test_calendar_answers_are_shared_and_the_rest_their_owners() -> None:
     """``patient_source_mappings`` gets the practice-answers policy, not the owner one.
 
-    A scoped row is any armed clinician's to read; a row without a scope
-    (from before answers were the practice's, holding a plain identifier)
-    is its owner's alone. Both arms need an armed clinician, so the table
-    stays fail-closed with nothing armed.
+    A calendar's row is any armed clinician's to read; a clinician's own row
+    (a feed's answer) is theirs alone, and so is a row without a scope (from
+    before scopes, holding a plain identifier). Every arm needs an armed
+    clinician, so the table stays fail-closed with nothing armed.
     """
     session = _run({"patient_source_mappings": {"doc_id", "user_id", "scope"}})
     ddl = " ".join(session.executed)
 
     assert "CREATE POLICY rls_practice_answers ON practice_test.patient_source_mappings" in ddl
-    assert "scope IS NOT NULL AND coalesce(current_setting('app.current_user_id', true)" in ddl
+    assert "scope LIKE 'calendar:%' AND coalesce(current_setting('app.current_user_id'" in ddl
+    assert "scope = 'clinician:' || current_setting('app.current_user_id', true)" in ddl
     assert "scope IS NULL AND user_id::text = current_setting('app.current_user_id', true)" in ddl
+    assert "scope IS NOT NULL" not in ddl
     assert "CREATE POLICY rls_user_isolation ON practice_test.patient_source_mappings" not in ddl
     assert "FORCE ROW LEVEL SECURITY" in ddl
 

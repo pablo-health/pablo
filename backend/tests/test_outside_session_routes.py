@@ -530,10 +530,10 @@ def _colleagues_feed(wired: _Wired) -> ICalSyncService:
     )
 
 
-def test_a_feed_code_answered_here_books_a_colleagues_sessions(
+def test_a_feed_code_answered_here_books_nothing_for_a_colleague(
     client: TestClient, wired: _Wired
 ) -> None:
-    """The answer is the practice's: the colleague's next read books without asking."""
+    """The answer is this clinician's: the colleague's own SH00001 is still asked about."""
     wired.client_named("p1")
     wired.patients.grant_access("p1", COLLEAGUE)
     wired.appointments.grant_access("p1", COLLEAGUE)
@@ -553,10 +553,10 @@ def test_a_feed_code_answered_here_books_a_colleagues_sessions(
     with patch.object(ICalSyncService, "_fetch_feed", return_value=SH_ICAL):
         [result] = _colleagues_feed(wired).sync(COLLEAGUE, SH)
 
-    assert result.created == 1
-    [booked] = wired.appointments.list_by_ical_source(COLLEAGUE, SH)
-    assert (booked.patient_id, booked.user_id) == ("p1", COLLEAGUE)
-    assert wired.events.list_open(COLLEAGUE) == []
+    assert result.created == 0
+    assert wired.appointments.list_by_ical_source(COLLEAGUE, SH) == []
+    [asked] = wired.events.list_open(COLLEAGUE)
+    assert asked.source == ical_source(SH)
 
 
 def test_a_row_from_before_calendars_were_recorded_is_answered_under_the_main_one(

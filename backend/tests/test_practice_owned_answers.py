@@ -32,8 +32,8 @@ from app.calendar_providers.source_identity import (
 )
 from app.models.patient import Patient
 from app.patients.identifiers import (
-    PRACTICE_SCOPE,
     calendar_scope,
+    clinician_scope,
     identifier_digest,
     is_calendar_scope,
 )
@@ -64,6 +64,9 @@ if TYPE_CHECKING:
 
 A = "clinician-a"
 B = "clinician-b"
+#: Where each clinician's answers about their own feed are remembered.
+MINE_A = clinician_scope(A)
+MINE_B = clinician_scope(B)
 MAIN = "shared@group.calendar.google.test"
 CALENDAR = calendar_scope(MAIN)
 SH = "sessions_health"
@@ -128,17 +131,20 @@ class TestIdentifierDigest:
 
 
 class TestScopes:
-    def test_a_feeds_answer_is_the_practices(self) -> None:
-        assert answer_scope("simplepractice", None) == PRACTICE_SCOPE
-        assert answer_scope("sessions_health", MAIN) == PRACTICE_SCOPE
+    def test_a_feeds_answer_is_its_clinicians(self) -> None:
+        """An SH code is numbered from one clinician's export; a name is their client's."""
+        assert answer_scope("simplepractice", None, A) == MINE_A
+        assert answer_scope("sessions_health", MAIN, A) == MINE_A
+        assert answer_scope("sessions_health", MAIN, B) == MINE_B != MINE_A
 
     def test_a_calendars_answer_is_that_calendars(self) -> None:
-        assert answer_scope(GOOGLE_CALENDAR_SOURCE, MAIN) == CALENDAR
+        assert answer_scope(GOOGLE_CALENDAR_SOURCE, MAIN, A) == CALENDAR
+        assert answer_scope(GOOGLE_CALENDAR_SOURCE, MAIN, B) == CALENDAR
         assert is_calendar_scope(CALENDAR)
-        assert not is_calendar_scope(PRACTICE_SCOPE)
+        assert not is_calendar_scope(MINE_A)
 
     def test_a_calendar_that_is_not_known_has_no_scope(self) -> None:
-        assert answer_scope(GOOGLE_CALENDAR_SOURCE, None) is None
+        assert answer_scope(GOOGLE_CALENDAR_SOURCE, None, A) is None
 
 
 # --- Adoption -----------------------------------------------------------------------
@@ -164,18 +170,18 @@ def _legacy(
 
 
 class TestAdoption:
-    def test_a_feed_answer_is_adopted_into_the_practice_on_first_read(self) -> None:
+    def test_a_feed_answer_is_adopted_into_its_clinicians_scope_on_first_read(self) -> None:
         patients = InMemoryPatientRepository()
         patients.create(_patient("p1", "Pablo", "Bear"), A)
         mappings = InMemoryPatientSourceMappingRepository()
         mappings.remember_legacy(_legacy(A, SH, "SH00001", "p1", days_ago=3))
 
-        hint = PatientHint(source=SH, source_identifier="SH00001", scope=PRACTICE_SCOPE)
+        hint = PatientHint(source=SH, source_identifier="SH00001", scope=MINE_A)
         result = match_patient(hint, MatchContext.for_practice(A, patients, mappings))
 
         assert (result.patient_id, result.evidence) == ("p1", "remembered")
         assert mappings.legacy_answers() == []
-        [stored] = mappings.list_by_source(PRACTICE_SCOPE, SH)
+        [stored] = mappings.list_by_source(MINE_A, SH)
         assert (stored.identifier_digest, stored.answered_by_user_id) == (
             identifier_digest("SH00001"),
             A,
@@ -212,64 +218,85 @@ class TestAdoption:
         assert (stored.answered_by_user_id, stored.session_clinician_user_id) == (A, A)
 
     def test_the_newer_answer_stands_whichever_side_it_is_on(self) -> None:
+        """A clinician's scoped answer and their own old row for one code: the newer holds."""
         patients = InMemoryPatientRepository()
         patients.create(_patient("old", "Pablo", "Bear"), A)
         patients.create(_patient("new", "Lulu", "Niemi"), A)
         mappings = InMemoryPatientSourceMappingRepository()
+        # Answered under scopes on a device that had already moved over, while
+        # the old rows were still waiting to be adopted.
         remember_match(
-            SH,
-            "SH00001",
-            "new",
-            MatchContext.for_practice(B, patients, mappings),
-            scope=PRACTICE_SCOPE,
+            SH, "SH00001", "new", MatchContext.for_practice(A, patients, mappings), scope=MINE_A
         )
-        mappings.remember_legacy(_legacy(A, SH, "SH00001", "old", days_ago=30))
-        mappings.remember_legacy(_legacy(A, SH, "SH00002", "old", days_ago=30))
         remember_match(
-            SH,
-            "SH00002",
-            "old",
-            MatchContext.for_practice(B, patients, mappings),
-            scope=PRACTICE_SCOPE,
+            SH, "SH00002", "old", MatchContext.for_practice(A, patients, mappings), scope=MINE_A
         )
-        [held] = [m for m in mappings.list_by_source(PRACTICE_SCOPE, SH) if m.patient_id == "old"]
+        [held] = [m for m in mappings.list_by_source(MINE_A, SH) if m.patient_id == "old"]
         held.created_at = datetime.now(UTC) - timedelta(days=60)
         mappings.save(held)
+        mappings.remember_legacy(_legacy(A, SH, "SH00001", "old", days_ago=30))
         mappings.remember_legacy(
             _legacy(A, SH, "SH00002", None, days_ago=10, answer=ANSWER_NOT_A_CLIENT)
         )
 
         ctx = MatchContext.for_practice(A, patients, mappings)
         first = match_patient(
-            PatientHint(source=SH, source_identifier="SH00001", scope=PRACTICE_SCOPE), ctx
+            PatientHint(source=SH, source_identifier="SH00001", scope=MINE_A), ctx
         )
         second = match_patient(
-            PatientHint(source=SH, source_identifier="SH00002", scope=PRACTICE_SCOPE), ctx
+            PatientHint(source=SH, source_identifier="SH00002", scope=MINE_A), ctx
         )
 
-        # The practice's newer answer outlives the old row for SH00001; the
-        # old row's newer "not a client" replaces the practice's for SH00002.
+        # The newer scoped answer outlives the old row for SH00001; the old
+        # row's newer "not a client" replaces the scoped answer for SH00002.
         assert (first.patient_id, first.evidence) == ("new", "remembered")
         assert second.evidence == "not_a_client"
         assert mappings.legacy_answers() == []
+
+    def test_a_colleagues_old_answer_for_the_same_code_is_left_theirs(self) -> None:
+        """Two clinicians' SH00001 are two clients: adopting one never touches the other."""
+        patients = InMemoryPatientRepository()
+        patients.create(_patient("mine", "Pablo", "Bear"), A)
+        patients.create(_patient("theirs", "Lulu", "Niemi"), B)
+        mappings = InMemoryPatientSourceMappingRepository()
+        mappings.remember_legacy(_legacy(A, SH, "SH00001", "mine", days_ago=30))
+        mappings.remember_legacy(_legacy(B, SH, "SH00001", "theirs", days_ago=3))
+
+        hint = PatientHint(source=SH, source_identifier="SH00001")
+        mine = match_patient(
+            hint.model_copy(update={"scope": MINE_A}),
+            MatchContext.for_practice(A, patients, mappings),
+        )
+        theirs = match_patient(
+            hint.model_copy(update={"scope": MINE_B}),
+            MatchContext.for_practice(B, patients, mappings),
+        )
+
+        assert (mine.patient_id, mine.evidence) == ("mine", "remembered")
+        assert (theirs.patient_id, theirs.evidence) == ("theirs", "remembered")
+        assert mappings.legacy_answers() == []
+        # B's newer adoption did not replace A's: A's next read still finds A's.
+        again = match_patient(
+            hint.model_copy(update={"scope": MINE_A}),
+            MatchContext.for_practice(A, patients, mappings),
+        )
+        assert (again.patient_id, again.evidence) == ("mine", "remembered")
 
     def test_a_second_read_changes_nothing(self) -> None:
         patients = InMemoryPatientRepository()
         patients.create(_patient("p1", "Pablo", "Bear"), A)
         mappings = InMemoryPatientSourceMappingRepository()
         mappings.remember_legacy(_legacy(A, SH, "SH00001", "p1", days_ago=3))
-        hint = PatientHint(source=SH, source_identifier="SH00001", scope=PRACTICE_SCOPE)
+        hint = PatientHint(source=SH, source_identifier="SH00001", scope=MINE_A)
 
         match_patient(hint, MatchContext.for_practice(A, patients, mappings))
-        before = [(m.doc_id, m.created_at) for m in mappings.list_by_source(PRACTICE_SCOPE, SH)]
+        before = [(m.doc_id, m.created_at) for m in mappings.list_by_source(MINE_A, SH)]
         match_patient(hint, MatchContext.for_practice(A, patients, mappings))
 
-        assert [(m.doc_id, m.created_at) for m in mappings.list_by_source(PRACTICE_SCOPE, SH)] == (
-            before
-        )
+        assert [(m.doc_id, m.created_at) for m in mappings.list_by_source(MINE_A, SH)] == before
 
 
-# --- A feed code answered once books for everyone -------------------------------------
+# --- A feed code is its clinician's ---------------------------------------------------
 
 
 class _Practice:
@@ -289,6 +316,10 @@ class _Practice:
         self.patients.grant_access(patient_id, B)
         self.appointments.grant_access(patient_id, A)
         self.appointments.grant_access(patient_id, B)
+
+    def own_client(self, user_id: str, patient_id: str, first: str, last: str) -> None:
+        self.patients.create(_patient(patient_id, first, last), user_id)
+        self.appointments.grant_access(patient_id, user_id)
 
     def feed(self, user_id: str) -> ICalSyncService:
         configs = MagicMock()
@@ -316,24 +347,43 @@ class _Practice:
         return result
 
 
-class TestAFeedCodeIsThePractices:
-    def test_answered_by_one_clinician_it_books_for_another(self) -> None:
+class TestAFeedCodeIsItsClinicians:
+    def test_answered_by_one_clinician_it_books_nothing_for_another(self) -> None:
+        """A's SH00001 is numbered from A's export; B's feed is still asked about its own."""
         practice = _Practice()
         practice.shared_client("p1", "Pablo", "Bear")
         assert practice.sync(A).created == 0
-        [held] = practice.events.list_open(A)
 
         practice.outside.answer(A, SH_FEED, "SH00001", patient_id="p1")
         result = practice.sync(B)
 
-        assert result.created == 1
-        [booked] = practice.appointments.list_by_ical_source(B, SH)
-        assert (booked.patient_id, booked.user_id) == ("p1", B)
-        assert practice.events.list_open(B) == []
-        # A's own session was booked by the answer, under A's name.
+        assert result.created == 0
+        assert practice.appointments.list_by_ical_source(B, SH) == []
+        [asked] = practice.events.list_open(B)
+        assert asked.source_event_id == "sh-1"
+        # A's own session was booked by A's answer, under A's name.
         [mine] = practice.appointments.list_by_ical_source(A, SH)
-        assert (mine.patient_id, mine.user_id, mine.id != booked.id) == ("p1", A, True)
-        assert held.source_event_id == "sh-1"
+        assert (mine.patient_id, mine.user_id) == ("p1", A)
+
+    def test_two_clinicians_one_code_two_clients(self) -> None:
+        """Each clinician's SH00001 books their own client; neither answer replaces the other."""
+        practice = _Practice()
+        practice.own_client(A, "mine", "Pablo", "Bear")
+        practice.own_client(B, "theirs", "Lulu", "Niemi")
+        practice.sync(A)
+        practice.sync(B)
+
+        practice.outside.answer(A, SH_FEED, "SH00001", patient_id="mine")
+        practice.outside.answer(B, SH_FEED, "SH00001", patient_id="theirs")
+        practice.sync(A)
+        practice.sync(B)
+
+        [a_booked] = practice.appointments.list_by_ical_source(A, SH)
+        [b_booked] = practice.appointments.list_by_ical_source(B, SH)
+        assert (a_booked.patient_id, b_booked.patient_id) == ("mine", "theirs")
+        [a_answer] = practice.mappings.list_by_source(MINE_A, SH)
+        [b_answer] = practice.mappings.list_by_source(MINE_B, SH)
+        assert (a_answer.patient_id, b_answer.patient_id) == ("mine", "theirs")
 
     def test_the_answer_records_who_gave_it(self) -> None:
         practice = _Practice()
@@ -341,10 +391,10 @@ class TestAFeedCodeIsThePractices:
 
         practice.outside.answer(A, SH_FEED, "SH00001", patient_id="p1")
 
-        [stored] = practice.mappings.list_by_source(PRACTICE_SCOPE, SH)
+        [stored] = practice.mappings.list_by_source(MINE_A, SH)
         assert (stored.answered_by_user_id, stored.scope, stored.session_clinician_user_id) == (
             A,
-            PRACTICE_SCOPE,
+            MINE_A,
             None,
         )
 

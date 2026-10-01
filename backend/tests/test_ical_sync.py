@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 
 import pytest
 from app.models.patient import Patient
-from app.patients.identifiers import PRACTICE_SCOPE, identifier_digest
+from app.patients.identifiers import clinician_scope, identifier_digest
 from app.patients.matching import remember_match, remember_not_a_client
 from app.repositories.external_calendar_event import InMemoryExternalCalendarEventRepository
 from app.repositories.ical_sync_config import ICalSyncConfig
@@ -333,7 +333,7 @@ class TestClientMatching:
         assert sorted(first.possible_ids) == ["james", "john"]
 
         # The clinician picks John; that is remembered for the feed's "J.A.".
-        remember_match("simplepractice", "J.A.", "john", ctx, scope=PRACTICE_SCOPE)
+        remember_match("simplepractice", "J.A.", "john", ctx, scope=clinician_scope("user1"))
 
         ctx = service._match_context("user1")
         later = service._match("simplepractice", "J.A.", ctx)
@@ -362,9 +362,9 @@ class TestClientMatching:
 
 
 def _answered(source: str, identifier: str, patient_id: str) -> PatientSourceMapping:
-    """A feed identifier answered by a colleague: the practice's answer, as stored."""
+    """A feed identifier user1 answered earlier, as stored: their own answer."""
     return PatientSourceMapping(
-        PRACTICE_SCOPE, source, identifier_digest(identifier), patient_id, "colleague"
+        clinician_scope("user1"), source, identifier_digest(identifier), patient_id, "user1"
     )
 
 
@@ -438,7 +438,7 @@ class TestSyncDiff:
             "simplepractice",
             "Jane Adams",
             sync_service._match_context("user1"),
-            scope=PRACTICE_SCOPE,
+            scope=clinician_scope("user1"),
         )
 
         [result] = sync_service.sync("user1", "simplepractice")
@@ -930,7 +930,7 @@ class TestCsvImport:
         assert result.mappings_created == 2
 
         # Verify SH00001 maps to Pablo Bear, as the practice's answer
-        stored = service._mapping_repo.list_by_source(PRACTICE_SCOPE, "sessions_health")
+        stored = service._mapping_repo.list_by_source(clinician_scope("user1"), "sessions_health")
         assert identifier_digest("SH00001") in {m.identifier_digest for m in stored}
         assert {m.answered_by_user_id for m in stored} == {"user1"}
 

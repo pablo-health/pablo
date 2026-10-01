@@ -24,10 +24,11 @@ uncertain, and never stands in the way of a new client.
 
 The checks run in a fixed order, strongest first:
 
-1. ``remembered`` — someone in the practice already said which patient this
-   source's identifier means (``patient_source_mappings``). An answer is the
-   practice's for a feed's client codes, and one calendar's for a calendar's
-   series; the hint says which (``scope``), and the identifier is looked up
+1. ``remembered`` — someone already said which patient this source's
+   identifier means (``patient_source_mappings``). An answer is the
+   clinician's own for a feed's client codes and names, and one calendar's
+   for a calendar's series, shared by everyone who follows it; the hint says
+   which (``scope``), and the identifier is looked up
    by its keyed digest (``identifiers.identifier_digest``).
 2. ``name_and_dob`` — exactly one patient in the practice has this name and
    date of birth.
@@ -78,8 +79,8 @@ from ..repositories.patient_source_mapping import (
     PatientSourceMapping,
 )
 from .identifiers import (
-    PRACTICE_SCOPE,
     calendar_scope,
+    clinician_scope,
     identifier_digest,
     is_calendar_scope,
     normalize,
@@ -197,10 +198,10 @@ class MatchContext:
     source's answers on first lookup.
 
     ``main_calendar_id`` is the clinician's main calendar, when the caller
-    knows it. Answers this clinician gave before answers were the practice's
-    are all about that calendar (it was the only one that could be followed
-    or imported), so they are adopted into its scope the first time it is
-    read here; feed answers are adopted into the practice's the same way.
+    knows it. Answers this clinician gave before answers had a scope are all
+    about that calendar (it was the only one that could be followed or
+    imported), so they are adopted into its scope the first time it is read
+    here; feed answers are adopted into the clinician's own scope the same way.
     """
 
     def __init__(
@@ -272,12 +273,13 @@ class MatchContext:
     def _adopts_into(self, scope: str) -> bool:
         """Whether a clinician's old answers for a source belong in this scope.
 
-        The practice's, for a feed. For a calendar, only the main one: every
-        old calendar answer was given about it, and moving them onto another
-        calendar would carry a "not a client" for Monday 09:00 onto a
-        calendar it was never about.
+        The clinician's own, for a feed: an old answer was always theirs, and
+        stays theirs. For a calendar, only the main one: every old calendar
+        answer was given about it, and moving them onto another calendar would
+        carry a "not a client" for Monday 09:00 onto a calendar it was never
+        about.
         """
-        if scope == PRACTICE_SCOPE:
+        if scope == clinician_scope(self.user_id):
             return True
         return self.main_calendar_id is not None and scope == calendar_scope(self.main_calendar_id)
 
@@ -436,8 +438,8 @@ def remember_match(  # noqa: PLR0913 — the answer's parts, each named at the c
     Idempotent. An identifier already remembered under different case or
     spacing is the same identifier, and its answer is replaced in place.
 
-    ``scope`` is whose answer this is: the practice's for a feed's client
-    code, one calendar's for a series (see ``identifiers``).
+    ``scope`` is whose answer this is: the clinician's for a feed's client
+    code or name, one calendar's for a series (see ``identifiers``).
 
     ``answered_title`` is the keyed digest of the title the answer was given
     under (``answered_title_digest``), for sources whose identifier can

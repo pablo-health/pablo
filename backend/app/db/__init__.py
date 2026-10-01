@@ -1674,9 +1674,9 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
     principal arms a different GUC. Its policy splits on ``actor_type``
     instead: see the branch for what each half permits.
 
-    ``patient_source_mappings`` is the practice's remembered answers: any
-    armed clinician reads a row with a ``scope``, and a row without one
-    (from before answers were the practice's) is its owner's alone. See
+    ``patient_source_mappings`` holds remembered answers: any armed
+    clinician reads a calendar's, and a clinician's own (a feed's) and one
+    from before answers had a scope are their owner's alone. See
     ``practice_answers`` for the one definition every path applies.
 
     Two kinds of tables are deliberately NOT given a row policy:
@@ -1948,9 +1948,10 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
             )
             continue
         if table_name == "patient_source_mappings" and "scope" in columns:
-            # Remembered answers are the practice's, so every armed clinician
-            # reads them; rows from before that carry plain-text identifiers
-            # and stay their owner's until adopted. The column guard lets the
+            # A calendar's answers are shared by every armed clinician, a
+            # feed's are their clinician's, and rows from before scopes carry
+            # plain-text identifiers and stay their owner's until adopted. The
+            # column guard lets the
             # reconcile replay over a schema that predates the ``scope``
             # column: such a schema keeps the owner-only shape below until
             # its own upgrade adds it.

@@ -8,16 +8,19 @@ keeps working against the migrated schema while a deploy rolls over.
 
 ``patient_source_mappings``:
 
-* ``scope`` — whose answer a row is: ``practice`` for a feed's client codes,
-  ``calendar:<id>`` for a calendar's series. NULL on every row from before
-  this revision, which is how the app tells them apart.
+* ``scope`` — whose answer a row is: ``calendar:<id>`` for a calendar's
+  series, shared by its followers; ``clinician:<id>`` for a feed's client
+  codes and names, which are numbered or spelled from one clinician's own
+  records. NULL on every row from before this revision, which is how the app
+  tells them apart.
 * ``answered_by_user_id`` — who answered; a fact about the answer, not its
   key. ``session_clinician_user_id`` — whose session a calendar's answer
   books for, for a later release to read.
 * A unique index on ``(scope, source, source_identifier)`` over scoped rows:
-  the practice's key, and what lets writes be insert-on-conflict.
-* The row policy: a scoped row is readable by any armed clinician in the
-  practice, a row without a scope only by its owner. Rows from before this
+  the answer's key, and what lets writes be insert-on-conflict.
+* The row policy (``app.db.practice_answers``): a calendar's row is readable
+  by any armed clinician in the practice, a clinician's row and a row
+  without a scope only by their owner. Rows from before this
   revision hold the identifier in plain text, so they stay their owner's
   until the app adopts them. Adoption is the app's job, not this revision's:
   the new rows hold a keyed digest of the identifier, and the key is an
