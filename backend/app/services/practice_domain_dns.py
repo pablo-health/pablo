@@ -218,8 +218,14 @@ class DnsChecker:
             return "unknown", None
         if _name(record.value) in found:
             return "ok", found
-        if found or not pointing:
+        if not pointing:
             return ("wrong" if found else "missing"), found
+        if found:
+            # A CNAME to another name that lands on this deployment's
+            # addresses works the same: www pointing at the bare domain, as
+            # one-click setup publishes it.
+            status, _ = self._check_flattened(record)
+            return (status if status in {"ok", "unknown"} else "wrong"), found
         return self._check_flattened(record)
 
     def _check_flattened(self, record: DnsRecord) -> tuple[RecordCheck, list[str] | None]:

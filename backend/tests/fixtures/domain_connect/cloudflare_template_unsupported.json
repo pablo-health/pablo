@@ -1,0 +1,7 @@
+{
+  "captured": "2026-10-01",
+  "request": "GET https://api.cloudflare.com/client/v4/dns/domainconnect/v2/domainTemplates/providers/pablo.health/services/practice-domain",
+  "status": 404,
+  "content_type": "application/json; charset=utf-8",
+  "body": "{\"error\":\"unknown template\"}"
+}
