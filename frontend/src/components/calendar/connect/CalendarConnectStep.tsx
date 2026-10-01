@@ -2,10 +2,12 @@
 
 "use client"
 
+import { useState } from "react"
 import { Check, Link2Off, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SetupStepHead } from "@/components/setup"
 import type { GoogleCalendarStatus } from "@/lib/api/scheduling"
+import { DisconnectCalendarDialog } from "./DisconnectCalendarDialog"
 
 interface CalendarConnectStepProps {
   status: GoogleCalendarStatus | undefined
@@ -28,6 +30,8 @@ export function CalendarConnectStep({
   onConnect,
   onDisconnect,
 }: CalendarConnectStepProps) {
+  const [confirmingDisconnect, setConfirmingDisconnect] = useState(false)
+
   if (status?.connected) {
     return (
       <div className="space-y-4">
@@ -48,7 +52,12 @@ export function CalendarConnectStep({
                 : "A calendar Pablo made for your sessions"}
             </p>
           </div>
-          <Button variant="ghost" size="sm" onClick={onDisconnect} disabled={disconnecting}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setConfirmingDisconnect(true)}
+            disabled={disconnecting}
+          >
             {disconnecting ? (
               <Loader2 className="mr-1 h-4 w-4 animate-spin" />
             ) : (
@@ -58,6 +67,11 @@ export function CalendarConnectStep({
           </Button>
         </div>
         {error ? <p className="text-sm text-red-600">{error}</p> : null}
+        <DisconnectCalendarDialog
+          open={confirmingDisconnect}
+          onOpenChange={setConfirmingDisconnect}
+          onConfirm={onDisconnect}
+        />
       </div>
     )
   }

@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import delete, select
 
@@ -19,6 +19,7 @@ from ..external_calendar_event import (
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from sqlalchemy.engine import CursorResult
     from sqlalchemy.orm import Session
 
 
@@ -95,6 +96,21 @@ class PostgresExternalCalendarEventRepository(ExternalCalendarEventRepository):
             )
         )
         self._session.flush()
+
+    def delete_by_source(self, user_id: str, source: str) -> int:
+        # cast: Session.execute is typed Result[Any]; a DELETE returns a
+        # CursorResult, which is what carries rowcount (as appointment.py).
+        result = cast(
+            "CursorResult[Any]",
+            self._session.execute(
+                delete(ExternalCalendarEventRow).where(
+                    ExternalCalendarEventRow.user_id == user_id,
+                    ExternalCalendarEventRow.source == source,
+                )
+            ),
+        )
+        self._session.flush()
+        return result.rowcount or 0
 
 
 def _to_event(row: ExternalCalendarEventRow) -> ExternalCalendarEvent:

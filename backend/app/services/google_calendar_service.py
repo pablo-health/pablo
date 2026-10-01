@@ -250,6 +250,7 @@ FOLLOW_MAIN_CALENDAR = "primary"
 # appointment behind it.
 _PABLO_APPOINTMENT_KEY = "pablo_appointment_id"
 
+_HTTP_OK = 200
 # Google answers a syncToken it no longer honours with 410 Gone.
 _HTTP_GONE = 410
 # And a calendar that no longer exists with 404.
@@ -427,11 +428,14 @@ def _exchange_code(flow: Any, code: str, requested_scopes: Sequence[str]) -> Non
 
 _GOOGLE_AUTH_URI = "https://accounts.google.com/o/oauth2/auth"
 _GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"  # noqa: S105 — an endpoint, not a secret
+_GOOGLE_REVOKE_URI = "https://oauth2.googleapis.com/revoke"
 
 # Where a stand-in (``ConsentSurface.base_url``) answers each of Google's
 # three hosts. The paths are Google's own, so one origin can serve all three.
 _STAND_IN_AUTH_PATH = "/o/oauth2/auth"
 _STAND_IN_TOKEN_PATH = "/token"  # noqa: S105 — an endpoint, not a secret
+_STAND_IN_REVOKE_PATH = "/revoke"
+_REVOKE_TIMEOUT_SECONDS = 10.0
 _STAND_IN_API_PATH = "/calendar/v3/"
 
 
@@ -499,6 +503,36 @@ def _make_credentials(
         client_id=client_id,
         client_secret=client_secret,
     )
+
+
+def _revoke_grant(token: str, *, base_url: str | None = None) -> bool:
+    """Ask Google to withdraw the grant this token belongs to.
+
+    Revoking either token of a grant revokes the whole grant, so Pablo drops
+    off the account's third-party access list. Whether it worked never
+    decides whether the disconnect happens — the caller deletes its copy of
+    the tokens either way — so every failure is logged and swallowed: an
+    unreachable Google, a 400 for a grant the user already removed there.
+    The token itself never reaches the log.
+    https://developers.google.com/identity/protocols/oauth2/web-server#tokenrevoke
+    """
+    import httpx
+
+    url = f"{base_url.rstrip('/')}{_STAND_IN_REVOKE_PATH}" if base_url else _GOOGLE_REVOKE_URI
+    try:
+        response = httpx.post(
+            url,
+            data={"token": token},
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=_REVOKE_TIMEOUT_SECONDS,
+        )
+    except httpx.HTTPError as exc:
+        logger.warning("Google Calendar revoke could not reach Google: %s", type(exc).__name__)
+        return False
+    if response.status_code != _HTTP_OK:
+        logger.warning("Google Calendar revoke answered %s", response.status_code)
+        return False
+    return True
 
 
 def _refresh_credentials(credentials: Credentials) -> None:
@@ -1196,16 +1230,42 @@ class GoogleCalendarService:
             kwargs["pageToken"] = page_token
 
     def disconnect(self, user_id: str) -> bool:
-        """Remove stored tokens, disconnecting Google Calendar.
+        """Withdraw the grant at Google and remove the stored tokens.
+
+        The refresh token is the one revoked when there is one: it is what
+        keeps the grant alive, and revoking it takes the access token with it.
+        A revoke that fails still disconnects (see ``_revoke_grant``).
 
         The calendar Pablo made is remembered apart from the tokens, so a
-        later connect finds it rather than making another one.
+        later connect finds it rather than making another one. What Pablo
+        read from the calendar is the caller's to remove, in the same
+        transaction — see ``app.calendar_providers.disconnect``.
         """
         self._record_existing_app_calendar(user_id)
+        token = self._stored_grant_token(user_id)
+        if token:
+            _revoke_grant(token, base_url=self._surface.base_url)
         deleted = self._token_repo.delete(user_id)
         if deleted:
             logger.info("Google Calendar disconnected")
         return deleted
+
+    def _stored_grant_token(self, user_id: str) -> str | None:
+        """The token to revoke the grant with, or None if there is none to read.
+
+        Tokens that no longer decrypt (a rotated key, a damaged row) leave
+        nothing to revoke with; the disconnect goes ahead without it.
+        """
+        token_doc = self._token_repo.get(user_id)
+        if token_doc is None:
+            return None
+        try:
+            token_data = decrypt_tokens(token_doc.encrypted_tokens)
+        except Exception:
+            logger.warning("Google Calendar tokens did not decrypt; disconnecting without revoke")
+            return None
+        token = token_data.get("refresh_token") or token_data.get("token")
+        return str(token) if token else None
 
     def get_sync_status(self, user_id: str) -> dict[str, Any]:
         """Check connection status, last sync time, and what was granted."""

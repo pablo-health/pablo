@@ -22,12 +22,14 @@ from ..api_errors import (
 from ..auth.oauth_redirect import is_allowed_oauth_redirect_uri
 from ..auth.service import (
     TenantContext,
+    get_current_user,
     get_tenant_context,
     require_active_subscription,
     require_baa_acceptance,
 )
 from ..calendar_providers.capabilities import CalendarCapability, CalendarWriteTarget
 from ..calendar_providers.consent_copy import capability_promise
+from ..calendar_providers.disconnect import forget_google_calendar
 from ..calendar_providers.event_titles import (
     ATTESTATION_STATEMENTS,
     CURRENT_ATTESTATION_VERSION,
@@ -91,6 +93,8 @@ from ..repositories import (
     PatientRepository,
     TherapySessionRepository,
     UserRepository,
+    get_external_calendar_event_repository,
+    get_patient_source_mapping_repository,
     get_user_repository,
 )
 from ..repositories import (
@@ -2011,13 +2015,37 @@ def google_calendar_callback(
 
 @router.delete("/api/google-calendar/disconnect")
 def google_calendar_disconnect(
+    http_request: Request,
     ctx: TenantContext = Depends(get_tenant_context),
+    # Not require_baa_acceptance: withdrawing access is never gated.
+    user: User = Depends(get_current_user),
     service: GoogleCalendarService = Depends(get_google_calendar_service),
+    appointments: AppointmentRepository = Depends(get_appointment_repository),
+    audit: AuditService = Depends(get_audit_service),
 ) -> dict[str, str]:
-    """Disconnect Google Calendar and remove stored tokens."""
+    """Disconnect Google Calendar: revoke the grant, drop the tokens and what was read.
+
+    The tokens and the data read from the calendar go in one transaction;
+    see ``app.calendar_providers.disconnect`` for what stays. The audit row
+    carries counts only — never a title, an event id or a client.
+    """
     deleted = service.disconnect(ctx.user_id)
     if not deleted:
         raise NotFoundError("Google Calendar not connected")
+    forgotten = forget_google_calendar(
+        ctx.user_id,
+        events=get_external_calendar_event_repository(),
+        mappings=get_patient_source_mapping_repository(),
+        appointments=appointments,
+    )
+    audit.log(
+        AuditAction.GOOGLE_CALENDAR_DISCONNECTED,
+        user,
+        http_request,
+        resource_type=ResourceType.APPOINTMENT,
+        resource_id="google-calendar",
+        changes=forgotten.to_dict(),
+    )
     return {"status": "disconnected"}
 
 

@@ -4,15 +4,16 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from ...db.models import PatientSourceMappingRow
 from ...utcnow import utc_now
 from ..patient_source_mapping import PatientSourceMapping, PatientSourceMappingRepository
 
 if TYPE_CHECKING:
+    from sqlalchemy.engine import CursorResult
     from sqlalchemy.orm import Session
 
 
@@ -56,6 +57,21 @@ class PostgresPatientSourceMappingRepository(PatientSourceMappingRepository):
         row.answered_title = mapping.answered_title
         row.created_at = mapping.created_at
         self._session.flush()
+
+    def delete_by_source(self, user_id: str, source: str) -> int:
+        # cast: Session.execute is typed Result[Any]; a DELETE returns a
+        # CursorResult, which is what carries rowcount (as appointment.py).
+        result = cast(
+            "CursorResult[Any]",
+            self._session.execute(
+                delete(PatientSourceMappingRow).where(
+                    PatientSourceMappingRow.user_id == user_id,
+                    PatientSourceMappingRow.source == source,
+                )
+            ),
+        )
+        self._session.flush()
+        return result.rowcount or 0
 
 
 def _row_to_mapping(row: PatientSourceMappingRow) -> PatientSourceMapping:

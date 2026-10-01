@@ -322,6 +322,25 @@ async def token(request: Request) -> Response:
     return JSONResponse(_issue(scopes, offline=pending["offline"]))
 
 
+@app.post("/revoke")
+async def revoke(request: Request) -> Response:
+    """Withdraw the grant a token belongs to, as Google does.
+
+    Either token of a grant revokes the whole grant: every access and
+    refresh token stops working and the account no longer lists the app.
+    One account per stand-in means one grant, so all of them go. A token
+    that is not live is ``400 invalid_token``, which is also what Google
+    answers for one the user already removed.
+    """
+    token = str((await request.form()).get("token") or "")
+    if token not in state.tokens and token not in state.refresh_tokens:
+        return JSONResponse({"error": "invalid_token"}, status_code=400)
+    state.tokens.clear()
+    state.refresh_tokens.clear()
+    state.granted = set()
+    return Response(status_code=200)
+
+
 # --- Scopes ----------------------------------------------------------------
 
 

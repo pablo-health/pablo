@@ -62,6 +62,10 @@ class PatientSourceMappingRepository(ABC):
     def save(self, mapping: PatientSourceMapping) -> None:
         """Insert, or replace the patient on the mapping with the same doc_id."""
 
+    @abstractmethod
+    def delete_by_source(self, user_id: str, source: str) -> int:
+        """Forget every answer remembered under one source; how many went."""
+
 
 class InMemoryPatientSourceMappingRepository(PatientSourceMappingRepository):
     """In-memory implementation for tests.
@@ -86,3 +90,11 @@ class InMemoryPatientSourceMappingRepository(PatientSourceMappingRepository):
 
     def save(self, mapping: PatientSourceMapping) -> None:
         self._mappings[mapping.doc_id] = copy.deepcopy(mapping)
+
+    def delete_by_source(self, user_id: str, source: str) -> int:
+        doomed = [
+            key for key, m in self._mappings.items() if m.user_id == user_id and m.source == source
+        ]
+        for key in doomed:
+            del self._mappings[key]
+        return len(doomed)

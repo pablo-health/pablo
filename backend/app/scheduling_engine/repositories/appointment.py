@@ -208,6 +208,16 @@ class AppointmentRepository(ABC):
     def delete(self, appointment_id: str, user_id: str) -> bool:
         """Delete an appointment. Returns True if deleted."""
 
+    @abstractmethod
+    def clear_google_calendar_links(self, user_id: str, outside_source: str) -> int:
+        """Drop every pointer from this clinician's appointments into Google.
+
+        That is the event a session was pushed to (``google_*``) and the
+        event a followed session came from, when it came from
+        ``outside_source``. The appointments themselves stay. Returns how
+        many appointments changed.
+        """
+
 
 class InMemoryAppointmentRepository(AppointmentRepository):
     """In-memory implementation for testing.
@@ -388,6 +398,21 @@ class InMemoryAppointmentRepository(AppointmentRepository):
             if (a.user_id, a.outside_source, a.outside_event_id) == (user_id, source, event_id):
                 return copy.deepcopy(a)
         return None
+
+    def clear_google_calendar_links(self, user_id: str, outside_source: str) -> int:
+        changed = 0
+        for a in self._appointments.values():
+            if a.user_id != user_id:
+                continue
+            pushed = bool(a.google_event_id or a.google_calendar_id or a.google_sync_status)
+            followed = a.outside_source == outside_source
+            if not (pushed or followed):
+                continue
+            a.google_event_id = a.google_calendar_id = a.google_sync_status = None
+            if followed:
+                a.outside_source = a.outside_event_id = a.outside_calendar_id = None
+            changed += 1
+        return changed
 
     def list_expired_pending(self, user_id: str, now: datetime) -> list[Appointment]:
         return [
