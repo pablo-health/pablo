@@ -400,6 +400,80 @@ class PracticePortalSettingsRow(PlatformBase):
     updated_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 
+class PracticeDomainRow(PlatformBase):
+    """A hostname a practice serves its client portal or its website from.
+
+    Platform-scoped for the same inversion as ``PortalPracticeSlugRow``: a
+    request arrives carrying only its host, so the practice has to be resolved
+    FROM the host before any tenant schema can be chosen. The hostname is the
+    primary key, so a host belongs to exactly one practice.
+
+    A practice may hold several hosts per ``purpose``. Exactly one of them can be
+    its primary for that purpose (the partial unique index); the others are
+    aliases. Only a host whose ``status`` is ``active`` may be made primary —
+    held by the service at the moment it is chosen, not by a CHECK, so a primary
+    whose certificate later lapses stays the practice's choice while it is
+    repaired rather than being silently unset.
+
+    ``kind`` tells a name under the deployment's own domain (``subdomain``) from
+    one the practice owns (``vanity``). ``status`` moves
+    ``pending → verifying → active`` (or ``error``) as whatever serves the host
+    confirms it; nothing in the engine marks a host active on its own say-so.
+
+    No PHI: a public hostname and its setup state.
+
+    VARCHAR + CHECK rather than native enums, so a new value is a constraint
+    swap, not an ``ALTER TYPE``.
+    """
+
+    __tablename__ = "practice_domains"
+    # PlatformBase annotates __table_args__ as the dict-only shape; see
+    # PracticeRow for why the tuple form needs the ignore.
+    __table_args__ = (  # type: ignore[assignment]
+        CheckConstraint(
+            "kind IN ('subdomain', 'vanity')",
+            name="practice_domains_kind_check",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'verifying', 'active', 'error')",
+            name="practice_domains_status_check",
+        ),
+        CheckConstraint(
+            "purpose IN ('portal', 'site')",
+            name="practice_domains_purpose_check",
+        ),
+        Index("ix_practice_domains_practice_id", "practice_id"),
+        Index(
+            "uq_practice_domains_primary",
+            "practice_id",
+            "purpose",
+            unique=True,
+            postgresql_where=text("is_primary"),
+        ),
+        {"schema": PLATFORM_SCHEMA},
+    )
+
+    domain: Mapped[str] = mapped_column(String(255), primary_key=True)
+    practice_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    #: What the host serves: the client portal or the practice's website.
+    #: Defaults to ``site`` because every host recorded before the column
+    #: existed was a website.
+    purpose: Mapped[str] = mapped_column(String(10), nullable=False, server_default="site")
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="pending")
+    is_primary: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    #: When whatever serves the host last confirmed the practice controls it.
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: The certificate's state, as whatever issues it reports it.
+    cert_status: Mapped[str | None] = mapped_column(String(20))
+    #: A DNS record the practice adds so a certificate can be issued for the host.
+    dns_auth_record: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class SetupTokenRow(PlatformBase):
     """Short-lived token to pass email from marketing signup to login page.
 

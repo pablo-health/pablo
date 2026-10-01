@@ -484,6 +484,23 @@ CREATE TABLE platform.portal_welcome_messages (
     updated_at timestamp with time zone NOT NULL
 );
 
+CREATE TABLE platform.practice_domains (
+    domain character varying(255) NOT NULL,
+    practice_id character varying(128) NOT NULL,
+    purpose character varying(10) DEFAULT 'site'::character varying NOT NULL,
+    kind character varying(16) NOT NULL,
+    status character varying(20) DEFAULT 'pending'::character varying NOT NULL,
+    is_primary boolean DEFAULT false NOT NULL,
+    verified_at timestamp with time zone,
+    cert_status character varying(20),
+    dns_auth_record text,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone,
+    CONSTRAINT practice_domains_kind_check CHECK (((kind)::text = ANY (ARRAY[('subdomain'::character varying)::text, ('vanity'::character varying)::text]))),
+    CONSTRAINT practice_domains_purpose_check CHECK (((purpose)::text = ANY (ARRAY[('portal'::character varying)::text, ('site'::character varying)::text]))),
+    CONSTRAINT practice_domains_status_check CHECK (((status)::text = ANY (ARRAY[('pending'::character varying)::text, ('verifying'::character varying)::text, ('active'::character varying)::text, ('error'::character varying)::text])))
+);
+
 CREATE TABLE platform.practice_portal_settings (
     practice_id character varying(128) NOT NULL,
     enabled boolean DEFAULT false NOT NULL,
@@ -694,6 +711,9 @@ ALTER TABLE ONLY platform.portal_invite_templates
 ALTER TABLE ONLY platform.portal_welcome_messages
     ADD CONSTRAINT portal_welcome_messages_pkey PRIMARY KEY (practice_id);
 
+ALTER TABLE ONLY platform.practice_domains
+    ADD CONSTRAINT practice_domains_pkey PRIMARY KEY (domain);
+
 ALTER TABLE ONLY platform.practice_portal_settings
     ADD CONSTRAINT practice_portal_settings_pkey PRIMARY KEY (practice_id);
 
@@ -826,6 +846,10 @@ CREATE INDEX ix_platform_platform_audit_logs_tenant_schema ON platform.platform_
 CREATE INDEX ix_platform_platform_audit_logs_timestamp ON platform.platform_audit_logs USING btree ("timestamp");
 
 CREATE INDEX ix_platform_user_identities_user_id ON platform.user_identities USING btree (user_id);
+
+CREATE INDEX ix_practice_domains_practice_id ON platform.practice_domains USING btree (practice_id);
+
+CREATE UNIQUE INDEX uq_practice_domains_primary ON platform.practice_domains USING btree (practice_id, purpose) WHERE is_primary;
 
 CREATE UNIQUE INDEX ux_credential_liability_policies_one_current ON platform.credential_liability_policies USING btree (user_id) WHERE is_current;
 

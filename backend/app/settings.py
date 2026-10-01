@@ -1160,6 +1160,28 @@ class Settings(BaseSettings):
         description="Mount the unauthenticated /api/public/booking-links/* endpoints.",
     )
 
+    # ── A practice's own domains (Settings > Domains) ────────────────────
+    practice_domain_cname_target: str = Field(
+        default="",
+        description=(
+            "Hostname a practice points its own portal and website hosts at "
+            "with a CNAME record, e.g. sites.example.org. Shown to the practice "
+            "as the record to add. Empty means this deployment has no single "
+            "target to name, and the practice is told only that the host must "
+            "point at this deployment."
+        ),
+    )
+    practice_domain_apex_ips: str = Field(
+        default="",
+        description=(
+            "Comma-separated IP addresses a bare domain (example.org, with "
+            "nothing in front) points at with A/AAAA records. Many DNS "
+            "providers refuse a CNAME on a bare domain, so a website there is "
+            "shown these instead, with the CNAME target offered as an ALIAS/"
+            "ANAME alternative. Empty: bare domains are shown the CNAME too."
+        ),
+    )
+
     # ── Patient portal sign-in (app.portal) ──────────────────────────────
     # Off by default: turning it on publishes a surface that mints
     # credentials for people who had none, and that is a decision a

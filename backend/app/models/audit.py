@@ -275,6 +275,14 @@ class AuditAction(StrEnum):
     # and new setting and nothing else.
     PRACTICE_PORTAL_OFFERING_CHANGED = "practice_portal_offering_changed"
 
+    # The practice's own domains: one added, one chosen as primary, one
+    # removed. The primary portal host is where clients' links lead, so who
+    # changed it, and when, belongs on the record. The payload is hostnames
+    # and the purpose they serve.
+    PRACTICE_DOMAIN_ADDED = "practice_domain_added"
+    PRACTICE_DOMAIN_MADE_PRIMARY = "practice_domain_made_primary"
+    PRACTICE_DOMAIN_REMOVED = "practice_domain_removed"
+
     # A patient signed themselves out. The mirror image of
     # PATIENT_PORTAL_SESSION_REDEEMED and recorded for the same reason:
     # when a credential stopped working is as much a part of the access

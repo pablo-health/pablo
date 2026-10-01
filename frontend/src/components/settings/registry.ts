@@ -9,6 +9,7 @@ import {
   Clock,
   FileArchive,
   FileInput,
+  Globe,
   Inbox,
   Mic,
   Palette,
@@ -29,6 +30,7 @@ import { BillingProfilePage } from "./pages/BillingProfilePage"
 import { CalendarsPage } from "./pages/CalendarsPage"
 import { CredentialingPage } from "./pages/CredentialingPage"
 import { CredentialingStartPage } from "./pages/CredentialingStartPage"
+import { DomainsPage } from "./pages/DomainsPage"
 import { ImportPage } from "./pages/ImportPage"
 import { InboxPage } from "./pages/InboxPage"
 import { InsurancePage } from "./pages/InsurancePage"
@@ -170,6 +172,13 @@ const baseGroups: SettingsGroup[] = [
         page: PatientPortalPage,
         feature: "patient_portal",
         desc: "Intake forms, self-report measures and patient sign-in.",
+      },
+      {
+        id: "domains",
+        label: "Domains",
+        icon: Globe,
+        page: DomainsPage,
+        desc: "Your own addresses for the client portal and your website.",
       },
       {
         id: "import",
