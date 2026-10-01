@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
+from app.calendar_providers.disconnect import forget_google_calendar
 from app.calendar_providers.practice_import import Cadence, ProposedSeries, SeriesStatus
 from app.calendar_providers.source_identity import (
     GOOGLE_CALENDAR_SOURCE,
@@ -499,6 +500,41 @@ class TestFollowing:
 
         [row] = h.events.list_open(USER_ID)
         assert (row.source_event_id, row.start_at) == ("e1", new_start)
+
+
+class TestAfterADisconnect:
+    """A disconnect forgets the events and the answers; the appointments keep their links.
+
+    So connecting again and answering the series once more picks the same
+    appointments back up: none is booked twice, and each follows Google again.
+    """
+
+    def test_answering_again_relinks_the_sessions_and_they_follow_google(
+        self, h: _Harness, mock_user: User
+    ) -> None:
+        h.patient("p1", "Jane", "Smith")
+        events = [_event("e1", _in(2)), _event("e2", _in(9))]
+        h.poll(mock_user, events)
+        h.answer("p1")
+        booked = {e: h.followed(e).id for e in ("e1", "e2")}  # type: ignore[union-attr]
+
+        forget_google_calendar(USER_ID, events=h.events, mappings=h.mappings)
+        h.poll(mock_user, events)
+        assert len(h.outside.questions(USER_ID)) == 1
+
+        h.answer("p1")
+
+        assert h.outside.questions(USER_ID) == []
+        appointments = h.appointments.list_by_range(USER_ID, _in(0), _in(30))
+        assert sorted(a.id for a in appointments) == sorted(booked.values())
+        rows = h.events.list_by_source(USER_ID, GOOGLE_CALENDAR_SOURCE)
+        assert {r.source_event_id: r.appointment_id for r in rows} == booked
+        # And it follows: a move in Google moves the same appointment.
+        moved_to = _in(3, hour=10)
+        h.poll(mock_user, [_event("e1", moved_to)])
+        followed = h.followed("e1")
+        assert followed is not None
+        assert (followed.id, followed.start_at) == (booked["e1"], moved_to)
 
 
 class TestReadingAnAnsweredEventAgain:

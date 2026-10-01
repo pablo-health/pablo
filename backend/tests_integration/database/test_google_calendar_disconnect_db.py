@@ -298,7 +298,6 @@ class _Calendar:
             self.user_id,
             events=self.events,
             mappings=self.mappings,
-            appointments=self.appointments,
         )
 
     def count(self, sql: str) -> int:
@@ -340,9 +339,7 @@ def test_disconnect_removes_what_was_read_and_keeps_pablos_records(
 
     forgotten = cal.forget()
 
-    assert forgotten == Forgotten(
-        calendar_events_deleted=2, remembered_answers_deleted=3, appointments_unfollowed=1
-    )
+    assert forgotten == Forgotten(calendar_events_deleted=2, remembered_answers_deleted=3)
     assert [e.id for e in cal.events.list_by_source(user_id, GOOGLE)] == []
     # Every answer they gave about Google goes: on their own calendar, on a
     # shared one, and from before answers had a scope.
@@ -353,18 +350,19 @@ def test_disconnect_removes_what_was_read_and_keeps_pablos_records(
     assert [e.id for e in cal.events.list_by_source(user_id, FEED)] == [feed_event.id]
     assert cal.answers(FEED, clinician_scope(user_id)) == 1
 
-    # Every appointment stays. The one following a Google event stops
-    # following it, and the status that reported on that event goes with it.
+    # Every appointment stays as it was, keeping the id of the event it is
+    # tied to. A followed one is picked back up when its series is answered
+    # again after a reconnect, rather than never following Google again.
     still_followed = cal.reread(followed)
     assert (
         still_followed.outside_source,
         still_followed.outside_event_id,
         still_followed.outside_calendar_id,
         still_followed.google_sync_status,
-    ) == (None, None, None, None)
+    ) == (GOOGLE, answered.source_event_id, "primary", "external_change")
     assert still_followed.patient_id == cal.patient.id
-    # The event Pablo wrote is Pablo's own: its id stays, so a reconnect
-    # updates that event instead of writing a second one.
+    # The event Pablo wrote: a reconnect updates it rather than writing a
+    # second one.
     still_pushed = cal.reread(pushed)
     assert (
         still_pushed.google_event_id,
@@ -460,7 +458,6 @@ def test_the_purge_is_scoped_by_clinician_even_where_rls_is_not(
                 leaving,
                 events=PostgresExternalCalendarEventRepository(sess),
                 mappings=PostgresPatientSourceMappingRepository(sess),
-                appointments=PostgresAppointmentRepository(sess),
             )
             sess.commit()
     finally:

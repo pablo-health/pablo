@@ -448,28 +448,6 @@ class PostgresAppointmentRepository(AppointmentRepository):
         self._session.flush()
         return result.rowcount or 0
 
-    def unfollow_outside_events(self, user_id: str, outside_source: str) -> int:
-        result = cast(
-            "CursorResult[Any]",
-            self._session.execute(
-                update(AppointmentRow)
-                .where(
-                    AppointmentRow.user_id == user_id,
-                    AppointmentRow.outside_source == outside_source,
-                )
-                .values(
-                    outside_source=None,
-                    outside_event_id=None,
-                    outside_calendar_id=None,
-                    google_sync_status=None,
-                    updated_at=utc_now(),
-                )
-                .execution_options(synchronize_session=False)
-            ),
-        )
-        self._session.flush()
-        return result.rowcount or 0
-
     def delete(self, appointment_id: str, user_id: str) -> bool:
         """Delete an appointment.
 

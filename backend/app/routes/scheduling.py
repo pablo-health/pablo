@@ -2020,7 +2020,6 @@ def google_calendar_disconnect(
     # Not require_baa_acceptance: withdrawing access is never gated.
     user: User = Depends(get_current_user),
     service: GoogleCalendarService = Depends(get_google_calendar_service),
-    appointments: AppointmentRepository = Depends(get_appointment_repository),
     audit: AuditService = Depends(get_audit_service),
 ) -> dict[str, str]:
     """Disconnect Google Calendar: revoke the grant, drop the tokens and what was read.
@@ -2036,7 +2035,6 @@ def google_calendar_disconnect(
         ctx.user_id,
         events=get_external_calendar_event_repository(),
         mappings=get_patient_source_mapping_repository(),
-        appointments=appointments,
     )
     audit.log(
         AuditAction.GOOGLE_CALENDAR_DISCONNECTED,

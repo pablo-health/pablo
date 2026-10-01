@@ -418,7 +418,6 @@ def test_disconnect_revokes_removes_what_was_read_and_keeps_pablos_records(
     assert audit.changes == {
         "calendar_events_deleted": 2,
         "remembered_answers_deleted": 2,
-        "appointments_unfollowed": 0,
     }
     assert audit.patient_id is None
     assert audit.resource_id == "google-calendar"

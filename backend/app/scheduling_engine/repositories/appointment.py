@@ -231,18 +231,6 @@ class AppointmentRepository(ABC):
     def delete(self, appointment_id: str, user_id: str) -> bool:
         """Delete an appointment. Returns True if deleted."""
 
-    @abstractmethod
-    def unfollow_outside_events(self, user_id: str, outside_source: str) -> int:
-        """Stop this clinician's appointments following events from one source.
-
-        Clears the pointer to the followed event (``outside_*``) and the sync
-        status that reported on it; the appointments themselves stay. A
-        session Pablo pushed to a calendar keeps its ``google_event_id``: that
-        id names Pablo's own event, so a later connection updates the event
-        rather than writing a second one. Returns how many appointments
-        changed.
-        """
-
 
 class InMemoryAppointmentRepository(AppointmentRepository):
     """In-memory implementation for testing.
@@ -423,15 +411,6 @@ class InMemoryAppointmentRepository(AppointmentRepository):
             if (a.user_id, a.outside_source, a.outside_event_id) == (user_id, source, event_id):
                 return copy.deepcopy(a)
         return None
-
-    def unfollow_outside_events(self, user_id: str, outside_source: str) -> int:
-        changed = 0
-        for a in self._appointments.values():
-            if a.user_id == user_id and a.outside_source == outside_source:
-                a.outside_source = a.outside_event_id = a.outside_calendar_id = None
-                a.google_sync_status = None
-                changed += 1
-        return changed
 
     def outside_appointment_id(
         self, source: str, calendar_id: str | None, event_id: str, user_id: str
