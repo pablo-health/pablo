@@ -496,9 +496,9 @@ CREATE TABLE platform.practice_domains (
     dns_auth_record text,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone,
-    CONSTRAINT practice_domains_kind_check CHECK (((kind)::text = ANY ((ARRAY['subdomain'::character varying, 'vanity'::character varying])::text[]))),
-    CONSTRAINT practice_domains_purpose_check CHECK (((purpose)::text = ANY ((ARRAY['portal'::character varying, 'site'::character varying])::text[]))),
-    CONSTRAINT practice_domains_status_check CHECK (((status)::text = ANY ((ARRAY['pending'::character varying, 'verifying'::character varying, 'active'::character varying, 'error'::character varying])::text[])))
+    CONSTRAINT practice_domains_kind_check CHECK (((kind)::text = ANY (ARRAY[('subdomain'::character varying)::text, ('vanity'::character varying)::text]))),
+    CONSTRAINT practice_domains_purpose_check CHECK (((purpose)::text = ANY (ARRAY[('portal'::character varying)::text, ('site'::character varying)::text]))),
+    CONSTRAINT practice_domains_status_check CHECK (((status)::text = ANY (ARRAY[('pending'::character varying)::text, ('verifying'::character varying)::text, ('active'::character varying)::text, ('error'::character varying)::text])))
 );
 
 CREATE TABLE platform.practice_portal_settings (
