@@ -268,6 +268,10 @@ class BAAStatusResponse(BaseModel):
     accepted_at: datetime | None = None
     version: str | None = None
     current_version: str
+    # The practice name the agreement was signed under, so a client can
+    # offer to sign again after the practice is renamed. None when no
+    # practice-level acceptance has been recorded.
+    signed_practice_name: str | None = None
 
 
 class AcknowledgeSecurityGuideRequest(BaseModel):

@@ -160,6 +160,13 @@ class AuditAction(StrEnum):
     ONBOARDING_SECURITY_GUIDE_ACKNOWLEDGED = "onboarding_security_guide_acknowledged"
     ONBOARDING_COMPLETED = "onboarding_completed"
 
+    # The practice owner changing the practice's display name, and choosing to
+    # sign the current BAA again outside onboarding (typically after a rename,
+    # so the agreement names the practice as it is now called). Neither touches
+    # PHI; ``changes`` carries the old/new name or the BAA version.
+    PRACTICE_RENAMED = "practice_renamed"
+    BAA_RESIGNED = "baa_resigned"
+
     # The authorisation letting Pablo apply to insurance panels on a
     # clinician's behalf: sign her name to a payer's form, and ring the payer
     # to chase it. Not a HIPAA event — no PHI is involved — but the moment
@@ -688,6 +695,7 @@ class ResourceType(StrEnum):
     INBOX_ITEM = "inbox_item"
     INVITATION = "invitation"
     PRACTICE_PORTAL = "practice_portal"
+    PRACTICE = "practice"
     CLAIM = "claim"
     CLAIM_EXPORT = "claim_export"
     BILLING_PERIOD_EXPORT = "billing_period_export"

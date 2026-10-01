@@ -10,6 +10,8 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
+from app.auth.service import get_baa_version, require_mfa
+from app.main import app
 from app.models import User
 from app.repositories import (
     ClinicianProfile,
@@ -17,6 +19,7 @@ from app.repositories import (
     InMemoryIdentityRepository,
     InMemoryUserRepository,
 )
+from app.route_introspection import iter_api_routes
 from app.routes.users import _user_has_totp_factor
 
 
@@ -102,6 +105,7 @@ class TestUpdateProfile:
         read back at all."""
         mock_user_repo.update(mock_user)
         practice = SimpleNamespace(
+            owner_email="",
             name="Renamed Practice",
             phone="555-010-0100",
             address="5 Oak Ave, Town, NY 10001",
@@ -133,7 +137,9 @@ class TestUpdateProfile:
         """A practice with no address reads as null, not "" — a caller
         prefilling a form needs to tell "nothing on file" from "blank"."""
         mock_user_repo.update(mock_user)
-        practice = SimpleNamespace(name="Renamed Practice", phone=None, address="   ")
+        practice = SimpleNamespace(
+            owner_email="", name="Renamed Practice", phone=None, address="   "
+        )
         fake_session = MagicMock()
         fake_session.get.return_value = practice
 
@@ -781,7 +787,7 @@ class TestProfessionalInfo:
         self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
     ) -> None:
         mock_user_repo.update(mock_user)
-        practice = SimpleNamespace(address=None)
+        practice = SimpleNamespace(owner_email="test@example.com", address=None)
         fake_session = MagicMock()
         fake_session.get.return_value = practice
         with (
@@ -802,7 +808,9 @@ class TestProfessionalInfo:
         self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
     ) -> None:
         mock_user_repo.update(mock_user)
-        practice = SimpleNamespace(name="Old Name", phone=None)
+        practice = SimpleNamespace(
+            id="practice-1", owner_email="test@example.com", name="Old Name", phone=None
+        )
         fake_session = MagicMock()
         fake_session.get.return_value = practice
         with (
@@ -822,6 +830,163 @@ class TestProfessionalInfo:
         assert body["practice_phone"] == "555-010-0100"
         assert practice.name == "New Name Counseling"
         assert practice.phone == "555-010-0100"
+
+
+class TestPracticeRename:
+    """Renaming the practice is the owner's call, is audited, and never
+    touches the BAA snapshot."""
+
+    def _practice(self, **overrides: Any) -> SimpleNamespace:
+        defaults: dict[str, Any] = {
+            "id": "practice-1",
+            "owner_email": "test@example.com",
+            "name": "Jane Doe",
+            "phone": None,
+            "address": None,
+            "baa_practice_name": "Jane Doe",
+            "baa_version": "2024-01-01",
+        }
+        defaults.update(overrides)
+        return SimpleNamespace(**defaults)
+
+    def _patch(self, client: Any, practice: SimpleNamespace, json: dict[str, Any]) -> Any:
+        fake_session = MagicMock()
+        fake_session.get.return_value = practice
+        with (
+            patch(
+                "app.auth.service._resolve_practice_from_email",
+                return_value=("practice-1", "practice_1"),
+            ),
+            patch("app.db.get_db_session", return_value=fake_session),
+        ):
+            return client.patch("/api/users/me/professional-info", json=json)
+
+    def test_owner_rename_is_trimmed_audited_and_leaves_baa_alone(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        practice = self._practice()
+        with patch("app.services.audit_service.AuditService.log") as audit_log:
+            response = self._patch(client, practice, {"practice_name": "  Center for Wellness  "})
+        assert response.status_code == 200
+        assert practice.name == "Center for Wellness"
+        # The agreement on file still names the practice it was signed under.
+        assert practice.baa_practice_name == "Jane Doe"
+        assert practice.baa_version == "2024-01-01"
+        audit_log.assert_called_once()
+        assert audit_log.call_args.args[0] == "practice_renamed"
+        assert audit_log.call_args.kwargs["changes"] == {
+            "from": "Jane Doe",
+            "to": "Center for Wellness",
+        }
+
+    def test_rename_carries_to_the_portal_header_name_not_the_slug(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        """The portal reads its header name from the slug row, so a rename
+        updates ``display_name`` there; the slug (clients' URL) is untouched."""
+        mock_user_repo.update(mock_user)
+        fake_session = MagicMock()
+        fake_session.get.return_value = self._practice()
+        with (
+            patch(
+                "app.auth.service._resolve_practice_from_email",
+                return_value=("practice-1", "practice_1"),
+            ),
+            patch("app.db.get_db_session", return_value=fake_session),
+        ):
+            response = client.patch(
+                "/api/users/me/professional-info", json={"practice_name": "Center for Wellness"}
+            )
+        assert response.status_code == 200
+        statement = fake_session.execute.call_args.args[0]
+        assert statement.table.name == "companion_practice_slugs"
+        params = statement.compile().params
+        assert params["display_name"] == "Center for Wellness"
+        assert "slug" not in params
+
+    def test_unchanged_name_is_not_audited(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        with patch("app.services.audit_service.AuditService.log") as audit_log:
+            response = self._patch(client, self._practice(), {"practice_name": "Jane Doe"})
+        assert response.status_code == 200
+        audit_log.assert_not_called()
+
+    def test_non_owner_rename_refused_and_nothing_else_written(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        mock_user.legal_name = "Original Legal"
+        mock_user_repo.update(mock_user)
+        practice = self._practice(owner_email="owner@example.com")
+        response = self._patch(
+            client, practice, {"practice_name": "Hijacked", "legal_name": "Changed Legal"}
+        )
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "NOT_PRACTICE_OWNER"
+        assert practice.name == "Jane Doe"
+        # Refused whole, not half-applied.
+        stored = mock_user_repo.get(mock_user.id)
+        assert stored is not None
+        assert stored.legal_name == "Original Legal"
+
+    def test_non_owner_cannot_change_address_or_phone(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        practice = self._practice(owner_email="owner@example.com", address="1 Owner St")
+        for body in ({"business_address": "5 Oak Ave"}, {"practice_phone": "555-0100"}):
+            response = self._patch(client, practice, body)
+            assert response.status_code == 403, body
+        assert practice.address == "1 Owner St"
+        assert practice.phone is None
+
+    def test_non_owner_can_still_save_their_own_credentials(
+        self,
+        client: Any,
+        mock_user: User,
+        mock_user_repo: InMemoryUserRepository,
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        practice = self._practice(owner_email="owner@example.com")
+        response = self._patch(client, practice, {"legal_name": "Sam Clinician"})
+        assert response.status_code == 200
+        stored = mock_user_repo.get(mock_user.id)
+        assert stored is not None
+        assert stored.legal_name == "Sam Clinician"
+
+    def test_blank_name_rejected(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        practice = self._practice()
+        response = self._patch(client, practice, {"practice_name": "   "})
+        assert response.status_code == 400
+        assert practice.name == "Jane Doe"
+
+    def test_status_reports_ownership(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        for owner_email, expected in (
+            ("test@example.com", True),
+            ("", True),
+            ("owner@example.com", False),
+        ):
+            fake_session = MagicMock()
+            fake_session.get.return_value = self._practice(owner_email=owner_email)
+            with (
+                patch("app.settings.get_settings") as mock_settings,
+                patch(
+                    "app.auth.service._resolve_practice_from_email",
+                    return_value=("practice-1", "practice_1"),
+                ),
+                patch("app.db.get_db_session", return_value=fake_session),
+            ):
+                mock_settings.return_value.is_saas = False
+                body = client.get("/api/users/me/status").json()
+            assert body["is_practice_owner"] is expected, owner_email
 
 
 class TestAudioRetentionSelfService:
@@ -984,6 +1149,7 @@ class TestAcceptBaaSnapshot:
             )
         )
         practice = SimpleNamespace(
+            owner_email="test@example.com",
             name="Jane's Practice",
             address="5 Oak Ave",
             baa_accepted_at=None,
@@ -1026,6 +1192,162 @@ class TestAcceptBaaSnapshot:
         assert stored.baa_version == "2024-01-01"
 
 
+class TestAcceptBaaByNonOwner:
+    """A clinician who does not own the practice still clears their own BAA
+    gate at onboarding, but cannot replace the owner's signed snapshot."""
+
+    def test_non_owner_acceptance_stamps_user_but_leaves_practice_snapshot(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        mock_user.baa_accepted_at = None
+        mock_user_repo.update(mock_user)
+        practice = SimpleNamespace(
+            id="practice-1",
+            owner_email="owner@example.com",
+            name="Center for Wellness",
+            address="5 Oak Ave",
+            baa_accepted_at="2026-09-01T00:00:00Z",
+            baa_version="2024-01-01",
+            baa_legal_name="Owner Legal",
+            baa_license_number="LIC1",
+            baa_license_state="MI",
+            baa_practice_name="Center for Wellness",
+            baa_business_address="5 Oak Ave",
+            baa_full_text="OWNER SIGNED TEXT",
+        )
+        before = dict(vars(practice))
+        fake_session = MagicMock()
+        fake_session.get.return_value = practice
+        with (
+            patch(
+                "app.auth.service._resolve_practice_from_email",
+                return_value=("practice-1", "practice_1"),
+            ),
+            patch("app.db.get_db_session", return_value=fake_session),
+            patch("app.routes.users._resolve_baa_path") as mock_path,
+        ):
+            mock_path.return_value.read_text.return_value = "BAA TEXT"
+            response = client.post(
+                "/api/users/me/accept-baa", json={"accepted": True, "version": "2024-01-01"}
+            )
+        assert response.status_code == 200
+        assert vars(practice) == before
+        assert response.json()["signed_practice_name"] == "Center for Wellness"
+        stored = mock_user_repo.get(mock_user.id)
+        assert stored is not None
+        assert stored.baa_accepted_at is not None
+        assert stored.baa_version == "2024-01-01"
+
+
+class TestBaaResign:
+    """The owner may sign the current BAA again outside onboarding, with an
+    MFA-satisfied session; the new snapshot names the practice as it is
+    called now."""
+
+    def _practice(self, **overrides: Any) -> SimpleNamespace:
+        defaults: dict[str, Any] = {
+            "id": "practice-1",
+            "owner_email": "test@example.com",
+            "name": "Center for Wellness",
+            "address": "5 Oak Ave",
+            "baa_accepted_at": None,
+            "baa_version": "2024-01-01",
+            "baa_legal_name": "Jane Q. Therapist",
+            "baa_license_number": None,
+            "baa_license_state": None,
+            "baa_practice_name": "Jane Doe",
+            "baa_business_address": "5 Oak Ave",
+            "baa_full_text": "OLD TEXT",
+        }
+        defaults.update(overrides)
+        return SimpleNamespace(**defaults)
+
+    def _post(self, client: Any, practice: SimpleNamespace, version: str) -> Any:
+        fake_session = MagicMock()
+        fake_session.get.return_value = practice
+        with (
+            patch(
+                "app.auth.service._resolve_practice_from_email",
+                return_value=("practice-1", "practice_1"),
+            ),
+            patch("app.db.get_db_session", return_value=fake_session),
+            patch("app.routes.users._resolve_baa_path") as mock_path,
+        ):
+            mock_path.return_value.read_text.return_value = "CURRENT TEXT"
+            app.dependency_overrides[get_baa_version] = lambda: "2026-09-26"
+            try:
+                return client.post(
+                    "/api/users/me/practice/baa/resign",
+                    json={"accepted": True, "version": version},
+                )
+            finally:
+                app.dependency_overrides.pop(get_baa_version, None)
+
+    def test_owner_resign_replaces_snapshot_with_current_name(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        mock_user.legal_name = "Jane Q. Therapist"
+        mock_user_repo.update(mock_user)
+        practice = self._practice()
+        with patch("app.services.audit_service.AuditService.log") as audit_log:
+            response = self._post(client, practice, "2026-09-26")
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["signed_practice_name"] == "Center for Wellness"
+        assert body["version"] == "2026-09-26"
+        assert practice.baa_practice_name == "Center for Wellness"
+        assert practice.baa_version == "2026-09-26"
+        assert practice.baa_full_text == "CURRENT TEXT"
+        assert practice.baa_accepted_at is not None
+        audit_log.assert_called_once()
+        assert audit_log.call_args.args[0] == "baa_resigned"
+
+    def test_non_owner_cannot_resign(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        practice = self._practice(owner_email="owner@example.com")
+        response = self._post(client, practice, "2026-09-26")
+        assert response.status_code == 403
+        assert practice.baa_practice_name == "Jane Doe"
+
+    def test_only_current_version_can_be_signed(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        practice = self._practice()
+        response = self._post(client, practice, "2024-01-01")
+        assert response.status_code == 400
+        assert practice.baa_practice_name == "Jane Doe"
+
+    def test_resign_requires_mfa_unlike_onboarding_accept(self) -> None:
+        """Re-signing is not an onboarding gate, so its dependency tree must
+        reach ``require_mfa``; ``accept-baa`` deliberately does not."""
+
+        def reaches(dependant: Any, target: Any) -> bool:
+            return any(d.call is target or reaches(d, target) for d in dependant.dependencies)
+
+        routes = {path: r for path, r in iter_api_routes(app) if "POST" in (r.methods or ())}
+        assert reaches(routes["/api/users/me/practice/baa/resign"].dependant, require_mfa)
+        assert not reaches(routes["/api/users/me/accept-baa"].dependant, require_mfa)
+
+    def test_baa_status_reports_signed_practice_name(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        fake_session = MagicMock()
+        fake_session.get.return_value = self._practice()
+        with (
+            patch(
+                "app.auth.service._resolve_practice_from_email",
+                return_value=("practice-1", "practice_1"),
+            ),
+            patch("app.db.get_db_session", return_value=fake_session),
+        ):
+            body = client.get("/api/users/me/baa-status").json()
+        assert body["signed_practice_name"] == "Jane Doe"
+
+
 class TestBaaEndpointsNoMfaPosture:
     """Regression guard: BAA endpoints must be pre-MFA-onboarding (#2),
     not MFA-required (#1).
@@ -1049,7 +1371,8 @@ class TestBaaEndpointsNoMfaPosture:
         self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
     ) -> None:
         mock_user_repo.update(mock_user)
-        response = client.get("/api/users/me/baa-status")
+        with patch("app.auth.service._resolve_practice_from_email", return_value=None):
+            response = client.get("/api/users/me/baa-status")
         assert response.status_code == 200, (
             f"expected 200 (no-MFA posture); got {response.status_code}: {response.text}"
         )
