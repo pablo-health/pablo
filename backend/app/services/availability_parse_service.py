@@ -212,6 +212,15 @@ _APPOINTMENT_TYPES_PROMPT = (
     "appointment_type to that name copied exactly as spelled above. A "
     "sentence naming no kind of appointment leaves appointment_type null, "
     "which applies the rule to every kind -- the ordinary case.\n\n"
+    "The everyday words for a visit -- session, appointment, meeting, "
+    "visit -- name no kind on their own, even when one of "
+    'the types above shares the word. "No sessions on Fridays" and "at '
+    'most six appointments a day" apply to every kind, so '
+    "appointment_type stays null. Scope a rule to a type only when "
+    'the sentence singles that kind out from the others ("intakes", '
+    '"consultations", "regular sessions but not intakes"). Leaving a rule '
+    "unscoped by mistake is safe; scoping one by mistake leaves every other "
+    "kind of appointment unblocked.\n\n"
     "Never write an appointment_type that is not on the list. If the "
     "sentence names a kind of appointment this practice does not have, "
     'leave proposals empty and refuse with refusal_reason "unknown_'
