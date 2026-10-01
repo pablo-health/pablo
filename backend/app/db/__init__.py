@@ -1951,10 +1951,10 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
             # A calendar's answers are shared by every armed clinician, a
             # feed's are their clinician's, and rows from before scopes carry
             # plain-text identifiers and stay their owner's until adopted. The
-            # column guard lets the
-            # reconcile replay over a schema that predates the ``scope``
-            # column: such a schema keeps the owner-only shape below until
-            # its own upgrade adds it.
+            # column guard lets the reconcile replay over a schema that
+            # predates the ``scope`` column: such a schema keeps the
+            # owner-only shape below until its own upgrade adds it.
+            # ``single_practice_migration`` mirrors this branch.
             from .practice_answers import apply_practice_answers_policy
 
             apply_practice_answers_policy(session, schema_name)

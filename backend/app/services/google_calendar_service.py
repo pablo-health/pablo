@@ -1122,7 +1122,7 @@ class GoogleCalendarService:
         credentials = self._get_credentials(user_id)
         if not credentials:
             return None
-        return _resolve_main_calendar(_build_calendar_service(credentials))
+        return _resolve_main_calendar(self._calendar(credentials))
 
     def read_main_calendar_changes(self, user_id: str) -> MainCalendarRead:
         """What changed on the followed calendar since the last read.
