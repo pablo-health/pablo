@@ -1421,6 +1421,10 @@ class _AudioUploadChannel(BaseModel):
     # client executes it without knowing which provider is configured.
     upload: UploadTarget
     gcs_path: str
+    #: Size of the object already at ``gcs_path`` from an earlier attempt, or
+    #: None. Objects only appear once a PUT completes, so a retrying client
+    #: skips re-sending a channel whose size matches the file it would upload.
+    existing_bytes: int | None = None
 
 
 class _AudioInitResponse(BaseModel):
@@ -1439,6 +1443,11 @@ class _AudioFinalizeResponse(BaseModel):
     message: str
 
 
+def _existing_object_bytes(storage: Any, bucket: str, object_name: str) -> int | None:
+    meta = storage.fetch_metadata(bucket=bucket, object_name=object_name)
+    return meta[0] if meta is not None else None
+
+
 @router.post(
     "/api/sessions/{session_id}/upload-audio/init",
     status_code=status.HTTP_201_CREATED,
@@ -1451,6 +1460,10 @@ def init_audio_upload(
     audit: AuditService = Depends(get_audit_service),
 ) -> _AudioInitResponse:
     """Mint two signed PUT URLs (therapist + client channels).
+
+    Each channel also reports ``existing_bytes`` — the size of the object a
+    previous attempt already landed, or None — so a retry on a slow link
+    re-sends only what is missing. Metadata lookup only; nothing is read.
 
     Audit emission carries channel count and provider only — no
     filename, no caller-provided metadata to redact.
@@ -1505,8 +1518,16 @@ def init_audio_upload(
 
     return _AudioInitResponse(
         session_id=session_id,
-        therapist=_AudioUploadChannel(upload=therapist_target, gcs_path=therapist_path),
-        client=_AudioUploadChannel(upload=client_target, gcs_path=client_path),
+        therapist=_AudioUploadChannel(
+            upload=therapist_target,
+            gcs_path=therapist_path,
+            existing_bytes=_existing_object_bytes(storage, bucket, therapist_path),
+        ),
+        client=_AudioUploadChannel(
+            upload=client_target,
+            gcs_path=client_path,
+            existing_bytes=_existing_object_bytes(storage, bucket, client_path),
+        ),
         max_bytes=_MAX_AUDIO_SIZE,
     )
 
