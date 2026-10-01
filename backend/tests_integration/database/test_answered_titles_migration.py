@@ -11,6 +11,7 @@ the downgrade takes the columns away and nothing else.
 
 from __future__ import annotations
 
+import base64
 import os
 import uuid
 from datetime import UTC, datetime
@@ -21,12 +22,14 @@ from alembic.script import ScriptDirectory
 from app.db import PLATFORM_SCHEMA
 from app.db.migrate_tenants import TenantStatus, _alembic_config_for, upgrade_tenant_schema
 from app.db.provisioning import _ALEMBIC_INI_PATH, create_practice_schema, ensure_schemas
+from app.patients.identifiers import calendar_scope, identifier_digest
 from app.repositories.ical_sync_config import ICalSyncConfig
 from app.repositories.patient_source_mapping import PatientSourceMapping
 from app.repositories.postgres.ical_sync_config import PostgresICalSyncConfigRepository
 from app.repositories.postgres.patient_source_mapping import (
     PostgresPatientSourceMappingRepository,
 )
+from app.settings import get_settings
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
@@ -39,6 +42,8 @@ pytestmark = pytest.mark.skipif(
 _PARENT = "b8e1f5a3c7d2"
 _UNDER_TEST = "c3f7a1d9e2b4"
 _USER_ID = "11111111-2222-3333-4444-555555555555"
+#: The calendar the repository test's answer is remembered under.
+_CALENDAR = calendar_scope("me@example.test")
 
 
 @pytest.fixture
@@ -46,6 +51,15 @@ def engine():
     eng = create_engine(_db_url, pool_pre_ping=True)
     ensure_schemas(eng)
     return eng
+
+
+@pytest.fixture(autouse=True)
+def _calendar_key(monkeypatch: pytest.MonkeyPatch):
+    """The secret identifiers are digested under; the repository test needs it."""
+    monkeypatch.setenv("GOOGLE_CALENDAR_ENCRYPTION_KEY", base64.b64encode(os.urandom(32)).decode())
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 def _set_rls(conn, schema: str, table: str, *, on: bool) -> None:
@@ -167,10 +181,11 @@ def test_the_repositories_write_and_read_the_new_columns(engine, tenant_at_paren
         mappings = PostgresPatientSourceMappingRepository(session)
         mappings.save(
             PatientSourceMapping(
-                user_id=_USER_ID,
+                scope=_CALENDAR,
                 source="google_calendar",
-                source_identifier="series:wk",
+                identifier_digest=identifier_digest("series:wk"),
                 patient_id=None,
+                answered_by_user_id=_USER_ID,
                 answer="not_a_client",
                 answered_title="a" * 64,
             )
@@ -182,10 +197,10 @@ def test_the_repositories_write_and_read_the_new_columns(engine, tenant_at_paren
     with Session(engine) as session:
         session.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
         session.execute(text(f"SET app.current_user_id = '{_USER_ID}'"))
-        mapping = PostgresPatientSourceMappingRepository(session).get(
-            _USER_ID, "google_calendar", "series:wk"
+        [mapping] = PostgresPatientSourceMappingRepository(session).list_by_source(
+            _CALENDAR, "google_calendar"
         )
-        assert mapping is not None
+        assert mapping.identifier_digest == identifier_digest("series:wk")
         assert mapping.answered_title == "a" * 64
         config = PostgresICalSyncConfigRepository(session).get(_USER_ID, "simplepractice")
         assert config is not None

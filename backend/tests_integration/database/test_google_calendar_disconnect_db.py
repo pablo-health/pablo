@@ -30,6 +30,7 @@ from alembic.config import Config
 from app.calendar_providers.disconnect import Forgotten, forget_google_calendar
 from app.db import _current_tenant_schema, arm_current_user_id, set_tenant_schema
 from app.models.patient import Patient
+from app.patients.identifiers import calendar_scope, clinician_scope
 from app.repositories.external_calendar_event import ANSWER_OPEN, ExternalCalendarEvent
 from app.repositories.patient_source_mapping import PatientSourceMapping
 from app.repositories.postgres.appointment import PostgresAppointmentRepository
@@ -104,6 +105,32 @@ def _as(engine: Engine, schema: str, user_id: str, opened: list[Session]) -> Ses
     return sess
 
 
+def _shared_calendar() -> str:
+    """A calendar several clinicians follow, whose answers they all share.
+
+    One per test: the schema outlives a test, and a shared calendar's
+    answers are visible to every clinician in it.
+    """
+    return calendar_scope(f"team-{uuid.uuid4().hex[:8]}@group.calendar.google.test")
+
+
+def _answers(sess: Session, source: str, scope: str | None = None) -> int:
+    """Answers this session can see for a source: in one scope, or from before scopes."""
+    query = (
+        _ANSWERS_BEFORE_SCOPES
+        if scope is None
+        else text(
+            "SELECT count(*) FROM patient_source_mappings WHERE source = :s AND scope = :scope"
+        )
+    )
+    return int(sess.execute(query, {"s": source, "scope": scope}).scalar_one())
+
+
+_ANSWERS_BEFORE_SCOPES = text(
+    "SELECT count(*) FROM patient_source_mappings WHERE source = :s AND scope IS NULL"
+)
+
+
 class _Calendar:
     """One clinician's calendar history, seeded through the real repositories."""
 
@@ -143,15 +170,52 @@ class _Calendar:
         self.events.save(row)
         return row
 
-    def remember(self, source: str) -> None:
+    @property
+    def own_calendar(self) -> str:
+        """The scope of this clinician's own main calendar."""
+        return calendar_scope(f"{self.user_id}@example.test")
+
+    def remember(self, source: str, scope: str | None = None) -> str:
+        """An answer this clinician gave; its identifier digest.
+
+        A calendar answer is the calendar's (their own unless ``scope`` says
+        otherwise); a feed answer is the clinician's own.
+        """
+        if scope is None:
+            scope = self.own_calendar if source == GOOGLE else clinician_scope(self.user_id)
+        digest = f"series:{uuid.uuid4().hex}"
         self.mappings.save(
             PatientSourceMapping(
-                user_id=self.user_id,
+                scope=scope,
                 source=source,
-                source_identifier=f"series:{uuid.uuid4().hex[:8]}",
+                identifier_digest=digest,
                 patient_id=self.patient.id,
+                answered_by_user_id=self.user_id,
             )
         )
+        return digest
+
+    def remember_before_scopes(self, source: str) -> None:
+        """An answer as the table held it before answers had a scope."""
+        identifier = f"series:{uuid.uuid4().hex[:8]}"
+        self.sess.execute(
+            text(
+                "INSERT INTO patient_source_mappings"
+                " (doc_id, user_id, source, source_identifier, answer, patient_id, created_at)"
+                " VALUES (:d, CAST(:u AS uuid), :s, :i, 'client', CAST(:p AS uuid), now())"
+            ),
+            {
+                "d": f"{self.user_id}_{source}_{identifier}",
+                "u": self.user_id,
+                "s": source,
+                "i": identifier,
+                "p": self.patient.id,
+            },
+        )
+        self.sess.flush()
+
+    def answers(self, source: str, scope: str | None = None) -> int:
+        return _answers(self.sess, source, scope)
 
     def appointment(self, **links: str) -> Appointment:
         """An appointment, carrying the given google_* / outside_* fields.
@@ -245,13 +309,15 @@ def test_disconnect_removes_what_was_read_and_keeps_pablos_records(
     engine: Engine, tenant_schema: str, sessions: list[Session]
 ) -> None:
     user_id = str(uuid.uuid4())
+    shared = _shared_calendar()
     cal = _Calendar(_as(engine, tenant_schema, user_id, sessions), user_id)
 
     cal.event(GOOGLE)
     answered = cal.event(GOOGLE, answer="client")
     feed_event = cal.event(FEED)
     cal.remember(GOOGLE)
-    cal.remember(GOOGLE)
+    cal.remember(GOOGLE, shared)
+    cal.remember_before_scopes(GOOGLE)
     cal.remember(FEED)
     pushed = cal.appointment(
         google_event_id="pushed-evt",
@@ -275,13 +341,17 @@ def test_disconnect_removes_what_was_read_and_keeps_pablos_records(
     forgotten = cal.forget()
 
     assert forgotten == Forgotten(
-        calendar_events_deleted=2, remembered_answers_deleted=2, appointments_unfollowed=1
+        calendar_events_deleted=2, remembered_answers_deleted=3, appointments_unfollowed=1
     )
     assert [e.id for e in cal.events.list_by_source(user_id, GOOGLE)] == []
-    assert cal.mappings.list_by_source(user_id, GOOGLE) == []
+    # Every answer they gave about Google goes: on their own calendar, on a
+    # shared one, and from before answers had a scope.
+    assert cal.answers(GOOGLE, cal.own_calendar) == 0
+    assert cal.answers(GOOGLE, shared) == 0
+    assert cal.answers(GOOGLE) == 0
     # A followed feed is its own connection.
     assert [e.id for e in cal.events.list_by_source(user_id, FEED)] == [feed_event.id]
-    assert len(cal.mappings.list_by_source(user_id, FEED)) == 1
+    assert cal.answers(FEED, clinician_scope(user_id)) == 1
 
     # Every appointment stays. The one following a Google event stops
     # following it, and the status that reported on that event goes with it.
@@ -324,22 +394,33 @@ def test_another_clinicians_google_calendar_is_untouched(
     engine: Engine, tenant_schema: str, sessions: list[Session]
 ) -> None:
     leaving, staying = str(uuid.uuid4()), str(uuid.uuid4())
+    shared = _shared_calendar()
     theirs = _Calendar(_as(engine, tenant_schema, staying, sessions), staying)
     their_event = theirs.event(GOOGLE)
     theirs.remember(GOOGLE)
+    their_shared = theirs.remember(GOOGLE, shared)
     their_push = theirs.appointment(google_event_id="their-evt", google_sync_status="synced")
     theirs.sess.commit()
 
     mine = _Calendar(_as(engine, tenant_schema, leaving, sessions), leaving)
     mine.event(GOOGLE)
+    mine.remember(GOOGLE, shared)
+    mine.sess.commit()
+    assert mine.answers(GOOGLE, shared) == 2
     mine.forget()
     mine.sess.commit()
 
     reread = _as(engine, tenant_schema, staying, sessions)
     events = PostgresExternalCalendarEventRepository(reread)
     assert [e.id for e in events.list_by_source(staying, GOOGLE)] == [their_event.id]
-    remembered = PostgresPatientSourceMappingRepository(reread).list_by_source(staying, GOOGLE)
-    assert len(remembered) == 1
+    answers = PostgresPatientSourceMappingRepository(reread)
+    assert len(answers.list_by_source(theirs.own_calendar, GOOGLE)) == 1
+    # On the calendar they share, the colleague's answer stays and the
+    # leaving clinician's goes.
+    on_shared = answers.list_by_source(shared, GOOGLE)
+    assert [(a.identifier_digest, a.answered_by_user_id) for a in on_shared] == [
+        (their_shared, staying)
+    ]
     kept = PostgresAppointmentRepository(reread).get(their_push.id, staying)
     assert kept is not None
     assert kept.google_event_id == "their-evt"
@@ -361,9 +442,12 @@ def test_the_purge_is_scoped_by_clinician_even_where_rls_is_not(
         pytest.skip("needs the testcontainer's superuser; an external database has none here")
 
     leaving, staying = str(uuid.uuid4()), str(uuid.uuid4())
+    shared = _shared_calendar()
     theirs = _Calendar(_as(engine, tenant_schema, staying, sessions), staying)
     theirs.event(GOOGLE)
     theirs.remember(GOOGLE)
+    theirs.remember(GOOGLE, shared)
+    theirs.remember_before_scopes(GOOGLE)
     their_push = theirs.appointment(google_event_id="their-evt", google_sync_status="synced")
     their_follow = theirs.appointment(outside_source=GOOGLE, outside_event_id="their-followed")
     theirs.sess.commit()
@@ -385,8 +469,9 @@ def test_the_purge_is_scoped_by_clinician_even_where_rls_is_not(
 
     reread = _as(engine, tenant_schema, staying, sessions)
     assert len(PostgresExternalCalendarEventRepository(reread).list_by_source(staying, GOOGLE)) == 1
-    remembered = PostgresPatientSourceMappingRepository(reread).list_by_source(staying, GOOGLE)
-    assert len(remembered) == 1
+    assert _answers(reread, GOOGLE, theirs.own_calendar) == 1
+    assert _answers(reread, GOOGLE, shared) == 1
+    assert _answers(reread, GOOGLE) == 1
     appointments = PostgresAppointmentRepository(reread)
     kept_push = appointments.get(their_push.id, staying)
     kept_follow = appointments.get(their_follow.id, staying)

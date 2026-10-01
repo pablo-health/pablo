@@ -256,7 +256,12 @@ class SyncSchedulerService:
         under the same guards as Pablo's own sessions.
         """
         read = self._google_calendar_service.read_main_calendar_changes(user_id)
-        outside = self._outside().in_zone(self._zone(user_id))
+        # The main calendar, when known: what rows and answers from before
+        # calendars were recorded are about.
+        main_calendar_id = (
+            read.main_calendar_id or self._google_calendar_service.known_main_calendar_id(user_id)
+        )
+        outside = self._outside().in_zone(self._zone(user_id)).with_main_calendar(main_calendar_id)
         if read.main_calendar_id is not None:
             # Rows from before calendars were recorded came from here.
             outside.claim_unrecorded(user_id, read.main_calendar_id)

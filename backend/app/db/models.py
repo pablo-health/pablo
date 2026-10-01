@@ -1684,6 +1684,32 @@ class EhrRouteRow(Base):
 
 class AppointmentRow(Base):
     __tablename__ = "appointments"
+    __table_args__ = (
+        # One outside event is at most one live appointment in the practice:
+        # two clinicians following one shared calendar must never book the
+        # same session twice. A feed is one clinician's, and sessions booked
+        # before calendars were recorded have no calendar, so those are kept
+        # unique per clinician instead.
+        Index(
+            "uq_appointments_outside_event_per_calendar",
+            "outside_source",
+            "outside_calendar_id",
+            "outside_event_id",
+            unique=True,
+            postgresql_where=text("status <> 'cancelled' AND outside_calendar_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_appointments_outside_event_per_clinician",
+            "outside_source",
+            "user_id",
+            "outside_event_id",
+            unique=True,
+            postgresql_where=text(
+                "status <> 'cancelled' AND outside_calendar_id IS NULL "
+                "AND outside_event_id IS NOT NULL"
+            ),
+        ),
+    )
 
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
@@ -2197,11 +2223,19 @@ class TelehealthConnectionRow(Base):
 
 
 class PatientSourceMappingRow(Base):
-    """What an outside source's identifier means, once the clinician said so.
+    """What an outside source's identifier means, once someone in the practice said so.
 
     Either a client (``answer='client'`` with the patient it is) or not a
     client at all (``answer='not_a_client'``, no patient), such as a standing
     staff meeting on a calendar, so it is never asked about again.
+
+    The answer is the practice's, keyed by ``(scope, source, source_identifier)``
+    where ``scope`` is ``practice`` or one calendar's and ``source_identifier``
+    is a keyed digest (``app.patients.identifiers``). Rows with no ``scope``
+    are from before that: one clinician's (``user_id``), with the identifier
+    in plain text. The row policy shows them to that clinician alone, and
+    the app adopts them into the practice's answers on first read; ``user_id``
+    stays required and is filled with the answerer until they are gone.
     """
 
     __tablename__ = "patient_source_mappings"
@@ -2212,6 +2246,14 @@ class PatientSourceMappingRow(Base):
         CheckConstraint(
             "(answer = 'client') = (patient_id IS NOT NULL)",
             name="ck_patient_source_mappings_patient_when_client",
+        ),
+        Index(
+            "uq_patient_source_mappings_scoped",
+            "scope",
+            "source",
+            "source_identifier",
+            unique=True,
+            postgresql_where=text("scope IS NOT NULL"),
         ),
     )
 
@@ -2225,6 +2267,13 @@ class PatientSourceMappingRow(Base):
     #: ``app.calendar_providers.source_identity.answered_title_digest``.
     answered_title: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: ``practice``, or ``calendar:<id>``. NULL on a row from before answers
+    #: were the practice's.
+    scope: Mapped[str | None] = mapped_column(Text)
+    #: Who answered: a fact about the answer, not part of its key.
+    answered_by_user_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    #: Whose session a calendar's answer books for.
+    session_clinician_user_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
 
 
 class ExternalCalendarEventRow(Base):

@@ -207,6 +207,7 @@ class _Seeded:
     def __init__(self, engine: Engine, schema: str, *, connected: bool = True) -> None:
         from app.db import arm_current_user_id, set_tenant_schema  # noqa: PLC0415
         from app.models.patient import Patient  # noqa: PLC0415
+        from app.patients.identifiers import calendar_scope, clinician_scope  # noqa: PLC0415
         from app.repositories.external_calendar_event import (  # noqa: PLC0415
             ExternalCalendarEvent,
         )
@@ -276,16 +277,37 @@ class _Seeded:
                         title="Followed Client",
                     )
                 )
+            # An answer about the clinician's own calendar, one about their
+            # feed, and one about Google from before answers had a scope.
             mappings = PostgresPatientSourceMappingRepository(sess)
-            for source in (_GOOGLE, _FEED):
+            for source, scope in (
+                (_GOOGLE, calendar_scope(_TENANT_EMAIL)),
+                (_FEED, clinician_scope(_USER_ID)),
+            ):
                 mappings.save(
                     PatientSourceMapping(
-                        user_id=_USER_ID,
+                        scope=scope,
                         source=source,
-                        source_identifier=f"series:{uuid.uuid4().hex[:8]}",
+                        identifier_digest=f"series:{uuid.uuid4().hex}",
                         patient_id=patient.id,
+                        answered_by_user_id=_USER_ID,
                     )
                 )
+            legacy = f"series:{uuid.uuid4().hex[:8]}"
+            sess.execute(
+                text(
+                    "INSERT INTO patient_source_mappings"
+                    " (doc_id, user_id, source, source_identifier, answer, patient_id, created_at)"
+                    " VALUES (:d, CAST(:u AS uuid), :s, :i, 'client', CAST(:p AS uuid), now())"
+                ),
+                {
+                    "d": f"{_USER_ID}_{_GOOGLE}_{legacy}",
+                    "u": _USER_ID,
+                    "s": _GOOGLE,
+                    "i": legacy,
+                    "p": patient.id,
+                },
+            )
             self.appointment_id = str(uuid.uuid4())
             PostgresAppointmentRepository(sess).create(
                 Appointment(
@@ -350,7 +372,7 @@ class _Seeded:
         """The reads can see what was written — so a zero after is a deletion."""
         assert self.rows("google_calendar_tokens") == (1 if self.connected else 0)
         assert self.rows("external_calendar_events", _GOOGLE) == 2
-        assert self.rows("patient_source_mappings", _GOOGLE) == 1
+        assert self.rows("patient_source_mappings", _GOOGLE) == 2
 
 
 def _revoked(status_code: int = 200) -> MagicMock:
@@ -395,7 +417,7 @@ def test_disconnect_revokes_removes_what_was_read_and_keeps_pablos_records(
     [audit] = seeded.disconnect_audits()
     assert audit.changes == {
         "calendar_events_deleted": 2,
-        "remembered_answers_deleted": 1,
+        "remembered_answers_deleted": 2,
         "appointments_unfollowed": 0,
     }
     assert audit.patient_id is None
@@ -448,7 +470,7 @@ def test_a_failure_after_the_deletes_leaves_every_row_in_place(
     assert response.status_code == 500
     assert seeded.rows("google_calendar_tokens") == 1
     assert seeded.rows("external_calendar_events", _GOOGLE) == 2
-    assert seeded.rows("patient_source_mappings", _GOOGLE) == 1
+    assert seeded.rows("patient_source_mappings", _GOOGLE) == 2
     assert seeded.scalar(
         "SELECT google_event_id FROM appointments WHERE id = CAST(:a AS uuid)",
         a=seeded.appointment_id,

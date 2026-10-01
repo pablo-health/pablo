@@ -3,10 +3,12 @@
 """What disconnecting Google Calendar removes besides the tokens.
 
 Everything Pablo read from the calendar goes: the events it followed,
-asked about or answered (``external_calendar_events``), and the answers it
-remembered for them (``patient_source_mappings`` under the Google source).
-A clinician who disconnects reasonably expects Pablo to stop holding what it
-read from their calendar.
+asked about or answered (``external_calendar_events``), and every answer the
+clinician gave about them (``patient_source_mappings`` under the Google
+source). That includes answers on a calendar shared with colleagues, which a
+colleague who still follows it is asked again; an answer a colleague gave
+stays. A clinician who disconnects reasonably expects Pablo to stop holding
+what it read from their calendar.
 
 Pablo's own records stay. An appointment booked in Pablo — including one
 booked from an answered outside session — belongs to the clinician, with
@@ -59,7 +61,7 @@ def forget_google_calendar(
     """Remove what Pablo read from this clinician's Google Calendar."""
     return Forgotten(
         calendar_events_deleted=events.delete_by_source(user_id, GOOGLE_CALENDAR_SOURCE),
-        remembered_answers_deleted=mappings.delete_by_source(user_id, GOOGLE_CALENDAR_SOURCE),
+        remembered_answers_deleted=mappings.forget_answers_by(user_id, GOOGLE_CALENDAR_SOURCE),
         appointments_unfollowed=appointments.unfollow_outside_events(
             user_id, GOOGLE_CALENDAR_SOURCE
         ),

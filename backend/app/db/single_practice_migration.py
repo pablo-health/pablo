@@ -89,6 +89,10 @@ class Shape(Enum):
     #: restricted rows are the author's alone (``rls_note_access``).
     NOTES = "note_access"
     CHAT_MESSAGES = "chat_message_access"
+    #: ``patient_source_mappings`` once it carries ``scope``
+    #: (``rls_practice_answers``): a calendar's answers are any armed
+    #: clinician's, a clinician's own and the old unscoped rows are their owner's.
+    PRACTICE_ANSWERS = "practice_answers"
 
 
 @dataclass(frozen=True)
@@ -143,6 +147,10 @@ def _classify(table_name: str, columns: set[str]) -> Shape:
     # patient_id shape below.
     if table_name == "notes" and "restricted" in columns:
         return Shape.NOTES
+    # Mirrors the ``patient_source_mappings`` / ``scope`` branch the same way:
+    # before the revision that adds the column, the table is plain user_id.
+    if table_name == "patient_source_mappings" and "scope" in columns:
+        return Shape.PRACTICE_ANSWERS
     for column, shape in _CLASSIFY_BY_COLUMN:
         if column in columns:
             return shape
@@ -213,6 +221,21 @@ def _chat_message(schema: str, table: str) -> str:
     )
 
 
+def _practice_answer(_schema: str, _table: str) -> str:
+    """Mirrors ``rls_practice_answers`` (``app.db.practice_answers``).
+
+    A calendar's answer is any armed clinician's, so never orphaned. A
+    clinician's own answer is orphaned when its scope names nobody, and an old
+    unscoped row when it names no owner. Any other scope matches no arm of the
+    policy, so nobody can read it.
+    """
+    return (
+        "(scope IS NULL AND user_id IS NULL) "
+        "OR (scope IS NOT NULL AND scope NOT LIKE 'calendar:%' "
+        "AND (scope NOT LIKE 'clinician:%' OR scope = 'clinician:'))"
+    )
+
+
 #: One entry per shape. A dispatch table rather than a branch chain so that
 #: adding a shape without its predicate is a KeyError at the point of use —
 #: loud — instead of a fall-through that reports the table clean.
@@ -225,6 +248,7 @@ _ORPHAN_PREDICATE = {
     Shape.PATIENT_DOCUMENTS: _patient_document,
     Shape.NOTES: _note,
     Shape.CHAT_MESSAGES: _chat_message,
+    Shape.PRACTICE_ANSWERS: _practice_answer,
 }
 
 
