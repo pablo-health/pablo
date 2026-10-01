@@ -75,6 +75,7 @@ from app.calendar_providers import pkce_store  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import User  # noqa: E402
 from app.portal import module_gate as portal_module_gate  # noqa: E402
+from app.portal import practice_hosts as portal_practice_hosts  # noqa: E402
 from app.portal.portal_settings import NOT_OFFERED  # noqa: E402
 from app.repositories import (  # noqa: E402
     InMemoryAllowlistRepository,
@@ -173,6 +174,18 @@ def portal_modules_all_on(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         portal_module_gate, "portal_settings_for_schema", lambda _schema: NOT_OFFERED
     )
+
+
+@pytest.fixture(autouse=True)
+def no_practice_portal_hosts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A practice with no portal host of its own, so links use the default origin.
+
+    Autouse because every portal link asks for the practice's primary host
+    first (``app.portal.factory``), and this suite has no platform table to
+    ask. The lookup and the links on a practice's host are proven against
+    Postgres in ``tests_integration/database/test_portal_hosts_db.py``.
+    """
+    monkeypatch.setattr(portal_practice_hosts, "primary_portal_host_for_slug", lambda _slug: None)
 
 
 @pytest.fixture(autouse=True)

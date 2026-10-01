@@ -68,8 +68,10 @@ services:
       - ENVIRONMENT=development
       # The second origin is the portal's own host on this stack (the
       # frontend's PORTAL_HOSTS): the same server, reached by another name,
-      # and a portal page there calls this API cross-origin.
-      - CORS_ORIGINS=http://localhost:${E2E_FRONTEND_PORT:-3000},http://127.0.0.1:${E2E_FRONTEND_PORT:-3000}
+      # and a portal page there calls this API cross-origin. The third is a
+      # practice's own primary portal host, which practice-own-host.spec.ts
+      # reaches through a browser that resolves it to this machine.
+      - CORS_ORIGINS=http://localhost:${E2E_FRONTEND_PORT:-3000},http://127.0.0.1:${E2E_FRONTEND_PORT:-3000},http://portal.e2e-practice.example:${E2E_FRONTEND_PORT:-3000}
       - CORS_ALLOW_CREDENTIALS=true
       - DATABASE_BACKEND=postgres
       - DATABASE_URL=postgresql://pablo:pablo_dev@postgres:5432/pablo
@@ -467,6 +469,10 @@ services:
       # The backend's CORS_ORIGINS and fake-gcs's allowed origins name this
       # host as well; change the three together.
       - PORTAL_HOSTS=127.0.0.1:${E2E_FRONTEND_PORT:-3000}
+      # The clinician app's own host. Naming it turns on serving a practice's
+      # portal from the practice's own hosts: any other name is looked up,
+      # and serves that practice's portal at its root or answers 404.
+      - APP_HOSTS=localhost
     healthcheck:
       # Distroless runtime: no shell, node at a fixed path.
       test:

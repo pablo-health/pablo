@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 import { authProviderMiddleware } from "@/lib/auth/middleware"
-import { portalHostsFromEnv, routePortalHost } from "@/lib/portal-host/routing"
+import { appHostsFromEnv, classifyHost, routePracticeHost } from "@/lib/portal-host/practice-host"
+import { lookupPracticeHost } from "@/lib/portal-host/practice-host-lookup"
+import { type PortalHostDecision, portalHostsFromEnv, routePortalHost } from "@/lib/portal-host/routing"
 
 const BUILD_ASSET_PREFIX = "/_next/static"
 const BUILD_ASSET_METHODS = ["GET", "HEAD"]
@@ -21,7 +23,12 @@ const FIREBASE_HELPER_PREFIX = "/__/"
 // (PORTAL_HOSTS; see src/lib/portal-host/routing.ts). On that host the
 // clinician app is not served at all. Unset, every request below takes the
 // "default" branch, which is the behaviour from before portal hosts existed.
-export default function proxy(request: NextRequest) {
+//
+// A practice can also serve its portal from a host of its own (APP_HOSTS
+// turns this on; see src/lib/portal-host/practice-host.ts). A host that is
+// not one of this deployment's is looked up, and serves that practice's
+// portal at its root or nothing at all.
+export default async function proxy(request: NextRequest) {
   const { pathname, search, protocol } = request.nextUrl
   if (pathname.startsWith(BUILD_ASSET_PREFIX)) {
     return BUILD_ASSET_METHODS.includes(request.method)
@@ -29,10 +36,18 @@ export default function proxy(request: NextRequest) {
       : new NextResponse(null, { status: 405, headers: { Allow: BUILD_ASSET_METHODS.join(", ") } })
   }
 
-  const decision = routePortalHost(
-    { host: request.headers.get("host"), pathname, search, protocol },
-    portalHostsFromEnv(),
-  )
+  const host = request.headers.get("host")
+  const portalHosts = portalHostsFromEnv()
+  const hostClass = classifyHost(host, appHostsFromEnv(), portalHosts)
+  let decision: PortalHostDecision
+  if (hostClass.kind === "practice" && host) {
+    const found = await lookupPracticeHost(hostClass.hostname)
+    decision = routePracticeHost({ host, hostname: hostClass.hostname, pathname, search, protocol }, found)
+  } else if (hostClass.kind === "unknown") {
+    decision = { kind: "not-found" }
+  } else {
+    decision = routePortalHost({ host, pathname, search, protocol }, portalHosts)
+  }
   switch (decision.kind) {
     case "pass":
       return NextResponse.next()
@@ -40,6 +55,15 @@ export default function proxy(request: NextRequest) {
       return new NextResponse("Not Found", {
         status: 404,
         headers: { "Content-Type": "text/plain; charset=utf-8", "X-Content-Type-Options": "nosniff" },
+      })
+    case "unavailable":
+      return new NextResponse("Service Unavailable", {
+        status: 503,
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          "X-Content-Type-Options": "nosniff",
+          "Retry-After": "5",
+        },
       })
     case "redirect":
       return NextResponse.redirect(decision.location, 301)

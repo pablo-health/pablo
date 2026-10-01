@@ -24,6 +24,7 @@ from urllib.parse import quote
 
 from ..services.email_sender import email_sender_from_settings
 from ..settings import get_settings
+from . import practice_hosts
 from .adapters import CapturingSmsGateway, ConsoleSmsGateway, SmtpInviteDelivery
 from .delivery import (
     DeliveryNotConfigured,
@@ -55,11 +56,14 @@ if TYPE_CHECKING:
 PORTAL_PRACTICE_PATH = "/portal/{slug}"
 INVITE_FRAGMENT_KEY = "invite"
 
-#: slug -> the absolute URL of that practice's portal page, with no trailing
-#: slash and no fragment. The default is ``PORTAL_WEB_BASE_URL`` plus
-#: :data:`PORTAL_PRACTICE_PATH`; a deployment that serves the portal somewhere
-#: else — a host of its own, or a host per practice with no slug in the path —
-#: registers one through :func:`register_portal_address_resolver`.
+#: slug -> the absolute URL of that practice's portal page, with no fragment
+#: and no trailing slash beyond a bare ``/`` path. The default is the root of
+#: the practice's own primary portal host when that host is working
+#: (``https://{host}/``), and otherwise ``PORTAL_WEB_BASE_URL`` plus
+#: :data:`PORTAL_PRACTICE_PATH`. A deployment that serves the portal somewhere
+#: else registers one through :func:`register_portal_address_resolver`, and can
+#: call :func:`app.portal.practice_hosts.primary_portal_host_for_slug` from it
+#: to keep the first half of that rule.
 type PortalAddressResolver = Callable[[str], str]
 
 _invite_delivery_factory: Callable[[], PortalInviteDelivery] | None = None
@@ -180,6 +184,12 @@ def notice_delivery_from_settings() -> PortalNoticeDelivery:
 
 
 def _default_portal_page_url(slug: str) -> str:
+    # The practice's own host first: a client who has used the portal there is
+    # signed in there and nowhere else. Only a working primary counts — a link
+    # to a host still being set up would go nowhere.
+    host = practice_hosts.primary_portal_host_for_slug(slug)
+    if host is not None:
+        return practice_hosts.portal_host_root_url(host)
     base = get_settings().portal_web_base_url.rstrip("/")
     if not base:
         raise DeliveryNotConfiguredError(

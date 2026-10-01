@@ -14,11 +14,12 @@ describe("portalLocation", () => {
     expect(portalLocation("acme", pathname)).toEqual(expected)
   })
 
-  it("falls back to Home on the /portal form for a path that is neither", () => {
-    expect(portalLocation("acme", "/somewhere/else")).toEqual({
-      base: "/portal/acme",
-      section: null,
-    })
+  it.each([
+    ["/", { base: "/", section: null }],
+    ["/refills", { base: "/", section: "refills" }],
+    ["/refills/", { base: "/", section: "refills" }],
+  ])("reads %s on a practice's own host as the root form", (pathname, expected) => {
+    expect(portalLocation("acme", pathname)).toEqual(expected)
   })
 
   it("does not mistake a slug called portal for the prefix", () => {
@@ -33,5 +34,6 @@ describe("portalSectionHref", () => {
   it("adds the section to the base it is given", () => {
     expect(portalSectionHref("/acme", "refills")).toBe("/acme/refills")
     expect(portalSectionHref("/portal/acme", "refills")).toBe("/portal/acme/refills")
+    expect(portalSectionHref("/", "refills")).toBe("/refills")
   })
 })

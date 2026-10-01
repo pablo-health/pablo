@@ -12,12 +12,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import proxy from "../proxy"
 import { authProviderMiddleware } from "@/lib/auth/middleware"
+import { lookupPracticeHost } from "@/lib/portal-host/practice-host-lookup"
 
 // Stubbing the provider chain keeps the edge auth stack (and its env
 // requirements) out of the test environment; what matters here is only
 // whether the proxy delegates to it.
 vi.mock("@/lib/auth/middleware", () => ({
   authProviderMiddleware: vi.fn(() => NextResponse.next()),
+}))
+
+// The backend lookup is its own unit (practice-host-lookup.test.ts); here it
+// only matters what the proxy does with each answer.
+vi.mock("@/lib/portal-host/practice-host-lookup", () => ({
+  lookupPracticeHost: vi.fn(async () => null),
 }))
 
 // proxy.ts (renamed from middleware.ts per the Next 16 convention)
@@ -187,5 +194,99 @@ describe("frontend/proxy.ts portal host", () => {
       expect(response.headers.get("location")).toBeNull()
     }
     expect(authProviderMiddleware).not.toHaveBeenCalled()
+  })
+})
+
+describe("frontend/proxy.ts practice host", () => {
+  const APP = "app.example.org"
+  const PRIMARY = "portal.example.com"
+  const ALIAS = "clients.example.com"
+
+  function at(url: string, host: string) {
+    return new NextRequest(url, { headers: { host } })
+  }
+
+  beforeEach(() => {
+    vi.mocked(authProviderMiddleware).mockClear()
+    vi.mocked(lookupPracticeHost).mockReset()
+    vi.mocked(lookupPracticeHost).mockResolvedValue({ slug: "acme", primaryHost: PRIMARY })
+    vi.stubEnv("APP_HOSTS", APP)
+    vi.stubEnv("PORTAL_HOSTS", "portal.example.org")
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it("looks nothing up when APP_HOSTS is unset", async () => {
+    vi.stubEnv("APP_HOSTS", "")
+    await proxy(at(`https://${PRIMARY}/dashboard`, PRIMARY))
+
+    expect(lookupPracticeHost).not.toHaveBeenCalled()
+    expect(authProviderMiddleware).toHaveBeenCalledTimes(1)
+  })
+
+  it("looks nothing up for the app's own host, which is served as before", async () => {
+    const response = await proxy(at(`https://${APP}/dashboard`, APP))
+
+    expect(lookupPracticeHost).not.toHaveBeenCalled()
+    expect(response.headers.get("x-middleware-rewrite")).toBeNull()
+    expect(authProviderMiddleware).toHaveBeenCalledTimes(1)
+  })
+
+  it("serves the practice's portal at the root of its primary host, address unchanged", async () => {
+    const response = await proxy(at(`https://${PRIMARY}/messaging?x=1`, `${PRIMARY}:443`))
+
+    expect(lookupPracticeHost).toHaveBeenCalledWith(PRIMARY)
+    expect(response.headers.get("x-middleware-rewrite")).toBe(`https://${PRIMARY}/portal/acme/messaging?x=1`)
+    expect(response.headers.get("location")).toBeNull()
+    const seen = vi.mocked(authProviderMiddleware).mock.calls[0][0]
+    expect(seen.nextUrl.pathname).toBe("/portal/acme/messaging")
+  })
+
+  it("sends an alias to the primary with a 301", async () => {
+    const response = await proxy(at(`https://${ALIAS}/forms?y=2`, ALIAS))
+
+    expect(response.status).toBe(301)
+    expect(response.headers.get("location")).toBe(`https://${PRIMARY}/forms?y=2`)
+  })
+
+  it("answers another practice's portal on this host with a 404", async () => {
+    const response = await proxy(at(`https://${PRIMARY}/portal/other`, PRIMARY))
+
+    expect(response.status).toBe(404)
+    expect(authProviderMiddleware).not.toHaveBeenCalled()
+  })
+
+  it("moves the practice's own /portal/{slug} address to the root with a 301", async () => {
+    const response = await proxy(at(`https://${PRIMARY}/portal/acme/recover`, PRIMARY))
+
+    expect(response.status).toBe(301)
+    expect(response.headers.get("location")).toBe(`https://${PRIMARY}/recover`)
+  })
+
+  it("answers a host that serves nothing with a 404, never the clinician app", async () => {
+    vi.mocked(lookupPracticeHost).mockResolvedValue(null)
+    for (const path of ["/", "/dashboard", "/login", "/portal/acme"]) {
+      const response = await proxy(at(`https://unknown.example.com${path}`, "unknown.example.com"))
+      expect(response.status, path).toBe(404)
+      expect(response.headers.get("location"), path).toBeNull()
+    }
+    expect(authProviderMiddleware).not.toHaveBeenCalled()
+  })
+
+  it("answers 503 when the lookup could not be made", async () => {
+    vi.mocked(lookupPracticeHost).mockResolvedValue("unavailable")
+    const response = await proxy(at(`https://${PRIMARY}/`, PRIMARY))
+
+    expect(response.status).toBe(503)
+    expect(authProviderMiddleware).not.toHaveBeenCalled()
+  })
+
+  it("answers a host no practice could hold with a 404 without asking", async () => {
+    const response = await proxy(at("https://bad_host.example.com/", "bad_host.example.com"))
+
+    expect(response.status).toBe(404)
+    expect(lookupPracticeHost).not.toHaveBeenCalled()
   })
 })
