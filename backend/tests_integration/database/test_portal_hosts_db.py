@@ -240,6 +240,7 @@ def test_every_host_that_serves_no_portal_is_the_same_404(client: TestClient, ro
         rows.host(practice_id, status="pending"),
         rows.host(practice_id, status="verifying"),
         rows.host(practice_id, status="error"),
+        rows.host(practice_id, status="removing"),
         rows.host(practice_id, purpose="site", prefix="www"),
         f"unknown.{uuid.uuid4().hex[:10]}.example.com",
         "203.0.113.7",
@@ -314,6 +315,20 @@ def test_a_link_falls_back_while_the_primary_is_not_working(rows: _Rows) -> None
 
     rows.set_status(primary, "active")
     assert factory.portal_page_url(slug) == f"https://{primary}/", "links are never cached"
+
+    # Removed by the practice and still being taken down: no new links to it.
+    rows.set_status(primary, "removing")
+    assert factory.portal_page_url(slug) == fallback
+
+
+def test_a_removing_primary_sends_no_one_from_an_alias(client: TestClient, rows: _Rows) -> None:
+    """While the primary is being taken down, an alias serves the portal itself
+    rather than redirecting to a host that is going away."""
+    practice_id, slug = rows.practice()
+    rows.host(practice_id, primary=True, status="removing")
+    alias = rows.host(practice_id, prefix="clients")
+
+    assert _ask(client, alias).json() == {"slug": slug, "primary_host": None}
 
 
 @pytest.mark.usefixtures("links")
