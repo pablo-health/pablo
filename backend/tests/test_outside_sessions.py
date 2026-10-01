@@ -682,3 +682,39 @@ class TestClaimingTheMainCalendar:
             a.id: a.outside_calendar_id
             for a in h.appointments.list_by_range(USER_ID, _in(0), _in(30))
         } == {"team-session": "team", "unrecorded-session": "main", "feed-session": None}
+
+    def test_a_session_a_colleague_already_books_on_the_main_calendar_is_left_alone(
+        self, h: _Harness
+    ) -> None:
+        """Claiming it would be a second live booking: it stays as it was, and the rest go on."""
+        h.patient("p1", "Jane", "Smith")
+        start = _in(3)
+
+        def session(appointment_id: str, user_id: str, event_id: str, calendar: str | None) -> None:
+            h.appointments.create(
+                Appointment(
+                    id=appointment_id,
+                    user_id=user_id,
+                    patient_id="p1",
+                    title="Session",
+                    start_at=start,
+                    end_at=start + timedelta(minutes=50),
+                    duration_minutes=50,
+                    status=AppointmentStatus.CONFIRMED,
+                    session_type="individual",
+                    outside_source=GOOGLE_CALENDAR_SOURCE,
+                    outside_event_id=event_id,
+                    outside_calendar_id=calendar,
+                )
+            )
+
+        session("colleagues", "colleague-1", "e1", "main")
+        session("mine-duplicate", USER_ID, "e1", None)
+        session("mine-other", USER_ID, "e2", None)
+
+        h.outside.claim_unrecorded(USER_ID, "main")
+
+        assert {
+            a.id: a.outside_calendar_id
+            for a in h.appointments.list_by_range(USER_ID, _in(0), _in(30))
+        } == {"mine-duplicate": None, "mine-other": "main"}

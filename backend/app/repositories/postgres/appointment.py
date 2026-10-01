@@ -416,12 +416,22 @@ class PostgresAppointmentRepository(AppointmentRepository):
         return appointments
 
     def update(self, appointment: Appointment) -> Appointment:
-        row = self._session.get(AppointmentRow, appointment.id)
-        if row is None:
-            row = AppointmentRow()
-            self._session.add(row)
-        _appointment_to_row(appointment, row)
-        self._session.flush()
+        # In a SAVEPOINT for the same reason as ``create``: a change that would
+        # double-book an outside event undoes itself and nothing else.
+        try:
+            with self._session.begin_nested():
+                row = self._session.get(AppointmentRow, appointment.id)
+                if row is None:
+                    row = AppointmentRow()
+                    self._session.add(row)
+                _appointment_to_row(appointment, row)
+                self._session.flush()
+        except IntegrityError as exc:
+            if _constraint_name(exc) in _OUTSIDE_EVENT_INDEXES:
+                raise OutsideEventAlreadyBookedError(
+                    "That outside event is already booked"
+                ) from exc
+            raise
         return appointment
 
     def bulk_set_patient(self, appointment_ids: list[str], patient_id: str) -> int:

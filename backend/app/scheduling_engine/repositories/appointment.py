@@ -191,7 +191,12 @@ class AppointmentRepository(ABC):
 
     @abstractmethod
     def update(self, appointment: Appointment) -> Appointment:
-        """Update an existing appointment."""
+        """Update an existing appointment.
+
+        Raises ``OutsideEventAlreadyBookedError``, and changes nothing, when
+        the change would make it a second live appointment for one outside
+        event.
+        """
 
     @abstractmethod
     def bulk_set_patient(self, appointment_ids: list[str], patient_id: str) -> int:
@@ -439,20 +444,31 @@ class InMemoryAppointmentRepository(AppointmentRepository):
                 return copy.deepcopy(appt)
         return None
 
-    def create(self, appointment: Appointment) -> Appointment:
+    def _would_double_book(self, appointment: Appointment) -> bool:
+        """What the unique outside-event indexes refuse in Postgres: a second live booking."""
         if (
-            appointment.outside_event_id is not None
-            and appointment.outside_source is not None
-            and appointment.status != AppointmentStatus.CANCELLED
-            and self.outside_appointment_id(
-                appointment.outside_source,
-                appointment.outside_calendar_id,
-                appointment.outside_event_id,
-                appointment.user_id,
-            )
-            is not None
+            appointment.outside_event_id is None
+            or appointment.outside_source is None
+            or appointment.status == AppointmentStatus.CANCELLED
         ):
-            # What the unique index refuses in Postgres.
+            return False
+        key = (
+            appointment.outside_source,
+            appointment.outside_calendar_id,
+            appointment.outside_event_id,
+        )
+        return any(
+            other.id != appointment.id
+            and other.status != AppointmentStatus.CANCELLED
+            and (other.outside_source, other.outside_calendar_id, other.outside_event_id) == key
+            and (
+                appointment.outside_calendar_id is not None or other.user_id == appointment.user_id
+            )
+            for other in self._appointments.values()
+        )
+
+    def create(self, appointment: Appointment) -> Appointment:
+        if self._would_double_book(appointment):
             raise OutsideEventAlreadyBookedError("That outside event is already booked")
         self._appointments[appointment.id] = copy.deepcopy(appointment)
         # Auto-grant the creator access to the patient — mirrors the
@@ -468,6 +484,8 @@ class InMemoryAppointmentRepository(AppointmentRepository):
         return appointments
 
     def update(self, appointment: Appointment) -> Appointment:
+        if self._would_double_book(appointment):
+            raise OutsideEventAlreadyBookedError("That outside event is already booked")
         self._appointments[appointment.id] = copy.deepcopy(appointment)
         return appointment
 

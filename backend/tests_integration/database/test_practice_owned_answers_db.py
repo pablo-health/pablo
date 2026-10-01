@@ -921,3 +921,31 @@ class TestTwoFollowersOfOneCalendar:
             PostgresAppointmentRepository(mine).create(
                 _appointment(_A, "sh-1", None, practice["patient"])
             )
+
+    def test_moving_a_session_onto_a_calendar_that_already_books_its_event_is_refused(
+        self, engine: Engine, practice: dict[str, str], opened: list[Session]
+    ) -> None:
+        """An update that would double-book raises the translated error, and the session lives."""
+        schema = practice["schema"]
+        mine = _session(engine, schema, _A)
+        theirs = _session(engine, schema, _B)
+        opened.extend([mine, theirs])
+        PostgresAppointmentRepository(mine).create(
+            _appointment(_A, "e1", MAIN, practice["patient"])
+        )
+        mine.commit()
+        # B's own booking of the same event, from before its calendar was recorded.
+        before = _appointment(_B, "e1", None, practice["patient"])
+        before.outside_source = GOOGLE_CALENDAR_SOURCE
+        PostgresAppointmentRepository(theirs).create(before)
+        theirs.commit()
+
+        before.outside_calendar_id = MAIN
+        with pytest.raises(OutsideEventAlreadyBookedError):
+            PostgresAppointmentRepository(theirs).update(before)
+
+        # Only the update was undone: the session still works, and B's row is as it was.
+        stored = PostgresAppointmentRepository(theirs).get(before.id, _B)
+        assert stored is not None
+        assert stored.outside_calendar_id is None
+        theirs.commit()

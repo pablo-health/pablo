@@ -514,7 +514,7 @@ class OutsideSessions:
                 and appointment.outside_calendar_id is None
             ):
                 appointment.outside_calendar_id = main_calendar_id
-                self._appointments.update(appointment)
+                self._keep_unless_booked_elsewhere(appointment)
         return claimed
 
     def has_unrecorded(self, user_id: str) -> bool:
@@ -532,7 +532,21 @@ class OutsideSessions:
         appointment = self._appointments.get(appointment_id, user_id)
         if appointment is not None and appointment.outside_calendar_id != calendar_id:
             appointment.outside_calendar_id = calendar_id
+            self._keep_unless_booked_elsewhere(appointment)
+
+    def _keep_unless_booked_elsewhere(self, appointment: Appointment) -> None:
+        """Save a session's new calendar, unless a colleague already books that event there.
+
+        Then this session is the second for one event, and recording the
+        calendar would break the one-live-booking rule: it is left exactly as
+        it was rather than failing the whole read, which would fail again on
+        every read after.
+        """
+        try:
             self._appointments.update(appointment)
+        except OutsideEventAlreadyBookedError:
+            # HIPAA: nothing that identifies the session or its client.
+            logger.warning("A session's event is already booked on that calendar; left as it was")
 
     def drop_open(self, user_id: str, source: str) -> None:
         """Drop every question from a source, leaving answered sessions as they are."""
