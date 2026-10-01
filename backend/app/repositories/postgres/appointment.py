@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
-from sqlalchemy import String, Uuid, bindparam, case, func, or_, select, text, update
+from sqlalchemy import String, Uuid, bindparam, func, or_, select, text, update
 
 from ...db.models import AppointmentRow, PatientClinicianRow
 from ...models.patient_facing import PatientAppointmentResponse
@@ -388,32 +388,20 @@ class PostgresAppointmentRepository(AppointmentRepository):
         self._session.flush()
         return result.rowcount or 0
 
-    def clear_google_calendar_links(self, user_id: str, outside_source: str) -> int:
-        followed = AppointmentRow.outside_source == outside_source
-
-        def unless_followed(column: Any) -> Any:
-            return case((followed, None), else_=column)
-
+    def unfollow_outside_events(self, user_id: str, outside_source: str) -> int:
         result = cast(
             "CursorResult[Any]",
             self._session.execute(
                 update(AppointmentRow)
                 .where(
                     AppointmentRow.user_id == user_id,
-                    or_(
-                        AppointmentRow.google_event_id.is_not(None),
-                        AppointmentRow.google_calendar_id.is_not(None),
-                        AppointmentRow.google_sync_status.is_not(None),
-                        followed,
-                    ),
+                    AppointmentRow.outside_source == outside_source,
                 )
                 .values(
-                    google_event_id=None,
-                    google_calendar_id=None,
+                    outside_source=None,
+                    outside_event_id=None,
+                    outside_calendar_id=None,
                     google_sync_status=None,
-                    outside_source=unless_followed(AppointmentRow.outside_source),
-                    outside_event_id=unless_followed(AppointmentRow.outside_event_id),
-                    outside_calendar_id=unless_followed(AppointmentRow.outside_calendar_id),
                     updated_at=utc_now(),
                 )
                 .execution_options(synchronize_session=False)

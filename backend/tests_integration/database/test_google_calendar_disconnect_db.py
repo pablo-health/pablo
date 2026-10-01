@@ -262,14 +262,12 @@ def test_disconnect_removes_what_was_read_and_keeps_pablos_records(
         outside_source=GOOGLE,
         outside_event_id=answered.source_event_id,
         outside_calendar_id="primary",
+        google_sync_status="external_change",
     )
-    from_feed = cal.appointment(outside_source=FEED, outside_event_id=feed_event.source_event_id)
-    # Pushed to Google once, and following a feed since: only the Google half goes.
-    pushed_and_from_feed = cal.appointment(
-        google_event_id="older-push",
-        google_sync_status="synced",
+    from_feed = cal.appointment(
         outside_source=FEED,
-        outside_event_id="feed-event-kept",
+        outside_event_id=feed_event.source_event_id,
+        google_sync_status="synced",
     )
     untouched = cal.appointment()
     session_id, note_id = cal.hold_session_with_note(followed)
@@ -277,7 +275,7 @@ def test_disconnect_removes_what_was_read_and_keeps_pablos_records(
     forgotten = cal.forget()
 
     assert forgotten == Forgotten(
-        calendar_events_deleted=2, remembered_answers_deleted=2, appointments_unlinked=3
+        calendar_events_deleted=2, remembered_answers_deleted=2, appointments_unfollowed=1
     )
     assert [e.id for e in cal.events.list_by_source(user_id, GOOGLE)] == []
     assert cal.mappings.list_by_source(user_id, GOOGLE) == []
@@ -285,30 +283,32 @@ def test_disconnect_removes_what_was_read_and_keeps_pablos_records(
     assert [e.id for e in cal.events.list_by_source(user_id, FEED)] == [feed_event.id]
     assert len(cal.mappings.list_by_source(user_id, FEED)) == 1
 
-    # Every appointment stays; only its pointers into Google go.
-    still_pushed = cal.reread(pushed)
-    assert (
-        still_pushed.google_event_id,
-        still_pushed.google_calendar_id,
-        still_pushed.google_sync_status,
-    ) == (None, None, None)
+    # Every appointment stays. The one following a Google event stops
+    # following it, and the status that reported on that event goes with it.
     still_followed = cal.reread(followed)
     assert (
         still_followed.outside_source,
         still_followed.outside_event_id,
         still_followed.outside_calendar_id,
-    ) == (None, None, None)
+        still_followed.google_sync_status,
+    ) == (None, None, None, None)
     assert still_followed.patient_id == cal.patient.id
+    # The event Pablo wrote is Pablo's own: its id stays, so a reconnect
+    # updates that event instead of writing a second one.
+    still_pushed = cal.reread(pushed)
+    assert (
+        still_pushed.google_event_id,
+        still_pushed.google_calendar_id,
+        still_pushed.google_sync_status,
+    ) == ("pushed-evt", "made@group.calendar.google.com", "synced")
     still_from_feed = cal.reread(from_feed)
-    assert (still_from_feed.outside_source, still_from_feed.outside_event_id) == (
-        FEED,
-        feed_event.source_event_id,
-    )
+    assert (
+        still_from_feed.outside_source,
+        still_from_feed.outside_event_id,
+        still_from_feed.google_sync_status,
+    ) == (FEED, feed_event.source_event_id, "synced")
     cal.reread(untouched)
-    both = cal.reread(pushed_and_from_feed)
-    assert (both.google_event_id, both.google_sync_status) == (None, None)
-    assert (both.outside_source, both.outside_event_id) == (FEED, "feed-event-kept")
-    assert cal.count("SELECT count(*) FROM appointments WHERE user_id = :u") == 5
+    assert cal.count("SELECT count(*) FROM appointments WHERE user_id = :u") == 4
 
     # The session held for the followed appointment, and its note, are untouched.
     assert still_followed.session_id == session_id

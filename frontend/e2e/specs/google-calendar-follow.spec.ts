@@ -56,12 +56,9 @@ let stamp = 0
  * the sessions an earlier spec booked from a calendar of the same name.
  */
 async function freshGoogle(api: ApiClient): Promise<string> {
-  // Following outlives a disconnect (and a reconnect to another account),
-  // so it is turned off first, while the connection that can still answer
-  // for it is there. Without this the wizard's checkbox starts checked
-  // and a click on it turns following OFF.
+  // A disconnect also turns following off, so the wizard's checkbox starts
+  // unchecked and a click on it turns following on.
   try {
-    await api.put("/api/google-calendar/followed-calendar", { calendar_id: null })
     await api.delete("/api/google-calendar/disconnect")
   } catch (error) {
     if (!(error instanceof ApiError) || error.status !== 404) throw error
@@ -559,9 +556,10 @@ test("disconnecting takes Pablo off the account and forgets what it read, keepin
   )
 
   // Connecting again starts from the grant it asks for, not the old one,
-  // and the answer about who the series is was forgotten with the rest of
-  // what was read: the series is asked about again.
-  await connectThroughSetup(page, { follow: false })
+  // with following off until it is turned on again (the helper checks the
+  // box starts unchecked). The answer about who the series is was forgotten
+  // with the rest of what was read: the series is asked about again.
+  await connectThroughSetup(page, { follow: true })
   await readCalendarsNow(api)
   expect((await questions(api)).map((q) => q.title)).toContain("Dana Brooks")
 })

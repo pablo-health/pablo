@@ -209,13 +209,15 @@ class AppointmentRepository(ABC):
         """Delete an appointment. Returns True if deleted."""
 
     @abstractmethod
-    def clear_google_calendar_links(self, user_id: str, outside_source: str) -> int:
-        """Drop every pointer from this clinician's appointments into Google.
+    def unfollow_outside_events(self, user_id: str, outside_source: str) -> int:
+        """Stop this clinician's appointments following events from one source.
 
-        That is the event a session was pushed to (``google_*``) and the
-        event a followed session came from, when it came from
-        ``outside_source``. The appointments themselves stay. Returns how
-        many appointments changed.
+        Clears the pointer to the followed event (``outside_*``) and the sync
+        status that reported on it; the appointments themselves stay. A
+        session Pablo pushed to a calendar keeps its ``google_event_id``: that
+        id names Pablo's own event, so a later connection updates the event
+        rather than writing a second one. Returns how many appointments
+        changed.
         """
 
 
@@ -399,19 +401,13 @@ class InMemoryAppointmentRepository(AppointmentRepository):
                 return copy.deepcopy(a)
         return None
 
-    def clear_google_calendar_links(self, user_id: str, outside_source: str) -> int:
+    def unfollow_outside_events(self, user_id: str, outside_source: str) -> int:
         changed = 0
         for a in self._appointments.values():
-            if a.user_id != user_id:
-                continue
-            pushed = bool(a.google_event_id or a.google_calendar_id or a.google_sync_status)
-            followed = a.outside_source == outside_source
-            if not (pushed or followed):
-                continue
-            a.google_event_id = a.google_calendar_id = a.google_sync_status = None
-            if followed:
+            if a.user_id == user_id and a.outside_source == outside_source:
                 a.outside_source = a.outside_event_id = a.outside_calendar_id = None
-            changed += 1
+                a.google_sync_status = None
+                changed += 1
         return changed
 
     def list_expired_pending(self, user_id: str, now: datetime) -> list[Appointment]:

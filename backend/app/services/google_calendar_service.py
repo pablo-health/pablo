@@ -1237,7 +1237,8 @@ class GoogleCalendarService:
         A revoke that fails still disconnects (see ``_revoke_grant``).
 
         The calendar Pablo made is remembered apart from the tokens, so a
-        later connect finds it rather than making another one. What Pablo
+        later connect finds it rather than making another one. Following a
+        calendar is turned off, so a reconnect starts without it. What Pablo
         read from the calendar is the caller's to remove, in the same
         transaction — see ``app.calendar_providers.disconnect``.
         """
@@ -1247,6 +1248,10 @@ class GoogleCalendarService:
             _revoke_grant(token, base_url=self._surface.base_url)
         deleted = self._token_repo.delete(user_id)
         if deleted:
+            # Following is a choice made about this connection. Left on, a
+            # reconnect would start reading the calendar again without being
+            # asked, after the clinician said to stop.
+            self._token_repo.set_followed_calendar(user_id, None)
             logger.info("Google Calendar disconnected")
         return deleted
 

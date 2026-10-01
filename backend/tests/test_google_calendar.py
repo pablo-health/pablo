@@ -1449,6 +1449,17 @@ class TestDisconnect:
         with patch("httpx.post") as post:
             assert calendar_service.disconnect("user-001") is False
         post.assert_not_called()
+        token_repo.set_followed_calendar.assert_not_called()
+
+    def test_disconnect_turns_following_off(
+        self,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        _connected(token_repo)
+        with patch("httpx.post", return_value=MagicMock(status_code=200)):
+            calendar_service.disconnect("user-001")
+        token_repo.set_followed_calendar.assert_called_once_with("user-001", None)
 
     def test_disconnect_revokes_the_refresh_token_and_never_logs_it(
         self,

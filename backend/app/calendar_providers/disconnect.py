@@ -10,8 +10,11 @@ read from their calendar.
 
 Pablo's own records stay. An appointment booked in Pablo — including one
 booked from an answered outside session — belongs to the clinician, with
-whatever session and note hang off it. Only its pointers into Google go,
-since an event id means nothing once the connection is gone.
+whatever session and note hang off it. One that followed an event on the
+calendar stops following it: that event was read from Google. One Pablo
+pushed to the calendar keeps the id of the event Pablo wrote, which is
+Pablo's own, so a later connection updates that event instead of writing a
+duplicate beside it.
 
 Followed calendar feeds are separate connections with their own sources,
 and the id of the calendar Pablo made is kept so a reconnect reuses it
@@ -40,7 +43,7 @@ class Forgotten:
 
     calendar_events_deleted: int
     remembered_answers_deleted: int
-    appointments_unlinked: int
+    appointments_unfollowed: int
 
     def to_dict(self) -> dict[str, int]:
         return asdict(self)
@@ -57,7 +60,7 @@ def forget_google_calendar(
     return Forgotten(
         calendar_events_deleted=events.delete_by_source(user_id, GOOGLE_CALENDAR_SOURCE),
         remembered_answers_deleted=mappings.delete_by_source(user_id, GOOGLE_CALENDAR_SOURCE),
-        appointments_unlinked=appointments.clear_google_calendar_links(
+        appointments_unfollowed=appointments.unfollow_outside_events(
             user_id, GOOGLE_CALENDAR_SOURCE
         ),
     )

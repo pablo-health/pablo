@@ -252,6 +252,7 @@ class _Seeded:
                     )
                 )
             tokens.remember_app_calendar_id(_USER_ID, _PABLO_CALENDAR)
+            tokens.set_followed_calendar(_USER_ID, "primary", main_calendar=True)
             patient = PostgresPatientRepository(sess).create(
                 Patient(
                     id=str(uuid.uuid4()),
@@ -376,22 +377,26 @@ def test_disconnect_revokes_removes_what_was_read_and_keeps_pablos_records(
     assert seeded.rows("patient_source_mappings", _GOOGLE) == 0
     assert seeded.rows("external_calendar_events", _FEED) == 1
     assert seeded.rows("patient_source_mappings", _FEED) == 1
-    # The appointment stays, without its pointer into Google.
-    assert seeded.scalar(
-        "SELECT google_event_id IS NULL AND google_calendar_id IS NULL"
-        " AND google_sync_status IS NULL FROM appointments WHERE id = CAST(:a AS uuid)",
-        a=seeded.appointment_id,
+    # The session Pablo pushed stays, still naming the event Pablo wrote.
+    assert (
+        seeded.scalar(
+            "SELECT google_event_id FROM appointments WHERE id = CAST(:a AS uuid)",
+            a=seeded.appointment_id,
+        )
+        == "pushed-evt"
     )
-    # The calendar Pablo made is remembered for the next connect.
+    # The calendar Pablo made is remembered for the next connect; following
+    # the clinician's calendar is not.
     assert seeded.scalar("SELECT app_calendar_id FROM google_calendar_settings") == (
         _PABLO_CALENDAR
     )
+    assert seeded.scalar("SELECT follow_calendar_id FROM google_calendar_settings") is None
 
     [audit] = seeded.disconnect_audits()
     assert audit.changes == {
         "calendar_events_deleted": 2,
         "remembered_answers_deleted": 1,
-        "appointments_unlinked": 1,
+        "appointments_unfollowed": 0,
     }
     assert audit.patient_id is None
     assert audit.resource_id == "google-calendar"
@@ -449,6 +454,7 @@ def test_a_failure_after_the_deletes_leaves_every_row_in_place(
         a=seeded.appointment_id,
     ) == ("pushed-evt")
     assert seeded.disconnect_audits() == []
+    assert seeded.scalar("SELECT follow_calendar_id FROM google_calendar_settings") == "primary"
 
 
 def test_withdrawing_access_needs_no_baa_on_file(
