@@ -1,0 +1,7 @@
+{
+  "captured": "2026-10-01",
+  "request": "GET https://domains.squarespace.com/v2/domainTemplates/providers/pablo.health/services/practice-domain",
+  "status": 404,
+  "content_type": "application/json",
+  "body": "{\"httpCode\":404,\"internalCode\":1000,\"contextId\":\"test-context\",\"message\":\"No supported template for providerId: 'pablo.health' and serviceId: 'practice-domain'\",\"details\":null,\"type\":null,\"subtype\":null}"
+}

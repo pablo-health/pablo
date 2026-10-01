@@ -1,0 +1,1 @@
+certauth=test-cert&dkim1=test-dkim-one&dkim2=test-dkim-two&dkim3=test-dkim-three&domain=example.com&portaltarget=sites&redirect_uri=https%3A%2F%2Fapp.example.org%2Fdashboard%2Fsettings%2Fdomains&state=test-state&verify=test-token

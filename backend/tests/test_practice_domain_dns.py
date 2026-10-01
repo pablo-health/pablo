@@ -106,6 +106,22 @@ class TestHostCname:
     def test_no_answer_for_the_addresses_is_unknown(self) -> None:
         assert _check({(HOST, "AAAA"): None}, POINT).check == "unknown"
 
+    def test_a_cname_to_a_name_on_our_addresses_is_ok(self) -> None:
+        # www pointing at the bare domain, which carries this deployment's
+        # address: what one-click setup publishes for a website.
+        www = DnsRecord(type="CNAME", name="www.ours.example", value=TARGET)
+        table = {
+            ("www.ours.example", "CNAME"): ["ours.example"],
+            ("www.ours.example", "A"): ["203.0.113.10"],
+        }
+        result = _check(table, www, host="www.ours.example", apex_ips=("203.0.113.10",))
+        assert (result.check, result.found) == ("ok", ["ours.example"])
+
+    def test_a_cname_to_a_name_on_other_addresses_is_wrong(self) -> None:
+        table = {(HOST, "CNAME"): ["old-host.example"], (HOST, "A"): ["192.0.2.99"]}
+        result = _check(table, POINT)
+        assert (result.check, result.found) == ("wrong", ["old-host.example"])
+
 
 class TestCertAuthCname:
     def test_found(self) -> None:

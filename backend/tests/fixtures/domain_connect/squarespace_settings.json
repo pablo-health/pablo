@@ -1,0 +1,7 @@
+{
+  "captured": "2026-10-01",
+  "request": "GET https://domains.squarespace.com/v2/example.com/settings",
+  "status": 200,
+  "content_type": "application/json",
+  "body": "{\"providerId\":\"squarespace.com\",\"providerName\":\"Squarespace\",\"providerDisplayName\":\"Squarespace\",\"urlSyncUX\":\"https://domains.squarespace.com\",\"urlAPI\":\"https://domains.squarespace.com\"}"
+}

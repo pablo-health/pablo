@@ -9,10 +9,13 @@ import {
   usePracticeDomains,
   useRemovePracticeDomain,
 } from "@/hooks/usePracticeDomains"
+import { useDomainConnect } from "@/hooks/useDomainConnect"
 import { ApiError } from "@/lib/api/client"
 import type { DomainPurpose, PracticeDomain } from "@/lib/api/practiceDomains"
 import type { UserStatus } from "@/lib/api/users"
 import { AddDomainForm } from "../domains/AddDomainForm"
+import { DomainConnectOffers } from "../domains/DomainConnectOffers"
+import { DomainConnectReturn } from "../domains/DomainConnectReturn"
 import { DomainRow } from "../domains/DomainRow"
 import { SettingsCard } from "../ui"
 import { useSettingsUserStatus } from "../useSettingsPreferences"
@@ -39,6 +42,7 @@ export function DomainsPage() {
   const check = useCheckPracticeDomains()
 
   const canManage = canManageDomains(userStatus)
+  const connect = useDomainConnect(canManage)
   const busy = makePrimary.isPending || remove.isPending || check.isPending
   const failure = makePrimary.error ?? remove.error ?? check.error
   const failureMessage =
@@ -66,6 +70,7 @@ export function DomainsPage() {
 
   return (
     <>
+      <DomainConnectReturn />
       {userStatus && !canManage && (
         <p className="mb-3 text-[12.5px] text-muted-foreground">Only the practice owner can change domains.</p>
       )}
@@ -86,6 +91,7 @@ export function DomainsPage() {
         const domains = byPurpose(purpose)
         return (
           <SettingsCard key={purpose} title={title} description={description}>
+            {canManage && <DomainConnectOffers purpose={purpose} domains={connect.data?.domains} />}
             {domains.length === 0 ? (
               <p className="text-sm text-muted-foreground">No domains yet.</p>
             ) : (
