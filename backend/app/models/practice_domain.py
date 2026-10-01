@@ -50,6 +50,9 @@ class PracticeDomainResponse(BaseModel):
     #: What to add at the DNS provider. Empty when this deployment has no single
     #: target to name; the page then says only that the host must point here.
     dns_records: list[DnsRecord]
+    #: For a bare domain shown address records: the name an ALIAS/ANAME record
+    #: could point at instead, where the DNS provider offers one.
+    alias_alternative: str | None = None
 
 
 class PracticeDomainListResponse(BaseModel):

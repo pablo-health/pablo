@@ -1171,6 +1171,16 @@ class Settings(BaseSettings):
             "point at this deployment."
         ),
     )
+    practice_domain_apex_ips: str = Field(
+        default="",
+        description=(
+            "Comma-separated IP addresses a bare domain (example.org, with "
+            "nothing in front) points at with A/AAAA records. Many DNS "
+            "providers refuse a CNAME on a bare domain, so a website there is "
+            "shown these instead, with the CNAME target offered as an ALIAS/"
+            "ANAME alternative. Empty: bare domains are shown the CNAME too."
+        ),
+    )
 
     # ── Patient portal sign-in (app.portal) ──────────────────────────────
     # Off by default: turning it on publishes a surface that mints

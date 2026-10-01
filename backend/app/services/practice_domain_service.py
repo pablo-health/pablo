@@ -46,19 +46,41 @@ class PracticeDomainService:
         *,
         reserved_hosts: frozenset[str] = frozenset(),
         cname_target: str = "",
+        apex_ips: tuple[str, ...] = (),
     ) -> None:
         self._repo = repo
         self._reserved = reserved_hosts
         self._cname_target = cname_target.strip().lower().rstrip(".")
+        self._apex_ips = apex_ips
 
     def for_practice(self, practice_id: str) -> list[PracticeDomain]:
         return self._repo.list_for_practice(practice_id)
 
+    def _is_bare(self, domain: PracticeDomain) -> bool:
+        return domain.domain.count(".") == _APEX_LABELS - 1
+
     def dns_records(self, domain: PracticeDomain) -> list[DnsRecord]:
-        """What the practice adds at its DNS provider for this host."""
+        """What the practice adds at its DNS provider for this host.
+
+        A bare domain (``example.org``) gets A/AAAA records when the deployment
+        names its addresses: many DNS providers refuse a CNAME there, and an
+        address record works at every one of them.
+        """
+        if self._is_bare(domain) and self._apex_ips:
+            return [
+                DnsRecord(type="AAAA" if ":" in ip else "A", name=domain.domain, value=ip)
+                for ip in self._apex_ips
+            ]
         if not self._cname_target:
             return []
         return [DnsRecord(type="CNAME", name=domain.domain, value=self._cname_target)]
+
+    def alias_alternative(self, domain: PracticeDomain) -> str | None:
+        """For a bare domain shown address records: the name an ALIAS/ANAME
+        record could point at instead, where the DNS provider offers one."""
+        if self._is_bare(domain) and self._apex_ips and self._cname_target:
+            return self._cname_target
+        return None
 
     def add(
         self,
@@ -175,6 +197,12 @@ def get_practice_domain_service(
             settings.practice_domain_cname_target,
         )
     )
+    apex_ips = tuple(
+        ip.strip() for ip in settings.practice_domain_apex_ips.split(",") if ip.strip()
+    )
     return PracticeDomainService(
-        repo, reserved_hosts=reserved, cname_target=settings.practice_domain_cname_target
+        repo,
+        reserved_hosts=reserved,
+        cname_target=settings.practice_domain_cname_target,
+        apex_ips=apex_ips,
     )

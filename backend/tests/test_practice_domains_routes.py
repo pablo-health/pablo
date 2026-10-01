@@ -143,6 +143,40 @@ class TestList:
         domain = _row("portal.ours.example")
         assert PracticeDomainService(repo).dns_records(domain) == []
 
+    def test_a_bare_domain_gets_address_records_and_an_alias_alternative(
+        self, mock_user: User, repo: InMemoryPracticeDomainRepository
+    ) -> None:
+        """Many DNS providers refuse a CNAME on a bare domain, so it is shown
+        A/AAAA records, with the CNAME target offered as an ALIAS/ANAME."""
+        service = PracticeDomainService(
+            repo, cname_target=CNAME_TARGET, apex_ips=("203.0.113.7", "2001:db8::7")
+        )
+        bare = _row("ours.example")
+
+        assert [(r.type, r.name, r.value) for r in service.dns_records(bare)] == [
+            ("A", "ours.example", "203.0.113.7"),
+            ("AAAA", "ours.example", "2001:db8::7"),
+        ]
+        assert service.alias_alternative(bare) == CNAME_TARGET
+
+    def test_a_name_under_a_domain_keeps_its_cname(
+        self, mock_user: User, repo: InMemoryPracticeDomainRepository
+    ) -> None:
+        service = PracticeDomainService(repo, cname_target=CNAME_TARGET, apex_ips=("203.0.113.7",))
+        sub = _row("portal.ours.example")
+
+        assert [(r.type, r.value) for r in service.dns_records(sub)] == [("CNAME", CNAME_TARGET)]
+        assert service.alias_alternative(sub) is None
+
+    def test_without_addresses_a_bare_domain_is_shown_the_cname(
+        self, mock_user: User, repo: InMemoryPracticeDomainRepository
+    ) -> None:
+        service = PracticeDomainService(repo, cname_target=CNAME_TARGET)
+        bare = _row("ours.example")
+
+        assert [r.type for r in service.dns_records(bare)] == ["CNAME"]
+        assert service.alias_alternative(bare) is None
+
     @pytest.mark.parametrize("owner_email", ["someone-else@example.com"])
     def test_a_non_owner_can_read(
         self, client: TestClient, repo: InMemoryPracticeDomainRepository

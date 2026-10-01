@@ -68,6 +68,7 @@ def _response(service: PracticeDomainService, domain: PracticeDomain) -> Practic
         verified_at=domain.verified_at,
         created_at=domain.created_at,
         dns_records=service.dns_records(domain),
+        alias_alternative=service.alias_alternative(domain),
     )
 
 

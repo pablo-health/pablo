@@ -26,6 +26,9 @@ export interface PracticeDomain {
   created_at: string
   /** Empty when the deployment names no single target. */
   dns_records: DnsRecord[]
+  /** For a bare domain shown address records: what an ALIAS/ANAME record
+   * could point at instead, where the DNS provider offers one. */
+  alias_alternative?: string | null
 }
 
 export interface PracticeDomainList {

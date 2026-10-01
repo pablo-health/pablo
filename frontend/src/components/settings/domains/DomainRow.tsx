@@ -112,6 +112,13 @@ function DnsInstructions({ domain }: { domain: PracticeDomain }) {
           ))}
         </tbody>
       </table>
+      {domain.alias_alternative && (
+        <p className="mt-1.5" data-testid="alias-alternative">
+          If your DNS provider offers ALIAS or ANAME records, one pointing at{" "}
+          <span className="font-mono text-foreground">{domain.alias_alternative}</span> works
+          instead.
+        </p>
+      )}
     </div>
   )
 }

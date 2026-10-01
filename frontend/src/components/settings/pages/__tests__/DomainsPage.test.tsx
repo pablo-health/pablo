@@ -94,6 +94,27 @@ describe("DomainsPage", () => {
     expect(within(table).getByText("sites.example.net")).toBeVisible()
   })
 
+  it("shows a bare domain its address record, and the ALIAS alternative", async () => {
+    mockList.mockResolvedValue({
+      domains: [
+        domain("example.com", {
+          purpose: "site",
+          status: "pending",
+          dns_records: [{ type: "A", name: "example.com", value: "203.0.113.7" }],
+          alias_alternative: "sites.example.net",
+        }),
+      ],
+    })
+    renderWithProviders(<DomainsPage />)
+
+    const table = await screen.findByRole("table", { name: "DNS records for example.com" })
+    expect(within(table).getByText("A")).toBeVisible()
+    expect(within(table).getByText("203.0.113.7")).toBeVisible()
+    expect(screen.getByTestId("alias-alternative")).toHaveTextContent(
+      "If your DNS provider offers ALIAS or ANAME records, one pointing at sites.example.net works instead.",
+    )
+  })
+
   it("says where to point a domain when the server names no target", async () => {
     mockList.mockResolvedValue({
       domains: [domain("portal.example.com", { status: "pending", dns_records: [] })],
