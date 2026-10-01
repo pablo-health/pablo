@@ -21,10 +21,11 @@ import pytest
 from app.api_errors import register_exception_handlers
 from app.auth.service import require_active_subscription
 from app.models.audit import AuditAction, ResourceType
-from app.models.practice_domain import PracticeDomain
+from app.models.practice_domain import PracticeDomain, PracticeDomainApex
 from app.repositories.practice_domain import InMemoryPracticeDomainRepository
 from app.routes import practice_domains
 from app.services.audit_service import get_audit_service
+from app.services.practice_domain_dns import get_dns_lookup
 from app.services.practice_domain_service import (
     PracticeDomainService,
     get_practice_domain_service,
@@ -68,11 +69,19 @@ def owner_email() -> str:
 
 
 @pytest.fixture
+def zone() -> dict[tuple[str, str], list[str] | None]:
+    """What the stub DNS answers, by (name, type). Absent is an empty answer;
+    ``None`` is no answer in time."""
+    return {}
+
+
+@pytest.fixture
 def client(
     mock_user: User,
     repo: InMemoryPracticeDomainRepository,
     audit: _RecordingAudit,
     owner_email: str,
+    zone: dict[tuple[str, str], list[str] | None],
 ) -> Iterator[TestClient]:
     app = FastAPI()
     register_exception_handlers(app)
@@ -85,6 +94,9 @@ def client(
     app.dependency_overrides[require_active_subscription] = lambda: mock_user
     app.dependency_overrides[get_practice_domain_service] = lambda: service
     app.dependency_overrides[get_audit_service] = lambda: audit
+    app.dependency_overrides[get_dns_lookup] = lambda: (
+        lambda name, rdtype: zone.get((name, rdtype), [])
+    )
 
     session = MagicMock()
     session.get.return_value = SimpleNamespace(id=PRACTICE_ID, owner_email=owner_email)
@@ -133,9 +145,17 @@ class TestList:
         domains = response.json()["domains"]
         assert [d["domain"] for d in domains] == ["portal.ours.example"]
         assert domains[0]["is_primary"] is True
+        # No domain row was written for it, so there is no ownership record yet.
         assert domains[0]["dns_records"] == [
-            {"type": "CNAME", "name": "portal.ours.example", "value": CNAME_TARGET}
+            {
+                "type": "CNAME",
+                "name": "portal.ours.example",
+                "value": CNAME_TARGET,
+                "check": None,
+                "found": None,
+            }
         ]
+        assert domains[0]["apex"] == "ours.example"
 
     def test_without_a_target_there_are_no_records_to_show(
         self, mock_user: User, repo: InMemoryPracticeDomainRepository
@@ -381,3 +401,267 @@ class TestRemove:
 
         assert client.delete(f"{URL}/ours.example").status_code == 403
         assert repo.get("ours.example") is not None
+
+
+def _apex(apex: str, **overrides: Any) -> PracticeDomainApex:
+    fields: dict[str, Any] = {
+        "apex": apex,
+        "practice_id": PRACTICE_ID,
+        "verify_token": "tok-" + apex,
+        "created_at": datetime(2026, 9, 1, tzinfo=UTC),
+    }
+    fields.update(overrides)
+    return PracticeDomainApex(**fields)
+
+
+def _records(domain: dict[str, Any]) -> list[tuple[str, str, str]]:
+    return [(r["type"], r["name"], r["value"]) for r in domain["dns_records"]]
+
+
+class TestDomainRows:
+    """The registrable domain a host sits under: one practice each, written
+    with the first host and released with the last."""
+
+    def test_adding_a_host_writes_its_domain_with_a_token(
+        self, client: TestClient, repo: InMemoryPracticeDomainRepository
+    ) -> None:
+        response = client.post(
+            URL, json={"domain": "portal.ours.example.co.uk", "purpose": "portal"}
+        )
+
+        assert response.status_code == 201
+        apex = repo.get_apex("example.co.uk")
+        assert apex is not None
+        assert apex.practice_id == PRACTICE_ID
+        assert len(apex.verify_token) >= 32
+        added = _by_domain(response.json())["portal.ours.example.co.uk"]
+        assert added["apex"] == "example.co.uk"
+        assert (
+            "TXT",
+            "_pablo-verify.example.co.uk",
+            f"pablo-verify={apex.verify_token}",
+        ) in _records(added)
+
+    def test_a_second_host_under_the_domain_keeps_its_token(
+        self, client: TestClient, repo: InMemoryPracticeDomainRepository
+    ) -> None:
+        client.post(URL, json={"domain": "portal.ours.example", "purpose": "portal"})
+        token = repo.get_apex("ours.example").verify_token  # type: ignore[union-attr]  # written above
+        client.post(URL, json={"domain": "book.ours.example", "purpose": "portal"})
+
+        assert repo.get_apex("ours.example").verify_token == token  # type: ignore[union-attr]  # written above
+
+    def test_a_host_under_another_practices_domain_is_409_and_writes_nothing(
+        self,
+        client: TestClient,
+        repo: InMemoryPracticeDomainRepository,
+        audit: _RecordingAudit,
+    ) -> None:
+        repo.put_apex(_apex("theirs.example", practice_id=OTHER_PRACTICE))
+
+        response = client.post(URL, json={"domain": "portal.theirs.example", "purpose": "portal"})
+
+        assert response.status_code == 409
+        assert _code(response) == "DOMAIN_TAKEN"
+        assert repo.get("portal.theirs.example") is None
+        assert audit.entries == []
+
+    def test_a_public_suffix_is_not_a_domain_anyone_can_add(self, client: TestClient) -> None:
+        response = client.post(URL, json={"domain": "co.uk", "purpose": "site"})
+
+        assert response.status_code == 422
+        assert _code(response) == "DOMAIN_INVALID"
+
+    def test_a_bare_domain_under_a_two_label_suffix_brings_www(self, client: TestClient) -> None:
+        response = client.post(URL, json={"domain": "ours.co.uk", "purpose": "site"})
+
+        assert set(_by_domain(response.json())) == {"ours.co.uk", "www.ours.co.uk"}
+
+    def test_the_domain_is_released_with_its_last_host(
+        self, client: TestClient, repo: InMemoryPracticeDomainRepository
+    ) -> None:
+        client.post(URL, json={"domain": "ours.example", "purpose": "site"})
+
+        client.delete(f"{URL}/ours.example")
+        assert repo.get_apex("ours.example") is not None  # www.ours.example is still there
+        client.delete(f"{URL}/www.ours.example")
+        assert repo.get_apex("ours.example") is None
+
+    def test_the_domain_records_are_shown_once_on_the_bare_domain(
+        self, client: TestClient, repo: InMemoryPracticeDomainRepository
+    ) -> None:
+        repo.put(_row("portal.ours.example"))
+        repo.put(_row("ours.example", purpose="site", created_at=datetime(2026, 9, 2, tzinfo=UTC)))
+        repo.put_apex(_apex("ours.example", email_dkim_tokens=["k1", "k2", "k3"]))
+
+        domains = _by_domain(client.get(URL).json())
+
+        bare = _records(domains["ours.example"])
+        assert ("TXT", "_pablo-verify.ours.example", "pablo-verify=tok-ours.example") in bare
+        assert [r for r in bare if "_domainkey" in r[1]] == [
+            ("CNAME", f"{k}._domainkey.ours.example", f"{k}.dkim.amazonses.com")
+            for k in ("k1", "k2", "k3")
+        ]
+        assert _records(domains["portal.ours.example"]) == [
+            ("CNAME", "portal.ours.example", CNAME_TARGET)
+        ]
+        assert domains["portal.ours.example"]["apex"] == "ours.example"
+
+    def test_without_the_bare_domain_the_oldest_host_shows_them(
+        self, client: TestClient, repo: InMemoryPracticeDomainRepository
+    ) -> None:
+        repo.put(_row("portal.ours.example"))
+        repo.put(_row("book.ours.example", created_at=datetime(2026, 9, 2, tzinfo=UTC)))
+        repo.put_apex(_apex("ours.example"))
+
+        domains = _by_domain(client.get(URL).json())
+
+        assert any(r[0] == "TXT" for r in _records(domains["portal.ours.example"]))
+        assert not any(r[0] == "TXT" for r in _records(domains["book.ours.example"]))
+
+    def test_a_requested_certificate_shows_its_authorisation_record(
+        self, client: TestClient, repo: InMemoryPracticeDomainRepository
+    ) -> None:
+        repo.put(_row("portal.ours.example", cert_auth_value="test-auth.7"))
+
+        (domain,) = client.get(URL).json()["domains"]
+
+        assert (
+            "CNAME",
+            "_acme-challenge.portal.ours.example",
+            "test-auth.7.authorize.certificatemanager.goog",
+        ) in _records(domain)
+
+
+class TestDescribe:
+    """What the add form asks so its www default matches the server's."""
+
+    @pytest.mark.parametrize(
+        ("raw", "domain", "apex", "bare"),
+        [
+            ("Example.co.uk.", "example.co.uk", "example.co.uk", True),
+            ("https://ours.example/", "ours.example", "ours.example", True),
+            ("portal.example.co.uk", "portal.example.co.uk", "example.co.uk", False),
+        ],
+    )
+    def test_names_the_domain_and_whether_it_is_bare(
+        self,
+        client: TestClient,
+        repo: InMemoryPracticeDomainRepository,
+        raw: str,
+        domain: str,
+        apex: str,
+        bare: bool,
+    ) -> None:
+        response = client.get(f"{URL}/describe", params={"domain": raw})
+
+        assert response.status_code == 200
+        assert response.json() == {"domain": domain, "apex": apex, "bare": bare}
+        # Describing writes nothing.
+        assert repo.get(domain) is None
+        assert repo.get_apex(apex) is None
+
+    @pytest.mark.parametrize("raw", ["co.uk", "192.0.2.1", "app.example.org"])
+    def test_an_unusable_name_is_422(self, client: TestClient, raw: str) -> None:
+        response = client.get(f"{URL}/describe", params={"domain": raw})
+
+        assert response.status_code == 422
+        assert _code(response) == "DOMAIN_INVALID"
+
+    @pytest.mark.parametrize("owner_email", ["someone-else@example.com"])
+    def test_a_non_owner_can_ask(self, client: TestClient) -> None:
+        response = client.get(f"{URL}/describe", params={"domain": "example.com"})
+        assert response.status_code == 200
+
+
+class TestCheck:
+    def test_reports_each_record_and_records_ownership(
+        self,
+        client: TestClient,
+        repo: InMemoryPracticeDomainRepository,
+        audit: _RecordingAudit,
+        zone: dict[tuple[str, str], list[str] | None],
+    ) -> None:
+        repo.put(_row("portal.ours.example", status="pending", cert_auth_value="abc.1"))
+        repo.put_apex(_apex("ours.example"))
+        zone[("portal.ours.example", "CNAME")] = [CNAME_TARGET]
+        zone[("_pablo-verify.ours.example", "TXT")] = ["pablo-verify=tok-ours.example"]
+        zone[("_acme-challenge.portal.ours.example", "CNAME")] = ["somewhere.else.example"]
+
+        response = client.post(f"{URL}/check")
+
+        assert response.status_code == 200
+        (domain,) = response.json()["domains"]
+        checks = {(r["type"], r["name"]): (r["check"], r["found"]) for r in domain["dns_records"]}
+        assert checks == {
+            ("CNAME", "portal.ours.example"): ("ok", [CNAME_TARGET]),
+            ("CNAME", "_acme-challenge.portal.ours.example"): (
+                "wrong",
+                ["somewhere.else.example"],
+            ),
+            ("TXT", "_pablo-verify.ours.example"): ("ok", ["pablo-verify=tok-ours.example"]),
+        }
+        assert domain["apex_verified_at"] is not None
+        assert repo.get_apex("ours.example").verified_at is not None  # type: ignore[union-attr]  # put above
+        # Nothing about the host itself changed.
+        assert domain["status"] == "pending"
+        assert repo.get("portal.ours.example").status == "pending"  # type: ignore[union-attr]  # put above
+        assert audit.entries == [
+            {
+                "action": AuditAction.PRACTICE_DOMAIN_OWNERSHIP_CONFIRMED,
+                "resource_type": ResourceType.PRACTICE,
+                "resource_id": PRACTICE_ID,
+                "changes": {"domains": ["ours.example"]},
+            }
+        ]
+
+    def test_missing_records_record_nothing(
+        self,
+        client: TestClient,
+        repo: InMemoryPracticeDomainRepository,
+        audit: _RecordingAudit,
+    ) -> None:
+        repo.put(_row("portal.ours.example", status="pending"))
+        repo.put_apex(_apex("ours.example"))
+
+        (domain,) = client.post(f"{URL}/check").json()["domains"]
+
+        assert {r["check"] for r in domain["dns_records"]} == {"missing"}
+        assert domain["apex_verified_at"] is None
+        assert repo.get_apex("ours.example").verified_at is None  # type: ignore[union-attr]  # put above
+        assert audit.entries == []
+
+    def test_a_host_from_before_domain_rows_gets_one(
+        self, client: TestClient, repo: InMemoryPracticeDomainRepository
+    ) -> None:
+        repo.put(_row("portal.ours.example"))
+
+        (domain,) = client.post(f"{URL}/check").json()["domains"]
+
+        apex = repo.get_apex("ours.example")
+        assert apex is not None
+        assert ("TXT", "_pablo-verify.ours.example", f"pablo-verify={apex.verify_token}") in (
+            _records(domain)
+        )
+
+    def test_a_domain_another_practice_holds_is_left_to_them(
+        self, client: TestClient, repo: InMemoryPracticeDomainRepository
+    ) -> None:
+        repo.put(_row("portal.shared.example"))
+        repo.put_apex(_apex("shared.example", practice_id=OTHER_PRACTICE))
+
+        (domain,) = client.post(f"{URL}/check").json()["domains"]
+
+        assert repo.get_apex("shared.example").practice_id == OTHER_PRACTICE  # type: ignore[union-attr]  # put above
+        assert not any(r[0] == "TXT" for r in _records(domain))
+
+    @pytest.mark.parametrize("owner_email", ["someone-else@example.com"])
+    def test_a_non_owner_cannot_check(
+        self, client: TestClient, repo: InMemoryPracticeDomainRepository
+    ) -> None:
+        repo.put(_row("portal.ours.example"))
+
+        response = client.post(f"{URL}/check")
+
+        assert response.status_code == 403
+        assert repo.get_apex("ours.example") is None

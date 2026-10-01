@@ -13,7 +13,7 @@
 # Host ports default to the ones the browser-facing design fixes (frontend
 # 3000, backend 8000, auth emulator 9099). Override E2E_FRONTEND_PORT,
 # E2E_BACKEND_PORT, E2E_CLEARINGHOUSE_PORT, E2E_MAIL_PORT, E2E_SMS_PORT,
-# E2E_STORAGE_PORT or E2E_GOOGLE_PORT when something already listens there. The emulator port is baked into the
+# E2E_DNS_PORT, E2E_STORAGE_PORT or E2E_GOOGLE_PORT when something already listens there. The emulator port is baked into the
 # frontend bundle at build time, so changing E2E_AUTH_EMULATOR_PORT needs
 # `make e2e-up` to rebuild.
 name: pablo-e2e
@@ -180,6 +180,9 @@ services:
       # What Settings > Domains tells a practice to point its own hosts at;
       # practice-domains.spec.ts reads it back from the page.
       - PRACTICE_DOMAIN_CNAME_TARGET=sites.e2e-stack.example
+      # Where "Check now" looks records up: the stand-in name server
+      # (scripts/fake_dns.py), which practice-domains.spec.ts fills.
+      - PRACTICE_DOMAIN_DNS_NAMESERVERS=fake-dns:5353
       # Every spec in the compose lane redeems through the same client
       # address, so the per-address portal budgets below have to cover a
       # whole suite rather than one household. The engine's own defaults
@@ -260,6 +263,8 @@ services:
       fake-mail:
         condition: service_healthy
       fake-sms:
+        condition: service_healthy
+      fake-dns:
         condition: service_healthy
     networks:
       - e2e-net
@@ -687,6 +692,30 @@ services:
           "python",
           "-c",
           "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://localhost:8026/_fake/messages').getcode() == 200 else 1)",
+        ]
+      interval: 3s
+      timeout: 5s
+      start_period: 5s
+      retries: 20
+    networks:
+      - e2e-net
+
+  # The name server Settings > Domains asks when a practice checks its records.
+  # It answers from a table a spec fills over HTTP; see scripts/fake_dns.py and
+  # frontend/e2e/fixtures/dns.ts.
+  fake-dns:
+    build:
+      context: .
+      dockerfile: scripts/e2e/fake-dns.Dockerfile
+    ports:
+      - "${E2E_DNS_PORT:-8027}:8027"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://localhost:8027/_fake/health').getcode() == 200 else 1)",
         ]
       interval: 3s
       timeout: 5s

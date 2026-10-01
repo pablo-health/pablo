@@ -422,6 +422,7 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # website from; public hostnames. The writes are audited anyway, as a
         # record of who changed where clients are sent.
         ("get", "/api/practice/domains"),  # practice hostnames; no patient data
+        ("get", "/api/practice/domains/describe"),  # parses a typed hostname; reads nothing
         # coverage.py — the practice's payer list (names, electronic payer
         # ids, filing deadlines); no client attached. The per-client coverage
         # routes in the same file live under /api/patients and are audited.

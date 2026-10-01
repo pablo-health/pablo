@@ -4,8 +4,14 @@
 
 * ``GET /api/practice/domains`` — any clinician of the practice: the hosts,
   their status, which is primary, and the DNS records to set.
+* ``GET /api/practice/domains/describe?domain=`` — any clinician of the
+  practice: what a name would be stored as, its registrable domain, and
+  whether it is bare (which decides a website's ``www.`` default).
 * ``POST /api/practice/domains`` — add a host (and, for a website, its
   ``www.`` alias).
+* ``POST /api/practice/domains/check`` — look the records up in DNS and answer
+  the list with what was found per record; records a domain's ownership when
+  its TXT is found. Changes no host's status.
 * ``POST /api/practice/domains/{domain}/primary`` — make an active host the
   primary for its purpose.
 * ``DELETE /api/practice/domains/{domain}`` — remove a host.
@@ -21,7 +27,7 @@ Nothing here marks a host as working. See
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 
 from ..api_errors import NotFoundError
 from ..auth.service import require_active_subscription
@@ -29,11 +35,11 @@ from ..models import User  # noqa: TC001 — fastapi resolves the annotation at 
 from ..models.audit import AuditAction, ResourceType
 from ..models.practice_domain import (
     AddPracticeDomainRequest,
-    PracticeDomain,
+    DomainNameResponse,
     PracticeDomainListResponse,
-    PracticeDomainResponse,
 )
 from ..services.audit_service import AuditService, get_audit_service
+from ..services.practice_domain_dns import DnsLookup, get_dns_lookup
 from ..services.practice_domain_service import (
     PracticeDomainService,
     get_practice_domain_service,
@@ -59,23 +65,8 @@ def _manageable_practice_id(user: User) -> str:
     return _get_own_practice_as_owner(user).id
 
 
-def _response(service: PracticeDomainService, domain: PracticeDomain) -> PracticeDomainResponse:
-    return PracticeDomainResponse(
-        domain=domain.domain,
-        purpose=domain.purpose,
-        status=domain.status,
-        is_primary=domain.is_primary,
-        verified_at=domain.verified_at,
-        created_at=domain.created_at,
-        dns_records=service.dns_records(domain),
-        alias_alternative=service.alias_alternative(domain),
-    )
-
-
 def _list(service: PracticeDomainService, practice_id: str) -> PracticeDomainListResponse:
-    return PracticeDomainListResponse(
-        domains=[_response(service, d) for d in service.for_practice(practice_id)]
-    )
+    return PracticeDomainListResponse(domains=service.responses(practice_id))
 
 
 @router.get("", response_model=PracticeDomainListResponse)
@@ -85,6 +76,17 @@ def list_practice_domains(
 ) -> PracticeDomainListResponse:
     """Every host the caller's practice serves from."""
     return _list(service, _practice_id(user))
+
+
+@router.get("/describe", response_model=DomainNameResponse)
+def describe_practice_domain(
+    domain: str = Query(max_length=512),
+    _user: User = Depends(require_active_subscription),
+    service: PracticeDomainService = Depends(get_practice_domain_service),
+) -> DomainNameResponse:
+    """What a name would be stored as, its registrable domain, and whether it
+    is bare. Reads nothing stored; 422 with what to fix."""
+    return service.describe(domain)
 
 
 @router.post("", response_model=PracticeDomainListResponse, status_code=201)
@@ -108,6 +110,32 @@ def add_practice_domain(
             changes={"domain": domain.domain, "purpose": domain.purpose},
         )
     return _list(service, practice_id)
+
+
+@router.post("/check", response_model=PracticeDomainListResponse)
+def check_practice_domains(
+    http_request: Request,
+    user: User = Depends(require_active_subscription),
+    service: PracticeDomainService = Depends(get_practice_domain_service),
+    lookup: DnsLookup = Depends(get_dns_lookup),
+    audit: AuditService = Depends(get_audit_service),
+) -> PracticeDomainListResponse:
+    """Look the practice's records up in DNS and say, per record, what was found.
+
+    Records when a domain's ownership record is found. Changes no host's status.
+    """
+    practice_id = _manageable_practice_id(user)
+    domains, confirmed = service.check(practice_id, lookup)
+    if confirmed:
+        audit.log(
+            AuditAction.PRACTICE_DOMAIN_OWNERSHIP_CONFIRMED,
+            user,
+            http_request,
+            resource_type=ResourceType.PRACTICE,
+            resource_id=practice_id,
+            changes={"domains": confirmed},
+        )
+    return PracticeDomainListResponse(domains=domains)
 
 
 @router.post("/{domain}/primary", response_model=PracticeDomainListResponse)

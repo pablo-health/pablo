@@ -114,6 +114,14 @@ openinference-semantic-conventions = "^0.1.30"
 python-docx = "^1.1.2"
 webauthn = "^3.0.0"
 
+# A practice's own domains (backend/app/services/practice_domain_dns.py and
+# practice_domain_hosts.py): dnspython reads the records the practice added,
+# tldextract finds the registrable domain a host sits under from the Public
+# Suffix List. tldextract is used with its bundled list snapshot only and never
+# fetches one at runtime.
+dnspython = "^2.8.0"
+tldextract = "^5.3.0"
+
 
 [tool.poetry.group.pii]
 optional = true

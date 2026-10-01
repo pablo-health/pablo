@@ -23,6 +23,8 @@ export const CLEARINGHOUSE_URL =
   process.env.E2E_CLEARINGHOUSE_URL || `http://localhost:${port("E2E_CLEARINGHOUSE_PORT", "8080")}`
 export const MAIL_URL = process.env.E2E_MAIL_URL || `http://localhost:${port("E2E_MAIL_PORT", "8025")}`
 export const SMS_URL = process.env.E2E_SMS_URL || `http://localhost:${port("E2E_SMS_PORT", "8026")}`
+/** The stand-in name server's HTTP hooks (scripts/fake_dns.py). */
+export const DNS_URL = process.env.E2E_DNS_URL || `http://localhost:${port("E2E_DNS_PORT", "8027")}`
 /**
  * The stand-in Google. One address for the browser (sent to its
  * authorization page) and the backend (which exchanges the code and reads

@@ -7,7 +7,9 @@
  * route into the real table (a website bringing its www alias), shows the DNS
  * record this deployment is configured to name, survives a reload, moves the
  * primary between two working hosts — the partial unique index allowing it —
- * and removes hosts again.
+ * and removes hosts again. And that "Check now" asks DNS — the stack's stand-in
+ * name server (scripts/fake_dns.py), filled from here — and reports each record
+ * found only once it is published, without moving the host's status.
  *
  * The two working hosts are written by backend/scripts/e2e_seed_practice_domains.py:
  * nothing in the product marks a host working on a practice's say-so, so a
@@ -21,6 +23,7 @@
 import type { Page } from "@playwright/test"
 import { test, expect } from "../fixtures/auth"
 import type { ApiClient } from "../fixtures/api"
+import { dns } from "../fixtures/dns"
 
 const SETTINGS_PATH = "/dashboard/settings/domains"
 const CNAME_TARGET = "sites.e2e-stack.example"
@@ -32,6 +35,8 @@ interface Domain {
   purpose: "portal" | "site"
   status: string
   is_primary: boolean
+  dns_records: { type: string; name: string; value: string }[]
+  apex_verified_at: string | null
 }
 
 async function domains(api: ApiClient): Promise<Domain[]> {
@@ -104,6 +109,48 @@ test.describe("A practice's own domains", () => {
     const left = (await domains(api)).map((d) => d.domain)
     expect(left).not.toContain(host)
     expect(left).not.toContain(www)
+  })
+
+  test("the owner checks a new address's records and sees each one found once it is published", async ({
+    api,
+    signedInPage: page,
+  }) => {
+    const host = `portal${Date.now()}${ADDED_SUFFIX}`
+    const verifyName = `_pablo-verify${ADDED_SUFFIX}`
+
+    await page.goto(SETTINGS_PATH)
+    await page.getByLabel("Domain", { exact: true }).fill(host)
+    await page.getByRole("button", { name: "Add domain" }).click()
+
+    // The domain's ownership record is shown beside the host's own.
+    const records = row(page, host).getByRole("table", { name: `DNS records for ${host}` })
+    await expect(records).toContainText(verifyName)
+    const verify = (await domains(api))
+      .find((d) => d.domain === host)
+      ?.dns_records.find((r) => r.type === "TXT" && r.name === verifyName)
+    expect(verify?.value).toMatch(/^pablo-verify=[\w-]{32}$/)
+    await expect(records).toContainText(verify!.value)
+
+    try {
+      await page.getByRole("button", { name: "Check now" }).click()
+      await expect(row(page, host).getByTestId(`check-CNAME-${host}`)).toHaveText("Not found yet")
+      await expect(row(page, host).getByTestId(`check-TXT-${verifyName}`)).toHaveText("Not found yet")
+
+      await dns.set(host, "CNAME", [CNAME_TARGET])
+      await dns.set(verifyName, "TXT", [verify!.value])
+      await page.getByRole("button", { name: "Check now" }).click()
+      await expect(row(page, host).getByTestId(`check-CNAME-${host}`)).toHaveText("Found")
+      await expect(row(page, host).getByTestId(`check-TXT-${verifyName}`)).toHaveText("Found")
+
+      // Records in place are not the address working: its status is unchanged.
+      await expect(row(page, host)).toContainText("Waiting for DNS")
+      const stored = (await domains(api)).find((d) => d.domain === host)
+      expect(stored?.status).toBe("pending")
+      expect(stored?.apex_verified_at).not.toBeNull()
+    } finally {
+      await dns.set(host, "CNAME", [])
+      await dns.set(verifyName, "TXT", [])
+    }
   })
 
   test("the owner moves the primary portal address between two that work", async ({
