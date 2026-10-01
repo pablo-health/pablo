@@ -1,0 +1,12 @@
+{
+  "name": "projects/example-project/locations/global/certificateMaps/sites-cert-map/certificateMapEntries/portal-example-org",
+  "createTime": "2026-10-01T15:06:32.238664992Z",
+  "updateTime": "2026-10-01T15:06:33.098709273Z",
+  "hostname": "portal.example.org",
+  "certificates": [
+    "projects/100000000001/locations/global/certificates/cm-portal-example-org"
+  ],
+  "state": 2,
+  "description": "",
+  "labels": {}
+}

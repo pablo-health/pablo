@@ -1,0 +1,30 @@
+{
+  "name": "projects/example-project/locations/global/certificates/cm-portal-example-org",
+  "createTime": "2026-10-01T15:06:29.301252301Z",
+  "updateTime": "2026-10-01T15:06:29.768084237Z",
+  "sanDnsnames": [
+    "portal.example.org"
+  ],
+  "managed": {
+    "domains": [
+      "portal.example.org"
+    ],
+    "dnsAuthorizations": [
+      "projects/100000000001/locations/global/dnsAuthorizations/dnsauth-portal-example-org"
+    ],
+    "state": 1,
+    "authorizationAttemptInfo": [
+      {
+        "domain": "portal.example.org",
+        "state": 1,
+        "failureReason": 0,
+        "details": ""
+      }
+    ],
+    "issuanceConfig": ""
+  },
+  "description": "",
+  "labels": {},
+  "pemCertificate": "",
+  "scope": 0
+}

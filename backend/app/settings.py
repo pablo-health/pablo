@@ -1197,6 +1197,40 @@ class Settings(BaseSettings):
             "resolver."
         ),
     )
+    # Serving the hosts (app.jobs.practice_domain_reconcile). The job gives each
+    # host a Google-managed certificate in Certificate Manager, a certificate
+    # map entry, and a host rule on the load balancer's URL map. All four empty
+    # (the default) leaves it off: hosts are recorded and their records shown,
+    # and serving them is left to the deployment.
+    practice_domain_serving_project: str = Field(
+        default="",
+        description=(
+            "Google Cloud project holding the certificate map and URL map that "
+            "serve practice hosts. Empty: this deployment does not serve them "
+            "through the domain reconciler."
+        ),
+    )
+    practice_domain_certificate_map: str = Field(
+        default="",
+        description=(
+            "Certificate Manager certificate map (location global) the reconciler "
+            "adds an entry to for each practice host."
+        ),
+    )
+    practice_domain_url_map: str = Field(
+        default="",
+        description=(
+            "Global URL map whose host rules list the practice hosts it serves. "
+            "The reconciler edits only host rules naming practice hosts."
+        ),
+    )
+    practice_domain_path_matcher: str = Field(
+        default="",
+        description=(
+            "Path matcher in practice_domain_url_map that a practice host's host "
+            "rule points at. Must already exist in the URL map."
+        ),
+    )
     # One-click DNS setup through Domain Connect (app/services/domain_connect.py).
     # Off unless the provider id, key host and KMS key version are all set. The
     # templates themselves are published in the public Domain Connect template

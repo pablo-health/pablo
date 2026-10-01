@@ -17,10 +17,16 @@ from ..practice_domain import DomainTakenError, PracticeDomainRepository
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from sqlalchemy import Delete, Update
     from sqlalchemy.engine import CursorResult
     from sqlalchemy.orm import Session
 
-    from ...models.practice_domain import DomainPurpose
+    from ...models.practice_domain import (
+        DomainPurpose,
+        EmailIdentityStatus,
+        HostStatus,
+        ServingState,
+    )
 
 # SQLSTATE 23505. A fresh row is never primary, so the only unique constraint
 # an insert can trip is the primary key: the hostname, or the domain.
@@ -39,6 +45,9 @@ def _to_domain(row: PracticeDomainRow) -> PracticeDomain:
         verified_at=row.verified_at,
         updated_at=row.updated_at,
         cert_auth_value=row.cert_auth_value,
+        cert_status=row.cert_status,
+        last_error=row.last_error,
+        cert_reissued_at=row.cert_reissued_at,
     )
 
 
@@ -81,6 +90,9 @@ class PostgresPracticeDomainRepository(PracticeDomainRepository):
             is_primary=domain.is_primary,
             verified_at=domain.verified_at,
             cert_auth_value=domain.cert_auth_value,
+            cert_status=domain.cert_status,
+            last_error=domain.last_error,
+            cert_reissued_at=domain.cert_reissued_at,
             created_at=domain.created_at,
             updated_at=domain.updated_at,
         )
@@ -187,3 +199,90 @@ class PostgresPracticeDomainRepository(PracticeDomainRepository):
             .values(verified_at=at, updated_at=at)
         )
         self._session.flush()
+
+    def list_all(self) -> list[PracticeDomain]:
+        stmt = select(PracticeDomainRow).order_by(
+            PracticeDomainRow.created_at, PracticeDomainRow.domain
+        )
+        return [_to_domain(row) for row in self._session.execute(stmt).scalars()]
+
+    def mark_removing(self, domain: str, practice_id: str) -> bool:
+        return self._changed(
+            update(PracticeDomainRow)
+            .where(
+                PracticeDomainRow.domain == domain,
+                PracticeDomainRow.practice_id == practice_id,
+            )
+            .values(status="removing", is_primary=False, updated_at=utc_now())
+        )
+
+    def record_serving(
+        self,
+        domain: str,
+        *,
+        expected_status: HostStatus,
+        state: ServingState,
+    ) -> bool:
+        return self._changed(
+            update(PracticeDomainRow)
+            .where(
+                PracticeDomainRow.domain == domain,
+                PracticeDomainRow.status == expected_status,
+            )
+            .values(
+                status=state.status,
+                cert_auth_value=state.cert_auth_value,
+                cert_status=state.cert_status,
+                last_error=state.last_error,
+                cert_reissued_at=state.cert_reissued_at,
+                verified_at=state.verified_at,
+                updated_at=utc_now(),
+            )
+        )
+
+    def claim_reissue(self, domain: str, *, last: datetime | None, at: datetime) -> bool:
+        unchanged = (
+            PracticeDomainRow.cert_reissued_at.is_(None)
+            if last is None
+            else PracticeDomainRow.cert_reissued_at == last
+        )
+        return self._changed(
+            update(PracticeDomainRow)
+            .where(PracticeDomainRow.domain == domain, unchanged)
+            .values(cert_reissued_at=at)
+        )
+
+    def delete_removing(self, domain: str) -> bool:
+        return self._changed(
+            delete(PracticeDomainRow).where(
+                PracticeDomainRow.domain == domain,
+                PracticeDomainRow.status == "removing",
+            )
+        )
+
+    def set_email_identity(
+        self,
+        apex: str,
+        practice_id: str,
+        status: EmailIdentityStatus,
+        dkim_tokens: list[str] | None,
+    ) -> None:
+        self._changed(
+            update(PracticeDomainApexRow)
+            .where(
+                PracticeDomainApexRow.apex == apex,
+                PracticeDomainApexRow.practice_id == practice_id,
+            )
+            .values(
+                email_identity_status=status,
+                email_dkim_tokens=list(dkim_tokens) if dkim_tokens else None,
+                updated_at=utc_now(),
+            )
+        )
+
+    def _changed(self, stmt: Update | Delete) -> bool:
+        # cast: an executed UPDATE or DELETE is a CursorResult, which carries
+        # rowcount.
+        result = cast("CursorResult[Any]", self._session.execute(stmt))
+        self._session.flush()
+        return bool(result.rowcount)
