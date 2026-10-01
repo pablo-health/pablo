@@ -234,6 +234,7 @@ class TestAdoption:
         )
         [held] = [m for m in mappings.list_by_source(PRACTICE_SCOPE, SH) if m.patient_id == "old"]
         held.created_at = datetime.now(UTC) - timedelta(days=60)
+        mappings.save(held)
         mappings.remember_legacy(
             _legacy(A, SH, "SH00002", None, days_ago=10, answer=ANSWER_NOT_A_CLIENT)
         )
@@ -295,7 +296,9 @@ class _Practice:
             ICalSyncConfig(
                 user_id=user_id,
                 ehr_system=SH,
-                encrypted_feed_url=encrypt_tokens({"feed_url": "https://app.sessionshealth.com/calendars/sh"}),
+                encrypted_feed_url=encrypt_tokens(
+                    {"feed_url": "https://app.sessionshealth.com/calendars/sh"}
+                ),
                 connected_at=utc_now(),
             )
         ]

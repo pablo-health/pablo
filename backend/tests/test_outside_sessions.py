@@ -17,13 +17,15 @@ from app.calendar_providers.source_identity import (
     GOOGLE_CALENDAR_SOURCE,
     calendar_source_identifier,
     event_source_identifier,
+    ical_source,
 )
 from app.models.patient import Patient
 from app.patients.identifiers import calendar_scope
-from app.patients.matching import remember_match
+from app.patients.matching import remember_match, remember_not_a_client
 from app.repositories.audit import InMemoryAuditRepository
 from app.repositories.external_calendar_event import (
     ANSWER_CLIENT,
+    ExternalCalendarEvent,
     InMemoryExternalCalendarEventRepository,
 )
 from app.repositories.patient import InMemoryPatientRepository
@@ -323,6 +325,13 @@ class TestAnswering:
         assert third is not None
         assert third.patient_id == "p1"
         assert third.outside_source == GOOGLE_CALENDAR_SOURCE
+        # What the calendar shows for it, and nothing a feed would carry.
+        assert (third.title, third.duration_minutes, third.session_type) == (
+            "Session",
+            50,
+            "individual",
+        )
+        assert (third.ical_uid, third.ical_source, third.ical_sync_status) == (None, None, None)
         assert h.outside.questions(USER_ID) == []
 
     def test_not_a_client_is_remembered_and_the_series_never_asks_again(
@@ -368,6 +377,42 @@ class TestAnswering:
         h.poll(mock_user, [_event("e1", _in(2)), _event("e2", _in(9))])
 
         assert h.appointments.list_by_range(USER_ID, _in(0), _in(30)) == []
+
+    def test_a_remembered_series_over_a_booking_books_nothing_and_reports_nothing(
+        self, h: _Harness, mock_user: User
+    ) -> None:
+        """The event is answered, so it is never asked about, but it is not booked twice."""
+        h.patient("p1", "Jane", "Smith")
+        start = _in(2)
+        h.appointments.create(
+            Appointment(
+                id="booked-here",
+                user_id=USER_ID,
+                patient_id="p1",
+                title="Session",
+                start_at=start,
+                end_at=start + timedelta(minutes=50),
+                duration_minutes=50,
+                status=AppointmentStatus.CONFIRMED,
+                session_type="individual",
+            )
+        )
+        h.poll(mock_user, [_event("e1", _in(9))])
+        h.answer("p1")
+
+        result = h.outside.ingest_google(USER_ID, [_event("e2", start)])
+
+        assert result.booked == []
+        [row] = [
+            r
+            for r in h.events.list_by_source(USER_ID, GOOGLE_CALENDAR_SOURCE)
+            if r.source_event_id == "e2"
+        ]
+        assert (row.answer, row.patient_id, row.appointment_id) == (ANSWER_CLIENT, "p1", None)
+        assert [a.id for a in h.appointments.list_by_range(USER_ID, _in(0), _in(30))] == [
+            "booked-here",
+            h.followed("e1").id,  # type: ignore[union-attr]
+        ]
 
 
 class TestFollowing:
@@ -454,3 +499,186 @@ class TestFollowing:
 
         [row] = h.events.list_open(USER_ID)
         assert (row.source_event_id, row.start_at) == ("e1", new_start)
+
+
+class TestReadingAnAnsweredEventAgain:
+    """A read brings an answered event in again: moved, retitled, or as it was.
+
+    The row's answer and its appointment are the row's own; the read only says
+    where and what the event is now. Nothing is booked a second time.
+    """
+
+    @pytest.fixture
+    def answered(self, h: _Harness, mock_user: User) -> _Harness:
+        h.patient("p1", "Jane", "Smith")
+        h.poll(mock_user, [_event("e1", _in(2)), _event("e2", _in(9))])
+        h.answer("p1")
+        return h
+
+    def test_a_moved_answered_event_keeps_its_one_appointment(self, answered: _Harness) -> None:
+        booked = answered.followed("e1")
+        assert booked is not None
+
+        # The read alone, before the follower moves the appointment.
+        answered.outside.ingest_google(USER_ID, [_event("e1", _in(3, hour=10))])
+
+        [row] = [
+            r
+            for r in answered.events.list_by_source(USER_ID, GOOGLE_CALENDAR_SOURCE)
+            if r.source_event_id == "e1"
+        ]
+        assert (row.answer, row.patient_id, row.appointment_id) == (
+            ANSWER_CLIENT,
+            "p1",
+            booked.id,
+        )
+        assert [
+            a.outside_event_id
+            for a in answered.appointments.list_by_range(USER_ID, _in(0), _in(30))
+        ] == ["e1", "e2"]
+
+    def test_a_retitled_answered_event_stays_answered(
+        self, answered: _Harness, mock_user: User
+    ) -> None:
+        """Retitled, the series would be asked again; an event already answered is not."""
+        booked = answered.followed("e1")
+        assert booked is not None
+
+        answered.poll(mock_user, [_event("e1", _in(2), title="Someone else")])
+
+        [row] = [
+            r
+            for r in answered.events.list_by_source(USER_ID, GOOGLE_CALENDAR_SOURCE)
+            if r.source_event_id == "e1"
+        ]
+        assert (row.answer, row.patient_id, row.appointment_id) == (
+            ANSWER_CLIENT,
+            "p1",
+            booked.id,
+        )
+        assert answered.outside.questions(USER_ID) == []
+
+    def test_an_identifier_since_said_to_be_no_client_takes_its_held_row(
+        self, h: _Harness, mock_user: User
+    ) -> None:
+        """Answered elsewhere (the import), the row already held for it goes."""
+        h.poll(mock_user, [_event("e1", _in(2))])
+        assert h.open_ids() == ["e1"]
+        remember_not_a_client(
+            GOOGLE_CALENDAR_SOURCE,
+            calendar_source_identifier(SERIES, "", 0, "00:00"),
+            h.outside.context(USER_ID),
+            scope=SCOPE,
+        )
+
+        h.poll(mock_user, [_event("e1", _in(2))])
+
+        assert h.events.list_by_source(USER_ID, GOOGLE_CALENDAR_SOURCE) == []
+        assert h.outside.questions(USER_ID) == []
+
+    def test_a_one_off_whose_only_candidate_is_gone_stops_being_asked(
+        self, h: _Harness, mock_user: User
+    ) -> None:
+        h.patient("p1", "Jane", "Smith")
+        h.poll(mock_user, [_event("x", _in(2), title="Jane Smith", series=None)])
+        assert h.open_ids() == ["x"]
+        h.patients.delete("p1", USER_ID)
+
+        h.poll(mock_user, [_event("x", _in(2), title="Jane Smith", series=None)])
+
+        assert h.open_ids() == []
+
+
+class TestAFullReadWindow:
+    def test_rows_touching_the_edge_of_the_window_are_left_alone(self, h: _Harness) -> None:
+        """Ending as the window opens, or starting as it closes, is outside it."""
+        start, end = _in(1), _in(30)
+        for row_id, starts, ends in [
+            ("ends-at-open", start - timedelta(minutes=50), start),
+            ("starts-at-close", end, end + timedelta(minutes=50)),
+            ("inside", start, start + timedelta(minutes=50)),
+        ]:
+            h.events.save(
+                ExternalCalendarEvent(
+                    id=row_id,
+                    user_id=USER_ID,
+                    source=GOOGLE_CALENDAR_SOURCE,
+                    source_event_id=row_id,
+                    calendar_id="main",
+                    start_at=starts,
+                    end_at=ends,
+                )
+            )
+
+        h.outside.reconcile_full_read(
+            USER_ID, present=set(), window=(start, end), calendar_id="main"
+        )
+
+        assert sorted(r.id for r in h.events.list_by_source(USER_ID, GOOGLE_CALENDAR_SOURCE)) == [
+            "ends-at-open",
+            "starts-at-close",
+        ]
+
+
+class TestClaimingTheMainCalendar:
+    def test_only_what_recorded_no_calendar_is_claimed(self, h: _Harness, mock_user: User) -> None:
+        """A row or session from another calendar, or from a feed, keeps what it recorded."""
+        h.patient("p1", "Jane", "Smith")
+        start = _in(3)
+        # A row from before calendars were recorded. A read records one now,
+        # so it is written as an older image left it.
+        h.events.save(
+            ExternalCalendarEvent(
+                id="unrecorded-row",
+                user_id=USER_ID,
+                source=GOOGLE_CALENDAR_SOURCE,
+                source_event_id="e1",
+                calendar_id=None,
+                start_at=_in(2),
+                end_at=_in(2) + timedelta(minutes=50),
+            )
+        )
+        h.events.save(
+            ExternalCalendarEvent(
+                id="team-row",
+                user_id=USER_ID,
+                source=GOOGLE_CALENDAR_SOURCE,
+                source_event_id="t1",
+                calendar_id="team",
+                start_at=start,
+                end_at=start + timedelta(minutes=50),
+            )
+        )
+        for appointment_id, source, calendar_id in [
+            ("team-session", GOOGLE_CALENDAR_SOURCE, "team"),
+            ("unrecorded-session", GOOGLE_CALENDAR_SOURCE, None),
+            ("feed-session", ical_source("simplepractice"), None),
+        ]:
+            h.appointments.create(
+                Appointment(
+                    id=appointment_id,
+                    user_id=USER_ID,
+                    patient_id="p1",
+                    title="Session",
+                    start_at=start,
+                    end_at=start + timedelta(minutes=50),
+                    duration_minutes=50,
+                    status=AppointmentStatus.CONFIRMED,
+                    session_type="individual",
+                    outside_source=source,
+                    outside_event_id=appointment_id,
+                    outside_calendar_id=calendar_id,
+                )
+            )
+
+        claimed = h.outside.claim_unrecorded(USER_ID, "main")
+
+        assert claimed == 1
+        assert {
+            r.source_event_id: r.calendar_id
+            for r in h.events.list_by_source(USER_ID, GOOGLE_CALENDAR_SOURCE)
+        } == {"e1": "main", "t1": "team"}
+        assert {
+            a.id: a.outside_calendar_id
+            for a in h.appointments.list_by_range(USER_ID, _in(0), _in(30))
+        } == {"team-session": "team", "unrecorded-session": "main", "feed-session": None}

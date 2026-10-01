@@ -9,6 +9,7 @@ for it) or not a client. See ``app.services.outside_sessions``.
 
 from __future__ import annotations
 
+import copy
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -76,13 +77,19 @@ class ExternalCalendarEventRepository(ABC):
 
 
 class InMemoryExternalCalendarEventRepository(ExternalCalendarEventRepository):
-    """In-memory implementation for tests."""
+    """In-memory implementation for tests.
+
+    Rows are copied on the way in and on the way out, as a database would
+    hand back a fresh row for every read. Otherwise a caller that changes a
+    row it was handed and forgets to ``save`` it still sees the change on
+    the next read, and a test cannot tell a forgotten save from a made one.
+    """
 
     def __init__(self) -> None:
         self._events: dict[str, ExternalCalendarEvent] = {}
 
     def get(self, user_id: str, source: str, source_event_id: str) -> ExternalCalendarEvent | None:
-        return next(
+        found = next(
             (
                 e
                 for e in self._events.values()
@@ -90,19 +97,24 @@ class InMemoryExternalCalendarEventRepository(ExternalCalendarEventRepository):
             ),
             None,
         )
+        return copy.deepcopy(found)
 
     def get_by_id(self, user_id: str, event_id: str) -> ExternalCalendarEvent | None:
         event = self._events.get(event_id)
-        return event if event is not None and event.user_id == user_id else None
+        return copy.deepcopy(event) if event is not None and event.user_id == user_id else None
 
     def list_by_source(self, user_id: str, source: str) -> list[ExternalCalendarEvent]:
-        return [e for e in self._events.values() if e.user_id == user_id and e.source == source]
+        return [
+            copy.deepcopy(e)
+            for e in self._events.values()
+            if e.user_id == user_id and e.source == source
+        ]
 
     def list_open(
         self, user_id: str, start: datetime | None = None, end: datetime | None = None
     ) -> list[ExternalCalendarEvent]:
         found = [
-            e
+            copy.deepcopy(e)
             for e in self._events.values()
             if e.user_id == user_id
             and e.answer == ANSWER_OPEN
@@ -112,7 +124,7 @@ class InMemoryExternalCalendarEventRepository(ExternalCalendarEventRepository):
         return sorted(found, key=lambda e: e.start_at)
 
     def save(self, event: ExternalCalendarEvent) -> None:
-        self._events[event.id] = event
+        self._events[event.id] = copy.deepcopy(event)
 
     def delete(self, user_id: str, event_id: str) -> None:
         if self.get_by_id(user_id, event_id) is not None:

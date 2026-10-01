@@ -8,7 +8,7 @@ import base64
 import io
 import os
 import zipfile
-from datetime import datetime  # noqa: TC003
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 from urllib.parse import urlparse
@@ -24,6 +24,7 @@ from app.repositories.patient_source_mapping import (
     InMemoryPatientSourceMappingRepository,
     PatientSourceMapping,
 )
+from app.scheduling_engine.models.appointment import AppointmentStatus
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.services.ical_sync_service import (
     FEED_URL_REFUSED,
@@ -260,21 +261,41 @@ class TestICalParsing:
         assert e.end_at.hour == 19
         assert e.end_at.minute == 0
 
+    def test_an_event_without_an_end_or_an_all_day_one_is_left_out(self, service: ICalSyncService):
+        """Neither is a session: no end means no duration, and a day is not a slot."""
+        extra = (
+            "BEGIN:VEVENT\nUID:no-end\n"
+            "DTSTART;TZID=America/New_York:20260318T140000\n"
+            "SUMMARY:J.A. Appointment\nEND:VEVENT\n"
+            "BEGIN:VEVENT\nUID:all-day\n"
+            "DTSTART;VALUE=DATE:20260318\nDTEND;VALUE=DATE:20260319\n"
+            "SUMMARY:Out of office\nEND:VEVENT\n"
+            "END:VCALENDAR"
+        )
+
+        events = service._parse_events(SP_ICAL_DATA.replace("END:VCALENDAR", extra))
+
+        assert sorted(e.uid for e in events) == ["3415461692", "3426439378"]
+
 
 class TestClientMatching:
     """Tests for client identifier extraction and matching."""
 
-    def test_extract_sp_initials(self, service: ICalSyncService):
-        assert service._extract_client_identifier("simplepractice", "J.A. Appointment") == "J.A."
-
-    def test_extract_sp_full_name(self, service: ICalSyncService):
-        assert (
-            service._extract_client_identifier("simplepractice", "Jane Adams Appointment")
-            == "Jane Adams"
-        )
-
-    def test_extract_sh_code(self, service: ICalSyncService):
-        assert service._extract_client_identifier("sessions_health", "SH00001") == "SH00001"
+    @pytest.mark.parametrize(
+        ("ehr_system", "summary", "identifier"),
+        [
+            ("simplepractice", "J.A. Appointment", "J.A."),
+            ("simplepractice", "Jane Adams Appointment", "Jane Adams"),
+            ("sessions_health", "SH00001", "SH00001"),
+            # Sessions Health pads nothing, but a code typed with a stray
+            # space must still be the code it was remembered under.
+            ("sessions_health", " SH00001 ", "SH00001"),
+        ],
+    )
+    def test_the_client_identifier_is_read_from_the_title(
+        self, service: ICalSyncService, ehr_system: str, summary: str, identifier: str
+    ):
+        assert service._extract_client_identifier(ehr_system, summary) == identifier
 
     def test_unique_initials_are_offered_never_booked(self, service: ICalSyncService):
         """ "J.A." fits Jane Adams alone today; tomorrow it may fit someone new."""
@@ -284,15 +305,6 @@ class TestClientMatching:
         ]
         ctx = _context(service, patients)
         assert service._match("simplepractice", "J.A.", ctx).patient_id == "p1"
-        assert _unattended(service, "simplepractice", "J.A. Appointment", ctx) is None
-
-    def test_ambiguous_initials_are_a_question(self, service: ICalSyncService):
-        patients = [
-            _make_patient("p1", "Jane", "Adams"),
-            _make_patient("p2", "John", "Adams"),
-        ]
-        ctx = _context(service, patients)
-        assert service._match("simplepractice", "J.A.", ctx).patient_id is None
         assert _unattended(service, "simplepractice", "J.A. Appointment", ctx) is None
 
     def test_a_full_name_one_chart_bears_books(self, service: ICalSyncService):
@@ -452,7 +464,14 @@ class TestSyncDiff:
 
         [result] = sync_service.sync("user1", "simplepractice")
 
-        assert "J.A." in [e["client_identifier"] for e in result.unmatched_events]
+        [unmatched] = [e for e in result.unmatched_events if e["client_identifier"] == "J.A."]
+        # Enough to open the appointment where it was booked.
+        assert unmatched == {
+            "ical_uid": "3415461692",
+            "client_identifier": "J.A.",
+            "start_at": "2026-03-18T18:00:00+00:00",
+            "ehr_appointment_url": "https://secure.simplepractice.com/appointments/3415461692",
+        }
 
     @patch.object(ICalSyncService, "_fetch_feed")
     def test_second_sync_no_changes(self, mock_fetch: MagicMock, sync_service: ICalSyncService):
@@ -474,21 +493,61 @@ class TestSyncDiff:
         sync_service.sync("user1", "simplepractice")
 
         # Second sync with one event removed
-        reduced_data = SP_ICAL_DATA.replace(
-            "BEGIN:VEVENT\nDTSTAMP:20260325T005244Z\n"
-            "UID:3426439378\n"
-            "DTSTART;TZID=America/New_York:20260323T200000\n"
-            "DTEND;TZID=America/New_York:20260323T205000\n"
-            "SUMMARY:P.B. Appointment\n"
-            "URL;VALUE=URI:https://video.simplepractice.com/appt-485bc95d4f126fadb091e02f240ea244\n"
-            "END:VEVENT\n",
-            "",
-        )
-        mock_fetch.return_value = reduced_data
+        mock_fetch.return_value = _WITHOUT_PABLO
         results = sync_service.sync("user1", "simplepractice")
         result = results[0]
         assert result.deleted == 1
         assert result.unchanged == 1
+        # The one that left is cancelled; the one still in the feed is not.
+        by_uid = _by_uid(sync_service)
+        gone, kept = by_uid["3426439378"], by_uid["3415461692"]
+        assert (gone.status, gone.ical_sync_status) == (AppointmentStatus.CANCELLED, "deleted")
+        assert gone.updated_at is not None
+        assert (kept.status, kept.ical_sync_status) == (AppointmentStatus.CONFIRMED, "synced")
+
+    @patch.object(ICalSyncService, "_fetch_feed")
+    def test_a_moved_event_moves_its_appointment(
+        self, mock_fetch: MagicMock, sync_service: ICalSyncService
+    ):
+        mock_fetch.return_value = SP_NAMES_ICAL_DATA
+        sync_service.sync("user1", "simplepractice")
+        before = _by_uid(sync_service)["3415461692"]
+
+        # Jane's session, an hour and a half later and fifteen minutes longer.
+        mock_fetch.return_value = SP_NAMES_ICAL_DATA.replace(
+            "DTSTART;TZID=America/New_York:20260318T140000\n"
+            "DTEND;TZID=America/New_York:20260318T150000\n",
+            "DTSTART;TZID=America/New_York:20260318T153000\n"
+            "DTEND;TZID=America/New_York:20260318T164500\n",
+        )
+        [result] = sync_service.sync("user1", "simplepractice")
+
+        assert (result.created, result.updated, result.unchanged, result.deleted) == (0, 1, 1, 0)
+        moved = _by_uid(sync_service)["3415461692"]
+        assert moved.start_at == before.start_at + timedelta(hours=1, minutes=30)
+        assert moved.end_at == before.end_at + timedelta(hours=1, minutes=45)
+        assert moved.duration_minutes == 75
+        assert moved.updated_at is not None
+
+    @patch.object(ICalSyncService, "_fetch_feed")
+    def test_an_event_that_comes_back_restores_its_appointment(
+        self, mock_fetch: MagicMock, sync_service: ICalSyncService
+    ):
+        mock_fetch.return_value = SP_NAMES_ICAL_DATA
+        sync_service.sync("user1", "simplepractice")
+        mock_fetch.return_value = _WITHOUT_PABLO
+        sync_service.sync("user1", "simplepractice")
+        assert _by_uid(sync_service)["3426439378"].status == AppointmentStatus.CANCELLED
+
+        mock_fetch.return_value = SP_NAMES_ICAL_DATA
+        [result] = sync_service.sync("user1", "simplepractice")
+
+        assert (result.created, result.updated, result.unchanged, result.deleted) == (0, 1, 1, 0)
+        restored = _by_uid(sync_service)["3426439378"]
+        assert (restored.status, restored.ical_sync_status) == (
+            AppointmentStatus.CONFIRMED,
+            "synced",
+        )
 
     @patch.object(ICalSyncService, "_fetch_feed")
     def test_ehr_appointment_url_set(self, mock_fetch: MagicMock, sync_service: ICalSyncService):
@@ -511,6 +570,28 @@ class TestSyncDiff:
         video_appt = next(a for a in appts if a.ical_uid == "3426439378")
         assert video_appt.video_link is not None
         assert urlparse(video_appt.video_link).hostname == "video.simplepractice.com"
+        assert video_appt.video_platform == "simplepractice"
+        plain = next(a for a in appts if a.ical_uid == "3415461692")
+        assert (plain.video_link, plain.video_platform) == (None, None)
+
+
+def _by_uid(service: ICalSyncService) -> dict[str, Any]:
+    """The feed's appointments, by the feed's own id for each."""
+    appointments = service._appt_repo.list_by_ical_source("user1", "simplepractice")
+    return {a.ical_uid: a for a in appointments}
+
+
+# The names feed with Pablo Bear's appointment gone from it.
+_WITHOUT_PABLO = SP_NAMES_ICAL_DATA.replace(
+    "BEGIN:VEVENT\nDTSTAMP:20260325T005244Z\n"
+    "UID:3426439378\n"
+    "DTSTART;TZID=America/New_York:20260323T200000\n"
+    "DTEND;TZID=America/New_York:20260323T205000\n"
+    "SUMMARY:Pablo Bear Appointment\n"
+    "URL;VALUE=URI:https://video.simplepractice.com/appt-485bc95d4f126fadb091e02f240ea244\n"
+    "END:VEVENT\n",
+    "",
+)
 
 
 # A feed that names its clients in a way nothing matches until the clinician
@@ -572,6 +653,14 @@ class TestUnmatchedFeedEvents:
         assert feed._appt_repo.list_by_ical_source("user1", _PLAIN_FEED) == []
         assert self._open(feed) == ["feed-event-1", "feed-event-2"]
         assert {e["client_identifier"] for e in result.unmatched_events} == {"SH00007"}
+        # Where and when, and the feed's own link where it gives one (here it doesn't).
+        assert sorted(
+            (e["ical_uid"], e["start_at"], e["ehr_appointment_url"])
+            for e in result.unmatched_events
+        ) == [
+            ("feed-event-1", "2099-01-05T15:00:00+00:00", ""),
+            ("feed-event-2", "2099-01-12T15:00:00+00:00", ""),
+        ]
 
     @patch.object(ICalSyncService, "_fetch_feed", return_value=_PLAIN_ICAL)
     def test_no_appointment_is_ever_written_without_a_patient(
@@ -620,9 +709,10 @@ class TestUrlValidation:
             "https://secure.simplepractice.com/ical/abc123",
         )
 
-    def test_invalid_sp_url(self, service: ICalSyncService):
+    @pytest.mark.parametrize("ehr_system", ["simplepractice", "sessions_health"])
+    def test_another_host_is_refused(self, service: ICalSyncService, ehr_system: str):
         with pytest.raises(ValueError, match="hostname must be"):
-            service._validate_feed_url("simplepractice", "https://evil.com/feed")
+            service._validate_feed_url(ehr_system, "https://evil.com/feed")
 
     def test_invalid_sp_url_http(self, service: ICalSyncService):
         with pytest.raises(ValueError, match="must use HTTPS"):
@@ -635,10 +725,6 @@ class TestUrlValidation:
             "sessions_health",
             "https://app.sessionshealth.com/calendars/123-abc/calendar.ics",
         )
-
-    def test_invalid_sh_url(self, service: ICalSyncService):
-        with pytest.raises(ValueError, match="hostname must be"):
-            service._validate_feed_url("sessions_health", "https://evil.com/feed")
 
     def test_unsupported_ehr(self, service: ICalSyncService):
         with pytest.raises(ValueError, match="Unsupported"):

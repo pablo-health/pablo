@@ -215,10 +215,20 @@ class TestCapturedFeeds:
     def test_a_read_records_how_the_feed_names_clients(self, feed: _Feed) -> None:
         assert feed.sync(INITIALS).title_style == "initials"
         assert feed.stored_title_style() == "initials"
-        assert feed.service.get_status(USER)[0].title_style == "initials"
+        [status] = feed.service.get_status(USER)
+        assert (status.connected, status.title_style) == (True, "initials")
 
         assert feed.sync(FULL_NAMES).title_style == "names"
         assert feed.stored_title_style() == "names"
+
+    def test_a_read_that_holds_no_events_records_no_style(self, feed: _Feed) -> None:
+        empty = INITIALS.split("BEGIN:VEVENT")[0] + "END:VCALENDAR"
+
+        result = feed.sync(empty)
+
+        assert result.errors == []
+        assert result.title_style is None
+        assert feed.stored_title_style() is None
 
 
 # --- Initials -----------------------------------------------------------------
@@ -258,22 +268,56 @@ class TestInitialsFeed:
         pb = feed.questions_titled("P.B. Appointment")
         assert len(pb) == 6
         assert all(q.match.patient_id == "pablo" for q in pb)
+        assert all(q.client_inactive is False for q in pb)
+
+    def test_an_inactive_chart_is_offered_and_said_to_be_inactive(self, feed: _Feed) -> None:
+        feed.chart("pablo", "Pablo", "Bear", status="inactive")
+
+        feed.sync(INITIALS)
+
+        pb = feed.questions_titled("P.B. Appointment")
+        assert len(pb) == 6
+        assert all((q.match.patient_id, q.client_inactive) == ("pablo", True) for q in pb)
+
+    def test_initials_need_both_letters_and_may_have_three(self, feed: _Feed) -> None:
+        """ "J.A." is not Jane Brown or Bob Adams; "J.Q.A." is nobody, and still asked."""
+        feed.chart("john", "John", "Adams")
+        feed.chart("jane", "Jane", "Brown")
+        feed.chart("bob", "Bob", "Adams")
+        three = INITIALS.replace("SUMMARY:P.B. Appointment", "SUMMARY:J.Q.A. Appointment")
+
+        result = feed.sync(three)
+
+        assert (result.errors, result.created) == ([], 0)
+        ja = feed.questions_titled("J.A. Appointment")
+        assert len(ja) == 38
+        assert all((q.match.patient_id, q.match.possible_ids) == ("john", []) for q in ja)
+        jqa = feed.questions_titled("J.Q.A. Appointment")
+        assert len(jqa) == 6
+        assert all((q.match.patient_id, q.match.possible_ids) == (None, []) for q in jqa)
 
     def test_an_answer_settles_one_event_and_pre_fills_the_rest(self, four: _Feed) -> None:
         four.sync(INITIALS)
         first = four.soonest("J.A. Appointment")
 
+        # Not the first chart made, so being offered first means something.
         rows = four.outside.answer(
-            USER, FEED_SOURCE, "J.A.", patient_id="john", row_id=first.outside_session_id
+            USER, FEED_SOURCE, "J.A.", patient_id="jamie", row_id=first.outside_session_id
         )
 
         assert [r.id for r in rows] == [first.outside_session_id]
-        assert four.booked() == {first.rows[0].source_event_id: "john"}
+        assert four.booked() == {first.rows[0].source_event_id: "jamie"}
+        [appointment] = four.appointments.list_by_ical_source(USER, SP)
+        assert (appointment.ical_uid, appointment.ical_sync_status, appointment.outside_source) == (
+            first.rows[0].source_event_id,
+            "synced",
+            FEED_SOURCE,
+        )
         # Remembered as the pre-fill for the next "J.A.", nothing more.
         again = four.questions_titled("J.A. Appointment")
         assert len(again) == 37
-        assert all(q.suggested_patient_id == "john" for q in again)
-        assert all(q.match.possible_ids[0] == "john" for q in again)
+        assert all(q.suggested_patient_id == "jamie" for q in again)
+        assert all(q.match.possible_ids[0] == "jamie" for q in again)
         assert all(
             sorted(q.match.possible_ids) == ["james", "jamie", "jane", "john"] for q in again
         )
@@ -329,12 +373,37 @@ class TestFullNameFeed:
         assert len(james.rows) == 30
         assert james.outside_session_id is None
         assert (james.match.patient_id, james.match.possible_ids) == (None, [])
+        assert james.client_inactive is False
         assert result.created == 3
 
-        # With a chart of his own, his run books to it.
+        # With a chart of his own, his run books to it, and is no longer asked.
         feed.chart("james", "James", "Anderson")
         assert feed.sync(FULL_NAMES).created == 30
         assert Counter(feed.booked().values()) == {"john": 3, "james": 30}
+        assert feed.questions_titled("James Anderson Appointment") == []
+        his = [r for r in feed.events.list_by_source(USER, FEED_SOURCE) if r.title == james.title]
+        assert len(his) == 30
+        assert all(
+            (r.answer, r.patient_id, r.appointment_id is not None) == (ANSWER_CLIENT, "james", True)
+            for r in his
+        )
+
+    def test_an_event_dismissed_after_it_was_held_loses_its_row(self, feed: _Feed) -> None:
+        feed.sync(FULL_NAMES)
+        assert len(feed.questions_titled("James Anderson Appointment")) == 1
+        remember_not_a_client(
+            SP, "James Anderson", feed.outside.context(USER), scope=PRACTICE_SCOPE
+        )
+
+        result = feed.sync(FULL_NAMES)
+
+        assert feed.questions_titled("James Anderson Appointment") == []
+        assert [
+            r
+            for r in feed.events.list_by_source(USER, FEED_SOURCE)
+            if r.title == "James Anderson Appointment"
+        ] == []
+        assert "James Anderson" not in {e["client_identifier"] for e in result.unmatched_events}
 
     def test_a_name_two_charts_share_is_asked_every_time(self, feed: _Feed) -> None:
         feed.chart("bear1", "Pablo", "Bear")
@@ -370,6 +439,16 @@ class TestFullNameFeed:
         assert Counter(booked.values()) == {"jane": 1, "abbott": 1}
         # Typed in lower case on the feed; the chart is the chart.
         assert feed.questions_titled("jane smith Appointment") == []
+        booked_to_jane = [
+            a for a in feed.appointments.list_by_ical_source(USER, SP) if a.patient_id == "jane"
+        ]
+        [janes] = booked_to_jane
+        assert (janes.title, janes.session_type, janes.ical_sync_status) == (
+            "Session",
+            "individual",
+            "synced",
+        )
+        assert janes.duration_minutes == int((janes.end_at - janes.start_at).total_seconds() // 60)
 
     def test_a_middle_initial_on_the_chart_does_not_hide_the_client(self, feed: _Feed) -> None:
         feed.chart("bear", "Pablo A", "Bear")
@@ -377,6 +456,33 @@ class TestFullNameFeed:
         feed.sync(FULL_NAMES)
 
         assert Counter(feed.booked().values()) == {"bear": 6}
+
+    def test_a_colleagues_chart_with_the_same_name_does_not_stop_mine_from_booking(
+        self, feed: _Feed
+    ) -> None:
+        """A name alone never means a colleague's client, so it can't make mine uncertain."""
+        feed.patients.create(_patient("theirs", "James", "Anderson"), "colleague")
+        feed.chart("mine", "James", "Anderson")
+
+        feed.sync(FULL_NAMES)
+
+        assert Counter(feed.booked().values()) == {"mine": 30}
+        assert feed.questions_titled("James Anderson Appointment") == []
+
+    def test_a_colleagues_chart_with_the_name_is_neither_booked_nor_offered(
+        self, feed: _Feed
+    ) -> None:
+        feed.patients.create(_patient("theirs", "James", "Anderson"), "colleague")
+
+        feed.sync(FULL_NAMES)
+
+        assert feed.booked() == {}
+        [james] = feed.questions_titled("James Anderson Appointment")
+        assert (james.match.patient_id, james.match.possible_ids, james.match.hidden_ids) == (
+            None,
+            [],
+            [],
+        )
 
 
 # --- What still books on its own ---------------------------------------------
@@ -405,6 +511,51 @@ class TestWhatStillBooks:
         assert result.title_style == "codes"
         [appointment] = feed.appointments.list_by_ical_source(USER, sh)
         assert appointment.patient_id == "p1"
+        # The feed's own link to the appointment, and no video link: a
+        # Sessions Health URL is the event's page, not a call.
+        assert (
+            appointment.ehr_appointment_url
+            == "https://app.sessionshealth.com/events/21420944-260316"
+        )
+        assert (appointment.video_link, appointment.video_platform) == (None, None)
+        assert (appointment.title, appointment.ical_sync_status) == ("Session", "synced")
+
+
+class TestASessionsHealthFeedShowingNames:
+    """Sessions Health writes a client code, or a full name when set to show names."""
+
+    def test_a_name_books_when_one_chart_bears_it(self, feed: _Feed) -> None:
+        sh = "sessions_health"
+        feed.configs.save(
+            ICalSyncConfig(
+                user_id=USER,
+                ehr_system=sh,
+                encrypted_feed_url=encrypt_tokens(
+                    {"feed_url": "https://app.sessionshealth.com/calendars/test/calendar.ics"}
+                ),
+                connected_at=utc_now(),
+            )
+        )
+        feed.chart("jane", "Jane", "Adams")
+        names = SH_ICAL_DATA.replace("SUMMARY:SH00001", "SUMMARY:Jane Adams").replace(
+            "SUMMARY:SH00002", "SUMMARY:Bo Li"
+        )
+        assert feed_identity(sh, "Jane Adams").kind == "name"
+        assert feed_identity(sh, "SH00001").kind == "code"
+
+        with patch.object(ICalSyncService, "_fetch_feed", return_value=names):
+            [result] = feed.service.sync(USER, sh)
+
+        assert (result.errors, result.created, result.title_style) == ([], 1, "names")
+        [appointment] = feed.appointments.list_by_ical_source(USER, sh)
+        assert appointment.patient_id == "jane"
+        # Bo Li has no chart: one question for the name.
+        [question] = feed.outside.questions(USER)
+        assert (question.title, question.source_identifier, question.outside_session_id) == (
+            "Bo Li",
+            "Bo Li",
+            None,
+        )
 
 
 class _Google:

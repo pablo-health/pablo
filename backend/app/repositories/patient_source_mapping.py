@@ -24,6 +24,7 @@ first time that clinician's matching reads the source
 
 from __future__ import annotations
 
+import copy
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -104,26 +105,35 @@ class PatientSourceMappingRepository(ABC):
 
 
 class InMemoryPatientSourceMappingRepository(PatientSourceMappingRepository):
-    """In-memory implementation for tests."""
+    """In-memory implementation for tests.
+
+    Mappings are copied on the way in and on the way out, as a database
+    would hand back a fresh row for every read, so a change made to one and
+    never saved is not seen by the next read.
+    """
 
     def __init__(self) -> None:
         self._mappings: dict[str, PatientSourceMapping] = {}
         self._legacy: list[LegacyAnswer] = []
 
     def list_by_source(self, scope: str, source: str) -> list[PatientSourceMapping]:
-        return [m for m in self._mappings.values() if (m.scope, m.source) == (scope, source)]
+        return [
+            copy.deepcopy(m)
+            for m in self._mappings.values()
+            if (m.scope, m.source) == (scope, source)
+        ]
 
     def save(self, mapping: PatientSourceMapping) -> None:
         if mapping.created_at is None:
             mapping.created_at = utc_now()
-        self._mappings[mapping.doc_id] = mapping
+        self._mappings[mapping.doc_id] = copy.deepcopy(mapping)
 
     def remember_legacy(self, answer: LegacyAnswer) -> None:
         """Test helper: a row as the table held it before answers were the practice's."""
-        self._legacy.append(answer)
+        self._legacy.append(copy.deepcopy(answer))
 
     def legacy_answers(self) -> list[LegacyAnswer]:
-        return list(self._legacy)
+        return copy.deepcopy(self._legacy)
 
     def adopt_legacy(self, user_id: str, source: str, scope: str) -> int:
         moved = 0

@@ -366,6 +366,21 @@ def _book(
     return client.post(f"/api/public/booking-links/{slug}/bookings", json=payload, headers=headers)
 
 
+def _only_appointment(public_client: Any) -> Appointment:
+    """The one appointment a hold made, as the repository holds it now."""
+    [appointment] = public_client.appt_repo._appointments.values()
+    return appointment
+
+
+def _stored(public_client: Any, appointment_id: str) -> Appointment:
+    """An appointment as the repository holds it now, not as it was handed out.
+
+    The repository hands out copies, as a database does, so a row read before
+    a request does not show what the request did to it.
+    """
+    return public_client.appt_repo._appointments[appointment_id]
+
+
 def _hold(
     client: Any,
     slug: str,
@@ -1335,15 +1350,17 @@ def test_expired_hold_releases_slot_and_sweeps_placeholder(
     public_client.rule_repo.create(_working_hours_rule(date_str))
 
     _resp, _token = _hold(public_client, "intro-call", f"{date_str}T09:00:00Z")
-    appt = next(iter(public_client.appt_repo._appointments.values()))
+    appt = _only_appointment(public_client)
     appt.pending_expires_at = utc_now() - timedelta(seconds=1)
+    public_client.appt_repo.update(appt)
     patient_id = appt.patient_id
 
     slots = public_client.get(f"/api/public/booking-links/intro-call/slots?date={date_str}").json()
     assert f"{date_str}T09:00:00Z" in [s["start"] for s in slots["slots"]]
 
-    assert appt.status == "cancelled"
-    assert appt.confirmation_token_hash is not None
+    swept = _stored(public_client, appt.id)
+    assert swept.status == "cancelled"
+    assert swept.confirmation_token_hash is not None
 
     assert public_client.patient_repo.get(patient_id, OWNER_ID) is None
     assert public_client.patient_repo.list_recently_deleted(OWNER_ID) == []
@@ -1391,7 +1408,7 @@ def test_sweep_never_touches_a_real_chart(
 
     public_client.get(f"/api/public/booking-links/intro-call/slots?date={date_str}")
 
-    assert appt.status == "cancelled"
+    assert _stored(public_client, appt.id).status == "cancelled"
     unchanged = public_client.patient_repo.get(patient.id, OWNER_ID)
     assert unchanged is not None
     assert unchanged.status == "active"
@@ -1405,7 +1422,7 @@ def test_confirm_finalizes_hold_and_promotes_placeholder(
     public_client.rule_repo.create(_working_hours_rule(date_str))
 
     hold_resp, token = _hold(public_client, "intro-call", f"{date_str}T09:00:00Z")
-    appt = next(iter(public_client.appt_repo._appointments.values()))
+    held = _only_appointment(public_client)
 
     resp = public_client.post("/api/public/booking-links/intro-call/confirm", json={"token": token})
     assert resp.status_code == 200
@@ -1413,6 +1430,7 @@ def test_confirm_finalizes_hold_and_promotes_placeholder(
     assert body["status"] == "confirmed"
     assert set(body) == set(hold_resp.json())
 
+    appt = _stored(public_client, held.id)
     assert appt.status == "confirmed"
     assert appt.pending_expires_at is None
 
@@ -1460,14 +1478,14 @@ def test_confirm_attaches_verified_email_to_existing_chart(
     _resp, token = _hold(
         public_client, "intro-call", f"{date_str}T09:00:00Z", email="client@example.com"
     )
-    appt = next(iter(public_client.appt_repo._appointments.values()))
+    appt = _only_appointment(public_client)
     placeholder_id = appt.patient_id
     assert placeholder_id != existing.id
 
     resp = public_client.post("/api/public/booking-links/intro-call/confirm", json={"token": token})
     assert resp.status_code == 200
 
-    assert appt.patient_id == existing.id
+    assert _stored(public_client, appt.id).patient_id == existing.id
     assert public_client.patient_repo.get(placeholder_id, OWNER_ID) is None
     assert placeholder_id not in [
         p.id for p, _ in public_client.patient_repo.list_recently_deleted(OWNER_ID)
@@ -1500,15 +1518,15 @@ def test_clinician_cancel_kills_the_token(
     public_client.rule_repo.create(_working_hours_rule(date_str))
 
     _resp, token = _hold(public_client, "intro-call", f"{date_str}T09:00:00Z")
-    appt = next(iter(public_client.appt_repo._appointments.values()))
+    appt = _only_appointment(public_client)
 
     SchedulingService(public_client.appt_repo).cancel_appointment(appt.id, OWNER_ID)
-    assert appt.confirmation_token_hash is None
+    assert _stored(public_client, appt.id).confirmation_token_hash is None
 
     resp = public_client.post("/api/public/booking-links/intro-call/confirm", json={"token": token})
     assert resp.status_code == 404
     assert resp.json()["error"]["message"] == public_booking_module._CONFIRMATION_INVALID
-    assert appt.status == "cancelled"
+    assert _stored(public_client, appt.id).status == "cancelled"
 
 
 def test_token_is_bound_to_its_link(link_repo: InMemoryBookingLinkRepository) -> None:
@@ -1632,16 +1650,18 @@ def test_manage_cancel_frees_the_slot_and_is_single_use(
         "/api/public/booking-links/intro-call/confirm", json={"token": token}
     )
     assert confirm.status_code == 200
-    appt = next(iter(public_client.appt_repo._appointments.values()))
+    appt = _only_appointment(public_client)
     appt.google_event_id = "gcal-event-1"
+    public_client.appt_repo.update(appt)
 
     resp = public_client.post(
         "/api/public/booking-links/intro-call/manage/cancel", json={"token": token}
     )
     assert resp.status_code == 200
     assert resp.json() == {"cancelled": True}
-    assert appt.status == "cancelled"
-    assert appt.confirmation_token_hash is None
+    cancelled = _stored(public_client, appt.id)
+    assert cancelled.status == "cancelled"
+    assert cancelled.confirmation_token_hash is None
 
     slots = public_client.get(f"/api/public/booking-links/intro-call/slots?date={date_str}").json()
     assert f"{date_str}T09:00:00Z" in [s["start"] for s in slots["slots"]]
@@ -1752,16 +1772,17 @@ def test_expired_hold_click_finalizes_when_slot_still_free(
     public_client.rule_repo.create(_working_hours_rule(date_str))
 
     _resp, token = _hold(public_client, "intro-call", f"{date_str}T09:00:00Z")
-    appt = next(iter(public_client.appt_repo._appointments.values()))
+    appt = _only_appointment(public_client)
     appt.pending_expires_at = utc_now() - timedelta(seconds=1)
+    public_client.appt_repo.update(appt)
 
     public_client.get(f"/api/public/booking-links/intro-call/slots?date={date_str}")
-    assert appt.status == "cancelled"
+    assert _stored(public_client, appt.id).status == "cancelled"
 
     resp = public_client.post("/api/public/booking-links/intro-call/confirm", json={"token": token})
     assert resp.status_code == 200
     assert resp.json()["status"] == "confirmed"
-    assert appt.status == "confirmed"
+    assert _stored(public_client, appt.id).status == "confirmed"
 
     patient = public_client.patient_repo.get(appt.patient_id, OWNER_ID)
     assert patient is not None
@@ -1777,11 +1798,12 @@ def test_expired_hold_click_when_slot_taken_says_pick_another_time(
     public_client.rule_repo.create(_working_hours_rule(date_str))
 
     _resp, token = _hold(public_client, "intro-call", f"{date_str}T09:00:00Z")
-    appt = next(iter(public_client.appt_repo._appointments.values()))
+    appt = _only_appointment(public_client)
     appt.pending_expires_at = utc_now() - timedelta(seconds=1)
+    public_client.appt_repo.update(appt)
 
     public_client.get(f"/api/public/booking-links/intro-call/slots?date={date_str}")
-    assert appt.status == "cancelled"
+    assert _stored(public_client, appt.id).status == "cancelled"
 
     taken = _book(public_client, "relaxed-link", f"{date_str}T09:00:00Z", email="other@example.com")
     assert taken.status_code == 201
@@ -1790,7 +1812,7 @@ def test_expired_hold_click_when_slot_taken_says_pick_another_time(
     assert resp.status_code == 409
     assert resp.json()["error"]["message"] == public_booking_module._SLOT_TAKEN
 
-    assert appt.status == "cancelled"
+    assert _stored(public_client, appt.id).status == "cancelled"
     assert public_client.patient_repo.get(appt.patient_id, OWNER_ID) is None
 
 
@@ -1857,7 +1879,7 @@ def test_two_holds_on_one_slot_cannot_both_confirm(
     live = [a for a in public_client.appt_repo._appointments.values() if a.status != "cancelled"]
     assert len(live) == 1
     assert live[0].id == appt_a.id
-    assert appt_b.status == "cancelled"
+    assert _stored(public_client, appt_b.id).status == "cancelled"
     assert public_client.patient_repo.get(appt_b.patient_id, OWNER_ID) is None
 
     slots = public_client.get(f"/api/public/booking-links/intro-call/slots?date={date_str}").json()

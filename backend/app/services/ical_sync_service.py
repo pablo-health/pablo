@@ -355,21 +355,11 @@ class ICalSyncService:
         # Create or update
         for uid, event in feed_events.items():
             if uid in existing_by_uid:
+                # An appointment always has its patient, so there is no
+                # matching to retry here: an event whose client is not yet
+                # known is an open outside session, not an appointment.
                 existing = existing_by_uid[uid]
                 updated = self._update_if_changed(existing, event, config.ehr_system)
-
-                # Re-attempt matching for previously unmatched appointments
-                if not existing.patient_id:
-                    client_id = self._extract_client_identifier(config.ehr_system, event.summary)
-                    patient_id = self._outside.unattended(
-                        self._row(user_id, config.ehr_system, event), ctx
-                    )
-                    if patient_id:
-                        existing.patient_id = patient_id
-                        existing.notes = f"ical_client:{client_id}"
-                        existing.updated_at = _now()
-                        self._appt_repo.update(existing)
-                        updated = True
 
                 if updated:
                     result.updated += 1
@@ -533,12 +523,6 @@ class ICalSyncService:
             # "SH00001" — return as-is
             return summary.strip()
         return summary
-
-    def _get_client_identifier(self, _ehr_system: str, notes: str) -> str:
-        """Extract client identifier from appointment notes."""
-        if notes.startswith("ical_client:"):
-            return notes[len("ical_client:") :]
-        return ""
 
     def _match_context(self, user_id: str) -> MatchContext:
         return MatchContext.for_practice(user_id, self._patient_repo, self._mapping_repo)
