@@ -100,6 +100,7 @@ from .routes import (
     payment_webhooks,
     practice_balances,
     practice_billing,
+    practice_domains,
     public_booking,
     refill_requests,
     scheduling,
@@ -267,6 +268,7 @@ app.include_router(admin_pentest.router)
 app.include_router(users.router)
 app.include_router(patients.router)
 app.include_router(practice_billing.router)
+app.include_router(practice_domains.router)
 app.include_router(coverage.payers_router)
 app.include_router(coverage.router)
 app.include_router(coverage.jobs_router)

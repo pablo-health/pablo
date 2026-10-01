@@ -177,6 +177,9 @@ services:
       # The default modules plus refills, which is off by default and which
       # portal-refills.spec.ts drives end to end.
       - PORTAL_MODULES=intake,messaging,appointments,refills
+      # What Settings > Domains tells a practice to point its own hosts at;
+      # practice-domains.spec.ts reads it back from the page.
+      - PRACTICE_DOMAIN_CNAME_TARGET=sites.e2e-stack.example
       # Every spec in the compose lane redeems through the same client
       # address, so the per-address portal budgets below have to cover a
       # whole suite rather than one household. The engine's own defaults
@@ -390,7 +393,14 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile.dev
-    command: ["python", "backend/scripts/e2e_seed_second_practice.py"]
+    # The second script gives the shared practice two hosts that already
+    # work, which nothing in the running product can do (see its docstring).
+    command:
+      [
+        "sh",
+        "-c",
+        "python backend/scripts/e2e_seed_second_practice.py && python backend/scripts/e2e_seed_practice_domains.py",
+      ]
     environment:
       - DATABASE_URL=postgresql://pablo:pablo_dev@postgres:5432/pablo
       - ENVIRONMENT=development

@@ -1160,6 +1160,18 @@ class Settings(BaseSettings):
         description="Mount the unauthenticated /api/public/booking-links/* endpoints.",
     )
 
+    # ── A practice's own domains (Settings > Domains) ────────────────────
+    practice_domain_cname_target: str = Field(
+        default="",
+        description=(
+            "Hostname a practice points its own portal and website hosts at "
+            "with a CNAME record, e.g. sites.example.org. Shown to the practice "
+            "as the record to add. Empty means this deployment has no single "
+            "target to name, and the practice is told only that the host must "
+            "point at this deployment."
+        ),
+    )
+
     # ── Patient portal sign-in (app.portal) ──────────────────────────────
     # Off by default: turning it on publishes a surface that mints
     # credentials for people who had none, and that is a decision a
