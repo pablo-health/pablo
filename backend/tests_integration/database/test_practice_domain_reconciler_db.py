@@ -349,6 +349,30 @@ def test_a_record_not_added_yet_waits_and_names_the_record(harness: Harness) -> 
     assert ("recreate_certificate", host) not in harness.serving.calls
 
 
+def test_a_certificate_still_authorising_without_its_record_waits_for_the_record(
+    harness: Harness,
+) -> None:
+    """The issuer can sit in AUTHORIZING for a long time while the record is
+    missing. That is waiting on the practice, never an error."""
+    host = f"portal.{_apex()}"
+    harness.add(host)
+    harness.sweep()
+
+    for _ in range(3):
+        harness.now += REISSUE_INTERVAL
+        harness.sweep()
+
+    stored = harness.host(host)
+    assert stored is not None
+    name, value = challenge_record(host, "test-auth.1")
+    assert (stored.status, stored.last_error) == (
+        "verifying",
+        f"Waiting for the record {name} CNAME {value}.",
+    )
+    assert ("recreate_certificate", host) not in harness.serving.calls
+    assert ("verifying", "error") not in _statuses(harness)
+
+
 def test_a_stuck_certificate_is_requested_again_once_its_record_is_in_place(
     harness: Harness,
 ) -> None:

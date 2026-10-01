@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import Depends
 
-from ..api_errors import ConflictError, NotFoundError, UnprocessableEntityError
+from ..api_errors import ConflictError, ForbiddenError, NotFoundError, UnprocessableEntityError
 from ..models.practice_domain import (
     DnsRecord,
     DomainNameResponse,
@@ -45,6 +45,7 @@ from ..repositories.practice_domain import (
 )
 from ..settings import get_settings
 from ..utcnow import utc_now
+from .practice_domain_allowance import domain_allowance
 from .practice_domain_cloud import serving_configured
 from .practice_domain_dns import DnsChecker, DnsLookup
 from .practice_domain_hosts import (
@@ -57,6 +58,7 @@ from .practice_domain_hosts import (
 
 if TYPE_CHECKING:
     from ..models.practice_domain import DomainPurpose, DomainStatus, HostStatus
+    from .practice_domain_allowance import DomainAllowancePolicy
 
 DOMAIN_TAKEN_MESSAGE = "That domain is already in use."
 
@@ -83,12 +85,18 @@ class PracticeDomainService:
         apex_ips: tuple[str, ...] = (),
         dkim_cname_suffix: str = "dkim.amazonses.com",
         deferred_removal: bool = False,
+        allowance: DomainAllowancePolicy = domain_allowance,
     ) -> None:
         """*deferred_removal*: the deployment serves hosts through the domain
         reconciler job, so a removed host is marked ``removing`` and the job
-        deletes the row once it has stopped serving it."""
+        deletes the row once it has stopped serving it.
+
+        *allowance*: how many registrable domains a practice may use; by
+        default whatever the deployment registered, which is no limit.
+        """
         self._repo = repo
         self._deferred_removal = deferred_removal
+        self._allowance = allowance
         self._reserved = reserved_hosts
         self._cname_target = cname_target.strip().lower().rstrip(".")
         self._apex_ips = apex_ips
@@ -261,6 +269,7 @@ class PracticeDomainService:
         existing_apex = self._repo.get_apex(apex)
         if existing_apex is not None and existing_apex.practice_id != practice_id:
             raise ConflictError(DOMAIN_TAKEN_MESSAGE, {"domain": host}, code="DOMAIN_TAKEN")
+        self._check_allowance(practice_id, apex)
 
         to_add = [
             candidate
@@ -307,6 +316,21 @@ class PracticeDomainService:
                     DOMAIN_TAKEN_MESSAGE, {"domain": candidate}, code="DOMAIN_TAKEN"
                 ) from e
         return added
+
+    def _check_allowance(self, practice_id: str, apex: str) -> None:
+        """Refuse a host that would bring the practice one domain past its
+        allowance. A host under a domain it already uses always passes.
+
+        The domains in use are those under the practice's hosts, less hosts it
+        has removed: a removal frees its domain at once, not when the job that
+        takes it down gets to it.
+        """
+        allowance = self._allowance(practice_id)
+        if allowance is None:
+            return
+        in_use = {apex_or_none(d.domain) for d in self.for_practice(practice_id)} - {None}
+        if apex not in in_use and len(in_use) >= allowance.limit:
+            raise ForbiddenError(allowance.message, {"domain": apex}, code="DOMAIN_LIMIT")
 
     def _addable(self, practice_id: str, candidate: str, *, alias: bool) -> bool:
         """Whether *candidate* is still to be added; raises when it can't be.

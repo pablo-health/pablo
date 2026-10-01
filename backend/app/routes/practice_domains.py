@@ -99,7 +99,9 @@ def add_practice_domain(
     service: PracticeDomainService = Depends(get_practice_domain_service),
     audit: AuditService = Depends(get_audit_service),
 ) -> PracticeDomainListResponse:
-    """Add a host. 409 if it is already in use; 422 with what to fix."""
+    """Add a host. 409 if it is already in use; 422 with what to fix; 403
+    (``DOMAIN_LIMIT``) if it would bring the practice past its allowance of
+    domains, with the deployment's words for it."""
     practice_id = _manageable_practice_id(user)
     added = service.add(practice_id, body.domain, body.purpose, include_www=body.include_www)
     for domain in added:
