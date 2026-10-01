@@ -44,10 +44,14 @@ import {
 import { echoLines, timezoneOptions, type EchoLine } from "./hoursCapture"
 import { useCreateAvailabilityRule, useParseAvailabilityRules } from "@/hooks/useAvailability"
 import { detectBrowserTimezone, usePreferences, useSavePreferences } from "@/hooks/usePreferences"
-import type {
-  CreateAvailabilityRuleRequest,
-  ProposedAvailabilityRule,
+import {
+  proposalToCreateRequest,
+  type CreateAvailabilityRuleRequest,
+  type ProposedAvailabilityRule,
 } from "@/types/availability"
+import { MissingAppointmentTypeOffer } from "@/components/availability/MissingAppointmentTypeOffer"
+import { ReadingChoice } from "@/components/availability/ReadingChoice"
+import type { ParseReading } from "@/types/availability"
 
 /** They double as documentation of what the box understands — a blank box
  * is the classic way natural-language input fails. */
@@ -94,6 +98,10 @@ export function CalendarHoursStep({ onSaved, onSkip }: CalendarHoursStepProps) {
   const [proposals, setProposals] = useState<ProposedAvailabilityRule[] | null>(null)
   const [kept, setKept] = useState<boolean[]>([])
   const [unsure, setUnsure] = useState<string | null>(null)
+  const [missingType, setMissingType] = useState<string | null>(null)
+  const [readings, setReadings] = useState<{ question: string | null; options: ParseReading[] } | null>(
+    null
+  )
   const [unsureCount, setUnsureCount] = useState(0)
   const [onGrid, setOnGrid] = useState(false)
   const [fallbackReason, setFallbackReason] = useState<string | null>(null)
@@ -112,8 +120,27 @@ export function CalendarHoursStep({ onSaved, onSkip }: CalendarHoursStepProps) {
     if (!sentence || parseRules.isPending) return
     setError(null)
     setUnsure(null)
+    setMissingType(null)
+    setReadings(null)
     try {
       const result = await parseRules.mutateAsync({ text: sentence })
+      if (result.proposals.length === 0 && result.readings?.length === 2) {
+        // Understood, two ways: a choice, not a failure, so it does not
+        // count toward handing the practice the grid.
+        setReadings({ question: result.could_not_parse, options: result.readings })
+        return
+      }
+      if (
+        result.proposals.length === 0 &&
+        result.refusal_reason === "unknown_appointment_type" &&
+        result.unknown_appointment_type
+      ) {
+        // Not a misunderstanding: the sentence was clear, the practice just
+        // has no such type yet. Offer to add it rather than counting this
+        // toward the grid fallback.
+        setMissingType(result.unknown_appointment_type)
+        return
+      }
       if (result.proposals.length === 0) {
         // The parser refuses rather than guesses when it is unsure, and
         // says why in the therapist's own words.
@@ -169,7 +196,7 @@ export function CalendarHoursStep({ onSaved, onSkip }: CalendarHoursStepProps) {
   const keptRules = proposals
     ? proposals
         .filter((_, index) => kept[index])
-        .map(({ rule_type, enforcement, params }) => ({ rule_type, enforcement, params }))
+        .map(proposalToCreateRequest)
     : []
 
   function toggleLine(line: EchoLine) {
@@ -366,6 +393,31 @@ export function CalendarHoursStep({ onSaved, onSkip }: CalendarHoursStepProps) {
             <p className="text-sm text-neutral-600" role="status">
               {unsure}
             </p>
+          ) : null}
+
+          {readings ? (
+            <ReadingChoice
+              question={readings.question}
+              readings={readings.options}
+              onPick={(reading) => {
+                setReadings(null)
+                setUnsureCount(0)
+                setProposals(reading.proposals)
+                setKept(reading.proposals.map(() => true))
+              }}
+            />
+          ) : null}
+
+          {missingType ? (
+            <MissingAppointmentTypeOffer
+              key={missingType}
+              name={missingType}
+              onCreated={() => {
+                setMissingType(null)
+                void check()
+              }}
+              onDismiss={() => setMissingType(null)}
+            />
           ) : null}
 
           <div className="flex items-center gap-4">

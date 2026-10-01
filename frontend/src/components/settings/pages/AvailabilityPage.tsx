@@ -3,7 +3,9 @@
 "use client"
 
 import { BlockedTimeCard, LimitsAndBuffersCard } from "../AvailabilitySettings"
+import { OtherAvailabilityRulesCard, otherRules } from "../OtherAvailabilityRulesCard"
 import { WorkingHoursGrid } from "../WorkingHoursGrid"
+import { useAvailabilityRules } from "@/hooks/useAvailability"
 import { AvailabilityExtras } from "../settingsSlots.extensions"
 import { SettingsCard } from "../ui"
 
@@ -17,6 +19,9 @@ import { SettingsCard } from "../ui"
  * the same rules engine.
  */
 export function AvailabilityPage() {
+  const { data } = useAvailabilityRules()
+  const hasOtherRules = otherRules(data?.data ?? []).length > 0
+
   return (
     <>
       <SettingsCard
@@ -35,6 +40,16 @@ export function AvailabilityPage() {
       <SettingsCard title="Limits & buffers" flush>
         <LimitsAndBuffersCard />
       </SettingsCard>
+
+      {hasOtherRules && (
+        <SettingsCard
+          title="More rules"
+          description="Limits and hours for one kind of appointment, and weekly limits."
+          flush
+        >
+          <OtherAvailabilityRulesCard />
+        </SettingsCard>
+      )}
     </>
   )
 }

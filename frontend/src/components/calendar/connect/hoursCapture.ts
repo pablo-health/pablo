@@ -52,7 +52,12 @@ export function echoLines(proposals: readonly ProposedAvailabilityRule[]): EchoL
   const others: EchoLine[] = []
 
   proposals.forEach((proposal, index) => {
-    if (proposal.rule_type !== "working_hours") {
+    // A window scoped to one appointment type is a different rule from the
+    // practice's general hours at the same times, and the grid's wording
+    // knows nothing of types: it stands on its own line, in the parser's
+    // words, which name the type. Grouping it would let one Remove drop the
+    // general hours too.
+    if (proposal.rule_type !== "working_hours" || proposal.appointment_type_id) {
       others.push({ text: proposal.human_summary, indexes: [index] })
       return
     }

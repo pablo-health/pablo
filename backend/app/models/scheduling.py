@@ -314,6 +314,13 @@ class ProposedAvailabilityRule(BaseModel):
     allow_other_types: bool = True
 
 
+class ParseReadingResponse(BaseModel):
+    """One meaning of an ambiguous sentence and the rules it would store."""
+
+    label: str
+    proposals: list[ProposedAvailabilityRule]
+
+
 class ParseAvailabilityRulesResponse(BaseModel):
     """Response for a natural-language availability-rule parse.
 
@@ -340,6 +347,22 @@ class ParseAvailabilityRulesResponse(BaseModel):
     )
     exclusive: bool = False
     existing_conflicting_rules: list[AvailabilityRuleResponse] = Field(default_factory=list)
+    unknown_appointment_type: str | None = Field(
+        default=None,
+        description=(
+            "On an 'unknown_appointment_type' refusal, the kind of appointment "
+            "the sentence named, so the caller can offer to create it and "
+            "parse again."
+        ),
+    )
+    readings: list[ParseReadingResponse] = Field(
+        default_factory=list,
+        description=(
+            "On an 'ambiguous' refusal between two meanings, both meanings "
+            "with the rules each would store, for the therapist to choose "
+            "from. Empty otherwise; never present alongside proposals."
+        ),
+    )
 
 
 class CheckConflictsRequest(BaseModel):

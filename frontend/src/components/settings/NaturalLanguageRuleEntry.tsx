@@ -7,15 +7,20 @@ import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { useCreateAvailabilityRule, useParseAvailabilityRules } from "@/hooks/useAvailability"
+import { useAppointmentTypes } from "@/hooks/useAppointmentTypes"
 import { ApiError } from "@/lib/api/client"
-import type {
-  AvailabilityRule,
-  EnforcementLevel,
-  ParseAvailabilityRulesResponse,
-  ProposedAvailabilityRule,
-  RuleType,
+import {
+  proposalToCreateRequest,
+  type AvailabilityRule,
+  type EnforcementLevel,
+  type ParseAvailabilityRulesResponse,
+  type ProposedAvailabilityRule,
+  type RuleType,
 } from "@/types/availability"
+import { MissingAppointmentTypeOffer } from "@/components/availability/MissingAppointmentTypeOffer"
+import { ReadingChoice } from "@/components/availability/ReadingChoice"
 import { RULE_TYPE_LABELS, RuleForm, summarize } from "./AvailabilitySettings"
+import { scopeLabel } from "./OtherAvailabilityRulesCard"
 
 function errorMessage(err: unknown): string {
   if (err instanceof ApiError) return err.message
@@ -30,6 +35,8 @@ function proposalToRule(proposal: ProposedAvailabilityRule): AvailabilityRule {
     rule_type: proposal.rule_type,
     enforcement: proposal.enforcement,
     params: proposal.params,
+    appointment_type_id: proposal.appointment_type_id ?? null,
+    allow_other_types: proposal.allow_other_types ?? true,
     created_at: null,
     updated_at: null,
   }
@@ -37,9 +44,11 @@ function proposalToRule(proposal: ProposedAvailabilityRule): AvailabilityRule {
 
 interface ProposalCardProps {
   proposal: ProposedAvailabilityRule
+  /** The scoped type's name, when the proposal is scoped to one. */
+  typeName: string | null
 }
 
-function ProposalCard({ proposal }: ProposalCardProps) {
+function ProposalCard({ proposal, typeName }: ProposalCardProps) {
   const createMutation = useCreateAvailabilityRule()
   const [editing, setEditing] = useState(false)
   const [created, setCreated] = useState(false)
@@ -48,8 +57,10 @@ function ProposalCard({ proposal }: ProposalCardProps) {
 
   function create(ruleType: RuleType, enforcement: EnforcementLevel, params: Record<string, unknown>) {
     setError(null)
+    // The edit form changes type, enforcement and params; the scope the
+    // sentence named travels with the proposal either way.
     createMutation.mutate(
-      { rule_type: ruleType, enforcement, params },
+      proposalToCreateRequest({ ...proposal, rule_type: ruleType, enforcement, params }),
       {
         onSuccess: () => {
           setCreated(true)
@@ -80,6 +91,11 @@ function ProposalCard({ proposal }: ProposalCardProps) {
             {RULE_TYPE_LABELS[proposal.rule_type]}
           </p>
           <p className="text-sm text-neutral-600">{summarize(rule)}</p>
+          {scopeLabel(rule, typeName) && (
+            <p className="text-xs text-neutral-600" data-testid="proposal-type-scope">
+              {scopeLabel(rule, typeName)}
+            </p>
+          )}
           <p className="text-xs text-neutral-500">
             {proposal.enforcement === "hard" ? "Hard — always enforced" : "Soft — allows override"}
           </p>
@@ -125,9 +141,10 @@ export function NaturalLanguageRuleEntry() {
   const parseMutation = useParseAvailabilityRules()
   const [result, setResult] = useState<ParseAvailabilityRulesResponse | null>(null)
   const [parseError, setParseError] = useState<string | null>(null)
+  const { data: appointmentTypes } = useAppointmentTypes()
+  const typeNames = new Map((appointmentTypes?.data ?? []).map((t) => [t.id, t.name]))
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
+  function parse() {
     if (!text.trim()) return
     setParseError(null)
     setResult(null)
@@ -139,6 +156,14 @@ export function NaturalLanguageRuleEntry() {
       }
     )
   }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    parse()
+  }
+
+  const missingType =
+    result?.refusal_reason === "unknown_appointment_type" ? result.unknown_appointment_type : null
 
   return (
     <div className="space-y-3 rounded-md border border-neutral-200 p-4">
@@ -170,8 +195,25 @@ export function NaturalLanguageRuleEntry() {
         </p>
       )}
 
-      {result?.could_not_parse && (
-        <p className="text-sm text-neutral-600">{result.could_not_parse}</p>
+      {missingType ? (
+        <MissingAppointmentTypeOffer
+          key={missingType}
+          name={missingType}
+          onCreated={parse}
+          onDismiss={() => setResult(null)}
+        />
+      ) : result?.readings && result.readings.length === 2 ? (
+        <ReadingChoice
+          question={result.could_not_parse}
+          readings={result.readings}
+          onPick={(reading) =>
+            setResult({ ...result, proposals: reading.proposals, could_not_parse: null, readings: [] })
+          }
+        />
+      ) : (
+        result?.could_not_parse && (
+          <p className="text-sm text-neutral-600">{result.could_not_parse}</p>
+        )
       )}
 
       {result && result.proposals.length > 0 && (
@@ -179,7 +221,15 @@ export function NaturalLanguageRuleEntry() {
           {result.proposals.map((proposal, index) => (
             // Proposals have no stable id until confirmed; index is stable
             // for the lifetime of this parse result.
-            <ProposalCard key={index} proposal={proposal} />
+            <ProposalCard
+              key={index}
+              proposal={proposal}
+              typeName={
+                proposal.appointment_type_id
+                  ? (typeNames.get(proposal.appointment_type_id) ?? null)
+                  : null
+              }
+            />
           ))}
         </ul>
       )}

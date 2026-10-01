@@ -21,7 +21,7 @@ import {
   useDeleteAvailabilityRule,
 } from "@/hooks/useAvailability"
 import { ApiError } from "@/lib/api/client"
-import { RULE_TYPES, ENFORCEMENT_LEVELS } from "@/types/availability"
+import { RULE_TYPES, ENFORCEMENT_LEVELS, isPracticeWide } from "@/types/availability"
 import type {
   AvailabilityRule,
   EnforcementLevel,
@@ -272,8 +272,8 @@ export interface SchedulingDefaultsFields {
 }
 
 export function schedulingDefaultsFromRules(rules: AvailabilityRule[]): SchedulingDefaultsFields {
-  const sessionDefaults = rules.find((r) => r.rule_type === "session_defaults")
-  const bufferAfter = rules.find((r) => r.rule_type === "buffer_after")
+  const sessionDefaults = rules.find((r) => r.rule_type === "session_defaults" && isPracticeWide(r))
+  const bufferAfter = rules.find((r) => r.rule_type === "buffer_after" && isPracticeWide(r))
   const alignment = sessionDefaults?.params.alignment
   return {
     durationMinutes:
@@ -313,7 +313,9 @@ export function LimitsAndBuffersCard() {
   const deleteMutation = useDeleteAvailabilityRule()
   const [error, setError] = useState<string | null>(null)
 
-  const rules = data?.data ?? []
+  // The practice's general limits only; a limit for one appointment type is
+  // listed with the other type rules and must not be edited from here.
+  const rules = (data?.data ?? []).filter(isPracticeWide)
   const maxPerDayRule = rules.find((r) => r.rule_type === "max_per_day")
   const bufferAfterRule = rules.find((r) => r.rule_type === "buffer_after")
   const sessionDefaultsRule = rules.find((r) => r.rule_type === "session_defaults")
@@ -844,7 +846,9 @@ export function BlockedTimeCard() {
   const [listError, setListError] = useState<string | null>(null)
 
   const rules = data?.data ?? []
-  const blockedRules = rules.filter((rule) => BLOCKED_RULE_TYPES.includes(rule.rule_type))
+  const blockedRules = rules.filter(
+    (rule) => BLOCKED_RULE_TYPES.includes(rule.rule_type) && isPracticeWide(rule)
+  )
 
   function openCreateForm() {
     setEditingRule(null)

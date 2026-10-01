@@ -17,6 +17,11 @@ vi.mock("@/hooks/useAvailability", () => ({
   useCreateAvailabilityRule: () => ({ mutateAsync: createRule }),
 }))
 
+const createType = vi.hoisted(() => vi.fn())
+vi.mock("@/hooks/useAppointmentTypes", () => ({
+  useCreateAppointmentType: () => ({ mutate: createType, isPending: false, isError: false }),
+}))
+
 const savePreferences = vi.hoisted(() => vi.fn())
 const preferencesState = vi.hoisted(() => ({
   data: { timezone: "America/New_York" } as Record<string, unknown>,
@@ -91,8 +96,142 @@ describe("CalendarHoursStep", () => {
       rule_type: "working_hours",
       enforcement: "hard",
       params: { day_of_week: 0, start: "09:00", end: "17:00" },
+      appointment_type_id: null,
+      allow_other_types: true,
     })
     expect(onSaved).toHaveBeenCalled()
+  })
+
+  it("saves a rule scoped to an appointment type with its scope, not for every type", async () => {
+    const user = userEvent.setup()
+    parseRules.mockResolvedValue({
+      proposals: [
+        {
+          rule_type: "max_per_week",
+          enforcement: "hard",
+          params: { max: 2 },
+          human_summary: "At most 2 intakes a week",
+          appointment_type_id: "type-intake",
+          allow_other_types: true,
+        },
+      ],
+      could_not_parse: null,
+    })
+    renderStep()
+
+    await describe_(user, "only two intakes a week")
+    expect(await screen.findByText("At most 2 intakes a week")).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Yes, save this" }))
+
+    await waitFor(() => expect(createRule).toHaveBeenCalledTimes(1))
+    expect(createRule.mock.calls[0][0]).toMatchObject({
+      rule_type: "max_per_week",
+      params: { max: 2 },
+      appointment_type_id: "type-intake",
+    })
+  })
+
+  it("offers both meanings of an ambiguous sentence and confirms the one picked", async () => {
+    const user = userEvent.setup()
+    const cap = {
+      rule_type: "max_per_week" as const,
+      enforcement: "hard" as const,
+      params: { max: 2 },
+      human_summary: "At most 2 intakes a week",
+      appointment_type_id: "type-intake",
+    }
+    parseRules.mockResolvedValue({
+      proposals: [],
+      could_not_parse: "A weekly cap, or a cap plus Tuesday hours?",
+      refusal_reason: "ambiguous",
+      readings: [
+        { label: "Just a weekly cap", proposals: [cap] },
+        {
+          label: "A cap, and intakes on Tuesdays",
+          proposals: [
+            cap,
+            {
+              rule_type: "working_hours",
+              enforcement: "hard",
+              params: { day_of_week: 1, start: "09:00", end: "17:00" },
+              human_summary: "Intakes on Tuesdays, 9 to 5",
+              appointment_type_id: "type-intake",
+            },
+          ],
+        },
+      ],
+    })
+    renderStep()
+
+    await describe_(user, "two intakes a week on Tuesdays")
+    expect(await screen.findByText("A weekly cap, or a cap plus Tuesday hours?")).toBeInTheDocument()
+    expect(createRule).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole("button", { name: /Just a weekly cap/ }))
+    expect(await screen.findByText("At most 2 intakes a week")).toBeInTheDocument()
+    expect(screen.queryByText("Intakes on Tuesdays, 9 to 5")).toBeNull()
+  })
+
+  it("a choice is not a failure: two ambiguous sentences do not hand over the grid", async () => {
+    const user = userEvent.setup()
+    const reading = (label: string) => ({
+      label,
+      proposals: [
+        { rule_type: "max_per_week", enforcement: "hard", params: { max: 2 }, human_summary: label },
+      ],
+    })
+    parseRules.mockResolvedValue({
+      proposals: [],
+      could_not_parse: "Which?",
+      refusal_reason: "ambiguous",
+      readings: [reading("A"), reading("B")],
+    })
+    renderStep()
+
+    await describe_(user, "two intakes a week on Tuesdays")
+    await screen.findByText("Which?")
+    await user.click(screen.getByRole("button", { name: "Check this" }))
+    await screen.findByText("Which?")
+
+    expect(screen.queryByText(/here is the grid instead/)).toBeNull()
+  })
+
+  it("offers to add a missing appointment type, then reads the sentence again", async () => {
+    const user = userEvent.setup()
+    parseRules
+      .mockResolvedValueOnce({
+        proposals: [],
+        could_not_parse: 'This practice has no appointment type called "Group".',
+        refusal_reason: "unknown_appointment_type",
+        unknown_appointment_type: "Group",
+      })
+      .mockResolvedValueOnce({
+        proposals: [
+          {
+            rule_type: "max_per_week",
+            enforcement: "hard",
+            params: { max: 2 },
+            human_summary: "At most 2 groups a week",
+            appointment_type_id: "type-group",
+          },
+        ],
+        could_not_parse: null,
+      })
+    createType.mockImplementation((_data: unknown, options?: { onSuccess?: () => void }) =>
+      options?.onSuccess?.()
+    )
+    renderStep()
+
+    await describe_(user, "only two groups a week")
+    await user.click(await screen.findByRole("button", { name: "Add Group" }))
+
+    expect(createType.mock.calls[0][0]).toEqual({
+      name: "Group",
+      duration_minutes: 50,
+      audience: "existing",
+    })
+    expect(await screen.findByText("At most 2 groups a week")).toBeInTheDocument()
+    expect(parseRules).toHaveBeenCalledTimes(2)
   })
 
   it("drops a line of the echo the practice does not recognise", async () => {
@@ -256,5 +395,18 @@ describe("echoLines", () => {
     }
 
     expect(echoLines([cap])).toEqual([{ text: "At most 2 appointments a day", indexes: [0] }])
+  })
+
+  it("keeps an appointment type's window apart from the general hours at the same times", () => {
+    const intakeTuesday: ProposedAvailabilityRule = {
+      ...workingHours(1),
+      human_summary: "Intakes on Tuesdays, 9 to 5",
+      appointment_type_id: "type-intake",
+    }
+    const lines = echoLines([workingHours(0), workingHours(1), intakeTuesday])
+
+    // One Remove must never drop both the general Tuesday hours and the intake window.
+    expect(lines).toContainEqual({ text: "Intakes on Tuesdays, 9 to 5", indexes: [2] })
+    expect(lines.find((line) => line.indexes.includes(1))?.indexes).toEqual([0, 1])
   })
 })

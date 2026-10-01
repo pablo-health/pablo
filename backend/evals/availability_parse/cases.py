@@ -84,6 +84,13 @@ class EvalCase:
     category: str
     expected: tuple[ExpectedRule, ...] | None
     expected_exclusive: bool | None = None
+    #: On an ambiguous refusal between two meanings, the parser should offer
+    #: both as readings for the therapist to pick. Graded soft: a refusal
+    #: without them is still a safe refusal, just a less helpful one.
+    expects_two_readings: bool = False
+    #: On an unknown-appointment-type refusal, the kind the parser should
+    #: name so the screen can offer to add it. Graded soft, case-insensitive.
+    expected_unknown_type: str | None = None
 
 
 def _positive(
@@ -103,13 +110,23 @@ def _positive(
     )
 
 
-def _refuse(name: str, phrasing: str, description: str, category: str) -> EvalCase:
+def _refuse(
+    name: str,
+    phrasing: str,
+    description: str,
+    category: str,
+    *,
+    expects_two_readings: bool = False,
+    expected_unknown_type: str | None = None,
+) -> EvalCase:
     return EvalCase(
         name=name,
         phrasing=phrasing,
         description=description,
         category=category,
         expected=None,
+        expects_two_readings=expects_two_readings,
+        expected_unknown_type=expected_unknown_type,
     )
 
 
@@ -835,6 +852,7 @@ def all_cases() -> list[EvalCase]:
             "closes it. Picking either silently writes a rule the therapist did "
             "not state, so this must come back as a question",
             "ambiguous",
+            expects_two_readings=True,
         ),
         _refuse(
             "two_intakes_a_week_on_tuesdays",
@@ -845,6 +863,7 @@ def all_cases() -> list[EvalCase]:
             "nobody asked for and, being exclusive of no other day, changes what "
             "the calendar offers",
             "ambiguous",
+            expects_two_readings=True,
         ),
         _refuse(
             "no_group_sessions_on_fridays",
@@ -854,5 +873,25 @@ def all_cases() -> list[EvalCase]:
             "unresolvable name would turn this into a rule blocking EVERY kind of "
             "appointment on Fridays, which is not what was said",
             "unknown_appointment_type",
+            expected_unknown_type="Group session",
+        ),
+        _refuse(
+            "only_two_groups_a_week",
+            "only two groups a week",
+            "a weekly cap on a type the practice does not have — refused, and the "
+            "missing kind named so the screen can offer to add it and read the "
+            "sentence again",
+            "unknown_appointment_type",
+            expected_unknown_type="Group",
+        ),
+        _refuse(
+            "no_fridays_two_intakes_wednesdays_only",
+            "I don't do Fridays, only 2 intakes a week on Wednesdays only",
+            "a therapist's own sentence (2026-09-30). 'No Fridays' is clear, but "
+            "'2 intakes a week on Wednesdays only' is the same cap-versus-cap-plus-"
+            "hours question as two_intakes_a_week_on_tuesdays, with no Wednesday "
+            "hours given to encode. All or nothing: a confident Friday block "
+            "shown alone would hide that the intake half was dropped",
+            "ambiguous",
         ),
     ]

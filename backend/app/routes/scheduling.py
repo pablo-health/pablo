@@ -74,6 +74,7 @@ from ..models.scheduling import (
     HeldRemovalsResponse,
     ParseAvailabilityRulesRequest,
     ParseAvailabilityRulesResponse,
+    ParseReadingResponse,
     ProposedAvailabilityRule,
     SchedulingPolicyResponse,
     SetEventTitlingRequest,
@@ -141,7 +142,7 @@ from ..services import (
     SessionService,
     get_audit_service,
 )
-from ..services.availability_parse_service import AvailabilityRuleParseService
+from ..services.availability_parse_service import AvailabilityRuleParseService, ProposedRule
 from ..services.google_calendar_follow import (
     GoogleChangeFollower,
     GoogleChangeUnavailableError,
@@ -1418,7 +1419,11 @@ def parse_availability_rules(
     # The practice's own types, read here for the same reason and in the
     # same breath: they are the only names a proposal may be scoped to, and
     # the parser cannot go looking for them once the connection is gone.
-    appointment_types = type_repo.list_by_user(ctx.user_id)
+    # Seeded the same way the appointment-type list seeds them, so a
+    # practice whose first stop is its hours (before it has ever opened the
+    # types card) can still say "only two intakes a week" and be understood.
+    # The release below commits the seed.
+    appointment_types, _ = _ensure_default_appointment_types(type_repo, ctx.user_id)
 
     # Release the request-scoped DB connection before the LLM call, same
     # seam as the note-import route (sessions.py) -- otherwise the pooled
@@ -1431,8 +1436,8 @@ def parse_availability_rules(
         appointment_types=appointment_types,
     )
 
-    proposals = [
-        ProposedAvailabilityRule(
+    def _proposal(p: ProposedRule) -> ProposedAvailabilityRule:
+        return ProposedAvailabilityRule(
             rule_type=p.rule_type,
             enforcement=p.enforcement,
             params=p.params,
@@ -1440,7 +1445,11 @@ def parse_availability_rules(
             appointment_type_id=p.appointment_type_id,
             allow_other_types=p.allow_other_types,
         )
-        for p in result.proposals
+
+    proposals = [_proposal(p) for p in result.proposals]
+    readings = [
+        ParseReadingResponse(label=r.label, proposals=[_proposal(p) for p in r.proposals])
+        for r in result.readings
     ]
 
     existing_conflicting_rules: list[AvailabilityRuleResponse] = []
@@ -1460,6 +1469,8 @@ def parse_availability_rules(
         refusal_reason=result.refusal_reason,
         exclusive=result.exclusive,
         existing_conflicting_rules=existing_conflicting_rules,
+        unknown_appointment_type=result.unknown_appointment_type,
+        readings=readings,
     )
 
 
