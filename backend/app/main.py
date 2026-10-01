@@ -68,6 +68,7 @@ from .routes import (
     coverage,
     credentialing,
     dashboard,
+    domain_connect,
     ehr_routes,
     ext_auth,
     ical_sync,
@@ -269,6 +270,7 @@ app.include_router(users.router)
 app.include_router(patients.router)
 app.include_router(practice_billing.router)
 app.include_router(practice_domains.router)
+app.include_router(domain_connect.router)
 app.include_router(coverage.payers_router)
 app.include_router(coverage.router)
 app.include_router(coverage.jobs_router)

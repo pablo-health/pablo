@@ -1,0 +1,19 @@
+{
+  "captured": "2026-10-01",
+  "type": "TXT",
+  "answers": {
+    "_domainconnect.example.com": [
+      "domains.squarespace.com"
+    ],
+    "_domainconnect.example.net": [
+      "api.cloudflare.com/client/v4/dns/domainconnect"
+    ],
+    "_domainconnect.example.org": [
+      "api.domainconnect.ionos.com"
+    ],
+    "dev1.dc.pablo.health": [
+      "p=2,a=RS256,d=/mxXwIh6R9NbqK5des5JqcG603/s48keRpyxsEQ8U3OyiJs2FCJA3VjDpnHJAzjOfmKDvUd0ZCUR7QaIS/U+jO/IqZ23shpc0JsD3Xbl5Frc8ZcHEcHNipW6QbrYinw4Ky9zIobt0QyJr0M+xUQbRrgjMwJGWTy5E7O9labMb4jrXXrpdIy0NCUhAKO7HQIDAQAB",
+      "p=1,a=RS256,d=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5k/IplLNKC4qj+TfoyakyAUcFs9q1E8+k+bobNDeiW3W9nfKobS5llnozp49rRLeJhPctzZd8N9ocYNwzNJLMa5gJxrLdxRSjlMyZwVXDt6eo/U2hvbzR11U2CFc49oL9Xk7Me+gA729WRCAf0vtaZtS"
+    ]
+  }
+}

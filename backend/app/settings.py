@@ -1197,6 +1197,55 @@ class Settings(BaseSettings):
             "resolver."
         ),
     )
+    # One-click DNS setup through Domain Connect (app/services/domain_connect.py).
+    # Off unless the provider id, key host and KMS key version are all set. The
+    # templates themselves are published in the public Domain Connect template
+    # registry, and their syncRedirectDomain must include app_url's host.
+    practice_domain_connect_provider_id: str = Field(
+        default="",
+        description=(
+            "The providerId the deployment's Domain Connect templates are "
+            "published under, e.g. example.org. Empty turns one-click DNS "
+            "setup off."
+        ),
+    )
+    practice_domain_connect_portal_service_id: str = Field(
+        default="",
+        description=(
+            "serviceId of the template that sets up portal.<domain>, the "
+            "domain's ownership TXT and its email DKIM records. Empty: not offered."
+        ),
+    )
+    practice_domain_connect_website_service_id: str = Field(
+        default="",
+        description=(
+            "serviceId of the template that points <domain> and www.<domain> "
+            "at the practice website. Empty: not offered."
+        ),
+    )
+    practice_domain_connect_key_host: str = Field(
+        default="",
+        description=(
+            "The 'key' sent with signed apply links: the label under the "
+            "templates' syncPubKeyDomain where the public key is published."
+        ),
+    )
+    practice_domain_connect_kms_key_version: str = Field(
+        default="",
+        description=(
+            "Cloud KMS key version that signs apply links (RSA PKCS#1 SHA-256), "
+            "projects/<p>/locations/<l>/keyRings/<r>/cryptoKeys/<k>/cryptoKeyVersions/<n>."
+        ),
+    )
+    practice_domain_connect_portal_target: str = Field(
+        default="",
+        description=(
+            "Value of the portal template's portaltarget variable: the leading "
+            "label(s) of practice_domain_cname_target that the template's fixed "
+            "suffix completes. The portal template is offered only when "
+            "practice_domain_cname_target starts with this plus a dot."
+        ),
+    )
 
     # ── Patient portal sign-in (app.portal) ──────────────────────────────
     # Off by default: turning it on publishes a surface that mints

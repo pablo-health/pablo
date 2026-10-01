@@ -1,0 +1,7 @@
+{
+  "captured": "2026-10-01",
+  "request": "GET https://api.domainconnect.ionos.com/v2/example.org/settings",
+  "status": 404,
+  "content_type": null,
+  "body": ""
+}
