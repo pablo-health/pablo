@@ -561,5 +561,24 @@ test("disconnecting takes Pablo off the account and forgets what it read, keepin
   // with the rest of what was read: the series is asked about again.
   await connectThroughSetup(page, { follow: true })
   await readCalendarsNow(api)
-  expect((await questions(api)).map((q) => q.title)).toContain("Dana Brooks")
+  const [asked] = (await questions(api)).filter((q) => q.title === "Dana Brooks")
+  expect(asked).toBeDefined()
+
+  // Answering it again books nothing new: the sessions kept their link to
+  // the events, so the same appointments are picked back up.
+  await api.post("/api/calendar/outside-sessions/answer", {
+    answers: [
+      {
+        source: asked.source,
+        source_identifier: asked.source_identifier,
+        patient_id: danaId,
+        new_client_name: null,
+        not_a_client: false,
+      },
+    ],
+  })
+  expect(await questions(api)).toHaveLength(0)
+  expect((await upcomingFor(api, danaId)).map((a) => a.id).sort()).toEqual(
+    booked.map((a) => a.id).sort(),
+  )
 })
