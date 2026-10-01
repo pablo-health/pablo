@@ -573,17 +573,19 @@ def _with_calendar_retry[T](call: Callable[[], T]) -> T:
     )
 
 
-def _resolve_main_calendar(service: Any) -> str:
+def _resolve_main_calendar(service: Any) -> str | None:
     """The main calendar's real id, from the calendar list.
 
     Asked of the calendar list, which the grant to read events covers. The
     id is what a followed ``primary`` is stored as and what the import keys
-    its answers by; ``primary`` itself stands in when nothing comes back.
+    its answers by. None when nothing comes back: ``primary`` is the same
+    word for every account, so it never stands in for an id.
     """
     resolved: dict[str, Any] = _with_calendar_retry(
         lambda: service.calendarList().get(calendarId=FOLLOW_MAIN_CALENDAR).execute()
     )
-    return str(resolved.get("id") or FOLLOW_MAIN_CALENDAR)
+    calendar_id = resolved.get("id")
+    return str(calendar_id) if calendar_id else None
 
 
 def _patch_event_summary(service: Any, calendar_id: str, event_id: str, summary: str) -> None:
@@ -1115,7 +1117,8 @@ class GoogleCalendarService:
         The import reads the main calendar, and what it remembers is keyed
         by that calendar's id — the same id a read of a followed ``primary``
         resolves to, so the import and following remember one calendar under
-        one name. Needs the grant to read events; None without it.
+        one name. Needs the grant to read events; None without it, or when
+        Google names no id for it.
         """
         if not self.can_read_events(user_id):
             return None
@@ -1149,14 +1152,21 @@ class GoogleCalendarService:
         service = self._calendar(credentials)
         calendar_id = token_doc.follow_calendar_id
         main_calendar_id = None
+        # What the rows read here are recorded under. None when Google named
+        # no id for the main calendar: the read still asks for ``primary``,
+        # but ``primary`` is the same word for every account, so nothing is
+        # recorded under it. The rows stay unrecorded until a read learns the
+        # real id, and are claimed onto it then.
+        recorded_as: str | None = calendar_id
         if calendar_id == FOLLOW_MAIN_CALENDAR:
-            calendar_id = main_calendar_id = _resolve_main_calendar(service)
-            if calendar_id != FOLLOW_MAIN_CALENDAR and not (
-                self._token_repo.resolve_followed_main_calendar(user_id, calendar_id)
-            ):
-                # Another calendar was chosen while this read was starting;
-                # the next read follows that one.
-                return nothing
+            main_calendar_id = _resolve_main_calendar(service)
+            recorded_as = main_calendar_id
+            if main_calendar_id is not None:
+                calendar_id = main_calendar_id
+                if not self._token_repo.resolve_followed_main_calendar(user_id, calendar_id):
+                    # Another calendar was chosen while this read was starting;
+                    # the next read follows that one.
+                    return nothing
         full = token_doc.main_calendar_sync_token is None
         # Bounded like an import scan: past it, Google's expansion of a
         # repeating event may stop, and a missing instance proves nothing.
@@ -1191,7 +1201,7 @@ class GoogleCalendarService:
             changes,
             full=full,
             window=window if full else None,
-            calendar_id=calendar_id,
+            calendar_id=recorded_as,
             main_calendar_id=main_calendar_id,
         )
 

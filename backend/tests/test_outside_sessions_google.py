@@ -619,6 +619,24 @@ class TestChosenCalendarReviewFindings:
         assert read.changes == []
         assert _reads_of(stack, MAIN) == 0
 
+    def test_a_main_calendar_google_names_no_id_for_is_recorded_under_nothing(
+        self, stack: _Stack
+    ) -> None:
+        """``primary`` is the same word for every account: it is never stored as an id."""
+
+        def nameless(_self: _FakeCalendarList, calendarId: str) -> _Request:  # noqa: N803
+            return _Request({"summary": calendarId})
+
+        with patch.object(_FakeCalendarList, "get", nameless):
+            read = stack.calendar.read_main_calendar_changes(USER_ID)
+            import_id = stack.calendar.main_calendar_id(USER_ID)
+
+        # Still read, this time, by the word Google answers to.
+        assert _reads_of(stack, "primary") == 1
+        assert (read.calendar_id, read.main_calendar_id, import_id) == (None, None, None)
+        # And still followed as "primary", for a later read to resolve.
+        assert stack.tokens.doc.follow_calendar_id == "primary"
+
     def test_a_session_whose_row_is_gone_is_still_claimed(self, stack: _Stack) -> None:
         stack.client("p1", "wk")
         stack.poll([_google_event("o1", _in(3))])
