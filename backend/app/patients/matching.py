@@ -110,6 +110,9 @@ class PatientHint(BaseModel):
     full_name: str | None = None
     initials: str | None = None
     """First and last initial, in any punctuation: ``"J.A."``."""
+    abbreviated_name: str | None = None
+    """A first and last name with one cut to its initial: ``"J. Smith"``,
+    ``"Jane S."``. Only ever offers possible matches, never a certain one."""
     email: str | None = None
     date_of_birth: date | None = None
     source: str | None = None
@@ -351,6 +354,28 @@ def _initials_matches(initials: str, candidates: list[Candidate]) -> list[Candid
     ]
 
 
+def _abbreviated_name_matches(name: str, candidates: list[Candidate]) -> list[Candidate]:
+    """Patients a name cut short could be: "J. Smith" or "Jane S." for Jane Smith.
+
+    Two words, one of them a single letter. The whole word must be the
+    chart's first or last name, and the letter that name's other initial.
+    """
+    words = [w.strip(".") for w in normalize(name).split()]
+    if len(words) != _INITIALS_LEN or not all(words):
+        return []
+    first, last = words
+    found: list[Candidate] = []
+    for c in candidates:
+        chart_first, chart_last = _first_and_last_word(
+            normalize(c.first_name), normalize(c.last_name)
+        )
+        cut_first = len(first) == 1 and chart_first[:1] == first and chart_last == last
+        cut_last = len(last) == 1 and chart_first == first and chart_last[:1] == last
+        if cut_first or cut_last:
+            found.append(c)
+    return found
+
+
 def match_patient(
     hint: PatientHint, ctx: MatchContext, *, name_alone_is_enough: bool = True
 ) -> MatchResult:
@@ -396,6 +421,9 @@ def _match(hint: PatientHint, ctx: MatchContext, *, name_alone_is_enough: bool) 
     )
     whole_name, by_name = _full_name_matches(hint.full_name, seen) if hint.full_name else ([], [])
     by_initials = _initials_matches(hint.initials, seen) if hint.initials else []
+    by_abbreviation = (
+        _abbreviated_name_matches(hint.abbreviated_name, seen) if hint.abbreviated_name else []
+    )
 
     steps: list[tuple[Evidence, list[Candidate]]] = []
     if hint.full_name and hint.date_of_birth is not None:
@@ -420,7 +448,8 @@ def _match(hint: PatientHint, ctx: MatchContext, *, name_alone_is_enough: bool) 
 
     # The name says who it could be; without one, the first check that
     # found anyone does.
-    possible = by_name or by_initials or next((found for _, found in steps if found), [])
+    first_found = next((found for _, found in steps if found), [])
+    possible = by_name or by_initials or by_abbreviation or first_found
     return MatchResult(possible_ids=[c.id for c in possible])
 
 

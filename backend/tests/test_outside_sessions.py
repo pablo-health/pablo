@@ -40,7 +40,7 @@ from app.services.google_calendar_follow import (
     GoogleSyncStatus,
     Resolution,
 )
-from app.services.outside_sessions import OutsideSessions
+from app.services.outside_sessions import OutsideSessions, Question
 from app.settings import get_settings
 from app.utcnow import utc_now
 
@@ -211,6 +211,107 @@ class TestWhatBecomesAQuestion:
 
         assert h.open_ids() == ["x"]
         assert h.followed("x") is None
+
+
+class TestWhatATitleSuggests:
+    """A calendar title names its client in many ways; each is read before matching.
+
+    The suggestion is all that changes: an event is never booked on its title.
+    """
+
+    @pytest.fixture
+    def clients(self, h: _Harness) -> _Harness:
+        h.patient("p1", "Jane", "Smith")
+        h.patient("p2", "Robert", "Jones")
+        return h
+
+    @staticmethod
+    def _asked(h: _Harness, mock_user: User, title: str) -> Question:
+        h.poll(mock_user, [_event("e1", _in(2), title=title)])
+        [question] = h.outside.questions(USER_ID)
+        return question
+
+    @pytest.mark.parametrize(
+        "title",
+        [
+            "Jane Smith",
+            "Smith, Jane",
+            "J.S.",
+            "JS",
+            "J. S.",
+            "Session with Jane Smith",
+            "Jane Smith - Therapy",
+            "Jane Smith \N{EN DASH} Therapy",
+            "Therapy: Jane Smith",
+        ],
+    )
+    def test_a_title_that_names_one_client_suggests_them(
+        self, clients: _Harness, mock_user: User, title: str
+    ) -> None:
+        question = self._asked(clients, mock_user, title)
+
+        assert question.match.patient_id == "p1"
+        assert clients.followed("e1") is None
+
+    @pytest.mark.parametrize("title", ["J. Smith", "Jane S."])
+    def test_a_name_cut_short_offers_the_client_without_choosing(
+        self, clients: _Harness, mock_user: User, title: str
+    ) -> None:
+        question = self._asked(clients, mock_user, title)
+
+        assert question.match.patient_id is None
+        assert question.match.possible_ids == ["p1"]
+
+    def test_a_title_naming_no_one_suggests_no_one(
+        self, clients: _Harness, mock_user: User
+    ) -> None:
+        question = self._asked(clients, mock_user, "Therapy Session")
+
+        assert (question.match.patient_id, question.match.possible_ids) == (None, [])
+
+    def test_initials_two_clients_share_are_offered_both(
+        self, clients: _Harness, mock_user: User
+    ) -> None:
+        clients.patient("p3", "John", "Stone")
+
+        question = self._asked(clients, mock_user, "J.S.")
+
+        assert question.match.patient_id is None
+        assert sorted(question.match.possible_ids) == ["p1", "p3"]
+
+    def test_a_title_naming_two_clients_chooses_neither(
+        self, clients: _Harness, mock_user: User
+    ) -> None:
+        question = self._asked(clients, mock_user, "Jane Smith / Robert Jones")
+
+        assert question.match.patient_id is None
+        assert sorted(question.match.possible_ids) == ["p1", "p2"]
+
+    def test_a_title_that_names_a_client_still_books_nothing(
+        self, clients: _Harness, mock_user: User
+    ) -> None:
+        clients.poll(
+            mock_user,
+            [_event("e1", _in(2), title="J.S."), _event("e2", _in(9), title="J.S.")],
+        )
+
+        assert clients.followed("e1") is None
+        assert clients.followed("e2") is None
+        assert clients.appointments.list_by_range(USER_ID, _in(0), _in(30)) == []
+        assert sorted(clients.open_ids()) == ["e1", "e2"]
+
+    def test_a_remembered_answer_still_decides_whatever_the_title_says(
+        self, clients: _Harness, mock_user: User
+    ) -> None:
+        """The title is read only when nothing is remembered for the series."""
+        clients.poll(mock_user, [_event("e1", _in(2), title="Robert Jones")])
+        clients.answer("p1")
+
+        clients.poll(mock_user, [_event("e2", _in(9), title="Robert Jones")])
+
+        booked = clients.followed("e2")
+        assert booked is not None
+        assert booked.patient_id == "p1"
 
 
 class TestSharedIdentifier:
