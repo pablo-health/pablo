@@ -14,7 +14,7 @@
 import type { Page } from "@playwright/test"
 import { test, expect } from "../fixtures/auth"
 import { ApiClient, ApiError } from "../fixtures/api"
-import { markCalendarSetupComplete } from "../fixtures/scenarios"
+import { givePatient, markCalendarSetupComplete } from "../fixtures/scenarios"
 import {
   SCOPE_APP_CALENDAR,
   SCOPE_FREEBUSY,
@@ -269,6 +269,7 @@ const CLIENTS = [
   "Morgan Lee",
   "Sam Patel",
   "Dana Brooks",
+  "Taylor Quinn",
 ]
 
 let addedRules: string[] = []
@@ -514,6 +515,28 @@ test("an expired sync token is read over from the start without losing a session
   expect(refreshed.at(-1)?.status).toBe(200)
   expect(await questions(api)).toHaveLength(0)
   expect(await upcomingFor(api, samId)).toHaveLength(4)
+})
+
+test("a session titled with a client's initials is offered that client", async ({
+  signedInPage: page,
+  api,
+}) => {
+  await freshGoogle(api)
+  await forgetClients(api, ["Taylor Quinn"])
+  const taylor = await givePatient(api, { first_name: "Taylor", last_name: "Quinn" })
+  await connectThroughSetup(page, { follow: true })
+  await seedWeekly("primary", "T.Q.", localDateTime(1, "15:00"), 2)
+  await readCalendarsNow(api)
+
+  // Asked, not booked: initials are only ever a suggestion.
+  expect(await upcomingFor(api, taylor.id)).toHaveLength(0)
+  await showTomorrow(page)
+  await page.getByRole("button", { name: "Review", exact: true }).click()
+  const review = page.getByRole("dialog")
+  await expect(review.getByRole("checkbox", { name: "T.Q." })).toBeChecked()
+  await expect(review.getByRole("combobox", { name: "Which client is T.Q.?" })).toHaveValue(
+    taylor.id,
+  )
 })
 
 test("disconnecting takes Pablo off the account and forgets what it read, keeping the sessions", async ({

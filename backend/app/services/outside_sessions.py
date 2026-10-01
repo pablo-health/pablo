@@ -87,6 +87,7 @@ from ..patients.matching import (
     remember_not_a_client,
     same_name_charts,
 )
+from ..patients.titles import TitleReading, title_readings
 from ..repositories.external_calendar_event import (
     ANSWER_CLIENT,
     ANSWER_NOT_A_CLIENT,
@@ -171,6 +172,9 @@ class _Identity:
     kind: IdentityKind
     scope: str | None
     """Whose answer this is remembered as; None when the calendar isn't known."""
+    readings: tuple[TitleReading, ...] = ()
+    """Each way a calendar event's title could name its client; empty for a
+    feed, whose identity already says how its titles read."""
 
 
 class OutsideSessions:
@@ -609,12 +613,12 @@ class OutsideSessions:
     ) -> Question:
         if each_time:
             return self._each_time_question(row, identity, ctx)
-        match = match_patient(identity.hint, ctx)
+        match = _match(identity, ctx)
         if match.evidence is None and not match.patient_id and not match.possible_ids:
             # Remembered to a chart that is gone: the matcher rightly guesses
             # no one, but the question still offers whoever the title could
             # mean, none of them preselected.
-            by_title = match_patient(_title_only(identity.hint), ctx)
+            by_title = _by_title(identity, ctx)
             ids = [by_title.patient_id] if by_title.patient_id else by_title.possible_ids
             match = MatchResult(possible_ids=ids)
         suggested = None
@@ -628,9 +632,7 @@ class OutsideSessions:
                 # mean and "New client", so the clinician can say no. (A
                 # name alone is already shown that way.)
                 suggested = match.patient_id
-                by_title = match_patient(
-                    identity.hint.model_copy(update={"source_identifier": None}), ctx
-                )
+                by_title = _by_title(identity, ctx)
                 others = [by_title.patient_id] if by_title.patient_id else by_title.possible_ids
                 match = MatchResult(
                     possible_ids=[suggested, *(o for o in others if o != suggested)]
@@ -659,7 +661,7 @@ class OutsideSessions:
         lock the question to a colleague's client nor stand for "not a
         client" on the next event.
         """
-        by_title = match_patient(_title_only(identity.hint), ctx)
+        by_title = _by_title(identity, ctx)
         candidates = [by_title.patient_id] if by_title.patient_id else by_title.possible_ids
         known = _known(ctx, identity)
         last = known.patient_id if known is not None else None
@@ -716,8 +718,8 @@ class OutsideSessions:
         if not rows:
             return False
         identity = self._identity(rows[0])
-        hint = _title_only(identity.hint) if self._asks_each_time(identity, ctx) else identity.hint
-        match = match_patient(hint, ctx)
+        each_time = self._asks_each_time(identity, ctx)
+        match = _by_title(identity, ctx) if each_time else _match(identity, ctx)
         return match.patient_id is not None and not match.visible
 
     def answer(
@@ -807,6 +809,7 @@ class OutsideSessions:
             ),
             "series" if identifier.startswith(SERIES_PREFIX) else "slot",
             scope,
+            tuple(title_readings(row.title)),
         )
 
     def _book(self, row: ExternalCalendarEvent) -> Appointment | None:
@@ -884,6 +887,61 @@ def _known(ctx: MatchContext, identity: _Identity) -> PatientSourceMapping | Non
 def _title_only(hint: PatientHint) -> PatientHint:
     """What the title says, without what was remembered under it."""
     return hint.model_copy(update={"source_identifier": None})
+
+
+def _match(identity: _Identity, ctx: MatchContext) -> MatchResult:
+    """Who the event is: what was remembered for it, else what its title says.
+
+    A remembered answer decides it, including one whose chart is gone, which
+    the matcher answers with no one rather than with whoever shares the name.
+    """
+    if not identity.readings or _known(ctx, identity) is not None:
+        return match_patient(identity.hint, ctx)
+    return _by_title(identity, ctx)
+
+
+def _by_title(identity: _Identity, ctx: MatchContext) -> MatchResult:
+    """What the title alone says about who the client is.
+
+    A calendar title is matched in each way it could be read
+    (``patients.titles``). It names one client only when the readings agree:
+    one is certain of a client and every other reading that found anyone
+    found only that client. Otherwise everyone any reading found is offered,
+    none of them certain, so two names in one title, or initials two clients
+    share, stay a question. A certain answer here is still only a name: the
+    booking rule never books on it.
+    """
+    if not identity.readings:
+        return match_patient(_title_only(identity.hint), ctx)
+    results = [
+        match_patient(
+            identity.hint.model_copy(
+                update={
+                    "source_identifier": None,
+                    "full_name": reading.full_name,
+                    "initials": reading.initials,
+                    "abbreviated_name": reading.abbreviated_name,
+                }
+            ),
+            ctx,
+        )
+        for reading in identity.readings
+    ]
+    hidden = {pid for result in results for pid in result.hidden_ids}
+    certain = next((result for result in results if result.patient_id), None)
+    found = [{r.patient_id} if r.patient_id else set(r.possible_ids) for r in results]
+    if certain is not None and all(f == {certain.patient_id} for f in found if f):
+        return MatchResult(
+            patient_id=certain.patient_id,
+            evidence=certain.evidence,
+            hidden_ids=[pid for pid in [certain.patient_id] if pid in hidden],
+        )
+    everyone: list[str] = []
+    for result in results:
+        for pid in [result.patient_id, *result.possible_ids]:
+            if pid and pid not in everyone:
+                everyone.append(pid)
+    return MatchResult(possible_ids=everyone, hidden_ids=[pid for pid in everyone if pid in hidden])
 
 
 def _sees(ctx: MatchContext, patient_id: str) -> bool:
