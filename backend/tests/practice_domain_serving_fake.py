@@ -20,6 +20,9 @@ class FakeDomainServing:
         self.host_rules: set[str] = set()
         #: A host's certificate state; PROVISIONING when unset.
         self.certificate_state: dict[str, CertificateStatus] = {}
+        #: The state a host's certificate is in once requested again;
+        #: PROVISIONING when unset.
+        self.after_reissue: dict[str, CertificateStatus] = {}
         #: Method name -> the error it raises.
         self.failures: dict[str, DomainServingError] = {}
 
@@ -46,6 +49,15 @@ class FakeDomainServing:
             self.calls.append(("create:certificate", host))
             self.certificates.add(host)
         return self.certificate_state.get(host, CertificateStatus("PROVISIONING"))
+
+    def recreate_certificate(self, host: str) -> CertificateStatus:
+        self._call("recreate_certificate", host)
+        self.calls.append(("create:certificate", host))
+        self.certificates.add(host)
+        self.certificate_state[host] = self.after_reissue.get(
+            host, CertificateStatus("PROVISIONING")
+        )
+        return self.certificate_state[host]
 
     def ensure_map_entry(self, host: str) -> None:
         self._call("ensure_map_entry", host)

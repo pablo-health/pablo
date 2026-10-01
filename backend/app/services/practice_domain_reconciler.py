@@ -13,20 +13,31 @@ way loses nothing:
 2. Per host, ask for its DNS authorisation (storing the ``_acme-challenge``
    value, so the practice is shown the record at once) and its certificate.
    ``pending`` becomes ``verifying``: the records are known and the job is
-   waiting on the practice's DNS and on the certificate.
-3. When the domain's ownership is confirmed, the host's own record points
+   waiting on the practice's DNS and on the certificate. What it is waiting
+   for is kept in ``last_error``.
+3. The issuer tries to authorise a certificate as soon as it is requested —
+   usually before the practice has added the ``_acme-challenge`` record — and
+   after that failed attempt it may not look again for a long time. So when a
+   certificate is stuck behind a failed attempt and this sweep's check finds
+   that record in place, the certificate is deleted and requested again
+   against the same authorisation (the record stays right), at most once per
+   :data:`REISSUE_INTERVAL` per host.
+4. When the domain's ownership is confirmed, the host's own record points
    here, and the certificate is active: add the certificate-map entry and the
    URL-map host rule, and the host becomes ``active``.
-4. A certificate that failed, or a request the cloud refused, puts a host that
-   is not yet served in ``error`` with the reason in ``last_error``.
-5. An ``active`` host is checked again every sweep. If its record stops
+5. ``error`` is kept for what the practice or whoever runs the deployment has
+   to act on: a request the cloud refused, or a CAA record that forbids the
+   certificate. A record not added yet is waiting, not an error.
+6. An ``active`` host is checked again every sweep. If its record stops
    pointing here, or its certificate stops being active, it goes to ``error``
    with the reason — and its host rule stays: taking a working site down over
    a DNS blip would be worse than the blip. No answer in time changes nothing.
    It comes back to ``active`` by itself once both are right again.
-6. A ``removing`` host has its host rule, map entry, certificate and DNS
+7. A ``removing`` host has its host rule, map entry, certificate and DNS
    authorisation removed, in that order, and then its row is deleted; with the
    last host under a domain, the domain's row (and its email identity) go too.
+   The hosts of a practice that is no longer active (``is_active`` false, or
+   offboarded with ``deleted_at`` set, or gone) are made ``removing`` first.
 
 Then, when the deployment registered one, each domain whose ownership is
 confirmed has its email sending identity ensured (see
@@ -44,6 +55,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, replace
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from ..models.audit import AuditAction
@@ -51,9 +63,10 @@ from ..models.practice_domain import ServingState
 from ..utcnow import utc_now
 from .practice_domain_cloud import DomainServingError
 from .practice_domain_hosts import apex_or_none
+from .practice_domain_service import CERT_AUTH_LABEL, CERT_AUTH_SUFFIX, VERIFY_LABEL
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Collection
     from contextlib import AbstractContextManager
     from datetime import datetime
 
@@ -77,8 +90,18 @@ _POINTING_TYPES = frozenset({"A", "AAAA", "CNAME"})
 
 PointingVerdict = Literal["ok", "bad", "unknown"]
 
+#: The least time between two re-requests of one host's certificate, so a host
+#: whose record never settles cannot churn certificates.
+REISSUE_INTERVAL = timedelta(minutes=30)
+
 POINTING_LAPSED = "The host's DNS record no longer points here."
 CERTIFICATE_LAPSED = "The host's certificate is no longer active."
+CERTIFICATE_PENDING = "Waiting for the certificate to be issued."
+CERTIFICATE_RETRY = (
+    "The certificate's last authorisation attempt failed; it is requested again "
+    f"once its record is in place, at most every {REISSUE_INTERVAL.seconds // 60} minutes."
+)
+CERTIFICATE_RATE_LIMITED = "The certificate authority is rate-limiting this domain; waiting."
 
 
 class PracticeScope(Protocol):
@@ -97,6 +120,11 @@ class ReconcileStore(Protocol):
 
     def practice(self, practice_id: str) -> AbstractContextManager[PracticeScope]:
         """A unit of work for *practice_id*, committed when it closes cleanly."""
+        ...
+
+    def retired_practices(self, practice_ids: Collection[str]) -> set[str]:
+        """Those of *practice_ids* that are no longer active: deactivated,
+        offboarded, or with no practice row at all."""
         ...
 
 
@@ -126,6 +154,24 @@ def pointing_verdict(host: str, records: list[DnsRecord]) -> PointingVerdict:
     return "ok" if "ok" in checks else "bad"
 
 
+def challenge_verdict(host: str, auth_value: str, records: list[DnsRecord]) -> PointingVerdict:
+    """Whether a check found the host's ``_acme-challenge`` CNAME carrying
+    *auth_value*. Not checked (the value was not stored yet when the check
+    ran, or no answer in time) is ``unknown``."""
+    name, value = challenge_record(host, auth_value)
+    for record in records:
+        if record.type == "CNAME" and record.name == name and record.value == value:
+            if record.check in (None, "unknown"):
+                return "unknown"
+            return "ok" if record.check == "ok" else "bad"
+    return "unknown"
+
+
+def challenge_record(host: str, auth_value: str) -> tuple[str, str]:
+    """The ``_acme-challenge`` CNAME's name and value for *host*."""
+    return f"{CERT_AUTH_LABEL}.{host}", f"{auth_value}.{CERT_AUTH_SUFFIX}"
+
+
 class PracticeDomainReconciler:
     def __init__(
         self,
@@ -149,10 +195,14 @@ class PracticeDomainReconciler:
         by_practice: dict[str, list[PracticeDomain]] = {}
         for host in self._store.all_hosts():
             by_practice.setdefault(host.practice_id, []).append(host)
+        retired = self._store.retired_practices(by_practice.keys()) if by_practice else set()
         for practice_id, hosts in by_practice.items():
             report.hosts += len(hosts)
             try:
-                self._practice(practice_id, hosts, report)
+                if practice_id in retired:
+                    self._retire(hosts, report)
+                else:
+                    self._practice(practice_id, hosts, report)
             except Exception:
                 # One practice's failure must not keep the others from being
                 # served; whatever it had left is retried next sweep.
@@ -177,6 +227,25 @@ class PracticeDomainReconciler:
         if self._email is not None and live:
             self._email_identities(self._email, practice_id, live, apexes)
 
+    def _retire(self, hosts: list[PracticeDomain], report: SweepReport) -> None:
+        """Stop serving every host of a practice that is no longer active."""
+        for host in hosts:
+            if host.status != "removing":
+                with self._store.practice(host.practice_id) as scope:
+                    if not scope.repo.mark_removing(host.domain, host.practice_id):
+                        continue
+                    scope.audit(
+                        AuditAction.PRACTICE_DOMAIN_STATUS_CHANGED,
+                        {
+                            "domain": host.domain,
+                            "status": "removing",
+                            "previous": host.status,
+                            "reason": "practice_inactive",
+                        },
+                    )
+                report.changed += 1
+            self._take_down(replace(host, status="removing", is_primary=False), report)
+
     def _check_dns(
         self, practice_id: str
     ) -> tuple[dict[str, list[DnsRecord]], dict[str, PracticeDomainApex]]:
@@ -200,21 +269,24 @@ class PracticeDomainReconciler:
         apex: PracticeDomainApex | None,
         report: SweepReport,
     ) -> None:
+        reissued_at = host.cert_reissued_at
         try:
             auth_value = self._serving.ensure_dns_authorization(host.domain)
             certificate = self._serving.ensure_certificate(host.domain)
+            challenge = challenge_verdict(host.domain, auth_value, records)
+            if self._may_reissue(host, certificate, challenge):
+                logger.info("practice_domain_reconcile_reissue domain=%s", host.domain)
+                certificate = self._serving.recreate_certificate(host.domain)
+                reissued_at = self._now()
         except DomainServingError as e:
             self._refused(host, e, report)
             return
         found = replace(
-            ServingState.of(host), cert_auth_value=auth_value, cert_status=certificate.state
+            ServingState.of(host),
+            cert_auth_value=auth_value,
+            cert_status=certificate.state,
+            cert_reissued_at=reissued_at,
         )
-
-        if certificate.state == "FAILED" and not _served_before(host):
-            detail = certificate.detail or "no reason given"
-            failure = f"The certificate could not be issued ({detail})."
-            self._write(host, replace(found, status="error", last_error=failure), report)
-            return
 
         pointing = pointing_verdict(host.domain, records)
         owned = apex is not None and apex.verified_at is not None
@@ -230,8 +302,23 @@ class PracticeDomainReconciler:
             self._write(host, active, report)
             return
 
-        status, reason = _waiting(host, pointing, certificate)
+        status, reason = _waiting(
+            host, auth_value, certificate, challenge=challenge, owned=owned, pointing=pointing
+        )
         self._write(host, replace(found, status=status, last_error=reason), report)
+
+    def _may_reissue(
+        self, host: PracticeDomain, certificate: CertificateStatus, challenge: PointingVerdict
+    ) -> bool:
+        """Whether to delete the certificate and request it again: it is stuck
+        behind a failed attempt, its record is in place now, the issuer is not
+        rate-limiting, and it was not re-requested within the interval."""
+        if not certificate.stuck or challenge != "ok":
+            return False
+        if certificate.attempt_failure == "RATE_LIMITED":
+            return False
+        last = host.cert_reissued_at
+        return last is None or self._now() - last >= REISSUE_INTERVAL
 
     def _refused(
         self, host: PracticeDomain, error: DomainServingError, report: SweepReport
@@ -346,13 +433,54 @@ def _served_before(host: PracticeDomain) -> bool:
 
 
 def _waiting(
-    host: PracticeDomain, pointing: PointingVerdict, certificate: CertificateStatus
+    host: PracticeDomain,
+    auth_value: str,
+    certificate: CertificateStatus,
+    *,
+    challenge: PointingVerdict,
+    owned: bool,
+    pointing: PointingVerdict,
 ) -> tuple[HostStatus, str | None]:
-    """Where a host stands while something it needs is missing."""
-    if not _served_before(host):
-        return "verifying", None
-    if pointing == "bad":
-        return "error", POINTING_LAPSED
-    if certificate.state != "ACTIVE":
-        return "error", CERTIFICATE_LAPSED
-    return host.status, host.last_error
+    """Where a host stands while something it needs is missing, and why.
+
+    A host that has been served and lapses is in ``error``. One that has not
+    is ``verifying`` with what it waits for first — unless what is in the way
+    is a CAA record, which only the practice can change.
+    """
+    if _served_before(host):
+        if pointing == "bad":
+            return "error", POINTING_LAPSED
+        if certificate.state != "ACTIVE":
+            return "error", CERTIFICATE_LAPSED
+        return host.status, host.last_error
+    if certificate.attempt_failure == "CAA":
+        detail = certificate.detail or "CAA"
+        return "error", f"The domain's CAA records do not allow this certificate ({detail})."
+    return "verifying", _waiting_for(
+        host, auth_value, certificate, challenge=challenge, owned=owned, pointing=pointing
+    )
+
+
+def _waiting_for(
+    host: PracticeDomain,
+    auth_value: str,
+    certificate: CertificateStatus,
+    *,
+    challenge: PointingVerdict,
+    owned: bool,
+    pointing: PointingVerdict,
+) -> str:
+    """The first thing a host not yet served is waiting for."""
+    if certificate.state != "ACTIVE" and challenge == "bad":
+        name, value = challenge_record(host.domain, auth_value)
+        return f"Waiting for the record {name} CNAME {value}."
+    if not owned:
+        apex = apex_or_none(host.domain) or host.domain
+        return f"Waiting for the record {VERIFY_LABEL}.{apex} TXT."
+    if pointing != "ok":
+        return f"Waiting for {host.domain} to point here."
+    if certificate.attempt_failure == "RATE_LIMITED":
+        return CERTIFICATE_RATE_LIMITED
+    if certificate.stuck:
+        return CERTIFICATE_RETRY
+    return CERTIFICATE_PENDING

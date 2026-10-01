@@ -17,8 +17,8 @@ from __future__ import annotations
 import importlib.util
 import os
 import uuid
-from dataclasses import dataclass
-from datetime import UTC, datetime
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -39,8 +39,11 @@ from app.services.practice_domain_reconcile_store import (
 )
 from app.services.practice_domain_reconciler import (
     CERTIFICATE_LAPSED,
+    CERTIFICATE_RATE_LIMITED,
     POINTING_LAPSED,
+    REISSUE_INTERVAL,
     PracticeDomainReconciler,
+    challenge_record,
 )
 from app.services.practice_domain_service import PracticeDomainService
 from sqlalchemy import create_engine, select, text
@@ -159,6 +162,7 @@ class Harness:
     serving: FakeDomainServing
     zone: Zone
     provisioner: _Provisioner | None = None
+    now: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def service(self, repo: PracticeDomainRepository) -> PracticeDomainService:
         return PracticeDomainService(repo, cname_target=TARGET, deferred_removal=True)
@@ -170,7 +174,13 @@ class Harness:
             lookup=lambda name, rdtype: self.zone.get((name, rdtype), []),
             service_for=self.service,
             email=self.provisioner,
+            now=lambda: self.now,
         ).sweep()
+
+    def add_challenge(self, host: str) -> None:
+        """Publish the host's ``_acme-challenge`` CNAME as it was shown."""
+        name, value = challenge_record(host, self.serving.authorizations[host])
+        self.zone[(name, "CNAME")] = [value]
 
     def add(self, host: str, purpose: str = "portal") -> None:
         with tenant_db_session(self.practice.schema, self.practice.owner) as session:
@@ -315,10 +325,102 @@ def test_a_second_sweep_changes_and_creates_nothing(harness: Harness) -> None:
 # --- errors -------------------------------------------------------------------
 
 
-def test_a_certificate_that_failed_is_an_error_with_the_reason(harness: Harness) -> None:
+def _attempt_failed(reason: str = "CONFIG") -> CertificateStatus:
+    """A certificate behind a failed authorisation attempt, as the issuer
+    leaves it when it looked before the record was added."""
+    return CertificateStatus("PROVISIONING", f"{reason} CNAME_MISMATCH", reason)
+
+
+def test_a_record_not_added_yet_waits_and_names_the_record(harness: Harness) -> None:
     host = f"portal.{_apex()}"
     harness.add(host)
-    harness.serving.certificate_state[host] = CertificateStatus("FAILED", f"{host}: CAA")
+    harness.serving.certificate_state[host] = _attempt_failed()
+    harness.sweep()  # stores the authorisation value the check then looks for
+
+    harness.sweep()
+
+    stored = harness.host(host)
+    assert stored is not None
+    name, value = challenge_record(host, "test-auth.1")
+    assert (stored.status, stored.last_error) == (
+        "verifying",
+        f"Waiting for the record {name} CNAME {value}.",
+    )
+    assert ("recreate_certificate", host) not in harness.serving.calls
+
+
+def test_a_stuck_certificate_is_requested_again_once_its_record_is_in_place(
+    harness: Harness,
+) -> None:
+    apex = _apex()
+    host = f"portal.{apex}"
+    harness.add(host)
+    harness.serving.certificate_state[host] = _attempt_failed()
+    harness.sweep()
+    harness.add_challenge(host)
+    harness.publish_ownership(apex)
+    harness.point(host)
+    harness.serving.after_reissue[host] = ACTIVE
+
+    harness.sweep()
+
+    assert harness.serving.calls.count(("recreate_certificate", host)) == 1
+    assert harness.serving.authorizations[host] == "test-auth.1"
+    stored = harness.host(host)
+    assert stored is not None
+    assert stored.status == "active"
+    assert stored.cert_reissued_at == harness.now
+    assert harness.serving.host_rules == {host}
+
+
+def test_a_certificate_is_requested_again_at_most_once_per_interval(harness: Harness) -> None:
+    host = f"portal.{_apex()}"
+    harness.add(host)
+    harness.serving.certificate_state[host] = _attempt_failed()
+    harness.serving.after_reissue[host] = _attempt_failed()
+    harness.sweep()
+    harness.add_challenge(host)
+
+    harness.sweep()
+    harness.now += REISSUE_INTERVAL - timedelta(minutes=1)
+    harness.sweep()
+
+    assert harness.serving.calls.count(("recreate_certificate", host)) == 1
+    stored = harness.host(host)
+    assert stored is not None
+    assert stored.status == "verifying"
+    assert stored.last_error is not None
+    assert stored.last_error.startswith("Waiting for the record _pablo-verify.")
+
+    harness.now += timedelta(minutes=1)
+    harness.sweep()
+    assert harness.serving.calls.count(("recreate_certificate", host)) == 2
+
+
+def test_a_rate_limited_certificate_is_left_to_wait(harness: Harness) -> None:
+    apex = _apex()
+    host = f"portal.{apex}"
+    harness.add(host)
+    harness.serving.certificate_state[host] = _attempt_failed("RATE_LIMITED")
+    harness.sweep()
+    harness.add_challenge(host)
+    harness.publish_ownership(apex)
+    harness.point(host)
+
+    harness.sweep()
+
+    assert ("recreate_certificate", host) not in harness.serving.calls
+    stored = harness.host(host)
+    assert stored is not None
+    assert (stored.status, stored.last_error) == ("verifying", CERTIFICATE_RATE_LIMITED)
+
+
+def test_a_caa_refusal_is_an_error_the_practice_must_fix(harness: Harness) -> None:
+    host = f"portal.{_apex()}"
+    harness.add(host)
+    harness.serving.certificate_state[host] = CertificateStatus(
+        "FAILED", f"{host}: CAA forbidden", "CAA"
+    )
 
     harness.sweep()
 
@@ -326,7 +428,9 @@ def test_a_certificate_that_failed_is_an_error_with_the_reason(harness: Harness)
     assert stored is not None
     assert stored.status == "error"
     assert stored.cert_status == "FAILED"
-    assert stored.last_error == f"The certificate could not be issued ({host}: CAA)."
+    assert stored.last_error == (
+        f"The domain's CAA records do not allow this certificate ({host}: CAA forbidden)."
+    )
 
 
 def test_a_refused_request_is_an_error_and_a_busy_one_waits(harness: Harness) -> None:
@@ -356,7 +460,9 @@ def test_a_refused_request_is_an_error_and_a_busy_one_waits(harness: Harness) ->
     harness.sweep()
     stored = harness.host(refused)
     assert stored is not None
-    assert (stored.status, stored.last_error) == ("verifying", None)
+    assert stored.status == "verifying"
+    assert stored.last_error is not None
+    assert stored.last_error.startswith("Waiting for")
 
 
 def test_a_served_host_whose_record_lapses_keeps_its_routing_and_recovers(
@@ -530,6 +636,55 @@ def test_a_host_whose_practice_is_gone_is_still_taken_down(
     assert harness.host(host) is None
 
 
+def test_a_deactivated_practices_hosts_stop_being_served(harness: Harness, engine: Engine) -> None:
+    apex = _apex()
+    host = f"portal.{apex}"
+    harness.add(host)
+    _ready(harness, host, apex)
+    harness.sweep()
+    assert harness.serving.host_rules == {host}
+    with engine.begin() as conn:
+        conn.execute(
+            text("UPDATE platform.practices SET is_active = false WHERE id = :i"),
+            {"i": harness.practice.id},
+        )
+
+    report = harness.sweep()
+
+    assert report.released == 1
+    assert harness.host(host) is None
+    assert harness.serving.host_rules == set()
+    assert harness.serving.certificates == set()
+    retired = [
+        e["changes"]
+        for e in harness.audit()
+        if e["action"] == AuditAction.PRACTICE_DOMAIN_STATUS_CHANGED.value
+    ][-1]
+    assert retired == {
+        "domain": host,
+        "status": "removing",
+        "previous": "active",
+        "reason": "practice_inactive",
+    }
+
+
+def test_an_offboarded_practices_hosts_stop_being_served(harness: Harness, engine: Engine) -> None:
+    host = f"portal.{_apex()}"
+    harness.add(host)
+    harness.sweep()
+    with engine.begin() as conn:
+        conn.execute(
+            text("UPDATE platform.practices SET deleted_at = now() WHERE id = :i"),
+            {"i": harness.practice.id},
+        )
+
+    report = harness.sweep()
+
+    assert report.released == 1
+    assert report.failed_practices == 0
+    assert harness.host(host) is None
+
+
 # --- email identities ---------------------------------------------------------
 
 
@@ -623,7 +778,7 @@ def test_the_revision_goes_down_and_comes_up_twice(engine: Engine) -> None:
                 text(
                     "SELECT count(*) FROM information_schema.columns "
                     "WHERE table_schema = 'platform' AND table_name = 'practice_domains' "
-                    "AND column_name = 'last_error'"
+                    "AND column_name IN ('last_error', 'cert_reissued_at')"
                 )
             ).scalar_one()
             check = conn.execute(
@@ -632,7 +787,7 @@ def test_the_revision_goes_down_and_comes_up_twice(engine: Engine) -> None:
                     "WHERE conname = 'practice_domains_status_check'"
                 )
             ).scalar_one()
-        return bool(column), "removing" in check
+        return column == 2, "removing" in check
 
     _migration("downgrade", engine)
     try:

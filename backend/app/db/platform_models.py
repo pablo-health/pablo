@@ -477,9 +477,12 @@ class PracticeDomainRow(PlatformBase):
     #: authorised with: the part before ``.authorize.certificatemanager.goog``.
     #: Set by whatever requests the certificate; ``None`` until then.
     cert_auth_value: Mapped[str | None] = mapped_column(String(255))
-    #: Why the host is in ``error``: what the last attempt to serve it found.
-    #: For whoever runs the deployment.
+    #: Why the host is not served: what it is waiting for, or why it is in
+    #: ``error``. For whoever runs the deployment.
     last_error: Mapped[str | None] = mapped_column(String(500))
+    #: When the certificate was last deleted and requested again after a failed
+    #: authorisation; bounds how often that happens.
+    cert_reissued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

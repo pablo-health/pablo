@@ -47,6 +47,7 @@ def _to_domain(row: PracticeDomainRow) -> PracticeDomain:
         cert_auth_value=row.cert_auth_value,
         cert_status=row.cert_status,
         last_error=row.last_error,
+        cert_reissued_at=row.cert_reissued_at,
     )
 
 
@@ -91,6 +92,7 @@ class PostgresPracticeDomainRepository(PracticeDomainRepository):
             cert_auth_value=domain.cert_auth_value,
             cert_status=domain.cert_status,
             last_error=domain.last_error,
+            cert_reissued_at=domain.cert_reissued_at,
             created_at=domain.created_at,
             updated_at=domain.updated_at,
         )
@@ -232,6 +234,7 @@ class PostgresPracticeDomainRepository(PracticeDomainRepository):
                 cert_auth_value=state.cert_auth_value,
                 cert_status=state.cert_status,
                 last_error=state.last_error,
+                cert_reissued_at=state.cert_reissued_at,
                 verified_at=state.verified_at,
                 updated_at=utc_now(),
             )

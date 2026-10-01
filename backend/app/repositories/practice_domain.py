@@ -231,6 +231,7 @@ class InMemoryPracticeDomainRepository(PracticeDomainRepository):
             row.cert_auth_value = state.cert_auth_value
             row.cert_status = state.cert_status
             row.last_error = state.last_error
+            row.cert_reissued_at = state.cert_reissued_at
             row.verified_at = state.verified_at
             row.updated_at = utc_now()
             return True

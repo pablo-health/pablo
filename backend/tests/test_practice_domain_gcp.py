@@ -5,9 +5,12 @@
 The JSON under ``fixtures/practice_domain_gcp`` was captured from the real
 Certificate Manager and Compute APIs through the same Python clients the code
 uses (``Type.to_json``), then scrubbed: project, hostnames, ids and the
-authorisation value replaced, structure kept. The certificate was captured
-while provisioning; the ACTIVE and FAILED cases below change the state fields
-of that capture rather than inventing a shape.
+authorisation value replaced, structure kept. One certificate was captured
+while provisioning (``certificate.json``) and again once active
+(``certificate_active.json``, its PEM chain replaced). The failed cases below
+change the state fields of the provisioning capture rather than inventing a
+shape: the client's ``AuthorizationAttemptInfo`` carries state, reason and
+details, and nothing else the API returns about a failed attempt.
 
 The clients are replaced by stubs that store and return those messages, so
 what is exercised is the parsing, the naming, the order of calls and the
@@ -219,13 +222,31 @@ def test_a_provisioning_certificate_reads_as_provisioning_with_nothing_in_the_wa
 
 
 def test_an_active_certificate_reads_as_active() -> None:
-    certificate = _load(cm.Certificate, "certificate")
-    managed = cm.Certificate.ManagedCertificate
-    certificate.managed.state = managed.State.ACTIVE
-    certificate.managed.authorization_attempt_info[
-        0
-    ].state = managed.AuthorizationAttemptInfo.State.AUTHORIZED
-    assert certificate_status(certificate).state == "ACTIVE"
+    status = certificate_status(_load(cm.Certificate, "certificate_active"))
+    assert status.state == "ACTIVE"
+    assert status.stuck is False
+
+
+def _failed_attempt(certificate: Any, reason: str, details: str) -> Any:
+    attempt_type = cm.Certificate.ManagedCertificate.AuthorizationAttemptInfo
+    attempt = certificate.managed.authorization_attempt_info[0]
+    attempt.state = attempt_type.State.FAILED
+    attempt.failure_reason = attempt_type.FailureReason[reason]
+    attempt.details = details
+    return certificate
+
+
+def test_a_certificate_behind_a_failed_attempt_is_stuck_while_provisioning() -> None:
+    """The common case: the issuer looked before the practice added the
+    ``_acme-challenge`` record, and the certificate still says PROVISIONING."""
+    certificate = _failed_attempt(_load(cm.Certificate, "certificate"), "CONFIG", "CNAME_MISMATCH")
+
+    status = certificate_status(certificate)
+
+    assert status.state == "PROVISIONING"
+    assert status.attempt_failure == "CONFIG"
+    assert status.stuck is True
+    assert status.detail == f"{HOST}: CONFIG CNAME_MISMATCH"
 
 
 def test_a_failed_certificate_says_why() -> None:
@@ -240,7 +261,47 @@ def test_a_failed_certificate_says_why() -> None:
     status = certificate_status(certificate)
 
     assert status.state == "FAILED"
+    assert status.attempt_failure == "CAA"
+    assert status.stuck is True
     assert status.detail == f"{HOST}: CAA CAA forbids issuance"
+
+
+def test_recreating_a_mapped_certificate_takes_the_entry_out_and_back(
+    serving: GoogleDomainServing, certificates: StubCertificates
+) -> None:
+    authorization = f"{PARENT}/dnsAuthorizations/dnsauth-portal-example-org"
+    entry = f"{PARENT}/certificateMaps/sites-cert-map/certificateMapEntries/portal-example-org"
+    cert = f"{PARENT}/certificates/cm-portal-example-org"
+    before = _copy(certificates.resources[authorization])
+    certificates.calls.clear()
+
+    status = serving.recreate_certificate(HOST)
+
+    assert [c for c in certificates.calls if c[0] != "get"] == [
+        ("delete", entry),
+        ("delete", cert),
+        ("create", cert),
+        ("create", entry),
+    ]
+    assert certificates.resources[authorization] == before
+    assert list(certificates.resources[cert].managed.dns_authorizations) == [
+        f"{PARENT}/dnsAuthorizations/dnsauth-portal-example-org"
+    ]
+    assert certificates.resources[entry].hostname == HOST
+    assert status.state == "PROVISIONING"
+
+
+def test_recreating_an_unmapped_certificate_adds_no_entry(
+    serving: GoogleDomainServing, certificates: StubCertificates
+) -> None:
+    entry = f"{PARENT}/certificateMaps/sites-cert-map/certificateMapEntries/portal-example-org"
+    del certificates.resources[entry]
+    certificates.calls.clear()
+
+    serving.recreate_certificate(HOST)
+
+    assert [c[0] for c in certificates.calls if c[0] != "get"] == ["delete", "create"]
+    assert entry not in certificates.resources
 
 
 # --- certificates, authorisations and map entries ------------------------------

@@ -15,6 +15,10 @@ answers for. Per host this keeps, in ``location global``:
 
 (``<host>`` with dots as hyphens; see ``practice_domain_cloud.resource_id``.)
 
+A certificate stuck behind a failed authorisation is deleted and created again
+against the same DNS authorisation; its map entry, which pins it, is taken out
+first and put back after.
+
 The URL map is one shared resource, so every edit is read-modify-write against
 its fingerprint, retried when another edit got there first. An edit touches
 only host rules naming the host it is about and pointing at the configured
@@ -104,19 +108,22 @@ def certificate_status(certificate: certificate_manager_v1.Certificate) -> Certi
     managed_type = certificate_manager_v1.Certificate.ManagedCertificate
     managed = certificate.managed
     problems: list[str] = []
+    attempt_failure: str | None = None
     issue = managed.provisioning_issue
     if issue.reason != managed_type.ProvisioningIssue.Reason.REASON_UNSPECIFIED:
         problems.append(" ".join(filter(None, [issue.reason.name, issue.details])))
     for attempt in managed.authorization_attempt_info:
         if attempt.state == managed_type.AuthorizationAttemptInfo.State.FAILED:
-            reason = attempt.failure_reason.name
-            problems.append(" ".join(filter(None, [f"{attempt.domain}:", reason, attempt.details])))
+            attempt_failure = attempt.failure_reason.name
+            problems.append(
+                " ".join(filter(None, [f"{attempt.domain}:", attempt_failure, attempt.details]))
+            )
     detail = "; ".join(problems) or None
     if managed.state == managed_type.State.ACTIVE:
         return CertificateStatus("ACTIVE")
     if managed.state == managed_type.State.FAILED:
-        return CertificateStatus("FAILED", detail)
-    return CertificateStatus("PROVISIONING", detail)
+        return CertificateStatus("FAILED", detail, attempt_failure)
+    return CertificateStatus("PROVISIONING", detail, attempt_failure)
 
 
 def _belongs(what: str, name: str, found: list[str], host: str) -> None:
@@ -169,23 +176,44 @@ class GoogleDomainServing:
 
     def ensure_certificate(self, host: str) -> CertificateStatus:
         name = self._certificate_name(host)
-        managed_type = certificate_manager_v1.Certificate.ManagedCertificate
         with _calls("Certificate"):
             certificate = _get(self._certificates.get_certificate, name)
             if certificate is None:
-                logger.info("practice_domain_serving requesting a certificate for %s", host)
-                certificate = self._certificates.create_certificate(
-                    parent=self._parent,
-                    certificate_id=name.rsplit("/", 1)[1],
-                    certificate=certificate_manager_v1.Certificate(
-                        managed=managed_type(
-                            domains=[host],
-                            dns_authorizations=[self._authorization_name(host)],
-                        )
-                    ),
-                ).result(timeout=OPERATION_TIMEOUT_SECONDS)
+                certificate = self._create_certificate(host)
         _belongs("Certificate", name, list(certificate.managed.domains), host)
         return certificate_status(certificate)
+
+    def recreate_certificate(self, host: str) -> CertificateStatus:
+        name, entry_name = self._certificate_name(host), self._entry_name(host)
+        with _calls("Certificate (requesting it again)"):
+            certificate = _get(self._certificates.get_certificate, name)
+            if certificate is not None:
+                _belongs("Certificate", name, list(certificate.managed.domains), host)
+            entry = _get(self._certificates.get_certificate_map_entry, entry_name)
+            mapped = entry is not None and entry.hostname == host
+            if mapped:
+                _delete(self._certificates.delete_certificate_map_entry, entry_name)
+            if certificate is not None:
+                _delete(self._certificates.delete_certificate, name)
+            certificate = self._create_certificate(host)
+        if mapped:
+            self.ensure_map_entry(host)
+        return certificate_status(certificate)
+
+    def _create_certificate(self, host: str) -> certificate_manager_v1.Certificate:
+        name = self._certificate_name(host)
+        logger.info("practice_domain_serving requesting a certificate for %s", host)
+        created: certificate_manager_v1.Certificate = self._certificates.create_certificate(
+            parent=self._parent,
+            certificate_id=name.rsplit("/", 1)[1],
+            certificate=certificate_manager_v1.Certificate(
+                managed=certificate_manager_v1.Certificate.ManagedCertificate(
+                    domains=[host],
+                    dns_authorizations=[self._authorization_name(host)],
+                )
+            ),
+        ).result(timeout=OPERATION_TIMEOUT_SECONDS)
+        return created
 
     def ensure_map_entry(self, host: str) -> None:
         name = self._entry_name(host)

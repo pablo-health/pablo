@@ -41,6 +41,18 @@ class CertificateStatus:
     state: CertificateState
     #: What the issuer says is in the way, when it says anything.
     detail: str | None = None
+    #: Set when the issuer's authorisation attempt for the host failed: its
+    #: reason (``CONFIG`` when the ``_acme-challenge`` record was not in place
+    #: when it looked, ``CAA``, ``RATE_LIMITED``). A certificate can sit in
+    #: ``PROVISIONING`` with such an attempt and not try again for a long time.
+    attempt_failure: str | None = None
+
+    @property
+    def stuck(self) -> bool:
+        """Failed, or not active with a failed authorisation attempt behind it."""
+        return self.state == "FAILED" or (
+            self.state != "ACTIVE" and self.attempt_failure is not None
+        )
 
 
 class DomainServingError(Exception):
@@ -67,6 +79,15 @@ class DomainServing(Protocol):
 
     def ensure_certificate(self, host: str) -> CertificateStatus:
         """Request the host's certificate if missing, and report its state."""
+        ...
+
+    def recreate_certificate(self, host: str) -> CertificateStatus:
+        """Delete the host's certificate and request it again against the same
+        DNS authorisation, so the record the practice added stays right.
+
+        A map entry naming the certificate is removed first and put back after,
+        since a certificate in use cannot be deleted.
+        """
         ...
 
     def ensure_map_entry(self, host: str) -> None:

@@ -8,9 +8,9 @@ that practice, armed as the practice's owner — the platform tables are
 schema-qualified and reachable from it, and the audit row and the status it
 records commit together.
 
-A practice with no row any more (its hosts outlived it) still has its hosts
-taken down: its unit of work is a plain platform session, and an audit event
-has nowhere to go, which is logged instead.
+A practice with no row any more, or offboarded with its schema dropped, still
+has its hosts taken down: its unit of work is a plain platform session, and an
+audit event has nowhere to go, which is logged instead.
 """
 
 from __future__ import annotations
@@ -18,6 +18,8 @@ from __future__ import annotations
 import logging
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
+
+from sqlalchemy import select
 
 from ..db import create_standalone_session
 from ..db.platform_models import PracticeRow
@@ -28,7 +30,7 @@ from ..repositories.postgres.practice_domain import PostgresPracticeDomainReposi
 from .audit_service import AuditService
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Collection, Iterator
 
     from ..models.audit import AuditAction
     from ..models.practice_domain import PracticeDomain
@@ -85,12 +87,33 @@ class PostgresReconcileStore:
         finally:
             session.close()
 
+    def retired_practices(self, practice_ids: Collection[str]) -> set[str]:
+        """The practices whose hosts should stop being served: deactivated
+        (``is_active`` false), offboarded (``deleted_at`` set), or with no row.
+        The same test the public booking page applies to a practice."""
+        session = create_standalone_session()
+        try:
+            live = set(
+                session.execute(
+                    select(PracticeRow.id).where(
+                        PracticeRow.id.in_(list(practice_ids)),
+                        PracticeRow.is_active.is_(True),
+                        PracticeRow.deleted_at.is_(None),
+                    )
+                ).scalars()
+            )
+        finally:
+            session.close()
+        return set(practice_ids) - live
+
     @contextmanager
     def practice(self, practice_id: str) -> Iterator[_Scope]:
         session = create_standalone_session()
         try:
             practice = session.get(PracticeRow, practice_id)
-            schema = practice.schema_name if practice else None
+            # An offboarded practice's schema has been dropped.
+            present = practice is not None and practice.deleted_at is None
+            schema = practice.schema_name if present and practice is not None else None
             owner = practice.owner_user_id if practice else None
         finally:
             session.close()

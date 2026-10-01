@@ -7,9 +7,11 @@ one DELETE: its routing and certificate are taken down first, by the domain
 reconciler job, and the row goes last. Until then the row is ``removing``, so
 the status CHECK gains that value.
 
-``last_error`` records why a host is in ``error`` (a certificate that could not
-be issued, a record that stopped pointing here), for whoever runs the
-deployment.
+``last_error`` records why a host is not served (a record it is waiting for, a
+certificate that could not be issued, a record that stopped pointing here), for
+whoever runs the deployment. ``cert_reissued_at`` is when the job last deleted
+and requested a certificate again after a failed authorisation, which bounds
+how often it does.
 
 No PHI: hostnames and setup state.
 
@@ -38,6 +40,8 @@ def upgrade() -> None:
         """
         ALTER TABLE platform.practice_domains
             ADD COLUMN IF NOT EXISTS last_error VARCHAR(500);
+        ALTER TABLE platform.practice_domains
+            ADD COLUMN IF NOT EXISTS cert_reissued_at TIMESTAMP WITH TIME ZONE;
         """
     )
     # Only where the CHECK lacks the value: on a fresh install the baseline
@@ -78,4 +82,9 @@ def downgrade() -> None:
             CHECK (status IN ('pending', 'verifying', 'active', 'error'));
         """
     )
-    op.execute("ALTER TABLE platform.practice_domains DROP COLUMN IF EXISTS last_error;")
+    op.execute(
+        """
+        ALTER TABLE platform.practice_domains DROP COLUMN IF EXISTS cert_reissued_at;
+        ALTER TABLE platform.practice_domains DROP COLUMN IF EXISTS last_error;
+        """
+    )

@@ -47,8 +47,12 @@ class PracticeDomain:
     #: The certificate's state as its issuer last reported it (``PROVISIONING``,
     #: ``ACTIVE``, ``FAILED``); ``None`` until one is requested.
     cert_status: str | None = None
-    #: Why the host is in ``error``, in words for whoever runs the deployment.
+    #: Why the host is not served: what it is waiting for, or why it is in
+    #: ``error``. In words for whoever runs the deployment.
     last_error: str | None = None
+    #: When the host's certificate was last deleted and requested again after
+    #: a failed authorisation. ``None`` if it never was.
+    cert_reissued_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -60,6 +64,7 @@ class ServingState:
     cert_status: str | None
     last_error: str | None
     verified_at: datetime | None
+    cert_reissued_at: datetime | None
 
     @classmethod
     def of(cls, host: PracticeDomain) -> ServingState:
@@ -69,6 +74,7 @@ class ServingState:
             cert_status=host.cert_status,
             last_error=host.last_error,
             verified_at=host.verified_at,
+            cert_reissued_at=host.cert_reissued_at,
         )
 
 
