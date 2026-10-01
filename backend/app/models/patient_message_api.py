@@ -19,6 +19,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field
 
+from .inbox import ReplyInboxOutcome
 from .patient_message import (
     MAX_ATTACHMENTS_PER_MESSAGE,
     InboxMessage,
@@ -55,6 +56,17 @@ class SendMessageRequest(BaseModel):
 
     body: str = Field(min_length=1, max_length=MAX_MESSAGE_BODY)
     attachment_ids: AttachmentIds = []
+
+
+class ClinicianReplyRequest(SendMessageRequest):
+    """``POST /api/message-threads/{thread_id}/replies`` body.
+
+    ``in_reply_to_message_id`` names the client message being answered, so
+    the Inbox can mark exactly that one replied. Optional: without it the
+    reply answers the newest client message still waiting in the thread.
+    """
+
+    in_reply_to_message_id: str | None = None
 
 
 class MessageAttachmentResponse(BaseModel):
@@ -100,6 +112,12 @@ class PatientMessageResponse(BaseModel):
             read_at=message.read_at,
             attachments=[MessageAttachmentResponse.from_attachment(a) for a in message.attachments],
         )
+
+
+class ClinicianReplyResponse(PatientMessageResponse):
+    """The reply as stored, and what it did to the client's messages in the Inbox."""
+
+    inbox: ReplyInboxOutcome = Field(default_factory=ReplyInboxOutcome)
 
 
 class AssignThreadRequest(BaseModel):

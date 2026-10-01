@@ -322,6 +322,11 @@ export interface UserPreferences {
    * index would point at the wrong screen once a step is inserted ahead of
    * it. An unknown id falls back to the start of her branch. */
   billing_setup_step?: string | null
+  /** After replying to a client, what happens to their earlier unanswered
+   * messages: ask each time, mark them handled too, or leave them open.
+   * Optional because a response from before the field existed lacks it,
+   * which reads as "ask". */
+  inbox_reply_earlier_messages?: "ask" | "always" | "never"
 }
 
 /** SUPERSEDED by {@link BillingSetupState}. It asked one question and got two
