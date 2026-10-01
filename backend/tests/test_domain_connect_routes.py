@@ -303,6 +303,34 @@ class TestOffers:
         assert offer["reason"] == "hosts_differ"
         assert web.requests == []
 
+    def test_hosts_being_removed_are_never_offered(
+        self, client: TestClient, repo: InMemoryPracticeDomainRepository, web: _Web
+    ) -> None:
+        _portal_ready(repo)
+        _website_ready(repo)
+        for host in (f"portal.{APEX}", APEX, f"www.{APEX}"):
+            removing = repo.get(host)
+            assert removing is not None
+            removing.status = "removing"
+            repo.put(removing)
+
+        assert _offers(client) == {}
+        assert web.requests == []
+
+    def test_a_website_being_removed_leaves_the_portal_offered(
+        self, client: TestClient, repo: InMemoryPracticeDomainRepository
+    ) -> None:
+        _portal_ready(repo)
+        _website_ready(repo)
+        www = repo.get(f"www.{APEX}")
+        assert www is not None
+        www.status = "removing"
+        repo.put(www)
+
+        offers = _offers(client)
+        assert offers["practice-website"]["reason"] == "hosts_differ"
+        assert offers["practice-domain"]["url"] is not None
+
     def test_a_website_without_its_www_alias_is_not_offered(
         self, client: TestClient, repo: InMemoryPracticeDomainRepository
     ) -> None:
