@@ -30,6 +30,7 @@ from ..auth.service import (
     get_current_user,
     get_current_user_no_mfa,
     get_tenant_context,
+    session_meets_mfa_requirement,
 )
 from ..models import (
     AcceptBAARequest,
@@ -162,8 +163,12 @@ def get_user_status(
 
     profile = profile_repo.get(user.id)
 
+    # The same decision require_mfa makes for this token, bypasses included,
+    # so a client is never sent to an MFA screen the API would not demand.
     identity = getattr(request.state, "verified_identity", None)
-    session_mfa_satisfied = isinstance(identity, VerifiedIdentity) and identity.mfa_satisfied
+    session_mfa_satisfied = isinstance(identity, VerifiedIdentity) and (
+        session_meets_mfa_requirement(identity)
+    )
 
     result: dict = {
         "status": user.status,

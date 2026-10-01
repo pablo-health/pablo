@@ -376,6 +376,39 @@ def get_current_user_id(
     return pablo_user_id
 
 
+def session_meets_mfa_requirement(identity: VerifiedIdentity, *, log_bypass: bool = False) -> bool:
+    """Whether this session clears the deployment's second-factor requirement.
+
+    The single answer to "would ``require_mfa`` let this token through?", so
+    anything that reports MFA state to a client (``/me/status``) says what
+    authorization will actually do. A status that disagrees sends a client
+    to an MFA screen the API would never have demanded, or the reverse.
+
+    True when MFA is not required, in development mode, for an allow-listed
+    E2E account outside production, or when the token carries a second factor.
+    """
+    settings = get_settings()
+    if not settings.require_mfa:
+        return True
+    if settings.is_development:
+        if log_bypass:
+            logger.debug("MFA check skipped (development mode)")
+        return True
+
+    # E2E test accounts bypass MFA in non-production environments only
+    claims = identity.claims
+    if settings.e2e_test_emails and not settings.is_prod_project:
+        email = claims.get("email", "")
+        if email in settings.e2e_test_emails and claims.get("email_verified", False):
+            if log_bypass:
+                # Logs an allow-listed E2E account's uid — an identifier, not a credential.
+                # nosemgrep
+                logger.warning("MFA bypassed for E2E test account: uid=%s", claims.get("uid"))
+            return True
+
+    return identity.mfa_satisfied
+
+
 def require_mfa(
     request: Request,
     auth_credentials: HTTPAuthorizationCredentials = Depends(security),
@@ -398,23 +431,7 @@ def require_mfa(
     identity = _verify_request_identity(request, token)
     decoded_token = identity.claims
 
-    settings = get_settings()
-    if not settings.require_mfa:
-        return decoded_token
-    if settings.is_development:
-        logger.debug("MFA check skipped (development mode)")
-        return decoded_token
-
-    # E2E test accounts bypass MFA in non-production environments only
-    if settings.e2e_test_emails and not settings.is_prod_project:
-        email = decoded_token.get("email", "")
-        if email in settings.e2e_test_emails and decoded_token.get("email_verified", False):
-            # Logs an allow-listed E2E account's uid — an identifier, not a credential.
-            # nosemgrep
-            logger.warning("MFA bypassed for E2E test account: uid=%s", decoded_token.get("uid"))
-            return decoded_token
-
-    if not identity.mfa_satisfied:
+    if not session_meets_mfa_requirement(identity, log_bypass=True):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={
