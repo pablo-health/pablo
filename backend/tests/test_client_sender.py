@@ -11,6 +11,7 @@ practice row patched in, as ``test_practice_domains_routes.py`` does.
 
 from __future__ import annotations
 
+import json
 from email import message_from_bytes, policy
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -304,13 +305,12 @@ class _FakeStore:
             defaults=SenderDefaults(
                 sender_name="Example Therapy",
                 sender_local_part="portal",
-                reply_to="owner@example.com",
             ),
             sending_domain=None,
             effective=ClientSender(
                 from_name=self.chosen.sender_name or "Example Therapy",
                 from_address=None,
-                reply_to=self.chosen.reply_to or "owner@example.com",
+                reply_to=self.chosen.reply_to,
             ),
         )
 
@@ -380,12 +380,29 @@ def test_the_owner_reads_the_defaults(client: TestClient) -> None:
     assert body["can_edit"] is True
     assert body["applies"] is True
     assert body["chosen"] == {"sender_name": None, "sender_local_part": None, "reply_to": None}
-    assert body["defaults"] == {
-        "sender_name": "Example Therapy",
-        "sender_local_part": "portal",
-        "reply_to": "owner@example.com",
+    # The reply-to has no default, and the owner's address appears nowhere.
+    assert body["defaults"] == {"sender_name": "Example Therapy", "sender_local_part": "portal"}
+    assert body["effective"] == {
+        "from_name": "Example Therapy",
+        "from_address": None,
+        "reply_to": None,
     }
-    assert body["effective"]["from_address"] is None
+    assert "test@example.com" not in json.dumps(body)
+
+
+def test_with_no_reply_to_the_smtp_message_carries_no_reply_to_header() -> None:
+    """The deployment's ordinary reply behaviour: no Reply-To, deployment From."""
+    server = _Smtp()
+    delivery = SmtpInviteDelivery(sender=_smtp_sender(server))
+
+    delivery.sending_as(
+        ClientSender(from_name="Example Therapy", from_address=None, reply_to=None)
+    ).send_rendered_invite(to_email="client@example.com", subject="s", text="t")
+
+    sent = server.sent[0]
+    assert sent["Reply-To"] is None
+    assert sent["From"].addresses[0].display_name == "Example Therapy"
+    assert sent["From"].addresses[0].addr_spec == "mail@deploy.example.com"
 
 
 def test_the_owner_saves_the_three_fields_and_the_change_is_audited(
