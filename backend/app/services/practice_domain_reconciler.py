@@ -42,6 +42,16 @@ way loses nothing:
    The hosts of a practice that is no longer active (``is_active`` false, or
    offboarded with ``deleted_at`` set, or gone) are made ``removing`` first.
 
+8. A purpose (portal, website) with an ``active`` host and no primary gets
+   one, since links are built on the primary and would otherwise never name
+   the practice's own domain. After the practice's hosts are done, so that
+   two going active in one sweep are chosen between rather than raced: the
+   bare domain first, then a name that is not a ``www.`` alias, then the
+   oldest. The write only claims a primary where there is none, so a primary
+   the practice chose is never replaced; and a sweep that finds active hosts
+   with no primary — added before this rule, or left by removing the primary
+   — fills it the same way.
+
 Then, when the deployment registered one, each domain whose ownership is
 confirmed has its email sending identity ensured (see
 ``practice_domain_email``).
@@ -75,6 +85,7 @@ if TYPE_CHECKING:
 
     from ..models.practice_domain import (
         DnsRecord,
+        DomainPurpose,
         HostStatus,
         PracticeDomain,
         PracticeDomainApex,
@@ -90,6 +101,7 @@ logger = logging.getLogger(__name__)
 #: ``last_error`` is VARCHAR(500).
 _LAST_ERROR_MAX = 500
 _POINTING_TYPES = frozenset({"A", "AAAA", "CNAME"})
+_PURPOSES: tuple[DomainPurpose, ...] = ("portal", "site")
 
 PointingVerdict = Literal["ok", "bad", "unknown"]
 
@@ -250,6 +262,8 @@ class PracticeDomainReconciler:
             else:
                 apex = apex_or_none(host.domain)
                 self._bring_up(host, records.get(host.domain, []), apexes.get(apex or ""), report)
+        if live:
+            self._settle_primaries(practice_id, report)
         if self._email is not None and live:
             self._email_identities(self._email, practice_id, live, apexes)
 
@@ -441,6 +455,32 @@ class PracticeDomainReconciler:
                     state.status,
                 )
 
+    def _settle_primaries(self, practice_id: str, report: SweepReport) -> None:
+        """Give each purpose with an active host and no primary its primary
+        (step 8). Reads the hosts as written, after this sweep's changes."""
+        with self._store.practice(practice_id) as scope:
+            hosts = scope.repo.list_for_practice(practice_id)
+            for purpose in _PURPOSES:
+                of = [h for h in hosts if h.purpose == purpose]
+                if any(h.is_primary for h in of):
+                    continue
+                active = [h for h in of if h.status == "active"]
+                if not active:
+                    continue
+                chosen = min(active, key=_primary_preference)
+                if not scope.repo.claim_primary(chosen.domain, practice_id, purpose):
+                    continue
+                scope.audit(
+                    AuditAction.PRACTICE_DOMAIN_MADE_PRIMARY,
+                    {"domain": chosen.domain, "purpose": purpose, "previous": None},
+                )
+                report.written += 1
+                logger.info(
+                    "practice_domain_reconcile_primary domain=%s purpose=%s",
+                    chosen.domain,
+                    purpose,
+                )
+
     # --- email identities ----------------------------------------------------
 
     def _email_identities(
@@ -466,6 +506,17 @@ class PracticeDomainReconciler:
                         AuditAction.PRACTICE_DOMAIN_EMAIL_IDENTITY_CHANGED,
                         {"domain": name, "status": identity.status},
                     )
+
+
+def _primary_preference(host: PracticeDomain) -> tuple[bool, bool, datetime, str]:
+    """Sort key for the host to make primary: the bare domain, then a name
+    that is not a ``www.`` alias, then the oldest, then by name."""
+    return (
+        host.domain != apex_or_none(host.domain),
+        host.domain.startswith("www."),
+        host.created_at,
+        host.domain,
+    )
 
 
 def _served_before(host: PracticeDomain) -> bool:

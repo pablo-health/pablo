@@ -133,23 +133,36 @@ test.describe("A practice's own domains", () => {
     await page.getByLabel("Domain", { exact: true }).fill(host)
     await page.getByRole("button", { name: "Add domain" }).click()
 
-    // The domain's ownership record is shown beside the host's own.
+    // The domain's ownership record is shown beside the host's own, its Host
+    // relative to the domain as a DNS provider's form asks for it, with the
+    // full name kept for the tooltip.
     const records = row(page, host).getByRole("table", { name: `DNS records for ${host}` })
-    await expect(records).toContainText(verifyName)
+    await expect(records.getByTitle(verifyName, { exact: true })).toHaveText("_pablo-verify")
+    await expect(records.getByTitle(host, { exact: true })).toHaveText(host.slice(0, -ADDED_SUFFIX.length))
+    await expect(records.getByRole("button", { name: "Copy host for TXT record _pablo-verify" })).toBeVisible()
+    await expect(records.getByRole("button", { name: "Copy value for TXT record _pablo-verify" })).toBeVisible()
     const verify = (await domains(api))
       .find((d) => d.domain === host)
       ?.dns_records.find((r) => r.type === "TXT" && r.name === verifyName)
     expect(verify?.value).toMatch(/^pablo-verify=[\w-]{32}$/)
     await expect(records).toContainText(verify!.value)
 
+    const checkNow = page.getByRole("button", { name: "Check now" })
     try {
-      await page.getByRole("button", { name: "Check now" }).click()
+      await checkNow.click()
       await expect(row(page, host).getByTestId(`check-CNAME-${host}`)).toHaveText("Not found yet")
       await expect(row(page, host).getByTestId(`check-TXT-${verifyName}`)).toHaveText("Not found yet")
+      // The check is quick, so the page says it ran, and rests the button.
+      await expect(page.getByTestId("domains-check-note")).toHaveText(
+        "Checked just now. You can check again in a moment.",
+      )
+      await expect(checkNow).toBeDisabled()
 
       await dns.set(host, "CNAME", [CNAME_TARGET])
       await dns.set(verifyName, "TXT", [verify!.value])
-      await page.getByRole("button", { name: "Check now" }).click()
+      // The rest is 30 seconds from the first click.
+      await expect(checkNow).toBeEnabled({ timeout: 40_000 })
+      await checkNow.click()
       await expect(row(page, host).getByTestId(`check-CNAME-${host}`)).toHaveText("Found")
       await expect(row(page, host).getByTestId(`check-TXT-${verifyName}`)).toHaveText("Found")
 

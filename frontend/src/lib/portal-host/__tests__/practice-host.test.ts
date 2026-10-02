@@ -92,7 +92,7 @@ describe("classifyHost", () => {
 describe("routePracticeHost", () => {
   const PRIMARY = "portal.example.com"
   const ALIAS = "clients.example.com"
-  const found: PracticeHostAnswer = { slug: "acme", primaryHost: PRIMARY, theme: null }
+  const found: PracticeHostAnswer = { slug: "acme", primaryHost: PRIMARY, theme: null, siteHost: null }
 
   function on(host: string, pathAndQuery: string, answer: PracticeHostAnswer = found) {
     const url = new URL(pathAndQuery, `https://${host}`)
@@ -111,7 +111,7 @@ describe("routePracticeHost", () => {
   })
 
   it("serves on every active host of a practice with no working primary", () => {
-    expect(on(ALIAS, "/", { slug: "acme", primaryHost: null, theme: null })).toEqual({
+    expect(on(ALIAS, "/", { slug: "acme", primaryHost: null, theme: null, siteHost: null })).toEqual({
       kind: "rewrite",
       pathname: "/portal/acme",
     })

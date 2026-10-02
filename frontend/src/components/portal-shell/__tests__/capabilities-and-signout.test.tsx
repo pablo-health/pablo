@@ -283,23 +283,24 @@ describe("signing out", () => {
     await renderSignedIn()
     await userEvent.click(screen.getByTestId("portal-shell-sign-out"))
 
-    const link = await screen.findByTestId("portal-shell-recover-link")
-    expect(link.getAttribute("href")).toBe(`/portal/${SLUG}/recover`)
+    expect(await screen.findByTestId("portal-shell-no-session")).toBeTruthy()
+    expect(screen.getByRole("button", { name: "Email me a sign-in link" })).toBeTruthy()
+    expect(screen.queryByTestId("portal-shell-expired-note")).toBeNull()
   })
 
-  it("offers the same way back from the expired state", async () => {
+  it("offers the same way back from the expired state, saying why", async () => {
     /**
      * The shell cannot tell a lapsed session from a withdrawn one, and
-     * neither can the recovery page — it answers the same way either way.
-     * So the offer is the same, and a patient whose access really was
-     * withdrawn simply gets nothing sent.
+     * neither can the endpoint behind the form — it answers the same way
+     * either way. So the offer is the same, and a patient whose access really
+     * was withdrawn simply gets nothing sent.
      */
     bootstrapSession.mockResolvedValue({ status: "expired" })
 
     render(<PortalShell slug={SLUG}><PortalHome /></PortalShell>)
 
-    const link = await screen.findByTestId("portal-shell-recover-link")
-    expect(link.getAttribute("href")).toBe(`/portal/${SLUG}/recover`)
+    expect(await screen.findByTestId("portal-shell-expired-note")).toHaveTextContent("Your sign-in has expired.")
+    expect(screen.getByRole("button", { name: "Email me a sign-in link" })).toBeTruthy()
   })
 
   it("is reachable by keyboard with a visible name", async () => {

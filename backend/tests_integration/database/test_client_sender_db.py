@@ -7,9 +7,11 @@ practice, its sender settings, its domains and their email identities, and the
 addresses its people sign in with — so it is proven here on committed rows,
 through the code's own sessions:
 
-* no row: the practice's name, ``portal``, and the owner's address;
-* a verified domain: ``<mailbox>@<domain>``; a pending or failed one: the
-  deployment's address, under the practice's name;
+* no row: the practice's name, ``portal``, and no reply-to — the owner's
+  address is never used;
+* a verified domain and a saved reply-to: ``<mailbox>@<domain>``; a verified
+  domain with no reply-to, or a pending or failed one: the deployment's
+  address, under the practice's name;
 * several verified domains: the one the primary portal host sits under, else
   the oldest;
 * never a person's own mailbox, refused on save and, if a domain added later
@@ -167,6 +169,14 @@ def store() -> PlatformSenderSettingsStore:
     return PlatformSenderSettingsStore()
 
 
+_REPLY_TO = "frontdesk@example.org"
+
+
+def _with_reply_to(practice_id: str) -> None:
+    """Save the one thing a practice must choose before its domain is used."""
+    PlatformSenderSettingsStore().save(practice_id, SenderSettings(reply_to=_REPLY_TO), by="user-1")
+
+
 # ── the rule ──────────────────────────────────────────────────────────────
 
 
@@ -176,16 +186,31 @@ def test_with_nothing_chosen_and_no_domain_mail_is_the_deployments_under_the_pra
     practice_id = rows.practice()
 
     assert resolve_client_sender(practice_id) == ClientSender(
-        from_name=_PRACTICE_NAME, from_address=None, reply_to=_OWNER
+        from_name=_PRACTICE_NAME, from_address=None, reply_to=None
     )
 
 
-def test_a_verified_domain_sends_as_portal_at_that_domain(rows: _Rows) -> None:
+def test_a_verified_domain_with_no_reply_to_sends_from_the_deployment_and_names_no_one(
+    rows: _Rows,
+) -> None:
+    """Replies to the practice's domain would need somewhere to go; the owner's
+    sign-in address is never that place."""
+    practice_id = rows.practice()
+    rows.apex(practice_id)
+
+    sender = resolve_client_sender(practice_id)
+
+    assert sender == ClientSender(from_name=_PRACTICE_NAME, from_address=None, reply_to=None)
+    assert _OWNER not in repr(sender)
+
+
+def test_a_verified_domain_and_a_reply_to_send_as_portal_at_that_domain(rows: _Rows) -> None:
     practice_id = rows.practice()
     apex = rows.apex(practice_id)
+    _with_reply_to(practice_id)
 
     assert resolve_client_sender(practice_id) == ClientSender(
-        from_name=_PRACTICE_NAME, from_address=f"portal@{apex}", reply_to=_OWNER
+        from_name=_PRACTICE_NAME, from_address=f"portal@{apex}", reply_to=_REPLY_TO
     )
 
 
@@ -195,6 +220,7 @@ def test_a_domain_whose_email_is_not_verified_does_not_send(
 ) -> None:
     practice_id = rows.practice()
     rows.apex(practice_id, status=status)
+    _with_reply_to(practice_id)
 
     sender = resolve_client_sender(practice_id)
 
@@ -229,6 +255,7 @@ def test_with_two_verified_domains_the_primary_portal_hosts_wins(rows: _Rows) ->
     rows.apex(practice_id, age_days=0)
     newer = rows.apex(practice_id, age_days=5)
     rows.primary_portal_host(practice_id, newer)
+    _with_reply_to(practice_id)
 
     assert resolve_client_sender(practice_id).from_address == f"portal@{newer}"
 
@@ -241,6 +268,7 @@ def test_a_primary_host_on_an_unverified_domain_leaves_the_oldest_verified_one(
     rows.apex(practice_id, age_days=3)
     pending = rows.apex(practice_id, status="pending", age_days=1)
     rows.primary_portal_host(practice_id, pending)
+    _with_reply_to(practice_id)
 
     assert resolve_client_sender(practice_id).from_address == f"portal@{oldest}"
 
@@ -249,6 +277,7 @@ def test_with_no_primary_host_the_oldest_verified_domain_wins(rows: _Rows) -> No
     practice_id = rows.practice()
     rows.apex(practice_id, age_days=9)
     oldest = rows.apex(practice_id, age_days=2)
+    _with_reply_to(practice_id)
 
     assert resolve_client_sender(practice_id).from_address == f"portal@{oldest}"
 
@@ -257,6 +286,7 @@ def test_a_mailbox_that_became_someones_own_address_is_not_sent_from(rows: _Rows
     """Saved before the domain existed; the send falls back rather than going out as a person."""
     practice_id = rows.practice()
     apex = rows.apex(practice_id)
+    _with_reply_to(practice_id)
     rows.sign_in_address(practice_id, f"portal@{apex}")
 
     sender = resolve_client_sender(practice_id)
@@ -291,26 +321,28 @@ def test_the_store_round_trips_and_clearing_goes_back_to_the_defaults(
     assert view.chosen == chosen
     assert view.defaults.sender_name == _PRACTICE_NAME
     assert view.defaults.sender_local_part == "portal"
-    assert view.defaults.reply_to == _OWNER
     assert view.sending_domain is None
 
     cleared = store.save(practice_id, SenderSettings(), by="user-1")
     assert cleared.chosen == SenderSettings()
     assert cleared.effective == ClientSender(
-        from_name=_PRACTICE_NAME, from_address=None, reply_to=_OWNER
+        from_name=_PRACTICE_NAME, from_address=None, reply_to=None
     )
 
 
-def test_the_view_names_the_domain_mail_leaves_from(
+def test_the_view_names_the_verified_domain_and_uses_it_once_a_reply_to_is_saved(
     rows: _Rows, store: PlatformSenderSettingsStore
 ) -> None:
     practice_id = rows.practice()
     apex = rows.apex(practice_id)
 
-    view = store.view(practice_id)
+    before = store.view(practice_id)
+    assert before.sending_domain == apex
+    assert before.effective.from_address is None
 
-    assert view.sending_domain == apex
-    assert view.effective.from_address == f"portal@{apex}"
+    _with_reply_to(practice_id)
+
+    assert store.view(practice_id).effective.from_address == f"portal@{apex}"
 
 
 def test_a_mailbox_that_is_the_reply_to_address_on_a_held_domain_is_refused(
@@ -329,26 +361,20 @@ def test_a_mailbox_that_is_the_reply_to_address_on_a_held_domain_is_refused(
     assert store.view(practice_id).chosen == SenderSettings()
 
 
-def test_a_mailbox_that_is_the_owners_address_is_refused(
+def test_a_mailbox_that_is_someones_sign_in_address_is_refused(
     rows: _Rows, store: PlatformSenderSettingsStore
 ) -> None:
-    """The default reply-to is the owner's address, so the owner's mailbox is someone's too."""
-    apex_owner = f"owner@{uuid.uuid4().hex[:10]}.example.com"
-    practice_id = rows.practice(owner_email=apex_owner)
-    domain = apex_owner.split("@", 1)[1]
-    rows.apexes.append(domain)
-    with rows.engine.begin() as conn:
-        conn.execute(
-            text(
-                "INSERT INTO platform.practice_domain_apexes"
-                " (apex, practice_id, verify_token, email_identity_status, created_at)"
-                " VALUES (:a, :p, 'token', 'verified', now())"
-            ),
-            {"a": domain, "p": practice_id},
-        )
+    """The owner's own address on the practice's domain is a person's mailbox."""
+    practice_id = rows.practice()
+    apex = rows.apex(practice_id)
+    rows.sign_in_address(practice_id, f"owner@{apex}")
 
-    with pytest.raises(SenderSettingsError):
-        store.save(practice_id, SenderSettings(sender_local_part="owner"), by="user-1")
+    with pytest.raises(SenderSettingsError, match="someone's own address"):
+        store.save(
+            practice_id,
+            SenderSettings(sender_local_part="owner", reply_to=_REPLY_TO),
+            by="user-1",
+        )
 
 
 def test_a_practice_that_does_not_exist_is_a_lookup_error() -> None:

@@ -98,6 +98,11 @@ export interface DomainName {
   bare: boolean
 }
 
+/** A host the server is still working on: not active, and not given up on. */
+export function isUnsettled(domain: PracticeDomain): boolean {
+  return domain.status === "pending" || domain.status === "verifying"
+}
+
 const DOMAINS = "/api/practice/domains"
 
 const one = (domain: string) => `${DOMAINS}/${encodeURIComponent(domain)}`
