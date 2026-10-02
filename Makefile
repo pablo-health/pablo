@@ -1,5 +1,5 @@
 .PHONY: help install lint format test test-integration test-all check clean export-schema
-.PHONY: e2e-up e2e e2e-down
+.PHONY: e2e-up e2e e2e-hosted e2e-down
 .PHONY: docker-up docker-down docker-restart docker-logs docker-shell-backend docker-shell-frontend
 .PHONY: docker-test-backend docker-test-frontend docker-lint-backend docker-lint-frontend docker-check
 .PHONY: docker-clean docker-rebuild docker-status
@@ -17,6 +17,7 @@ help:
 	@echo "  make test-all          - Run both unit and integration tests"
 	@echo "  make e2e-up            - Build and start the end-to-end stack (Docker)"
 	@echo "  make e2e               - Run the Playwright end-to-end suite"
+	@echo "  make e2e-hosted        - Run the hosted-address specs on a hosted-domain backend"
 	@echo "  make e2e-down          - Stop the end-to-end stack and drop its data"
 	@echo "  make check             - Run lint + test (CI-style)"
 	@echo "  make clean             - Clean generated files"
@@ -85,6 +86,14 @@ e2e-up:
 
 e2e:
 	cd frontend && npm run test:e2e
+
+# The specs about practices' hosted addresses, on the stack with a hosted
+# domain (docker-compose.e2e-hosted.yml). Recreates the backend and what shares
+# its network; run `make e2e-up` afterwards to put it back for the rest of the
+# suite.
+e2e-hosted:
+	$(E2E_COMPOSE) -f docker-compose.e2e-hosted.yml up --wait
+	cd frontend && npx playwright test --config e2e/playwright.config.ts --grep @hosted
 
 e2e-down:
 	$(E2E_COMPOSE) down --volumes --remove-orphans

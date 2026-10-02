@@ -15,6 +15,11 @@
  *     `backend/app/sites/paths.py`);
  *   - any other website host of the practice permanently redirects to the
  *     same path and query on its primary, as a portal alias does;
+ *   - on the practice's hosted website address (a deployment's hosted domain,
+ *     `backend/app/portal/hosted.py`), `/portal` and everything under it
+ *     permanently redirects to the practice's portal host. The portal is never
+ *     served on a website's origin: the website runs the practice's own
+ *     scripts, and a portal session lives in its origin's storage;
  *   - a host that is not working, has nothing published, or is nobody's is the
  *     same plain 404 as an unknown host;
  *   - only GET and HEAD: a website is static.
@@ -29,11 +34,16 @@
  */
 
 import type { PracticeHostRequest } from "./practice-host"
+import { isUnder } from "./routing"
+
+const PORTAL_PREFIX = "/portal"
 
 /** What the backend says a website host serves. */
 export interface SiteHost {
   /** The practice's working primary website host, if it has one. */
   primaryHost: string | null
+  /** On a hosted website address only: the host the practice's portal is on. */
+  portalHost: string | null
 }
 
 export type SiteHostAnswer = SiteHost | null | "unavailable"
@@ -78,6 +88,10 @@ export function routeSiteHost(request: PracticeHostRequest & { method: string },
   if (found === "unavailable") return { kind: "unavailable" }
   if (found === null) return { kind: "not-found" }
   if (!SITE_METHODS.includes(request.method)) return { kind: "method-not-allowed" }
+  if (found.portalHost !== null && isUnder(request.pathname, PORTAL_PREFIX)) {
+    const rest = request.pathname.slice(PORTAL_PREFIX.length) || "/"
+    return { kind: "redirect", location: `https://${found.portalHost}${rest}${request.search}` }
+  }
   if (found.primaryHost !== null && found.primaryHost !== request.hostname) {
     return { kind: "redirect", location: `https://${found.primaryHost}${request.pathname}${request.search}` }
   }

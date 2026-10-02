@@ -4,7 +4,10 @@
 
 * ``GET /api/practice/domains`` — any clinician of the practice: the hosts,
   their status, which is primary, the DNS records to set, and whether a host
-  is taking too long now that its records are in place.
+  is taking too long now that its records are in place. Where the deployment
+  names a hosted domain, also the practice's hosted addresses
+  (:mod:`app.portal.hosted`), giving the practice its portal address first if
+  it has none yet; every answer below carries them too.
 * ``GET /api/practice/domains/describe?domain=`` — any clinician of the
   practice: what a name would be stored as, its registrable domain, and
   whether it is bare (which decides a website's ``www.`` default).
@@ -42,13 +45,16 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 
 from ..api_errors import NotFoundError
 from ..auth.service import require_active_subscription
+from ..db import create_standalone_session
 from ..models import User  # noqa: TC001 — fastapi resolves the annotation at runtime
 from ..models.audit import AuditAction, ResourceType
 from ..models.practice_domain import (
     AddPracticeDomainRequest,
     DomainNameResponse,
+    HostedAddressesResponse,
     PracticeDomainListResponse,
 )
+from ..portal.hosted import hosted_domain, hosted_portal_host, hosted_site_host
 from ..portal.practice_routes import ensure_practice_slug
 from ..services.audit_service import AuditService, get_audit_service
 from ..services.practice_domain_dns import DnsLookup, get_dns_lookup
@@ -57,6 +63,7 @@ from ..services.practice_domain_service import (
     get_practice_domain_service,
 )
 from ..services.practice_domain_trigger import request_reconcile
+from ..sites.store import PracticeSiteStore
 from .users import _get_own_practice_as_owner, _resolve_practice_id_for
 
 router = APIRouter(prefix="/api/practice/domains", tags=["practice"])
@@ -79,8 +86,38 @@ def _manageable_practice_id(user: User) -> str:
     return _get_own_practice_as_owner(user).id
 
 
+def _hosted(practice_id: str) -> HostedAddressesResponse | None:
+    """The practice's hosted addresses, where the deployment has a hosted domain.
+
+    Both come from the practice's portal address, which is minted here when it
+    has none, so every practice has them from its first look at this page.
+    ``None`` too for an address that cannot be a hostname label
+    (:mod:`app.portal.slugs`).
+    """
+    if hosted_domain() is None:
+        return None
+    address = ensure_practice_slug(practice_id)
+    portal_host = hosted_portal_host(address.slug)
+    site_host = hosted_site_host(address.slug)
+    if portal_host is None or site_host is None:
+        return None
+    session = create_standalone_session()
+    try:
+        site = PracticeSiteStore(session).get(practice_id)
+    finally:
+        session.close()
+    return HostedAddressesResponse(
+        portal_host=portal_host,
+        portal_on=address.enabled,
+        site_host=site_host,
+        site_live=site is not None and site.live_version is not None,
+    )
+
+
 def _list(service: PracticeDomainService, practice_id: str) -> PracticeDomainListResponse:
-    return PracticeDomainListResponse(domains=service.responses(practice_id))
+    return PracticeDomainListResponse(
+        domains=service.responses(practice_id), hosted=_hosted(practice_id)
+    )
 
 
 @router.get("", response_model=PracticeDomainListResponse)
@@ -187,7 +224,7 @@ def check_practice_domains(
     # gives the job nothing to do.
     if service.serving_work_left(practice_id):
         background.add_task(request_reconcile)
-    return PracticeDomainListResponse(domains=check.domains)
+    return PracticeDomainListResponse(domains=check.domains, hosted=_hosted(practice_id))
 
 
 @router.post("/{domain}/primary", response_model=PracticeDomainListResponse)

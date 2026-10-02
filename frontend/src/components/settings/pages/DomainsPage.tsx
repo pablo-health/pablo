@@ -17,6 +17,7 @@ import { CheckNow } from "../domains/CheckNow"
 import { DomainConnectOffers } from "../domains/DomainConnectOffers"
 import { DomainConnectReturn } from "../domains/DomainConnectReturn"
 import { DomainRow } from "../domains/DomainRow"
+import { HostedAddresses } from "../domains/HostedAddresses"
 import { PortalOffNote } from "../domains/PortalOffNote"
 import { withLastCheck } from "../domains/records"
 import { SettingsCard } from "../ui"
@@ -84,6 +85,7 @@ export function DomainsPage() {
           onCheck={run.run}
         />
       )}
+      {data.hosted && <HostedAddresses hosted={data.hosted} domains={data.domains} />}
       {SECTIONS.map(({ purpose, title, description }) => {
         const domains = byPurpose(purpose)
         return (

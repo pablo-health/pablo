@@ -59,8 +59,23 @@ export interface PracticeDomain {
   stuck_message?: string | null
 }
 
+/**
+ * The practice's addresses under the deployment's hosted domain: there with no
+ * DNS work, each serving once the practice has something there to serve.
+ */
+export interface HostedAddresses {
+  portal_host: string
+  /** The practice offers its clients the portal, so the portal address serves it. */
+  portal_on: boolean
+  site_host: string
+  /** A website is published, so the website address serves it. */
+  site_live: boolean
+}
+
 export interface PracticeDomainList {
   domains: PracticeDomain[]
+  /** Absent or `null` where the deployment names no hosted domain. */
+  hosted?: HostedAddresses | null
 }
 
 export interface AddPracticeDomain {

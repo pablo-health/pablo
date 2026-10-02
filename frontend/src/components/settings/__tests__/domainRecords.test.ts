@@ -86,6 +86,16 @@ describe("withLastCheck", () => {
     const list = { domains: [host()] }
     expect(withLastCheck(list, undefined)).toBe(list)
   })
+
+  it("keeps the rest of the list, such as the hosted addresses", () => {
+    const hosted = {
+      portal_host: "acme.portal.hosted.example",
+      portal_on: true,
+      site_host: "acme.hosted.example",
+      site_live: false,
+    }
+    expect(withLastCheck({ domains: [host()], hosted }, { domains: [host()] }).hosted).toEqual(hosted)
+  })
 })
 
 describe("isFinishingSetup", () => {

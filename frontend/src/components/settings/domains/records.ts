@@ -50,6 +50,7 @@ export function withLastCheck(
   if (!checked) return list
   const byHost = new Map(checked.domains.map((d) => [d.domain, d]))
   return {
+    ...list,
     domains: list.domains.map((domain) => {
       const before = byHost.get(domain.domain)
       if (!before || before.status !== domain.status) return domain

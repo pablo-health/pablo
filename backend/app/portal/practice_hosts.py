@@ -9,17 +9,20 @@ answered here from the same rule:
 * **Which portal does this host serve?** :func:`resolve_portal_host`. Only a
   host whose purpose is ``portal`` and whose status is ``active`` serves
   anything; a pending, failing or website host is the same "nothing" as a host
-  nobody has heard of. The web app asks this through the public route in
-  :mod:`app.portal.host_routes` before it serves a request for a host it does
-  not otherwise know.
+  nobody has heard of. So does the practice's hosted portal address, where the
+  deployment names a hosted domain (:mod:`app.portal.hosted`). The web app asks
+  this through the public route in :mod:`app.portal.host_routes` before it
+  serves a request for a host it does not otherwise know.
 * **Where should a portal link point?** :func:`primary_portal_host_for_slug`.
-  The practice's primary portal host, if that host is active. The default
-  address resolver in :mod:`app.portal.factory` prefers it; a deployment that
-  registers its own resolver can call it to follow the same rule.
+  The practice's primary portal host, if that host is active; else its hosted
+  portal address, if the deployment has one. The default address resolver in
+  :mod:`app.portal.factory` prefers it; a deployment that registers its own
+  resolver can call it to follow the same rule.
 
 A host is only ever the portal of the practice that holds it — the hostname is
-the primary key of ``platform.practice_domains`` — so nothing here can hand one
-practice's host to another.
+the primary key of ``platform.practice_domains``, and a hosted address carries
+the practice's own unique slug — so nothing here can hand one practice's host
+to another.
 
 The portal host's answer also carries what the portal takes from the practice's
 website there — its theme and the website's host (:mod:`app.portal.practice_site`)
@@ -42,6 +45,7 @@ from sqlalchemy import select
 
 from ..db import create_standalone_session
 from ..db.platform_models import PortalPracticeSlugRow, PracticeDomainRow
+from .hosted import hosted_portal_host, hosted_practice_id, practice_slug
 from .portal_settings import portal_enabled_in
 from .practice_site import live_site_host, portal_theme
 
@@ -125,35 +129,44 @@ def resolve_portal_host(session: Session, host: str) -> PortalHost | None:
     with no portal address yet, and a practice that does not offer the portal —
     the same answer for all of them, so the question cannot be used to learn
     which practices hold which hosts in which state.
+
+    A practice's hosted portal address (:mod:`app.portal.hosted`) serves its
+    portal like a working host of its own that is not its primary: when the
+    practice has a working primary, the answer names it and visitors are sent
+    there.
     """
     row = session.get(PracticeDomainRow, host)
-    if row is None or row.purpose != "portal" or row.status != "active":
+    if row is not None:
+        if row.purpose != "portal" or row.status != "active":
+            return None
+        practice_id: str | None = row.practice_id
+    else:
+        practice_id = hosted_practice_id(session, host, "portal")
+    if practice_id is None:
         return None
-    slug = session.execute(
-        select(PortalPracticeSlugRow.slug).where(
-            PortalPracticeSlugRow.practice_id == row.practice_id
-        )
-    ).scalar_one_or_none()
-    if slug is None or not portal_enabled_in(session, row.practice_id):
+    slug = practice_slug(session, practice_id)
+    if slug is None or not portal_enabled_in(session, practice_id):
         return None
     return PortalHost(
         slug=slug,
-        primary_host=active_primary_portal_host(session, row.practice_id),
-        theme=portal_theme(session, row.practice_id),
-        site_host=live_site_host(session, row.practice_id),
+        primary_host=active_primary_portal_host(session, practice_id),
+        theme=portal_theme(session, practice_id),
+        site_host=live_site_host(session, practice_id),
     )
 
 
 def primary_portal_host_for_slug(slug: str) -> str | None:
-    """The active primary portal host of the practice whose address is *slug*.
+    """The host portal links of the practice whose address is *slug* point at.
 
-    What the default portal address resolver uses to put links on the
-    practice's own host (``https://{host}/``). A deployment that registers its
-    own resolver (:func:`app.portal.factory.register_portal_address_resolver`)
-    can call this first and fall back to its own address when it answers
-    ``None``, so its links follow the same rule. Opens and closes its own
-    session; asked once per link, never cached, so a link is never minted on a
-    host that has just stopped working.
+    Its active primary portal host; else its hosted portal address, where the
+    deployment names a hosted domain; else ``None``. What the default portal
+    address resolver uses to put links on the practice's own host
+    (``https://{host}/``). A deployment that registers its own resolver
+    (:func:`app.portal.factory.register_portal_address_resolver`) can call this
+    first and fall back to its own address when it answers ``None``, so its
+    links follow the same rule. Opens and closes its own session; asked once
+    per link, never cached, so a link is never minted on a host that has just
+    stopped working.
     """
     session = create_standalone_session()
     try:
@@ -162,7 +175,7 @@ def primary_portal_host_for_slug(slug: str) -> str | None:
         ).scalar_one_or_none()
         if practice_id is None:
             return None
-        return active_primary_portal_host(session, practice_id)
+        return active_primary_portal_host(session, practice_id) or hosted_portal_host(slug)
     finally:
         session.close()
 

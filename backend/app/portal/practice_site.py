@@ -37,11 +37,12 @@ def portal_theme(session: Session, practice_id: str) -> PracticeTheme | None:
 
 def live_site_host(session: Session, practice_id: str) -> str | None:
     """The working host the practice's live website is served at — the primary,
-    else the oldest — or ``None`` when nothing is published or no host works.
-    The same host Settings > Website calls "live"."""
+    else the oldest, else its hosted website address (:mod:`app.portal.hosted`)
+    — or ``None`` when nothing is published or no host works. The same host
+    Settings > Website calls "live"."""
     store = PracticeSiteStore(session)
     site = store.get(practice_id)
     if site is None or site.live_version is None:
         return None
     hosts = store.active_site_hosts(practice_id)
-    return hosts[0].domain if hosts else None
+    return hosts[0].domain if hosts else store.hosted_site_host(practice_id)
