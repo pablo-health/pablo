@@ -8,6 +8,7 @@ import type { SiteDraft } from "@/lib/api/practiceSite"
 import { SettingsCard } from "../ui"
 import { WebsiteCreateOptions } from "../settingsSlots.extensions"
 import { describeFiles, formatWhen } from "./format"
+import { ThemeReport } from "./ThemeReport"
 
 interface DraftCardProps {
   draft: SiteDraft | null
@@ -49,6 +50,7 @@ export function DraftCard({
           No draft yet.
         </p>
       )}
+      {draft?.theme && <ThemeReport report={draft.theme} />}
       {canManage && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <input

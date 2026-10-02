@@ -16,7 +16,7 @@ import userEvent from "@testing-library/user-event"
 import { WebsitePage } from "../WebsitePage"
 import { renderWithProviders } from "@/test/renderWithProviders"
 import { ApiError } from "@/lib/api/client"
-import type { PracticeSite } from "@/lib/api/practiceSite"
+import type { PracticeSite, SiteThemeReport } from "@/lib/api/practiceSite"
 
 const mockGet = vi.fn()
 const mockUpload = vi.fn()
@@ -65,12 +65,18 @@ const PUBLISHED = site({
   live_host: "www.example.com",
   has_active_host: true,
   versions: [
-    { version: 2, file_count: 3, total_bytes: 2048, published_at: WHEN, is_live: true },
-    { version: 1, file_count: 1, total_bytes: 100, published_at: WHEN, is_live: false },
+    { version: 2, file_count: 3, total_bytes: 2048, published_at: WHEN, is_live: true, has_theme: true },
+    { version: 1, file_count: 1, total_bytes: 100, published_at: WHEN, is_live: false, has_theme: false },
   ],
 })
 
-const WITH_DRAFT = site({ draft: { file_count: 3, total_bytes: 2048, uploaded_at: WHEN } })
+const WITH_DRAFT = site({ draft: { file_count: 3, total_bytes: 2048, uploaded_at: WHEN, theme: null } })
+
+const NO_COLORS = { accent: null, accentText: null, background: null, surface: null, text: null, mutedText: null }
+
+function withTheme(theme: SiteThemeReport): PracticeSite {
+  return site({ draft: { file_count: 4, total_bytes: 2048, uploaded_at: WHEN, theme } })
+}
 
 describe("WebsitePage", () => {
   beforeEach(() => {
@@ -203,6 +209,57 @@ describe("WebsitePage", () => {
         "noopener",
       ),
     )
+  })
+
+  it("says what the draft's theme.json gives the portal, and what it leaves out and why", async () => {
+    mockGet.mockResolvedValue(
+      withTheme({
+        theme: {
+          version: 1,
+          colors: { ...NO_COLORS, accent: "#24504c", accentText: "#ffffff" },
+          fonts: { heading: "Fraunces", body: null },
+          radius: null,
+        },
+        skipped: [{ field: "colors.text", reason: "Too little contrast with background to read easily." }],
+      }),
+    )
+    renderWithProviders(<WebsitePage />)
+
+    const theme = await screen.findByTestId("website-theme")
+    expect(theme).toHaveTextContent(
+      "Once this is published, your portal on your own domain will use the colors and fonts from theme.json.",
+    )
+    expect(theme).toHaveTextContent("Not used from theme.json:")
+    expect(within(theme).getByRole("listitem")).toHaveTextContent(
+      "colors.text: Too little contrast with background to read easily.",
+    )
+  })
+
+  it("says only why when nothing in theme.json could be used", async () => {
+    mockGet.mockResolvedValue(
+      withTheme({ theme: null, skipped: [{ field: "theme.json", reason: "Isn't valid JSON." }] }),
+    )
+    renderWithProviders(<WebsitePage />)
+
+    const theme = await screen.findByTestId("website-theme")
+    expect(theme).not.toHaveTextContent("will use")
+    expect(within(theme).getByRole("listitem")).toHaveTextContent("theme.json: Isn't valid JSON.")
+  })
+
+  it("says nothing about a theme when the draft has no theme.json", async () => {
+    mockGet.mockResolvedValue(WITH_DRAFT)
+    renderWithProviders(<WebsitePage />)
+
+    expect(await screen.findByTestId("website-draft")).toBeVisible()
+    expect(screen.queryByTestId("website-theme")).not.toBeInTheDocument()
+  })
+
+  it("marks the versions that give the portal a theme", async () => {
+    mockGet.mockResolvedValue(PUBLISHED)
+    renderWithProviders(<WebsitePage />)
+
+    expect(await screen.findByTestId("website-version-2")).toHaveTextContent("Portal theme")
+    expect(screen.getByTestId("website-version-1")).not.toHaveTextContent("Portal theme")
   })
 
   it("discards the draft", async () => {

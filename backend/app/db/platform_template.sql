@@ -542,7 +542,8 @@ CREATE TABLE platform.practice_site_versions (
     file_count integer NOT NULL,
     total_bytes bigint NOT NULL,
     published_at timestamp with time zone NOT NULL,
-    published_by character varying(128) NOT NULL
+    published_by character varying(128) NOT NULL,
+    theme jsonb
 );
 
 CREATE TABLE platform.practice_sites (
@@ -558,7 +559,8 @@ CREATE TABLE platform.practice_sites (
     preview_expires_at timestamp with time zone,
     published_at timestamp with time zone,
     published_by character varying(128),
-    updated_at timestamp with time zone NOT NULL
+    updated_at timestamp with time zone NOT NULL,
+    draft_theme jsonb
 );
 
 CREATE TABLE platform.practices (

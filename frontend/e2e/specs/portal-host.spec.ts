@@ -45,6 +45,9 @@ test("a practice's portal renders at /{slug} on the portal host @portal", async 
 
   await expect(page.getByTestId("portal-shell-practice-name")).toBeVisible()
   await expect(page.getByTestId("portal-shell-no-session")).toBeVisible()
+  // The shared portal host keeps its own footer; only a practice's own host
+  // drops it (practice-site-theme.spec.ts).
+  await expect(page.getByTestId("portal-footer")).toHaveText("Powered by Pablo")
   // Served in place, not bounced: the address the patient typed is the one
   // they stay on.
   expect(page.url()).toBe(`${PORTAL_URL}/${slug}`)

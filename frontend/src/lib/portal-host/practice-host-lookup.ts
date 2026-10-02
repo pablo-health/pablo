@@ -20,6 +20,7 @@
  */
 
 import type { PracticeHost, PracticeHostAnswer } from "./practice-host"
+import { parsePracticeTheme } from "./practice-theme"
 
 export interface PracticeHostLookupOptions {
   /** The backend's origin, as the server reaches it. Read per call. */
@@ -48,10 +49,12 @@ const TIMEOUT_MS = 3_000
 
 function parsePortalHost(body: unknown): PracticeHost | "unavailable" {
   if (typeof body !== "object" || body === null) return "unavailable"
-  const { slug, primary_host: primaryHost } = body as Record<string, unknown>
+  const { slug, primary_host: primaryHost, theme } = body as Record<string, unknown>
   if (typeof slug !== "string" || !slug) return "unavailable"
   if (primaryHost !== null && typeof primaryHost !== "string") return "unavailable"
-  return { slug, primaryHost }
+  // A theme that does not parse is no theme: the portal is still served, in
+  // its own look.
+  return { slug, primaryHost, theme: parsePracticeTheme(theme) }
 }
 
 /** A cached lookup of `route` on the backend: found, nothing (404), or could not be asked. */

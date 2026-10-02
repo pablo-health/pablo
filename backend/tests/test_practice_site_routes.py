@@ -31,6 +31,7 @@ from app.sites.service import (
     UnknownVersionError,
     get_practice_site_service,
 )
+from app.sites.theme import read_theme
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -42,6 +43,10 @@ if TYPE_CHECKING:
 PRACTICE_ID = "practice-1"
 URL = "/api/practice/website"
 WHEN = datetime(2026, 9, 1, tzinfo=UTC)
+DRAFT_THEME = read_theme(
+    b'{"colors": {"accent": "#24504c", "accentText": "#ffffff"}, "radius": "huge"}'
+)
+assert DRAFT_THEME is not None
 
 
 class _StubService:
@@ -63,9 +68,9 @@ class _StubService:
             live_version=2,
             live_host="www.example.com",
             has_active_host=True,
-            draft=SiteDraft(file_count=3, total_bytes=120, uploaded_at=WHEN),
+            draft=SiteDraft(file_count=3, total_bytes=120, uploaded_at=WHEN, theme=DRAFT_THEME),
             versions=[
-                SiteVersion(2, 3, 120, WHEN, "u"),
+                SiteVersion(2, 3, 120, WHEN, "u", theme=DRAFT_THEME.theme),
                 SiteVersion(1, 2, 80, WHEN, "u"),
             ],
         )
@@ -151,6 +156,28 @@ class TestTheOwner:
         assert body["live_host"] == "www.example.com"
         assert [(v["version"], v["is_live"]) for v in body["versions"]] == [(2, True), (1, False)]
         assert body["draft"]["file_count"] == 3
+
+    def test_reads_what_the_draft_gives_the_portal_and_what_it_skips(
+        self, client: TestClient
+    ) -> None:
+        body = client.get(URL).json()
+        assert body["draft"]["theme"] == {
+            "theme": {
+                "version": 1,
+                "colors": {
+                    "accent": "#24504c",
+                    "accentText": "#ffffff",
+                    "background": None,
+                    "surface": None,
+                    "text": None,
+                    "mutedText": None,
+                },
+                "fonts": {"heading": None, "body": None},
+                "radius": None,
+            },
+            "skipped": [{"field": "radius", "reason": "Should be none, sm, md or lg."}],
+        }
+        assert [v["has_theme"] for v in body["versions"]] == [True, False]
 
     def test_uploads_a_draft_and_it_is_tidied_after(
         self, client: TestClient, service: _StubService
