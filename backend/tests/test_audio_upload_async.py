@@ -167,6 +167,7 @@ class TestSignedUrlAssemblyAi:
         fake_storage.make_upload_target.return_value = UploadTarget(
             url="https://storage.example/put", method="PUT"
         )
+        fake_storage.fetch_metadata.return_value = None
 
         with (
             patch("app.routes.sessions.get_settings", return_value=_assemblyai_settings()),
@@ -189,6 +190,69 @@ class TestSignedUrlAssemblyAi:
         for call in fake_storage.make_upload_target.call_args_list:
             assert call.kwargs["ttl_seconds"] == 3600
             assert call.kwargs["ttl_seconds"] != 900
+
+    def _init_with_existing(
+        self,
+        client: object,
+        session: TherapySession,
+        existing: dict[str, tuple[int, str | None] | None],
+    ) -> dict[str, object]:
+        fake_storage = MagicMock()
+        fake_storage.make_upload_target.return_value = UploadTarget(
+            url="https://storage.example/put", method="PUT"
+        )
+        fake_storage.fetch_metadata.side_effect = lambda *, bucket, object_name: existing[  # noqa: ARG005
+            object_name.rsplit("/", 1)[-1].removesuffix(".pcm")
+        ]
+        with (
+            patch("app.routes.sessions.get_settings", return_value=_assemblyai_settings()),
+            patch(
+                "app.services.file_storage.file_storage_from_settings",
+                return_value=fake_storage,
+            ),
+        ):
+            resp = client.post(  # type: ignore[attr-defined]
+                f"/api/sessions/{session.id}/upload-audio/init",
+            )
+        assert resp.status_code == 201, resp.text
+        # Metadata only — init never reads the audio back.
+        fake_storage.download_bytes.assert_not_called()
+        body: dict[str, object] = resp.json()
+        return body
+
+    def test_init_reports_no_existing_channels_on_a_first_attempt(
+        self, client: object, mock_session_repo: object, mock_user_id: str
+    ) -> None:
+        session = _seed_recording_complete(mock_session_repo, mock_user_id)
+        body = self._init_with_existing(client, session, {"therapist": None, "client": None})
+        assert body["therapist"]["existing_bytes"] is None  # type: ignore[index]
+        assert body["client"]["existing_bytes"] is None  # type: ignore[index]
+
+    def test_init_reports_a_channel_an_earlier_attempt_landed(
+        self, client: object, mock_session_repo: object, mock_user_id: str
+    ) -> None:
+        # A slow retry that already got the therapist channel up should not
+        # have to send it again.
+        session = _seed_recording_complete(mock_session_repo, mock_user_id)
+        body = self._init_with_existing(
+            client,
+            session,
+            {"therapist": (189_109_484, "application/octet-stream"), "client": None},
+        )
+        assert body["therapist"]["existing_bytes"] == 189_109_484  # type: ignore[index]
+        assert body["client"]["existing_bytes"] is None  # type: ignore[index]
+
+    def test_init_reports_both_channels_when_both_landed(
+        self, client: object, mock_session_repo: object, mock_user_id: str
+    ) -> None:
+        session = _seed_recording_complete(mock_session_repo, mock_user_id)
+        body = self._init_with_existing(
+            client,
+            session,
+            {"therapist": (100, None), "client": (200, None)},
+        )
+        assert body["therapist"]["existing_bytes"] == 100  # type: ignore[index]
+        assert body["client"]["existing_bytes"] == 200  # type: ignore[index]
 
     def test_finalize_enqueues_submit_for_assemblyai(
         self, client: object, mock_session_repo: object, mock_user_id: str

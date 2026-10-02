@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from ..scheduling_engine.models.appointment import AppointmentStatus  # noqa: TC001
 from ..scheduling_engine.models.availability import EnforcementLevel, RuleType  # noqa: TC001
 from .availability_rule_params import TaggedAvailabilityRule
+from .enums import SessionStatus  # noqa: TC001
 
 # The patient-facing projection of an appointment lives with its sibling for
 # ``patients`` and with the column decisions behind both — see
@@ -207,6 +208,10 @@ class AppointmentResponse(BaseModel):
     outside_source: str | None = None
     outside_event_id: str | None = None
     session_id: str | None = None
+    #: Lifecycle of the linked session, so a client can tell "being recorded"
+    #: from "ended, note in progress" without fetching each session. None when
+    #: there is no session or the caller can't see it.
+    session_status: SessionStatus | None = None
     service_code: str | None = None
     modifiers: list[str] | None = None
     unit_count: int | None = None
