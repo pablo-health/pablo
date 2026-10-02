@@ -5,7 +5,7 @@
 * ``GET /api/practice/domains`` — any clinician of the practice: the hosts,
   their status, which is primary, the DNS records to set, and whether a host
   is taking too long now that its records are in place. Where the deployment
-  names a hosted domain, also the practice's hosted addresses
+  names a hosted domain and says it is served, also the practice's hosted addresses
   (:mod:`app.portal.hosted`), giving the practice its portal address first if
   it has none yet; every answer below carries them too.
 * ``GET /api/practice/domains/describe?domain=`` — any clinician of the
@@ -54,7 +54,7 @@ from ..models.practice_domain import (
     HostedAddressesResponse,
     PracticeDomainListResponse,
 )
-from ..portal.hosted import hosted_domain, hosted_portal_host, hosted_site_host
+from ..portal.hosted import hosted_addresses_ready, hosted_portal_host, hosted_site_host
 from ..portal.practice_routes import ensure_practice_slug
 from ..services.audit_service import AuditService, get_audit_service
 from ..services.practice_domain_dns import DnsLookup, get_dns_lookup
@@ -94,7 +94,7 @@ def _hosted(practice_id: str) -> HostedAddressesResponse | None:
     ``None`` too for an address that cannot be a hostname label
     (:mod:`app.portal.slugs`).
     """
-    if hosted_domain() is None:
+    if not hosted_addresses_ready():
         return None
     address = ensure_practice_slug(practice_id)
     portal_host = hosted_portal_host(address.slug)

@@ -3,7 +3,8 @@
 /**
  * Every practice's hosted addresses, under a hosted domain the deployment names.
  *
- * With `PRACTICE_HOSTED_DOMAIN` set on the backend, a practice has
+ * With `PRACTICE_HOSTED_DOMAIN` set on the backend, and marked as served with
+ * `PRACTICE_HOSTED_DOMAIN_READY`, a practice has
  * `{slug}.portal.{domain}` for its portal and `{slug}.{domain}` for its
  * website, with no DNS work of its own. Setting it moves every practice's
  * portal links onto its hosted address, which the specs following the shared

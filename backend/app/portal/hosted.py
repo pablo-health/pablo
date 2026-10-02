@@ -24,6 +24,14 @@ under the hosted domain itself (:mod:`app.services.practice_domain_service`).
 A slug that is not a DNS label, or that is reserved, has no hosted address.
 Unset, nothing here answers anything and every host is served as before.
 
+**Shown only once served.** The hosted addresses resolve as soon as the
+domain is named, but nothing points anyone at them — Settings shows none,
+portal links stay on the practice's own host or the shared one, and the
+portal links back to no hosted website — until ``PRACTICE_HOSTED_DOMAIN_READY``
+says the wildcards are in DNS and their certificate is issued
+(:func:`hosted_addresses_ready`). So naming the domain early never sends
+anyone to an address that cannot be reached yet.
+
 No PHI: hostnames and slugs.
 """
 
@@ -49,6 +57,13 @@ type HostedPurpose = Literal["portal", "site"]
 def hosted_domain() -> str | None:
     """The deployment's hosted domain, or ``None`` when it names none."""
     return get_settings().practice_hosted_domain or None
+
+
+def hosted_addresses_ready() -> bool:
+    """Whether hosted addresses may be shown and linked to: a domain is named
+    and the deployment says it is served (``PRACTICE_HOSTED_DOMAIN_READY``)."""
+    settings = get_settings()
+    return bool(settings.practice_hosted_domain) and settings.practice_hosted_domain_ready
 
 
 def _hostable(slug: str) -> bool:
