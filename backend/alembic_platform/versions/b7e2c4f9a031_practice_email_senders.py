@@ -14,7 +14,7 @@ materialise the platform tables from the models before this chain runs — the
 same reasoning as ``d1c7b94e3a26_portal_practice_slugs``.
 
 Revision ID: b7e2c4f9a031
-Revises: e3b8c41f6a52
+Revises: b4e7a2c95d18
 Create Date: 2026-10-01
 """
 
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 revision: str = "b7e2c4f9a031"
-down_revision: str | Sequence[str] | None = "e3b8c41f6a52"
+down_revision: str | Sequence[str] | None = "b4e7a2c95d18"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
