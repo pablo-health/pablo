@@ -74,6 +74,16 @@ vi.mock("@/lib/api/scheduling", async () => {
   }
 })
 
+// The hours step has its own tests; here it only needs to save or skip.
+vi.mock("../CalendarHoursStep", () => ({
+  CalendarHoursStep: ({ onSaved, onSkip }: { onSaved: () => void; onSkip: () => void }) => (
+    <div data-testid="calendar-hours-step">
+      <button onClick={onSaved}>Save hours</button>
+      <button onClick={onSkip}>Skip hours</button>
+    </div>
+  ),
+}))
+
 const DISCONNECTED: GoogleCalendarStatus = {
   connected: false,
   calendar_id: null,
@@ -911,6 +921,33 @@ describe("CalendarSetupWizard hosted on another page", () => {
 
     expect(onDone).toHaveBeenCalled()
     expect(routerPush).not.toHaveBeenCalled()
+  })
+
+  it("keeps the hours step through a save even once the host stops asking for it", async () => {
+    const onHoursAnswered = vi.fn()
+    const user = userEvent.setup()
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wizard = (withHoursStep: boolean) => (
+      <QueryClientProvider client={queryClient}>
+        <CalendarSetupWizard withHoursStep={withHoursStep} onHoursAnswered={onHoursAnswered} />
+      </QueryClientProvider>
+    )
+    const { rerender } = render(wizard(true))
+    expect(screen.getByTestId("calendar-hours-step")).toBeInTheDocument()
+
+    // The first rule the step creates makes the host's rule list non-empty
+    // while the rest are still being written.
+    rerender(wizard(false))
+    expect(screen.getByTestId("calendar-hours-step")).toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: "Save hours" }))
+
+    expect(onHoursAnswered).toHaveBeenCalledTimes(1)
+    // Lands on Connect, not one step past it.
+    expect(
+      await screen.findByRole("heading", { name: "Connect Google Calendar" })
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId("calendar-hours-step")).not.toBeInTheDocument()
   })
 
   it("still leaves for Settings when nobody is hosting it", async () => {

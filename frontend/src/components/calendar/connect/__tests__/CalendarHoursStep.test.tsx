@@ -1,18 +1,19 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
+import { act, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import type { ProposedAvailabilityRule } from "@/types/availability"
 import { CalendarHoursStep } from "../CalendarHoursStep"
 import { echoLines } from "../hoursCapture"
 
 const parseRules = vi.hoisted(() => vi.fn())
+const parseState = vi.hoisted(() => ({ pending: false }))
 const createRule = vi.hoisted(() => vi.fn())
 vi.mock("@/hooks/useAvailability", () => ({
   useParseAvailabilityRules: () => ({
     mutateAsync: parseRules,
-    isPending: false,
+    isPending: parseState.pending,
   }),
   useCreateAvailabilityRule: () => ({ mutateAsync: createRule }),
 }))
@@ -58,6 +59,7 @@ async function describe_(user: ReturnType<typeof userEvent.setup>, sentence: str
 describe("CalendarHoursStep", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    parseState.pending = false
     preferencesState.data = { timezone: "America/New_York" }
     createRule.mockResolvedValue({})
     savePreferences.mockResolvedValue({})
@@ -362,6 +364,133 @@ describe("CalendarHoursStep", () => {
     expect(onSkip).toHaveBeenCalled()
     expect(createRule).not.toHaveBeenCalled()
     expect(savePreferences).not.toHaveBeenCalled()
+  })
+})
+
+describe("CalendarHoursStep while Pablo reads", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    parseState.pending = false
+    preferencesState.data = { timezone: "America/New_York" }
+  })
+
+  it("shows the bear and keeps the box and the examples usable", () => {
+    parseState.pending = true
+    renderStep()
+
+    expect(screen.getByRole("status")).toHaveTextContent("Reading your hours")
+    expect(screen.queryByText("Reading…")).toBeNull()
+    expect(screen.getByLabelText("Tell Pablo in your own words")).toBeEnabled()
+    expect(screen.getByRole("button", { name: "No appointments before 10am" })).toBeEnabled()
+  })
+
+  it("shows only the answer to the latest sentence when a correction overtakes the first", async () => {
+    const user = userEvent.setup()
+    const answers: ((value: unknown) => void)[] = []
+    parseRules.mockImplementation(() => new Promise((resolve) => answers.push(resolve)))
+    renderStep()
+
+    await describe_(user, "Monday to Thursday, 9 to 5")
+    await user.type(screen.getByLabelText("Tell Pablo in your own words"), ", and Fridays")
+    await user.click(screen.getByRole("button", { name: "Check this" }))
+    expect(parseRules).toHaveBeenCalledTimes(2)
+
+    const friday = { ...workingHours(4) }
+    await act(async () =>
+      answers[1]({ proposals: [...MON_TO_THU, friday], could_not_parse: null })
+    )
+    await act(async () => answers[0]({ proposals: MON_TO_THU, could_not_parse: null }))
+
+    expect(screen.getByText("Monday to Friday, 09:00 to 17:00")).toBeInTheDocument()
+    expect(screen.queryByText("Monday to Thursday, 09:00 to 17:00")).toBeNull()
+  })
+})
+
+describe("CalendarHoursStep saving", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    parseState.pending = false
+    preferencesState.data = { timezone: "America/New_York" }
+    savePreferences.mockResolvedValue({})
+    parseRules.mockResolvedValue({ proposals: MON_TO_THU, could_not_parse: null })
+  })
+
+  async function confirmMonToThu(user: ReturnType<typeof userEvent.setup>) {
+    await describe_(user, "Monday to Thursday, 9 to 5")
+    await screen.findByText("Monday to Thursday, 09:00 to 17:00")
+    await user.click(screen.getByRole("button", { name: "Yes, save this" }))
+  }
+
+  it("creates every confirmed rule at once rather than waiting on each in turn", async () => {
+    const user = userEvent.setup()
+    const settle: (() => void)[] = []
+    createRule.mockImplementation(() => new Promise<void>((resolve) => settle.push(resolve)))
+    renderStep()
+
+    await confirmMonToThu(user)
+
+    // All four are in flight before any of them has come back.
+    await waitFor(() => expect(createRule).toHaveBeenCalledTimes(4))
+    expect(onSaved).not.toHaveBeenCalled()
+
+    await act(async () => settle.forEach((resolve) => resolve()))
+    expect(onSaved).toHaveBeenCalledTimes(1)
+  })
+
+  it("says so when part of the week did not save, and retries only that part", async () => {
+    const user = userEvent.setup()
+    createRule.mockImplementation(async (rule: { params: { day_of_week: number } }) => {
+      if (rule.params.day_of_week === 2) throw new Error("503")
+      return {}
+    })
+    renderStep()
+
+    await confirmMonToThu(user)
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Some of those hours could not be saved. Try again to save the rest."
+    )
+    expect(onSaved).not.toHaveBeenCalled()
+    // The echo is frozen: changing it now would describe hours already half saved.
+    expect(screen.getByRole("button", { name: "Say it differently" })).toBeDisabled()
+
+    createRule.mockClear()
+    createRule.mockResolvedValue({})
+    await user.click(screen.getByRole("button", { name: "Yes, save this" }))
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1))
+    expect(createRule).toHaveBeenCalledTimes(1)
+    expect(createRule.mock.calls[0][0].params.day_of_week).toBe(2)
+  })
+
+  it("asks to try again when nothing saved", async () => {
+    const user = userEvent.setup()
+    createRule.mockRejectedValue(new Error("503"))
+    renderStep()
+
+    await confirmMonToThu(user)
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Those hours could not be saved. Try again."
+    )
+    expect(screen.getByRole("button", { name: "Say it differently" })).toBeEnabled()
+  })
+
+  it("saves a changed timezone before the hours that are read in it", async () => {
+    const user = userEvent.setup()
+    const order: string[] = []
+    savePreferences.mockImplementation(async () => order.push("timezone"))
+    createRule.mockImplementation(async () => order.push("rule"))
+    renderStep()
+
+    await user.click(screen.getByRole("button", { name: "Pick from a grid instead" }))
+    await user.click(screen.getByRole("combobox", { name: "Times are in" }))
+    await user.click(screen.getByRole("option", { name: "America/Chicago" }))
+    await user.click(screen.getByRole("button", { name: "Save these hours" }))
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalled())
+    expect(order[0]).toBe("timezone")
+    expect(order.filter((step) => step === "rule")).toHaveLength(5)
   })
 })
 

@@ -2,9 +2,10 @@
 
 "use client"
 
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
+import { PabloSpinner } from "@/components/ui/PabloSpinner"
 import { Textarea } from "@/components/ui/textarea"
 import { useCreateAvailabilityRule, useParseAvailabilityRules } from "@/hooks/useAvailability"
 import { useAppointmentTypes } from "@/hooks/useAppointmentTypes"
@@ -141,20 +142,23 @@ export function NaturalLanguageRuleEntry() {
   const parseMutation = useParseAvailabilityRules()
   const [result, setResult] = useState<ParseAvailabilityRulesResponse | null>(null)
   const [parseError, setParseError] = useState<string | null>(null)
+  // The box stays editable while Pablo reads, so a second submit can
+  // overtake the first; only the latest one's answer is shown.
+  const latestParse = useRef(0)
   const { data: appointmentTypes } = useAppointmentTypes()
   const typeNames = new Map((appointmentTypes?.data ?? []).map((t) => [t.id, t.name]))
 
-  function parse() {
+  async function parse() {
     if (!text.trim()) return
+    const request = ++latestParse.current
     setParseError(null)
     setResult(null)
-    parseMutation.mutate(
-      { text },
-      {
-        onSuccess: (data) => setResult(data),
-        onError: (err) => setParseError(errorMessage(err)),
-      }
-    )
+    try {
+      const data = await parseMutation.mutateAsync({ text })
+      if (request === latestParse.current) setResult(data)
+    } catch (err) {
+      if (request === latestParse.current) setParseError(errorMessage(err))
+    }
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -182,11 +186,13 @@ export function NaturalLanguageRuleEntry() {
           onChange={(e) => setText(e.target.value)}
           placeholder="No appointments on Fridays"
           maxLength={1000}
-          disabled={parseMutation.isPending}
         />
-        <Button type="submit" size="sm" disabled={parseMutation.isPending || !text.trim()}>
-          {parseMutation.isPending ? "Parsing..." : "Parse"}
-        </Button>
+        <div className="flex items-center gap-4">
+          <Button type="submit" size="sm" disabled={!text.trim()}>
+            Parse
+          </Button>
+          {parseMutation.isPending ? <PabloSpinner label="Reading your description" /> : null}
+        </div>
       </form>
 
       {parseError && (

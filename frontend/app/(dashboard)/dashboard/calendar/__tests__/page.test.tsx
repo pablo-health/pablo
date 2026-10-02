@@ -65,11 +65,13 @@ vi.mock("@/components/calendar/connect/CalendarSetupWizard", () => ({
     onFinishLater,
     onDone,
     withHoursStep,
+    onHoursAnswered,
   }: {
     returnPath?: string
     onFinishLater?: () => void
     onDone?: () => void
     withHoursStep?: boolean
+    onHoursAnswered?: () => void
   }) => (
     <div
       data-testid="calendar-setup-wizard"
@@ -78,6 +80,7 @@ vi.mock("@/components/calendar/connect/CalendarSetupWizard", () => ({
     >
       <button onClick={onFinishLater}>Finish later</button>
       <button onClick={onDone}>Done</button>
+      <button onClick={onHoursAnswered}>Answer hours</button>
     </div>
   ),
 }))
@@ -249,6 +252,37 @@ describe("CalendarPage hours capture", () => {
 
     expect(screen.getByTestId("editorial-calendar")).toBeInTheDocument()
     expect(savePreferences).not.toHaveBeenCalled()
+  })
+
+  it("keeps the hours step up while the rules it is saving arrive", async () => {
+    const user = userEvent.setup()
+    const { rerender } = render(<CalendarPage />)
+
+    // The first rule lands and the list refetches while the step is still
+    // writing the rest of the week.
+    rulesState.data = { data: [WORKING_HOURS_RULE], total: 1 }
+    rerender(<CalendarPage />)
+
+    expect(screen.getByTestId("calendar-hours-step")).toBeInTheDocument()
+    expect(screen.queryByTestId("editorial-calendar")).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: "Save hours" }))
+
+    expect(screen.getByTestId("editorial-calendar")).toBeInTheDocument()
+  })
+
+  it("does not ask again after the wizard's hours step has been answered", async () => {
+    runtimeConfig.googleCalendarEnabled = true
+    preferencesState.data = { ...PREFERENCES }
+    const user = userEvent.setup()
+    const { rerender } = render(<CalendarPage />)
+
+    await user.click(screen.getByRole("button", { name: "Answer hours" }))
+    preferencesState.data = { ...PREFERENCES, calendar_setup_complete: true }
+    rerender(<CalendarPage />)
+
+    expect(screen.getByTestId("editorial-calendar")).toBeInTheDocument()
+    expect(screen.queryByTestId("calendar-hours-step")).not.toBeInTheDocument()
   })
 
   it("saving does not mark the Google setup complete either", async () => {

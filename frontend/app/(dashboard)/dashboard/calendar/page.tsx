@@ -72,13 +72,22 @@ export default function CalendarPage() {
   // offer a time, remind anyone, or let a client book. The gate is the
   // rules alone — nothing to do with Google, and answering it is not an
   // answer to the wizard's own gate. Either answer quiets it for this
-  // visit: saving because the rules it asked for now exist (this also
-  // covers the beat before the list refetches), skipping because there is
-  // no "asked already" to record and re-asking an empty calendar next
-  // visit is the right nag.
+  // visit; skipping records nothing, because there is no "asked already"
+  // to record and re-asking an empty calendar next visit is the right nag.
+  //
+  // Once asked, the step stays up until it answers. It must not close
+  // itself when the rule list stops being empty: the first rule it creates
+  // refetches the list while the rest are still being written, and closing
+  // then unmounts the step mid-save — a later failure would land on a
+  // component nobody can see, and the practice would leave with part of
+  // its week saved and no word about the rest.
+  const [hoursAsked, setHoursAsked] = useState(false)
   const [hoursAnswered, setHoursAnswered] = useState(false)
-  const showHoursStep =
-    availabilityRules !== undefined && availabilityRules.data.length === 0 && !hoursAnswered
+  if (!hoursAsked && availabilityRules !== undefined && availabilityRules.data.length === 0) {
+    setHoursAsked(true)
+  }
+  const showHoursStep = hoursAsked && !hoursAnswered
+  const answerHours = useCallback(() => setHoursAnswered(true), [])
 
   // Either way out of the wizard — finished or "later" — is an answer;
   // Settings keeps its own door back in.
@@ -206,10 +215,7 @@ export default function CalendarPage() {
   if (showHoursStep && !showWizard) {
     return (
       <div className="max-w-3xl">
-        <CalendarHoursStep
-          onSaved={() => setHoursAnswered(true)}
-          onSkip={() => setHoursAnswered(true)}
-        />
+        <CalendarHoursStep onSaved={answerHours} onSkip={answerHours} />
       </div>
     )
   }
@@ -225,6 +231,7 @@ export default function CalendarPage() {
             onFinishLater={markSetupComplete}
             onDone={markSetupComplete}
             withHoursStep={showHoursStep}
+            onHoursAnswered={answerHours}
           />
         </Suspense>
       </div>

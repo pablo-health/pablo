@@ -145,19 +145,27 @@ interface CalendarSetupWizardProps {
    * offer a time. Finishing or skipping it only advances the wizard — it is
    * not an answer to the Google steps' own gate. */
   withHoursStep?: boolean
+  /** The hours step was saved or skipped, so the host can stop asking. */
+  onHoursAnswered?: () => void
 }
 
 export function CalendarSetupWizard({
   returnPath = CALENDAR_SETUP_PATH,
   onFinishLater,
   onDone,
-  withHoursStep = false,
+  withHoursStep: withHoursStepProp = false,
+  onHoursAnswered,
 }: CalendarSetupWizardProps = {}) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const queryClient = useQueryClient()
   const { user, loading: authLoading } = useAuth()
 
+  // Fixed for the life of the wizard. The host stops asking once rules
+  // exist, and the hours step is what creates them: following the prop
+  // would drop the step from the stepper mid-save and shift every index
+  // under the therapist — landing them past Connect instead of on it.
+  const [withHoursStep] = useState(withHoursStepProp)
   const steps = withHoursStep ? [HOURS_STEP, ...GOOGLE_STEPS] : GOOGLE_STEPS
   // Every Google step sits one further along when the hours step is in
   // front of them.
@@ -566,8 +574,14 @@ export function CalendarSetupWizard({
       ) : null}
       {onHoursStep ? (
         <CalendarHoursStep
-          onSaved={() => setActiveIndex(connectIndex)}
-          onSkip={() => setActiveIndex(connectIndex)}
+          onSaved={() => {
+            onHoursAnswered?.()
+            setActiveIndex(connectIndex)
+          }}
+          onSkip={() => {
+            onHoursAnswered?.()
+            setActiveIndex(connectIndex)
+          }}
         />
       ) : activeIndex === connectIndex ? (
         <CalendarConnectStep

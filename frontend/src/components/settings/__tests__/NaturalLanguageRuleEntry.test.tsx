@@ -1,13 +1,14 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen, within } from "@testing-library/react"
+import { act, render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { NaturalLanguageRuleEntry } from "../NaturalLanguageRuleEntry"
 import type { ParseAvailabilityRulesResponse } from "@/types/availability"
 
 const mutateCreate = vi.fn()
 const mutateParse = vi.fn()
+const parseState = { pending: false }
 
 let parseResponse: ParseAvailabilityRulesResponse = {
   proposals: [],
@@ -25,7 +26,7 @@ vi.mock("@/hooks/useAppointmentTypes", () => ({
 
 vi.mock("@/hooks/useAvailability", () => ({
   useCreateAvailabilityRule: () => ({ mutate: mutateCreate, isPending: false }),
-  useParseAvailabilityRules: () => ({ mutate: mutateParse, isPending: false }),
+  useParseAvailabilityRules: () => ({ mutateAsync: mutateParse, isPending: parseState.pending }),
 }))
 
 function blockFridayProposal() {
@@ -55,9 +56,7 @@ describe("NaturalLanguageRuleEntry", () => {
       exclusive: false,
       existing_conflicting_rules: [],
     }
-    mutateParse.mockImplementation((_vars, opts) => {
-      opts.onSuccess(parseResponse)
-    })
+    mutateParse.mockImplementation(async () => parseResponse)
   })
 
   it("renders the structured preview using the same rendering as an existing rule row", async () => {
@@ -233,9 +232,7 @@ describe("NaturalLanguageRuleEntry — appointment types", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     appointmentTypes = [{ id: "type-intake", name: "Intake" }]
-    mutateParse.mockImplementation((_vars, opts) => {
-      opts.onSuccess(parseResponse)
-    })
+    mutateParse.mockImplementation(async () => parseResponse)
   })
 
   it("says which type a scoped proposal governs, and saves it with that scope", async () => {
@@ -335,5 +332,44 @@ describe("NaturalLanguageRuleEntry — appointment types", () => {
       duration_minutes: 60,
       audience: "new",
     })
+  })
+})
+
+describe("NaturalLanguageRuleEntry while Pablo reads", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    parseState.pending = false
+  })
+
+  it("shows the bear and keeps the box editable", () => {
+    parseState.pending = true
+    render(<NaturalLanguageRuleEntry />)
+
+    expect(screen.getByRole("status")).toHaveTextContent("Reading your description")
+    expect(screen.queryByText("Parsing...")).toBeNull()
+    expect(screen.getByLabelText(/describe your availability/i)).toBeEnabled()
+  })
+
+  it("shows only the answer to the latest submit when a second one overtakes the first", async () => {
+    const answers: ((value: ParseAvailabilityRulesResponse) => void)[] = []
+    mutateParse.mockImplementation(
+      () => new Promise<ParseAvailabilityRulesResponse>((resolve) => answers.push(resolve))
+    )
+    const user = await submitText("No appointments on Fridays")
+    await user.type(screen.getByLabelText(/describe your availability/i), " or Mondays")
+    await user.click(screen.getByRole("button", { name: "Parse" }))
+    expect(mutateParse).toHaveBeenCalledTimes(2)
+
+    const answer = (day: number): ParseAvailabilityRulesResponse => ({
+      proposals: [{ ...blockFridayProposal(), params: { day_of_week: day } }],
+      could_not_parse: null,
+      exclusive: false,
+      existing_conflicting_rules: [],
+    })
+    await act(async () => answers[1](answer(0)))
+    await act(async () => answers[0](answer(4)))
+
+    expect(screen.getByText("Monday blocked")).toBeInTheDocument()
+    expect(screen.queryByText("Friday blocked")).toBeNull()
   })
 })
