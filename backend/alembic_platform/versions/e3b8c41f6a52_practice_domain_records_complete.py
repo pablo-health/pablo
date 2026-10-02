@@ -18,7 +18,7 @@ their next check.
 No PHI: setup state.
 
 Revision ID: e3b8c41f6a52
-Revises: c5f1d7a93e28
+Revises: a9d3f6c21e87
 Create Date: 2026-10-01
 """
 
@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 revision: str = "e3b8c41f6a52"
-down_revision: str | Sequence[str] | None = "c5f1d7a93e28"
+down_revision: str | Sequence[str] | None = "a9d3f6c21e87"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
