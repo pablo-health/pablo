@@ -90,6 +90,10 @@ test("a practice publishes its website, rolls it back, and it serves on its own 
     const preview = await opened
     await preview.waitForLoadState()
     await expect(preview.getByRole("heading", { name: first })).toBeVisible()
+    // On the app's side of things it is inert: no script, no form.
+    const previewed = await request.get(preview.url())
+    expect(previewed.headers()["content-security-policy"]).toBe("sandbox; frame-ancestors 'none'")
+    expect(previewed.headers()["x-robots-tag"]).toBe("noindex")
     await preview.close()
 
     await page.getByRole("button", { name: "Publish" }).click()

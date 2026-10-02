@@ -16,8 +16,13 @@
   thing that grants it; a new draft, a publish, or a newer preview address
   ends it.
 
-Website files are public by design and carry no PHI. Answers are sandboxed
-(:mod:`app.sites.serving`), so none of them can act on the app's origin.
+Website files are public by design and carry no PHI. These routes are
+reachable on the app's own origin, so every answer is inert there: a bare
+``sandbox`` policy, no script, no form (:mod:`app.sites.serving`).
+
+They do not refuse a request by its Host. The web app's server reaches them at
+its configured API address, which on a deployment serving app and API from one
+host is the app's own host, so the Host cannot tell its fetch from a visitor's.
 """
 
 from __future__ import annotations

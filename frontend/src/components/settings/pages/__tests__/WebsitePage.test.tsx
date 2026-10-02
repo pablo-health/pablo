@@ -190,6 +190,10 @@ describe("WebsitePage", () => {
     mockPreview.mockResolvedValue({ path: "/api/practice/website/preview/tok/", expires_at: WHEN })
     renderWithProviders(<WebsitePage />)
 
+    // The preview is inert; the page says so beside the button.
+    expect(
+      await screen.findByText("The preview shows your pages. Scripts run once the site is live on your domain."),
+    ).toBeInTheDocument()
     await userEvent.click(await screen.findByRole("button", { name: "Preview" }))
 
     await vi.waitFor(() =>

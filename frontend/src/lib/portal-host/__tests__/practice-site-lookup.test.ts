@@ -49,7 +49,9 @@ describe("fetchSiteFile", () => {
       upstream(200, "<h1>Home</h1>", {
         "Content-Type": "text/html; charset=utf-8",
         ETag: '"v3"',
-        "Content-Security-Policy": "sandbox",
+        // What the backend sends, so the page is inert on the app's origin.
+        "Content-Security-Policy": "sandbox; frame-ancestors 'none'",
+        "X-Robots-Tag": "noindex",
         "Cache-Control": "no-store",
         "Set-Cookie": "session=leaked",
       }),
@@ -68,6 +70,21 @@ describe("fetchSiteFile", () => {
     expect(response.headers.get("x-content-type-options")).toBe("nosniff")
     expect(response.headers.get("referrer-policy")).toBe("strict-origin-when-cross-origin")
     expect(response.headers.get("set-cookie")).toBeNull()
+  })
+
+  it("never passes the backend's sandbox on, so the website's own scripts run on its own host", async () => {
+    const { ask } = setup(
+      upstream(200, "<script>1</script>", {
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Security-Policy": "sandbox; frame-ancestors 'none'",
+        "X-Robots-Tag": "noindex",
+      }),
+    )
+
+    const response = await ask("/")
+
+    expect(response.headers.get("content-security-policy")).not.toContain("sandbox")
+    expect(response.headers.get("x-robots-tag")).toBeNull()
   })
 
   it("passes the website's 404 page on with its status", async () => {

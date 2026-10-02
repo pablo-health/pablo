@@ -82,6 +82,13 @@ export function DraftCard({
           )}
         </div>
       )}
+      {canManage && draft && (
+        // The preview is served inert (no scripts, no forms) because it is on
+        // the app's own address; see backend/app/sites/serving.py.
+        <p className="mt-2 text-[12.5px] text-muted-foreground">
+          The preview shows your pages. Scripts run once the site is live on your domain.
+        </p>
+      )}
     </SettingsCard>
   )
 }

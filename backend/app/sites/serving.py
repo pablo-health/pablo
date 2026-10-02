@@ -7,12 +7,18 @@ or the site's ``404.html``, a plain 404, or a 301 to a folder's slashed form
 (:mod:`app.sites.paths`).
 
 These answers come from routes under ``/api``, which on a deployment that
-serves the app and its API from one host share the app's origin. So every one
-carries a ``sandbox`` Content-Security-Policy without ``allow-same-origin``: a
-website's page opened there, deliberately or by a crafted link, runs in an
-origin of its own and can read nothing the app keeps. Visitors to a website
-host never see these headers — the web app's server fetches the file and
-answers them with its own (``frontend/src/lib/portal-host/practice-site.ts``).
+serves the app and its API from one host share the app's origin, and a
+practice can upload any HTML it likes. So every one carries a bare ``sandbox``
+Content-Security-Policy, with no ``allow-*`` token at all: a page opened there,
+deliberately or by a crafted link, runs no script, submits no form, opens no
+window and navigates nothing but itself, in an origin of its own. It is inert
+static content, which is all the draft preview needs to show the pages, and
+never something that could pass for the app's own sign-in page. ``noindex``
+keeps it out of search results too.
+
+Visitors to a website host never see these headers: the web app's server
+fetches the file and answers them with its own, on the practice's own origin,
+where the website's scripts run (``frontend/src/lib/portal-host/practice-site.ts``).
 """
 
 from __future__ import annotations
@@ -30,13 +36,12 @@ if TYPE_CHECKING:
     from ..services.file_storage import FileStorageProvider
     from .storage import SiteFileCache
 
-SANDBOX_CSP = (
-    "sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox; "
-    "frame-ancestors 'none'"
-)
-_HEADERS = {
+#: No ``allow-*`` token, deliberately; see the module docstring.
+SANDBOX_CSP = "sandbox; frame-ancestors 'none'"
+INERT_HEADERS = {
     "Content-Security-Policy": SANDBOX_CSP,
     "X-Content-Type-Options": "nosniff",
+    "X-Robots-Tag": "noindex",
     "Referrer-Policy": "strict-origin-when-cross-origin",
 }
 
@@ -53,7 +58,7 @@ class SiteFolder:
 
 def plain_not_found() -> Response:
     return Response(
-        "Not Found", status_code=404, media_type="text/plain; charset=utf-8", headers=_HEADERS
+        "Not Found", status_code=404, media_type="text/plain; charset=utf-8", headers=INERT_HEADERS
     )
 
 
@@ -79,10 +84,10 @@ def site_file_response(
     files = folder.cache.files_in(folder.storage, folder.bucket, folder.prefix)
     answer = resolve_site_path(request_path, files)
     if answer.location is not None:
-        return Response(status_code=301, headers={**_HEADERS, "Location": answer.location})
+        return Response(status_code=301, headers={**INERT_HEADERS, "Location": answer.location})
     if answer.file is None:
         return plain_not_found()
-    headers = dict(_HEADERS)
+    headers = dict(INERT_HEADERS)
     if etag is not None:
         headers["ETag"] = etag
         if answer.status == HTTPStatus.OK and _etag_matches(if_none_match, etag):

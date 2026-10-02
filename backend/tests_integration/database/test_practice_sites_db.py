@@ -331,6 +331,15 @@ def client(clock: _Clock, bucket: str) -> Iterator[TestClient]:
         yield test_client
 
 
+def _assert_inert(response: Any) -> None:
+    """These routes are reachable on the app's own origin, where an uploaded
+    page must run no script and submit no form: a bare sandbox, no allow-*."""
+    assert response.headers["content-security-policy"] == "sandbox; frame-ancestors 'none'"
+    assert "allow-" not in response.headers["content-security-policy"]
+    assert response.headers["x-robots-tag"] == "noindex"
+    assert response.headers["x-content-type-options"] == "nosniff"
+
+
 def _file(client: TestClient, host: str, path: str, **headers: str) -> Any:
     return client.get(
         f"/api/sites/hosts/{host}/file",
@@ -377,7 +386,7 @@ def test_each_request_path_gets_its_file(
     assert (home.status_code, home.content) == (200, b"<h1>Home</h1>")
     assert home.headers["content-type"] == "text/html; charset=utf-8"
     assert home.headers["etag"] == '"v1"'
-    assert "sandbox" in home.headers["content-security-policy"]
+    _assert_inert(home)
     assert _file(client, host, "/about/").content == b"<h1>About</h1>"
     css = _file(client, host, "/css/site.css")
     assert css.headers["content-type"] == "text/css; charset=utf-8"
@@ -387,6 +396,8 @@ def test_each_request_path_gets_its_file(
 
     missing = _file(client, host, "/nope.html")
     assert (missing.status_code, missing.content) == (404, b"<h1>Lost</h1>")
+    for answer in (css, folder, missing, _file(client, "nobody.example.com", "/")):
+        _assert_inert(answer)
 
     for attempt in ("/../index.html", "/%2e%2e/index.html", "/css/..%2f404.html", "/a\\b"):
         assert _file(client, host, attempt).content == b"<h1>Lost</h1>", attempt
@@ -437,7 +448,7 @@ def test_the_preview_address_serves_the_draft_until_it_is_published(
 
     page = client.get(f"{base}/about/")
     assert (page.status_code, page.content) == (200, b"<h1>About</h1>")
-    assert "sandbox" in page.headers["content-security-policy"]
+    _assert_inert(page)
     assert client.get(f"{base}/nope").content == b"<h1>Lost</h1>"
     assert client.get("/api/practice/website/preview/not-a-token/").status_code == 404
 
