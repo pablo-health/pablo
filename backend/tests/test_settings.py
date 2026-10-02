@@ -141,6 +141,17 @@ def test_feed_origin_override_allowed_in_development() -> None:
 
 
 @pytest.mark.parametrize("environment", ["staging", "production"])
+def test_availability_parse_override_rejected_outside_development(environment: str) -> None:
+    with pytest.raises(ValueError, match="AVAILABILITY_PARSE_BASE_URL must not be set"):
+        _make(environment=environment, availability_parse_base_url="http://fake-llm:8083")
+
+
+def test_availability_parse_override_allowed_in_development() -> None:
+    settings = _make(environment="development", availability_parse_base_url="http://fake-llm:8083")
+    assert settings.availability_parse_base_url == "http://fake-llm:8083"
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
 def test_google_origin_override_rejected_outside_development(environment: str) -> None:
     with pytest.raises(ValueError, match="GOOGLE_CALENDAR_BASE_URL must not be set"):
         _make(environment=environment, google_calendar_base_url="http://localhost:8090")
