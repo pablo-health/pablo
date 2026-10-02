@@ -10,7 +10,7 @@
  */
 
 import type { ApiClient } from "./api"
-import { giveWorkingHours } from "./scenarios"
+import { type AvailabilityRule, giveWorkingHours } from "./scenarios"
 
 /**
  * The practice-wide switch for patients it already has.
@@ -34,10 +34,21 @@ export async function letExistingClientsSelfBook(
  *
  * One rule per weekday, because the engine accumulates rules and two
  * covering the same day would offer every slot twice.
+ *
+ * Returns a `cleanup` the caller must run. Rules live on the worker's
+ * clinician, so hours left behind constrain every later spec in the worker:
+ * a session booked minutes from now (portal-telehealth.spec.ts) is refused as
+ * "outside working hours" whenever the suite runs outside 09:00-17:00.
  */
-export async function giveWorkingHoursAllWeek(api: ApiClient): Promise<void> {
+export async function giveWorkingHoursAllWeek(api: ApiClient): Promise<{ cleanup: () => Promise<void> }> {
+  const rules: AvailabilityRule[] = []
   for (let day = 0; day < 7; day += 1) {
-    await giveWorkingHours(api, day)
+    rules.push(await giveWorkingHours(api, day))
+  }
+  return {
+    cleanup: async () => {
+      for (const rule of rules) await api.delete(`/api/availability/rules/${rule.id}`)
+    },
   }
 }
 

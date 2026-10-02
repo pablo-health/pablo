@@ -160,9 +160,17 @@ test.describe("portal appointments", () => {
    * through the product's own login, into a practice registered before they
    * existed — which is precisely the path that has to record it.
    */
+  // The hours a test opened, taken away again whether or not it passed: they
+  // live on the worker's clinician and would otherwise fence in later specs.
+  let closeDiary: (() => Promise<void>) | null = null
+  test.afterEach(async () => {
+    await closeDiary?.()
+    closeDiary = null
+  })
+
   test("a patient books a time, moves it, and cancels it", async ({ api, page }) => {
     // --- the practice opens its diary ---------------------------------------
-    await giveWorkingHoursAllWeek(api)
+    closeDiary = (await giveWorkingHoursAllWeek(api)).cleanup
     await giveSelfBookableType(api, `Therapy session ${Date.now().toString(36)}`)
     await letExistingClientsSelfBook(api)
 
