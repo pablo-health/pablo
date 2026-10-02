@@ -36,6 +36,7 @@ from app.api_errors import register_exception_handlers
 from app.portal.delivery import (
     CapturingInviteDelivery,
     CapturingRenderedInviteDelivery,
+    ClientSender,
     DeliveryNotConfigured,
     FakeSmsGateway,
 )
@@ -53,6 +54,8 @@ from app.rate_limit import require_portal_recover_rate_limit, reset_portal_limit
 from app.settings import get_settings
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
+from tests.client_sender_doubles import EXAMPLE_SENDER, SenderAwareInviteDelivery
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -715,3 +718,27 @@ def test_with_no_practice_name_recovery_sends_the_wording_that_names_nobody(
     [email] = rendered_delivery.sent
     assert email.subject is None, "sent as the adapter's fixed wording"
     assert email.link.startswith("http")
+
+
+def test_a_recovery_email_goes_out_as_the_practice_where_the_channel_can(
+    app: FastAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The practice is the one living in the schema the client was found in."""
+    delivery = SenderAwareInviteDelivery()
+    app.dependency_overrides[get_invite_delivery] = lambda: delivery
+    asked: list[str] = []
+
+    def resolve(schema: str) -> ClientSender | None:
+        asked.append(schema)
+        return EXAMPLE_SENDER
+
+    monkeypatch.setattr("app.portal.recovery.resolve_client_sender_for_schema", resolve)
+    monkeypatch.setattr(
+        "app.portal.recovery.practice_address_for_schema",
+        lambda _schema: PracticeAddress(slug=SLUG, display_name=PRACTICE_NAME, enabled=True),
+    )
+
+    assert _recover(TestClient(app), ACTIVE.email or "").status_code == 202
+
+    assert asked == [TENANT]
+    assert delivery.sent_as == [EXAMPLE_SENDER]

@@ -400,6 +400,39 @@ class PracticePortalSettingsRow(PlatformBase):
     updated_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 
+class PracticeEmailSenderRow(PlatformBase):
+    """Who a practice's email to its clients says it is from, and where replies go.
+
+    Keyed on the practice, beside its other portal settings, because it belongs
+    to the practice rather than to any clinician or chart. Every column is
+    nullable and ``NULL`` means the default, so a practice with no row and a
+    practice that cleared a field get the same answer:
+
+    * ``sender_name`` — the display name on the From line; defaults to the
+      practice's name.
+    * ``sender_local_part`` — the part before the ``@`` when the practice's own
+      domain can send; defaults to ``portal``.
+    * ``reply_to`` — where a client's reply goes; defaults to the practice
+      owner's email.
+
+    Which address the mail actually leaves from is decided at send time (see
+    ``app.portal.client_sender``), not stored here.
+
+    No PHI: a practice's name for itself, a mailbox name, and a staff address.
+    """
+
+    __tablename__ = "practice_email_senders"
+    __table_args__ = {"schema": PLATFORM_SCHEMA}
+
+    practice_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    sender_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    sender_local_part: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    reply_to: Mapped[str | None] = mapped_column(String(254), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    #: The clinician who last changed it.
+    updated_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+
 class PracticeDomainRow(PlatformBase):
     """A hostname a practice serves its client portal or its website from.
 

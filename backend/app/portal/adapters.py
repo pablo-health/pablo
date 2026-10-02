@@ -23,12 +23,13 @@ the floor, not the ceiling.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from typing import Self
 
 import httpx
 
 from ..services.email_sender import EmailSender, OutboundEmail
-from .delivery import DeliveryNotConfiguredError
+from .delivery import ClientSender, DeliveryNotConfiguredError
 from .invite_email import InviteContext, InviteTemplate, describe_duration, render
 from .service import PortalAuthConfig
 
@@ -76,6 +77,12 @@ class SmtpInviteDelivery:
     """
 
     sender: EmailSender
+    #: Who the invitation is from, when the practice is known (see
+    #: ``PracticeSenderDelivery``). ``None`` sends under the deployment's From.
+    client_sender: ClientSender | None = None
+
+    def sending_as(self, sender: ClientSender) -> Self:
+        return replace(self, client_sender=sender)
 
     def check_ready(self) -> None:
         if not self.sender.can_deliver:
@@ -93,8 +100,17 @@ class SmtpInviteDelivery:
         deployment's own mail server is trusted with, so this adapter
         offers the editor (see ``RenderedInviteDelivery``)."""
         self.check_ready()
+        practice = self.client_sender
         self.sender.send(
-            OutboundEmail(to=to_email, subject=subject, text=text, kind="portal_invite")
+            OutboundEmail(
+                to=to_email,
+                subject=subject,
+                text=text,
+                kind="portal_invite",
+                from_name=practice.from_name if practice else None,
+                from_address=practice.from_address if practice else None,
+                reply_to=practice.reply_to if practice else None,
+            )
         )
 
 

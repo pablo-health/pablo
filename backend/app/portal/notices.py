@@ -24,6 +24,10 @@ anything. There is no field here a clinical fact could ride in, which is
 the point: an inbox has proved nothing, and everything worth reading is
 behind the two factors on the other side of the link.
 
+**From the practice.** Where the channel can say who a notice is from, it
+says the practice (:mod:`app.portal.client_sender`), the same as an
+invitation.
+
 Nothing here logs the address, the practice or the patient. What is logged
 is which notice could not be sent, which is the operational fact.
 """
@@ -34,7 +38,8 @@ import logging
 from typing import TYPE_CHECKING
 
 from ..auth.service import _resolve_practice_from_email
-from .delivery import PORTAL_NOTICES, DeliveryNotConfiguredError
+from .client_sender import resolve_client_sender
+from .delivery import PORTAL_NOTICES, DeliveryNotConfiguredError, sending_as_practice
 from .factory import build_portal_link
 from .practice_routes import ensure_practice_slug
 
@@ -69,13 +74,15 @@ def send_portal_notice(
     practice = _resolve_practice_from_email(from_clinician_email)
     if practice is None:
         return False
-    address = ensure_practice_slug(practice[0])
+    practice_id = practice[0]
+    address = ensure_practice_slug(practice_id)
     if not address.enabled:
         # The portal is switched off, so the link would open a 404. Saying
         # nothing is better than sending somebody to one.
         return False
 
     try:
+        delivery = sending_as_practice(delivery, lambda: resolve_client_sender(practice_id))
         delivery.send_notice(
             to_email=to_email,
             notice=notice,

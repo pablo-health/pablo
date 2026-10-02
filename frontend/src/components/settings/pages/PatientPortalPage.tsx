@@ -3,6 +3,7 @@
 "use client"
 
 import { usePortalSettings } from "@/hooks/usePortalSettings"
+import { ClientEmailSenderCard } from "../intake/ClientEmailSenderCard"
 import { IntakeDocumentsCard } from "../intake/IntakeDocumentsCard"
 import { IntakeFormsCard } from "../intake/IntakeFormsCard"
 import { InviteEmailCard } from "../intake/InviteEmailCard"
@@ -17,7 +18,7 @@ import { SettingsCard } from "../ui"
  * Gated behind `patient_portal`, so this only renders where a deployment has
  * turned the portal on. The first card is whether this practice offers it;
  * the welcome and the invitation only matter once it does, so they wait,
- * greyed, until then. Forms and the documents they can ask somebody to sign
+ * greyed, until then — and so does who client email is from. Forms and the documents they can ask somebody to sign
  * stay open either way — a practice can build them before it offers the
  * portal.
  *
@@ -50,6 +51,7 @@ export function PatientPortalPage() {
       >
         <PortalWelcomeCard />
         <InviteEmailCard />
+        <ClientEmailSenderCard />
       </div>
       <IntakeDocumentsCard />
       <LicensedInstrumentsCard />
