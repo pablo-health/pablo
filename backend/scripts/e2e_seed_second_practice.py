@@ -77,6 +77,9 @@ class SeededPractice:
     #: Tables in the practice's schema emptied on every run, so a spec that
     #: builds up state across its cases starts from nothing each bring-up.
     emptied: tuple[str, ...] = ()
+    #: A portal address given to the practice directly, for one the minter
+    #: would never hand out.
+    slug: str | None = None
 
 
 SECOND_PRACTICE = SeededPractice(
@@ -147,6 +150,16 @@ FRESH_HOSTED = SeededPractice(
     email="e2e-fresh-hosted@example.com",
     name="Fresh Practice Hosted",
 )
+# A practice holding a portal address that was reserved after it was given,
+# which the minter refuses today: it keeps the address, and gets no hosted
+# address under a hosted domain.
+FRESH_RESERVED = SeededPractice(
+    id="e2e-fresh-reserved",
+    schema="practice_e2e_fresh_reserved",
+    email="e2e-fresh-reserved@example.com",
+    name="Fresh Practice Reserved",
+    slug="status",
+)
 SEEDED = (
     SECOND_PRACTICE,
     FRESH_YES,
@@ -155,6 +168,7 @@ SEEDED = (
     FRESH_FEED,
     FRESH_DOMAINS,
     FRESH_HOSTED,
+    FRESH_RESERVED,
 )
 
 # Kept for anything that still reads the second practice by its old names.
@@ -173,6 +187,7 @@ def _seed(practice: SeededPractice) -> bool:
     from app.db.platform_models import (
         EmailTenantMappingRow,
         PlatformAllowedEmailRow,
+        PortalPracticeSlugRow,
         PracticePortalSettingsRow,
         PracticeRow,
     )
@@ -234,6 +249,17 @@ def _seed(practice: SeededPractice) -> bool:
                     added_at=now,
                 )
             )
+
+        if practice.slug is not None and session.get(PortalPracticeSlugRow, practice.slug) is None:
+            session.add(
+                PortalPracticeSlugRow(
+                    slug=practice.slug,
+                    practice_id=practice.id,
+                    display_name=practice.name,
+                    created_at=now,
+                )
+            )
+            logger.info("gave %s the portal address %s", practice.id, practice.slug)
 
         if practice.unanswered:
             answered = session.get(PracticePortalSettingsRow, practice.id)
