@@ -196,6 +196,7 @@ def rows(engine: Engine) -> Iterator[_Rows]:
 def hosted(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """A hosted domain, websites on, the shared portal address, no resolver."""
     monkeypatch.setenv("PRACTICE_HOSTED_DOMAIN", DOMAIN)
+    monkeypatch.setenv("PRACTICE_HOSTED_DOMAIN_READY", "true")
     monkeypatch.setenv("PRACTICE_SITE_BUCKET", "hosted-sites")
     monkeypatch.setenv("PORTAL_WEB_BASE_URL", "https://app.example.test")
     get_settings.cache_clear()
@@ -303,6 +304,27 @@ def test_without_a_hosted_domain_nothing_answers_on_one(
     try:
         assert _portal(client, f"{slug}.portal.{DOMAIN}").status_code == 404
         assert _site(client, f"{slug}.{DOMAIN}").status_code == 404
+    finally:
+        get_settings.cache_clear()
+
+
+def test_a_domain_not_yet_served_changes_nothing(
+    client: TestClient, rows: _Rows, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Named but not marked ready: no address resolves, Settings shows none, and
+    links stay on the shared address, so none points at a name not yet served."""
+    monkeypatch.setenv("PRACTICE_HOSTED_DOMAIN", DOMAIN)
+    monkeypatch.setenv("PRACTICE_SITE_BUCKET", "hosted-sites")
+    monkeypatch.setenv("PORTAL_WEB_BASE_URL", "https://app.example.test")
+    get_settings.cache_clear()
+    factory.reset_delivery_registrations()
+    practice_id, slug = rows.practice()
+    rows.site(practice_id)
+    try:
+        assert _portal(client, f"{slug}.portal.{DOMAIN}").status_code == 404
+        assert _site(client, f"{slug}.{DOMAIN}").status_code == 404
+        assert practice_domains._hosted(practice_id) is None
+        assert factory.portal_page_url(slug) == f"https://app.example.test/portal/{slug}"
     finally:
         get_settings.cache_clear()
 

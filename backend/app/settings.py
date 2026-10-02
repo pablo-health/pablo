@@ -1270,6 +1270,19 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Whether the hosted domain's wildcards are actually served yet: DNS in
+    # place and the certificate issued. Until it is set, nothing uses the hosted
+    # domain — no address resolves, Settings shows none and portal links stay
+    # where they were — so naming the domain ahead of time breaks no link.
+    practice_hosted_domain_ready: bool = Field(
+        default=False,
+        description=(
+            "Set once practice_hosted_domain is served: its two wildcards point "
+            "at this deployment and their certificate is issued. Off, practices "
+            "have no hosted addresses even with the domain named."
+        ),
+    )
+
     @field_validator("practice_hosted_domain", mode="before")
     @classmethod
     def _normalize_hosted_domain(cls, v: object) -> object:

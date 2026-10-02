@@ -12,3 +12,4 @@ services:
   backend:
     environment:
       - PRACTICE_HOSTED_DOMAIN=e2e-hosted.example
+      - PRACTICE_HOSTED_DOMAIN_READY=true

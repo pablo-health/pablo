@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
+from app.api_errors import UnprocessableEntityError
 from app.portal.hosted import (
     HostedPurpose,
     hosted_domain,
@@ -24,7 +25,9 @@ from app.portal.hosted import (
     is_under_hosted_domain,
 )
 from app.portal.slugs import RESERVED_SLUGS, is_dns_label, is_mintable_slug
+from app.repositories.practice_domain import InMemoryPracticeDomainRepository
 from app.services.practice_domain_hosts import HostnameError, normalize_host
+from app.services.practice_domain_service import get_practice_domain_service
 from app.settings import Settings, get_settings
 from pydantic import ValidationError
 
@@ -44,6 +47,7 @@ def _fresh_settings() -> Iterator[None]:
 @pytest.fixture
 def hosted(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PRACTICE_HOSTED_DOMAIN", DOMAIN)
+    monkeypatch.setenv("PRACTICE_HOSTED_DOMAIN_READY", "true")
     get_settings.cache_clear()
 
 
@@ -58,6 +62,19 @@ def test_unset_gives_no_practice_a_hosted_address() -> None:
     assert hosted_site_host("acme") is None
     assert hosted_slug("acme.hosted.example", "site") is None
     assert not is_under_hosted_domain("acme.hosted.example")
+
+
+def test_a_named_domain_gives_nothing_until_it_is_marked_served(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PRACTICE_HOSTED_DOMAIN", DOMAIN)
+    get_settings.cache_clear()
+
+    assert get_settings().practice_hosted_domain_ready is False
+    assert hosted_domain() is None
+    assert hosted_portal_host("acme") is None
+    assert hosted_site_host("acme") is None
+    assert hosted_slug("acme.portal.hosted.example", "portal") is None
 
 
 @pytest.mark.parametrize(
@@ -204,6 +221,17 @@ def test_a_slug_is_at_least_three_characters() -> None:
 def test_a_host_under_a_reserved_domain_is_refused(raw: str) -> None:
     with pytest.raises(HostnameError, match="part of this service"):
         normalize_host(raw, reserved_domains=frozenset({DOMAIN}))
+
+
+def test_a_named_domain_is_refused_to_practices_even_before_it_is_served(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PRACTICE_HOSTED_DOMAIN", DOMAIN)
+    get_settings.cache_clear()
+    service = get_practice_domain_service(InMemoryPracticeDomainRepository())
+
+    with pytest.raises(UnprocessableEntityError):
+        service.add("practice-1", f"acme.portal.{DOMAIN}", "portal")
 
 
 def test_a_domain_that_only_ends_the_same_way_is_a_practices_to_add() -> None:
