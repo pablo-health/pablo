@@ -69,11 +69,18 @@ def deployment_hosts(urls: Iterable[str]) -> frozenset[str]:
     return frozenset(hosts)
 
 
-def normalize_host(raw: str, *, reserved: frozenset[str] = frozenset()) -> str:
+def normalize_host(
+    raw: str,
+    *,
+    reserved: frozenset[str] = frozenset(),
+    reserved_domains: frozenset[str] = frozenset(),
+) -> str:
     """The canonical hostname for *raw*, or :class:`HostnameError`.
 
     *reserved* are this deployment's own hosts, which cannot belong to a
-    practice.
+    practice. *reserved_domains* are this deployment's own domains, which no
+    name under can belong to a practice either: every practice already has
+    its address there (:mod:`app.portal.hosted`).
     """
     host = raw.strip().lower()
     if not host:
@@ -105,7 +112,9 @@ def normalize_host(raw: str, *, reserved: frozenset[str] = frozenset()) -> str:
 
     # Exact matches only. A self-hosted install may serve the app from a
     # practice's own apex and want the portal on a name under it.
-    if host in reserved:
+    if host in reserved or any(
+        host == domain or host.endswith(f".{domain}") for domain in reserved_domains
+    ):
         raise HostnameError("That address is part of this service. Enter a domain you own.")
     return host
 

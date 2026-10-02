@@ -5,7 +5,7 @@
 
 import { describe, expect, it, vi } from "vitest"
 import { createHostLookup } from "../practice-host-lookup"
-import { fetchSiteFile } from "../practice-site-lookup"
+import { fetchSiteFile, parseSiteHost } from "../practice-site-lookup"
 
 const API = "http://backend.internal:8000"
 
@@ -134,6 +134,23 @@ describe("fetchSiteFile", () => {
 
     expect(response.status).toBe(503)
     expect(response.headers.get("retry-after")).toBe("5")
+  })
+})
+
+describe("parseSiteHost", () => {
+  it("reads the primary and, on a hosted address, the portal's host", () => {
+    expect(parseSiteHost({ primary_host: null, portal_host: "acme.portal.hosted.example" })).toEqual({
+      primaryHost: null,
+      portalHost: "acme.portal.hosted.example",
+    })
+  })
+
+  it("reads an answer with no portal host as one without", () => {
+    expect(parseSiteHost({ primary_host: "example.com" })).toEqual({ primaryHost: "example.com", portalHost: null })
+  })
+
+  it("makes nothing of a portal host that is not a name", () => {
+    expect(parseSiteHost({ primary_host: null, portal_host: 7 })).toBe("unavailable")
   })
 })
 

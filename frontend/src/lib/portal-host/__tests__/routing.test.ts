@@ -250,11 +250,11 @@ describe("CLINICIAN_ROUTE_SEGMENTS", () => {
     // Two lists in two languages, one here and one where slugs are minted.
     // Read the backend's literal rather than trust a copy of it.
     const source = readFileSync(
-      join(__dirname, "..", "..", "..", "..", "..", "backend", "app", "portal", "practice_routes.py"),
+      join(__dirname, "..", "..", "..", "..", "..", "backend", "app", "portal", "slugs.py"),
       "utf8",
     )
-    const block = source.match(/_RESERVED_SLUGS = frozenset\(\s*\{([\s\S]*?)\}\s*\)/)
-    expect(block, "backend/app/portal/practice_routes.py defines _RESERVED_SLUGS").toBeTruthy()
+    const block = source.match(/RESERVED_SLUGS = frozenset\(\s*\{([\s\S]*?)\}\s*\)/)
+    expect(block, "backend/app/portal/slugs.py defines RESERVED_SLUGS").toBeTruthy()
     const reserved = new Set([...(block as RegExpMatchArray)[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]))
 
     for (const name of [...CLINICIAN_ROUTE_SEGMENTS, "portal", "api"]) {

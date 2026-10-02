@@ -68,7 +68,7 @@ const PORTAL_PREFIX = "/portal"
  * "no such practice" state.
  *
  * The backend never mints one of these as a practice slug: its
- * `_RESERVED_SLUGS` (backend/app/portal/practice_routes.py) carries the same
+ * `RESERVED_SLUGS` (backend/app/portal/slugs.py) carries the same
  * names, and a unit test here fails when one is missing there.
  */
 export const CLINICIAN_ROUTE_SEGMENTS: ReadonlySet<string> = new Set([

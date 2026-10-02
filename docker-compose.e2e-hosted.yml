@@ -1,0 +1,14 @@
+# The end-to-end stack with a hosted domain: every practice gets
+# <slug>.e2e-hosted.example for its website and <slug>.portal.e2e-hosted.example
+# for its portal (backend/app/portal/hosted.py).
+#
+# Layered on docker-compose.e2e.yml, never run on its own. Kept out of the
+# main file because a hosted domain moves every practice's portal links onto
+# its hosted address, which the specs following the shared practice's links
+# do not expect. `make e2e-hosted` recreates the backend (and the services
+# sharing its network) with this on top and runs the specs tagged @hosted, which reach the hosted names through
+# practice-host-lb; `make e2e-up` puts the backend back.
+services:
+  backend:
+    environment:
+      - PRACTICE_HOSTED_DOMAIN=e2e-hosted.example

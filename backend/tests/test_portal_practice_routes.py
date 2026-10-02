@@ -28,7 +28,8 @@ import pytest
 from app.auth.service import require_active_subscription
 from app.db.platform_models import PortalPracticeSlugRow, PracticePortalSettingsRow, PracticeRow
 from app.portal.factory import build_invite_link
-from app.portal.practice_routes import _RESERVED_SLUGS, _slugify, router
+from app.portal.practice_routes import _slugify, router
+from app.portal.slugs import RESERVED_SLUGS
 from app.rate_limit import (
     require_portal_practice_resolve_rate_limit,
     reset_portal_limiters,
@@ -393,8 +394,8 @@ def test_no_reserved_word_can_become_an_address() -> None:
     """The minter skips them, and this is the list it skips. Kept as its own
     assertion because the shell's routing gives some of these meaning, and a
     practice holding one would shadow it."""
-    assert "redeem" in _RESERVED_SLUGS
-    assert "api" in _RESERVED_SLUGS
+    assert "redeem" in RESERVED_SLUGS
+    assert "api" in RESERVED_SLUGS
 
 
 @pytest.mark.parametrize(
@@ -418,4 +419,4 @@ def test_no_web_app_route_can_become_an_address(route: str) -> None:
     and the web app's own top-level routes answer 404 on it, so a practice
     holding one of those names would have an address that goes nowhere. The
     frontend's routing test checks this set covers its route list too."""
-    assert route in _RESERVED_SLUGS
+    assert route in RESERVED_SLUGS

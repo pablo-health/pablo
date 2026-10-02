@@ -3,7 +3,7 @@
 /**
  * Asking the backend about a practice's website hosts, and fetching their files.
  *
- * `GET {API_URL}/api/sites/hosts/{host}` answers `{primary_host}` for a
+ * `GET {API_URL}/api/sites/hosts/{host}` answers `{primary_host, portal_host}` for a
  * working website host of a practice that has published, and 404 for every
  * other; answers are kept for a minute like a portal host's
  * (`./practice-host-lookup`).
@@ -19,11 +19,12 @@ import { SITE_SECURITY_HEADERS, type SiteHost, siteCacheControl } from "./practi
 
 const FILE_TIMEOUT_MS = 10_000
 
-function parseSiteHost(body: unknown): SiteHost | "unavailable" {
+export function parseSiteHost(body: unknown): SiteHost | "unavailable" {
   if (typeof body !== "object" || body === null) return "unavailable"
-  const { primary_host: primaryHost } = body as Record<string, unknown>
+  const { primary_host: primaryHost, portal_host: portalHost = null } = body as Record<string, unknown>
   if (primaryHost !== null && typeof primaryHost !== "string") return "unavailable"
-  return { primaryHost }
+  if (portalHost !== null && typeof portalHost !== "string") return "unavailable"
+  return { primaryHost, portalHost }
 }
 
 export const lookupSiteHost = createHostLookup<SiteHost>(

@@ -125,9 +125,11 @@ class SiteStatus:
     #: The version visitors are served once a website host works.
     live_version: int | None
     #: The working website host the live version is served at: the primary,
-    #: else the oldest. ``None`` when nothing is published or no host works.
+    #: else the oldest, else the hosted address. ``None`` when nothing is
+    #: published or no host works.
     live_host: str | None
-    #: Whether the practice has a working website host at all.
+    #: Whether the practice has a working website host at all, its hosted
+    #: address included.
     has_active_host: bool
     draft: SiteDraft | None
     #: Retained versions, newest first.
@@ -197,11 +199,17 @@ class PracticeSiteService:
 
     def status(self, practice_id: str) -> SiteStatus:
         row = self._store.get(practice_id)
-        hosts = self._store.active_site_hosts(practice_id)
+        # The practice's own working hosts first; its hosted address, where the
+        # deployment has one, serves the site too and sends visitors to the
+        # primary of those when there is one.
+        hosts = [h.domain for h in self._store.active_site_hosts(practice_id)]
+        hosted = self._store.hosted_site_host(practice_id)
+        if hosted is not None:
+            hosts.append(hosted)
         live = row.live_version if row else None
         return SiteStatus(
             live_version=live,
-            live_host=hosts[0].domain if hosts and live is not None else None,
+            live_host=hosts[0] if hosts and live is not None else None,
             has_active_host=bool(hosts),
             draft=_draft(row),
             versions=[_version(v) for v in self._store.versions(practice_id)] if row else [],

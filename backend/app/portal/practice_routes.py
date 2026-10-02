@@ -44,6 +44,7 @@ from ..rate_limit import require_portal_practice_resolve_rate_limit
 from ..services.captcha import CaptchaVerifier, get_captcha_verifier
 from ..utcnow import utc_now
 from .portal_settings import portal_enabled_in
+from .slugs import MAX_SLUG_LENGTH, MIN_SLUG_LENGTH, is_mintable_slug
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -52,8 +53,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["patient-portal"])
 
-_MIN_SLUG_LEN = 3
-_MAX_SLUG_LEN = 63
 _MAX_SLUG_ATTEMPTS = 25
 _SLUG_COLLAPSE_RE = re.compile(r"[^a-z0-9]+")
 # SQLSTATE 23505, unique_violation. The table's only unique constraints are the
@@ -61,46 +60,6 @@ _SLUG_COLLAPSE_RE = re.compile(r"[^a-z0-9]+")
 # not-yet-seen practice_id (idempotency is checked first), so a 23505 here is a
 # slug collision.
 _UNIQUE_VIOLATION = "23505"
-
-# The handful of path segments that would be confusing or actively misleading
-# as a practice's own address. Not a moderation list — these are words the
-# shell's own routing already gives meaning to, or that read as platform
-# surface rather than as a practice. ``redeem`` is the load-bearing one: it is
-# the segment a magic link lands on (see ``app.portal.factory``).
-#
-# The second group is every top-level route the web app serves outside the
-# portal. Where the portal has a host of its own it is addressed as ``/{slug}``
-# there, and those paths answer 404 rather than reach a practice, so a
-# practice holding one would have an address that goes nowhere. The web app
-# keeps the same names in ``CLINICIAN_ROUTE_SEGMENTS``
-# (frontend/src/lib/portal-host/routing.ts); a frontend unit test reads this
-# set and fails when a name there is missing here.
-_RESERVED_SLUGS = frozenset(
-    {
-        "api",
-        "app",
-        "admin",
-        "auth",
-        "redeem",
-        "refresh",
-        "practice",
-        "practices",
-        "www",
-        "static",
-        "assets",
-        # Top-level web app routes (see above).
-        "portal",
-        "book",
-        "dashboard",
-        "fbauth-proxy",
-        "launch",
-        "login",
-        "mfa-enrollment",
-        "mfa-step-up",
-        "native-auth",
-        "onboarding",
-    }
-)
 
 
 class PortalPracticeResolution(BaseModel):
@@ -325,7 +284,8 @@ def ensure_practice_slug(practice_id: str) -> PracticeAddress:
         base = _slugify(practice_row.name)
         now = utc_now()
         for candidate in _candidate_slugs(base):
-            if candidate in _RESERVED_SLUGS:
+            # A slug is also a DNS label on a hosted domain (app.portal.slugs).
+            if not is_mintable_slug(candidate):
                 continue
             row = PortalPracticeSlugRow(
                 slug=candidate,
@@ -368,8 +328,8 @@ def _slugify(name: str) -> str:
     the name collapses to nothing printable.
     """
     base = _SLUG_COLLAPSE_RE.sub("-", name.strip().lower()).strip("-")
-    base = base[:_MAX_SLUG_LEN].rstrip("-")
-    if len(base) < _MIN_SLUG_LEN:
+    base = base[:MAX_SLUG_LENGTH].rstrip("-")
+    if len(base) < MIN_SLUG_LENGTH:
         base = "practice"
     return base
 
@@ -379,5 +339,5 @@ def _candidate_slugs(base: str) -> Iterator[str]:
     yield base
     for n in range(2, _MAX_SLUG_ATTEMPTS + 1):
         suffix = f"-{n}"
-        trimmed = base[: _MAX_SLUG_LEN - len(suffix)]
+        trimmed = base[: MAX_SLUG_LENGTH - len(suffix)]
         yield f"{trimmed}{suffix}"

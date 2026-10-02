@@ -14,17 +14,18 @@
  * portal answer on every bring-up. Each spec uses its own: the answer is
  * given once per run, so two specs sharing one would race for it.
  *
- * "messages", "feed" and "domains" are practices of their own for a
+ * "messages", "feed", "domains" and "hosted" are practices of their own for a
  * different reason: the specs using each change something every other spec
  * would see — Messages turned off, a season of feed sessions on the calendar,
- * portal links that point at a host of the practice's own.
+ * portal links that point at a host of the practice's own, a website
+ * published with no host of the practice's own to put it on.
  */
 
 import type { Browser, BrowserContext, BrowserContextOptions, Page } from "@playwright/test"
 import { ApiClient, ensureEmulatorUser } from "./api"
 import { BASE_URL } from "./stack"
 
-export type FreshPracticeName = "yes" | "no" | "messages" | "feed" | "domains"
+export type FreshPracticeName = "yes" | "no" | "messages" | "feed" | "domains" | "hosted"
 
 const PASSWORD = "E2e-fresh-practice-password-long-enough"
 

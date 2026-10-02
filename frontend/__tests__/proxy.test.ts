@@ -312,7 +312,7 @@ describe("frontend/proxy.ts website host", () => {
     vi.mocked(lookupPracticeHost).mockReset()
     vi.mocked(lookupPracticeHost).mockResolvedValue(null)
     vi.mocked(lookupSiteHost).mockReset()
-    vi.mocked(lookupSiteHost).mockResolvedValue({ primaryHost: SITE })
+    vi.mocked(lookupSiteHost).mockResolvedValue({ primaryHost: SITE, portalHost: null })
     vi.mocked(fetchSiteFile).mockClear()
     vi.stubEnv("APP_HOSTS", APP)
   })
@@ -369,6 +369,18 @@ describe("frontend/proxy.ts website host", () => {
     const response = await proxy(at(`https://${SITE}/`, SITE))
 
     expect(response.status).toBe(503)
+  })
+
+  it("sends /portal on a hosted website address to the practice's portal host", async () => {
+    const hosted = "acme.hosted.example"
+    vi.mocked(lookupSiteHost).mockResolvedValue({ primaryHost: null, portalHost: "acme.portal.hosted.example" })
+
+    const response = await proxy(at(`https://${hosted}/portal/forms?from=email`, hosted))
+
+    expect(response.status).toBe(301)
+    expect(response.headers.get("location")).toBe("https://acme.portal.hosted.example/forms?from=email")
+    expect(fetchSiteFile).not.toHaveBeenCalled()
+    expect(authProviderMiddleware).not.toHaveBeenCalled()
   })
 
   it("refuses a POST: a website is static", async () => {

@@ -138,7 +138,24 @@ FRESH_DOMAINS = SeededPractice(
     email="e2e-fresh-domains@example.com",
     name="Fresh Practice Domains",
 )
-SEEDED = (SECOND_PRACTICE, FRESH_YES, FRESH_NO, FRESH_MESSAGES, FRESH_FEED, FRESH_DOMAINS)
+# Its own practice for the spec about a practice's hosted addresses: it
+# publishes a website and holds no host of its own, so its hosted addresses
+# are its only ones.
+FRESH_HOSTED = SeededPractice(
+    id="e2e-fresh-hosted",
+    schema="practice_e2e_fresh_hosted",
+    email="e2e-fresh-hosted@example.com",
+    name="Fresh Practice Hosted",
+)
+SEEDED = (
+    SECOND_PRACTICE,
+    FRESH_YES,
+    FRESH_NO,
+    FRESH_MESSAGES,
+    FRESH_FEED,
+    FRESH_DOMAINS,
+    FRESH_HOSTED,
+)
 
 # Kept for anything that still reads the second practice by its old names.
 SECOND_PRACTICE_ID = SECOND_PRACTICE.id

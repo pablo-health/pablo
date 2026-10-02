@@ -114,6 +114,7 @@ class PracticeDomainService:
         repo: PracticeDomainRepository,
         *,
         reserved_hosts: frozenset[str] = frozenset(),
+        reserved_domains: frozenset[str] = frozenset(),
         cname_target: str = "",
         apex_ips: tuple[str, ...] = (),
         dkim_cname_suffix: str = "dkim.amazonses.com",
@@ -136,6 +137,7 @@ class PracticeDomainService:
         self._deferred_removal = deferred_removal
         self._allowance = allowance
         self._reserved = reserved_hosts
+        self._reserved_domains = reserved_domains
         self._cname_target = cname_target.strip().lower().rstrip(".")
         self._apex_ips = apex_ips
         self._dkim_suffix = dkim_cname_suffix.strip().lower().strip(".")
@@ -523,7 +525,9 @@ class PracticeDomainService:
 
     def _normalize(self, raw_domain: str) -> str:
         try:
-            return normalize_host(raw_domain, reserved=self._reserved)
+            return normalize_host(
+                raw_domain, reserved=self._reserved, reserved_domains=self._reserved_domains
+            )
         except HostnameError as e:
             raise UnprocessableEntityError(str(e), code="DOMAIN_INVALID") from e
 
@@ -618,6 +622,7 @@ def get_practice_domain_service(
     return PracticeDomainService(
         repo,
         reserved_hosts=reserved,
+        reserved_domains=frozenset(filter(None, [settings.practice_hosted_domain])),
         cname_target=settings.practice_domain_cname_target,
         apex_ips=apex_ips,
         dkim_cname_suffix=settings.practice_domain_dkim_cname_suffix,

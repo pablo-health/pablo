@@ -23,6 +23,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Matches -prod, -production, -prod<N> at end of project id. The
 # leading `-` prevents substring traps (reproduction, approved).
 _PROD_PROJECT_PATTERN = re.compile(r"-prod(?:uction)?\d*$")
+_DNS_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
 
 class Settings(BaseSettings):
@@ -1255,6 +1256,36 @@ class Settings(BaseSettings):
             "rule points at. Must already exist in the URL map."
         ),
     )
+    # Every practice's addresses under a domain of the deployment's
+    # (app.portal.hosted): <slug>.<domain> for its website and
+    # <slug>.portal.<domain> for its portal. Serving them needs the two
+    # wildcards pointed at whatever serves practice hosts, with a certificate.
+    practice_hosted_domain: str = Field(
+        default="",
+        description=(
+            "Domain under which every practice has a website address "
+            "(<slug>.<domain>) and a portal address (<slug>.portal.<domain>), "
+            "e.g. hosted.example.org. Empty: practices have only the hosts "
+            "they add themselves."
+        ),
+    )
+
+    @field_validator("practice_hosted_domain", mode="before")
+    @classmethod
+    def _normalize_hosted_domain(cls, v: object) -> object:
+        # Stored the way hosts are compared: lowercase, no trailing dot. A
+        # value that is not a hostname would give no practice an address that
+        # resolves, so it stops the deployment instead.
+        if not isinstance(v, str):
+            return v
+        domain = v.strip().lower().removesuffix(".")
+        labels = domain.split(".")
+        # A name with no dot is not on the public internet.
+        if domain and ("." not in domain or not all(_DNS_LABEL.match(lbl) for lbl in labels)):
+            msg = f"PRACTICE_HOSTED_DOMAIN is not a domain name: {v!r}"
+            raise ValueError(msg)
+        return domain
+
     # One-click DNS setup through Domain Connect (app/services/domain_connect.py).
     # Off unless the provider id, key host and KMS key version are all set. The
     # templates themselves are published in the public Domain Connect template

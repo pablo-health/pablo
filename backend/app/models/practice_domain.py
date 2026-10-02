@@ -149,8 +149,23 @@ class PracticeDomainResponse(BaseModel):
     stuck_message: str | None = None
 
 
+class HostedAddressesResponse(BaseModel):
+    """The practice's addresses under the deployment's hosted domain."""
+
+    portal_host: str
+    #: Whether the practice offers its clients the portal; until it does, the
+    #: portal address serves nothing.
+    portal_on: bool
+    site_host: str
+    #: Whether the practice has published a website; until it has, the website
+    #: address serves nothing.
+    site_live: bool
+
+
 class PracticeDomainListResponse(BaseModel):
     domains: list[PracticeDomainResponse]
+    #: ``None`` where the deployment names no hosted domain.
+    hosted: HostedAddressesResponse | None = None
 
 
 class DomainNameResponse(BaseModel):

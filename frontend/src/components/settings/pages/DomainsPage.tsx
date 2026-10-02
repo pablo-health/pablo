@@ -17,6 +17,7 @@ import { canManageDomains } from "../domains/canManageDomains"
 import { DomainConnectOffers } from "../domains/DomainConnectOffers"
 import { DomainConnectReturn } from "../domains/DomainConnectReturn"
 import { DomainRow } from "../domains/DomainRow"
+import { HostedAddresses } from "../domains/HostedAddresses"
 import { SettingsCard } from "../ui"
 import { useSettingsUserStatus } from "../useSettingsPreferences"
 
@@ -79,6 +80,7 @@ export function DomainsPage() {
           <span className="text-[12.5px] text-muted-foreground">Looks up your DNS records.</span>
         </div>
       )}
+      {data.hosted && <HostedAddresses hosted={data.hosted} domains={data.domains} />}
       {SECTIONS.map(({ purpose, title, description }) => {
         const domains = byPurpose(purpose)
         return (

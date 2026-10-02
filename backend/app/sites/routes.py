@@ -42,7 +42,9 @@ from ..api_errors import (
 )
 from ..auth.service import require_active_subscription
 from ..models import User  # noqa: TC001 — fastapi resolves the annotation at runtime
+from ..portal.hosted import hosted_domain
 from ..portal.practice_hosts import get_portal_host_cache
+from ..portal.practice_routes import ensure_practice_slug
 from ..routes.practice_domains import _manageable_practice_id, _practice_id
 from .files import MAX_ARCHIVE_BYTES, SiteFilesError, SiteTooLargeError, read_zip
 from .hosts import get_site_host_cache
@@ -226,6 +228,11 @@ def publish_practice_site(
     """Publish the draft as a new version and make it live. 409 with no draft."""
     practice_id = _manageable_practice_id(user)
     _translated(lambda: service.publish_draft(practice_id, user, http_request))
+    if hosted_domain() is not None:
+        # The hosted website address is the practice's portal address; a
+        # practice that never set up its portal gets one now, so what it
+        # published is live somewhere.
+        ensure_practice_slug(practice_id)
     background.add_task(_forget_host_answers)
     background.add_task(tidy_practice_site, practice_id)
     return _response(service, practice_id)

@@ -368,6 +368,7 @@ class TestStuck:
             practice_domain_url_map="",
             practice_domain_path_matcher="",
             practice_domain_stuck_after_seconds=120,
+            practice_hosted_domain="",
         )
         with patch.object(practice_domain_service, "get_settings", return_value=settings):
             service = get_practice_domain_service(InMemoryPracticeDomainRepository())

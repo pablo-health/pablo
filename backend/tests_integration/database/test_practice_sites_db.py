@@ -421,8 +421,14 @@ def test_a_published_site_answers_on_its_hosts(
     alias = rows.host(practice_id, primary=False)
     _publish(session, bucket, practice_id)
 
-    assert client.get(f"/api/sites/hosts/{primary}").json() == {"primary_host": primary}
-    assert client.get(f"/api/sites/hosts/{alias.upper()}:443").json() == {"primary_host": primary}
+    assert client.get(f"/api/sites/hosts/{primary}").json() == {
+        "primary_host": primary,
+        "portal_host": None,
+    }
+    assert client.get(f"/api/sites/hosts/{alias.upper()}:443").json() == {
+        "primary_host": primary,
+        "portal_host": None,
+    }
 
 
 def test_a_host_that_serves_no_site_is_one_404(

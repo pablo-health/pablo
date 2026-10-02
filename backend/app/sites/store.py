@@ -3,7 +3,8 @@
 """The rows behind a practice's website: ``platform.practice_sites`` and its versions.
 
 Every query names the practice, and both tables are keyed on it. The website
-hosts are read from ``platform.practice_domains`` (purpose ``site``).
+hosts are read from ``platform.practice_domains`` (purpose ``site``), and its
+hosted address from its portal slug (:mod:`app.portal.hosted`).
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 
 from ..db.platform_models import PracticeDomainRow, PracticeSiteRow, PracticeSiteVersionRow
+from ..portal.hosted import hosted_site_host, practice_slug
 
 if TYPE_CHECKING:
     from collections.abc import Collection
@@ -90,3 +92,8 @@ class PracticeSiteStore:
             )
         )
         return list(self._session.execute(stmt).scalars())
+
+    def hosted_site_host(self, practice_id: str) -> str | None:
+        """The practice's hosted website address, where the deployment has one."""
+        slug = practice_slug(self._session, practice_id)
+        return hosted_site_host(slug) if slug else None
