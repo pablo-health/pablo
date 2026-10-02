@@ -3,7 +3,7 @@
 import { existsSync, readFileSync } from "fs"
 import { join } from "path"
 import { describe, expect, it, vi } from "vitest"
-import { practiceThemeFor } from "../practice-host-theme"
+import { portalPracticeHost } from "../practice-host-request"
 import type { PracticeHostAnswer } from "../practice-host"
 import { PRACTICE_FONTS, type PracticeTheme, parsePracticeTheme, practiceThemeCss } from "../practice-theme"
 
@@ -109,16 +109,23 @@ describe("the fonts a theme can name", () => {
   })
 })
 
-describe("practiceThemeFor", () => {
+describe("portalPracticeHost", () => {
   const ENV = { APP_HOSTS: "app.example.com", PORTAL_HOSTS: "portal.example.com" }
   const THEME = parsePracticeTheme(FULL)
   const answering = (answer: PracticeHostAnswer) => vi.fn(async () => answer)
 
-  it("is the practice's theme on its own portal host", async () => {
-    const lookup = answering({ slug: "acme", primaryHost: null, theme: THEME })
+  it("is the practice's own host, with its theme", async () => {
+    const found = { slug: "acme", primaryHost: null, theme: THEME }
+    const lookup = answering(found)
 
-    expect(await practiceThemeFor("clients.acme-therapy.com", "acme", lookup, ENV)).toEqual(THEME)
+    expect(await portalPracticeHost("clients.acme-therapy.com", "acme", lookup, ENV)).toEqual(found)
     expect(lookup).toHaveBeenCalledWith("clients.acme-therapy.com")
+  })
+
+  it("is the practice's own host even when it has no theme", async () => {
+    const found = { slug: "acme", primaryHost: null, theme: null }
+
+    expect(await portalPracticeHost("clients.acme-therapy.com", "acme", answering(found), ENV)).toEqual(found)
   })
 
   it.each([
@@ -126,10 +133,10 @@ describe("practiceThemeFor", () => {
     ["the shared portal host", "portal.example.com"],
     ["a local address", "localhost:3000"],
     ["no host at all", null],
-  ])("is no theme on %s, which is never looked up", async (_name, host) => {
+  ])("is not on %s, which is never looked up", async (_name, host) => {
     const lookup = answering({ slug: "acme", primaryHost: null, theme: THEME })
 
-    expect(await practiceThemeFor(host, "acme", lookup, ENV)).toBeNull()
+    expect(await portalPracticeHost(host, "acme", lookup, ENV)).toBeNull()
     expect(lookup).not.toHaveBeenCalled()
   })
 
@@ -137,14 +144,13 @@ describe("practiceThemeFor", () => {
     ["serves nothing", null],
     ["could not be asked", "unavailable"],
     ["is another practice's", { slug: "other", primaryHost: null, theme: THEME }],
-    ["has no theme", { slug: "acme", primaryHost: null, theme: null }],
-  ] as const)("is no theme when the host %s", async (_name, answer) => {
-    expect(await practiceThemeFor("clients.acme-therapy.com", "acme", answering(answer), ENV)).toBeNull()
+  ] as const)("is not when the host %s", async (_name, answer) => {
+    expect(await portalPracticeHost("clients.acme-therapy.com", "acme", answering(answer), ENV)).toBeNull()
   })
 
-  it("is no theme where practice hosts are not looked up at all", async () => {
+  it("is not where practice hosts are not looked up at all", async () => {
     const lookup = answering({ slug: "acme", primaryHost: null, theme: THEME })
 
-    expect(await practiceThemeFor("clients.acme-therapy.com", "acme", lookup, {})).toBeNull()
+    expect(await portalPracticeHost("clients.acme-therapy.com", "acme", lookup, {})).toBeNull()
   })
 })

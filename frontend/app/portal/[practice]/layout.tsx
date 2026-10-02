@@ -5,9 +5,10 @@
  *
  * Outside the `(dashboard)` route group deliberately: no clinician nav, no
  * dashboard sidebar. Rides the root layout exactly as `book/[slug]` does —
- * this file gives the route its own metadata, and on a practice's own host
- * the practice's theme (`@/lib/portal-host/practice-host-theme`), but adds no
- * chrome the root layout already provides.
+ * this file gives the route its own metadata and, on a practice's own host,
+ * tells the pages beneath that they are there and puts on the practice's
+ * theme (`@/lib/portal-host/practice-host-request`). It adds no chrome the
+ * root layout already provides.
  *
  * `noindex`: a practice's own slug is not a page worth surfacing in search
  * results, and — unlike `book/[slug]`, which wants to be found — nothing
@@ -17,7 +18,8 @@
 import type { Metadata } from "next"
 import { headers } from "next/headers"
 import { PracticeThemeScope } from "@/components/portal-shell/PracticeThemeScope"
-import { practiceThemeFor } from "@/lib/portal-host/practice-host-theme"
+import { PortalHostProvider } from "@/components/portal-shell/portal-host-context"
+import { portalPracticeHost } from "@/lib/portal-host/practice-host-request"
 
 export const metadata: Metadata = {
   title: "Patient Portal",
@@ -31,6 +33,10 @@ interface LayoutProps {
 
 export default async function PortalLayout({ children, params }: LayoutProps) {
   const { practice } = await params
-  const theme = await practiceThemeFor((await headers()).get("host"), practice)
-  return <PracticeThemeScope theme={theme}>{children}</PracticeThemeScope>
+  const found = await portalPracticeHost((await headers()).get("host"), practice)
+  return (
+    <PortalHostProvider value={{ onPracticeHost: found !== null }}>
+      <PracticeThemeScope theme={found?.theme ?? null}>{children}</PracticeThemeScope>
+    </PortalHostProvider>
+  )
 }

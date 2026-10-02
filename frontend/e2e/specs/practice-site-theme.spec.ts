@@ -10,8 +10,9 @@
  * a theme.json, and a browser that resolves the practice's hosts to this
  * machine opens the portal on its primary host after each:
  *
- *   1. With no theme the portal is served exactly as before — no themed
- *      element, the app's own background.
+ *   1. With no theme the portal keeps its own look — no themed element, the
+ *      app's own background — but, being on the practice's own host, no
+ *      "Powered by Pablo" either.
  *   2. The draft's theme.json is reported on the Website page: what it gives
  *      the portal, and the value it leaves out (too little contrast) and why.
  *   3. Once published, the portal on the practice's host takes the theme's
@@ -84,6 +85,7 @@ async function portalLook(browser: Browser) {
         heading: heading ? getComputedStyle(heading).fontFamily : null,
         body: shell ? getComputedStyle(shell).fontFamily : null,
         interLoaded: document.fonts.check('16px "Inter"'),
+        poweredByPablo: document.body.innerText.includes("Powered by Pablo"),
       }
     })
   } finally {
@@ -115,6 +117,7 @@ test("the portal on a practice's own host wears its website's theme @portal", as
       .toBe(false)
     const plain = await portalLook(onThisMachine)
     expect(plain.background).not.toBe("rgb(251, 248, 243)")
+    expect(plain.poweredByPablo, "no Powered by Pablo on the practice's own host, theme or not").toBe(false)
 
     // 2. The draft's theme.json, as the Website page reports it.
     await page.getByLabel("Website zip").setInputFiles(await siteZip(`Themed ${Date.now()}`, THEME))
@@ -150,6 +153,7 @@ test("the portal on a practice's own host wears its website's theme @portal", as
     expect(themed.heading).toContain("Fraunces")
     expect(themed.body).toContain("Inter")
     expect(themed.interLoaded, "the body font loaded").toBe(true)
+    expect(themed.poweredByPablo).toBe(false)
     expect(fontRequests.length, "the page asked for its fonts").toBeGreaterThan(0)
     for (const url of fontRequests) {
       expect(new URL(url).origin, "every font came from the practice's own origin").toBe(PRIMARY_ORIGIN)
