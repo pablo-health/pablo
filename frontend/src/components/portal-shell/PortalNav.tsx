@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 /**
- * The shell's header: the practice's name, Sign out, and the navigation.
+ * The shell's header: the practice's name, on the practice's own host a link
+ * back to its website, Sign out, and the navigation.
  *
  * The navigation is real links — Home, then one per section this practice
  * serves — and the page being shown is marked `aria-current="page"`, so a
@@ -15,6 +16,7 @@
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { portalSectionHref } from "@/lib/portal-shell/paths"
+import { usePortalHost } from "./portal-host-context"
 import type { PortalSlot } from "./slots"
 
 const LINK_CLASS =
@@ -39,15 +41,22 @@ export function ShellHeader({
   // Only slots that asked for a label appear in the navigation; a slot
   // without one still has a tile and a page of its own.
   const navSlots = slots.filter((slot) => slot.label !== undefined)
+  // On the practice's own host, the way back to the practice's website.
+  const { siteHost } = usePortalHost()
   return (
     <header className="border-b border-neutral-200 bg-white px-4 py-4">
       <div className="mx-auto flex max-w-md flex-wrap items-center justify-between gap-x-4 gap-y-2">
         {displayName ? (
-          <h1 data-testid="portal-shell-practice-name" className="text-base font-semibold">
+          <h1 data-testid="portal-shell-practice-name" className="font-display text-lg font-semibold">
             {displayName}
           </h1>
         ) : (
           <div className="h-5 w-40 animate-pulse rounded bg-neutral-200" aria-hidden="true" />
+        )}
+        {siteHost && (
+          <a href={`https://${siteHost}`} data-testid="portal-back-to-site" className={LINK_CLASS}>
+            Back to {siteHost}
+          </a>
         )}
         {onSignOut && (
           <Button

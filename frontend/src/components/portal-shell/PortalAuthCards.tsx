@@ -2,8 +2,8 @@
 
 /**
  * The cards the shell shows before there is a session: resolving, an address
- * that names no practice, no session, a link the server will no longer text
- * a code for, and asking for and entering the code.
+ * that names no practice, and asking for and entering the code. Signing in by
+ * email — the landing for anyone without a session — is `./EmailSignIn`.
  *
  * Every redeem failure reaches `OtpCard` as the same message. See
  * `PortalShell` for why that sameness is the point.
@@ -20,14 +20,17 @@ import { Label } from "@/components/ui/label"
 export function CardShell({
   children,
   testId,
+  roomy = false,
 }: {
   children: React.ReactNode
   testId: string
+  /** More room inside, for the signed-out cards that stand on their own. */
+  roomy?: boolean
 }) {
   return (
     <div
       data-testid={testId}
-      className="rounded-lg border border-neutral-200 bg-white p-6 shadow-sm"
+      className={`rounded-lg border border-neutral-200 bg-white shadow-sm ${roomy ? "p-6 sm:p-8" : "p-6"}`}
     >
       {children}
     </div>
@@ -58,36 +61,7 @@ export function UnknownPracticeCard() {
   )
 }
 
-export function NoSessionCard({ slug, revoked = false }: { slug: string; revoked?: boolean }) {
-  return (
-    <CardShell testId="portal-shell-no-session">
-      <div className="flex flex-col items-center gap-2 py-4 text-center">
-        <h2 className="text-base font-semibold text-neutral-900">Check your email</h2>
-        <p className="text-sm text-neutral-600">
-          Look for your invite link — or ask your practice to send one.
-        </p>
-        {revoked && (
-          <p data-testid="portal-shell-expired-note" className="mt-2 text-sm text-neutral-500">
-            Your access has ended. Ask your practice to send a new invite link when you&apos;re
-            ready to continue.
-          </p>
-        )}
-        {/* Offered on both, because the shell cannot tell a lapsed session
-            from a withdrawn one and neither can the recovery page — it
-            answers the same way either way. */}
-        <Link
-          href={`/portal/${encodeURIComponent(slug)}/recover`}
-          data-testid="portal-shell-recover-link"
-          className="mt-2 text-sm text-neutral-600 underline underline-offset-4"
-        >
-          Send me a new link
-        </Link>
-      </div>
-    </CardShell>
-  )
-}
-
-/** Where a patient whose link no longer works gets a new one. */
+/** Where a patient whose code did not work gets a new link. */
 function RecoverLink({ slug, testId }: { slug: string; testId: string }) {
   return (
     <Link
@@ -97,22 +71,6 @@ function RecoverLink({ slug, testId }: { slug: string; testId: string }) {
     >
       Get a new sign-in link
     </Link>
-  )
-}
-
-/**
- * The server would not text a code for this link. Spent, expired and
- * withdrawn all look like this, on purpose — the answer is the same either
- * way.
- */
-export function LinkEndedCard({ slug }: { slug: string }) {
-  return (
-    <CardShell testId="portal-shell-link-ended">
-      <div className="flex flex-col items-center gap-2 py-4 text-center">
-        <h2 className="text-base font-semibold text-neutral-900">This link has expired</h2>
-        <RecoverLink slug={slug} testId="portal-shell-link-ended-recover" />
-      </div>
-    </CardShell>
   )
 }
 
@@ -151,8 +109,8 @@ export function OtpCard({
 
   if (!codeSent) {
     return (
-      <CardShell testId="portal-shell-otp">
-        <h2 className="text-base font-semibold text-neutral-900">Get a sign-in code</h2>
+      <CardShell testId="portal-shell-otp" roomy>
+        <h2 className="text-xl font-semibold text-neutral-900">Get a sign-in code</h2>
         <p className="mt-1 text-sm text-neutral-600">
           We&apos;ll text a code to the mobile number your practice has for you.
         </p>
@@ -172,8 +130,8 @@ export function OtpCard({
 
   const canSubmit = otp.trim().length > 0 && !submitting
   return (
-    <CardShell testId="portal-shell-otp">
-      <h2 className="text-base font-semibold text-neutral-900">Enter your code</h2>
+    <CardShell testId="portal-shell-otp" roomy>
+      <h2 className="text-xl font-semibold text-neutral-900">Enter your code</h2>
       <p className="mt-1 text-sm text-neutral-600">
         We texted you a code. It works for 15 minutes.
       </p>

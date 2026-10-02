@@ -216,7 +216,7 @@ describe("frontend/proxy.ts practice host", () => {
   beforeEach(() => {
     vi.mocked(authProviderMiddleware).mockClear()
     vi.mocked(lookupPracticeHost).mockReset()
-    vi.mocked(lookupPracticeHost).mockResolvedValue({ slug: "acme", primaryHost: PRIMARY, theme: null })
+    vi.mocked(lookupPracticeHost).mockResolvedValue({ slug: "acme", primaryHost: PRIMARY, theme: null, siteHost: null })
     vi.stubEnv("APP_HOSTS", APP)
     vi.stubEnv("PORTAL_HOSTS", "portal.example.org")
   })
@@ -380,7 +380,7 @@ describe("frontend/proxy.ts website host", () => {
   })
 
   it("leaves a portal host's files to the app, as before", async () => {
-    vi.mocked(lookupPracticeHost).mockResolvedValue({ slug: "acme", primaryHost: "portal.example.com", theme: null })
+    vi.mocked(lookupPracticeHost).mockResolvedValue({ slug: "acme", primaryHost: "portal.example.com", theme: null, siteHost: null })
     const response = await proxy(at("https://portal.example.com/icon.png", "portal.example.com"))
 
     expect(response.status).toBe(200)

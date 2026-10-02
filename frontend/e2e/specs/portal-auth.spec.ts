@@ -234,11 +234,10 @@ test("a link that can no longer be used offers a new one @portal", async ({
   await page.goto(invitation.link)
   await page.getByTestId("portal-shell-request-code").click()
 
-  await expect(page.getByTestId("portal-shell-link-ended")).toBeVisible()
-  await expect(page.getByTestId("portal-shell-link-ended-recover")).toHaveAttribute(
-    "href",
-    new RegExp(`/${slug}/recover$`),
-  )
+  // Not a dead end: the same sign-in the landing shows, saying why.
+  await expect(page.getByTestId("portal-shell-link-ended")).toHaveText("That sign-in link has expired.")
+  await expect(page.getByRole("button", { name: "Email me a sign-in link" })).toBeVisible()
+  expect(page.url()).toContain(slug)
   await settle()
   expect(await sms.countFor(invitation.phone), "a spent link texts nobody").toBe(
     textsAfterRedeem,
