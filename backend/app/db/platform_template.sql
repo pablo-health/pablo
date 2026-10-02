@@ -518,6 +518,15 @@ CREATE TABLE platform.practice_domains (
     CONSTRAINT practice_domains_status_check CHECK (((status)::text = ANY (ARRAY[('pending'::character varying)::text, ('verifying'::character varying)::text, ('active'::character varying)::text, ('error'::character varying)::text, ('removing'::character varying)::text])))
 );
 
+CREATE TABLE platform.practice_email_senders (
+    practice_id character varying(128) NOT NULL,
+    sender_name character varying(100),
+    sender_local_part character varying(64),
+    reply_to character varying(254),
+    updated_at timestamp with time zone NOT NULL,
+    updated_by character varying(128)
+);
+
 CREATE TABLE platform.practice_portal_settings (
     practice_id character varying(128) NOT NULL,
     enabled boolean DEFAULT false NOT NULL,
@@ -760,6 +769,9 @@ ALTER TABLE ONLY platform.practice_domain_apexes
 
 ALTER TABLE ONLY platform.practice_domains
     ADD CONSTRAINT practice_domains_pkey PRIMARY KEY (domain);
+
+ALTER TABLE ONLY platform.practice_email_senders
+    ADD CONSTRAINT practice_email_senders_pkey PRIMARY KEY (practice_id);
 
 ALTER TABLE ONLY platform.practice_portal_settings
     ADD CONSTRAINT practice_portal_settings_pkey PRIMARY KEY (practice_id);

@@ -274,6 +274,11 @@ class AuditAction(StrEnum):
     # belongs on the record beside the invitations. The payload is the old
     # and new setting and nothing else.
     PRACTICE_PORTAL_OFFERING_CHANGED = "practice_portal_offering_changed"
+    # The practice owner changed who client email is from or where clients'
+    # replies go. Where replies land is where a client's words end up, so the
+    # change belongs on the record. The payload is the three settings as
+    # saved: a name, a mailbox name and a staff address.
+    PRACTICE_EMAIL_SENDER_CHANGED = "practice_email_sender_changed"
 
     # The practice's own domains: one added, one chosen as primary, one
     # removed. The primary portal host is where clients' links lead, so who

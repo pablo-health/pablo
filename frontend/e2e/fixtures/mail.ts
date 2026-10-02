@@ -15,7 +15,12 @@ import { MAIL_URL } from "./stack"
 
 export interface CapturedEmail {
   at: string
+  /** The envelope sender (where bounces go), a bare address. */
   from: string
+  /** The From header a mail client shows, display name included. */
+  from_header: string
+  /** The Reply-To header, or "" when there is none. */
+  reply_to: string
   to: string[]
   subject: string
   text: string
