@@ -97,6 +97,17 @@ jobs:
         env:
           CI: "1"
 
+      # A hosted domain moves every practice's portal links onto its hosted
+      # address, so the specs about it run in a second pass on a backend that
+      # names one (docker-compose.e2e-hosted.yml). In the pass above they skip.
+      - name: Run the hosted-address specs
+        if: steps.classify.outputs.substantive != 'false'
+        run: |
+          docker compose -f docker-compose.e2e.yml -f docker-compose.e2e-hosted.yml up --wait
+          cd frontend && npx playwright test --config e2e/playwright.config.ts --grep @hosted
+        env:
+          CI: "1"
+
       - name: Nothing to exercise
         if: steps.classify.outputs.substantive == 'false'
         run: echo "Diff touches only the ignorable set (see scripts/ci_classify_diff.sh) - the stack cannot be affected, so the suite is skipped and this check reports green."
