@@ -308,11 +308,12 @@ def test_without_a_hosted_domain_nothing_answers_on_one(
         get_settings.cache_clear()
 
 
-def test_a_domain_not_yet_served_changes_nothing(
+def test_a_domain_not_yet_served_resolves_but_is_shown_to_nobody(
     client: TestClient, rows: _Rows, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Named but not marked ready: no address resolves, Settings shows none, and
-    links stay on the shared address, so none points at a name not yet served."""
+    """Named but not marked ready: the hosted hosts answer as they will, but
+    Settings shows none, links stay on the shared address and the portal links
+    back to no hosted website, so nobody is sent to a name not yet served."""
     monkeypatch.setenv("PRACTICE_HOSTED_DOMAIN", DOMAIN)
     monkeypatch.setenv("PRACTICE_SITE_BUCKET", "hosted-sites")
     monkeypatch.setenv("PORTAL_WEB_BASE_URL", "https://app.example.test")
@@ -320,12 +321,19 @@ def test_a_domain_not_yet_served_changes_nothing(
     factory.reset_delivery_registrations()
     practice_id, slug = rows.practice()
     rows.site(practice_id)
+    session = create_standalone_session()
     try:
-        assert _portal(client, f"{slug}.portal.{DOMAIN}").status_code == 404
-        assert _site(client, f"{slug}.{DOMAIN}").status_code == 404
+        portal = _portal(client, f"{slug}.portal.{DOMAIN}")
+        assert portal.status_code == 200
+        assert portal.json()["site_host"] is None
+        assert _site(client, f"{slug}.{DOMAIN}").status_code == 200
+
         assert practice_domains._hosted(practice_id) is None
         assert factory.portal_page_url(slug) == f"https://app.example.test/portal/{slug}"
+        service = PracticeSiteService(PracticeSiteStore(session), LocalFileStorage(), "b")
+        assert service.status(practice_id).live_host is None
     finally:
+        session.close()
         get_settings.cache_clear()
 
 

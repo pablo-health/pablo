@@ -18,6 +18,7 @@ import pytest
 from app.api_errors import UnprocessableEntityError
 from app.portal.hosted import (
     HostedPurpose,
+    hosted_addresses_ready,
     hosted_domain,
     hosted_portal_host,
     hosted_site_host,
@@ -64,17 +65,26 @@ def test_unset_gives_no_practice_a_hosted_address() -> None:
     assert not is_under_hosted_domain("acme.hosted.example")
 
 
-def test_a_named_domain_gives_nothing_until_it_is_marked_served(
+def test_a_named_domain_resolves_but_is_not_shown_until_it_is_marked_served(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("PRACTICE_HOSTED_DOMAIN", DOMAIN)
     get_settings.cache_clear()
 
     assert get_settings().practice_hosted_domain_ready is False
-    assert hosted_domain() is None
-    assert hosted_portal_host("acme") is None
-    assert hosted_site_host("acme") is None
-    assert hosted_slug("acme.portal.hosted.example", "portal") is None
+    assert hosted_slug("acme.portal.hosted.example", "portal") == "acme"
+    assert hosted_addresses_ready() is False
+
+    monkeypatch.setenv("PRACTICE_HOSTED_DOMAIN_READY", "true")
+    get_settings.cache_clear()
+    assert hosted_addresses_ready() is True
+
+
+def test_ready_with_no_domain_named_shows_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PRACTICE_HOSTED_DOMAIN_READY", "true")
+    get_settings.cache_clear()
+
+    assert hosted_addresses_ready() is False
 
 
 @pytest.mark.parametrize(

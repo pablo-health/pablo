@@ -15,7 +15,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 
 from ..db.platform_models import PracticeDomainRow, PracticeSiteRow, PracticeSiteVersionRow
-from ..portal.hosted import hosted_site_host, practice_slug
+from ..portal.hosted import hosted_addresses_ready, hosted_site_host, practice_slug
 
 if TYPE_CHECKING:
     from collections.abc import Collection
@@ -94,6 +94,9 @@ class PracticeSiteStore:
         return list(self._session.execute(stmt).scalars())
 
     def hosted_site_host(self, practice_id: str) -> str | None:
-        """The practice's hosted website address, where the deployment has one."""
+        """The practice's hosted website address, where the deployment has one
+        and says it is served."""
+        if not hosted_addresses_ready():
+            return None
         slug = practice_slug(self._session, practice_id)
         return hosted_site_host(slug) if slug else None

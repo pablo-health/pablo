@@ -2,8 +2,7 @@
 
 """Every practice's hosted addresses, under a domain the deployment names.
 
-A deployment that sets ``PRACTICE_HOSTED_DOMAIN`` (say ``hosted.example``),
-and ``PRACTICE_HOSTED_DOMAIN_READY`` once that domain is served,
+A deployment that sets ``PRACTICE_HOSTED_DOMAIN`` (say ``hosted.example``)
 gives every practice two addresses that need no DNS work of its own, from the
 practice's portal slug (:mod:`app.portal.slugs`):
 
@@ -23,12 +22,15 @@ the hosted address is the practice's address. A practice cannot add a host
 under the hosted domain itself (:mod:`app.services.practice_domain_service`).
 
 A slug that is not a DNS label, or that is reserved, has no hosted address.
-Unset, or not yet marked ready, nothing here answers anything and every host
-is served as before: no hosted address resolves, Settings shows none, and
-portal links stay where they were. So the domain can be named before its DNS
-and certificate are in place without a single link going to an address that
-does not work yet. A practice can never add a host under a named hosted
-domain, ready or not.
+Unset, nothing here answers anything and every host is served as before.
+
+**Shown only once served.** The hosted addresses resolve as soon as the
+domain is named, but nothing points anyone at them — Settings shows none,
+portal links stay on the practice's own host or the shared one, and the
+portal links back to no hosted website — until ``PRACTICE_HOSTED_DOMAIN_READY``
+says the wildcards are in DNS and their certificate is issued
+(:func:`hosted_addresses_ready`). So naming the domain early never sends
+anyone to an address that cannot be reached yet.
 
 No PHI: hostnames and slugs.
 """
@@ -53,12 +55,15 @@ type HostedPurpose = Literal["portal", "site"]
 
 
 def hosted_domain() -> str | None:
-    """The deployment's hosted domain, or ``None`` when it names none or has not
-    said it is served yet (``PRACTICE_HOSTED_DOMAIN_READY``)."""
+    """The deployment's hosted domain, or ``None`` when it names none."""
+    return get_settings().practice_hosted_domain or None
+
+
+def hosted_addresses_ready() -> bool:
+    """Whether hosted addresses may be shown and linked to: a domain is named
+    and the deployment says it is served (``PRACTICE_HOSTED_DOMAIN_READY``)."""
     settings = get_settings()
-    if not settings.practice_hosted_domain_ready:
-        return None
-    return settings.practice_hosted_domain or None
+    return bool(settings.practice_hosted_domain) and settings.practice_hosted_domain_ready
 
 
 def _hostable(slug: str) -> bool:
