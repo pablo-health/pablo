@@ -45,7 +45,12 @@ from sqlalchemy import select
 
 from ..db import create_standalone_session
 from ..db.platform_models import PortalPracticeSlugRow, PracticeDomainRow
-from .hosted import hosted_portal_host, hosted_practice_id, practice_slug
+from .hosted import (
+    hosted_addresses_ready,
+    hosted_portal_host,
+    hosted_practice_id,
+    practice_slug,
+)
 from .portal_settings import portal_enabled_in
 from .practice_site import live_site_host, portal_theme
 
@@ -159,7 +164,7 @@ def primary_portal_host_for_slug(slug: str) -> str | None:
     """The host portal links of the practice whose address is *slug* point at.
 
     Its active primary portal host; else its hosted portal address, where the
-    deployment names a hosted domain; else ``None``. What the default portal
+    deployment names a hosted domain and says it is served; else ``None``. What the default portal
     address resolver uses to put links on the practice's own host
     (``https://{host}/``). A deployment that registers its own resolver
     (:func:`app.portal.factory.register_portal_address_resolver`) can call this
@@ -175,7 +180,10 @@ def primary_portal_host_for_slug(slug: str) -> str | None:
         ).scalar_one_or_none()
         if practice_id is None:
             return None
-        return active_primary_portal_host(session, practice_id) or hosted_portal_host(slug)
+        own = active_primary_portal_host(session, practice_id)
+        if own is not None or not hosted_addresses_ready():
+            return own
+        return hosted_portal_host(slug)
     finally:
         session.close()
 
