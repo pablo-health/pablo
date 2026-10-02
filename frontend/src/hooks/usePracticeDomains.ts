@@ -5,6 +5,7 @@
 import { useEffect, useState } from "react"
 import {
   addPracticeDomain,
+  isUnsettled,
   checkPracticeDomains,
   describePracticeDomain,
   listPracticeDomains,
@@ -18,14 +19,29 @@ import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
 
 const DESCRIBE_DELAY_MS = 250
 
+/** While a host is finishing setup, how often the list is asked again, and for how long. */
+export const DOMAIN_POLL_MS = 15_000
+export const DOMAIN_POLL_FOR_MS = 10 * 60_000
+/** Check now rests this long after a click; the server dedupes runs anyway. */
+export const CHECK_COOLDOWN_MS = 30_000
+
 export const practiceDomainKeys = {
   all: ["practiceDomains"] as const,
 }
 
-export function usePracticeDomains() {
+/**
+ * The practice's hosts. Given `pollUntil`, asks again every `DOMAIN_POLL_MS`
+ * until then, for as long as any host is still pending or verifying — so a
+ * host the server finishes turns Active on the page by itself.
+ */
+export function usePracticeDomains(pollUntil: number | null = null) {
   return useAuthQuery<PracticeDomainList>({
     queryKey: practiceDomainKeys.all,
     queryFn: () => listPracticeDomains(),
+    refetchInterval: (query) => {
+      if (pollUntil === null || Date.now() >= pollUntil) return false
+      return query.state.data?.domains.some(isUnsettled) ? DOMAIN_POLL_MS : false
+    },
   })
 }
 
@@ -72,6 +88,37 @@ export function useCheckPracticeDomains() {
       queryClient.setQueryData(practiceDomainKeys.all, data)
     },
   })
+}
+
+/**
+ * Check now, as the page runs it: the check itself, when it last answered, a
+ * rest after each click, and how long to keep polling afterwards. A failed
+ * check ends the rest at once, so trying again is never blocked.
+ */
+export function usePracticeDomainCheckRun() {
+  const check = useCheckPracticeDomains()
+  const [checkedAt, setCheckedAt] = useState<Date | null>(null)
+  const [restingSince, setRestingSince] = useState<number | null>(null)
+  const [pollUntil, setPollUntil] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (restingSince === null) return
+    const timer = setTimeout(() => setRestingSince(null), CHECK_COOLDOWN_MS)
+    return () => clearTimeout(timer)
+  }, [restingSince])
+
+  function run() {
+    setRestingSince(Date.now())
+    check.mutate(undefined, {
+      onSuccess: (data) => {
+        setCheckedAt(new Date())
+        setPollUntil(data.domains.some(isUnsettled) ? Date.now() + DOMAIN_POLL_FOR_MS : null)
+      },
+      onError: () => setRestingSince(null),
+    })
+  }
+
+  return { check, run, checkedAt, resting: restingSince !== null, pollUntil }
 }
 
 export function useMakePracticeDomainPrimary() {

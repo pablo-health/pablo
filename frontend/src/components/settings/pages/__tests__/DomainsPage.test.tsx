@@ -311,7 +311,7 @@ describe("DomainsPage", () => {
     renderWithProviders(<DomainsPage />)
 
     const table = await screen.findByRole("table", { name: "DNS records for portal.example.com" })
-    expect(screen.getByText("Add these records at your DNS provider:")).toBeVisible()
+    expect(screen.getByText(/Add these at your DNS provider\. Some providers call Host “Name”\./)).toBeVisible()
     expect(within(table).getByText("TXT")).toBeVisible()
     expect(within(table).getByText("_pablo-verify.example.com")).toBeVisible()
     expect(within(table).getByText("pablo-verify=test-token")).toBeVisible()
