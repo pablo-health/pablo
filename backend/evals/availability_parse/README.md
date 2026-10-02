@@ -18,16 +18,22 @@ the `params` keys the checkers in
 `app/scheduling_engine/services/availability.py` actually read — so
 nothing in the corpus asks for a rule the engine can't evaluate.
 
-The corpus is 84 cases: the original 14, a 60-case expansion drafted in
+The corpus is 89 cases: the original 14, a 60-case expansion drafted in
 two independent passes and merged by arbitration (see "On this expansion"
-below), and 10 cases covering appointment types and weekly caps. 46 are
-parseable, 38 must refuse (54.8% / 45.2%).
+below), 10 cases covering appointment types and weekly caps, and 5
+covering day-less hours and caps tied to a weekday. 47 are parseable, 42
+must refuse (52.8% / 47.2%).
 
 Two soft checks grade how helpful a correct refusal is, never gated: an
 ambiguous case marked `expects_two_readings` should come back with both
 readings for the therapist to pick from, and an unknown-type case with
 `expected_unknown_type` should name the missing kind so the screen can
-offer to add it.
+offer to add it. A case that also pins `expected_readings` grades what
+the readings say, and that check is hard: the therapist saves whichever
+reading they pick, so a wrong one is a wrong rule set.
+
+Every case also records how long its parse took, and the summary reports
+p50, p95 and max across the run (see "Latency" below).
 
 ### Case matrix
 
@@ -205,6 +211,25 @@ question rather than a rule. Same for a type the practice has never
 configured — dropping the name would widen "no group sessions on
 Fridays" into a Friday blocked for everything.
 
+**Day-less hours and weekday caps** — a range of hours with no day
+named, and a cap that holds on one weekday only. Both have a tempting
+single answer that writes the wrong week.
+
+| case | expects |
+|---|---|
+| `nine_to_five_no_days` | refuse, with two readings: 9–5 on weekdays, or 9–5 every day |
+| `my_hours_are_ten_to_four` | the same, in other words and other hours |
+| `nine_dash_five_no_fridays` | four `working_hours` rules, Monday to Thursday, and no Friday block |
+| `max_two_on_saturdays` | refuse — `max_per_day` has no day, so it would cap every day |
+| `up_to_two_anytime_saturday` | refuse — and never as 00:00–23:59 Saturday hours |
+
+"9 to 5" with no day used to come back as one guessed day, which saves
+one rule and leaves the other six days closed. Which days the hours cover
+is the therapist's call, so the parser asks, and offers both answers.
+Leaving a day out ("no Fridays") answers it: the hours are a working
+week. Friday gets no block of its own, because a day with no working
+hours already takes no appointments.
+
 All nine rule types are covered many times over. Relative dates resolve
 against a fixed anchor (`cases.REFERENCE_DATE`) so the corpus stays
 deterministic.
@@ -225,6 +250,8 @@ which is exactly the failure this eval exists to price.
 | right rules, wrong `enforcement` | soft finding, reported not gated |
 | right rules, wrong `exclusive` flag | soft finding, reported not gated (see below) |
 | a parseable sentence is refused | **always acceptable** — it falls through to the form. Reported as a recall miss, never gated |
+| readings are offered, but not the ones the case pins | **hard failure** — the therapist saves the one they pick |
+| the call fails after its retry | reported with the latencies as a failed call, never graded |
 
 Refusing costs recall and nothing else. Guessing fails the run. A wrong
 rule blocks or opens a calendar with nothing to tell the therapist it
@@ -304,6 +331,62 @@ soften — "light" names no `max_per_day` count — so it refuses instead of
 becoming a soft rule with an invented number. **The rule of thumb: a
 hedge over a complete, concrete boundary parses soft; a hedge with no
 boundary underneath it refuses.**
+
+## Latency and pass rate — recorded 2026-10-02
+
+Production parses had gone from 3-5 s to 20-35 s, and one run against
+dev took 168 s, with nothing logged to show it. Two full runs of the
+89-case corpus on each side of the change, `gemini-3.5-flash` on the
+Vertex global endpoint, from a laptop:
+
+| | recall | correct refusals | hard failures | soft findings | failed calls | p50 | p95 | max |
+|---|---|---|---|---|---|---|---|---|
+| before, run 1 | 43/47 | 37/42 | 7 | 1 | 0 | 1542 ms | 7511 ms | 23018 ms |
+| before, run 2 | 45/47 | 37/42 | 6 | 1 | 0 | 1566 ms | 3874 ms | 16196 ms |
+| after, run 1 | 44/47 | 40/42 | 2 | 0 | 0 | 1574 ms | 5105 ms | 10638 ms |
+| after, run 2 | 44/47 | 40/42 | 2 | 0 | 0 | 1606 ms | 6175 ms | 8627 ms |
+
+"Before" is the parser as it stood, graded against today's corpus: the
+five new cases account for four of its hard failures and its soft
+finding, and the rest are `only_until_noon_wednesdays`,
+`block_out_friday_ambiguous` and (once) `half_hour_between_clients`.
+"After" fails only the first two, which have failed since the 2026-08-30
+baseline below. The p95 after reflects the new readings cases: two
+readings of a whole week is a dozen proposals, 6-8 s of output, where
+the old parser answered sooner with a guess.
+
+What the time went into, measured before deciding anything:
+
+- **The long tail was the service, not the schema.** Repeating six
+  sentences three times under each response shape turned up a 94 s call
+  that produced 112 output tokens with the old nested schema, and a 26 s
+  call that produced 80 with no readings in the schema at all. A stalled
+  call was bounded only by the client's 180 s read timeout. Each attempt
+  is now bounded at 15 s and retried once.
+- **That bound has to stay client-side.** Given as the server's deadline
+  (the SDK's default when a request sets a timeout), Vertex answered 504
+  DEADLINE_EXCEEDED well short of it: at 10 s of a 15 s deadline, and on
+  2 of 15 runs of "9 to 5" that otherwise take 6-8 s. With the bound
+  client-side and the server's deadline left at 180 s, the same 45
+  calls had no errors.
+- **Readings cost their output tokens and little else.** On ordinary
+  sentences the old nested `readings` array, flat `reading_a`/`reading_b`
+  siblings and no readings at all were within a few hundred milliseconds
+  of each other. Where readings are produced, time tracks output: 1,760
+  tokens took 6-8 s. The flat shape is kept because it is one level
+  shallower to decode and needs no second call; asking for readings in a
+  second request only after an ambiguous refusal would add a full round
+  trip to every refusal, including the ones with no readings to give.
+- **The flat shape needed the prompt to say more.** The first flat run
+  dropped `buffer_before` from every "N minutes between clients" case and
+  parsed "I hate Mondays" as a block, and a run with no readings in the
+  schema dropped the buffer too. The prompt now says that a gap between
+  appointments is a buffer on both sides, and that a feeling about a day
+  is not an instruction.
+
+The parse result log line now carries `latency_ms` and `output_tokens`
+beside the rule types and refusal reason, so the next regression shows
+up in the logs rather than in a therapist's wait.
 
 ## Hard failures — recorded baseline
 
@@ -410,11 +493,10 @@ here so the boundary is documented rather than lost:
 - **"Emergency-only Saturdays"** (or similar "special-case clients only")
   — the same which-clients-qualify shape as `out_of_scope_insurance_
   mondays`; adds a day name but not a new failure mode.
-- **Bare "9 to 5"** — no day named at all, genuinely ambiguous about
-  scope (every day? weekdays only?) — cut as adjacent to `done_by_three`
-  (no-day-named `block_time_range`) and `nine_to_five_mon_thu`
-  (day-ranged `working_hours`) without adding a dimension neither of
-  those already covers.
+- **Bare "9 to 5"** — cut from this expansion as adjacent to
+  `done_by_three` and `nine_to_five_mon_thu`. It came back later as
+  `nine_to_five_no_days`, after a therapist's first-run calendar showed
+  what the parser did with it: one guessed day.
 - **Inventing a number to rescue a hedge into a positive case** (e.g.
   giving `prefer_fridays_light`'s "light" a made-up `max_per_day` count)
   — rejected outright as the exact anti-pattern this eval polices; kept
@@ -450,6 +532,6 @@ scripts/run-availability-parse-eval.sh --case friday
 scripts/run-availability-parse-eval.sh --json
 ```
 
-Every case is a real model call, so a full run over all 84 cases takes
-roughly two minutes and costs what seventy-four flash-tier calls cost.
+Every case is a real model call, so a full run over all 89 cases takes
+roughly three minutes and costs what eighty-nine flash-tier calls cost.
 `--list` needs neither credentials nor a project.

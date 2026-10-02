@@ -37,7 +37,11 @@ if TYPE_CHECKING:
 from ..reliability import LLM_JOB, LLM_REQUEST, Idempotency, call_with_retry
 from .llm_provider import LLMProvider, strip_provider_prefix
 from .llm_telemetry import LLMSpanRequest, llm_span, usage_tokens
-from .vertex_client import anthropic_vertex_client, vertex_genai_client
+from .vertex_client import (
+    anthropic_vertex_client,
+    seconds_to_genai_timeout_ms,
+    vertex_genai_client,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +108,7 @@ class StructuredLLMGateway(ABC):
         max_output_tokens: int,
         temperature: float = 0.3,
         thinking_budget: int | None = None,
+        timeout_seconds: float | None = None,
     ) -> StructuredCompletion:
         """Issue one structured completion and return the parsed JSON.
 
@@ -118,6 +123,11 @@ class StructuredLLMGateway(ABC):
         ``None`` to use the model's default thinking budget -- correct for
         genuine generation (e.g. SOAP from a transcript), where the
         reasoning is doing the work.
+
+        ``timeout_seconds`` bounds each attempt when set, in place of the
+        client's generous default. An interactive caller that would rather
+        retry a stalled call than wait out the default passes a short one;
+        a timed-out attempt is retried like any other transient failure.
 
         Raises:
             ValueError: model returned invalid JSON or violated the schema.
@@ -152,6 +162,7 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
         max_output_tokens: int,
         temperature: float = 0.3,
         thinking_budget: int | None = None,
+        timeout_seconds: float | None = None,
     ) -> StructuredCompletion:
         # Never hold a pooled DB connection across the model round-trip — the
         # caller must release_db_connection() first (raises in dev/test).
@@ -179,6 +190,20 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
             thinking_config=(
                 types.ThinkingConfig(thinking_budget=thinking_budget)
                 if thinking_budget is not None
+                else None
+            ),
+            # A per-attempt bound is enforced here, client-side, only. The SDK
+            # would otherwise also send it as the server's own deadline
+            # (X-Server-Timeout), and Vertex then answers 504 DEADLINE_EXCEEDED
+            # well short of it -- at 10 s of a 15 s deadline, and on 2 of 15
+            # ordinary 6-8 s answers in testing. The server is given the
+            # client's default instead, as it would be with no bound at all.
+            http_options=(
+                types.HttpOptions(
+                    timeout=seconds_to_genai_timeout_ms(timeout_seconds),
+                    headers={"X-Server-Timeout": str(int(_STRUCTURED_LLM_TIMEOUT_SECONDS))},
+                )
+                if timeout_seconds is not None
                 else None
             ),
         )
@@ -281,6 +306,7 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
         max_output_tokens: int,
         temperature: float = 0.3,
         thinking_budget: int | None = None,
+        timeout_seconds: float | None = None,
     ) -> StructuredCompletion:
         # Never hold a pooled DB connection across the model round-trip — the
         # caller must release_db_connection() first (raises in dev/test).
@@ -317,6 +343,7 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
                         tools=[tool],
                         tool_choice={"type": "tool", "name": self._TOOL_NAME},
                         messages=[{"role": "user", "content": user_prompt}],
+                        **({"timeout": timeout_seconds} if timeout_seconds is not None else {}),
                     ),
                     policy=LLM_REQUEST,
                     idempotency=Idempotency.SAFE,
@@ -404,7 +431,9 @@ class MistralStructuredLLMGateway(StructuredLLMGateway):
         # Injectable transport for tests: (url, payload) -> parsed JSON response.
         self._request = request
 
-    def _do_request(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def _do_request(
+        self, url: str, payload: dict[str, Any], timeout_seconds: float = 60.0
+    ) -> dict[str, Any]:
         if self._request is not None:
             return self._request(url, payload)
         # Lazy: only the Mistral path needs these.
@@ -418,7 +447,7 @@ class MistralStructuredLLMGateway(StructuredLLMGateway):
             url,
             headers={"Authorization": f"Bearer {creds.token}"},
             json=payload,
-            timeout=60.0,
+            timeout=timeout_seconds,
         )
         resp.raise_for_status()
         return cast("dict[str, Any]", resp.json())
@@ -433,6 +462,7 @@ class MistralStructuredLLMGateway(StructuredLLMGateway):
         max_output_tokens: int,
         temperature: float = 0.3,
         thinking_budget: int | None = None,
+        timeout_seconds: float | None = None,
     ) -> StructuredCompletion:
         from ..db import assert_no_held_db_connection
 
@@ -471,7 +501,11 @@ class MistralStructuredLLMGateway(StructuredLLMGateway):
         with llm_span(LLMSpanRequest(operation="structured", model=normalized_model)) as span:
             try:
                 data = call_with_retry(
-                    lambda: self._do_request(url, payload),
+                    lambda: (
+                        self._do_request(url, payload)
+                        if timeout_seconds is None
+                        else self._do_request(url, payload, timeout_seconds)
+                    ),
                     policy=LLM_JOB,
                     idempotency=Idempotency.SAFE,
                 )
@@ -582,6 +616,7 @@ class FakeStructuredLLMGateway(StructuredLLMGateway):
         max_output_tokens: int,
         temperature: float = 0.3,
         thinking_budget: int | None = None,
+        timeout_seconds: float | None = None,
     ) -> StructuredCompletion:
         self.calls.append(
             {
@@ -592,6 +627,7 @@ class FakeStructuredLLMGateway(StructuredLLMGateway):
                 "max_output_tokens": max_output_tokens,
                 "temperature": temperature,
                 "thinking_budget": thinking_budget,
+                "timeout_seconds": timeout_seconds,
             }
         )
         if self.responses:

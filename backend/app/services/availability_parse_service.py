@@ -35,6 +35,7 @@ kind of appointment.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -124,6 +125,9 @@ _SYSTEM_PROMPT = (
     "every appointment.\n"
     "- buffer_after: minutes (integer, at least 0) -- gap required after "
     "every appointment.\n"
+    '  A gap "between" appointments sits on both sides of each one: emit '
+    "buffer_before and buffer_after with the same minutes. A gap with no "
+    "minutes stated has no boundary to write down.\n"
     "- block_date_range: date_intent describing a start and an end -- no "
     "appointments anywhere in that span.\n"
     "- block_specific_dates: date_intent listing one or more individual "
@@ -146,6 +150,22 @@ _SYSTEM_PROMPT = (
     'A sentence naming several days ("9 to 5 on weekdays") becomes one '
     'proposal per day. Default enforcement to "hard"; use "soft" only '
     'for explicit preference language ("I\'d prefer not to...").\n\n'
+    'Hours given with no day at all ("9 to 5", "my hours are 10-4") do '
+    "not say which days they cover, and a single guessed day leaves the "
+    "other six closed. Never pick days for the therapist: refuse as "
+    '"ambiguous" and offer two readings, "Weekdays" (one working_hours '
+    'proposal for each of Monday to Friday) and "Every day" (one for each '
+    'of the seven days). When the sentence names a day to leave out ("9-5, '
+    'no Fridays"), the hours are a working week: one working_hours proposal '
+    "for each weekday that is left, and no block_day_of_week for the day "
+    "left out, because a day without working hours already takes no "
+    "appointments.\n\n"
+    "max_per_day and max_per_week apply to every day of the week; neither "
+    'can be limited to particular days. A cap tied to a day ("max 2 on '
+    'Saturdays", "up to 2 patients anytime on Saturday") has no rule that '
+    'can store it: refuse with refusal_reason "ambiguous" and say that a '
+    "daily limit applies to every day. Never turn it into a practice-wide "
+    "max_per_day, and never into working_hours covering the whole day.\n\n"
     "Set exclusive to true only when the sentence states this is the "
     "therapist's complete set of working hours (e.g. \"I ONLY meet on "
     'Mondays and Tuesdays"), meaning the working_hours proposals in your '
@@ -178,7 +198,19 @@ _SYSTEM_PROMPT = (
     "rest is still a guess about what was wanted, and the dropped half "
     "leaves no trace for the therapist to notice.\n\n"
     "If nothing in the sentence maps to a covered rule type for any other "
-    'reason, refuse the same way with refusal_reason "ambiguous".\n\n'
+    'reason, refuse the same way with refusal_reason "ambiguous". A '
+    'feeling about a day ("I hate Mondays") is not an instruction about '
+    "it, and gets this refusal too.\n\n"
+    "TWO READINGS\n\n"
+    "When an ambiguous sentence has exactly two concrete meanings, each of "
+    "which stores complete rules, refuse as above, write could_not_parse as "
+    "a short question naming both, and offer them: reading_a_label and "
+    "reading_a hold the first meaning, reading_b_label and reading_b the "
+    "second. Each label is a few words the therapist would recognise as "
+    "their meaning; each reading lists that meaning's complete proposals, "
+    "at the confidence you have in each rule given that reading. The "
+    "therapist picks one; you do not. Leave all four empty on every other "
+    "response, including a refusal with no boundary to write down.\n\n"
     "When genuinely unsure whether something is encodable, refuse rather "
     "than guess. A confident wrong rule silently blocks or opens a "
     "therapist's calendar, which is worse than falling through to the "
@@ -239,12 +271,7 @@ _APPOINTMENT_TYPES_PROMPT = (
     'or as a claim ("Tuesdays are for intakes and nothing else"), and "two '
     'intakes a week on Tuesdays" reads either as one weekly cap or as a '
     "weekly cap plus Tuesday hours. When both readings are live, leave "
-    'proposals empty, refuse with refusal_reason "ambiguous", write '
-    "could_not_parse as a short question naming the two readings, and put "
-    "both readings in readings: exactly two entries, each with a short "
-    "label the therapist would recognise as their meaning and the complete "
-    "proposals for that reading, at the confidence you have in each rule "
-    "given that reading. The therapist picks one; you do not.\n"
+    "proposals empty and offer both as two readings, as described above.\n"
 )
 
 
@@ -309,23 +336,34 @@ _RESPONSE_SCHEMA: dict[str, Any] = {
     "required": ["proposals"],
 }
 
-# Two readings of one sentence, offered for the therapist to choose between.
-# Each reading's proposals have exactly the shape of a top-level proposal.
-_RESPONSE_SCHEMA["properties"]["readings"] = {
-    "type": "array",
-    "nullable": True,
-    "items": {
-        "type": "object",
-        "properties": {
-            "label": {"type": "string"},
-            "proposals": {
-                "type": "array",
-                "items": _RESPONSE_SCHEMA["properties"]["proposals"]["items"],
-            },
-        },
-        "required": ["label", "proposals"],
-    },
-}
+_PROPOSAL_SCHEMA: dict[str, Any] = _RESPONSE_SCHEMA["properties"]["proposals"]["items"]
+
+#: The two readings of an ambiguous sentence, as sibling top-level fields
+#: rather than an array of reading objects each nesting its own proposals
+#: array: one level shallower for constrained decoding, and no slower than
+#: no readings at all on a sentence that needs none (see the eval README).
+_READING_FIELDS: tuple[tuple[str, str], ...] = (
+    ("reading_a_label", "reading_a"),
+    ("reading_b_label", "reading_b"),
+)
+
+_RESPONSE_SCHEMA["properties"].update(
+    {
+        name: schema
+        for label_field, proposals_field in _READING_FIELDS
+        for name, schema in (
+            (label_field, {"type": "string", "nullable": True}),
+            (proposals_field, {"type": "array", "items": _PROPOSAL_SCHEMA}),
+        )
+    }
+)
+
+#: Each attempt's own bound. A typical parse returns in 1-3 s, but a call
+#: now and then stalls for 15-90 s with almost nothing to say, and the
+#: client's default would wait 180 s for it. The longest real answer, two
+#: readings of a whole week, takes 6-8 s and now and then 12, so this
+#: leaves it room. One retry (LLM_REQUEST) follows a timed-out attempt.
+_ATTEMPT_TIMEOUT_SECONDS = 15.0
 
 
 @dataclass(frozen=True)
@@ -381,8 +419,9 @@ class AvailabilityParseResult:
 
 _MAX_DAY_OF_WEEK = 6
 
-#: An ambiguous sentence is offered as exactly this many readings.
-_READING_COUNT = 2
+
+def _elapsed_ms(started: float) -> int:
+    return round((time.monotonic() - started) * 1000)
 
 
 def _is_valid_day(value: object) -> bool:
@@ -612,6 +651,7 @@ class AvailabilityRuleParseService:
             len(text),
             len(appointment_types),
         )
+        started = time.monotonic()
         try:
             completion = self._llm_gateway.complete_structured(
                 model=self._resolve_model(),
@@ -623,10 +663,13 @@ class AvailabilityRuleParseService:
                 max_output_tokens=_MAX_OUTPUT_TOKENS,
                 temperature=0.0,
                 thinking_budget=0,
+                timeout_seconds=_ATTEMPT_TIMEOUT_SECONDS,
             )
         except StructuredOutputTruncatedError:
             logger.warning(
-                "Availability parse truncated at max_output_tokens=%d", _MAX_OUTPUT_TOKENS
+                "Availability parse truncated at max_output_tokens=%d, latency_ms=%d",
+                _MAX_OUTPUT_TOKENS,
+                _elapsed_ms(started),
             )
             return AvailabilityParseResult(
                 could_not_parse=(
@@ -636,13 +679,20 @@ class AvailabilityRuleParseService:
                 refusal_reason="ambiguous",
             )
 
+        latency_ms = _elapsed_ms(started)
+
         result = self._coerce(
             completion.data, reference_date, _index_appointment_types(appointment_types)
         )
         logger.info(
-            "Availability parse result: %d proposal(s) [%s]",
+            "Availability parse result: %d proposal(s) [%s], refusal=%s, %d reading(s), "
+            "latency_ms=%d, output_tokens=%s",
             len(result.proposals),
             ",".join(p.rule_type for p in result.proposals),
+            result.refusal_reason,
+            len(result.readings),
+            latency_ms,
+            completion.output_tokens,
         )
         return result
 
@@ -750,26 +800,23 @@ class AvailabilityRuleParseService:
         less and the therapist gets the question alone, as before: a choice
         with one broken side is not a choice worth offering.
         """
-        raw_readings = data.get("readings")
-        if not isinstance(raw_readings, list) or len(raw_readings) != _READING_COUNT:
-            return []
         readings = [
-            self._coerce_reading(raw, reference_date, type_index, floor) for raw in raw_readings
+            self._coerce_reading(
+                data.get(label_field), data.get(proposals_field), reference_date, type_index, floor
+            )
+            for label_field, proposals_field in _READING_FIELDS
         ]
         return [r for r in readings if r is not None] if all(readings) else []
 
     def _coerce_reading(
         self,
-        raw: object,
+        label: object,
+        raw_proposals: object,
         reference_date: date | None,
         type_index: dict[str, str],
         floor: float,
     ) -> ParseReading | None:
         """One labelled reading, or None if any part of it is unusable."""
-        if not isinstance(raw, dict):
-            return None
-        label = raw.get("label")
-        raw_proposals = raw.get("proposals")
         if not isinstance(label, str) or not label.strip():
             return None
         if not isinstance(raw_proposals, list) or not raw_proposals:

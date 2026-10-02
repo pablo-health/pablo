@@ -11,8 +11,9 @@ exceptions, falls back to ``default_response``, and records calls.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+import httpx
 import pytest
 
 from backend.app.services.structured_llm_gateway import (
@@ -28,7 +29,6 @@ from backend.app.services.structured_llm_gateway import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from typing import Any
 
 
 class TestFakeStructuredLLMGateway:
@@ -305,6 +305,91 @@ class TestAnthropicStructuredLLMGateway:
                 response_schema=_SCHEMA,
                 max_output_tokens=64,
             )
+
+
+class TestAnthropicAttemptTimeout:
+    def test_timeout_reaches_the_request_only_when_set(self) -> None:
+        client = _FakeAnthropic(_tool_response())
+        gw = AnthropicStructuredLLMGateway(client=client)
+        call = {
+            "model": "anthropic:claude-haiku-4-5",
+            "system_prompt": "s",
+            "user_prompt": "u",
+            "response_schema": _SCHEMA,
+            "max_output_tokens": 64,
+        }
+
+        gw.complete_structured(**call)
+        assert "timeout" not in client.captured
+
+        gw.complete_structured(**call, timeout_seconds=10.0)
+        assert client.captured["timeout"] == 10.0
+
+
+class _GeminiResponse:
+    text = '{"ok": true}'
+    candidates = ()
+    usage_metadata = None
+
+
+class _StallingGeminiModels:
+    """Raises the SDK's read timeout ``stalls`` times, then answers."""
+
+    def __init__(self, stalls: int) -> None:
+        self.stalls = stalls
+        self.configs: list[Any] = []
+
+    def generate_content(self, **kwargs: Any) -> _GeminiResponse:
+        self.configs.append(kwargs["config"])
+        if len(self.configs) <= self.stalls:
+            raise httpx.ReadTimeout("The read operation timed out")
+        return _GeminiResponse()
+
+
+class TestGeminiAttemptTimeout:
+    def _gateway(self, stalls: int) -> tuple[GeminiStructuredLLMGateway, _StallingGeminiModels]:
+        models = _StallingGeminiModels(stalls)
+        gw = GeminiStructuredLLMGateway()
+        gw._client = type("_Client", (), {"models": models})()
+        return gw, models
+
+    def _complete(self, gw: GeminiStructuredLLMGateway, **extra: Any) -> StructuredCompletion:
+        return gw.complete_structured(
+            model="gemini-3.5-flash",
+            system_prompt="s",
+            user_prompt="u",
+            response_schema={"type": "object", "properties": {"ok": {"type": "boolean"}}},
+            max_output_tokens=64,
+            **extra,
+        )
+
+    def test_timeout_bounds_each_attempt_in_milliseconds(self) -> None:
+        gw, models = self._gateway(stalls=0)
+        self._complete(gw, timeout_seconds=10.0)
+        assert models.configs[0].http_options.timeout == 10_000
+
+    def test_the_server_is_not_handed_the_short_deadline(self) -> None:
+        """Vertex answers 504 well short of a deadline it is given, so the
+        bound stays client-side and the server keeps the default one."""
+        gw, models = self._gateway(stalls=0)
+        self._complete(gw, timeout_seconds=10.0)
+        assert models.configs[0].http_options.headers == {"X-Server-Timeout": "180"}
+
+    def test_no_timeout_keeps_the_client_default(self) -> None:
+        gw, models = self._gateway(stalls=0)
+        self._complete(gw)
+        assert models.configs[0].http_options is None
+
+    def test_a_stalled_attempt_is_retried_once(self) -> None:
+        gw, models = self._gateway(stalls=1)
+        assert self._complete(gw, timeout_seconds=10.0).data == {"ok": True}
+        assert len(models.configs) == 2
+
+    def test_two_stalled_attempts_fail(self) -> None:
+        gw, models = self._gateway(stalls=2)
+        with pytest.raises(RuntimeError, match="Structured LLM call failed"):
+            self._complete(gw, timeout_seconds=10.0)
+        assert len(models.configs) == 2
 
 
 class TestMistralStructuredLLMGateway:

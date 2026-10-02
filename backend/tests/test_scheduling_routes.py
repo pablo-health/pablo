@@ -2261,31 +2261,25 @@ def test_parse_passes_both_readings_through(write_client: TestClient) -> None:
             "proposals": [],
             "could_not_parse": "A weekly cap, or no Tuesdays?",
             "refusal_reason": "ambiguous",
-            "readings": [
+            "reading_a_label": "Just a weekly cap",
+            "reading_a": [
                 {
-                    "label": "Just a weekly cap",
-                    "proposals": [
-                        {
-                            "rule_type": "max_per_week",
-                            "enforcement": "hard",
-                            "max": 2,
-                            "human_summary": "Two a week.",
-                            "confidence": 0.9,
-                        }
-                    ],
-                },
+                    "rule_type": "max_per_week",
+                    "enforcement": "hard",
+                    "max": 2,
+                    "human_summary": "Two a week.",
+                    "confidence": 0.9,
+                }
+            ],
+            "reading_b_label": "No Tuesdays at all",
+            "reading_b": [
                 {
-                    "label": "No Tuesdays at all",
-                    "proposals": [
-                        {
-                            "rule_type": "block_day_of_week",
-                            "enforcement": "hard",
-                            "day_of_week": 1,
-                            "human_summary": "No Tuesdays.",
-                            "confidence": 0.9,
-                        }
-                    ],
-                },
+                    "rule_type": "block_day_of_week",
+                    "enforcement": "hard",
+                    "day_of_week": 1,
+                    "human_summary": "No Tuesdays.",
+                    "confidence": 0.9,
+                }
             ],
         }
     )
