@@ -1209,6 +1209,18 @@ class Settings(BaseSettings):
             "resolver."
         ),
     )
+    practice_domain_stuck_after_seconds: int = Field(
+        default=3600,
+        ge=60,
+        description=(
+            "How long a host may stay not active after every record it needs "
+            "was found in place before Settings > Domains tells the practice it "
+            "is taking too long (with the message from "
+            "app.services.practice_domain_stuck) and it is reported once in the "
+            "logs and the audit trail as practice_domain_stuck. Checking goes on "
+            "regardless."
+        ),
+    )
     # Serving the hosts (app.jobs.practice_domain_reconcile). The job gives each
     # host a Google-managed certificate in Certificate Manager, a certificate
     # map entry, and a host rule on the load balancer's URL map. All four empty

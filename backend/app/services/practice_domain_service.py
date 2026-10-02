@@ -21,12 +21,21 @@ records one thing — that the ownership record was found — and leaves the hos
 status alone. That is also why only an ``active`` host can be made primary:
 links are built on the primary, and a link to a host nobody has confirmed is a
 dead link.
+
+A check also notes when it first finds every record a host needs in place
+(``records_complete_at``), and forgets it when one goes missing or wrong. A host
+that stays not active for ``stuck_after`` past that is shown as taking too long,
+with the deployment's message (``practice_domain_stuck``), and is reported once
+per such wait: a structured ``practice_domain_stuck`` log line here, and an
+audit row from the caller, which holds the audit trail.
 """
 
 from __future__ import annotations
 
+import logging
 import secrets
-from typing import TYPE_CHECKING
+from datetime import timedelta
+from typing import TYPE_CHECKING, Literal, NamedTuple
 
 from fastapi import Depends
 
@@ -56,12 +65,23 @@ from .practice_domain_hosts import (
     deployment_hosts,
     normalize_host,
 )
+from .practice_domain_stuck import domain_stuck_message
 
 if TYPE_CHECKING:
-    from ..models.practice_domain import DomainPurpose, DomainStatus, HostStatus
+    from collections.abc import Callable
+    from datetime import datetime
+
+    from ..models.practice_domain import DomainPurpose, DomainStatus, HostStatus, RecordCheck
     from .practice_domain_allowance import DomainAllowancePolicy
 
+logger = logging.getLogger(__name__)
+
 DOMAIN_TAKEN_MESSAGE = "That domain is already in use."
+#: The structured log event a host taking too long is reported with.
+STUCK_EVENT = "practice_domain_stuck"
+_POINTING_TYPES = frozenset({"A", "AAAA", "CNAME"})
+
+RecordsVerdict = Literal["complete", "incomplete", "unknown"]
 
 #: The ownership record: ``_pablo-verify.<domain>`` TXT ``pablo-verify=<token>``.
 VERIFY_LABEL = "_pablo-verify"
@@ -76,6 +96,18 @@ def new_verify_token() -> str:
     return secrets.token_urlsafe(24)
 
 
+class DomainCheck(NamedTuple):
+    """What a DNS check found."""
+
+    #: Every host, with what was found per record.
+    domains: list[PracticeDomainResponse]
+    #: The domains whose ownership record was found.
+    confirmed: list[str]
+    #: The hosts this check was the first to find taking too long. Each was
+    #: logged; the caller, which holds the audit trail, audits them.
+    stuck: list[str]
+
+
 class PracticeDomainService:
     def __init__(
         self,
@@ -87,6 +119,8 @@ class PracticeDomainService:
         dkim_cname_suffix: str = "dkim.amazonses.com",
         deferred_removal: bool = False,
         allowance: DomainAllowancePolicy = domain_allowance,
+        stuck_after: timedelta = timedelta(hours=1),
+        now: Callable[[], datetime] = utc_now,
     ) -> None:
         """*deferred_removal*: the deployment serves hosts through the domain
         reconciler job, so a removed host is marked ``removing`` and the job
@@ -94,6 +128,9 @@ class PracticeDomainService:
 
         *allowance*: how many registrable domains a practice may use; by
         default whatever the deployment registered, which is no limit.
+
+        *stuck_after*: how long a host may stay not active once every record
+        it needs is in place before it is shown as taking too long.
         """
         self._repo = repo
         self._deferred_removal = deferred_removal
@@ -102,6 +139,8 @@ class PracticeDomainService:
         self._cname_target = cname_target.strip().lower().rstrip(".")
         self._apex_ips = apex_ips
         self._dkim_suffix = dkim_cname_suffix.strip().lower().strip(".")
+        self._stuck_after = stuck_after
+        self._now = now
 
     def serving_work_left(self, practice_id: str) -> bool:
         """Whether any of the practice's hosts is still the reconciler's to
@@ -207,23 +246,60 @@ class PracticeDomainService:
                     alias_alternative=self.alias_alternative(d),
                     apex=apex_name,
                     apex_verified_at=apex_row.verified_at if apex_row else None,
+                    stuck=self.is_stuck(d),
+                    stuck_message=self._stuck_message(d),
                 )
             )
         return responses
 
-    def check(
-        self, practice_id: str, lookup: DnsLookup
-    ) -> tuple[list[PracticeDomainResponse], list[str]]:
+    def is_stuck(self, domain: PracticeDomain) -> bool:
+        """Whether every record the host needs has been in place for longer
+        than ``stuck_after`` and it is still not active."""
+        return (
+            domain.status != "active"
+            and domain.records_complete_at is not None
+            and self._now() - domain.records_complete_at >= self._stuck_after
+        )
+
+    def _stuck_message(self, domain: PracticeDomain) -> str | None:
+        return domain_stuck_message() if self.is_stuck(domain) else None
+
+    def report_stuck(self, practice_id: str) -> list[str]:
+        """Report each of the practice's hosts that is taking too long and has
+        not been reported since its records were complete.
+
+        Logs each and returns them for the caller to audit. The report is
+        claimed on the row first, so two callers at once report a host once.
+        """
+        reported: list[str] = []
+        for d in self.for_practice(practice_id):
+            if d.stuck_reported_at is not None or not self.is_stuck(d):
+                continue
+            if not self._repo.claim_stuck_report(d.domain, practice_id, self._now()):
+                continue
+            logger.warning(
+                "%s domain=%s practice_id=%s",
+                STUCK_EVENT,
+                d.domain,
+                practice_id,
+                extra={"event": STUCK_EVENT, "domain": d.domain, "practice_id": practice_id},
+            )
+            reported.append(d.domain)
+        return reported
+
+    def check(self, practice_id: str, lookup: DnsLookup) -> DomainCheck:
         """Look every record up and say, per record, what was found.
 
         Records the time on a domain whose ownership TXT was found with its
-        token, and returns those domains beside the hosts. Changes no host's
-        status: a record being in place is not the host being served.
+        token, and returns those domains beside the hosts. Notes, per host not
+        yet active, whether every record it needs was found, and reports the
+        hosts that have waited too long since. Changes no host's status: a
+        record being in place is not the host being served.
         """
         self._ensure_apexes(practice_id)
         checker = DnsChecker(lookup, cname_target=self._cname_target, apex_ips=self._apex_ips)
         responses = self.responses(practice_id)
-        now = utc_now()
+        now = self._now()
         verified: set[str] = set()
         for response in responses:
             response.dns_records = [
@@ -241,7 +317,38 @@ class PracticeDomainService:
         for response in responses:
             if response.apex in verified:
                 response.apex_verified_at = now
-        return responses, sorted(verified)
+        self._note_records_complete(practice_id, responses, now)
+        return DomainCheck(responses, sorted(verified), self.report_stuck(practice_id))
+
+    def _note_records_complete(
+        self, practice_id: str, responses: list[PracticeDomainResponse], now: datetime
+    ) -> None:
+        """Start a waiting host's clock when its records are first all found,
+        and stop it when one is missing or wrong. A record nobody could look up
+        in time leaves the clock as it is."""
+        ownership = {
+            r.apex: record.check
+            for r in responses
+            if r.apex is not None
+            for record in r.dns_records
+            if record.type == "TXT" and record.name == f"{VERIFY_LABEL}.{r.apex}"
+        }
+        hosts = {d.domain: d for d in self.for_practice(practice_id)}
+        for response in responses:
+            host = hosts.get(response.domain)
+            if host is None or host.status == "active":
+                continue
+            verdict = _records_verdict(host, response, ownership)
+            if verdict == "complete" and host.records_complete_at is None:
+                self._repo.mark_records_complete(host.domain, practice_id, now)
+                host.records_complete_at = now
+            elif verdict == "incomplete" and (
+                host.records_complete_at is not None or host.stuck_reported_at is not None
+            ):
+                self._repo.clear_records_complete(host.domain, practice_id)
+                host.records_complete_at = host.stuck_reported_at = None
+            response.stuck = self.is_stuck(host)
+            response.stuck_message = self._stuck_message(host)
 
     def describe(self, raw_domain: str) -> DomainNameResponse:
         """The stored form of *raw_domain*, its domain, and whether it is bare.
@@ -444,6 +551,35 @@ class PracticeDomainService:
         return domain
 
 
+def _records_verdict(
+    host: PracticeDomain,
+    response: PracticeDomainResponse,
+    ownership: dict[str, RecordCheck | None],
+) -> RecordsVerdict:
+    """Whether a check found every record the host needs (``complete``), found
+    one missing or wrong (``incomplete``), or could not tell (``unknown``).
+
+    What a host needs: its own record(s), its certificate's authorisation, and
+    its domain's ownership TXT, on whichever host that is shown. Until a
+    certificate was requested the set is not known yet, so it is incomplete. A
+    domain's DKIM records are for its email, not for the host.
+    """
+    pointing = [
+        r for r in response.dns_records if r.type in _POINTING_TYPES and r.name == host.domain
+    ]
+    cert_auth = [
+        r
+        for r in response.dns_records
+        if r.type == "CNAME" and r.name == f"{CERT_AUTH_LABEL}.{host.domain}"
+    ]
+    if not pointing or not cert_auth or response.apex not in ownership:
+        return "incomplete"
+    checks = [r.check for r in pointing + cert_auth] + [ownership[response.apex]]
+    if any(c in ("missing", "wrong") for c in checks):
+        return "incomplete"
+    return "complete" if all(c == "ok" for c in checks) else "unknown"
+
+
 def _shown_status(status: HostStatus) -> DomainStatus:
     if status == "removing":
         # for_practice() leaves removing hosts out of everything shown.
@@ -486,4 +622,5 @@ def get_practice_domain_service(
         apex_ips=apex_ips,
         dkim_cname_suffix=settings.practice_domain_dkim_cname_suffix,
         deferred_removal=serving_configured(settings),
+        stuck_after=timedelta(seconds=settings.practice_domain_stuck_after_seconds),
     )

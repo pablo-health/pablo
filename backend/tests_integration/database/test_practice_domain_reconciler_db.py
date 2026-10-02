@@ -74,6 +74,7 @@ _MIGRATION = (
     / "versions"
     / "c5f1d7a93e28_practice_domain_serving.py"
 )
+_WAIT_MIGRATION = _MIGRATION.with_name("e3b8c41f6a52_practice_domain_records_complete.py")
 TARGET = "sites.example.net"
 ACTIVE = CertificateStatus("ACTIVE")
 Zone = dict[tuple[str, str], list[str] | None]
@@ -166,7 +167,9 @@ class Harness:
     now: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def service(self, repo: PracticeDomainRepository) -> PracticeDomainService:
-        return PracticeDomainService(repo, cname_target=TARGET, deferred_removal=True)
+        return PracticeDomainService(
+            repo, cname_target=TARGET, deferred_removal=True, now=lambda: self.now
+        )
 
     def sweep(self, *, store: PostgresReconcileStore | None = None) -> Any:
         return PracticeDomainReconciler(
@@ -826,6 +829,155 @@ def test_without_a_provisioner_no_email_fields_are_written(harness: Harness) -> 
 # --- the schema ---------------------------------------------------------------
 
 
+# --- a host that takes too long -------------------------------------------------
+
+
+def _all_records_in_place(harness: Harness, host: str, apex: str) -> None:
+    """Everything the practice can do: ownership, the host's record and its
+    certificate's authorisation. The certificate is left to the issuer."""
+    harness.publish_ownership(apex)
+    harness.point(host)
+    harness.add_challenge(host)
+
+
+def _stuck_reports(harness: Harness) -> list[dict[str, Any]]:
+    return [
+        e["changes"]
+        for e in harness.audit()
+        if e["action"] == AuditAction.PRACTICE_DOMAIN_STUCK.value
+    ]
+
+
+def test_a_host_waiting_an_hour_on_complete_records_is_reported_once(harness: Harness) -> None:
+    apex = _apex()
+    host = f"portal.{apex}"
+    harness.add(host)
+    harness.sweep()  # requests the authorisation the challenge record names
+    _all_records_in_place(harness, host, apex)
+    harness.serving.certificate_state[host] = CertificateStatus("PROVISIONING")
+
+    harness.sweep()
+    started = harness.host(host)
+    assert started is not None
+    assert started.records_complete_at == harness.now
+    harness.now += timedelta(minutes=59)
+    harness.sweep()
+    assert _stuck_reports(harness) == []
+
+    harness.now += timedelta(minutes=1)
+    harness.sweep()
+    harness.now += timedelta(minutes=2)
+    harness.sweep()
+
+    assert _stuck_reports(harness) == [{"domain": host}]
+    reported = harness.host(host)
+    assert reported is not None
+    assert reported.status == "verifying"
+    assert reported.stuck_reported_at == started.records_complete_at + timedelta(hours=1)  # type: ignore[operator]  # set above
+    entry = next(
+        e for e in harness.audit() if e["action"] == AuditAction.PRACTICE_DOMAIN_STUCK.value
+    )
+    assert (entry["actor_type"], entry["actor_component"]) == ("system", ACTOR_COMPONENT)
+
+
+def test_a_reported_host_that_goes_active_starts_afresh(harness: Harness) -> None:
+    apex = _apex()
+    host = f"portal.{apex}"
+    harness.add(host)
+    harness.sweep()
+    _all_records_in_place(harness, host, apex)
+    harness.sweep()
+    harness.now += timedelta(hours=1)
+    harness.sweep()
+    assert _stuck_reports(harness) == [{"domain": host}]
+
+    # Checking went on; the issuer came through.
+    harness.serving.certificate_state[host] = ACTIVE
+    harness.sweep()
+
+    served = harness.host(host)
+    assert served is not None
+    assert served.status == "active"
+    assert (served.records_complete_at, served.stuck_reported_at) == (None, None)
+
+    # A lapse with every record still in place is a new wait, and a new report.
+    harness.serving.certificate_state[host] = CertificateStatus("PROVISIONING")
+    harness.sweep()
+    harness.sweep()
+    harness.now += timedelta(hours=1)
+    harness.sweep()
+
+    lapsed = harness.host(host)
+    assert lapsed is not None
+    assert lapsed.status == "error"
+    assert _stuck_reports(harness) == [{"domain": host}, {"domain": host}]
+
+
+def test_a_missing_record_clears_the_wait(harness: Harness) -> None:
+    apex = _apex()
+    host = f"portal.{apex}"
+    harness.add(host)
+    harness.sweep()
+    _all_records_in_place(harness, host, apex)
+    harness.sweep()
+    harness.now += timedelta(hours=1)
+    harness.sweep()
+
+    del harness.zone[(host, "CNAME")]
+    harness.sweep()
+
+    cleared = harness.host(host)
+    assert cleared is not None
+    assert (cleared.records_complete_at, cleared.stuck_reported_at) == (None, None)
+
+
+def test_the_wait_columns_are_kept_and_cleared_in_postgres(harness: Harness) -> None:
+    host = f"portal.{_apex()}"
+    harness.add(host)
+    at = datetime(2026, 10, 1, 9, 0, tzinfo=UTC)
+    with tenant_db_session(harness.practice.schema, harness.practice.owner) as session:
+        repo = PostgresPracticeDomainRepository(session)
+        assert repo.mark_records_complete(host, harness.practice.id, at)
+        assert not repo.mark_records_complete(host, harness.practice.id, at + timedelta(hours=1))
+        assert not repo.mark_records_complete(host, "another-practice", at)
+        assert repo.claim_stuck_report(host, harness.practice.id, at + timedelta(hours=1))
+        assert not repo.claim_stuck_report(host, harness.practice.id, at + timedelta(hours=2))
+    stored = harness.host(host)
+    assert stored is not None
+    assert (stored.records_complete_at, stored.stuck_reported_at) == (at, at + timedelta(hours=1))
+
+    with tenant_db_session(harness.practice.schema, harness.practice.owner) as session:
+        repo = PostgresPracticeDomainRepository(session)
+        assert repo.clear_records_complete(host, harness.practice.id)
+        assert not repo.clear_records_complete(host, harness.practice.id)
+    cleared = harness.host(host)
+    assert cleared is not None
+    assert (cleared.records_complete_at, cleared.stuck_reported_at) == (None, None)
+
+
+def test_the_wait_revision_goes_down_and_comes_up_twice(engine: Engine) -> None:
+    def columns() -> int:
+        with engine.begin() as conn:
+            return int(
+                conn.execute(
+                    text(
+                        "SELECT count(*) FROM information_schema.columns "
+                        "WHERE table_schema = 'platform' AND table_name = 'practice_domains' "
+                        "AND column_name IN ('records_complete_at', 'stuck_reported_at')"
+                    )
+                ).scalar_one()
+            )
+
+    _migration("downgrade", engine, _WAIT_MIGRATION)
+    try:
+        assert columns() == 0
+    finally:
+        _migration("upgrade", engine, _WAIT_MIGRATION)
+    _migration("upgrade", engine, _WAIT_MIGRATION)
+
+    assert columns() == 2
+
+
 def test_an_unknown_status_is_still_refused(engine: Engine) -> None:
     session = sessionmaker(bind=engine)()
     try:
@@ -843,8 +995,8 @@ def test_an_unknown_status_is_still_refused(engine: Engine) -> None:
         session.close()
 
 
-def _migration(direction: str, engine: Engine) -> None:
-    spec = importlib.util.spec_from_file_location("practice_domain_serving_revision", _MIGRATION)
+def _migration(direction: str, engine: Engine, path: Path = _MIGRATION) -> None:
+    spec = importlib.util.spec_from_file_location(f"revision_{path.stem}", path)
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)

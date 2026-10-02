@@ -3,7 +3,8 @@
 """The hosts a practice serves its client portal and website from.
 
 * ``GET /api/practice/domains`` — any clinician of the practice: the hosts,
-  their status, which is primary, and the DNS records to set.
+  their status, which is primary, the DNS records to set, and whether a host
+  is taking too long now that its records are in place.
 * ``GET /api/practice/domains/describe?domain=`` — any clinician of the
   practice: what a name would be stored as, its registrable domain, and
   whether it is bare (which decides a website's ``www.`` default).
@@ -21,7 +22,10 @@
 The writes are the practice owner's (see :func:`_manageable_practice_id`).
 The practice is always the caller's own, resolved from the caller, never taken
 from the request. Writes are audited: not PHI, but the primary portal host is
-where clients' links lead, so who changed it belongs on the record.
+where clients' links lead, so who changed it belongs on the record. So is the
+first time a host is seen taking too long (``practice_domain_stuck``), whether
+a check or a plain read sees it first: the practice is shown it as soon as it
+is true, and whoever runs the deployment should hear of it then too.
 
 Nothing here marks a host as working. See
 :mod:`app.services.practice_domain_service`. What does is the domain reconciler
@@ -79,11 +83,23 @@ def _list(service: PracticeDomainService, practice_id: str) -> PracticeDomainLis
 
 @router.get("", response_model=PracticeDomainListResponse)
 def list_practice_domains(
+    http_request: Request,
     user: User = Depends(require_active_subscription),
     service: PracticeDomainService = Depends(get_practice_domain_service),
+    audit: AuditService = Depends(get_audit_service),
 ) -> PracticeDomainListResponse:
     """Every host the caller's practice serves from."""
-    return _list(service, _practice_id(user))
+    practice_id = _practice_id(user)
+    for host in service.report_stuck(practice_id):
+        audit.log(
+            AuditAction.PRACTICE_DOMAIN_STUCK,
+            user,
+            http_request,
+            resource_type=ResourceType.PRACTICE,
+            resource_id=practice_id,
+            changes={"domain": host},
+        )
+    return _list(service, practice_id)
 
 
 @router.get("/describe", response_model=DomainNameResponse)
@@ -136,24 +152,34 @@ def check_practice_domains(
 ) -> PracticeDomainListResponse:
     """Look the practice's records up in DNS and say, per record, what was found.
 
-    Records when a domain's ownership record is found. Changes no host's status.
+    Records when a domain's ownership record is found, and when a host's
+    records are all in place. Changes no host's status.
     """
     practice_id = _manageable_practice_id(user)
-    domains, confirmed = service.check(practice_id, lookup)
-    if confirmed:
+    check = service.check(practice_id, lookup)
+    if check.confirmed:
         audit.log(
             AuditAction.PRACTICE_DOMAIN_OWNERSHIP_CONFIRMED,
             user,
             http_request,
             resource_type=ResourceType.PRACTICE,
             resource_id=practice_id,
-            changes={"domains": confirmed},
+            changes={"domains": check.confirmed},
+        )
+    for host in check.stuck:
+        audit.log(
+            AuditAction.PRACTICE_DOMAIN_STUCK,
+            user,
+            http_request,
+            resource_type=ResourceType.PRACTICE,
+            resource_id=practice_id,
+            changes={"domain": host},
         )
     # Only when a host is still waiting: a check over hosts that all work
     # gives the job nothing to do.
     if service.serving_work_left(practice_id):
         background.add_task(request_reconcile)
-    return PracticeDomainListResponse(domains=domains)
+    return PracticeDomainListResponse(domains=check.domains)
 
 
 @router.post("/{domain}/primary", response_model=PracticeDomainListResponse)

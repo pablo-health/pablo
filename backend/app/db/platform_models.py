@@ -483,6 +483,12 @@ class PracticeDomainRow(PlatformBase):
     #: When the certificate was last deleted and requested again after a failed
     #: authorisation; bounds how often that happens.
     cert_reissued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: When a DNS check first found every record the host needs in place while
+    #: it was not active; cleared when one goes missing or the host is active.
+    records_complete_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: When the host was reported as taking too long since
+    #: ``records_complete_at``; cleared with it.
+    stuck_reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

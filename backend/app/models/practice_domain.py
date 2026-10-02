@@ -55,6 +55,15 @@ class PracticeDomain:
     #: When the host's certificate was last deleted and requested again after
     #: a failed authorisation. ``None`` if it never was.
     cert_reissued_at: datetime | None = None
+    #: When a DNS check first found every record the host needs in place while
+    #: it was not active. Cleared when one goes missing or wrong, and when the
+    #: host becomes active. How long a host has waited with nothing left for
+    #: the practice to do is measured from here, never from when it was added.
+    records_complete_at: datetime | None = None
+    #: When the host was reported as taking too long since
+    #: ``records_complete_at``; cleared with it, so each such episode is
+    #: reported once.
+    stuck_reported_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -133,6 +142,11 @@ class PracticeDomainResponse(BaseModel):
     apex: str | None = None
     #: When the domain's ownership record was last found.
     apex_verified_at: datetime | None = None
+    #: Every record the host needs has been in place for longer than the
+    #: deployment allows, and the host is still not active.
+    stuck: bool = False
+    #: With ``stuck``: what the practice is told to do about it.
+    stuck_message: str | None = None
 
 
 class PracticeDomainListResponse(BaseModel):
