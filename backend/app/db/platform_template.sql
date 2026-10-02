@@ -511,6 +511,8 @@ CREATE TABLE platform.practice_domains (
     cert_auth_value character varying(255),
     last_error character varying(500),
     cert_reissued_at timestamp with time zone,
+    records_complete_at timestamp with time zone,
+    stuck_reported_at timestamp with time zone,
     CONSTRAINT practice_domains_kind_check CHECK (((kind)::text = ANY (ARRAY[('subdomain'::character varying)::text, ('vanity'::character varying)::text]))),
     CONSTRAINT practice_domains_purpose_check CHECK (((purpose)::text = ANY (ARRAY[('portal'::character varying)::text, ('site'::character varying)::text]))),
     CONSTRAINT practice_domains_status_check CHECK (((status)::text = ANY (ARRAY[('pending'::character varying)::text, ('verifying'::character varying)::text, ('active'::character varying)::text, ('error'::character varying)::text, ('removing'::character varying)::text])))
@@ -532,6 +534,31 @@ CREATE TABLE platform.practice_portal_settings (
     decided_at timestamp with time zone,
     updated_at timestamp with time zone NOT NULL,
     updated_by character varying(128)
+);
+
+CREATE TABLE platform.practice_site_versions (
+    practice_id character varying(128) NOT NULL,
+    version integer NOT NULL,
+    file_count integer NOT NULL,
+    total_bytes bigint NOT NULL,
+    published_at timestamp with time zone NOT NULL,
+    published_by character varying(128) NOT NULL
+);
+
+CREATE TABLE platform.practice_sites (
+    practice_id character varying(128) NOT NULL,
+    live_version integer,
+    next_version integer DEFAULT 1 NOT NULL,
+    draft_id character varying(32),
+    draft_file_count integer,
+    draft_bytes bigint,
+    draft_uploaded_at timestamp with time zone,
+    draft_uploaded_by character varying(128),
+    preview_token_hash character varying(64),
+    preview_expires_at timestamp with time zone,
+    published_at timestamp with time zone,
+    published_by character varying(128),
+    updated_at timestamp with time zone NOT NULL
 );
 
 CREATE TABLE platform.practices (
@@ -747,6 +774,12 @@ ALTER TABLE ONLY platform.practice_email_senders
 ALTER TABLE ONLY platform.practice_portal_settings
     ADD CONSTRAINT practice_portal_settings_pkey PRIMARY KEY (practice_id);
 
+ALTER TABLE ONLY platform.practice_site_versions
+    ADD CONSTRAINT practice_site_versions_pkey PRIMARY KEY (practice_id, version);
+
+ALTER TABLE ONLY platform.practice_sites
+    ADD CONSTRAINT practice_sites_pkey PRIMARY KEY (practice_id);
+
 ALTER TABLE ONLY platform.practices
     ADD CONSTRAINT practices_pkey PRIMARY KEY (id);
 
@@ -883,6 +916,8 @@ CREATE INDEX ix_practice_domains_practice_id ON platform.practice_domains USING 
 
 CREATE UNIQUE INDEX uq_practice_domains_primary ON platform.practice_domains USING btree (practice_id, purpose) WHERE is_primary;
 
+CREATE UNIQUE INDEX uq_practice_sites_preview_token_hash ON platform.practice_sites USING btree (preview_token_hash) WHERE (preview_token_hash IS NOT NULL);
+
 CREATE UNIQUE INDEX ux_credential_liability_policies_one_current ON platform.credential_liability_policies USING btree (user_id) WHERE is_current;
 
 CREATE UNIQUE INDEX ux_credential_licenses_one_primary ON platform.credential_licenses USING btree (user_id) WHERE is_primary;
@@ -902,6 +937,9 @@ ALTER TABLE ONLY platform.contracted_rates
 
 ALTER TABLE ONLY platform.payer_participation_events
     ADD CONSTRAINT payer_participation_events_participation_id_fkey FOREIGN KEY (participation_id) REFERENCES platform.payer_participations(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY platform.practice_site_versions
+    ADD CONSTRAINT practice_site_versions_practice_id_fkey FOREIGN KEY (practice_id) REFERENCES platform.practice_sites(practice_id) ON DELETE CASCADE;
 
 ALTER TABLE platform.contracted_rates ENABLE ROW LEVEL SECURITY;
 

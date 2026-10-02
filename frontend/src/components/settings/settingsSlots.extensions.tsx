@@ -66,6 +66,22 @@ export function SchedulingExtras(): ReactNode {
   return null
 }
 
+/**
+ * Other ways to make the website's draft, beside the zip upload on Practice >
+ * Website.
+ *
+ * A deployment that offers another way to make a website (a generator it
+ * runs, say) renders its control here. Whatever it adds saves the draft
+ * through its own backend call into
+ * `app.sites.service.PracticeSiteService.save_draft_files`, so the files are
+ * checked and audited exactly like an upload, then calls `onDraftSaved` so the
+ * page shows the new draft. Preview and Publish stay on the page. `canManage`
+ * is false for anyone who may not change the website.
+ */
+export function WebsiteCreateOptions(_props: { canManage: boolean; onDraftSaved: () => void }): ReactNode {
+  return null
+}
+
 /** Extra rows on You > Sign-in & security, below the second-factor rows. */
 export function SecurityLegalRows(): ReactNode {
   return null

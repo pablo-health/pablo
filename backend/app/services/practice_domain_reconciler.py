@@ -9,7 +9,10 @@ way loses nothing:
 
 1. Look the practice's records up (``PracticeDomainService.check``, the same
    check Settings > Domains runs), which also records a domain's ownership
-   when its ``_pablo-verify`` TXT is found.
+   when its ``_pablo-verify`` TXT is found, notes when a host's records are
+   all in place, and reports a host that has stayed not active too long since
+   (audited here as ``practice_domain_stuck``). Such a host is checked as
+   before: it goes active by itself if what held it up clears.
 2. Per host, ask for its DNS authorisation (storing the ``_acme-challenge``
    value, so the practice is shown the record at once) and its certificate.
    ``pending`` becomes ``verifying``: the records are known and the job is
@@ -278,12 +281,14 @@ class PracticeDomainReconciler:
             before = {
                 a.apex for a in scope.repo.list_apexes_for_practice(practice_id) if a.verified_at
             }
-            responses, found = self._service_for(scope.repo).check(practice_id, self._lookup)
-            confirmed = sorted(set(found) - before)
+            check = self._service_for(scope.repo).check(practice_id, self._lookup)
+            confirmed = sorted(set(check.confirmed) - before)
             if confirmed:
                 scope.audit(AuditAction.PRACTICE_DOMAIN_OWNERSHIP_CONFIRMED, {"domains": confirmed})
+            for host in check.stuck:
+                scope.audit(AuditAction.PRACTICE_DOMAIN_STUCK, {"domain": host})
             apexes = {a.apex: a for a in scope.repo.list_apexes_for_practice(practice_id)}
-        return {r.domain: r.dns_records for r in responses}, apexes
+        return {r.domain: r.dns_records for r in check.domains}, apexes
 
     # --- one host ------------------------------------------------------------
 

@@ -115,6 +115,8 @@ from .routes import (
     users,
 )
 from .settings import get_settings, log_startup_posture
+from .sites import public_routes as site_public_routes
+from .sites import routes as site_routes
 from .version_check import get_min_versions, get_server_version
 
 configure_logging(level=os.environ.get("LOG_LEVEL", "INFO"))
@@ -272,6 +274,9 @@ app.include_router(users.router)
 app.include_router(patients.router)
 app.include_router(practice_billing.router)
 app.include_router(practice_domains.router)
+# The practice's website: managed in Settings > Website, served to its hosts.
+app.include_router(site_routes.router)
+app.include_router(site_public_routes.router)
 app.include_router(domain_connect.router)
 app.include_router(coverage.payers_router)
 app.include_router(coverage.router)

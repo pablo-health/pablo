@@ -516,6 +516,12 @@ class PracticeDomainRow(PlatformBase):
     #: When the certificate was last deleted and requested again after a failed
     #: authorisation; bounds how often that happens.
     cert_reissued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: When a DNS check first found every record the host needs in place while
+    #: it was not active; cleared when one goes missing or the host is active.
+    records_complete_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: When the host was reported as taking too long since
+    #: ``records_complete_at``; cleared with it.
+    stuck_reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -560,6 +566,85 @@ class PracticeDomainApexRow(PlatformBase):
     email_dkim_tokens: Mapped[list[str] | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PracticeSiteRow(PlatformBase):
+    """A practice's static website: which published version is live, and its draft.
+
+    Platform-scoped like ``PracticeDomainRow``: a request for a website host
+    carries only the host, so the practice and its live version are found from
+    it before any tenant schema is known.
+
+    The files live in object storage under ``sites/<practice_id>/``: each
+    published version in ``v<N>/`` and the draft in ``draft/<draft_id>/``
+    (see :mod:`app.sites.service`). Keyed on the practice id rather than its
+    slug, since a practice can be renamed.
+
+    ``next_version`` only grows, so a version number is never reused, even by
+    a publish that failed after writing some of its files. Every change to a
+    practice's site holds this row's lock from its first write to its commit.
+
+    No PHI: a practice's public website and who published it.
+    """
+
+    __tablename__ = "practice_sites"
+    # See PracticeDomainRow for why the tuple form needs the ignore.
+    __table_args__ = (  # type: ignore[assignment]
+        Index(
+            "uq_practice_sites_preview_token_hash",
+            "preview_token_hash",
+            unique=True,
+            postgresql_where=text("preview_token_hash IS NOT NULL"),
+        ),
+        {"schema": PLATFORM_SCHEMA},
+    )
+
+    practice_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    #: The version visitors are served; ``None`` until the first publish.
+    live_version: Mapped[int | None] = mapped_column(Integer)
+    next_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default=text("1")
+    )
+    #: The folder the current draft was written to, ``None`` with no draft.
+    draft_id: Mapped[str | None] = mapped_column(String(32))
+    draft_file_count: Mapped[int | None] = mapped_column(Integer)
+    draft_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    draft_uploaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    draft_uploaded_by: Mapped[str | None] = mapped_column(String(128))
+    #: SHA-256 of the token in the draft's preview address, and when that
+    #: address stops working. Only the hash is kept.
+    preview_token_hash: Mapped[str | None] = mapped_column(String(64))
+    preview_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: The last publish or roll back.
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    published_by: Mapped[str | None] = mapped_column(String(128))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class PracticeSiteVersionRow(PlatformBase):
+    """One retained published version of a practice's website.
+
+    A row exists exactly while the version's files are kept, so every row is a
+    version the practice can roll back to. The newest versions are kept (see
+    ``app.sites.service.RETAINED_VERSIONS``) plus the live one; older rows go
+    with their files.
+
+    No PHI: counts, sizes, a time and who published.
+    """
+
+    __tablename__ = "practice_site_versions"
+    __table_args__ = {"schema": PLATFORM_SCHEMA}
+
+    practice_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey(f"{PLATFORM_SCHEMA}.practice_sites.practice_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    version: Mapped[int] = mapped_column(Integer, primary_key=True)
+    file_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    published_by: Mapped[str] = mapped_column(String(128), nullable=False)
 
 
 class SetupTokenRow(PlatformBase):

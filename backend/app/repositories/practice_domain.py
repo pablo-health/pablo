@@ -136,6 +136,24 @@ class PracticeDomainRepository(ABC):
     ) -> None:
         """Record the state and DKIM tokens of the domain's email sending identity."""
 
+    # --- How long a host has waited (PracticeDomainService.check) -----------
+
+    @abstractmethod
+    def mark_records_complete(self, domain: str, practice_id: str, at: datetime) -> bool:
+        """Record that every record the host needs was found at *at*, unless
+        that is already recorded. Returns whether the row was written."""
+
+    @abstractmethod
+    def clear_records_complete(self, domain: str, practice_id: str) -> bool:
+        """Forget when the host's records were complete, and any report of its
+        wait since. Returns whether the row was written."""
+
+    @abstractmethod
+    def claim_stuck_report(self, domain: str, practice_id: str, at: datetime) -> bool:
+        """Record that the host's wait is being reported at *at*, only if it has
+        not been since its records were complete. Returns whether this caller
+        is the one to report it."""
+
 
 class InMemoryPracticeDomainRepository(PracticeDomainRepository):
     """In-memory implementation for tests."""
@@ -242,6 +260,9 @@ class InMemoryPracticeDomainRepository(PracticeDomainRepository):
             row.last_error = state.last_error
             row.cert_reissued_at = state.cert_reissued_at
             row.verified_at = state.verified_at
+            if state.status == "active":
+                row.records_complete_at = None
+                row.stuck_reported_at = None
             row.updated_at = utc_now()
             return True
 
@@ -274,6 +295,33 @@ class InMemoryPracticeDomainRepository(PracticeDomainRepository):
                 row.email_identity_status = status
                 row.email_dkim_tokens = list(dkim_tokens) if dkim_tokens else None
                 row.updated_at = utc_now()
+
+    def mark_records_complete(self, domain: str, practice_id: str, at: datetime) -> bool:
+        with self._lock:
+            row = self._rows.get(domain)
+            if row is None or row.practice_id != practice_id or row.records_complete_at:
+                return False
+            row.records_complete_at = at
+            return True
+
+    def clear_records_complete(self, domain: str, practice_id: str) -> bool:
+        with self._lock:
+            row = self._rows.get(domain)
+            if row is None or row.practice_id != practice_id:
+                return False
+            if row.records_complete_at is None and row.stuck_reported_at is None:
+                return False
+            row.records_complete_at = None
+            row.stuck_reported_at = None
+            return True
+
+    def claim_stuck_report(self, domain: str, practice_id: str, at: datetime) -> bool:
+        with self._lock:
+            row = self._rows.get(domain)
+            if row is None or row.practice_id != practice_id or row.stuck_reported_at:
+                return False
+            row.stuck_reported_at = at
+            return True
 
     def put(self, domain: PracticeDomain) -> None:
         """Test seam: record a row as-is, status and all."""

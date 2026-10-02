@@ -49,6 +49,14 @@ export interface PracticeDomain {
   apex?: string | null
   /** When the domain's ownership record was last found. */
   apex_verified_at?: string | null
+  /**
+   * Every record the host needs has been in place for longer than the
+   * deployment allows, and it is still not active. Checking goes on; the host
+   * goes active by itself if what held it up clears.
+   */
+  stuck?: boolean
+  /** With `stuck`: what the practice is told to do about it. */
+  stuck_message?: string | null
 }
 
 export interface PracticeDomainList {

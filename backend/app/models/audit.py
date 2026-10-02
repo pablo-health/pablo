@@ -290,6 +290,10 @@ class AuditAction(StrEnum):
     # A DNS check found a domain's ownership record. The payload is the
     # domains, nothing else.
     PRACTICE_DOMAIN_OWNERSHIP_CONFIRMED = "practice_domain_ownership_confirmed"
+    # Every record a host needs has been in place for longer than the
+    # deployment allows and the host is still not active. Recorded once per
+    # such wait. The payload is the host, nothing else.
+    PRACTICE_DOMAIN_STUCK = "practice_domain_stuck"
     # The domain reconciler job serving the hosts: a host's status moved
     # (payload: the host, its status before and after), a removed host's
     # serving was taken down and its row deleted (payload: the host), and a
@@ -303,6 +307,12 @@ class AuditAction(StrEnum):
     # domains, nothing else.
     PRACTICE_DOMAIN_CONNECT_LINK_ISSUED = "practice_domain_connect_link_issued"
     PRACTICE_DOMAIN_CONNECT_RETURNED = "practice_domain_connect_returned"
+    # The practice's website: a draft uploaded, a version published, and a
+    # version put back live. The payload is the version, how many files and
+    # how many bytes; never the files themselves.
+    PRACTICE_SITE_DRAFT_SAVED = "practice_site_draft_saved"
+    PRACTICE_SITE_PUBLISHED = "practice_site_published"
+    PRACTICE_SITE_ROLLED_BACK = "practice_site_rolled_back"
 
     # A patient signed themselves out. The mirror image of
     # PATIENT_PORTAL_SESSION_REDEEMED and recorded for the same reason:

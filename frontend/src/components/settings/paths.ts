@@ -37,3 +37,7 @@ export const CREDENTIALING_SETTINGS_PATH = `/dashboard/settings/${CREDENTIALING_
  */
 export const CREDENTIALING_LEGACY_SETTINGS_ID = "credentialing-deprecated"
 export const CREDENTIALING_LEGACY_SETTINGS_PATH = `/dashboard/settings/${CREDENTIALING_LEGACY_SETTINGS_ID}`
+
+/** The practice's own domains; Settings > Website links here until a website domain works. */
+export const DOMAINS_SETTINGS_ID = "domains"
+export const DOMAINS_SETTINGS_PATH = `/dashboard/settings/${DOMAINS_SETTINGS_ID}`

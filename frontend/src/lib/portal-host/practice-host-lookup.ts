@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 /**
- * Asking the backend which practice's portal a host serves, and remembering
- * the answer for a minute.
+ * Asking the backend what a practice's own host serves, and remembering the
+ * answer for a minute.
  *
  * `GET {API_URL}/api/portal/hosts/{host}` answers `{slug, primary_host}` for
  * an active portal host and 404 for every other. Both are kept for
@@ -14,6 +14,9 @@
  *
  * The backend keeps its answers for the same minute, so a host that starts
  * or stops working is noticed here within about two.
+ *
+ * A practice's website hosts are looked up the same way, against their own
+ * route (`./practice-site-lookup`), through {@link createHostLookup}.
  */
 
 import type { PracticeHost, PracticeHostAnswer } from "./practice-host"
@@ -29,13 +32,21 @@ export interface PracticeHostLookupOptions {
   timeoutMs?: number
 }
 
+export interface HostLookupRoute<T> {
+  /** The backend path that answers for `hostname`. */
+  path: (hostname: string) => string
+  /** A found answer from the response body, or `"unavailable"` when it makes no sense. */
+  parse: (body: unknown) => T | "unavailable"
+}
+
+export type HostLookup<T> = (hostname: string) => Promise<T | null | "unavailable">
 export type PracticeHostLookup = (hostname: string) => Promise<PracticeHostAnswer>
 
 const TTL_MS = 60_000
 const MAX_ENTRIES = 5_000
 const TIMEOUT_MS = 3_000
 
-function parse(body: unknown): PracticeHost | "unavailable" {
+function parsePortalHost(body: unknown): PracticeHost | "unavailable" {
   if (typeof body !== "object" || body === null) return "unavailable"
   const { slug, primary_host: primaryHost } = body as Record<string, unknown>
   if (typeof slug !== "string" || !slug) return "unavailable"
@@ -43,20 +54,21 @@ function parse(body: unknown): PracticeHost | "unavailable" {
   return { slug, primaryHost }
 }
 
-export function createPracticeHostLookup(options: PracticeHostLookupOptions): PracticeHostLookup {
+/** A cached lookup of `route` on the backend: found, nothing (404), or could not be asked. */
+export function createHostLookup<T>(options: PracticeHostLookupOptions, route: HostLookupRoute<T>): HostLookup<T> {
   const fetchFn = options.fetch ?? fetch
   const now = options.now ?? Date.now
   const ttlMs = options.ttlMs ?? TTL_MS
   const maxEntries = options.maxEntries ?? MAX_ENTRIES
   const timeoutMs = options.timeoutMs ?? TIMEOUT_MS
-  const kept = new Map<string, { until: number; answer: PracticeHost | null }>()
-  const inFlight = new Map<string, Promise<PracticeHostAnswer>>()
+  const kept = new Map<string, { until: number; answer: T | null }>()
+  const inFlight = new Map<string, Promise<T | null | "unavailable">>()
 
-  async function ask(hostname: string): Promise<PracticeHostAnswer> {
+  async function ask(hostname: string): Promise<T | null | "unavailable"> {
     const base = options.apiUrl().replace(/\/+$/, "")
     let response: Response
     try {
-      response = await fetchFn(`${base}/api/portal/hosts/${encodeURIComponent(hostname)}`, {
+      response = await fetchFn(`${base}${route.path(hostname)}`, {
         headers: { Accept: "application/json" },
         cache: "no-store",
         signal: AbortSignal.timeout(timeoutMs),
@@ -67,13 +79,13 @@ export function createPracticeHostLookup(options: PracticeHostLookupOptions): Pr
     if (response.status === 404) return null
     if (!response.ok) return "unavailable"
     try {
-      return parse(await response.json())
+      return route.parse(await response.json())
     } catch {
       return "unavailable"
     }
   }
 
-  function keep(hostname: string, answer: PracticeHost | null): void {
+  function keep(hostname: string, answer: T | null): void {
     kept.delete(hostname)
     kept.set(hostname, { until: now() + ttlMs, answer })
     while (kept.size > maxEntries) {
@@ -103,7 +115,17 @@ export function createPracticeHostLookup(options: PracticeHostLookupOptions): Pr
   }
 }
 
+export function createPracticeHostLookup(options: PracticeHostLookupOptions): PracticeHostLookup {
+  return createHostLookup(options, {
+    path: (hostname) => `/api/portal/hosts/${encodeURIComponent(hostname)}`,
+    parse: parsePortalHost,
+  })
+}
+
+/** The backend's origin as this server reaches it: the server-side `API_URL`. */
+export function serverApiUrl(): string {
+  return process.env.API_URL || "http://localhost:8000"
+}
+
 /** The process-wide lookup the proxy uses, against the server-side `API_URL`. */
-export const lookupPracticeHost: PracticeHostLookup = createPracticeHostLookup({
-  apiUrl: () => process.env.API_URL || "http://localhost:8000",
-})
+export const lookupPracticeHost: PracticeHostLookup = createPracticeHostLookup({ apiUrl: serverApiUrl })

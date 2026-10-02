@@ -876,6 +876,18 @@ class Settings(BaseSettings):
         description="Maximum compliance document upload size (bytes).",
     )
 
+    # A practice's static website (app.sites). Files are kept under
+    # sites/<practice_id>/ in this bucket; unset turns publishing off and
+    # every website host serves nothing.
+    practice_site_bucket: str | None = Field(
+        default=None,
+        description=(
+            "Bucket for practices' published websites, on the provider "
+            "selected by file_storage_provider. Leave unset to turn practice "
+            "websites off."
+        ),
+    )
+
     # Patient document upload (THERAPY-ak6m.2). When unset, the
     # /api/patients/{id}/documents surface returns 503 with a clear
     # configuration message — keeps self-hosters who haven't provisioned
@@ -1195,6 +1207,18 @@ class Settings(BaseSettings):
             "Comma-separated DNS servers (host or host:port) Settings > Domains "
             "asks when a practice checks its records. Empty uses the system's "
             "resolver."
+        ),
+    )
+    practice_domain_stuck_after_seconds: int = Field(
+        default=3600,
+        ge=60,
+        description=(
+            "How long a host may stay not active after every record it needs "
+            "was found in place before Settings > Domains tells the practice it "
+            "is taking too long (with the message from "
+            "app.services.practice_domain_stuck) and it is reported once in the "
+            "logs and the audit trail as practice_domain_stuck. Checking goes on "
+            "regardless."
         ),
     )
     # Serving the hosts (app.jobs.practice_domain_reconcile). The job gives each

@@ -31,7 +31,7 @@ export interface ApiOriginRequest {
  * over plain http whatever the visitor used, so the balancer's
  * `X-Forwarded-Proto` says which; without one, the request's own.
  */
-function browserScheme(request: ApiOriginRequest): string {
+export function browserScheme(request: ApiOriginRequest): string {
   const forwarded = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase()
   if (forwarded === "https" || forwarded === "http") return `${forwarded}:`
   return request.protocol

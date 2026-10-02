@@ -27,6 +27,9 @@ from app.routes.scheduling import (
 from app.routes.scheduling import (
     get_patient_repository as get_scheduling_patient_repository,
 )
+from app.routes.scheduling import (
+    get_session_repository as get_scheduling_session_repository,
+)
 from app.scheduling_engine.models.appointment import Appointment
 from app.scheduling_engine.models.availability import AvailabilityRule, RuleType
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
@@ -296,6 +299,95 @@ def test_list_appointments_name_null_without_grant(client: TestClient) -> None:
 
     assert response.status_code == 200, response.text
     assert response.json()["data"][0]["patient_name"] is None
+
+
+def _linked_appointment(appt_id: str, session_id: str | None) -> Appointment:
+    appt = _real_appointment(appt_id=appt_id)
+    appt.session_id = session_id
+    return appt
+
+
+def _session_with(session_id: str, status: str) -> TherapySession:
+    session = _session()
+    session.id = session_id
+    session.status = status
+    return session
+
+
+def _list_with_sessions(
+    client: TestClient, appointments: list[Appointment], sessions: dict[str, TherapySession]
+) -> tuple[list[dict[str, Any]], MagicMock]:
+    scheduling_svc = MagicMock()
+    scheduling_svc.list_appointments.return_value = appointments
+    session_repo = MagicMock()
+    session_repo.get_multiple.return_value = sessions
+    app.dependency_overrides[get_scheduling_service] = lambda: scheduling_svc
+    app.dependency_overrides[get_scheduling_session_repository] = lambda: session_repo
+    response = client.get(
+        "/api/appointments",
+        params={"start": "2026-04-15T00:00:00Z", "end": "2026-04-16T00:00:00Z"},
+    )
+    assert response.status_code == 200, response.text
+    data: list[dict[str, Any]] = response.json()["data"]
+    return data, session_repo
+
+
+def test_list_appointments_carries_linked_session_status(client: TestClient) -> None:
+    """A client can tell a session still being recorded from one already
+    ended — before this, an appointment whose session ended early stayed the
+    "next" appointment until its scheduled end."""
+    data, session_repo = _list_with_sessions(
+        client,
+        [
+            _linked_appointment("appt-live", "session-live"),
+            _linked_appointment("appt-ended", "session-ended"),
+            _linked_appointment("appt-none", None),
+        ],
+        {
+            "session-live": _session_with("session-live", SessionStatus.IN_PROGRESS),
+            "session-ended": _session_with("session-ended", SessionStatus.RECORDING_COMPLETE),
+        },
+    )
+
+    by_id = {row["id"]: row["session_status"] for row in data}
+    assert by_id == {
+        "appt-live": "in_progress",
+        "appt-ended": "recording_complete",
+        "appt-none": None,
+    }
+    # One batched lookup for the whole page, not one per appointment.
+    session_repo.get_multiple.assert_called_once()
+    assert set(session_repo.get_multiple.call_args.args[0]) == {"session-live", "session-ended"}
+
+
+def test_list_appointments_session_status_null_when_session_not_visible(
+    client: TestClient,
+) -> None:
+    """A session the caller can't see (no grant, deleted) leaves the field
+    null rather than failing the list."""
+    data, _ = _list_with_sessions(client, [_linked_appointment("appt-1", "session-gone")], {})
+
+    assert data[0]["session_status"] is None
+
+
+def test_list_appointments_skips_session_lookup_when_nothing_is_linked(
+    client: TestClient,
+) -> None:
+    data, session_repo = _list_with_sessions(client, [_linked_appointment("appt-1", None)], {})
+
+    assert data[0]["session_status"] is None
+    session_repo.get_multiple.assert_not_called()
+
+
+def test_list_appointments_drops_an_unknown_session_status(client: TestClient) -> None:
+    """A status this build doesn't know must not 500 the whole calendar."""
+    data, _ = _list_with_sessions(
+        client,
+        [_linked_appointment("appt-1", "session-1")],
+        {"session-1": _session_with("session-1", "some_future_status")},
+    )
+
+    assert data[0]["session_status"] is None
 
 
 def test_list_appointments_audits_each_row(client: TestClient) -> None:
