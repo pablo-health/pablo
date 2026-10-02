@@ -38,6 +38,10 @@ export const CREDENTIALING_SETTINGS_PATH = `/dashboard/settings/${CREDENTIALING_
 export const CREDENTIALING_LEGACY_SETTINGS_ID = "credentialing-deprecated"
 export const CREDENTIALING_LEGACY_SETTINGS_PATH = `/dashboard/settings/${CREDENTIALING_LEGACY_SETTINGS_ID}`
 
+/** Whether the practice offers the portal; Settings > Domains links here while it does not. */
+export const PATIENT_PORTAL_SETTINGS_ID = "portal"
+export const PATIENT_PORTAL_SETTINGS_PATH = `/dashboard/settings/${PATIENT_PORTAL_SETTINGS_ID}`
+
 /** The practice's own domains; Settings > Website links here until a website domain works. */
 export const DOMAINS_SETTINGS_ID = "domains"
 export const DOMAINS_SETTINGS_PATH = `/dashboard/settings/${DOMAINS_SETTINGS_ID}`

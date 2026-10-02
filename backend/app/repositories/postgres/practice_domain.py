@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import delete, or_, select, update
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import aliased
 
 from ...db.platform_models import PracticeDomainApexRow, PracticeDomainRow
 from ...models.practice_domain import PracticeDomain, PracticeDomainApex
@@ -29,7 +30,8 @@ if TYPE_CHECKING:
     )
 
 # SQLSTATE 23505. A fresh row is never primary, so the only unique constraint
-# an insert can trip is the primary key: the hostname, or the domain.
+# an insert can trip is the primary key: the hostname, or the domain. A primary
+# claimed (claim_primary) can trip the one-primary-per-purpose index.
 _UNIQUE_VIOLATION = "23505"
 
 
@@ -247,6 +249,38 @@ class PostgresPracticeDomainRepository(PracticeDomainRepository):
             )
             .values(**values)
         )
+
+    def claim_primary(self, domain: str, practice_id: str, purpose: DomainPurpose) -> bool:
+        other = aliased(PracticeDomainRow)
+        no_primary = ~(
+            select(other.domain)
+            .where(
+                other.practice_id == practice_id,
+                other.purpose == purpose,
+                other.is_primary.is_(True),
+            )
+            .exists()
+        )
+        try:
+            # A savepoint: two claims at once can both see no primary, and the
+            # partial unique index then refuses the second. That one simply
+            # did not claim it.
+            with self._session.begin_nested():
+                return self._changed(
+                    update(PracticeDomainRow)
+                    .where(
+                        PracticeDomainRow.domain == domain,
+                        PracticeDomainRow.practice_id == practice_id,
+                        PracticeDomainRow.purpose == purpose,
+                        PracticeDomainRow.status == "active",
+                        no_primary,
+                    )
+                    .values(is_primary=True, updated_at=utc_now())
+                )
+        except IntegrityError as e:
+            if getattr(e.orig, "pgcode", None) != _UNIQUE_VIOLATION:
+                raise
+            return False
 
     def claim_reissue(self, domain: str, *, last: datetime | None, at: datetime) -> bool:
         unchanged = (
