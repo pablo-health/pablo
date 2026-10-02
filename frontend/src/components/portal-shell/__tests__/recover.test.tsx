@@ -128,14 +128,16 @@ describe("the recovery page", () => {
     expect(screen.queryByTestId("portal-recover-sent")).toBeNull()
   })
 
-  it("keeps the submit button disabled until an address is typed", async () => {
+  it("offers the button as ready, and sends nothing without an address", async () => {
     render(<PortalRecover slug={SLUG} />)
 
     const button = await screen.findByTestId("portal-recover-submit")
-    expect(button.hasAttribute("disabled")).toBe(true)
-
-    await userEvent.type(screen.getByTestId("portal-recover-email"), "a@b.test")
     expect(button.hasAttribute("disabled")).toBe(false)
+    expect(screen.getByTestId("portal-recover-email")).toBeRequired()
+
+    await userEvent.click(button)
+    expect(requestPortalRecovery).not.toHaveBeenCalled()
+    expect(screen.queryByTestId("portal-recover-sent")).toBeNull()
   })
 
   it("offers a way back to the portal", async () => {

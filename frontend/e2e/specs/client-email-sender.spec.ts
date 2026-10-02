@@ -7,7 +7,8 @@
  * What only the real stack can prove: the card saves through the real route
  * into the platform table, and the invitation the portal sends afterwards
  * leaves through the real SMTP sender with the practice's name on the From
- * line and its Reply-To. The practice on this stack has no domain that can
+ * line and its Reply-To — and, before a reply-to is set, with no Reply-To at
+ * all rather than anybody's sign-in address. The practice on this stack has no domain that can
  * send, so the From address stays the deployment's own — which is the
  * fallback a practice sees while its domain is being set up.
  *
@@ -47,6 +48,38 @@ test.describe("Who client email is from", () => {
   test.afterEach(async ({ api }) => {
     // The practice is shared by every spec in this worker.
     await api.put(SENDER_URL, original)
+  })
+
+  test("with no reply-to set, an invitation carries the practice's name and no Reply-To", async ({
+    api,
+    signedInPage: page,
+  }) => {
+    await api.put(SENDER_URL, { sender_name: null, sender_local_part: null, reply_to: null })
+    const status = await api.get<{ practice_name?: string }>("/api/users/me/status")
+    const practiceName = status.practice_name ?? ""
+    expect(practiceName).not.toBe("")
+
+    await page.goto("/dashboard/settings/portal")
+    const card = page.getByTestId("client-email-sender-card")
+    await expect(card.getByLabel("Replies go to")).toHaveValue("")
+    await expect(page.getByTestId("client-email-preview")).toContainText(
+      `Clients see: ${practiceName} <${DEPLOYMENT_FROM}>`,
+    )
+    await expect(page.getByTestId("client-email-preview")).not.toContainText("replies go to")
+    await expect(page.getByTestId("client-email-pending-note")).toContainText(
+      "a reply-to address is set",
+    )
+
+    const stamp = Date.now().toString(36)
+    const email = `sender-unset-${stamp}@example.com`
+    const patient = await givePatient(api, { email, phone: "+15005550198" })
+    await api.post(`/api/patients/${patient.id}/portal-invite`)
+
+    const invitation = await mail.waitFor(email)
+    expect(invitation.from_header).toContain(`<${DEPLOYMENT_FROM}>`)
+    expect(invitation.from_header).toContain(practiceName)
+    // No owner's address, no Reply-To at all: replies follow the deployment's From.
+    expect(invitation.reply_to).toBe("")
   })
 
   test("the owner sets the sender name and reply-to, and an invitation carries both", async ({

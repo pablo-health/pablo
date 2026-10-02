@@ -63,8 +63,6 @@ class EmailSenderFields(BaseModel):
 class EmailSenderDefaults(BaseModel):
     sender_name: str
     sender_local_part: str
-    #: ``None`` when the practice has no owner address to fall back on.
-    reply_to: str | None
 
 
 class EffectiveSender(BaseModel):
@@ -115,7 +113,6 @@ def _response(view: SenderView, *, can_edit: bool, applies: bool) -> EmailSender
         defaults=EmailSenderDefaults(
             sender_name=view.defaults.sender_name,
             sender_local_part=view.defaults.sender_local_part,
-            reply_to=view.defaults.reply_to,
         ),
         sending_domain=view.sending_domain,
         deployment_from_address=deployment_from_address(),

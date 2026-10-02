@@ -225,7 +225,12 @@ def test_the_primary_host_serves_its_practice(client: TestClient, rows: _Rows) -
     response = _ask(client, primary)
 
     assert response.status_code == 200
-    assert response.json() == {"slug": slug, "primary_host": primary, "theme": None}
+    assert response.json() == {
+        "slug": slug,
+        "primary_host": primary,
+        "theme": None,
+        "site_host": None,
+    }
 
 
 def test_an_alias_names_the_primary_to_send_visitors_to(client: TestClient, rows: _Rows) -> None:
@@ -236,7 +241,12 @@ def test_an_alias_names_the_primary_to_send_visitors_to(client: TestClient, rows
     response = _ask(client, alias)
 
     assert response.status_code == 200
-    assert response.json() == {"slug": slug, "primary_host": primary, "theme": None}
+    assert response.json() == {
+        "slug": slug,
+        "primary_host": primary,
+        "theme": None,
+        "site_host": None,
+    }
 
 
 def test_a_practice_with_no_working_primary_serves_on_every_active_host(
@@ -246,7 +256,12 @@ def test_a_practice_with_no_working_primary_serves_on_every_active_host(
     better to send anyone, so each active host serves the portal itself."""
     practice_id, slug = rows.practice()
     alias = rows.host(practice_id)
-    assert _ask(client, alias).json() == {"slug": slug, "primary_host": None, "theme": None}
+    assert _ask(client, alias).json() == {
+        "slug": slug,
+        "primary_host": None,
+        "theme": None,
+        "site_host": None,
+    }
 
     other_id, other_slug = rows.practice()
     rows.host(other_id, primary=True, status="error")
@@ -255,6 +270,7 @@ def test_a_practice_with_no_working_primary_serves_on_every_active_host(
         "slug": other_slug,
         "primary_host": None,
         "theme": None,
+        "site_host": None,
     }
 
 
@@ -304,7 +320,12 @@ def test_an_answer_is_kept_for_a_minute(client: TestClient, rows: _Rows, clock: 
     assert _ask(client, host).status_code == 404, "the kept answer stands until the minute is up"
 
     clock.now += 1
-    assert _ask(client, host).json() == {"slug": slug, "primary_host": host, "theme": None}
+    assert _ask(client, host).json() == {
+        "slug": slug,
+        "primary_host": host,
+        "theme": None,
+        "site_host": None,
+    }
 
     rows.set_status(host, "error")
     assert _ask(client, host).status_code == 200
@@ -363,7 +384,12 @@ def test_a_removing_primary_sends_no_one_from_an_alias(client: TestClient, rows:
     rows.host(practice_id, primary=True, status="removing")
     alias = rows.host(practice_id, prefix="clients")
 
-    assert _ask(client, alias).json() == {"slug": slug, "primary_host": None, "theme": None}
+    assert _ask(client, alias).json() == {
+        "slug": slug,
+        "primary_host": None,
+        "theme": None,
+        "site_host": None,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -419,6 +445,24 @@ def test_one_practices_theme_never_reaches_anothers_host(client: TestClient, row
     other_host = rows.host(other, primary=True)
 
     assert _theme(client, other_host) is None
+
+
+def test_the_host_names_the_live_website_to_link_back_to(
+    client: TestClient, rows: _Rows, clock: _Clock
+) -> None:
+    practice_id, _ = rows.practice()
+    host = rows.host(practice_id, primary=True)
+    site = rows.host(practice_id, purpose="site", primary=True, prefix="www")
+    rows.host(practice_id, purpose="site", prefix="old")
+    assert _ask(client, host).json()["site_host"] is None, "nothing published yet"
+
+    rows.site(practice_id, [None], live=1)
+    clock.now += 61
+    assert _ask(client, host).json()["site_host"] == site
+
+    rows.set_live(practice_id, None)
+    clock.now += 61
+    assert _ask(client, host).json()["site_host"] is None, "nothing live"
 
 
 @pytest.mark.usefixtures("links")

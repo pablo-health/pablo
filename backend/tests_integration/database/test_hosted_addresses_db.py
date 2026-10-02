@@ -240,7 +240,26 @@ def test_the_hosted_portal_address_serves_the_practices_portal(
     response = _portal(client, f"{slug}.portal.{DOMAIN}")
 
     assert response.status_code == 200
-    assert response.json() == {"slug": slug, "primary_host": None, "theme": None}
+    assert response.json() == {
+        "slug": slug,
+        "primary_host": None,
+        "theme": None,
+        "site_host": None,
+    }
+
+
+@pytest.mark.usefixtures("hosted")
+def test_the_portal_links_back_to_the_hosted_website_once_one_is_live(
+    client: TestClient, rows: _Rows
+) -> None:
+    practice_id, slug = rows.practice()
+    rows.site(practice_id)
+
+    assert _portal(client, f"{slug}.portal.{DOMAIN}").json()["site_host"] == f"{slug}.{DOMAIN}"
+
+    own = rows.host(practice_id, purpose="site")
+    portal_host = rows.host(practice_id, purpose="portal")
+    assert _portal(client, portal_host).json()["site_host"] == own
 
 
 @pytest.mark.usefixtures("hosted")

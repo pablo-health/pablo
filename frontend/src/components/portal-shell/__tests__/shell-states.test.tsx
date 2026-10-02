@@ -187,7 +187,7 @@ describe("PortalShell", () => {
     expect(requestSignInCode).toHaveBeenCalledTimes(2)
   })
 
-  it("sends a link the server will not text a code for to get a new one", async () => {
+  it("sends a link the server will not text a code for to sign in again, saying why", async () => {
     arriveWithInvitation("tok-1")
     resolvePortalPractice.mockResolvedValue({
       ok: true,
@@ -200,11 +200,9 @@ describe("PortalShell", () => {
     render(<PortalShell slug="example-therapy" />)
     await user.click(await screen.findByTestId("portal-shell-request-code"))
 
-    expect(await screen.findByTestId("portal-shell-link-ended")).toBeTruthy()
-    expect(screen.getByTestId("portal-shell-link-ended-recover")).toHaveAttribute(
-      "href",
-      "/portal/example-therapy/recover",
-    )
+    expect(await screen.findByTestId("portal-shell-link-ended")).toHaveTextContent("That sign-in link has expired.")
+    expect(screen.getByTestId("portal-recover-email")).toBeTruthy()
+    expect(screen.getByRole("button", { name: "Email me a sign-in link" })).toBeTruthy()
   })
 
   it("keeps the patient on the first step when a code could not be sent", async () => {

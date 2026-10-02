@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from app.db import create_standalone_session
 from app.models.audit import AuditAction
-from app.portal.theme import portal_theme
+from app.portal.practice_site import portal_theme
 from app.services.file_storage import LocalFileStorage
 from app.settings import get_settings
 from app.sites import public_routes

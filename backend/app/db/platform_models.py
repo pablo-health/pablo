@@ -412,8 +412,8 @@ class PracticeEmailSenderRow(PlatformBase):
       practice's name.
     * ``sender_local_part`` — the part before the ``@`` when the practice's own
       domain can send; defaults to ``portal``.
-    * ``reply_to`` — where a client's reply goes; defaults to the practice
-      owner's email.
+    * ``reply_to`` — where a client's reply goes. No default: until one is
+      saved, mail does not leave from the practice's domain.
 
     Which address the mail actually leaves from is decided at send time (see
     ``app.portal.client_sender``), not stored here.

@@ -26,9 +26,11 @@ interface Draft {
 /**
  * Who the practice's email to its clients is from, and where replies go.
  *
- * Three fields, each blank for its default, and a preview line drawn here so it
- * follows every keystroke. Mail leaves from the practice's own domain once that
- * domain's email is verified, and from the deployment's address until then;
+ * Three fields and a preview line drawn here so it follows every keystroke. The
+ * sender name and mailbox name fall back to defaults; the reply-to has none, and
+ * nothing is pre-filled from anybody's sign-in address. Mail leaves from the
+ * practice's own domain once that domain's email is verified AND a reply-to is
+ * set, and from the deployment's address until then;
  * the server decides which (`resolve_client_sender`), and the preview shows
  * the server's answer whenever the form matches what is saved.
  *
@@ -100,15 +102,24 @@ function ClientEmailSenderForm({ sender }: { sender: EmailSender }) {
 
   const fromName = draft.sender_name.trim() || sender.defaults.sender_name
   const localPart = draft.sender_local_part.trim().toLowerCase() || sender.defaults.sender_local_part
-  const replyTo = draft.reply_to.trim() || sender.defaults.reply_to
+  // No default: nothing is filled in from anybody's sign-in address.
+  const replyTo = draft.reply_to.trim()
   // Matching what is saved, the server's answer is the truth (it also knows
   // when the practice's domain cannot be used). Edited, the preview follows
-  // the same rule the server applies.
+  // the same rule the server applies: the practice's domain needs a verified
+  // domain AND a reply-to address.
   const fromAddress = !dirty
     ? (sender.effective.from_address ?? sender.deployment_from_address)
-    : sender.sending_domain
+    : sender.sending_domain && replyTo
       ? `${localPart}@${sender.sending_domain}`
       : sender.deployment_from_address
+  const pendingNote = !sender.sending_domain
+    ? replyTo
+      ? `Once your domain's email is verified, this switches to ${localPart}@your domain automatically.`
+      : `Emails come from ${localPart}@your domain once its email is verified and a reply-to address is set.`
+    : !replyTo
+      ? `Emails come from ${localPart}@${sender.sending_domain} once a reply-to address is set.`
+      : null
 
   return (
     <div className="space-y-4" data-testid="client-email-sender-card">
@@ -150,7 +161,6 @@ function ClientEmailSenderForm({ sender }: { sender: EmailSender }) {
             id="client-email-reply-to"
             type="email"
             value={draft.reply_to}
-            placeholder={sender.defaults.reply_to ?? ""}
             maxLength={MAX_REPLY_TO_LENGTH}
             readOnly={readOnly}
             aria-readonly={readOnly}
@@ -167,10 +177,9 @@ function ClientEmailSenderForm({ sender }: { sender: EmailSender }) {
           {fromAddress && <span> &lt;{fromAddress}&gt;</span>}
           {replyTo && <span className="text-muted-foreground"> · replies go to {replyTo}</span>}
         </p>
-        {!sender.sending_domain && (
+        {pendingNote && (
           <p className="text-[12.5px] text-muted-foreground" data-testid="client-email-pending-note">
-            Once your domain&apos;s email is verified, this switches to {localPart}@your domain
-            automatically.
+            {pendingNote}
           </p>
         )}
       </div>
