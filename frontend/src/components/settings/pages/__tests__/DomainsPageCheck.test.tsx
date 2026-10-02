@@ -25,6 +25,12 @@ vi.mock("@/lib/api/practiceDomains", async (importOriginal) => ({
   checkPracticeDomains: (...a: unknown[]) => mockCheck(...a),
 }))
 
+const mockPortalSettings = vi.fn()
+vi.mock("@/lib/api/portalSettings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api/portalSettings")>()),
+  getPortalSettings: (...a: unknown[]) => mockPortalSettings(...a),
+}))
+
 vi.mock("@/lib/api/users", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api/users")>()),
   getUserStatus: (...a: unknown[]) => mockStatus(...a),
@@ -253,5 +259,43 @@ describe("DomainsPage Check now", () => {
       await vi.advanceTimersByTimeAsync(60_000)
     })
     expect(mockList.mock.calls.length).toBe(after)
+  })
+})
+
+describe("DomainsPage portal address with the portal off", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockStatus.mockResolvedValue({ is_practice_owner: true })
+  })
+
+  it("says to turn the portal on, and links to it, while the practice doesn't offer it", async () => {
+    mockList.mockResolvedValue({ domains: [host({ status: "active" })] })
+    mockPortalSettings.mockResolvedValue({ enabled: false, decided: true, modules: {} })
+    renderWithProviders(<DomainsPage />)
+
+    const note = await screen.findByTestId("domains-portal-off")
+    expect(note).toHaveTextContent("Turn on the portal in Patient portal before these addresses can show it.")
+    expect(within(note).getByRole("link", { name: "Patient portal" })).toHaveAttribute(
+      "href",
+      "/dashboard/settings/portal",
+    )
+  })
+
+  it("says nothing when the portal is on, or there is no portal address", async () => {
+    mockList.mockResolvedValue({ domains: [host({ status: "active" })] })
+    mockPortalSettings.mockResolvedValue({ enabled: true, decided: true, modules: {} })
+    const { unmount } = renderWithProviders(<DomainsPage />)
+    await screen.findByTestId("domain-row-portal.example.com")
+    await vi.waitFor(() => expect(mockPortalSettings).toHaveBeenCalled())
+    expect(screen.queryByTestId("domains-portal-off")).toBeNull()
+    unmount()
+
+    mockPortalSettings.mockClear()
+    mockPortalSettings.mockResolvedValue({ enabled: false, decided: true, modules: {} })
+    mockList.mockResolvedValue({ domains: [host({ purpose: "site" })] })
+    renderWithProviders(<DomainsPage />)
+    await screen.findByTestId("domain-row-portal.example.com")
+    expect(mockPortalSettings).not.toHaveBeenCalled()
+    expect(screen.queryByTestId("domains-portal-off")).toBeNull()
   })
 })

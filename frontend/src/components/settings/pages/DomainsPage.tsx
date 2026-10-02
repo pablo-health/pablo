@@ -17,6 +17,7 @@ import { CheckNow } from "../domains/CheckNow"
 import { DomainConnectOffers } from "../domains/DomainConnectOffers"
 import { DomainConnectReturn } from "../domains/DomainConnectReturn"
 import { DomainRow } from "../domains/DomainRow"
+import { PortalOffNote } from "../domains/PortalOffNote"
 import { withLastCheck } from "../domains/records"
 import { SettingsCard } from "../ui"
 import { useSettingsUserStatus } from "../useSettingsPreferences"
@@ -87,6 +88,7 @@ export function DomainsPage() {
         const domains = byPurpose(purpose)
         return (
           <SettingsCard key={purpose} title={title} description={description}>
+            {purpose === "portal" && <PortalOffNote hasPortalHosts={domains.length > 0} />}
             {canManage && <DomainConnectOffers purpose={purpose} domains={connect.data?.domains} />}
             {domains.length === 0 ? (
               <p className="text-sm text-muted-foreground">No domains yet.</p>

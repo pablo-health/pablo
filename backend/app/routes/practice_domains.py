@@ -9,7 +9,8 @@
   practice: what a name would be stored as, its registrable domain, and
   whether it is bare (which decides a website's ``www.`` default).
 * ``POST /api/practice/domains`` — add a host (and, for a website, its
-  ``www.`` alias).
+  ``www.`` alias). A portal host also makes sure the practice has a portal
+  address for it to serve.
 * ``POST /api/practice/domains/check`` — look the records up in DNS and answer
   the list with what was found per record; records a domain's ownership when
   its TXT is found. Changes no host's status.
@@ -48,6 +49,7 @@ from ..models.practice_domain import (
     DomainNameResponse,
     PracticeDomainListResponse,
 )
+from ..portal.practice_routes import ensure_practice_slug
 from ..services.audit_service import AuditService, get_audit_service
 from ..services.practice_domain_dns import DnsLookup, get_dns_lookup
 from ..services.practice_domain_service import (
@@ -127,6 +129,12 @@ def add_practice_domain(
     domains, with the deployment's words for it."""
     practice_id = _manageable_practice_id(user)
     added = service.add(practice_id, body.domain, body.purpose, include_www=body.include_www)
+    if any(domain.purpose == "portal" for domain in added):
+        # A portal host serves the practice's portal address, which is
+        # otherwise minted only when the portal is switched on or a client is
+        # first invited. Without one, a host that goes active would answer
+        # every visitor with the not-found page an unknown host gets.
+        ensure_practice_slug(practice_id)
     for domain in added:
         audit.log(
             AuditAction.PRACTICE_DOMAIN_ADDED,
