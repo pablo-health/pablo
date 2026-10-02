@@ -11,6 +11,7 @@ import {
   FileInput,
   Globe,
   Inbox,
+  LayoutTemplate,
   Mic,
   Palette,
   Receipt,
@@ -41,11 +42,13 @@ import { SchedulingPage } from "./pages/SchedulingPage"
 import { SecurityPage } from "./pages/SecurityPage"
 import { SessionsPage } from "./pages/SessionsPage"
 import { SuperbillsPage } from "./pages/SuperbillsPage"
+import { WebsitePage } from "./pages/WebsitePage"
 import {
   BILLING_CONTACT_SETTINGS_ID,
   BILLING_PROFILE_SETTINGS_ID,
   CREDENTIALING_LEGACY_SETTINGS_ID,
   CREDENTIALING_SETTINGS_ID,
+  DOMAINS_SETTINGS_ID,
   INSURANCE_PAYERS_SETTINGS_ID,
 } from "./paths"
 import { settingsExtensions } from "./registry.extensions"
@@ -174,11 +177,18 @@ const baseGroups: SettingsGroup[] = [
         desc: "Intake forms, self-report measures and patient sign-in.",
       },
       {
-        id: "domains",
+        id: DOMAINS_SETTINGS_ID,
         label: "Domains",
         icon: Globe,
         page: DomainsPage,
         desc: "Your own addresses for the client portal and your website.",
+      },
+      {
+        id: "website",
+        label: "Website",
+        icon: LayoutTemplate,
+        page: WebsitePage,
+        desc: "Publish your practice's website from a folder of files.",
       },
       {
         id: "import",

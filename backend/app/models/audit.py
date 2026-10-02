@@ -298,6 +298,12 @@ class AuditAction(StrEnum):
     # domains, nothing else.
     PRACTICE_DOMAIN_CONNECT_LINK_ISSUED = "practice_domain_connect_link_issued"
     PRACTICE_DOMAIN_CONNECT_RETURNED = "practice_domain_connect_returned"
+    # The practice's website: a draft uploaded, a version published, and a
+    # version put back live. The payload is the version, how many files and
+    # how many bytes; never the files themselves.
+    PRACTICE_SITE_DRAFT_SAVED = "practice_site_draft_saved"
+    PRACTICE_SITE_PUBLISHED = "practice_site_published"
+    PRACTICE_SITE_ROLLED_BACK = "practice_site_rolled_back"
 
     # A patient signed themselves out. The mirror image of
     # PATIENT_PORTAL_SESSION_REDEEMED and recorded for the same reason:

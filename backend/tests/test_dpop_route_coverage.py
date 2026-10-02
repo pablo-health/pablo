@@ -132,6 +132,13 @@ DPOP_UNCOVERABLE: dict[str, str] = {
     # slug in, a practice's own display name out. ---
     "GET /api/portal/practices/{slug}": "public: resolves a practice slug to its display name",
     "GET /api/portal/hosts/{host}": "public: resolves a practice's own host to its portal slug",
+    # --- A practice's website: public files, asked for by the web app's
+    # server on a visitor's behalf, and the draft behind a preview token. ---
+    "GET /api/sites/hosts/{host}": "public: resolves a practice's website host to its primary",
+    "GET /api/sites/hosts/{host}/file": "public: a published website file, no PHI",
+    "GET /api/practice/website/preview/{token}/{path:path}": (
+        "public: a draft website file; the unguessable token is the grant"
+    ),
     # --- Account recovery, reached by someone who has lost the only
     # credential they had. Binding a device proof would require the
     # enrolment this route exists to restore. It answers 202 to everyone,

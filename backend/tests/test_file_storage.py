@@ -328,6 +328,17 @@ class TestLocalFileStorage:
         names = storage.list_names(bucket=base, prefix="audio/obj.speech.")
         assert sorted(names) == ["audio/obj.speech.aac", "audio/obj.speech.wav"]
 
+    def test_list_names_includes_names_in_folders_beneath(self, tmp_path: Any) -> None:
+        storage = LocalFileStorage()
+        base = str(tmp_path)
+        for name in ("site/a.html", "site/css/b.css", "site/css/deep/c.css", "sitemap.xml"):
+            storage.upload_bytes(bucket=base, object_name=name, data=b"x", content_type="text/css")
+        assert storage.list_names(bucket=base, prefix="site/") == [
+            "site/a.html",
+            "site/css/b.css",
+            "site/css/deep/c.css",
+        ]
+
     def test_list_names_missing_dir_returns_empty(self, tmp_path: Any) -> None:
         storage = LocalFileStorage()
         assert storage.list_names(bucket=str(tmp_path), prefix="nope/obj.speech.") == []

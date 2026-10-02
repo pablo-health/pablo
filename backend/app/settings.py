@@ -876,6 +876,18 @@ class Settings(BaseSettings):
         description="Maximum compliance document upload size (bytes).",
     )
 
+    # A practice's static website (app.sites). Files are kept under
+    # sites/<practice_id>/ in this bucket; unset turns publishing off and
+    # every website host serves nothing.
+    practice_site_bucket: str | None = Field(
+        default=None,
+        description=(
+            "Bucket for practices' published websites, on the provider "
+            "selected by file_storage_provider. Leave unset to turn practice "
+            "websites off."
+        ),
+    )
+
     # Patient document upload (THERAPY-ak6m.2). When unset, the
     # /api/patients/{id}/documents surface returns 503 with a clear
     # configuration message — keeps self-hosters who haven't provisioned
