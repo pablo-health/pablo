@@ -20,11 +20,18 @@
  *   resolving   -> skeleton while the slug resolves
  *   unknown     -> the slug doesn't resolve to a practice this deployment
  *                  serves a portal for
- *   no-session  -> no stored session and no invitation
+ *   no-session  -> no stored session and no invitation: sign in by email
  *   otp         -> no stored session, invitation present: ask for a code,
  *                  then enter it
  *   active      -> a live (or freshly redeemed) session; renders the page
  *   expired     -> a stored session's `/refresh` came back 401
+ *
+ * Everyone without a session lands on the same sign-in (`./EmailSignIn`):
+ * no-session as it is, expired with a note that their sign-in has expired,
+ * and an invitation the server will no longer text a code for with a note
+ * that the link has expired. Lapsed, spent and withdrawn all look alike on
+ * purpose; the shell cannot tell them apart and neither can the endpoint
+ * behind the form, which answers every address the same way.
  *
  * The code is texted when the patient asks for it here, not when the
  * invitation was sent, so the link can be days old and the code still
@@ -55,14 +62,11 @@ import {
 import { portalLocation } from "@/lib/portal-shell/paths"
 import { bootstrapSession, redeemAndStore, signOutAndForget } from "@/lib/portal-shell/session"
 import { type CapabilitiesState, type PortalView, PortalViewProvider } from "./context"
-import {
-  LinkEndedCard,
-  NoSessionCard,
-  OtpCard,
-  ResolvingCard,
-  UnknownPracticeCard,
-} from "./PortalAuthCards"
+import { EmailSignIn } from "./EmailSignIn"
+import { OtpCard, ResolvingCard, UnknownPracticeCard } from "./PortalAuthCards"
+import { PortalFooter } from "./PortalFooter"
 import { ShellHeader } from "./PortalNav"
+import { PortalWelcome } from "./PortalWelcome"
 import { visiblePortalSlots } from "./slots"
 // Side-effect import: fills the slot registry in the BROWSER's module graph.
 // It has to happen from a client component — see modules.tsx.
@@ -90,6 +94,7 @@ export function PortalShell({ slug, children }: { slug: string; children?: React
   const { base, section } = portalLocation(slug, pathname)
   const [phase, setPhase] = useState<Phase>("resolving")
   const [displayName, setDisplayName] = useState<string | null>(null)
+  const [captchaSiteKey, setCaptchaSiteKey] = useState<string | null>(null)
   const [sessionToken, setSessionToken] = useState<string | null>(null)
   const [invitation, setInvitation] = useState<string | null>(null)
   const [otp, setOtp] = useState("")
@@ -100,7 +105,7 @@ export function PortalShell({ slug, children }: { slug: string; children?: React
   const [codeNotice, setCodeNotice] = useState<string | null>(null)
   const [redeemFailed, setRedeemFailed] = useState(false)
   // The server refused to text a code for this link. It never says why, and
-  // neither does this screen: the only way on is a new link.
+  // neither does this screen: the way on is a new link, asked for right here.
   const [linkRefused, setLinkRefused] = useState(false)
   const [capabilities, setCapabilities] = useState<CapabilitiesState>({ status: "loading" })
   const [signingOut, setSigningOut] = useState(false)
@@ -121,6 +126,7 @@ export function PortalShell({ slug, children }: { slug: string; children?: React
         return
       }
       setDisplayName(resolved.data.display_name)
+      setCaptchaSiteKey(resolved.data.captcha_site_key ?? null)
 
       const bootstrap = await bootstrapSession(slug)
       if (cancelled) return
@@ -219,6 +225,8 @@ export function PortalShell({ slug, children }: { slug: string; children?: React
   }, [slug, sessionToken, signingOut])
 
   const signedIn = phase === "active" && sessionToken !== null
+  // The front door: greeted, with more room. Signed-in pages keep their layout.
+  const signedOut = phase === "no-session" || phase === "expired" || phase === "otp"
   // Until the document arrives every slot counts as served — see
   // `visiblePortalSlots` for why a missing document keeps everything.
   const modules = capabilities.status === "loaded" ? capabilities.data.modules : null
@@ -239,13 +247,32 @@ export function PortalShell({ slug, children }: { slug: string; children?: React
         onSignOut={signedIn ? handleSignOut : undefined}
         signingOut={signingOut}
       />
-      <main className="flex flex-1 items-start justify-center px-4 py-8 sm:py-12">
+      <main
+        className={`flex flex-1 items-start justify-center px-4 ${signedOut ? "py-10 sm:py-16" : "py-8 sm:py-12"}`}
+      >
         <div className="w-full max-w-md">
+          {signedOut && <PortalWelcome displayName={displayName} />}
           {phase === "resolving" && <ResolvingCard />}
           {phase === "unknown" && <UnknownPracticeCard />}
-          {phase === "no-session" && <NoSessionCard slug={slug} />}
-          {phase === "expired" && <NoSessionCard slug={slug} revoked />}
-          {phase === "otp" && linkRefused && <LinkEndedCard slug={slug} />}
+          {phase === "no-session" && (
+            <EmailSignIn slug={slug} captchaSiteKey={captchaSiteKey} testId="portal-shell-no-session" />
+          )}
+          {phase === "expired" && (
+            <EmailSignIn
+              slug={slug}
+              captchaSiteKey={captchaSiteKey}
+              testId="portal-shell-no-session"
+              note={{ text: "Your sign-in has expired.", testId: "portal-shell-expired-note" }}
+            />
+          )}
+          {phase === "otp" && linkRefused && (
+            <EmailSignIn
+              slug={slug}
+              captchaSiteKey={captchaSiteKey}
+              testId="portal-shell-no-session"
+              note={{ text: "That sign-in link has expired.", testId: "portal-shell-link-ended" }}
+            />
+          )}
           {phase === "otp" && !linkRefused && (
             <OtpCard
               slug={slug}
@@ -270,9 +297,7 @@ export function PortalShell({ slug, children }: { slug: string; children?: React
           )}
         </div>
       </main>
-      <footer className="px-4 py-6 text-center text-xs text-neutral-400">
-        <p>Powered by Pablo</p>
-      </footer>
+      <PortalFooter displayName={displayName} />
     </div>
   )
 }

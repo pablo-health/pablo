@@ -21,7 +21,12 @@ A host is only ever the portal of the practice that holds it — the hostname is
 the primary key of ``platform.practice_domains`` — so nothing here can hand one
 practice's host to another.
 
-No PHI: public hostnames, a slug, and whether a practice offers the portal.
+The portal host's answer also carries what the portal takes from the practice's
+website there — its theme and the website's host (:mod:`app.portal.practice_site`)
+— so the web app learns them in the lookup it already makes.
+
+No PHI: public hostnames, a slug, whether a practice offers the portal, and the
+colors and fonts its portal wears.
 """
 
 from __future__ import annotations
@@ -38,11 +43,14 @@ from sqlalchemy import select
 from ..db import create_standalone_session
 from ..db.platform_models import PortalPracticeSlugRow, PracticeDomainRow
 from .portal_settings import portal_enabled_in
+from .practice_site import live_site_host, portal_theme
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from sqlalchemy.orm import Session
+
+    from ..sites.theme import PracticeTheme
 
 _MAX_HOST_LENGTH = 253
 _LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
@@ -64,6 +72,12 @@ class PortalHost:
     #: The practice's primary portal host, when it has one that is active. A
     #: host that is not it sends visitors there.
     primary_host: str | None
+    #: The colors and fonts the portal wears there (:mod:`app.portal.practice_site`);
+    #: ``None`` for its own look.
+    theme: PracticeTheme | None = None
+    #: The host the practice's live website is served at, which the portal
+    #: links back to; ``None`` with no live website.
+    site_host: str | None = None
 
 
 def normalize_request_host(raw: str) -> str | None:
@@ -122,7 +136,12 @@ def resolve_portal_host(session: Session, host: str) -> PortalHost | None:
     ).scalar_one_or_none()
     if slug is None or not portal_enabled_in(session, row.practice_id):
         return None
-    return PortalHost(slug=slug, primary_host=active_primary_portal_host(session, row.practice_id))
+    return PortalHost(
+        slug=slug,
+        primary_host=active_primary_portal_host(session, row.practice_id),
+        theme=portal_theme(session, row.practice_id),
+        site_host=live_site_host(session, row.practice_id),
+    )
 
 
 def primary_portal_host_for_slug(slug: str) -> str | None:

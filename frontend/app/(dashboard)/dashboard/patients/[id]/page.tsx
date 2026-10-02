@@ -5,6 +5,7 @@
 import { use } from "react"
 import { ArrowLeft } from "lucide-react"
 import Link from "next/link"
+import { EditPatientButton } from "@/components/patients/EditPatientButton"
 import { PatientExport } from "@/components/patients/PatientExport"
 import { PatientSummary } from "@/components/patients/PatientSummary"
 import { PatientChartTabs } from "@/components/patients/PatientChartTabs"
@@ -81,6 +82,7 @@ export default function PatientDetailPage({ params, searchParams }: PatientDetai
           <span>Back to Patients</span>
         </Link>
         <div className="flex items-center gap-2">
+          <EditPatientButton patient={patient} />
           <PatientChatDialog patientId={patient.id} />
           <NewNoteButton patientId={patient.id} />
           <PatientExport

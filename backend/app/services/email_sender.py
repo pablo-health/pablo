@@ -41,7 +41,9 @@ import logging
 import smtplib
 import ssl
 from dataclasses import dataclass, field
+from email.headerregistry import Address
 from email.message import EmailMessage
+from email.utils import parseaddr
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ..settings import Settings, get_settings
@@ -54,12 +56,20 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class OutboundEmail:
-    """A plain-text email to send. HTML is deferred — text only."""
+    """A plain-text email to send. HTML is deferred — text only.
+
+    The three sender fields override the deployment's own From for one message:
+    ``from_name`` replaces its display name, ``from_address`` its address, and
+    ``reply_to`` adds a Reply-To. Each left ``None`` keeps the deployment's.
+    """
 
     to: str
     subject: str
     text: str
     kind: str
+    from_name: str | None = None
+    from_address: str | None = None
+    reply_to: str | None = None
 
 
 class EmailSender(Protocol):
@@ -151,11 +161,23 @@ class SmtpEmailSender:
             return self._client_factory(15)
         return smtplib.SMTP(self._host, self._port, timeout=15)
 
+    def _from_header(self, message: OutboundEmail) -> str | Address:
+        """The configured From, with the message's own name or address in place."""
+        if message.from_name is None and message.from_address is None:
+            return self._from_addr
+        configured_name, configured_address = parseaddr(self._from_addr)
+        return Address(
+            display_name=(message.from_name if message.from_name is not None else configured_name),
+            addr_spec=message.from_address or configured_address or self._from_addr,
+        )
+
     def send(self, message: OutboundEmail) -> None:
         email_message = EmailMessage()
         email_message["Subject"] = message.subject
-        email_message["From"] = self._from_addr
+        email_message["From"] = self._from_header(message)
         email_message["To"] = message.to
+        if message.reply_to:
+            email_message["Reply-To"] = message.reply_to
         email_message.set_content(message.text)
 
         server = self._client()

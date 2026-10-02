@@ -73,6 +73,7 @@ from ..services.audit_service import AuditService, get_audit_service
 from ..settings import get_settings
 from ..utcnow import utc_now
 from . import tokens
+from .client_sender import resolve_client_sender
 from .clinicians import ClinicianName, get_primary_clinician_name
 from .delivery import (
     DeliveryNotConfigured,
@@ -80,6 +81,7 @@ from .delivery import (
     PortalInviteDelivery,
     RenderedInviteDelivery,
     SmsGateway,
+    sending_as_practice,
 )
 from .errors import PortalAuthError
 from .factory import (
@@ -320,6 +322,7 @@ def issue_portal_invite(  # noqa: PLR0913 — FastAPI Depends-injected params ar
         )
         issued = service.issue_invite(patient_id=patient_id, tenant=stores.tenant)
         link = build_invite_link(slug=address.slug, token=issued.token)
+        delivery = sending_as_practice(delivery, lambda: resolve_client_sender(practice_id))
         if isinstance(delivery, RenderedInviteDelivery):
             rendered = compose(
                 templates.get(practice_id),

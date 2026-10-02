@@ -71,6 +71,15 @@ def audit() -> _RecordingAudit:
     return _RecordingAudit()
 
 
+@pytest.fixture(autouse=True)
+def ensured_address() -> Iterator[MagicMock]:
+    """The practice's portal address, minted (or found) on adding a portal
+    host. The minting itself is ``tests_integration/portal`` territory; here it
+    is only whether the route asks for it."""
+    with patch("app.routes.practice_domains.ensure_practice_slug") as ensure:
+        yield ensure
+
+
 @pytest.fixture
 def owner_email() -> str:
     """The practice's registered owner; the test user is test@example.com."""
@@ -242,6 +251,30 @@ class TestAdd:
                 "changes": {"domain": "portal.ours.example", "purpose": "portal"},
             }
         ]
+
+    def test_a_portal_host_makes_sure_the_practice_has_a_portal_address(
+        self, client: TestClient, ensured_address: MagicMock
+    ) -> None:
+        response = client.post(URL, json={"domain": "portal.ours.example", "purpose": "portal"})
+
+        assert response.status_code == 201
+        ensured_address.assert_called_once_with(PRACTICE_ID)
+
+    def test_a_website_host_leaves_the_portal_address_alone(
+        self, client: TestClient, ensured_address: MagicMock
+    ) -> None:
+        response = client.post(URL, json={"domain": "ours.example", "purpose": "site"})
+
+        assert response.status_code == 201
+        ensured_address.assert_not_called()
+
+    def test_a_refused_portal_host_mints_no_address(
+        self, client: TestClient, ensured_address: MagicMock
+    ) -> None:
+        response = client.post(URL, json={"domain": "192.0.2.1", "purpose": "portal"})
+
+        assert response.status_code == 422
+        ensured_address.assert_not_called()
 
     def test_a_website_apex_brings_its_www_alias(self, client: TestClient) -> None:
         response = client.post(URL, json={"domain": "ours.example", "purpose": "site"})

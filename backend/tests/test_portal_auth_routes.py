@@ -35,7 +35,12 @@ from app.auth.service import get_current_user, require_active_subscription
 from app.models.audit import AuditAction
 from app.portal import tokens
 from app.portal.clinicians import get_primary_clinician_name
-from app.portal.delivery import CapturingInviteDelivery, DeliveryNotConfigured, FakeSmsGateway
+from app.portal.delivery import (
+    CapturingInviteDelivery,
+    ClientSender,
+    DeliveryNotConfigured,
+    FakeSmsGateway,
+)
 from app.portal.factory import get_invite_delivery, get_sms_gateway
 from app.portal.invite_composer import get_invite_form_names
 from app.portal.invite_template_store import (
@@ -57,6 +62,8 @@ from app.services.audit_service import AuditService, get_audit_service
 from app.settings import get_settings
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
+
+from tests.client_sender_doubles import EXAMPLE_SENDER, SenderAwareInviteDelivery
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -322,6 +329,25 @@ def _link_token(delivery: CapturingInviteDelivery) -> str:
 
 def _issue(client: TestClient, patient_id: str = PATIENT_ID) -> Any:
     return client.post(_invite_url(patient_id))
+
+
+def test_an_invitation_goes_out_as_the_callers_practice_where_the_channel_can(
+    app: FastAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    delivery = SenderAwareInviteDelivery()
+    app.dependency_overrides[get_invite_delivery] = lambda: delivery
+    asked: list[str] = []
+
+    def resolve(practice_id: str) -> ClientSender:
+        asked.append(practice_id)
+        return EXAMPLE_SENDER
+
+    monkeypatch.setattr("app.portal.routes.resolve_client_sender", resolve)
+
+    assert _issue(TestClient(app)).status_code == 202
+
+    assert asked == [PRACTICE_ID]
+    assert delivery.sent_as == [EXAMPLE_SENDER]
 
 
 # ---------------------------------------------------------------------------

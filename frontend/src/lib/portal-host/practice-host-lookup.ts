@@ -19,7 +19,8 @@
  * route (`./practice-site-lookup`), through {@link createHostLookup}.
  */
 
-import type { PracticeHost, PracticeHostAnswer } from "./practice-host"
+import { type PracticeHost, type PracticeHostAnswer, practiceHostname } from "./practice-host"
+import { parsePracticeTheme } from "./practice-theme"
 
 export interface PracticeHostLookupOptions {
   /** The backend's origin, as the server reaches it. Read per call. */
@@ -48,10 +49,18 @@ const TIMEOUT_MS = 3_000
 
 function parsePortalHost(body: unknown): PracticeHost | "unavailable" {
   if (typeof body !== "object" || body === null) return "unavailable"
-  const { slug, primary_host: primaryHost } = body as Record<string, unknown>
+  const { slug, primary_host: primaryHost, theme, site_host: siteHost } = body as Record<string, unknown>
   if (typeof slug !== "string" || !slug) return "unavailable"
   if (primaryHost !== null && typeof primaryHost !== "string") return "unavailable"
-  return { slug, primaryHost }
+  // A theme or website host that does not parse is none: the portal is still
+  // served, in its own look and with no link back. The website host becomes a
+  // link, so only a plain hostname gets through.
+  return {
+    slug,
+    primaryHost,
+    theme: parsePracticeTheme(theme),
+    siteHost: typeof siteHost === "string" ? practiceHostname(siteHost) : null,
+  }
 }
 
 /** A cached lookup of `route` on the backend: found, nothing (404), or could not be asked. */

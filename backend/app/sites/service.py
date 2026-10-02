@@ -16,6 +16,11 @@ The newest :data:`RETAINED_VERSIONS` versions are kept, plus the live one if
 it is older; :func:`tidy_practice_site` removes the rest, and any draft folder
 that is no longer the draft, after the change that left them has committed.
 
+A website's ``theme.json`` (:mod:`app.sites.theme`) is read when the draft is
+saved, so the practice sees what it gives the portal, and again as the draft is
+published; the theme is kept with the version, so a roll back brings back the
+theme that version had.
+
 Every change holds the practice's row lock (:meth:`PracticeSiteStore.lock`)
 from its first write to its commit, tidying included, so two changes to one
 practice's website never interleave.
@@ -47,6 +52,7 @@ from ..utcnow import utc_now
 from .files import SiteFiles, check_files, content_type_for
 from .storage import site_storage
 from .store import PracticeSiteStore
+from .theme import THEME_FILE, PracticeTheme, ThemeReport, read_theme, storable_theme, stored_theme
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -99,6 +105,8 @@ class SiteDraft:
     file_count: int
     total_bytes: int
     uploaded_at: datetime
+    #: What the draft's ``theme.json`` gives the portal; ``None`` without one.
+    theme: ThemeReport | None = None
 
 
 @dataclass(frozen=True)
@@ -108,6 +116,8 @@ class SiteVersion:
     total_bytes: int
     published_at: datetime
     published_by: str
+    #: The portal theme this version gives while it is live.
+    theme: PracticeTheme | None = None
 
 
 @dataclass(frozen=True)
@@ -131,7 +141,12 @@ def _version(row: PracticeSiteVersionRow) -> SiteVersion:
         total_bytes=row.total_bytes,
         published_at=row.published_at,
         published_by=row.published_by,
+        theme=stored_theme(row.theme),
     )
+
+
+def _draft_theme(row: PracticeSiteRow) -> ThemeReport | None:
+    return ThemeReport.model_validate(row.draft_theme) if row.draft_theme else None
 
 
 def _draft(row: PracticeSiteRow | None) -> SiteDraft | None:
@@ -141,6 +156,7 @@ def _draft(row: PracticeSiteRow | None) -> SiteDraft | None:
         file_count=row.draft_file_count or 0,
         total_bytes=row.draft_bytes or 0,
         uploaded_at=row.draft_uploaded_at,
+        theme=_draft_theme(row),
     )
 
 
@@ -150,6 +166,7 @@ def _clear_draft(row: PracticeSiteRow) -> None:
     row.draft_bytes = None
     row.draft_uploaded_at = None
     row.draft_uploaded_by = None
+    row.draft_theme = None
     row.preview_token_hash = None
     row.preview_expires_at = None
 
@@ -200,12 +217,14 @@ class PracticeSiteService:
         now = self._clock()
         row = self._store.lock(practice_id, now)
         draft_id = uuid.uuid4().hex
+        theme = read_theme(site.files.get(THEME_FILE))
         self._write(draft_prefix(practice_id, draft_id), site.files)
         row.draft_id = draft_id
         row.draft_file_count = site.file_count
         row.draft_bytes = site.total_bytes
         row.draft_uploaded_at = now
         row.draft_uploaded_by = user.id
+        row.draft_theme = theme.model_dump(mode="json") if theme else None
         row.preview_token_hash = None
         row.preview_expires_at = None
         row.updated_at = now
@@ -216,7 +235,9 @@ class PracticeSiteService:
             practice_id,
             {"file_count": site.file_count, "total_bytes": site.total_bytes},
         )
-        return SiteDraft(file_count=site.file_count, total_bytes=site.total_bytes, uploaded_at=now)
+        return SiteDraft(
+            file_count=site.file_count, total_bytes=site.total_bytes, uploaded_at=now, theme=theme
+        )
 
     def save_draft_files(
         self,
@@ -268,6 +289,7 @@ class PracticeSiteService:
         # before it committed; it is overwritten from empty.
         self._delete_all(target)
         file_count, total = 0, 0
+        theme: ThemeReport | None = None
         for name in self._storage.list_names(bucket=bucket, prefix=source):
             path = name.removeprefix(source)
             data = self._storage.download_bytes(bucket=bucket, object_name=name)
@@ -277,6 +299,10 @@ class PracticeSiteService:
                 data=data,
                 content_type=content_type_for(path) or _OCTET_STREAM,
             )
+            if path == THEME_FILE:
+                # Read again from the files being published, so the version
+                # carries exactly what the rules make of them now.
+                theme = read_theme(data)
             file_count += 1
             total += len(data)
         version = PracticeSiteVersionRow(
@@ -286,6 +312,7 @@ class PracticeSiteService:
             total_bytes=total,
             published_at=now,
             published_by=user.id,
+            theme=storable_theme(theme.theme if theme else None),
         )
         self._store.add_version(version)
         row.live_version = number

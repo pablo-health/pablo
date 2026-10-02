@@ -622,6 +622,155 @@ def test_a_refusal_on_a_served_host_leaves_it_active(harness: Harness) -> None:
     assert harness.host(host).status == "active"  # type: ignore[union-attr]  # added above
 
 
+# --- the primary --------------------------------------------------------------
+
+
+def _primaries(harness: Harness, *hosts: str) -> list[str]:
+    return [h for h in hosts if harness.host(h).is_primary]  # type: ignore[union-attr]  # added
+
+
+def _made_primary(harness: Harness) -> list[dict[str, Any]]:
+    return [
+        e["changes"]
+        for e in harness.audit()
+        if e["action"] == AuditAction.PRACTICE_DOMAIN_MADE_PRIMARY.value
+    ]
+
+
+def test_a_first_active_host_becomes_the_primary(harness: Harness) -> None:
+    apex = _apex()
+    host = f"portal.{apex}"
+    harness.add(host)
+    harness.sweep()
+    assert _primaries(harness, host) == []  # not active yet: links must not name it
+
+    _ready(harness, host, apex)
+    harness.sweep()
+
+    assert _primaries(harness, host) == [host]
+    assert _made_primary(harness) == [{"domain": host, "purpose": "portal", "previous": None}]
+
+    report = harness.sweep()
+    assert report.quiet
+    assert len(_made_primary(harness)) == 1
+
+
+def test_a_host_going_active_leaves_an_existing_primary_alone(harness: Harness) -> None:
+    apex = _apex()
+    first, second = f"portal.{apex}", f"clients.{apex}"
+    harness.add(first)
+    _ready(harness, first, apex)
+    harness.sweep()
+    assert _primaries(harness, first) == [first]
+
+    harness.add(second)
+    _ready(harness, second, apex)
+    harness.sweep()
+
+    assert harness.host(second).status == "active"  # type: ignore[union-attr]  # added
+    assert _primaries(harness, first, second) == [first]
+
+
+def test_a_primary_the_practice_chose_is_never_replaced(harness: Harness) -> None:
+    apex = _apex()
+    first, second = f"portal.{apex}", f"clients.{apex}"
+    harness.add(first)
+    harness.add(second)
+    _ready(harness, first, apex)
+    _ready(harness, second, apex)
+    harness.sweep()
+
+    with tenant_db_session(harness.practice.schema, harness.practice.owner) as session:
+        harness.service(PostgresPracticeDomainRepository(session)).make_primary(
+            harness.practice.id, second
+        )
+    harness.sweep()
+
+    assert _primaries(harness, first, second) == [second]
+
+
+def test_a_website_going_active_with_its_www_alias_makes_the_bare_domain_primary(
+    harness: Harness,
+) -> None:
+    apex = _apex()
+    www = f"www.{apex}"
+    harness.add(apex, "site")
+    assert harness.host(www) is not None  # the alias came with it
+    harness.sweep()
+    harness.publish_ownership(apex)
+    for host in (apex, www):
+        harness.zone[(host, "CNAME")] = [TARGET]
+        harness.serving.certificate_state[host] = ACTIVE
+
+    harness.sweep()
+
+    assert harness.host(apex).status == "active"  # type: ignore[union-attr]  # added
+    assert harness.host(www).status == "active"  # type: ignore[union-attr]  # added
+    assert _primaries(harness, apex, www) == [apex]
+    assert _made_primary(harness) == [{"domain": apex, "purpose": "site", "previous": None}]
+
+
+def test_a_portal_and_a_website_each_get_their_own_primary(harness: Harness) -> None:
+    apex = _apex()
+    portal, site = f"portal.{apex}", f"site.{apex}"
+    harness.add(portal)
+    harness.add(site, "site")
+    _ready(harness, portal, apex)
+    _ready(harness, site, apex)
+
+    harness.sweep()
+
+    assert _primaries(harness, portal, site) == [portal, site]
+
+
+def test_active_hosts_with_no_primary_are_given_one_by_a_sweep(harness: Harness) -> None:
+    """Hosts that went active before the rule, or whose primary was removed."""
+    apex = _apex()
+    first, second = f"portal.{apex}", f"clients.{apex}"
+    harness.add(first)
+    harness.add(second)
+    _ready(harness, first, apex)
+    _ready(harness, second, apex)
+    harness.sweep()
+    with tenant_db_session(harness.practice.schema, harness.practice.owner) as session:
+        session.execute(
+            text("UPDATE platform.practice_domains SET is_primary = false WHERE practice_id = :p"),
+            {"p": harness.practice.id},
+        )
+
+    harness.sweep()
+    assert _primaries(harness, first, second) == [first]  # the older of the two
+
+    harness.remove(first)
+    harness.sweep()
+    assert _primaries(harness, second) == [second]
+
+
+def test_a_primary_is_claimed_only_on_an_active_host_with_none_beside_it(
+    harness: Harness,
+) -> None:
+    apex = _apex()
+    first, second = f"portal.{apex}", f"clients.{apex}"
+    harness.add(first)
+    harness.add(second)
+    pid = harness.practice.id
+
+    with tenant_db_session(harness.practice.schema, harness.practice.owner) as session:
+        repo = PostgresPracticeDomainRepository(session)
+        assert not repo.claim_primary(first, pid, "portal")  # pending
+        session.execute(
+            text("UPDATE platform.practice_domains SET status = 'active' WHERE practice_id = :p"),
+            {"p": pid},
+        )
+        assert not repo.claim_primary(first, pid, "site")  # not its purpose
+        assert not repo.claim_primary(first, "another-practice", "portal")
+        assert repo.claim_primary(first, pid, "portal")
+        assert not repo.claim_primary(second, pid, "portal")  # one is primary already
+        assert repo.claim_primary(first, pid, "portal") is False  # and stays so
+
+    assert _primaries(harness, first, second) == [first]
+
+
 # --- removal ------------------------------------------------------------------
 
 

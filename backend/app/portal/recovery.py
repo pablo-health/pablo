@@ -93,11 +93,13 @@ from ..rate_limit import (
 # route, so they cannot live in a TYPE_CHECKING block.
 from ..services.captcha import CaptchaVerifier, get_captcha_verifier
 from ..settings import get_settings
+from .client_sender import resolve_client_sender_for_schema
 from .delivery import (
     DeliveryNotConfiguredError,
     PortalInviteDelivery,
     RenderedInviteDelivery,
     SmsGateway,
+    sending_as_practice,
 )
 from .factory import (
     build_invite_link,
@@ -274,6 +276,9 @@ def _attempt_recovery(  # noqa: PLR0913 — one parameter per injected collabora
             # request's own URL, which is how the caller reached this
             # practice in the first place.
             link = build_invite_link(slug=slug, token=issued.token)
+            delivery = sending_as_practice(
+                delivery, lambda: resolve_client_sender_for_schema(schema)
+            )
             address = (
                 practice_address_for_schema(schema)
                 if isinstance(delivery, RenderedInviteDelivery)

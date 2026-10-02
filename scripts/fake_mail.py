@@ -110,7 +110,11 @@ class _Mailbox:
         self.messages.append(
             {
                 "at": datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+                # The envelope sender, which is where bounces go.
                 "from": sender,
+                # What the recipient's mail client shows: display name and all.
+                "from_header": str(parsed["From"] or ""),
+                "reply_to": str(parsed["Reply-To"] or ""),
                 "to": recipients,
                 "subject": str(parsed["Subject"] or ""),
                 "text": body.get_content() if body is not None else "",

@@ -25,8 +25,42 @@ describe("createPracticeHostLookup", () => {
   it("asks the backend for the host and reads the answer", async () => {
     const { lookup, fetch } = setup(() => json(200, { slug: "acme", primary_host: "portal.example.com" }))
 
-    expect(await lookup("portal.example.com")).toEqual({ slug: "acme", primaryHost: "portal.example.com" })
+    expect(await lookup("portal.example.com")).toEqual({ slug: "acme", primaryHost: "portal.example.com", theme: null, siteHost: null })
     expect(fetch).toHaveBeenCalledWith(`${API}/api/portal/hosts/portal.example.com`, expect.anything())
+  })
+
+  it("reads the theme the portal wears there", async () => {
+    const theme = { version: 1, colors: { accent: "#24504c", text: null }, fonts: { body: "Inter" }, radius: "md" }
+    const { lookup } = setup(() => json(200, { slug: "acme", primary_host: null, theme }))
+
+    expect(await lookup("portal.example.com")).toEqual({
+      slug: "acme",
+      primaryHost: null,
+      theme: { colors: { accent: "#24504c" }, fonts: { body: "Inter" }, radius: "md" },
+      siteHost: null,
+    })
+  })
+
+  it("reads the website the portal links back to, and only a plain hostname", async () => {
+    const answers = [
+      { site_host: "www.acme-therapy.com", expected: "www.acme-therapy.com" },
+      { site_host: "javascript:alert(1)//x.com", expected: null },
+      { site_host: 7, expected: null },
+    ]
+    for (const { site_host, expected } of answers) {
+      const { lookup } = setup(() => json(200, { slug: "acme", primary_host: null, site_host }))
+      expect((await lookup("portal.example.com")) as { siteHost: string | null }).toMatchObject({
+        siteHost: expected,
+      })
+    }
+  })
+
+  it("serves the portal in its own look when the theme makes no sense", async () => {
+    const { lookup } = setup(() =>
+      json(200, { slug: "acme", primary_host: null, theme: { colors: { accent: "red;}" }, fonts: "x" } }),
+    )
+
+    expect(await lookup("portal.example.com")).toEqual({ slug: "acme", primaryHost: null, theme: null, siteHost: null })
   })
 
   it("keeps a found host for a minute, then asks again", async () => {

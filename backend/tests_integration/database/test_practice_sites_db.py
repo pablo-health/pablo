@@ -9,6 +9,8 @@ Proven here on committed rows, through the code's own sessions:
   one and removes every other folder; a publish that failed part-way leaves a
   number that the next publish writes from empty;
 * every change is audited with the version, file count and bytes;
+* a ``theme.json`` is reported on the draft, kept with the version it was
+  published in, comes back with a roll back, and never stops a publish;
 * which website a host serves, behind the minute-long cache (the clock is
   injected), and which file each request path gets: ``/``, a folder, a folder
   without its slash, a missing file and a traversal attempt;
@@ -32,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from app.db import create_standalone_session
 from app.models.audit import AuditAction
+from app.portal.practice_site import portal_theme
 from app.services.file_storage import LocalFileStorage
 from app.settings import get_settings
 from app.sites import public_routes
@@ -287,6 +290,67 @@ def test_tidying_removes_a_replaced_draft(session: Session, bucket: str, rows: _
     assert (Path(bucket) / "sites" / practice_id / "draft" / draft / "index.html").read_bytes() == (
         b"newer"
     )
+
+
+THEMED = {
+    **SITE,
+    "theme.json": b'{"colors": {"accent": "#24504c", "text": "#eeeeee"}, "radius": "sm"}',
+}
+
+
+def test_the_draft_says_what_its_theme_gives_and_publishing_keeps_it_with_the_version(
+    session: Session, bucket: str, rows: _Rows
+) -> None:
+    practice_id = rows.practice()
+    service = _service(session, bucket)
+
+    service.save_draft_files(practice_id, THEMED, PUBLISHER)
+    session.commit()
+    draft = service.status(practice_id).draft
+    assert draft is not None
+    assert draft.theme is not None
+    assert [s.field for s in draft.theme.skipped] == ["colors.text"]
+
+    service.publish_draft(practice_id, PUBLISHER)
+    session.commit()
+
+    (version,) = service.status(practice_id).versions
+    assert version.theme is not None
+    assert version.theme.colors.accent == "#24504c"
+    assert version.theme.colors.text is None
+    assert version.theme.radius == "sm"
+    assert portal_theme(session, practice_id) == version.theme
+    # The file is still part of the website, served like any other.
+    assert (Path(bucket) / "sites" / practice_id / "v1" / "theme.json").exists()
+
+
+def test_rolling_back_brings_back_the_theme_that_version_had(
+    session: Session, bucket: str, rows: _Rows
+) -> None:
+    practice_id = rows.practice()
+    _publish(session, bucket, practice_id, THEMED)
+    _publish(session, bucket, practice_id)
+    assert portal_theme(session, practice_id) is None
+
+    _service(session, bucket).roll_back(practice_id, 1, PUBLISHER)
+    session.commit()
+
+    theme = portal_theme(session, practice_id)
+    assert theme is not None
+    assert theme.colors.accent == "#24504c"
+
+
+def test_a_broken_theme_never_stops_a_publish(session: Session, bucket: str, rows: _Rows) -> None:
+    practice_id = rows.practice()
+
+    _publish(session, bucket, practice_id, {**SITE, "theme.json": b"{nope"})
+
+    assert _service(session, bucket).status(practice_id).live_version == 1
+    assert portal_theme(session, practice_id) is None
+
+
+def test_a_practice_with_no_website_has_no_theme(session: Session, rows: _Rows) -> None:
+    assert portal_theme(session, rows.practice()) is None
 
 
 def test_a_publish_that_failed_leaves_nothing_behind_in_the_next(

@@ -31,6 +31,13 @@ point rather than an omission — an email that said which form, or why, would
 put a clinical fact in an inbox nobody proved anything about, and the whole
 design of this portal is that the content lives behind two factors.
 
+**Who an email is from is the practice's.** An email channel that can put the
+practice's name, address and reply-to on a message implements
+:class:`PracticeSenderDelivery`; the callers bind it to the practice with
+:func:`sending_as_practice` just before they send, and
+:mod:`app.portal.client_sender` decides what the practice's sender is. A
+channel that does not implement it sends under the deployment's own name.
+
 Unlike the invitation channels, an unconfigured notice channel is not a
 refusal. :meth:`PortalNoticeDelivery.can_deliver` is what a caller asks, and
 a deployment that has wired nothing simply sends nothing: asking a patient
@@ -41,11 +48,60 @@ whether or not there is a mail server to mention it to.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, Self, cast, runtime_checkable
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 class DeliveryNotConfiguredError(RuntimeError):
     """No adapter is wired for this channel, so nothing was sent."""
+
+
+@dataclass(frozen=True)
+class ClientSender:
+    """Who an email to a client says it is from, and where a reply goes.
+
+    Resolved per practice by :func:`app.portal.client_sender.resolve_client_sender`.
+
+    ``from_address`` is set only when the practice's own domain can send;
+    ``None`` means the deployment's own address, still under ``from_name``.
+    ``reply_to`` is ``None`` until the practice saves one; a channel then adds
+    no Reply-To, and ``from_address`` is ``None`` too.
+    """
+
+    from_name: str
+    from_address: str | None
+    reply_to: str | None
+
+
+@runtime_checkable
+class PracticeSenderDelivery(Protocol):
+    """An email channel that can send as the practice.
+
+    Optional, like :class:`RenderedInviteDelivery`: a channel that does not
+    implement it keeps sending under the deployment's own name, and the
+    practice's sender settings say they do not apply here. One that does
+    returns a copy of itself that puts *sender* on every message it sends.
+    """
+
+    def sending_as(self, sender: ClientSender) -> Self:
+        """This channel, sending as *sender*."""
+        ...
+
+
+def sending_as_practice[D](delivery: D, sender: Callable[[], ClientSender | None]) -> D:
+    """*delivery* sending as the practice where it can, else *delivery* unchanged.
+
+    *sender* is asked only when the channel can use the answer, so a channel
+    that sends under the deployment's name costs no lookup. A ``None`` answer
+    (no practice to send as) also leaves *delivery* unchanged.
+    """
+    if isinstance(delivery, PracticeSenderDelivery):
+        resolved = sender()
+        if resolved is not None:
+            return cast("D", delivery.sending_as(resolved))
+    return delivery
 
 
 class PortalInviteDelivery(Protocol):
