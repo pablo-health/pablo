@@ -578,6 +578,9 @@ class PracticeSiteRow(PlatformBase):
     draft_bytes: Mapped[int | None] = mapped_column(BigInteger)
     draft_uploaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     draft_uploaded_by: Mapped[str | None] = mapped_column(String(128))
+    #: What the draft's ``theme.json`` gave the portal and what it skipped
+    #: (``app.sites.theme.ThemeReport``); ``None`` when the draft has none.
+    draft_theme: Mapped[dict | None] = mapped_column(JSONB)
     #: SHA-256 of the token in the draft's preview address, and when that
     #: address stops working. Only the hash is kept.
     preview_token_hash: Mapped[str | None] = mapped_column(String(64))
@@ -596,7 +599,7 @@ class PracticeSiteVersionRow(PlatformBase):
     ``app.sites.service.RETAINED_VERSIONS``) plus the live one; older rows go
     with their files.
 
-    No PHI: counts, sizes, a time and who published.
+    No PHI: counts, sizes, a time, who published and the site's colors and fonts.
     """
 
     __tablename__ = "practice_site_versions"
@@ -612,6 +615,10 @@ class PracticeSiteVersionRow(PlatformBase):
     total_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     published_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    #: The portal theme from this version's ``theme.json``, only the values
+    #: that passed (``app.sites.theme.PracticeTheme``); ``None`` without one.
+    #: Kept with the version, so rolling back brings its theme back with it.
+    theme: Mapped[dict | None] = mapped_column(JSONB)
 
 
 class SetupTokenRow(PlatformBase):
