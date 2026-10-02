@@ -159,6 +159,38 @@ describe("IdleTimeout (server-enforced mode)", () => {
     expect(touchSession).not.toHaveBeenCalled()
   })
 
+  it("Sign In still leaves for /login when the forced-logout boot has stalled", async () => {
+    // Alive on mount, then the arbiter peek past 0:00 says dead — the boot
+    // starts (mocked here, so it never navigates, as when Safari stalls it).
+    getSessionStatus.mockResolvedValueOnce(sessionStatus(1))
+    getSessionStatus.mockResolvedValue(sessionStatus(0, false))
+    const realLocation = window.location
+    const assign = vi.fn()
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      writable: true,
+      value: { ...realLocation, assign },
+    })
+
+    try {
+      await renderAndSettleMount()
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_500)
+      })
+      expect(handleTerminalAuthLogout).toHaveBeenCalledWith("idle_timeout")
+
+      fireEvent.click(screen.getByText("Sign In"))
+
+      expect(assign).toHaveBeenCalledWith("/login?reason=idle_timeout")
+    } finally {
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        writable: true,
+        value: realLocation,
+      })
+    }
+  })
+
   it("keeps a locally-active user alive server-side via the throttled touch", async () => {
     getSessionStatus.mockResolvedValue(sessionStatus(900))
     touchSession.mockResolvedValue(sessionStatus(900))

@@ -51,6 +51,10 @@ export function registerResponseInterceptor(fn: ApiResponseInterceptor): () => v
 
 let terminalAuthLogoutInFlight = false
 
+// The redirect is the part that must happen: once this flow starts, every
+// caller has stopped offering the user any other way out.
+const TERMINAL_SIGN_OUT_BUDGET_MS = 3000
+
 /**
  * Sign the user out and bounce to /login for an unrecoverable auth failure —
  * an idle timeout, or a session whose token is expired/revoked/disabled and
@@ -76,7 +80,10 @@ export function handleTerminalAuthLogout(reason: "idle_timeout" | "session_expir
       // stored refresh token is itself dead. Either way, if the SDK re-hydrates
       // the old session from storage (bfcache / iOS Safari) the user loops on
       // the same 401 forever. Forcing a fresh sign-in mints a new one.
-      await getClientAuthProvider().signOut({ wipePersisted: true })
+      await Promise.race([
+        getClientAuthProvider().signOut({ wipePersisted: true }),
+        new Promise((resolve) => setTimeout(resolve, TERMINAL_SIGN_OUT_BUDGET_MS)),
+      ])
     } catch {
       // Provider not initialized — still redirect.
     }
