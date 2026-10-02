@@ -488,7 +488,9 @@ class PracticeDomainService:
         return domain
 
     def remove(self, practice_id: str, raw_domain: str) -> PracticeDomain:
-        """Remove a host. Removing the primary leaves that purpose with none.
+        """Remove a host. Removing the primary leaves that purpose with none,
+        until the reconciler's next sweep makes another active host of it
+        primary (``practice_domain_reconciler``, step 8).
 
         Removing the last host under a domain releases the domain too. Where
         the deployment serves hosts through the reconciler job, the host is

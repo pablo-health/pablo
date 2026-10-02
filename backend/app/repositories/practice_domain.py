@@ -114,6 +114,16 @@ class PracticeDomainRepository(ABC):
         """
 
     @abstractmethod
+    def claim_primary(self, domain: str, practice_id: str, purpose: DomainPurpose) -> bool:
+        """Make this practice's active host the primary for *purpose*, only if
+        no host of the practice is primary for it.
+
+        Unlike :meth:`set_primary`, never unsets anything: a primary the
+        practice chose, even one chosen while the caller was deciding, stands.
+        Returns whether this host became primary.
+        """
+
+    @abstractmethod
     def claim_reissue(self, domain: str, *, last: datetime | None, at: datetime) -> bool:
         """Record that the host's certificate is being requested again at *at*,
         only if the last time recorded is still *last*.
@@ -263,6 +273,26 @@ class InMemoryPracticeDomainRepository(PracticeDomainRepository):
             if state.status == "active":
                 row.records_complete_at = None
                 row.stuck_reported_at = None
+            row.updated_at = utc_now()
+            return True
+
+    def claim_primary(self, domain: str, practice_id: str, purpose: DomainPurpose) -> bool:
+        with self._lock:
+            row = self._rows.get(domain)
+            if (
+                row is None
+                or row.practice_id != practice_id
+                or row.purpose != purpose
+                or row.status != "active"
+            ):
+                return False
+            if any(
+                r.is_primary
+                for r in self._rows.values()
+                if r.practice_id == practice_id and r.purpose == purpose
+            ):
+                return False
+            row.is_primary = True
             row.updated_at = utc_now()
             return True
 

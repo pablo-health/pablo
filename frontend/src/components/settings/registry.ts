@@ -50,6 +50,7 @@ import {
   CREDENTIALING_SETTINGS_ID,
   DOMAINS_SETTINGS_ID,
   INSURANCE_PAYERS_SETTINGS_ID,
+  PATIENT_PORTAL_SETTINGS_ID,
 } from "./paths"
 import { settingsExtensions } from "./registry.extensions"
 
@@ -169,7 +170,7 @@ const baseGroups: SettingsGroup[] = [
         desc: "Defaults for new appointments and how recordings are handled.",
       },
       {
-        id: "portal",
+        id: PATIENT_PORTAL_SETTINGS_ID,
         label: "Patient portal",
         icon: Users,
         page: PatientPortalPage,

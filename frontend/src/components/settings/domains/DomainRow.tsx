@@ -2,10 +2,12 @@
 
 "use client"
 
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import type { DnsRecord, DomainStatus, PracticeDomain, RecordCheck } from "@/lib/api/practiceDomains"
 import { SettingsBadge } from "../ui"
+import { CopyButton } from "./CopyButton"
+import { isFinishingSetup, relativeHost } from "./records"
 
 /**
  * What each status is called on screen. Only `active` says the domain works:
@@ -89,6 +91,11 @@ export function DomainRow({ domain, canManage, busy, onMakePrimary, onRemove }: 
           {domain.stuck_message}
         </p>
       )}
+      {isFinishingSetup(domain) && (
+        <p className="mt-1.5 text-[12.5px] text-foreground" data-testid="domain-finishing">
+          Finishing setup — this usually takes a few minutes.
+        </p>
+      )}
       <DnsInstructions domain={domain} />
     </li>
   )
@@ -122,6 +129,49 @@ function recordsToShow(domain: PracticeDomain): DnsRecord[] {
   )
 }
 
+/**
+ * One record. Host is shown relative to the zone, as providers' forms ask for
+ * it; the full name stays in the tooltip and for a screen reader. The check
+ * cell's test id keeps the full name, which is what identifies the record.
+ */
+function RecordRow({ record, apex, checked }: { record: DnsRecord; apex?: string | null; checked: boolean }) {
+  const hostRef = useRef<HTMLSpanElement>(null)
+  const valueRef = useRef<HTMLSpanElement>(null)
+  const host = relativeHost(record.name, apex)
+  const which = `${record.type} record ${host}`
+
+  return (
+    <tr className="align-top">
+      <td className="py-0.5">{record.type}</td>
+      <td className="py-0.5 pr-2">
+        <span className="flex items-start gap-1">
+          <span ref={hostRef} className="min-w-0 break-all" title={record.name}>
+            {host}
+          </span>
+          {host !== record.name && <span className="sr-only">{record.name}</span>}
+          <CopyButton text={host} label={`Copy host for ${which}`} source={hostRef} />
+        </span>
+      </td>
+      <td className="py-0.5 pr-2">
+        <span className="flex items-start gap-1">
+          <span ref={valueRef} className="min-w-0 break-all">
+            {record.value}
+          </span>
+          <CopyButton text={record.value} label={`Copy value for ${which}`} source={valueRef} />
+        </span>
+      </td>
+      {checked && (
+        <td className="break-all py-0.5 font-sans" data-testid={`check-${record.type}-${record.name}`}>
+          {record.check ? CHECK[record.check] : null}
+          {record.check === "wrong" && record.found && record.found.length > 0 && (
+            <span className="block font-mono text-muted-foreground">{record.found.join(", ")}</span>
+          )}
+        </td>
+      )}
+    </tr>
+  )
+}
+
 function DnsInstructions({ domain }: { domain: PracticeDomain }) {
   const records = recordsToShow(domain)
   if (records.length === 0) {
@@ -138,36 +188,34 @@ function DnsInstructions({ domain }: { domain: PracticeDomain }) {
       {domain.status === "error" && !domain.stuck && (
         <p className="mb-1">The record couldn&apos;t be confirmed. Check it matches the one below.</p>
       )}
+      {/* DNS providers' forms differ on the word: some say Host, some Name. */}
       <p className="mb-1">
-        {records.length === 1 ? "Add this record at your DNS provider:" : "Add these records at your DNS provider:"}
+        {records.length === 1 ? "Add this at your DNS provider." : "Add these at your DNS provider."} Some
+        providers call Host &ldquo;Name&rdquo;.
       </p>
-      <table className="w-full table-fixed text-left" aria-label={`DNS records for ${domain.domain}`}>
-        <thead>
-          <tr className="text-[11px] uppercase tracking-[0.06em]">
-            <th className="w-20 font-semibold">Type</th>
-            <th className="font-semibold">Name</th>
-            <th className="font-semibold">Value</th>
-            {checked && <th className="w-32 font-semibold">Check</th>}
-          </tr>
-        </thead>
-        <tbody className="font-mono text-foreground">
-          {records.map((record) => (
-            <tr key={`${record.type}-${record.name}-${record.value}`}>
-              <td>{record.type}</td>
-              <td className="break-all pr-2">{record.name}</td>
-              <td className="break-all">{record.value}</td>
-              {checked && (
-                <td className="break-all pl-2 font-sans" data-testid={`check-${record.type}-${record.name}`}>
-                  {record.check ? CHECK[record.check] : null}
-                  {record.check === "wrong" && record.found && record.found.length > 0 && (
-                    <span className="block font-mono text-muted-foreground">{record.found.join(", ")}</span>
-                  )}
-                </td>
-              )}
+      {/* Scrolls inside the card on a narrow screen, never the page. */}
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[30rem] table-fixed text-left" aria-label={`DNS records for ${domain.domain}`}>
+          <thead>
+            <tr className="text-[11px] uppercase tracking-[0.06em]">
+              <th className="w-16 font-semibold">Type</th>
+              <th className="w-[32%] font-semibold">Host</th>
+              <th className="font-semibold">Value</th>
+              {checked && <th className="w-28 font-semibold">Status</th>}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody className="font-mono text-foreground">
+            {records.map((record) => (
+              <RecordRow
+                key={`${record.type}-${record.name}-${record.value}`}
+                record={record}
+                apex={domain.apex}
+                checked={checked}
+              />
+            ))}
+          </tbody>
+        </table>
+      </div>
       {domain.alias_alternative && (
         <p className="mt-1.5" data-testid="alias-alternative">
           If your DNS provider offers ALIAS or ANAME records, one pointing at{" "}

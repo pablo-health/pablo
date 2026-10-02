@@ -2,10 +2,9 @@
 
 "use client"
 
-import { Button } from "@/components/ui/button"
 import {
-  useCheckPracticeDomains,
   useMakePracticeDomainPrimary,
+  usePracticeDomainCheckRun,
   usePracticeDomains,
   useRemovePracticeDomain,
 } from "@/hooks/usePracticeDomains"
@@ -14,10 +13,13 @@ import { ApiError } from "@/lib/api/client"
 import type { DomainPurpose, PracticeDomain } from "@/lib/api/practiceDomains"
 import { AddDomainForm } from "../domains/AddDomainForm"
 import { canManageDomains } from "../domains/canManageDomains"
+import { CheckNow } from "../domains/CheckNow"
 import { DomainConnectOffers } from "../domains/DomainConnectOffers"
 import { DomainConnectReturn } from "../domains/DomainConnectReturn"
 import { DomainRow } from "../domains/DomainRow"
 import { HostedAddresses } from "../domains/HostedAddresses"
+import { PortalOffNote } from "../domains/PortalOffNote"
+import { withLastCheck } from "../domains/records"
 import { SettingsCard } from "../ui"
 import { useSettingsUserStatus } from "../useSettingsPreferences"
 
@@ -29,10 +31,11 @@ const SECTIONS: { purpose: DomainPurpose; title: string; description: string }[]
 /** Practice > Domains. The practice's own addresses for its portal and website. */
 export function DomainsPage() {
   const { data: userStatus } = useSettingsUserStatus()
-  const { data, isLoading, isError } = usePracticeDomains()
+  const run = usePracticeDomainCheckRun()
+  const { check } = run
+  const { data: listed, isLoading, isError } = usePracticeDomains(run.pollUntil)
   const makePrimary = useMakePracticeDomainPrimary()
   const remove = useRemovePracticeDomain()
-  const check = useCheckPracticeDomains()
 
   const canManage = canManageDomains(userStatus)
   const connect = useDomainConnect(canManage)
@@ -48,7 +51,7 @@ export function DomainsPage() {
           : null
 
   if (isLoading) return null
-  if (isError || !data) {
+  if (isError || !listed) {
     return (
       <SettingsCard>
         <p role="alert" className="text-sm text-muted-foreground">
@@ -58,6 +61,7 @@ export function DomainsPage() {
     )
   }
 
+  const data = withLastCheck(listed, check.data)
   const byPurpose = (purpose: DomainPurpose): PracticeDomain[] =>
     data.domains.filter((d) => d.purpose === purpose)
 
@@ -73,18 +77,20 @@ export function DomainsPage() {
         </p>
       )}
       {canManage && data.domains.length > 0 && (
-        <div className="mb-3 flex items-center gap-3">
-          <Button size="sm" variant="outline" disabled={busy} onClick={() => check.mutate()}>
-            {check.isPending ? "Checking…" : "Check now"}
-          </Button>
-          <span className="text-[12.5px] text-muted-foreground">Looks up your DNS records.</span>
-        </div>
+        <CheckNow
+          checking={check.isPending}
+          resting={run.resting}
+          checkedAt={run.checkedAt}
+          disabled={busy}
+          onCheck={run.run}
+        />
       )}
       {data.hosted && <HostedAddresses hosted={data.hosted} domains={data.domains} />}
       {SECTIONS.map(({ purpose, title, description }) => {
         const domains = byPurpose(purpose)
         return (
           <SettingsCard key={purpose} title={title} description={description}>
+            {purpose === "portal" && <PortalOffNote hasPortalHosts={domains.length > 0} />}
             {canManage && <DomainConnectOffers purpose={purpose} domains={connect.data?.domains} />}
             {domains.length === 0 ? (
               <p className="text-sm text-muted-foreground">No domains yet.</p>
