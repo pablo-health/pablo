@@ -80,6 +80,10 @@ const SAVE_ERROR = "Those hours could not be saved. Try again."
 
 const PARTIAL_SAVE_ERROR = "Some of those hours could not be saved. Try again to save the rest."
 
+/** What the preferences API returns for a practice that never saved a zone
+ * (`UserPreferences.timezone` in backend/app/models/user.py). */
+const SERVER_DEFAULT_TIMEZONE = "America/New_York"
+
 const SKIP_CONSEQUENCE =
   "Until Pablo knows your hours it cannot offer times to a client, send session reminders, or let anyone book themselves."
 
@@ -122,7 +126,14 @@ export function CalendarHoursStep({ onSaved, onSkip }: CalendarHoursStepProps) {
   // must not be overwritten by the answer to the one before it.
   const latestCheck = useRef(0)
 
-  const detected = preferences?.timezone || detectBrowserTimezone()
+  // The server answers with its default zone for a practice that has never
+  // saved one, so a saved value equal to that default cannot be told apart
+  // from nobody having chosen. For that case the browser's own zone is the
+  // better first guess; any other saved value was a person's choice and is
+  // kept. Either way the zone is shown, and saved only once confirmed.
+  const savedTimezone = preferences?.timezone
+  const fromSettings = !!savedTimezone && savedTimezone !== SERVER_DEFAULT_TIMEZONE
+  const detected = fromSettings ? savedTimezone : detectBrowserTimezone()
   const chosenTimezone = timezone ?? detected
   const locked = saving || unsaved !== null
 
@@ -256,7 +267,8 @@ export function CalendarHoursStep({ onSaved, onSkip }: CalendarHoursStepProps) {
         </SelectContent>
       </Select>
       <p className="text-xs text-muted-foreground">
-        Detected from this browser. Change it if that is not where you practise.
+        {fromSettings ? "From your settings." : "Detected from this browser."} Change it if that is
+        not where you practice.
       </p>
     </div>
   )

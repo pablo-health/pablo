@@ -26,11 +26,12 @@ vi.mock("@/hooks/useAppointmentTypes", () => ({
 const savePreferences = vi.hoisted(() => vi.fn())
 const preferencesState = vi.hoisted(() => ({
   data: { timezone: "America/New_York" } as Record<string, unknown>,
+  browserTimezone: "America/New_York",
 }))
 vi.mock("@/hooks/usePreferences", () => ({
   usePreferences: () => ({ data: preferencesState.data }),
   useSavePreferences: () => ({ mutateAsync: savePreferences }),
-  detectBrowserTimezone: () => "America/New_York",
+  detectBrowserTimezone: () => preferencesState.browserTimezone,
 }))
 
 function workingHours(day: number): ProposedAvailabilityRule {
@@ -61,6 +62,7 @@ describe("CalendarHoursStep", () => {
     vi.clearAllMocks()
     parseState.pending = false
     preferencesState.data = { timezone: "America/New_York" }
+    preferencesState.browserTimezone = "America/New_York"
     createRule.mockResolvedValue({})
     savePreferences.mockResolvedValue({})
   })
@@ -336,6 +338,43 @@ describe("CalendarHoursStep", () => {
     await waitFor(() =>
       expect(savePreferences).toHaveBeenCalledWith({ timezone: "America/Chicago" })
     )
+  })
+
+  it("offers the browser's zone, not the server's default, to a practice that never chose one", async () => {
+    const user = userEvent.setup()
+    // What the server answers before any zone has been saved.
+    preferencesState.data = { timezone: "America/New_York" }
+    preferencesState.browserTimezone = "America/Los_Angeles"
+    renderStep()
+
+    await user.click(screen.getByRole("button", { name: "Pick from a grid instead" }))
+    expect(screen.getByRole("combobox", { name: "Times are in" })).toHaveTextContent(
+      "America/Los Angeles"
+    )
+    expect(screen.getByText(/Detected from this browser\./)).toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: "Save these hours" }))
+    await waitFor(() =>
+      expect(savePreferences).toHaveBeenCalledWith({ timezone: "America/Los_Angeles" })
+    )
+  })
+
+  it("keeps a zone the practice chose, and says where it came from", async () => {
+    const user = userEvent.setup()
+    preferencesState.data = { timezone: "America/Chicago" }
+    preferencesState.browserTimezone = "America/Los_Angeles"
+    renderStep()
+
+    await user.click(screen.getByRole("button", { name: "Pick from a grid instead" }))
+    expect(screen.getByRole("combobox", { name: "Times are in" })).toHaveTextContent(
+      "America/Chicago"
+    )
+    expect(screen.getByText(/From your settings\./)).toBeInTheDocument()
+    expect(screen.queryByText(/Detected from this browser/)).toBeNull()
+
+    await user.click(screen.getByRole("button", { name: "Save these hours" }))
+    await waitFor(() => expect(createRule).toHaveBeenCalled())
+    expect(savePreferences).not.toHaveBeenCalled()
   })
 
   it("leaves the timezone alone when it was already right", async () => {
