@@ -79,7 +79,12 @@ def test_a_sender_name_that_could_not_be_a_header_is_refused(raw: str) -> None:
 
 @pytest.mark.parametrize(
     ("raw", "expected"),
-    [("portal", "portal"), (" Hello ", "hello"), ("front.desk", "front.desk"), ("a+b_c-d", "a+b_c-d")],
+    [
+        ("portal", "portal"),
+        (" Hello ", "hello"),
+        ("front.desk", "front.desk"),
+        ("a+b_c-d", "a+b_c-d"),
+    ],
 )
 def test_a_mailbox_name_is_lowercased(raw: str, expected: str) -> None:
     assert clean_local_part(raw) == expected
@@ -131,7 +136,7 @@ def _smtp_sender(server: _Smtp) -> SmtpEmailSender:
         host="smtp.example.com",
         port=587,
         username="u",
-        password="p",
+        password="secret",  # noqa: S106 — dummy test credential
         from_addr="Example Deployment <mail@deploy.example.com>",
         client_factory=lambda _timeout: server,
     )
@@ -168,9 +173,7 @@ def test_smtp_sends_from_the_practice_domain_with_its_name_and_reply_to() -> Non
     assert sent["Reply-To"] == "frontdesk@example.com"
 
 
-def test_smtp_keeps_its_own_address_under_the_practice_name_while_the_domain_cannot_send() -> (
-    None
-):
+def test_smtp_keeps_its_own_address_under_the_practice_name_while_the_domain_cannot_send() -> None:
     server = _Smtp()
     _smtp_sender(server).send(
         _message(from_name="Jordan Rivera, LCSW", reply_to="frontdesk@example.com")
@@ -228,7 +231,9 @@ def test_a_portal_notice_goes_out_as_the_clinicians_practice(
         "ensure_practice_slug",
         lambda _pid: PracticeAddress(slug="example", display_name="Example", enabled=True),
     )
-    monkeypatch.setattr(notices, "build_portal_link", lambda *, slug: f"https://p.example.com/{slug}")
+    monkeypatch.setattr(
+        notices, "build_portal_link", lambda *, slug: f"https://p.example.com/{slug}"
+    )
     asked: list[str] = []
 
     def resolve(practice_id: str) -> ClientSender:
@@ -262,7 +267,9 @@ def test_a_notice_whose_sender_cannot_be_found_is_not_sent_and_not_raised(
         "ensure_practice_slug",
         lambda _pid: PracticeAddress(slug="example", display_name="Example", enabled=True),
     )
-    monkeypatch.setattr(notices, "build_portal_link", lambda *, slug: f"https://p.example.com/{slug}")
+    monkeypatch.setattr(
+        notices, "build_portal_link", lambda *, slug: f"https://p.example.com/{slug}"
+    )
 
     def broken(_practice_id: str) -> ClientSender:
         raise LookupError("no such practice")
@@ -407,7 +414,9 @@ def test_the_owner_saves_the_three_fields_and_the_change_is_audited(
 
 
 def test_blank_fields_go_back_to_their_defaults(client: TestClient, store: _FakeStore) -> None:
-    store.chosen = SenderSettings(sender_name="Old", sender_local_part="old", reply_to="a@example.com")
+    store.chosen = SenderSettings(
+        sender_name="Old", sender_local_part="old", reply_to="a@example.com"
+    )
     response = client.put(URL, json={"sender_name": "", "sender_local_part": " ", "reply_to": None})
     assert response.status_code == 200
     assert store.chosen == SenderSettings()

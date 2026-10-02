@@ -87,9 +87,7 @@ class _Rows:
             )
         return practice_id
 
-    def apex(
-        self, practice_id: str, *, status: str | None = "verified", age_days: int = 0
-    ) -> str:
+    def apex(self, practice_id: str, *, status: str | None = "verified", age_days: int = 0) -> str:
         """A domain the practice holds, created *age_days* after a fixed day."""
         apex = f"{uuid.uuid4().hex[:10]}.example.com"
         self.apexes.append(apex)
@@ -192,7 +190,9 @@ def test_a_verified_domain_sends_as_portal_at_that_domain(rows: _Rows) -> None:
 
 
 @pytest.mark.parametrize("status", ["pending", "failed", None])
-def test_a_domain_whose_email_is_not_verified_does_not_send(rows: _Rows, status: str | None) -> None:
+def test_a_domain_whose_email_is_not_verified_does_not_send(
+    rows: _Rows, status: str | None
+) -> None:
     practice_id = rows.practice()
     rows.apex(practice_id, status=status)
 
