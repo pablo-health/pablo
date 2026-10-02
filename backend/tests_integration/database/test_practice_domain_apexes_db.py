@@ -192,7 +192,7 @@ def test_a_check_records_ownership_and_leaves_the_host_alone(
         (f"portal.{apex}", "CNAME"): [TARGET],
     }
 
-    responses, confirmed = service.check(
+    responses, confirmed, _stuck = service.check(
         practice, lambda name, rdtype: table.get((name, rdtype), [])
     )
 

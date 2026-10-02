@@ -19,6 +19,14 @@ const STATUS: Record<DomainStatus, { label: string; tone: "sage" | "honey" | "mu
   error: { label: "Not working", tone: "honey" },
 }
 
+/**
+ * A host whose records have all been in place for a while and is still not
+ * active. Said in place of "Checking": the practice has nothing left to do in
+ * its DNS, so the row tells it who can help instead. The server keeps checking,
+ * and a host that goes active drops this by itself.
+ */
+const STUCK = { label: "Delayed", tone: "honey" } as const
+
 interface DomainRowProps {
   domain: PracticeDomain
   canManage: boolean
@@ -30,7 +38,8 @@ interface DomainRowProps {
 /** One host: its status, whether it is primary, and the DNS record it needs. */
 export function DomainRow({ domain, canManage, busy, onMakePrimary, onRemove }: DomainRowProps) {
   const [confirming, setConfirming] = useState(false)
-  const status = STATUS[domain.status]
+  const stuck = domain.stuck === true && domain.status !== "active"
+  const status = stuck ? STUCK : STATUS[domain.status]
 
   return (
     <li
@@ -75,6 +84,11 @@ export function DomainRow({ domain, canManage, busy, onMakePrimary, onRemove }: 
           </div>
         )}
       </div>
+      {stuck && domain.stuck_message && (
+        <p role="status" className="mt-1.5 text-[12.5px] text-foreground" data-testid="domain-stuck">
+          {domain.stuck_message}
+        </p>
+      )}
       <DnsInstructions domain={domain} />
     </li>
   )
@@ -121,7 +135,7 @@ function DnsInstructions({ domain }: { domain: PracticeDomain }) {
   const checked = records.some((record) => record.check != null)
   return (
     <div className="mt-2 text-[12.5px] text-muted-foreground">
-      {domain.status === "error" && (
+      {domain.status === "error" && !domain.stuck && (
         <p className="mb-1">The record couldn&apos;t be confirmed. Check it matches the one below.</p>
       )}
       <p className="mb-1">

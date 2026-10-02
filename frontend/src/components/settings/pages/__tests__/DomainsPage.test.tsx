@@ -100,6 +100,39 @@ describe("DomainsPage", () => {
     expect(screen.getAllByText("Active")).toHaveLength(1)
   })
 
+  it("tells the practice who can help with a host that is taking too long, in place of Checking", async () => {
+    const message = "This is taking longer than usual. Ask the front desk."
+    mockList.mockResolvedValue({
+      domains: [
+        domain("stuck.example.com", { status: "verifying", stuck: true, stuck_message: message }),
+        domain("waiting.example.com", { status: "pending", stuck: false, stuck_message: null }),
+      ],
+    })
+    renderWithProviders(<DomainsPage />)
+
+    const stuck = await screen.findByTestId("domain-row-stuck.example.com")
+    expect(within(stuck).getByRole("status")).toHaveTextContent(message)
+    expect(within(stuck).getByText("Delayed")).toBeVisible()
+    expect(within(stuck).queryByText("Checking")).not.toBeInTheDocument()
+
+    const waiting = row("waiting.example.com")
+    expect(within(waiting).getByText("Waiting for DNS")).toBeVisible()
+    expect(within(waiting).queryByRole("status")).not.toBeInTheDocument()
+    expect(screen.getAllByText(message)).toHaveLength(1)
+  })
+
+  it("says a stuck host's records couldn't be confirmed only when they weren't", async () => {
+    const message = "This is taking longer than usual."
+    mockList.mockResolvedValue({
+      domains: [domain("lapsed.example.com", { status: "error", stuck: true, stuck_message: message })],
+    })
+    renderWithProviders(<DomainsPage />)
+
+    const lapsed = await screen.findByTestId("domain-row-lapsed.example.com")
+    expect(within(lapsed).getByRole("status")).toHaveTextContent(message)
+    expect(within(lapsed).queryByText(/couldn't be confirmed/)).not.toBeInTheDocument()
+  })
+
   it("shows the record to add for a domain that is not active yet", async () => {
     mockList.mockResolvedValue({ domains: [domain("portal.example.com", { status: "pending" })] })
     renderWithProviders(<DomainsPage />)

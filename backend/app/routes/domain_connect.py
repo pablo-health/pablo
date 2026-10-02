@@ -97,14 +97,23 @@ def return_from_domain_connect(
         resource_id=practice_id,
         changes={"domain": state.apex},
     )
-    checked, confirmed = domains.check(practice_id, lookup)
-    if confirmed:
+    check = domains.check(practice_id, lookup)
+    if check.confirmed:
         audit.log(
             AuditAction.PRACTICE_DOMAIN_OWNERSHIP_CONFIRMED,
             user,
             http_request,
             resource_type=ResourceType.PRACTICE,
             resource_id=practice_id,
-            changes={"domains": confirmed},
+            changes={"domains": check.confirmed},
         )
-    return DomainConnectReturnResponse(apex=state.apex, error=body.error, domains=checked)
+    for host in check.stuck:
+        audit.log(
+            AuditAction.PRACTICE_DOMAIN_STUCK,
+            user,
+            http_request,
+            resource_type=ResourceType.PRACTICE,
+            resource_id=practice_id,
+            changes={"domain": host},
+        )
+    return DomainConnectReturnResponse(apex=state.apex, error=body.error, domains=check.domains)

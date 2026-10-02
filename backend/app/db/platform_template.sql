@@ -511,6 +511,8 @@ CREATE TABLE platform.practice_domains (
     cert_auth_value character varying(255),
     last_error character varying(500),
     cert_reissued_at timestamp with time zone,
+    records_complete_at timestamp with time zone,
+    stuck_reported_at timestamp with time zone,
     CONSTRAINT practice_domains_kind_check CHECK (((kind)::text = ANY (ARRAY[('subdomain'::character varying)::text, ('vanity'::character varying)::text]))),
     CONSTRAINT practice_domains_purpose_check CHECK (((purpose)::text = ANY (ARRAY[('portal'::character varying)::text, ('site'::character varying)::text]))),
     CONSTRAINT practice_domains_status_check CHECK (((status)::text = ANY (ARRAY[('pending'::character varying)::text, ('verifying'::character varying)::text, ('active'::character varying)::text, ('error'::character varying)::text, ('removing'::character varying)::text])))

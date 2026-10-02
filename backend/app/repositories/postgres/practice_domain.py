@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from ...db.platform_models import PracticeDomainApexRow, PracticeDomainRow
@@ -48,6 +48,8 @@ def _to_domain(row: PracticeDomainRow) -> PracticeDomain:
         cert_status=row.cert_status,
         last_error=row.last_error,
         cert_reissued_at=row.cert_reissued_at,
+        records_complete_at=row.records_complete_at,
+        stuck_reported_at=row.stuck_reported_at,
     )
 
 
@@ -93,6 +95,8 @@ class PostgresPracticeDomainRepository(PracticeDomainRepository):
             cert_status=domain.cert_status,
             last_error=domain.last_error,
             cert_reissued_at=domain.cert_reissued_at,
+            records_complete_at=domain.records_complete_at,
+            stuck_reported_at=domain.stuck_reported_at,
             created_at=domain.created_at,
             updated_at=domain.updated_at,
         )
@@ -223,21 +227,25 @@ class PostgresPracticeDomainRepository(PracticeDomainRepository):
         expected_status: HostStatus,
         state: ServingState,
     ) -> bool:
+        values: dict[str, Any] = {
+            "status": state.status,
+            "cert_auth_value": state.cert_auth_value,
+            "cert_status": state.cert_status,
+            "last_error": state.last_error,
+            "cert_reissued_at": state.cert_reissued_at,
+            "verified_at": state.verified_at,
+            "updated_at": utc_now(),
+        }
+        if state.status == "active":
+            # A served host is no longer waiting; a later lapse starts afresh.
+            values |= {"records_complete_at": None, "stuck_reported_at": None}
         return self._changed(
             update(PracticeDomainRow)
             .where(
                 PracticeDomainRow.domain == domain,
                 PracticeDomainRow.status == expected_status,
             )
-            .values(
-                status=state.status,
-                cert_auth_value=state.cert_auth_value,
-                cert_status=state.cert_status,
-                last_error=state.last_error,
-                cert_reissued_at=state.cert_reissued_at,
-                verified_at=state.verified_at,
-                updated_at=utc_now(),
-            )
+            .values(**values)
         )
 
     def claim_reissue(self, domain: str, *, last: datetime | None, at: datetime) -> bool:
@@ -278,6 +286,42 @@ class PostgresPracticeDomainRepository(PracticeDomainRepository):
                 email_dkim_tokens=list(dkim_tokens) if dkim_tokens else None,
                 updated_at=utc_now(),
             )
+        )
+
+    def mark_records_complete(self, domain: str, practice_id: str, at: datetime) -> bool:
+        return self._changed(
+            update(PracticeDomainRow)
+            .where(
+                PracticeDomainRow.domain == domain,
+                PracticeDomainRow.practice_id == practice_id,
+                PracticeDomainRow.records_complete_at.is_(None),
+            )
+            .values(records_complete_at=at)
+        )
+
+    def clear_records_complete(self, domain: str, practice_id: str) -> bool:
+        return self._changed(
+            update(PracticeDomainRow)
+            .where(
+                PracticeDomainRow.domain == domain,
+                PracticeDomainRow.practice_id == practice_id,
+                or_(
+                    PracticeDomainRow.records_complete_at.is_not(None),
+                    PracticeDomainRow.stuck_reported_at.is_not(None),
+                ),
+            )
+            .values(records_complete_at=None, stuck_reported_at=None)
+        )
+
+    def claim_stuck_report(self, domain: str, practice_id: str, at: datetime) -> bool:
+        return self._changed(
+            update(PracticeDomainRow)
+            .where(
+                PracticeDomainRow.domain == domain,
+                PracticeDomainRow.practice_id == practice_id,
+                PracticeDomainRow.stuck_reported_at.is_(None),
+            )
+            .values(stuck_reported_at=at)
         )
 
     def _changed(self, stmt: Update | Delete) -> bool:

@@ -285,6 +285,10 @@ class AuditAction(StrEnum):
     # A DNS check found a domain's ownership record. The payload is the
     # domains, nothing else.
     PRACTICE_DOMAIN_OWNERSHIP_CONFIRMED = "practice_domain_ownership_confirmed"
+    # Every record a host needs has been in place for longer than the
+    # deployment allows and the host is still not active. Recorded once per
+    # such wait. The payload is the host, nothing else.
+    PRACTICE_DOMAIN_STUCK = "practice_domain_stuck"
     # The domain reconciler job serving the hosts: a host's status moved
     # (payload: the host, its status before and after), a removed host's
     # serving was taken down and its row deleted (payload: the host), and a
