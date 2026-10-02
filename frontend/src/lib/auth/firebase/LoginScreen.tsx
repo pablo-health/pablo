@@ -75,16 +75,19 @@ export function FirebaseLoginScreen() {
   })
 
   // Clean up after a forced logout: strip the reason param and clear the
-  // stale session.
+  // stale session. Waits for auth to finish loading: AuthProvider initializes
+  // Firebase in its own effect, which React runs after this child's, so on a
+  // fresh page load — exactly how a forced logout arrives — getFirebaseAuth()
+  // would otherwise throw and take the whole page down.
   useEffect(() => {
-    if (!cameFromForcedLogout) return
+    if (!cameFromForcedLogout || authLoading) return
     window.history.replaceState({}, "", "/login")
     // Backstop: the logout path already wipes the persisted session, but clear
     // again here in case that raced or was bypassed. Otherwise a session the
     // SDK re-hydrates on this page would auto-redirect to the dashboard and
     // re-trip the same 401. Forces a fresh sign-in.
     void clearStaleSession(getFirebaseAuth())
-  }, [cameFromForcedLogout])
+  }, [cameFromForcedLogout, authLoading])
 
   // Arm the Firebase Auth stuck-state recovery and surface a one-line
   // notice if the last attempt was auto-recovered. THERAPY-n1n6.
