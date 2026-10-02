@@ -11,13 +11,17 @@
  * machine opens the portal on its primary host after each:
  *
  *   1. With no theme the portal keeps its own look — no themed element, the
- *      app's own background — but, being on the practice's own host, no
- *      "Powered by Pablo" either.
+ *      app's own background — but, being on the practice's own host, it is
+ *      the practice's: a welcome, a link back to the live website, and the
+ *      practice's footer with a crisis line instead of "Powered by Pablo".
  *   2. The draft's theme.json is reported on the Website page: what it gives
  *      the portal, and the value it leaves out (too little contrast) and why.
  *   3. Once published, the portal on the practice's host takes the theme's
- *      accent, background and fonts — read from the computed style — and the
- *      fonts load from this app, not from anywhere else.
+ *      accent, background and fonts — read from the computed style, the
+ *      sign-in button included — and the fonts load from this app, not from
+ *      anywhere else. A screenshot of the landing is attached to the run.
+ *   4. The landing is the sign-in: asking for a link says to check email, in
+ *      words that do not reveal whether the address is on file.
  *
  * The rules are pinned in unit tests: reading and checking theme.json in
  * backend/tests/test_site_theme.py, storing it with a version and rolling back
@@ -35,6 +39,8 @@ import { PRACTICE_HOST_PORT } from "../fixtures/stack"
 
 const PRIMARY = "portal.e2e-practice.example"
 const PRIMARY_ORIGIN = `http://${PRIMARY}:${PRACTICE_HOST_PORT}`
+/** The practice's primary website host (e2e_seed_practice_domains.py). */
+const SITE = "e2e-site.example"
 const SETTINGS_PATH = "/dashboard/settings/website"
 
 const ACCENT = "#24504c"
@@ -86,6 +92,13 @@ async function portalLook(browser: Browser) {
         body: shell ? getComputedStyle(shell).fontFamily : null,
         interLoaded: document.fonts.check('16px "Inter"'),
         poweredByPablo: document.body.innerText.includes("Powered by Pablo"),
+        backToSite: document.querySelector("[data-testid=portal-back-to-site]")?.getAttribute("href") ?? null,
+        footer: document.querySelector("[data-testid=portal-footer]")?.textContent ?? "",
+        welcome: document.querySelector("[data-testid=portal-welcome] h2")?.textContent ?? null,
+        signInButton: (() => {
+          const button = document.querySelector("[data-testid=portal-recover-submit]")
+          return button ? getComputedStyle(button).backgroundColor : null
+        })(),
       }
     })
   } finally {
@@ -118,6 +131,9 @@ test("the portal on a practice's own host wears its website's theme @portal", as
     const plain = await portalLook(onThisMachine)
     expect(plain.background).not.toBe("rgb(251, 248, 243)")
     expect(plain.poweredByPablo, "no Powered by Pablo on the practice's own host, theme or not").toBe(false)
+    expect(plain.footer).toContain("In crisis? Call or text 988, or call 911.")
+    expect(plain.backToSite, "a live website, theme or not, is linked back to").toBe(`https://${SITE}`)
+    expect(plain.welcome).toMatch(/^Welcome to /)
 
     // 2. The draft's theme.json, as the Website page reports it.
     await page.getByLabel("Website zip").setInputFiles(await siteZip(`Themed ${Date.now()}`, THEME))
@@ -146,6 +162,21 @@ test("the portal on a practice's own host wears its website's theme @portal", as
     })
     await watched.goto(`${PRIMARY_ORIGIN}/`)
     await expect(watched.getByTestId("portal-shell-no-session")).toBeVisible()
+    await watched.evaluate(() => document.fonts.ready)
+    // The landing as a visitor sees it, kept with the run's results.
+    await test.info().attach("landing on the practice's own host", {
+      body: await watched.screenshot({ fullPage: true }),
+      contentType: "image/png",
+    })
+
+    // 4. Asking for a sign-in link from the landing: the same answer for
+    // every address, and a way to try another.
+    await watched.getByLabel("Email").fill(`nobody-${Date.now()}@example.com`)
+    await watched.getByRole("button", { name: "Email me a sign-in link" }).click()
+    await expect(watched.getByRole("heading", { name: "Check your email" })).toBeVisible()
+    await expect(watched.getByRole("status")).toContainText("If we find a portal account for this email")
+    await watched.getByRole("button", { name: "Use a different email" }).click()
+    await expect(watched.getByLabel("Email")).toBeVisible()
     await watched.close()
 
     const themed = await portalLook(onThisMachine)
@@ -154,6 +185,7 @@ test("the portal on a practice's own host wears its website's theme @portal", as
     expect(themed.body).toContain("Inter")
     expect(themed.interLoaded, "the body font loaded").toBe(true)
     expect(themed.poweredByPablo).toBe(false)
+    expect(themed.signInButton, "the sign-in button wears the accent").toBe("rgb(36, 80, 76)")
     expect(fontRequests.length, "the page asked for its fonts").toBeGreaterThan(0)
     for (const url of fontRequests) {
       expect(new URL(url).origin, "every font came from the practice's own origin").toBe(PRIMARY_ORIGIN)

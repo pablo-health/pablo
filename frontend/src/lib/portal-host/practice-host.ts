@@ -54,6 +54,8 @@ export interface PracticeHost {
   primaryHost: string | null
   /** The theme the portal wears on the practice's hosts (`./practice-theme`), if any. */
   theme: PracticeTheme | null
+  /** The host the practice's live website is served at, which the portal links back to. */
+  siteHost: string | null
 }
 
 /** The lookup's answer: found, serves nothing, or could not be asked. */

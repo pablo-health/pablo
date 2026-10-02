@@ -251,10 +251,8 @@ test("the portal works at a phone's width, by keyboard @portal", async ({ api, p
   )
   expect(shellOverflow, "the shell does not scroll sideways on a phone").toBeLessThanOrEqual(0)
 
-  // Reach recovery the way somebody without a mouse does.
-  await page.getByTestId("portal-shell-recover-link").focus()
-  await page.keyboard.press("Enter")
-
+  // The landing is the sign-in: ask for a link the way somebody without a
+  // mouse does.
   const field = page.getByTestId("portal-recover-email")
   await expect(field).toBeVisible()
   await field.focus()
