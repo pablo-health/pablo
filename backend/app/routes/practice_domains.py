@@ -230,7 +230,8 @@ def remove_practice_domain(
     service: PracticeDomainService = Depends(get_practice_domain_service),
     audit: AuditService = Depends(get_audit_service),
 ) -> PracticeDomainListResponse:
-    """Remove a host. Removing the primary leaves that purpose with none."""
+    """Remove a host. Removing the primary leaves that purpose with none until
+    the reconciler makes another active host of it primary."""
     practice_id = _manageable_practice_id(user)
     removed = service.remove(practice_id, domain)
     audit.log(
