@@ -66,7 +66,8 @@ class ClientSender:
 
     ``from_address`` is set only when the practice's own domain can send;
     ``None`` means the deployment's own address, still under ``from_name``.
-    ``reply_to`` is ``None`` only when the practice has no address to offer.
+    ``reply_to`` is ``None`` until the practice saves one; a channel then adds
+    no Reply-To, and ``from_address`` is ``None`` too.
     """
 
     from_name: str

@@ -2,19 +2,28 @@
 
 """Who a practice's email to its clients is from, and where replies go.
 
-Three settings, practice-wide, each with a default (see
-:class:`~app.db.platform_models.PracticeEmailSenderRow`): the sender name, the
-mailbox name on the practice's own domain, and the reply-to address.
+Three settings, practice-wide (see
+:class:`~app.db.platform_models.PracticeEmailSenderRow`): the sender name
+(defaults to the practice's name), the mailbox name on the practice's own
+domain (defaults to ``portal``), and the reply-to address, which has **no
+default**.
 
 **The rule, in** :func:`resolve_client_sender`:
 
-* When the practice holds a domain whose email sending identity is verified,
-  mail leaves from ``<mailbox>@<that domain>`` under the sender name.
+* When the practice holds a domain whose email sending identity is verified
+  AND has saved a reply-to address, mail leaves from
+  ``<mailbox>@<that domain>`` under the sender name, with that Reply-To.
 * Otherwise it leaves from the deployment's own address, still under the
   sender name. A client never gets a less trustworthy email while the
-  practice's domain is being set up; it changes over on its own once the
-  domain verifies.
-* Either way, replies go to the reply-to address.
+  practice's domain is being set up; it changes over on its own once both are
+  in place.
+
+**Why the reply-to has no default.** Mail from the practice's own domain
+invites replies, and those must reach an address the practice chose for them.
+Falling back to anybody's sign-in address would send clients' replies to a
+personal inbox the practice never offered — the owner may have signed up with
+one. Until a reply-to is saved, nothing names one, and replies follow the
+deployment's own From.
 
 With several verified domains, the one the practice's primary portal host
 sits under wins, and otherwise the oldest; nothing to configure, and the same
@@ -91,9 +100,10 @@ class SenderSettings:
 
 @dataclass(frozen=True)
 class SenderDefaults:
+    """The defaults for the two fields that have one. The reply-to has none."""
+
     sender_name: str
     sender_local_part: str
-    reply_to: str | None
 
 
 def clean_sender_name(raw: str | None) -> str | None:
@@ -147,7 +157,6 @@ def defaults_for(practice: PracticeRow) -> SenderDefaults:
     return SenderDefaults(
         sender_name=practice.name,
         sender_local_part=DEFAULT_LOCAL_PART,
-        reply_to=practice.owner_email or None,
     )
 
 
@@ -219,9 +228,11 @@ def _load(session: Session, practice_id: str) -> tuple[PracticeRow, SenderSettin
 
 def _resolve(session: Session, practice: PracticeRow, chosen: SenderSettings) -> ClientSender:
     defaults = defaults_for(practice)
-    reply_to = chosen.reply_to or defaults.reply_to
+    reply_to = chosen.reply_to
     local = chosen.sender_local_part or defaults.sender_local_part
-    apex = sending_domain(session, practice.id)
+    # The practice's own domain only once replies have somewhere the practice
+    # chose to go; see the module docstring.
+    apex = sending_domain(session, practice.id) if reply_to else None
     from_address = f"{local}@{apex}" if apex is not None else None
     if from_address is not None:
         taken = _personal_addresses(session, practice.id)
@@ -334,10 +345,9 @@ def _refuse_personal_mailbox(
     domain verifies.
     """
     local = chosen.sender_local_part or DEFAULT_LOCAL_PART
-    reply_to = chosen.reply_to or defaults_for(practice).reply_to
     taken = _personal_addresses(session, practice.id)
-    if reply_to:
-        taken.add(reply_to.lower())
+    if chosen.reply_to:
+        taken.add(chosen.reply_to.lower())
     apexes = session.execute(
         select(PracticeDomainApexRow.apex).where(PracticeDomainApexRow.practice_id == practice.id)
     ).scalars()

@@ -22,10 +22,11 @@ export interface EmailSender {
   can_edit: boolean
   applies: boolean
   chosen: EmailSenderFields
+  /** The reply-to has no default: until one is saved, mail does not come from
+   * the practice's domain. */
   defaults: {
     sender_name: string
     sender_local_part: string
-    reply_to: string | null
   }
   /** The practice's domain mail leaves from, or null while none can send. */
   sending_domain: string | null
