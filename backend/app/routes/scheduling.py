@@ -49,7 +49,7 @@ from ..models.availability_rule_params import (
     AvailabilityRuleParamsError,
     validate_rule_params,
 )
-from ..models.enums import SessionSource, SessionType, VideoPlatform
+from ..models.enums import SessionSource, SessionStatus, SessionType, VideoPlatform
 from ..models.scheduling import (
     AppointmentListResponse,
     AppointmentResponse,
@@ -206,6 +206,16 @@ def get_patient_repository(
     Used to resolve patient display names onto appointment responses.
     """
     return _patient_repo_factory()
+
+
+def get_session_repository(
+    _ctx: TenantContext = Depends(get_tenant_context),
+) -> TherapySessionRepository:
+    """Get session repository scoped to the tenant's database.
+
+    Used to resolve each linked session's status onto appointment responses.
+    """
+    return _session_repo_factory()
 
 
 def get_appointment_type_repository(
@@ -530,6 +540,31 @@ def _patient_name_map(
     return {pid: f"{p.first_name} {p.last_name}" for pid, p in patients.items()}
 
 
+def _session_status_map(
+    session_repo: TherapySessionRepository,
+    user_id: str,
+    appointments: Sequence[Appointment],
+) -> dict[str, SessionStatus]:
+    """Status of each appointment's linked session, in one repository call.
+
+    Lets a client tell an appointment whose session is still being recorded
+    from one whose session already ended — without it, a session ended early
+    stayed the "next" appointment until its scheduled end. Sessions the caller
+    can't see are simply absent, and a status this build doesn't know is
+    dropped rather than failing the whole list.
+    """
+    ids = list({a.session_id for a in appointments if a.session_id})
+    if not ids:
+        return {}
+    statuses: dict[str, SessionStatus] = {}
+    for sid, session in session_repo.get_multiple(ids, user_id).items():
+        try:
+            statuses[sid] = SessionStatus(session.status)
+        except ValueError:
+            continue
+    return statuses
+
+
 def _checked_note_inputs(
     note_type: str | None, inputs: dict[str, str] | None
 ) -> dict[str, str] | None:
@@ -549,6 +584,7 @@ def _to_response(
     appt: Appointment,
     *,
     patient_name: str | None = None,
+    session_status: SessionStatus | None = None,
     warnings: list[str] | None = None,
 ) -> AppointmentResponse:
     return AppointmentResponse(
@@ -582,6 +618,7 @@ def _to_response(
         outside_source=appt.outside_source,
         outside_event_id=appt.outside_event_id,
         session_id=appt.session_id,
+        session_status=session_status,
         service_code=appt.service_code,
         modifiers=appt.modifiers,
         unit_count=appt.unit_count,
@@ -673,6 +710,7 @@ def list_appointments(
     user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
     patient_repo: PatientRepository = Depends(get_patient_repository),
+    session_repo: TherapySessionRepository = Depends(get_session_repository),
     audit: AuditService = Depends(get_audit_service),
     tz: tzinfo = Depends(get_owner_timezone),
 ) -> AppointmentListResponse:
@@ -686,6 +724,7 @@ def list_appointments(
     """
     appointments = service.list_appointments(user.id, start.isoformat(), end.isoformat(), tz=tz)
     names = _patient_name_map(patient_repo, user.id, appointments)
+    statuses = _session_status_map(session_repo, user.id, appointments)
     # The payload carries each patient's display name, which makes reading
     # this list a per-record identifier read rather than bare calendar
     # metadata — audit one appointment_viewed per row, mirroring the
@@ -701,7 +740,14 @@ def list_appointments(
             patient_id=a.patient_id,
         )
     return AppointmentListResponse(
-        data=[_to_response(a, patient_name=names.get(a.patient_id)) for a in appointments],
+        data=[
+            _to_response(
+                a,
+                patient_name=names.get(a.patient_id),
+                session_status=statuses.get(a.session_id) if a.session_id else None,
+            )
+            for a in appointments
+        ],
         total=len(appointments),
     )
 
@@ -715,6 +761,7 @@ def get_appointment(
     service: SchedulingService = Depends(get_scheduling_service),
     audit: AuditService = Depends(get_audit_service),
     patient_repo: PatientRepository = Depends(get_patient_repository),
+    session_repo: TherapySessionRepository = Depends(get_session_repository),
 ) -> AppointmentResponse:
     """Get a single appointment."""
     try:
@@ -728,9 +775,11 @@ def get_appointment(
         appt.id,
         patient_id=appt.patient_id,
     )
+    statuses = _session_status_map(session_repo, user.id, [appt])
     return _to_response(
         appt,
         patient_name=_patient_name_map(patient_repo, user.id, [appt]).get(appt.patient_id),
+        session_status=statuses.get(appt.session_id) if appt.session_id else None,
     )
 
 

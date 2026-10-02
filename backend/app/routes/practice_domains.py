@@ -73,6 +73,7 @@ def _manageable_practice_id(user: User) -> str:
     Owner-only today. When a practice-admin role exists, widening who may
     manage domains is this function and nothing else.
     """
+    # Owner-only until a practice admin role exists; Domains and Website both widen here.
     return _get_own_practice_as_owner(user).id
 
 

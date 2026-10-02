@@ -609,17 +609,14 @@ class LocalFileStorage(FileStorageProvider):
         (Path(bucket) / object_name).unlink(missing_ok=True)
 
     def list_names(self, *, bucket: str, prefix: str) -> list[str]:
+        # Object-store semantics: every name starting with the prefix, files
+        # in folders beneath it included, as a cloud bucket lists them.
         base = Path(bucket)
-        prefix_path = base / prefix
-        parent = prefix_path.parent
-        if not parent.is_dir():
+        root = base / prefix.rpartition("/")[0]
+        if not root.is_dir():
             return []
-        stem = prefix_path.name
-        return [
-            str((parent / entry.name).relative_to(base))
-            for entry in parent.iterdir()
-            if entry.is_file() and entry.name.startswith(stem)
-        ]
+        names = (path.relative_to(base).as_posix() for path in root.rglob("*") if path.is_file())
+        return sorted(name for name in names if name.startswith(prefix))
 
 
 def file_storage_from_settings(settings: Settings) -> FileStorageProvider:

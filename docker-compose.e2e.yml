@@ -215,6 +215,9 @@ services:
       # which cannot sign a URL at all.
       - GOOGLE_APPLICATION_CREDENTIALS=/srv/gcs-credentials/service-account.json
       - PATIENT_DOCUMENTS_GCS_BUCKET=pablo-e2e-documents
+      # Practices' websites, written and read server-side through the same
+      # provider; practice-website.spec.ts publishes one.
+      - PRACTICE_SITE_BUCKET=pablo-e2e-sites
       # Video sessions. Only the two providers that need no vendor account
       # are offered here: a pasted link, and a clinician's own waiting room.
       # Zoom and Google Meet each need a real connection to produce a room,

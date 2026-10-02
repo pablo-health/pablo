@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import proxy from "../proxy"
 import { authProviderMiddleware } from "@/lib/auth/middleware"
 import { lookupPracticeHost } from "@/lib/portal-host/practice-host-lookup"
+import { fetchSiteFile, lookupSiteHost } from "@/lib/portal-host/practice-site-lookup"
 
 // Stubbing the provider chain keeps the edge auth stack (and its env
 // requirements) out of the test environment; what matters here is only
@@ -25,6 +26,12 @@ vi.mock("@/lib/auth/middleware", () => ({
 // only matters what the proxy does with each answer.
 vi.mock("@/lib/portal-host/practice-host-lookup", () => ({
   lookupPracticeHost: vi.fn(async () => null),
+}))
+
+// Likewise the website lookup and file fetch (practice-site-lookup.test.ts).
+vi.mock("@/lib/portal-host/practice-site-lookup", () => ({
+  lookupSiteHost: vi.fn(async () => null),
+  fetchSiteFile: vi.fn(async () => new Response("<h1>Home</h1>", { status: 200 })),
 }))
 
 // proxy.ts (renamed from middleware.ts per the Next 16 convention)
@@ -288,5 +295,134 @@ describe("frontend/proxy.ts practice host", () => {
 
     expect(response.status).toBe(404)
     expect(lookupPracticeHost).not.toHaveBeenCalled()
+  })
+})
+
+describe("frontend/proxy.ts website host", () => {
+  const APP = "app.example.org"
+  const SITE = "example.com"
+  const WWW = "www.example.com"
+
+  function at(url: string, host: string, init: { method?: string; headers?: Record<string, string> } = {}) {
+    return new NextRequest(url, { method: init.method, headers: { host, ...init.headers } })
+  }
+
+  beforeEach(() => {
+    vi.mocked(authProviderMiddleware).mockClear()
+    vi.mocked(lookupPracticeHost).mockReset()
+    vi.mocked(lookupPracticeHost).mockResolvedValue(null)
+    vi.mocked(lookupSiteHost).mockReset()
+    vi.mocked(lookupSiteHost).mockResolvedValue({ primaryHost: SITE })
+    vi.mocked(fetchSiteFile).mockClear()
+    vi.stubEnv("APP_HOSTS", APP)
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it.each(["/", "/about/", "/css/site.css", "/favicon.ico", "/api/login", "/dashboard"])(
+    "serves %s from the website, never the app",
+    async (path) => {
+      const response = await proxy(at(`https://${SITE}${path}`, SITE, { headers: { "if-none-match": '"v2"' } }))
+
+      expect(await response.text()).toBe("<h1>Home</h1>")
+      expect(fetchSiteFile).toHaveBeenCalledWith({
+        hostname: SITE,
+        address: `https://${SITE}${path}`,
+        pathname: path,
+        method: "GET",
+        ifNoneMatch: '"v2"',
+      })
+      expect(response.headers.get("location")).toBeNull()
+      expect(authProviderMiddleware).not.toHaveBeenCalled()
+    },
+  )
+
+  it("asks for the website only once the host is known to be no practice's portal", async () => {
+    await proxy(at(`https://${SITE}/`, SITE))
+
+    expect(lookupPracticeHost).toHaveBeenCalledWith(SITE)
+    expect(lookupSiteHost).toHaveBeenCalledWith(SITE)
+  })
+
+  it("sends www to the primary with a 301, path and query kept", async () => {
+    const response = await proxy(at(`https://${WWW}/team/?ref=card`, WWW))
+
+    expect(response.status).toBe(301)
+    expect(response.headers.get("location")).toBe(`https://${SITE}/team/?ref=card`)
+    expect(fetchSiteFile).not.toHaveBeenCalled()
+  })
+
+  it("answers a host with nothing published, or not working, with a plain 404", async () => {
+    vi.mocked(lookupSiteHost).mockResolvedValue(null)
+    for (const path of ["/", "/index.html"]) {
+      const response = await proxy(at(`https://${SITE}${path}`, SITE))
+      expect(response.status, path).toBe(404)
+      expect(await response.text()).toBe("Not Found")
+    }
+    expect(fetchSiteFile).not.toHaveBeenCalled()
+  })
+
+  it("answers 503 when the website lookup could not be made", async () => {
+    vi.mocked(lookupSiteHost).mockResolvedValue("unavailable")
+    const response = await proxy(at(`https://${SITE}/`, SITE))
+
+    expect(response.status).toBe(503)
+  })
+
+  it("refuses a POST: a website is static", async () => {
+    const response = await proxy(at(`https://${SITE}/contact`, SITE, { method: "POST" }))
+
+    expect(response.status).toBe(405)
+    expect(response.headers.get("allow")).toBe("GET, HEAD")
+    expect(fetchSiteFile).not.toHaveBeenCalled()
+  })
+
+  it("leaves a portal host's files to the app, as before", async () => {
+    vi.mocked(lookupPracticeHost).mockResolvedValue({ slug: "acme", primaryHost: "portal.example.com" })
+    const response = await proxy(at("https://portal.example.com/icon.png", "portal.example.com"))
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get("x-middleware-next")).toBe("1")
+    expect(lookupSiteHost).not.toHaveBeenCalled()
+  })
+})
+
+describe("frontend/proxy.ts files and trailing slashes off a website host", () => {
+  const APP = "app.example.org"
+
+  function at(url: string) {
+    return new NextRequest(url, { headers: { host: APP } })
+  }
+
+  beforeEach(() => {
+    vi.mocked(authProviderMiddleware).mockClear()
+    vi.mocked(lookupPracticeHost).mockClear()
+    vi.stubEnv("APP_HOSTS", APP)
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it.each(["/robots.txt", "/favicon.ico", "/brand/logo.svg"])("passes %s on the app's host straight through", async (path) => {
+    const response = await proxy(at(`https://${APP}${path}`))
+
+    expect(response.headers.get("x-middleware-next")).toBe("1")
+    expect(authProviderMiddleware).not.toHaveBeenCalled()
+    expect(lookupPracticeHost).not.toHaveBeenCalled()
+  })
+
+  it("redirects /path/ to /path on the app's host, as Next did before the proxy took it over", async () => {
+    const response = await proxy(at(`https://${APP}/dashboard/patients/?tab=all`))
+
+    expect(response.status).toBe(308)
+    expect(response.headers.get("location")).toBe(`https://${APP}/dashboard/patients?tab=all`)
+    expect(authProviderMiddleware).not.toHaveBeenCalled()
+  })
+
+  it("matches file paths so a website host can serve its own", () => {
+    expect(proxySource).toContain(String.raw`"/((?!_next/|__/).*\\..*)"`)
   })
 })
