@@ -121,14 +121,19 @@ test("the portal on a practice's own host wears its website's theme @portal", as
 
     // 1. No theme.json: the portal in its own look.
     await publish(page, `Plain ${Date.now()}`)
+    // Wait for the answer that knows about this publish: the web app keeps
+    // a host's answer for a minute, and an earlier spec may have asked before
+    // anything was published. The link back to the website arriving is that
+    // answer; "no theme" alone would also be true of the stale one.
     await expect
-      .poll(async () => (await portalLook(onThisMachine)).themed, {
-        message: "the portal has no theme",
+      .poll(async () => (await portalLook(onThisMachine)).backToSite, {
+        message: "the portal links back to the live website",
         timeout: 90_000,
         intervals: [1_000, 2_000, 5_000],
       })
-      .toBe(false)
+      .toBe(`https://${SITE}`)
     const plain = await portalLook(onThisMachine)
+    expect(plain.themed, "the portal has no theme").toBe(false)
     expect(plain.background).not.toBe("rgb(251, 248, 243)")
     expect(plain.poweredByPablo, "no Powered by Pablo on the practice's own host, theme or not").toBe(false)
     expect(plain.footer).toContain("In crisis? Call or text 988, or call 911.")
