@@ -2,12 +2,10 @@
 
 "use client"
 
-import { useState } from "react"
-import { Button } from "@/components/ui/button"
+import { useRef } from "react"
 import type { HostedAddresses as Hosted, PracticeDomain } from "@/lib/api/practiceDomains"
 import { SettingsBadge, SettingsCard } from "../ui"
-
-const COPIED_FOR_MS = 2000
+import { CopyButton } from "./CopyButton"
 
 /**
  * The practice's addresses under the deployment's hosted domain
@@ -55,30 +53,23 @@ interface HostedRowProps {
 }
 
 function HostedRow({ testId, label, host, waitingFor, movedTo }: HostedRowProps) {
-  const [copied, setCopied] = useState(false)
-  const url = `https://${host}`
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(url)
-      setCopied(true)
-      setTimeout(() => setCopied(false), COPIED_FOR_MS)
-    } catch {
-      // The address stays on screen to copy by hand.
-    }
-  }
+  const hostRef = useRef<HTMLSpanElement>(null)
 
   return (
     <li className="border-t border-border py-3 first:border-t-0 first:pt-1" data-testid={testId}>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className="text-[12.5px] text-muted-foreground">{label}</span>
-          <span className="truncate text-sm font-semibold text-foreground">{host}</span>
-          {!waitingFor && !movedTo && <SettingsBadge tone="sage">Active</SettingsBadge>}
-        </div>
-        <Button size="sm" variant="outline" onClick={copy} aria-label={`Copy ${label.toLowerCase()} address`}>
-          {copied ? "Copied" : "Copy"}
-        </Button>
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <span className="text-[12.5px] text-muted-foreground">{label}</span>
+        <span className="flex min-w-0 items-center gap-1">
+          <span ref={hostRef} className="break-all text-sm font-semibold text-foreground">
+            {host}
+          </span>
+          <CopyButton
+            text={`https://${host}`}
+            label={`Copy ${label.toLowerCase()} address`}
+            source={hostRef}
+          />
+        </span>
+        {!waitingFor && !movedTo && <SettingsBadge tone="sage">Active</SettingsBadge>}
       </div>
       {waitingFor ? (
         <p className="mt-1.5 text-[12.5px] text-muted-foreground">{waitingFor}</p>
