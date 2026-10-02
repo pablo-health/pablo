@@ -131,8 +131,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # X-Frame-Options - Prevent clickjacking
         response.headers["X-Frame-Options"] = "DENY"
 
-        # Content-Security-Policy - Basic CSP
-        response.headers["Content-Security-Policy"] = "default-src 'self'"
+        # Content-Security-Policy - Basic CSP, unless the route set its own.
+        # The only routes that do serve a practice's website files, with a
+        # sandbox policy stricter than this one where it matters (see
+        # app.sites.serving).
+        if "content-security-policy" not in response.headers:
+            response.headers["Content-Security-Policy"] = "default-src 'self'"
 
         # Referrer-Policy - Control referrer information
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"

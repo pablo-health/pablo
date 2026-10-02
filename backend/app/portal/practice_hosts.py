@@ -153,12 +153,13 @@ def portal_host_root_url(host: str) -> str:
     return f"https://{host}/"
 
 
-class PortalHostCache:
-    """Answers to "which portal does this host serve", kept for a short while.
+class HostAnswerCache[T]:
+    """Answers to "what does this host serve", kept for a short while.
 
     Found and not-found answers are both kept for ``ttl_seconds``, and at most
     ``max_entries`` hosts are kept, the oldest answer going first. The clock is
-    a parameter so tests can move it.
+    a parameter so tests can move it. The portal's answers are kept in one of
+    these, and a practice website's (:mod:`app.sites.hosts`) in another.
     """
 
     def __init__(
@@ -171,10 +172,10 @@ class PortalHostCache:
         self._ttl = ttl_seconds
         self._max = max_entries
         self._clock = clock
-        self._entries: OrderedDict[str, tuple[float, PortalHost | None]] = OrderedDict()
+        self._entries: OrderedDict[str, tuple[float, T | None]] = OrderedDict()
         self._lock = Lock()
 
-    def get_or_load(self, host: str, load: Callable[[str], PortalHost | None]) -> PortalHost | None:
+    def get_or_load(self, host: str, load: Callable[[str], T | None]) -> T | None:
         """The kept answer for *host*, or *load*'s, which is then kept."""
         now = self._clock()
         with self._lock:
@@ -193,6 +194,9 @@ class PortalHostCache:
         with self._lock:
             self._entries.clear()
 
+
+#: The portal's cache; callable, so tests build their own with a clock.
+PortalHostCache = HostAnswerCache[PortalHost]
 
 _cache = PortalHostCache()
 

@@ -63,6 +63,8 @@ ROUTE_ROOTS: tuple[Path, ...] = tuple(
         # for a caller who had none. Named explicitly so moving them out of
         # app/routes/ did not quietly move them out of this check too.
         _BACKEND / "app" / "portal",
+        # A practice's website, managed and served from its own package.
+        _BACKEND / "app" / "sites",
         _BACKEND / "saas",
     )
     if d.is_dir()
@@ -426,6 +428,18 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # record of who changed where clients are sent.
         ("get", "/api/practice/domains"),  # practice hostnames; no patient data
         ("get", "/api/practice/domains/describe"),  # parses a typed hostname; reads nothing
+        # sites/routes.py and sites/public_routes.py — the practice's public
+        # website: its files, versions and hosts. Uploads, publishes and roll
+        # backs are audited by app.sites.service, whoever calls it.
+        ("get", "/api/practice/website"),  # website versions and hosts; no patient data
+        ("post", "/api/practice/website/draft"),  # website files; audited in the service
+        ("delete", "/api/practice/website/draft"),  # forgets the draft; no patient data
+        ("post", "/api/practice/website/draft/preview"),  # mints a preview address
+        ("post", "/api/practice/website/publish"),  # website files; audited in the service
+        ("post", "/api/practice/website/versions/{version}/live"),  # audited in the service
+        ("get", "/api/practice/website/preview/{token}/{path:path}"),  # draft website file
+        ("get", "/api/sites/hosts/{host}"),  # host to host, no PHI
+        ("get", "/api/sites/hosts/{host}/file"),  # a published website file
         # coverage.py — the practice's payer list (names, electronic payer
         # ids, filing deadlines); no client attached. The per-client coverage
         # routes in the same file live under /api/patients and are audited.

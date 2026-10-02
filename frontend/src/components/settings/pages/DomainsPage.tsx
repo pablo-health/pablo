@@ -12,8 +12,8 @@ import {
 import { useDomainConnect } from "@/hooks/useDomainConnect"
 import { ApiError } from "@/lib/api/client"
 import type { DomainPurpose, PracticeDomain } from "@/lib/api/practiceDomains"
-import type { UserStatus } from "@/lib/api/users"
 import { AddDomainForm } from "../domains/AddDomainForm"
+import { canManageDomains } from "../domains/canManageDomains"
 import { DomainConnectOffers } from "../domains/DomainConnectOffers"
 import { DomainConnectReturn } from "../domains/DomainConnectReturn"
 import { DomainRow } from "../domains/DomainRow"
@@ -24,14 +24,6 @@ const SECTIONS: { purpose: DomainPurpose; title: string; description: string }[]
   { purpose: "portal", title: "Client portal", description: "Addresses your clients can use to reach your portal." },
   { purpose: "site", title: "Website", description: "Addresses for your practice's website." },
 ]
-
-/**
- * Who may change the practice's domains. The owner today; when a practice
- * administrator role exists, this and the server's check are what widen.
- */
-function canManageDomains(status: UserStatus | undefined): boolean {
-  return status?.is_practice_owner === true
-}
 
 /** Practice > Domains. The practice's own addresses for its portal and website. */
 export function DomainsPage() {
