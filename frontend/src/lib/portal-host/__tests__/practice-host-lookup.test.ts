@@ -25,8 +25,27 @@ describe("createPracticeHostLookup", () => {
   it("asks the backend for the host and reads the answer", async () => {
     const { lookup, fetch } = setup(() => json(200, { slug: "acme", primary_host: "portal.example.com" }))
 
-    expect(await lookup("portal.example.com")).toEqual({ slug: "acme", primaryHost: "portal.example.com" })
+    expect(await lookup("portal.example.com")).toEqual({ slug: "acme", primaryHost: "portal.example.com", theme: null })
     expect(fetch).toHaveBeenCalledWith(`${API}/api/portal/hosts/portal.example.com`, expect.anything())
+  })
+
+  it("reads the theme the portal wears there", async () => {
+    const theme = { version: 1, colors: { accent: "#24504c", text: null }, fonts: { body: "Inter" }, radius: "md" }
+    const { lookup } = setup(() => json(200, { slug: "acme", primary_host: null, theme }))
+
+    expect(await lookup("portal.example.com")).toEqual({
+      slug: "acme",
+      primaryHost: null,
+      theme: { colors: { accent: "#24504c" }, fonts: { body: "Inter" }, radius: "md" },
+    })
+  })
+
+  it("serves the portal in its own look when the theme makes no sense", async () => {
+    const { lookup } = setup(() =>
+      json(200, { slug: "acme", primary_host: null, theme: { colors: { accent: "red;}" }, fonts: "x" } }),
+    )
+
+    expect(await lookup("portal.example.com")).toEqual({ slug: "acme", primaryHost: null, theme: null })
   })
 
   it("keeps a found host for a minute, then asks again", async () => {

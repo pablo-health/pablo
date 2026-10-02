@@ -7,10 +7,27 @@
 
 import { del, get, post, postForm } from "./client"
 
+/** The portal theme a website's `theme.json` gives; a value it does not give is `null`. */
+export interface SiteTheme {
+  version: number
+  colors: Record<"accent" | "accentText" | "background" | "surface" | "text" | "mutedText", string | null>
+  fonts: Record<"heading" | "body", string | null>
+  radius: "none" | "sm" | "md" | "lg" | null
+}
+
+export interface SiteThemeReport {
+  /** `null` when nothing in `theme.json` could be used. */
+  theme: SiteTheme | null
+  /** What was left out: where in the file (`colors.text`, or `theme.json` for all of it), and why. */
+  skipped: { field: string; reason: string }[]
+}
+
 export interface SiteDraft {
   file_count: number
   total_bytes: number
   uploaded_at: string
+  /** What the draft's `theme.json` gives the portal; `null` when it has none. */
+  theme: SiteThemeReport | null
 }
 
 export interface SiteVersion {
@@ -19,6 +36,8 @@ export interface SiteVersion {
   total_bytes: number
   published_at: string
   is_live: boolean
+  /** Whether this version gives the portal a theme. */
+  has_theme: boolean
 }
 
 export interface PracticeSite {

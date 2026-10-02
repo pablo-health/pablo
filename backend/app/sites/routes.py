@@ -20,8 +20,9 @@ widening one widens both. The practice is always the caller's own. Uploads,
 publishes and roll backs are audited by the service, with the version, file
 count and bytes. Old versions and replaced drafts are tidied away after the
 change commits, as a background task. A publish or roll back also forgets this
-process's answers about website hosts once it has committed, so it is served
-here at once; another process notices within the minute it keeps answers.
+process's answers about website and portal hosts once it has committed, so the
+site and the theme the portal takes from it are served here at once; another
+process notices within the minute it keeps answers.
 """
 
 from __future__ import annotations
@@ -41,6 +42,7 @@ from ..api_errors import (
 )
 from ..auth.service import require_active_subscription
 from ..models import User  # noqa: TC001 — fastapi resolves the annotation at runtime
+from ..portal.practice_hosts import get_portal_host_cache
 from ..routes.practice_domains import _manageable_practice_id, _practice_id
 from .files import MAX_ARCHIVE_BYTES, SiteFilesError, SiteTooLargeError, read_zip
 from .hosts import get_site_host_cache
@@ -52,6 +54,7 @@ from .service import (
     get_practice_site_service,
     tidy_practice_site,
 )
+from .theme import ThemeReport  # noqa: TC001 — pydantic resolves it at runtime
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -68,6 +71,9 @@ class SiteDraftResponse(BaseModel):
     file_count: int
     total_bytes: int
     uploaded_at: datetime
+    #: What the draft's ``theme.json`` gives the portal and what it skips;
+    #: ``None`` when the draft has none.
+    theme: ThemeReport | None
 
 
 class SiteVersionResponse(BaseModel):
@@ -76,6 +82,8 @@ class SiteVersionResponse(BaseModel):
     total_bytes: int
     published_at: datetime
     is_live: bool
+    #: Whether this version gives the portal a theme.
+    has_theme: bool
 
 
 class PracticeSiteResponse(BaseModel):
@@ -109,6 +117,7 @@ def _response(service: PracticeSiteService, practice_id: str) -> PracticeSiteRes
             file_count=draft.file_count,
             total_bytes=draft.total_bytes,
             uploaded_at=draft.uploaded_at,
+            theme=draft.theme,
         )
         if draft
         else None,
@@ -119,10 +128,18 @@ def _response(service: PracticeSiteService, practice_id: str) -> PracticeSiteRes
                 total_bytes=v.total_bytes,
                 published_at=v.published_at,
                 is_live=v.version == status.live_version,
+                has_theme=v.theme is not None,
             )
             for v in status.versions
         ],
     )
+
+
+def _forget_host_answers() -> None:
+    """Forget the kept answers a publish or roll back changes: the website a
+    host serves, and the theme a portal host carries."""
+    get_site_host_cache().clear()
+    get_portal_host_cache().clear()
 
 
 def _translated[T](call: Callable[[], T]) -> T:
@@ -209,7 +226,7 @@ def publish_practice_site(
     """Publish the draft as a new version and make it live. 409 with no draft."""
     practice_id = _manageable_practice_id(user)
     _translated(lambda: service.publish_draft(practice_id, user, http_request))
-    background.add_task(get_site_host_cache().clear)
+    background.add_task(_forget_host_answers)
     background.add_task(tidy_practice_site, practice_id)
     return _response(service, practice_id)
 
@@ -225,5 +242,5 @@ def roll_back_practice_site(
     """Make a kept version live again. 404 if it is not kept."""
     practice_id = _manageable_practice_id(user)
     _translated(lambda: service.roll_back(practice_id, version, user, http_request))
-    background.add_task(get_site_host_cache().clear)
+    background.add_task(_forget_host_answers)
     return _response(service, practice_id)

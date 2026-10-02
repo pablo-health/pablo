@@ -30,6 +30,7 @@ export function VersionHistory({ versions, canManage, busy, onRollBack }: Versio
               <p className="text-sm font-medium">Version {v.version}</p>
               <p className="text-[12.5px] text-muted-foreground">
                 Published {formatWhen(v.published_at)} · {describeFiles(v.file_count, v.total_bytes)}
+                {v.has_theme && " · Portal theme"}
               </p>
             </div>
             {v.is_live ? (

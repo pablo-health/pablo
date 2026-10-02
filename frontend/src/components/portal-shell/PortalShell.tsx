@@ -62,6 +62,7 @@ import {
   ResolvingCard,
   UnknownPracticeCard,
 } from "./PortalAuthCards"
+import { PortalFooter } from "./PortalFooter"
 import { ShellHeader } from "./PortalNav"
 import { visiblePortalSlots } from "./slots"
 // Side-effect import: fills the slot registry in the BROWSER's module graph.
@@ -270,9 +271,7 @@ export function PortalShell({ slug, children }: { slug: string; children?: React
           )}
         </div>
       </main>
-      <footer className="px-4 py-6 text-center text-xs text-neutral-400">
-        <p>Powered by Pablo</p>
-      </footer>
+      <PortalFooter />
     </div>
   )
 }

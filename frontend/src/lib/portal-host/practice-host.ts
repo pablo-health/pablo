@@ -34,6 +34,7 @@
  * (`frontend/proxy.ts`) hands in what it found.
  */
 
+import type { PracticeTheme } from "./practice-theme"
 import {
   CLINICIAN_ROUTE_SEGMENTS,
   PORTAL_FRONTEND_API_ROUTES,
@@ -51,6 +52,8 @@ export interface PracticeHost {
   slug: string
   /** The practice's working primary portal host, if it has one. */
   primaryHost: string | null
+  /** The theme the portal wears on the practice's hosts (`./practice-theme`), if any. */
+  theme: PracticeTheme | null
 }
 
 /** The lookup's answer: found, serves nothing, or could not be asked. */

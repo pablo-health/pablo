@@ -29,6 +29,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { requestPortalRecovery, resolvePortalPractice } from "@/lib/portal-shell/api"
+import { PortalFooter } from "./PortalFooter"
 
 const TURNSTILE_SCRIPT_SRC = "https://challenges.cloudflare.com/turnstile/v0/api.js"
 
@@ -185,9 +186,7 @@ export function PortalRecover({ slug }: { slug: string }) {
         </div>
       </main>
 
-      <footer className="px-4 py-6 text-center text-xs text-neutral-400">
-        <p>Powered by Pablo</p>
-      </footer>
+      <PortalFooter />
     </div>
   )
 }

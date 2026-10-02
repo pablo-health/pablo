@@ -8,7 +8,8 @@ committed rows through the code's own sessions:
 * ``GET /api/portal/hosts/{host}`` — the public route the web app asks before
   it serves a request on a host it does not otherwise know. Only an active
   portal host of a practice that offers the portal answers; everything else is
-  one 404. An alias names the primary it should send visitors to.
+  one 404. An alias names the primary it should send visitors to, and the
+  answer carries the theme of the practice's live website version, if any.
 * The default portal address — a link goes to the root of the practice's
   primary portal host while that host is active, and to the shared portal
   address otherwise; a registered resolver still decides, and can ask the same
@@ -21,6 +22,7 @@ front of the database.
 
 from __future__ import annotations
 
+import json
 import os
 import uuid
 from dataclasses import dataclass, field
@@ -129,6 +131,35 @@ class _Rows:
             )
         return host
 
+    def site(self, practice_id: str, themes: list[dict[str, Any] | None], live: int | None) -> None:
+        """A published website: version *n* has ``themes[n - 1]``, and *live* is live."""
+        with self.engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO platform.practice_sites "
+                    "(practice_id, live_version, next_version, updated_at) "
+                    "VALUES (:p, :live, :next, now())"
+                ),
+                {"p": practice_id, "live": live, "next": len(themes) + 1},
+            )
+            for number, theme in enumerate(themes, start=1):
+                conn.execute(
+                    text(
+                        "INSERT INTO platform.practice_site_versions "
+                        "(practice_id, version, file_count, total_bytes, published_at, "
+                        "published_by, theme) "
+                        "VALUES (:p, :v, 1, 1, now(), 'publisher', CAST(:t AS JSONB))"
+                    ),
+                    {"p": practice_id, "v": number, "t": json.dumps(theme) if theme else None},
+                )
+
+    def set_live(self, practice_id: str, live: int | None) -> None:
+        with self.engine.begin() as conn:
+            conn.execute(
+                text("UPDATE platform.practice_sites SET live_version = :v WHERE practice_id = :p"),
+                {"v": live, "p": practice_id},
+            )
+
     def set_status(self, host: str, status: str) -> None:
         with self.engine.begin() as conn:
             conn.execute(
@@ -142,7 +173,7 @@ class _Rows:
                 text("DELETE FROM platform.practice_domains WHERE domain = ANY(:h)"),
                 {"h": self.hosts},
             )
-            for table in ("companion_practice_slugs", "practice_portal_settings"):
+            for table in ("companion_practice_slugs", "practice_portal_settings", "practice_sites"):
                 conn.execute(
                     text(f"DELETE FROM platform.{table} WHERE practice_id = ANY(:p)"),  # noqa: S608 — fixed table names
                     {"p": self.practices},
@@ -194,7 +225,7 @@ def test_the_primary_host_serves_its_practice(client: TestClient, rows: _Rows) -
     response = _ask(client, primary)
 
     assert response.status_code == 200
-    assert response.json() == {"slug": slug, "primary_host": primary}
+    assert response.json() == {"slug": slug, "primary_host": primary, "theme": None}
 
 
 def test_an_alias_names_the_primary_to_send_visitors_to(client: TestClient, rows: _Rows) -> None:
@@ -205,7 +236,7 @@ def test_an_alias_names_the_primary_to_send_visitors_to(client: TestClient, rows
     response = _ask(client, alias)
 
     assert response.status_code == 200
-    assert response.json() == {"slug": slug, "primary_host": primary}
+    assert response.json() == {"slug": slug, "primary_host": primary, "theme": None}
 
 
 def test_a_practice_with_no_working_primary_serves_on_every_active_host(
@@ -215,12 +246,16 @@ def test_a_practice_with_no_working_primary_serves_on_every_active_host(
     better to send anyone, so each active host serves the portal itself."""
     practice_id, slug = rows.practice()
     alias = rows.host(practice_id)
-    assert _ask(client, alias).json() == {"slug": slug, "primary_host": None}
+    assert _ask(client, alias).json() == {"slug": slug, "primary_host": None, "theme": None}
 
     other_id, other_slug = rows.practice()
     rows.host(other_id, primary=True, status="error")
     other_alias = rows.host(other_id, prefix="clients")
-    assert _ask(client, other_alias).json() == {"slug": other_slug, "primary_host": None}
+    assert _ask(client, other_alias).json() == {
+        "slug": other_slug,
+        "primary_host": None,
+        "theme": None,
+    }
 
 
 def test_a_host_value_is_read_as_a_host_header_would_be(client: TestClient, rows: _Rows) -> None:
@@ -269,7 +304,7 @@ def test_an_answer_is_kept_for_a_minute(client: TestClient, rows: _Rows, clock: 
     assert _ask(client, host).status_code == 404, "the kept answer stands until the minute is up"
 
     clock.now += 1
-    assert _ask(client, host).json() == {"slug": slug, "primary_host": host}
+    assert _ask(client, host).json() == {"slug": slug, "primary_host": host, "theme": None}
 
     rows.set_status(host, "error")
     assert _ask(client, host).status_code == 200
@@ -328,7 +363,62 @@ def test_a_removing_primary_sends_no_one_from_an_alias(client: TestClient, rows:
     rows.host(practice_id, primary=True, status="removing")
     alias = rows.host(practice_id, prefix="clients")
 
-    assert _ask(client, alias).json() == {"slug": slug, "primary_host": None}
+    assert _ask(client, alias).json() == {"slug": slug, "primary_host": None, "theme": None}
+
+
+# ---------------------------------------------------------------------------
+# The theme the portal wears
+# ---------------------------------------------------------------------------
+
+GREEN = {"version": 1, "colors": {"accent": "#24504c"}, "fonts": {"body": "Inter"}}
+BLUE = {"version": 1, "colors": {"accent": "#1e3a8a"}, "radius": "lg"}
+
+
+def _theme(client: TestClient, host: str) -> Any:
+    return _ask(client, host).json()["theme"]
+
+
+def test_the_host_carries_the_live_websites_theme(
+    client: TestClient, rows: _Rows, clock: _Clock
+) -> None:
+    practice_id, _ = rows.practice()
+    host = rows.host(practice_id, primary=True)
+    rows.site(practice_id, [GREEN, BLUE], live=2)
+
+    theme = _theme(client, host)
+
+    assert theme["colors"]["accent"] == "#1e3a8a"
+    assert theme["radius"] == "lg"
+    # Rolling back brings back the theme that version had.
+    rows.set_live(practice_id, 1)
+    clock.now += 61
+    assert _theme(client, host)["colors"]["accent"] == "#24504c"
+    assert _theme(client, host)["fonts"]["body"] == "Inter"
+
+
+def test_without_a_live_website_or_its_theme_the_portal_keeps_its_own_look(
+    client: TestClient, rows: _Rows, clock: _Clock
+) -> None:
+    practice_id, _ = rows.practice()
+    host = rows.host(practice_id, primary=True)
+    assert _theme(client, host) is None
+
+    rows.site(practice_id, [GREEN, None], live=2)
+    clock.now += 61
+    assert _theme(client, host) is None
+
+    rows.set_live(practice_id, None)
+    clock.now += 61
+    assert _theme(client, host) is None
+
+
+def test_one_practices_theme_never_reaches_anothers_host(client: TestClient, rows: _Rows) -> None:
+    themed, _ = rows.practice()
+    rows.site(themed, [GREEN], live=1)
+    other, _ = rows.practice()
+    other_host = rows.host(other, primary=True)
+
+    assert _theme(client, other_host) is None
 
 
 @pytest.mark.usefixtures("links")
