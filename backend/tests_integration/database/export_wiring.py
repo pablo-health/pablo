@@ -50,6 +50,7 @@ from app.repositories.postgres.patient_payment import PostgresPatientPaymentRepo
 from app.repositories.postgres.session import PostgresTherapySessionRepository
 from app.repositories.postgres.user import PostgresUserRepository
 from app.routes.patient_intake_export import _FormRenderer
+from app.routes.people_term import people_words_for
 from app.services import ExportService
 from app.services.export_archive import practitioner_from
 from app.services.export_billing import BillingRecordSource
@@ -76,6 +77,7 @@ def _text(profile: dict[str, object], key: str) -> str | None:
 def billing_source_for(session: Session) -> BillingRecordSource:
     """The billing record wired as the route wires it, on the same tenant session."""
     users = PostgresUserRepository(session)
+    profiles = PostgresClinicianProfileRepository(session)
 
     def practice() -> PracticeBlock:
         profile = load_billing_profile(session)
@@ -101,8 +103,9 @@ def billing_source_for(session: Session) -> BillingRecordSource:
         appointments=PostgresAppointmentRepository(session),
         practice=practice,
         tax_id=lambda: load_billing_tax_id(session),
-        license_for=PostgresClinicianProfileRepository(session).get,
+        license_for=profiles.get,
         timezone=timezone,
+        people=lambda user_id: people_words_for(user_id, users, profiles),
     )
 
 
