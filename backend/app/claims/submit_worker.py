@@ -389,7 +389,7 @@ def _attempt(  # noqa: PLR0913 — keyword-only collaborators
     try:
         request = _request_for(pipeline, claim, account, payers)
     except ClaimMappingError as exc:
-        stall(pipeline, claim, code="claim_incomplete", description=str(exc))
+        stall(pipeline, claim, code="claim_incomplete", description=str(exc), filing_refused=True)
         summary.stalled += 1
         return
 
@@ -427,7 +427,7 @@ def _attempt(  # noqa: PLR0913 — keyword-only collaborators
             code,
             describe_error(exc),
         )
-        stall(pipeline, claim, code=code, description=description)
+        stall(pipeline, claim, code=code, description=description, filing_refused=True)
         summary.stalled += 1
         return
 

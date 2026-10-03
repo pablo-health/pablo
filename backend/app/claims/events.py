@@ -97,6 +97,13 @@ class ClaimEventDetail:
     Codes and dates only. ``payer_instructions`` is set on enrollment
     events, where the payer's own wording of what it needs is the whole
     point; ``amount_cents`` on paid and partial events.
+
+    ``filing_refused`` marks a ``stalled`` event raised while the claim was
+    being sent rather than after it left: the clearinghouse refused the
+    submission, or the claim could not be put on the wire at all. Both park
+    the claim the same way a timeout does, but nobody is waiting on a payer
+    here — the claim never reached one — so a listener must not word it as a
+    wait.
     """
 
     codes: tuple[CodeRef, ...] = ()
@@ -105,6 +112,7 @@ class ClaimEventDetail:
     days_left: int | None = None
     payer_instructions: str | None = None
     amount_cents: int | None = None
+    filing_refused: bool = False
 
 
 @dataclass(frozen=True)
@@ -152,6 +160,7 @@ class ClaimEvent:
                 "days_left": detail.days_left,
                 "payer_instructions": detail.payer_instructions,
                 "amount_cents": detail.amount_cents,
+                "filing_refused": detail.filing_refused,
             },
         }
 
@@ -217,6 +226,10 @@ _KIND_PHRASES: dict[ClaimEventKind, str] = {
     "paid": "paid by {payer}",
 }
 
+#: A stall raised while sending. "Stalled at" would say the payer has it and
+#: is slow, when the claim never left.
+_FILING_REFUSED_PHRASE = "could not be filed with {payer}"
+
 
 #: The kinds raised with no claim behind them, and the reason the listener
 #: has two arms.
@@ -244,7 +257,12 @@ def compliance_item_type(kind: ClaimEventKind) -> str:
 
 def _label(event: ClaimEvent) -> str:
     detail = event.detail
-    phrase = _KIND_PHRASES[event.kind].format(
+    template = (
+        _FILING_REFUSED_PHRASE
+        if event.kind == "stalled" and detail.filing_refused
+        else _KIND_PHRASES[event.kind]
+    )
+    phrase = template.format(
         payer=event.payer_name or "payer",
         deadline=detail.deadline_kind or "claim",
     )
