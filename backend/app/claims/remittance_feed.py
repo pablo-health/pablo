@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING
 
 from ..utcnow import utc_now
 from .clearinghouse import (
+    ClearinghouseAccessDeniedError,
     ClearinghouseError,
     ClearinghouseNotFoundError,
     ClearinghouseReportUnreadableError,
@@ -75,9 +76,12 @@ def fetch_remittance(client: ClearinghouseClient, transaction_id: str) -> Fetche
         return None
     try:
         report = client.get_remittance_report(transaction_id)
-    except ClearinghouseNotFoundError as exc:
+    except (ClearinghouseNotFoundError, ClearinghouseAccessDeniedError) as exc:
+        # The transaction read just succeeded with this same key, so a 403 on
+        # its report is not "this key may not use the API" — see
+        # fetch_acknowledgment, which meets the same answer.
         raise ClearinghouseReportUnreadableError(
-            f"no 835 report for transaction {transaction_id}"
+            f"no 835 report for transaction {transaction_id}", code=exc.code
         ) from exc
     return FetchedRemittance(
         transaction_id=transaction_id,
