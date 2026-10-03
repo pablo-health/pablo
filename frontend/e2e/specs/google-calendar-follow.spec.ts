@@ -144,9 +144,11 @@ async function connectThroughSetup(page: Page, { follow }: { follow: boolean }):
   await page.goto(SETUP_PATH)
   await page.getByRole("button", { name: "Connect Google Calendar" }).click()
   // Google (the stand-in) sends the browser back with a code; the page
-  // exchanges it and moves on to the clients step.
+  // exchanges it and lands on Sessions, where the choices can still change.
   await expect(page.getByText("Google Calendar is connected.")).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Where your sessions go" })).toBeVisible()
   expect(await google.grant()).toEqual([SCOPE_APP_CALENDAR, SCOPE_FREEBUSY].sort())
+  await page.getByRole("button", { name: "Continue", exact: true }).click()
 
   await page.getByRole("button", { name: "Look at my week" }).click()
   // Reading events is a second grant, asked for only now, and added to

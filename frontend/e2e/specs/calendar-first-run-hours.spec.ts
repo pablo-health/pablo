@@ -174,7 +174,7 @@ test("hours described on a Friday evening show up as working time in the week an
 
     // The week the hours were set in still shows them: its working days are
     // working time, marked past rather than blank.
-    await page.getByRole("button", { name: "Previous" }).click()
+    await page.getByRole("button", { name: "Previous", exact: true }).click()
     for (const day of weekFrom(thisSunday)) {
       if (!WORKING_DAYS.includes(day.weekday)) continue
       const column = weekColumn(page, day.label)

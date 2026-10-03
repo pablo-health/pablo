@@ -283,7 +283,7 @@ test.describe("Patient Management", () => {
       await page.getByRole("link", { name: /back to clients/i }).click()
 
       await expect(page).toHaveURL(/\/dashboard\/patients$/)
-      await expect(page.getByRole("heading", { name: /^patients$/i })).toBeVisible()
+      await expect(page.getByRole("heading", { name: /^clients$/i })).toBeVisible()
     })
   })
 
