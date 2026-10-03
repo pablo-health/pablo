@@ -7,6 +7,8 @@ import "./globals.css"
 import { Providers } from "@/components/providers"
 import { DEFAULT_THEME } from "@/lib/theme"
 import { NONCE_HEADER } from "@/lib/auth/csp"
+import { appHostsFromEnv, servesOnlyPortal } from "@/lib/portal-host/practice-host"
+import { portalHostsFromEnv } from "@/lib/portal-host/routing"
 
 // Static no-FOUC bootstrap: applies the saved theme (localStorage key
 // "pablo-theme" — must match THEME_STORAGE_KEY) before first paint, falling
@@ -35,7 +37,9 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode
 }>) {
-  const nonce = (await headers()).get(NONCE_HEADER) ?? undefined
+  const requestHeaders = await headers()
+  const nonce = requestHeaders.get(NONCE_HEADER) ?? undefined
+  const portalOnly = servesOnlyPortal(requestHeaders.get("host"), appHostsFromEnv(), portalHostsFromEnv())
 
   return (
     <html lang="en" data-default-theme={DEFAULT_THEME} suppressHydrationWarning>
@@ -43,7 +47,7 @@ export default async function RootLayout({
         <script nonce={nonce} dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
       <body className={`${dmSans.variable} ${fraunces.variable} font-sans`}>
-        <Providers>{children}</Providers>
+        <Providers portalOnlyHost={portalOnly}>{children}</Providers>
       </body>
     </html>
   )
