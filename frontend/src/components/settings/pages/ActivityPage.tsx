@@ -13,9 +13,11 @@ import {
 import { SettingsBadge, SettingsCard } from "../ui"
 import { Button } from "@/components/ui/button"
 import { useAuditLog } from "@/hooks/useAuditLog"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import type { AuditLogItem } from "@/lib/api/users"
 
 function Row({ entry }: { entry: AuditLogItem }) {
+  const people = usePeopleTerm()
   return (
     <tr className="border-t border-border align-top">
       <td className="whitespace-nowrap px-[22px] py-3 text-[13px] text-muted-foreground">
@@ -23,14 +25,14 @@ function Row({ entry }: { entry: AuditLogItem }) {
       </td>
       <td className="px-3 py-3 text-[13px] font-medium text-foreground">
         <div className="flex items-center gap-2">
-          {formatAuditAction(entry.action)}
+          {formatAuditAction(entry.action, people)}
           {isSomeoneElsesAction(entry) && (
             <SettingsBadge tone="mute">{formatAuditAction(entry.actor_type)}</SettingsBadge>
           )}
         </div>
       </td>
       <td className="px-3 py-3 font-mono text-[12px] leading-relaxed break-all text-muted-foreground">
-        {describeAuditResource(entry)}
+        {describeAuditResource(entry, people)}
       </td>
       <td className="whitespace-nowrap px-3 py-3 font-mono text-[12px] text-muted-foreground">
         {entry.ip_address ?? "—"}

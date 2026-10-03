@@ -179,7 +179,7 @@ describe("UploadTranscriptDialog", () => {
       await user.click(screen.getByText("Upload Session"))
 
       await waitFor(() => {
-        expect(screen.getByText("Select a patient...")).toBeInTheDocument()
+        expect(screen.getByText("Select a client...")).toBeInTheDocument()
       })
 
       const selectTrigger = screen.getByRole("combobox")
@@ -206,7 +206,7 @@ describe("UploadTranscriptDialog", () => {
       await user.click(submitButton)
 
       await waitFor(() => {
-        expect(screen.getByText("Patient is required")).toBeInTheDocument()
+        expect(screen.getByText("Client is required")).toBeInTheDocument()
       })
     })
 
@@ -534,7 +534,7 @@ describe("UploadTranscriptDialog", () => {
       await user.click(screen.getByText("Upload & Generate SOAP"))
 
       await waitFor(() => {
-        expect(screen.getByText("Patient is required")).toBeInTheDocument()
+        expect(screen.getByText("Client is required")).toBeInTheDocument()
         expect(screen.getByText("Session date is required")).toBeInTheDocument()
         expect(screen.getByText("File is required")).toBeInTheDocument()
       })
@@ -553,7 +553,7 @@ describe("UploadTranscriptDialog", () => {
       await user.click(screen.getByText("Upload Session"))
 
       await waitFor(() => {
-        expect(screen.getByText("Select a patient...")).toBeInTheDocument()
+        expect(screen.getByText("Select a client...")).toBeInTheDocument()
       })
 
       // Select patient
@@ -622,7 +622,7 @@ describe("UploadTranscriptDialog", () => {
       await user.click(screen.getByText("Upload Session"))
 
       await waitFor(() => {
-        expect(screen.getByText("Select a patient...")).toBeInTheDocument()
+        expect(screen.getByText("Select a client...")).toBeInTheDocument()
       })
 
       // Select patient
@@ -679,7 +679,7 @@ describe("UploadTranscriptDialog", () => {
       await user.click(screen.getByText("Upload Session"))
 
       await waitFor(() => {
-        expect(screen.getByText("Select a patient...")).toBeInTheDocument()
+        expect(screen.getByText("Select a client...")).toBeInTheDocument()
       })
 
       const selectTrigger = screen.getByRole("combobox")
@@ -716,7 +716,7 @@ describe("UploadTranscriptDialog", () => {
       await user.click(screen.getByText("Upload Session"))
 
       await waitFor(() => {
-        expect(screen.getByText("Select a patient...")).toBeInTheDocument()
+        expect(screen.getByText("Select a client...")).toBeInTheDocument()
       })
 
       // Select patient
@@ -757,7 +757,7 @@ describe("UploadTranscriptDialog", () => {
       await user.click(screen.getByText("Upload Session"))
 
       await waitFor(() => {
-        expect(screen.getByText("Select a patient...")).toBeInTheDocument()
+        expect(screen.getByText("Select a client...")).toBeInTheDocument()
       })
 
       // Select patient
@@ -797,7 +797,7 @@ describe("UploadTranscriptDialog", () => {
       await user.click(screen.getByText("Upload Session"))
 
       await waitFor(() => {
-        expect(screen.getByText("Select a patient...")).toBeInTheDocument()
+        expect(screen.getByText("Select a client...")).toBeInTheDocument()
       })
 
       // Select patient
@@ -837,7 +837,7 @@ describe("UploadTranscriptDialog", () => {
       await user.click(screen.getByText("Upload Session"))
 
       await waitFor(() => {
-        expect(screen.getByText("Select a patient...")).toBeInTheDocument()
+        expect(screen.getByText("Select a client...")).toBeInTheDocument()
       })
 
       // Select patient
@@ -884,7 +884,7 @@ describe("UploadTranscriptDialog", () => {
       await user.click(screen.getByText("Upload Session"))
 
       await waitFor(() => {
-        expect(screen.getByText("Select a patient...")).toBeInTheDocument()
+        expect(screen.getByText("Select a client...")).toBeInTheDocument()
       })
 
       // Select patient
@@ -931,7 +931,7 @@ describe("UploadTranscriptDialog", () => {
       await user.click(screen.getByText("Upload Session"))
 
       await waitFor(() => {
-        expect(screen.getByText("Select a patient...")).toBeInTheDocument()
+        expect(screen.getByText("Select a client...")).toBeInTheDocument()
       })
 
       const selectTrigger = screen.getByRole("combobox")
@@ -967,7 +967,7 @@ describe("UploadTranscriptDialog", () => {
       await user.click(screen.getByText("Upload Session"))
 
       await waitFor(() => {
-        expect(screen.getByText("Select a patient...")).toBeInTheDocument()
+        expect(screen.getByText("Select a client...")).toBeInTheDocument()
       })
 
       const selectTrigger = screen.getByRole("combobox")
@@ -1012,7 +1012,7 @@ describe("UploadTranscriptDialog", () => {
       await user.click(screen.getByText("Upload Session"))
 
       await waitFor(() => {
-        expect(screen.getByText("Select a patient...")).toBeInTheDocument()
+        expect(screen.getByText("Select a client...")).toBeInTheDocument()
       })
 
       const selectTrigger = screen.getByRole("combobox")

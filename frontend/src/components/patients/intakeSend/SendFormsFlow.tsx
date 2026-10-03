@@ -14,6 +14,7 @@ import { useAssignIntakePacket } from "@/hooks/useIntakeArtifacts"
 import { useIntakeTemplates } from "@/hooks/useIntakePackets"
 import { useInviteTemplate } from "@/hooks/useInviteTemplate"
 import { usePatient } from "@/hooks/usePatients"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { useIssuePortalInvite, usePortalAccess } from "@/hooks/usePortalAccess"
 import { usePortalSettings } from "@/hooks/usePortalSettings"
 import { InviteEmailPreview } from "./InviteEmailPreview"
@@ -70,6 +71,7 @@ export function SendFormsFlow({
   const invite = useIssuePortalInvite(patientId)
 
   const { data: portalSettings } = usePortalSettings()
+  const people = usePeopleTerm()
   // A practice that turned the Forms part of its portal off has nowhere for a
   // client to fill one in, so there is nothing to send.
   const formsOff = portalSettings?.modules?.intake === false
@@ -115,7 +117,7 @@ export function SendFormsFlow({
       } catch (error) {
         // No invitation for forms that did not all go out: the email would
         // point the client at a list that is not what the practice meant.
-        setFailure(assignErrorMessage(error, sent))
+        setFailure(assignErrorMessage(error, sent, people))
         setBusy(false)
         return
       }
@@ -140,7 +142,7 @@ export function SendFormsFlow({
         portalServed: !noPortal,
         email: patient?.email,
         phone: patient?.phone,
-      }),
+      }, people),
     )
     setSentForms(chosen.map((form) => form.name))
     setStep("sent")
@@ -185,7 +187,7 @@ export function SendFormsFlow({
         <div className="flex justify-end gap-2">
           {chartHref && (
             <Button asChild variant="outline">
-              <Link href={chartHref}>Open client&rsquo;s chart</Link>
+              <Link href={chartHref}>Open {people.one}&rsquo;s chart</Link>
             </Button>
           )}
           <Button onClick={onDone}>Done</Button>
@@ -264,9 +266,9 @@ export function SendFormsFlow({
         <h3 className="text-sm font-semibold text-neutral-900">Forms to fill in</h3>
         {formsOff ? (
           <p className="text-sm text-neutral-600" data-testid="send-forms-forms-off">
-            Forms are turned off in your client portal.{" "}
+            Forms are turned off in your {people.one} portal.{" "}
             <Link href="/dashboard/settings/portal" className="font-medium underline">
-              Client portal settings
+              {people.One} portal settings
             </Link>
           </p>
         ) : templatesLoading ? (
@@ -308,7 +310,7 @@ export function SendFormsFlow({
             <p className="text-sm text-neutral-600" data-testid="send-forms-portal-off">
               To invite them to the portal,{" "}
               <Link href="/dashboard/settings/portal" className="font-medium underline">
-                turn on the client portal
+                turn on the {people.one} portal
               </Link>
               .
             </p>

@@ -12,6 +12,7 @@ import { useState } from "react"
 import Link from "next/link"
 import { AlertCircle, FileText } from "lucide-react"
 import { useClaims } from "@/hooks/useClaims"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { formatCents } from "@/lib/money"
 import { CLAIM_STATES, type ClaimState, type ClaimTrackerItem } from "@/types/claims"
 import { Label } from "@/components/ui/label"
@@ -36,6 +37,7 @@ import {
 export function ClaimsTracker() {
   const [state, setState] = useState<ClaimState | "">("")
   const { data, isLoading } = useClaims(state ? { state } : {})
+  const people = usePeopleTerm()
 
   const rows = data?.data ?? []
 
@@ -77,7 +79,7 @@ export function ClaimsTracker() {
           <FileText className="mx-auto h-8 w-8 text-neutral-300" />
           <p className="mt-3 text-sm font-medium text-neutral-900">No claims yet</p>
           <p className="mt-1 text-sm text-neutral-500">
-            File one from an unbilled session whose client has coverage on file.
+            File one from an unbilled session whose {people.one} has coverage on file.
           </p>
         </div>
       ) : (
@@ -86,7 +88,7 @@ export function ClaimsTracker() {
             <TableHeader>
               <TableRow>
                 <TableHead>Claim</TableHead>
-                <TableHead>Client</TableHead>
+                <TableHead>{people.One}</TableHead>
                 <TableHead>Service date</TableHead>
                 <TableHead>Payer</TableHead>
                 <TableHead>Status</TableHead>

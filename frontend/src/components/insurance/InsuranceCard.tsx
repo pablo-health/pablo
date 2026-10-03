@@ -41,6 +41,7 @@ import type {
   EligibilitySummary,
   SubscriberRelationship,
 } from "@/types/coverage"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { CoverageDialog } from "./CoverageDialog"
 import { EligibilityBadge, carveoutText } from "./EligibilityBadge"
 
@@ -156,6 +157,7 @@ export function InsuranceCard({ patientId }: InsuranceCardProps) {
   const deactivate = useDeactivateCoverage()
   const verify = useVerifyCoverage()
   const { readOnly } = useReadOnlyMode()
+  const people = usePeopleTerm()
   const [dialogOpen, setDialogOpen] = useState(false)
   const [confirmRemove, setConfirmRemove] = useState(false)
   const [verifyError, setVerifyError] = useState<string | null>(null)
@@ -251,7 +253,7 @@ export function InsuranceCard({ patientId }: InsuranceCardProps) {
       ) : (
         <div className="flex flex-col items-center gap-3 py-8 text-center">
           <ShieldCheck className="h-8 w-8 text-neutral-300" />
-          <p className="text-sm text-neutral-600">No insurance on file for this client.</p>
+          <p className="text-sm text-neutral-600">No insurance on file for this {people.one}.</p>
           {!readOnly && <Button onClick={() => setDialogOpen(true)}>Add coverage</Button>}
         </div>
       )}

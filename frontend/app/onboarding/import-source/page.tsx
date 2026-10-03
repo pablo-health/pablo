@@ -15,6 +15,8 @@ import { getUserStatus } from "@/lib/api/users"
 import { authConfig } from "@/lib/auth-config"
 import { OnboardingStepShell } from "@/components/onboarding/OnboardingStepShell"
 import { ImportSourceStep } from "@/components/onboarding/ImportSourceStep"
+import { PeopleTermProvider } from "@/hooks/usePeopleTerm"
+import { DEFAULT_PEOPLE_TERM, peopleWords } from "@/lib/peopleTerm"
 
 export const dynamic = "force-dynamic"
 
@@ -29,13 +31,19 @@ export default async function OnboardingImportSourcePage() {
     redirect("/onboarding")
   }
 
+  // Onboarding sits outside the dashboard layout and its word provider, so the
+  // word the server resolved for this clinician is applied here.
+  const people = peopleWords(status.people_term ?? DEFAULT_PEOPLE_TERM)
+
   return (
     <OnboardingStepShell
       stepId="import-source"
       title="Are you importing from another EHR?"
-      description="If your records are in SimplePractice, you can bring your clients and notes across now or later from Settings."
+      description={`If your records are in SimplePractice, you can bring your ${people.many} and notes across now or later from Settings.`}
     >
-      <ImportSourceStep />
+      <PeopleTermProvider initialTerm={status.people_term}>
+        <ImportSourceStep />
+      </PeopleTermProvider>
     </OnboardingStepShell>
   )
 }

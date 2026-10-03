@@ -16,10 +16,14 @@
  */
 
 import { describe, expect, it } from "vitest"
-import { CURRENT_STATES, type CurrentStateId, stepsForState } from "../routes"
+import { peopleWords } from "@/lib/peopleTerm"
+import { currentStates, type CurrentStateId, stepsForState } from "../routes"
+
+const people = peopleWords("clients")
+const CURRENT_STATES = currentStates(people)
 
 const ids = (state: CurrentStateId[] | null, wants = false, wantsCard = false) =>
-  stepsForState(state, wants, wantsCard).map((s) => s.id)
+  stepsForState(people, state, wants, wantsCard).map((s) => s.id)
 
 const ALL: CurrentStateId[] = ["self_pay", "platform", "own_insurance"]
 

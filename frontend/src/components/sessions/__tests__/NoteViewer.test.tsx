@@ -12,6 +12,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, fireEvent, waitFor } from "@testing-library/react"
 import { NoteViewer } from "../NoteViewer"
+import { peopleWords } from "@/lib/peopleTerm"
 import type {
   NoteContent,
   SessionStatus,
@@ -478,7 +479,7 @@ describe("NoteViewer (SOAP)", () => {
 
       fireEvent.click(screen.getByText("Export PDF"))
 
-      expect(exportSOAPToPDF).toHaveBeenCalledWith(PDF_META, structuredNarrative)
+      expect(exportSOAPToPDF).toHaveBeenCalledWith(PDF_META, structuredNarrative, peopleWords("clients"))
     })
 
     it("uses edited note for export when available", async () => {
@@ -488,7 +489,7 @@ describe("NoteViewer (SOAP)", () => {
 
       fireEvent.click(screen.getByText("Export PDF"))
 
-      expect(exportSOAPToPDF).toHaveBeenCalledWith(PDF_META, edited)
+      expect(exportSOAPToPDF).toHaveBeenCalledWith(PDF_META, edited, peopleWords("clients"))
     })
 
     it("shows Export PDF button regardless of status", () => {

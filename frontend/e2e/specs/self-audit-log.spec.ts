@@ -44,8 +44,8 @@ test.describe("your own audit log", () => {
 
     // The row, and the request context that makes it recognisable.
     const table = signedInPage.getByRole("table")
-    await expect(table.getByText("Patient viewed").first()).toBeVisible()
-    await expect(table.getByText("Patient created").first()).toBeVisible()
+    await expect(table.getByText("Client viewed").first()).toBeVisible()
+    await expect(table.getByText("Client created").first()).toBeVisible()
     await expect(signedInPage.getByRole("columnheader", { name: "IP address" })).toBeVisible()
     await expect(signedInPage.getByRole("columnheader", { name: "From" })).toBeVisible()
   })

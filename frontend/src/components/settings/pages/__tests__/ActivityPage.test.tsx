@@ -65,8 +65,8 @@ describe("ActivityPage", () => {
 
     renderPage(<ActivityPage />)
 
-    expect(await screen.findByText("Patient viewed")).toBeInTheDocument()
-    expect(screen.getByText("Patient patient-123")).toBeInTheDocument()
+    expect(await screen.findByText("Client viewed")).toBeInTheDocument()
+    expect(screen.getByText("Client patient-123")).toBeInTheDocument()
     expect(screen.getByText("203.0.113.4")).toBeInTheDocument()
     expect(screen.getByText("Chrome")).toBeInTheDocument()
   })
@@ -78,7 +78,7 @@ describe("ActivityPage", () => {
 
     renderPage(<ActivityPage />)
 
-    expect(await screen.findByText("Patient created")).toBeInTheDocument()
+    expect(await screen.findByText("Client created")).toBeInTheDocument()
     expect(screen.getByText("Anonymous")).toBeInTheDocument()
   })
 
@@ -97,7 +97,7 @@ describe("ActivityPage", () => {
     await user.click(screen.getByRole("button", { name: /Load older/ }))
 
     expect(await screen.findByText("Session created")).toBeInTheDocument()
-    expect(screen.getByText("Patient viewed")).toBeInTheDocument()
+    expect(screen.getByText("Client viewed")).toBeInTheDocument()
     expect(screen.getByText(/Showing all 2/)).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /Load older/ })).not.toBeInTheDocument()
     // The second request carried the cursor from the first.
@@ -110,7 +110,7 @@ describe("ActivityPage", () => {
     mockGetMyAuditLog.mockResolvedValue(page([row()]))
 
     renderPage(<ActivityPage />)
-    await screen.findByText("Patient viewed")
+    await screen.findByText("Client viewed")
 
     // Give any timer- or focus-driven refetch a chance to fire.
     window.dispatchEvent(new Event("focus"))
@@ -148,6 +148,6 @@ describe("ActivityPage", () => {
 
     await user.click(screen.getByRole("button", { name: /Try again/ }))
 
-    await waitFor(() => expect(screen.getByText("Patient viewed")).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText("Client viewed")).toBeInTheDocument())
   })
 })

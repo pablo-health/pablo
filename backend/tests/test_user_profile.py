@@ -109,6 +109,7 @@ class TestUpdateProfile:
             name="Renamed Practice",
             phone="555-010-0100",
             address="5 Oak Ave, Town, NY 10001",
+            people_term=None,
         )
         fake_session = MagicMock()
         fake_session.get.return_value = practice
@@ -138,7 +139,7 @@ class TestUpdateProfile:
         prefilling a form needs to tell "nothing on file" from "blank"."""
         mock_user_repo.update(mock_user)
         practice = SimpleNamespace(
-            owner_email="", name="Renamed Practice", phone=None, address="   "
+            owner_email="", name="Renamed Practice", phone=None, address="   ", people_term=None
         )
         fake_session = MagicMock()
         fake_session.get.return_value = practice
@@ -845,6 +846,7 @@ class TestPracticeRename:
             "address": None,
             "baa_practice_name": "Jane Doe",
             "baa_version": "2024-01-01",
+            "people_term": None,
         }
         defaults.update(overrides)
         return SimpleNamespace(**defaults)

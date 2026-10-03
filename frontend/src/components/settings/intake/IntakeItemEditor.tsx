@@ -29,11 +29,12 @@ import {
   LABEL_FIELD,
   LABEL_FIELD_OVERRIDE,
   LABEL_OVERRIDE_PLACEHOLDER,
-  LABEL_PLACEHOLDER,
   NO_QUESTIONS,
   PUBLISHED_NOTICE,
   PUBLISH_BUTTON,
+  labelPlaceholder,
 } from "./intakeCopy"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import {
   ItemConfigForm,
   type OfferableBlankForm,
@@ -141,6 +142,7 @@ function QuestionWording({
   idPrefix: string
   onChange: (changes: Partial<IntakeItemInput>) => void
 }) {
+  const people = usePeopleTerm()
   const written = LABEL_REQUIRED_ITEM_TYPES.includes(item.item_type)
   return (
     <>
@@ -151,7 +153,7 @@ function QuestionWording({
         <Input
           id={`${idPrefix}-label`}
           value={item.label ?? ""}
-          placeholder={written ? LABEL_PLACEHOLDER : LABEL_OVERRIDE_PLACEHOLDER}
+          placeholder={written ? labelPlaceholder(people) : LABEL_OVERRIDE_PLACEHOLDER}
           onChange={(e) => onChange({ label: e.target.value || null })}
         />
       </div>

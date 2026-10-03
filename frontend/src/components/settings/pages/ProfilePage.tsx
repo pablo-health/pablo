@@ -2,6 +2,8 @@
 
 "use client"
 
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
+import { PeopleTermSettings } from "../PeopleTermSettings"
 import { PracticeNameSettings } from "../PracticeNameSettings"
 import { ProfileSettings } from "../ProfileSettings"
 import { ProviderTypeSettings } from "../ProviderTypeSettings"
@@ -11,13 +13,15 @@ import { useSettingsPreferences, useSettingsUserStatus } from "../useSettingsPre
 /**
  * You > Profile.
  *
- * Edits a display name, the clinician type, and — for the practice owner —
- * the practice name. The rest of the profile (licence, NPI, address, phone,
+ * Edits a display name, the clinician type, whether the app says clients or
+ * patients, and — for the practice owner — the practice name and the practice's
+ * default word. The rest of the profile (licence, NPI, address, phone,
  * timezone) lives on the billing pages or arrives with the fields behind it.
  */
 export function ProfilePage() {
   const { preferences, save, isSaving } = useSettingsPreferences()
   const { data: userStatus } = useSettingsUserStatus()
+  const people = usePeopleTerm()
 
   if (!preferences) return null
 
@@ -34,10 +38,18 @@ export function ProfilePage() {
         <ProviderTypeSettings currentValue={userStatus?.provider_type ?? null} />
       </SettingsCard>
 
+      <SettingsCard
+        // people-term-ok: this card is the choice between the two words
+        title="Clients or patients"
+        description="Pablo chooses from your license. You can change it here."
+      >
+        <PeopleTermSettings />
+      </SettingsCard>
+
       {userStatus?.practice_name !== undefined && (
         <SettingsCard
           title="Practice"
-          description="The name your clients see in the portal and on forms."
+          description={`The name your ${people.many} see in the portal and on forms.`}
         >
           <PracticeNameSettings
             currentName={userStatus.practice_name}

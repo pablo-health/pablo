@@ -19,6 +19,7 @@
 import { useState } from "react"
 import { AlertTriangle, Plus } from "lucide-react"
 import { ApiError } from "@/lib/api/client"
+import { type PeopleWords } from "@/lib/peopleTerm"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -34,6 +35,7 @@ import { Input } from "@/components/ui/input"
 import { useToast } from "@/components/ui/Toast"
 import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
 import { useCreateOutcomeMeasure } from "@/hooks/useOutcomeMeasures"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import {
   INSTRUMENTS,
   getInstrumentMeta,
@@ -55,7 +57,7 @@ function nowLocalInput(): string {
 }
 
 /** Map a known backend error code to a clinician-facing message. */
-function messageForError(err: unknown): string {
+function messageForError(err: unknown, people: PeopleWords): string {
   if (err instanceof ApiError) {
     switch (err.code) {
       case "UNKNOWN_INSTRUMENT":
@@ -65,7 +67,7 @@ function messageForError(err: unknown): string {
       case "INVALID_REQUEST":
         return "Enter at least one item response or a total score."
       case "NOT_FOUND":
-        return "You don't have access to this patient."
+        return `You don't have access to this ${people.one}.`
       default:
         return err.message
     }
@@ -86,6 +88,7 @@ export function RecordOutcomeMeasureButton({
   const { showToast } = useToast()
   const createMeasure = useCreateOutcomeMeasure()
   const { readOnly } = useReadOnlyMode()
+  const people = usePeopleTerm()
 
   const meta = getInstrumentMeta(instrumentCode) as InstrumentMeta
   const answeredKeys = Object.keys(itemScores)
@@ -135,7 +138,7 @@ export function RecordOutcomeMeasureButton({
       setOpen(false)
       reset()
     } catch (err) {
-      showToast(messageForError(err), "error")
+      showToast(messageForError(err, people), "error")
     }
   }
 
@@ -159,7 +162,7 @@ export function RecordOutcomeMeasureButton({
         <DialogHeader>
           <DialogTitle>Record outcome measure</DialogTitle>
           <DialogDescription>
-            Enter a standardized instrument score for this patient. Scoring and
+            Enter a standardized instrument score for this {people.one}. Scoring and
             severity are calculated automatically.
           </DialogDescription>
         </DialogHeader>

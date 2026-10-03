@@ -30,6 +30,7 @@ import { useUnbilledQueue } from "@/hooks/useBilling"
 import { useBillingProfile } from "@/hooks/useBillingProfile"
 import { useClaims } from "@/hooks/useClaims"
 import { usePayers } from "@/hooks/useCoverage"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { ClaimsSetupSteps } from "./billingSlots.extensions"
 
 interface SetupStep {
@@ -46,6 +47,7 @@ export function ClaimsSetupChecklist() {
   const { data: payers } = usePayers()
   const { data: queue } = useUnbilledQueue()
   const { data: claims } = useClaims()
+  const people = usePeopleTerm()
 
   // Nothing to say until every read is in: a checklist that flashes on for a
   // practice that finished setting up months ago is worse than a late one.
@@ -83,9 +85,9 @@ export function ClaimsSetupChecklist() {
     },
     {
       id: "coverage",
-      label: "Put a client's plan on file",
+      label: `Put a ${people.one}'s plan on file`,
       href: uncovered ? `/dashboard/patients/${uncovered.patient_id}` : "/dashboard/patients",
-      detail: "A claim is built from the coverage on the client's Insurance tab.",
+      detail: `A claim is built from the coverage on the ${people.one}'s Insurance tab.`,
       done: covered,
     },
   ]

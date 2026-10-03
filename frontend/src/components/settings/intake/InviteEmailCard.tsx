@@ -16,6 +16,7 @@ import {
   useSaveInviteTemplate,
 } from "@/hooks/useInviteTemplate"
 import type { InviteTemplate, InviteTemplateDraft } from "@/lib/api/inviteTemplate"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 
 const PREVIEW_DELAY_MS = 400
 
@@ -37,6 +38,7 @@ export function InviteEmailCard() {
 
 function InviteEmailEditor({ template }: { template: InviteTemplate }) {
   const save = useSaveInviteTemplate()
+  const people = usePeopleTerm()
   const resetToDefault = useResetInviteTemplate()
   const bodyRef = useRef<HTMLTextAreaElement>(null)
 
@@ -81,7 +83,7 @@ function InviteEmailEditor({ template }: { template: InviteTemplate }) {
   return (
     <SettingsCard
       title="Invitation email"
-      description="What a client receives when you invite them to the portal. The text message carries only their sign-in code."
+      description={`What a ${people.one} receives when you invite them to the portal. The text message carries only their sign-in code.`}
     >
       <div className="grid gap-6 lg:grid-cols-2" data-testid="invite-email-card">
         <div className="space-y-4">
@@ -161,7 +163,7 @@ function InviteEmailEditor({ template }: { template: InviteTemplate }) {
         </div>
 
         <div className="space-y-2">
-          <p className="text-xs font-medium text-neutral-500">Preview for an example client</p>
+          <p className="text-xs font-medium text-neutral-500">Preview for an example {people.one}</p>
           <div
             className="space-y-2 rounded-lg border border-border bg-neutral-50 p-3 text-sm"
             data-testid="invite-email-card-preview"

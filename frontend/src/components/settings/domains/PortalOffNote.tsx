@@ -3,6 +3,7 @@
 "use client"
 
 import Link from "next/link"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { usePortalSettings } from "@/hooks/usePortalSettings"
 import { PATIENT_PORTAL_SETTINGS_PATH } from "../paths"
 
@@ -14,12 +15,13 @@ import { PATIENT_PORTAL_SETTINGS_PATH } from "../paths"
  */
 export function PortalOffNote({ hasPortalHosts }: { hasPortalHosts: boolean }) {
   const { data } = usePortalSettings({ enabled: hasPortalHosts })
+  const people = usePeopleTerm()
   if (!hasPortalHosts || data?.enabled !== false) return null
   return (
     <p className="mb-2 text-[12.5px] text-foreground" data-testid="domains-portal-off">
       Turn on the portal in{" "}
       <Link href={PATIENT_PORTAL_SETTINGS_PATH} className="underline">
-        Patient portal
+        {people.One} portal
       </Link>{" "}
       before these addresses can show it.
     </p>

@@ -23,6 +23,7 @@ import Link from "next/link"
 import { CircleDollarSign } from "lucide-react"
 import { useUnbilledQueue } from "@/hooks/useBilling"
 import { useUserTimeZone, formatInUserTimeZone } from "@/hooks/usePreferences"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { formatCents } from "@/lib/money"
 import type { UnbilledSessionItem } from "@/types/billing"
 import { Button } from "@/components/ui/button"
@@ -34,6 +35,7 @@ import { ClaimReviewDialog } from "./claims/ClaimReviewDialog"
 export function UnbilledQueue() {
   const { data, isLoading } = useUnbilledQueue()
   const timeZone = useUserTimeZone()
+  const people = usePeopleTerm()
 
   if (isLoading) {
     return (
@@ -62,7 +64,7 @@ export function UnbilledQueue() {
   return (
     <div className="card">
       <p className="text-sm text-neutral-500 mb-4">
-        Amounts shown are what was charged, resolved from each client&rsquo;s rate. Stripe is the
+        Amounts shown are what was charged, resolved from each {people.one}&rsquo;s rate. Stripe is the
         source of truth for money — fees, payouts and net are not shown here and will legitimately
         differ from these figures.
       </p>

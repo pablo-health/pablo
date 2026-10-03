@@ -5,6 +5,7 @@
 import { useCallback, useMemo } from "react"
 import { SetupNav, StepSaveProvider, SetupWizardShell, useStepSave } from "@/components/setup"
 import { Skeleton } from "@/components/ui/skeleton"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { usePreferences, useSavePreferences } from "@/hooks/usePreferences"
 import { type CurrentStateId, stepsForState } from "./routes"
 import { STEP_BODIES } from "./stepBodies"
@@ -62,6 +63,7 @@ function GetPaidWizardBody({ onSettled }: GetPaidWizardProps) {
   // on its own button — so without this, Continue walked past everything just
   // typed and it was gone.
   const saveStep = useStepSave()
+  const people = usePeopleTerm()
 
   // What she has done in this sitting laid over what was stored, so the screen
   // reacts immediately rather than waiting for the save to land. The merge and
@@ -71,7 +73,12 @@ function GetPaidWizardBody({ onSettled }: GetPaidWizardProps) {
     savePreferences.mutate,
   )
 
-  const steps = stepsForState(answers.state, answers.wantsCredentialing, answers.wantsCardPayments)
+  const steps = stepsForState(
+    people,
+    answers.state,
+    answers.wantsCredentialing,
+    answers.wantsCardPayments,
+  )
 
   // An unknown id — a step renamed, or one she no longer walks because she
   // unticked what added it — falls back to the start rather than a blank

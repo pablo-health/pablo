@@ -19,10 +19,11 @@ import {
   HELP_TEXT_FIELD,
   LABEL_FIELD,
   LABEL_FIELD_OVERRIDE,
-  LABEL_PLACEHOLDER,
   NO_QUESTIONS,
   PUBLISHED_NOTICE,
+  labelPlaceholder,
 } from "../intakeCopy"
+import { peopleWords } from "@/lib/peopleTerm"
 import type { IntakeVersionDetail } from "@/types/intakePackets"
 
 const onSave = vi.fn()
@@ -283,7 +284,7 @@ describe("IntakeItemEditor", () => {
 
     await user.click(screen.getByRole("button", { name: /Written answer/ }))
 
-    expect(screen.getByLabelText(LABEL_FIELD)).toHaveAttribute("placeholder", LABEL_PLACEHOLDER)
+    expect(screen.getByLabelText(LABEL_FIELD)).toHaveAttribute("placeholder", labelPlaceholder(peopleWords("clients")))
   })
 
   it("offers a heading override on a question Pablo already words", async () => {

@@ -287,7 +287,7 @@ _TEMPLATES: tuple[ComplianceTemplate, ...] = (
         item_type="telehealth_licensure",
         label="Telehealth licensure (per state)",
         description=(
-            "If you see clients across state lines, track each state's "
+            "If you practice across state lines, track each state's "
             "license or compact authorization separately."
         ),
         cadence_days=None,

@@ -172,7 +172,7 @@ describe("IntakeReviewPanel", () => {
     renderPanel()
 
     expect(await screen.findByTestId("intake-review-provenance-item-1")).toHaveTextContent(
-      "Patient",
+      "Client",
     )
     expect(screen.getByTestId("intake-review-provenance-item-3")).toHaveTextContent(
       "Entered by practice",

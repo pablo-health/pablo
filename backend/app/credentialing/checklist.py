@@ -380,13 +380,13 @@ TIER_1_CLAIMS_READY: tuple[ChecklistField, ...] = (
     ),
     ChecklistField(
         key="service_locations",
-        label="Where you see clients",
+        label="Where you practice",
         section=CaqhSection.PRACTICE_LOCATIONS,
         tier=Tier.CLAIMS_READY,
         kind=FieldKind.COLLECTION,
         target="credential_service_locations",
         help_text=(
-            "These end up in payer directories, so accepting-new-clients and "
+            "These end up in payer directories, so availability and "
             "languages matter more than they look."
         ),
     ),

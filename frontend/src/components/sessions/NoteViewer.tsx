@@ -19,6 +19,7 @@ import { useState } from "react"
 import { AlertTriangle, Check, Download, Edit, X, Save } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { areAllGrounded, isTextGrounded } from "@/lib/utils/grounding"
 import { Button } from "@/components/ui/button"
 import {
@@ -216,6 +217,7 @@ function SOAPNoteView({
   )
   const [showConfirmDialog, setShowConfirmDialog] = useState(false)
   const [clinicalObs, setClinicalObs] = useState<ClinicalObservation>(EMPTY_CLINICAL_OBSERVATION)
+  const people = usePeopleTerm()
 
   const displayNote: SOAPNoteModel | null =
     noteEdited ?? note ?? (startEmptyEditing ? EMPTY_SOAP_NARRATIVE : null)
@@ -268,7 +270,7 @@ function SOAPNoteView({
   const handlePDFExport = () => {
     if (displayNote && pdfMetadata) {
       const { subjective, objective, assessment, plan } = displayNote
-      exportSOAPToPDF(pdfMetadata, { subjective, objective, assessment, plan })
+      exportSOAPToPDF(pdfMetadata, { subjective, objective, assessment, plan }, people)
     }
   }
 

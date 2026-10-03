@@ -75,7 +75,7 @@ function PlatformAdminPanel() {
       <p className="mt-2 text-neutral-600">
         You&rsquo;re signed in as a platform admin. Clinician panels (today,
         week, compliance) are hidden because they require BAA acceptance and
-        access to patient records. Use the admin navigation in the sidebar to
+        access to clinical records. Use the admin navigation in the sidebar to
         manage users and platform settings.
       </p>
     </div>

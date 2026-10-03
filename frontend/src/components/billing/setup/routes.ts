@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
+import type { PeopleWords } from "@/lib/peopleTerm"
+
 /**
  * Every step this wizard can show.
  *
@@ -64,23 +66,25 @@ export interface CurrentStateOption {
  * because out-of-network therapists are a large share of private pay and would
  * not otherwise know which line is theirs.
  */
-export const CURRENT_STATES: readonly CurrentStateOption[] = [
-  {
-    id: "self_pay",
-    label: "Clients pay me directly",
-    detail: "By card, cash, or bank transfer. I may also give clients superbills.",
-  },
-  {
-    id: "platform",
-    label: "I see clients through a service like Headway, Alma, or Rula",
-    detail: "The service handles their insurance and pays me.",
-  },
-  {
-    id: "own_insurance",
-    label: "I bill insurance myself",
-    detail: "I have at least one contract in my own name and submit my own claims.",
-  },
-] as const
+export function currentStates(people: PeopleWords): readonly CurrentStateOption[] {
+  return [
+    {
+      id: "self_pay",
+      label: `${people.Many} pay me directly`,
+      detail: `By card, cash, or bank transfer. I may also give ${people.many} superbills.`,
+    },
+    {
+      id: "platform",
+      label: `I see ${people.many} through a service like Headway, Alma, or Rula`,
+      detail: "The service handles their insurance and pays me.",
+    },
+    {
+      id: "own_insurance",
+      label: "I bill insurance myself",
+      detail: "I have at least one contract in my own name and submit my own claims.",
+    },
+  ]
+}
 
 /** The question every therapist answers. */
 const ROUTE_STEP: SetupStep = {
@@ -130,10 +134,12 @@ const DONE_STEP: SetupStep = {
  * the rates are in hand would be asking her to set up a till before she has
  * decided what anything costs.
  */
-const PAYMENTS_STEP: SetupStep = {
-  id: "payments",
-  label: "Card payments",
-  caption: "Clients pay an invoice by card.",
+function paymentsStep(people: PeopleWords): SetupStep {
+  return {
+    id: "payments",
+    label: "Card payments",
+    caption: `${people.Many} pay an invoice by card.`,
+  }
 }
 
 const PAYER_STEP: SetupStep = {
@@ -196,6 +202,7 @@ const RECORD_STEP: SetupStep = {
  * her something.
  */
 export function stepsForState(
+  people: PeopleWords,
   state: readonly CurrentStateId[] | null,
   wantsCredentialing = false,
   wantsCardPayments = false,
@@ -207,7 +214,7 @@ export function stepsForState(
   // Only when she asked, and only where a deployment can actually deliver it.
   // The caller resolves both — see `wantsCardPayments` in GetPaidWizard, which
   // is already false wherever `HAS_PAYMENTS_SETUP` is.
-  if (wantsCardPayments) steps.push(PAYMENTS_STEP)
+  if (wantsCardPayments) steps.push(paymentsStep(people))
   // Which payers she can bill is a question for someone who bills insurers
   // herself, or is about to. It is never asked because she is on a platform:
   // the platform's payers are the platform's business.

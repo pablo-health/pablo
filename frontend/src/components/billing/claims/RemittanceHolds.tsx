@@ -22,31 +22,34 @@ import {
   useRemittanceHolds,
   useResolveRemittanceHold,
 } from "@/hooks/useClaims"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { formatCents } from "@/lib/money"
+import type { PeopleWords } from "@/lib/peopleTerm"
 import type { RemittanceHold, RemittanceHoldReason } from "@/types/claims"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 
 /** What each check was comparing, in the therapist's terms rather than X12's. */
-const REASON_COPY: Record<
-  RemittanceHoldReason,
-  { label: string; stated: string; computed: string }
-> = {
-  patient_responsibility: {
-    label: "The payer's total for this client does not match its own itemisation",
-    stated: "Payer's stated client total",
-    computed: "Adds up from the lines to",
-  },
-  line_balance: {
-    label: "A service line's adjustments do not account for what it was paid",
-    stated: "Line charged",
-    computed: "Paid plus adjustments",
-  },
-  claim_balance: {
-    label: "The claim's adjustments do not account for what it was paid",
-    stated: "Claim charged",
-    computed: "Paid plus adjustments",
-  },
+function reasonCopy(
+  people: PeopleWords,
+): Record<RemittanceHoldReason, { label: string; stated: string; computed: string }> {
+  return {
+    patient_responsibility: {
+      label: `The payer's total for this ${people.one} does not match its own itemisation`,
+      stated: `Payer's stated ${people.one} total`,
+      computed: "Adds up from the lines to",
+    },
+    line_balance: {
+      label: "A service line's adjustments do not account for what it was paid",
+      stated: "Line charged",
+      computed: "Paid plus adjustments",
+    },
+    claim_balance: {
+      label: "The claim's adjustments do not account for what it was paid",
+      stated: "Claim charged",
+      computed: "Paid plus adjustments",
+    },
+  }
 }
 
 function codeList(hold: RemittanceHold): string {
@@ -57,7 +60,8 @@ function HoldCard({ hold }: { hold: RemittanceHold }) {
   const resolve = useResolveRemittanceHold()
   const acknowledge = useAcknowledgeRemittanceHold()
   const [error, setError] = useState<string | null>(null)
-  const copy = REASON_COPY[hold.reason]
+  const people = usePeopleTerm()
+  const copy = reasonCopy(people)[hold.reason]
   const busy = resolve.isPending || acknowledge.isPending
 
   const decide = (finding: "bill_as_stated" | "waived") => {
@@ -105,7 +109,7 @@ function HoldCard({ hold }: { hold: RemittanceHold }) {
           )}
 
           <p className="text-sm text-neutral-700">
-            This client has <strong>not</strong> been billed. The payer&rsquo;s payment posted
+            This {people.one} has <strong>not</strong> been billed. The payer&rsquo;s payment posted
             normally. Bill {formatCents(hold.patient_responsibility_cents)} as the payer stated,
             or waive it.
           </p>
@@ -149,6 +153,7 @@ function HoldCard({ hold }: { hold: RemittanceHold }) {
 
 export function RemittanceHolds() {
   const { data, isLoading } = useRemittanceHolds()
+  const people = usePeopleTerm()
   const holds = data?.data ?? []
 
   if (isLoading) return <Skeleton className="h-32 w-full" />
@@ -163,8 +168,8 @@ export function RemittanceHolds() {
           Remittances that do not add up
         </h2>
         <p className="mt-1 text-sm text-neutral-600">
-          A payer stated one of these clients&rsquo; share twice and the two statements disagree,
-          so nothing was billed to them. The payment itself posted. Decide what the client owes
+          A payer stated one of these {people.many}&rsquo; share twice and the two statements disagree,
+          so nothing was billed to them. The payment itself posted. Decide what the {people.one} owes
           and it will be billed — or waive it.
         </p>
       </div>

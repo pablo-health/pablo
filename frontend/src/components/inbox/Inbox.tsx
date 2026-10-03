@@ -31,6 +31,7 @@ import {
 } from "@/hooks/useInbox"
 import { formatInUserTimeZone, useUserTimeZone } from "@/hooks/usePreferences"
 import { usePortalSettings } from "@/hooks/usePortalSettings"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import type { InboxItem, InboxView } from "@/lib/api/inbox"
 import { WHEN } from "./ItemPanel"
 import { inboxFilters, renderInboxItem } from "./itemRenderers"
@@ -164,7 +165,8 @@ export function Inbox() {
 
 function PortalOffBanner() {
   const { data: portal } = usePortalSettings()
-  const notice = portalOffNotice(portal)
+  const people = usePeopleTerm()
+  const notice = portalOffNotice(portal, people)
   if (!notice) return null
   return (
     <div
@@ -173,7 +175,7 @@ function PortalOffBanner() {
     >
       <p className="text-sm text-neutral-800">{notice}</p>
       <Link href="/dashboard/settings/portal" className="text-sm font-medium underline">
-        Client portal settings
+        {people.One} portal settings
       </Link>
     </div>
   )

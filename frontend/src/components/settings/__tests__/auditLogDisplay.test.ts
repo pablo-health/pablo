@@ -9,6 +9,7 @@
  */
 
 import { describe, it, expect } from "vitest"
+import { peopleWords } from "@/lib/peopleTerm"
 import {
   describeAuditResource,
   formatAuditAction,
@@ -38,6 +39,11 @@ describe("formatAuditAction", () => {
   it("reads an action as a sentence", () => {
     expect(formatAuditAction("patient_viewed")).toBe("Patient viewed")
     expect(formatAuditAction("session_transcript_uploaded")).toBe("Session transcript uploaded")
+  })
+
+  it("names the person in the clinician's own word", () => {
+    expect(formatAuditAction("patient_viewed", peopleWords("clients"))).toBe("Client viewed")
+    expect(formatAuditAction("patient_viewed", peopleWords("patients"))).toBe("Patient viewed")
   })
 
   it("keeps acronyms spelled the way they are said", () => {

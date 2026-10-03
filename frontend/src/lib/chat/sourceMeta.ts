@@ -24,6 +24,8 @@ import {
   type LucideIcon,
 } from "lucide-react"
 
+import type { PeopleWords } from "@/lib/peopleTerm"
+
 import type { SourceFamily, SourceKey } from "./types"
 
 /**
@@ -49,8 +51,12 @@ export const SUPPORTED_SOURCE_KEYS: readonly SourceKey[] = [
 interface SourceMeta {
   /** Display label for the chip + manifest. */
   label: string
-  /** Slightly longer description for the popover header / add-source menu. */
-  description: string
+  /**
+   * Slightly longer description for the popover header / add-source menu.
+   * A function when it names the people the clinician sees; read it through
+   * `sourceDescription`.
+   */
+  description: string | ((people: PeopleWords) => string)
   /** Family drives the chip's left-edge color band per §13.2. */
   family: SourceFamily
   icon: LucideIcon
@@ -65,7 +71,7 @@ export const SOURCE_META: Record<SourceKey, SourceMeta> = {
   },
   current_medications: {
     label: "Medications",
-    description: "Current medication list from the patient's chart.",
+    description: (people) => `Current medication list from the ${people.one}'s chart.`,
     family: "documents",
     icon: Pill,
   },
@@ -89,8 +95,8 @@ export const SOURCE_META: Record<SourceKey, SourceMeta> = {
   },
   patient_documents: {
     label: "Uploaded documents",
-    description:
-      "PDFs you've uploaded to this patient's chart (prior-provider records, intake packets, labs).",
+    description: (people) =>
+      `PDFs you've uploaded to this ${people.one}'s chart (prior-provider records, intake packets, labs).`,
     family: "documents",
     icon: Files,
   },
@@ -118,6 +124,12 @@ export const SOURCE_META: Record<SourceKey, SourceMeta> = {
     family: "documents",
     icon: HeartPulse,
   },
+}
+
+/** A source's longer description, in the clinician's own word for the people they see. */
+export function sourceDescription(key: SourceKey, people: PeopleWords): string {
+  const description = SOURCE_META[key].description
+  return typeof description === "function" ? description(people) : description
 }
 
 /**

@@ -21,6 +21,8 @@ import {
   describeServiceCode,
   normalizeServiceCode,
 } from "@/lib/serviceCodes"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
+import { type PeopleWords } from "@/lib/peopleTerm"
 import { cn } from "@/lib/utils"
 import type {
   AppointmentAudience,
@@ -28,17 +30,23 @@ import type {
   UpdateAppointmentTypeRequest,
 } from "@/types/scheduling"
 
-const AUDIENCE_LABEL: Record<AppointmentAudience, string> = {
-  new: "New patients",
-  existing: "Existing patients",
-  both: "Anyone",
+// Only the labels follow the clinician's word; the stored audience values don't.
+function audienceLabels(people: PeopleWords): Record<AppointmentAudience, string> {
+  return {
+    new: `New ${people.many}`,
+    existing: `Existing ${people.many}`,
+    both: "Anyone",
+  }
 }
 
-const AUDIENCE_OPTIONS: { value: AppointmentAudience; label: string }[] = [
-  { value: "new", label: "New patients" },
-  { value: "existing", label: "Existing patients" },
-  { value: "both", label: "Anyone" },
-]
+function audienceOptions(people: PeopleWords): { value: AppointmentAudience; label: string }[] {
+  const labels = audienceLabels(people)
+  return [
+    { value: "new", label: labels.new },
+    { value: "existing", label: labels.existing },
+    { value: "both", label: labels.both },
+  ]
+}
 
 /** Radix `Select.Item` rejects an empty-string value, so "defer to the
  * practice default" needs a sentinel distinct from every real hour count. */
@@ -123,6 +131,7 @@ export function AppointmentTypeRow({
   showOffering: boolean
   defaultNoticeHours: number
 }) {
+  const people = usePeopleTerm()
   const [nameDraft, setNameDraft] = useState(appointmentType.name)
   const [cptDraft, setCptDraft] = useState(appointmentType.cpt ?? "")
   const serviceCodeListId = useId()
@@ -156,7 +165,7 @@ export function AppointmentTypeRow({
                 {fee != null && <> &middot; {fee === 0 ? "Free" : `$${fee / 100}`}</>}
               </span>
               <SettingsBadge tone={appointmentType.audience === "new" ? "sky" : appointmentType.audience === "both" ? "mute" : "honey"}>
-                {AUDIENCE_LABEL[appointmentType.audience]}
+                {audienceLabels(people)[appointmentType.audience]}
               </SettingsBadge>
             </div>
             {showOffering && (
@@ -261,7 +270,7 @@ export function AppointmentTypeRow({
               label="Who is this for?"
               value={appointmentType.audience}
               onChange={(value) => onChange({ audience: value })}
-              options={AUDIENCE_OPTIONS}
+              options={audienceOptions(people)}
             />
           </div>
 

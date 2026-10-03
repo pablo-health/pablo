@@ -37,6 +37,8 @@ import {
   useRequestPayerEnrollments,
   useUpdatePayer,
 } from "@/hooks/useCoverage"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
+import { type PeopleWords } from "@/lib/peopleTerm"
 import type {
   EnrollmentRequestStatus,
   EnrollmentStatus,
@@ -134,24 +136,28 @@ function EnrollmentRequestRow({
 type EnrollField = "enroll_eligibility" | "enroll_claims" | "enroll_remittance"
 
 /** `weighty` marks the one whose help is a consequence rather than a description. */
-const CHOICES: { field: EnrollField; label: string; help: string; weighty?: true }[] = [
-  {
-    field: "enroll_eligibility",
-    label: "Check eligibility",
-    help: "Ask this payer what a client's plan covers, before the session.",
-  },
-  {
-    field: "enroll_claims",
-    label: "File claims",
-    help: "Send this payer your claims from Pablo.",
-  },
-  {
-    field: "enroll_remittance",
-    label: "Receive remittances (ERAs)",
-    help: REMITTANCE_WARNING,
-    weighty: true,
-  },
-]
+function enrollChoices(
+  people: PeopleWords,
+): { field: EnrollField; label: string; help: string; weighty?: true }[] {
+  return [
+    {
+      field: "enroll_eligibility",
+      label: "Check eligibility",
+      help: `Ask this payer what a ${people.one}'s plan covers, before the session.`,
+    },
+    {
+      field: "enroll_claims",
+      label: "File claims",
+      help: "Send this payer your claims from Pablo.",
+    },
+    {
+      field: "enroll_remittance",
+      label: "Receive remittances (ERAs)",
+      help: REMITTANCE_WARNING,
+      weighty: true,
+    },
+  ]
+}
 
 /**
  * What the practice wants Pablo doing with this payer.
@@ -170,13 +176,14 @@ function PayerTransactionChoice({
   payer: PayerResponse
   onChange: (patch: UpdatePayerRequest) => void
 }) {
+  const people = usePeopleTerm()
   return (
     <fieldset className="m-0 border-0 p-0">
       <legend className="mb-1.5 p-0 text-sm font-semibold text-foreground">
         What should Pablo do with this payer?
       </legend>
       <div className="space-y-2">
-        {CHOICES.map(({ field, label, help, weighty }) => (
+        {enrollChoices(people).map(({ field, label, help, weighty }) => (
           <div key={field} className="flex items-start gap-2.5">
             <Checkbox
               id={`${field}-${payer.id}`}
@@ -391,6 +398,7 @@ function RefreshEnrollmentsControl() {
 
 export function PayersCard() {
   const { data } = usePayers()
+  const people = usePeopleTerm()
   const createPayer = useCreatePayer()
   const updatePayer = useUpdatePayer()
   const [openId, setOpenId] = useState<string | null>(null)
@@ -429,7 +437,7 @@ export function PayersCard() {
         <RefreshEnrollmentsControl />
         {payers.length === 0 && !adding && (
           <p className="py-3 text-sm text-muted-foreground">
-            No payers yet. One is added the first time a client&apos;s coverage names it, or add one here.
+            No payers yet. One is added the first time a {people.one}&apos;s coverage names it, or add one here.
           </p>
         )}
         <ul className="m-0 list-none p-0">

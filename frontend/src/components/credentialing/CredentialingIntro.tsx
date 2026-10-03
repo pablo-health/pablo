@@ -5,6 +5,7 @@
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { INSURANCE_PAYERS_SETTINGS_PATH } from "@/components/settings/paths"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 
 interface CredentialingIntroProps {
   onStart: () => void
@@ -25,6 +26,7 @@ interface CredentialingIntroProps {
  * explainer for a process she finished years ago.
  */
 export function CredentialingIntro({ onStart }: CredentialingIntroProps) {
+  const people = usePeopleTerm()
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div>
@@ -78,7 +80,7 @@ export function CredentialingIntro({ onStart }: CredentialingIntroProps) {
       </div>
       <p className="text-xs text-neutral-500">
         Recording the payers you are already contracted with is what lets us
-        bill them as claims rather than handing your client a superbill. It
+        bill them as claims rather than handing your {people.one} a superbill. It
         takes a minute and it is worth doing even if you skip everything else.
       </p>
     </div>

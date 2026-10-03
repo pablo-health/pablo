@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useCreateAppointmentType } from "@/hooks/useAppointmentTypes"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 
 const NEW_CLIENT_WORDS = /\b(intake|consult|evaluation|eval|assessment|new)/i
 
@@ -40,6 +41,7 @@ export function MissingAppointmentTypeOffer({
   onDismiss,
 }: MissingAppointmentTypeOfferProps) {
   const create = useCreateAppointmentType()
+  const people = usePeopleTerm()
   const [typeName, setTypeName] = useState(name)
   const [duration, setDuration] = useState(String(defaultDuration(name)))
   const [forNewClients, setForNewClients] = useState(NEW_CLIENT_WORDS.test(name))
@@ -98,7 +100,7 @@ export function MissingAppointmentTypeOffer({
             checked={forNewClients}
             onChange={(e) => setForNewClients(e.target.checked)}
           />
-          For new clients
+          For new {people.many}
         </label>
       </div>
       <div className="flex gap-2">

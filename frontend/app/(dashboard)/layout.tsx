@@ -15,6 +15,8 @@ import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary"
 import { IdleTimeout } from "@/components/IdleTimeout"
 import { ThemeSync } from "@/components/theme/ThemeSync"
 import { errorCode } from "@/lib/errors/errorCode"
+import { PeopleTermProvider } from "@/hooks/usePeopleTerm"
+import type { PeopleTerm } from "@/lib/peopleTerm"
 
 export const dynamic = "force-dynamic"
 
@@ -28,6 +30,7 @@ export default async function DashboardLayout({
   let user
   let token: string | undefined
   let isAdmin = false
+  let peopleTerm: PeopleTerm | undefined
 
   if (IS_DEV_MODE) {
     user = mockUser
@@ -55,6 +58,7 @@ export default async function DashboardLayout({
         image: claims.picture,
       }
       isAdmin = userStatus.is_platform_admin
+      peopleTerm = userStatus.people_term
 
       // Disabled users cannot access the platform
       if (userStatus.status === "disabled") {
@@ -117,22 +121,24 @@ export default async function DashboardLayout({
   }
 
   return (
-    <div className="flex h-screen">
-      <a
-        href="#main-content"
-        className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:top-4 focus:left-4 focus:bg-white focus:px-4 focus:py-2 focus:rounded-lg focus:shadow-lg focus:text-primary-700 focus:font-medium"
-      >
-        Skip to main content
-      </a>
-      <Sidebar isAdmin={isAdmin} />
-      <div className="flex flex-1 flex-col">
-        <Header user={user} />
-        <main id="main-content" className="flex-1 overflow-y-auto p-6 bg-neutral-50">
-          <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
-        </main>
+    <PeopleTermProvider initialTerm={peopleTerm}>
+      <div className="flex h-screen">
+        <a
+          href="#main-content"
+          className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:top-4 focus:left-4 focus:bg-white focus:px-4 focus:py-2 focus:rounded-lg focus:shadow-lg focus:text-primary-700 focus:font-medium"
+        >
+          Skip to main content
+        </a>
+        <Sidebar isAdmin={isAdmin} />
+        <div className="flex flex-1 flex-col">
+          <Header user={user} />
+          <main id="main-content" className="flex-1 overflow-y-auto p-6 bg-neutral-50">
+            <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
+          </main>
+        </div>
+        <IdleTimeout />
+        <ThemeSync />
       </div>
-      <IdleTimeout />
-      <ThemeSync />
-    </div>
+    </PeopleTermProvider>
   )
 }

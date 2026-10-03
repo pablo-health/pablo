@@ -14,6 +14,7 @@ import { use } from "react"
 import Link from "next/link"
 import { ArrowLeft, FileText } from "lucide-react"
 import { usePatient } from "@/hooks/usePatients"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { usePatientNotes } from "@/hooks/useNotes"
 import { useNoteTypeLabel } from "@/hooks/useNoteTypes"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -30,6 +31,7 @@ export default function PatientNotesListPage({ params }: PageProps) {
   const { data: patient, isLoading: patientLoading } = usePatient(id)
   const { data: notesData, isLoading: notesLoading, error } = usePatientNotes(id)
   const noteTypeLabel = useNoteTypeLabel()
+  const people = usePeopleTerm()
 
   if (patientLoading) {
     return (
@@ -43,7 +45,7 @@ export default function PatientNotesListPage({ params }: PageProps) {
   if (!patient) {
     return (
       <div className="card text-center py-12">
-        <p className="text-red-500">Patient not found.</p>
+        <p className="text-red-500">{people.One} not found.</p>
       </div>
     )
   }
@@ -82,7 +84,7 @@ export default function PatientNotesListPage({ params }: PageProps) {
       ) : !notesData || notesData.total === 0 ? (
         <div className="card text-center py-12">
           <FileText className="w-12 h-12 mx-auto text-neutral-300 mb-3" />
-          <p className="text-neutral-600">No notes yet for this patient.</p>
+          <p className="text-neutral-600">No notes yet for this {people.one}.</p>
           <p className="text-sm text-neutral-500 mt-1">
             Use the <strong>New note</strong> button to create a standalone
             note, or generate one from a recorded session.

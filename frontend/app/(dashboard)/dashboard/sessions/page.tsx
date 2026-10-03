@@ -13,6 +13,7 @@
 
 import { CheckCircle2 } from "lucide-react"
 import { SessionsTable } from "@/components/sessions/SessionsTable"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import type { SessionStatus } from "@/types/sessions"
 
 // Sessions in one of these states are awaiting clinician action: still
@@ -26,6 +27,7 @@ const REVIEW_STATUSES: ReadonlySet<SessionStatus> = new Set([
 ])
 
 export default function ReviewPage() {
+  const people = usePeopleTerm()
   return (
     <div className="space-y-6">
       <div>
@@ -45,7 +47,7 @@ export default function ReviewPage() {
             <p className="text-neutral-700 font-medium">You&apos;re all caught up.</p>
             <p className="text-sm text-neutral-500">
               No sessions are waiting for review. New notes start from a
-              patient&apos;s chart.
+              {people.one}&apos;s chart.
             </p>
           </div>
         }

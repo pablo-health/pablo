@@ -66,6 +66,7 @@ if TYPE_CHECKING:
 
     from ..models.claims import Claim, ClaimLine, PersonSnapshot
     from ..models.payments import PatientCharge
+    from ..people_term import PeopleWords
     from ..repositories.clinician_profile import ClinicianProfile
     from ..scheduling_engine.models.appointment import Appointment
 
@@ -215,6 +216,7 @@ def build_superbill(  # noqa: PLR0913 — every record the receipt is copied fro
     tax_id: str | None,
     license_for: Callable[[str], ClinicianProfile | None],
     generated_at: datetime,
+    people: PeopleWords,
 ) -> Superbill:
     """The receipt for ``patient_id`` over ``period_start``..``period_end``, inclusive.
 
@@ -222,7 +224,8 @@ def build_superbill(  # noqa: PLR0913 — every record the receipt is copied fro
     ledger and ``appointments`` their whole diary; the period is applied
     here. ``tax_id`` is the practice's, decrypted by the caller, and
     ``license_for`` answers a clinician's licence from their profile — the
-    one provider fact a claim does not snapshot.
+    one provider fact a claim does not snapshot. ``people`` is the clinician's
+    word for the people they see, for the refusal messages.
 
     Raises :class:`SuperbillRefusedError` listing every gap, and never returns a
     document with one.
@@ -252,7 +255,7 @@ def build_superbill(  # noqa: PLR0913 — every record the receipt is copied fro
     patient = newest.subscriber_snapshot.patient
     findings.extend(_provider_findings(newest, tax_id))
     findings.extend(_patient_findings(patient))
-    findings.extend(_line_findings(lines))
+    findings.extend(_line_findings(lines, people))
     if findings:
         raise SuperbillRefusedError(findings)
 
@@ -379,7 +382,7 @@ def _patient_findings(patient: PersonSnapshot) -> list[Finding]:
     return [_missing("patient", name) for name in missing_fields(patient, _PATIENT_REQUIRED)]
 
 
-def _line_findings(lines: Sequence[_Unpaid]) -> list[Finding]:
+def _line_findings(lines: Sequence[_Unpaid], people: PeopleWords) -> list[Finding]:
     findings: list[Finding] = []
     for position, unpaid in enumerate(lines):
         line = unpaid.line
@@ -407,7 +410,7 @@ def _line_findings(lines: Sequence[_Unpaid]) -> list[Finding]:
                 Finding(
                     "blocking",
                     "charge_zero",
-                    f"The service on {when} has no fee. Set a rate on the client or the "
+                    f"The service on {when} has no fee. Set a rate on the {people.one} or the "
                     "appointment type and rebuild the claim.",
                     f"lines[{position}].charge_cents",
                 )
@@ -484,8 +487,11 @@ _RULE = colors.HexColor("#d9d2c5")
 _MUTED = colors.HexColor("#6b635a")
 
 
-def render_superbill_pdf(superbill: Superbill) -> bytes:
-    """The document as PDF bytes. Same superbill in, same bytes out."""
+def render_superbill_pdf(superbill: Superbill, people: PeopleWords) -> bytes:
+    """The document as PDF bytes. Same superbill in, same bytes out.
+
+    ``people`` names the person the receipt is for in the clinician's own word.
+    """
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -500,11 +506,11 @@ def render_superbill_pdf(superbill: Superbill) -> bytes:
         invariant=1,
         pageCompression=0,
     )
-    doc.build(_story(superbill))
+    doc.build(_story(superbill, people))
     return buffer.getvalue()
 
 
-def _story(superbill: Superbill) -> list:
+def _story(superbill: Superbill, people: PeopleWords) -> list:
     styles = getSampleStyleSheet()
     title = ParagraphStyle("sb-title", parent=styles["Title"], alignment=0, textColor=_INK)
     heading = ParagraphStyle(
@@ -521,7 +527,7 @@ def _story(superbill: Superbill) -> list:
         Spacer(1, 8),
         Paragraph("Provider", heading),
         _pairs(_provider_rows(superbill.provider)),
-        Paragraph("Client", heading),
+        Paragraph(people.One, heading),
         _pairs(_patient_rows(superbill.patient)),
         Paragraph("Services", heading),
         _services_table(superbill),
@@ -533,7 +539,7 @@ def _story(superbill: Superbill) -> list:
         Spacer(1, 14),
         Paragraph(
             "This is a receipt for services already rendered and paid for as shown. It is "
-            "not a claim; the client submits it to their own insurer.",
+            f"not a claim; the {people.one} submits it to their own insurer.",
             small,
         ),
         Paragraph(f"Generated {_stamp(superbill.generated_at)}", small),

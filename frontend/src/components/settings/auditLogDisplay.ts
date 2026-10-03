@@ -11,6 +11,7 @@
  */
 
 import type { AuditLogItem } from "@/lib/api/users"
+import type { PeopleWords } from "@/lib/peopleTerm"
 
 /** Words that read wrong in sentence case, because they are not words. */
 const ACRONYMS: Record<string, string> = {
@@ -32,24 +33,25 @@ const ACRONYMS: Record<string, string> = {
 }
 
 /**
- * `patient_viewed` → `Patient viewed`.
+ * `patient_viewed` → `Patient viewed` (or `Client viewed`, given `people`).
  *
  * Generic on purpose. A hand-written label per action would be a second
  * list to keep in step with the server's, and the day it drifts the log
  * starts describing events by the wrong name — worse than a plain one.
  */
-export function formatAuditAction(action: string): string {
+export function formatAuditAction(action: string, people?: PeopleWords): string {
   const words = action.split("_").filter(Boolean)
   if (words.length === 0) return action
-  const spelled = words.map((word) => ACRONYMS[word] ?? word)
+  const said: Record<string, string> = people ? { patient: people.one, patients: people.many } : {}
+  const spelled = words.map((word) => ACRONYMS[word] ?? said[word] ?? word)
   const [first, ...rest] = spelled
   const head = ACRONYMS[words[0]] ? first : first.charAt(0).toUpperCase() + first.slice(1)
   return [head, ...rest].join(" ")
 }
 
 /** `patient` → `Patient`. Same reasoning as above. */
-export function formatResourceType(resourceType: string): string {
-  return formatAuditAction(resourceType)
+export function formatResourceType(resourceType: string, people?: PeopleWords): string {
+  return formatAuditAction(resourceType, people)
 }
 
 /**
@@ -102,8 +104,8 @@ export function summarizeUserAgent(userAgent: string | null): string {
  * `resource_id` is polymorphic — it holds whichever id the action was for —
  * so the row shows that one, and says which kind it is. Ids, never names.
  */
-export function describeAuditResource(entry: AuditLogItem): string {
-  return `${formatResourceType(entry.resource_type)} ${entry.resource_id}`
+export function describeAuditResource(entry: AuditLogItem, people?: PeopleWords): string {
+  return `${formatResourceType(entry.resource_type, people)} ${entry.resource_id}`
 }
 
 /**

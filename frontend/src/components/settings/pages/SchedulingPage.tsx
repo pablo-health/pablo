@@ -7,6 +7,7 @@ import { BookingLinkSettings } from "../BookingLinkSettings"
 import { SchedulingEmailReplies, SchedulingExtras } from "../settingsSlots.extensions"
 import { SettingsCard } from "../ui"
 import { useConfig } from "@/lib/config"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 
 /**
  * Practice > Scheduling.
@@ -17,6 +18,7 @@ import { useConfig } from "@/lib/config"
  */
 export function SchedulingPage() {
   const { publicBookingEnabled } = useConfig()
+  const people = usePeopleTerm()
 
   return (
     <>
@@ -27,7 +29,7 @@ export function SchedulingPage() {
       {publicBookingEnabled && (
         <SettingsCard
           title="Public booking pages"
-          description="Pages where patients pick a time. Each page books at a fixed length."
+          description={`Pages where ${people.many} pick a time. Each page books at a fixed length.`}
         >
           <BookingLinkSettings />
         </SettingsCard>

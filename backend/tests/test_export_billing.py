@@ -25,6 +25,7 @@ from app.models.claims import ClaimReceipt
 from app.models.coverage import PatientCoverage
 from app.models.payments import CardOnFile, PatientCharge
 from app.payments.statement import PracticeBlock
+from app.people_term import people_words
 from app.repositories.claim_receipts import InMemoryClaimReceiptRepository
 from app.repositories.claims import InMemoryClaimRepository
 from app.repositories.clinician_profile import ClinicianProfile
@@ -174,6 +175,7 @@ def _source(payments: Mock, *, tax_id: str | None = _TAX_ID) -> BillingRecordSou
         tax_id=lambda: tax_id,
         license_for=lambda user_id: _PROFILE if user_id == USER_ID else None,
         timezone=lambda _user_id: ZoneInfo("America/New_York"),
+        people=lambda _user_id: people_words("clients"),
     )
 
 
