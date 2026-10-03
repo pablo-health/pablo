@@ -226,6 +226,28 @@ describe.each(["nested", "flat"] as const)(
   })
 })
 
+describe("handleTerminalAuthLogout", () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  // Safari can leave an IndexedDB delete unsettled while another tab holds
+  // the database open; a sign-out stalled on it must not strand the user on
+  // the page that just declared their session dead.
+  it("still redirects to /login when the sign-out never settles", async () => {
+    vi.useFakeTimers()
+    signOut.mockReturnValue(new Promise<void>(() => {}))
+    const { handleTerminalAuthLogout } = await freshClient()
+
+    handleTerminalAuthLogout("idle_timeout")
+    await vi.advanceTimersByTimeAsync(2_999)
+    expect(assignSpy).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+
+    expect(assignSpy).toHaveBeenCalledWith("/login?reason=idle_timeout")
+  })
+})
+
 describe("returnToParam", () => {
   /** Stand the interrupted page up in `window.location`. */
   function atPage(pathname: string, search = "", hash = "") {
