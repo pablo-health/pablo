@@ -204,13 +204,12 @@ _SYSTEM_PROMPT = (
     "TWO READINGS\n\n"
     "When an ambiguous sentence has exactly two concrete meanings, each of "
     "which stores complete rules, refuse as above, write could_not_parse as "
-    "a short question naming both, and offer them: reading_a_label and "
-    "reading_a hold the first meaning, reading_b_label and reading_b the "
-    "second. Each label is a few words the therapist would recognise as "
-    "their meaning; each reading lists that meaning's complete proposals, "
-    "at the confidence you have in each rule given that reading. The "
-    "therapist picks one; you do not. Leave all four empty on every other "
-    "response, including a refusal with no boundary to write down.\n\n"
+    "a short question naming both, and put both in readings: exactly two "
+    "entries, each with a short label the therapist would recognise as "
+    "their meaning and the complete proposals for that reading, at the "
+    "confidence you have in each rule given that reading. The therapist "
+    "picks one; you do not. Leave readings empty on every other response, "
+    "including a refusal with no boundary to write down.\n\n"
     "When genuinely unsure whether something is encodable, refuse rather "
     "than guess. A confident wrong rule silently blocks or opens a "
     "therapist's calendar, which is worse than falling through to the "
@@ -336,27 +335,23 @@ _RESPONSE_SCHEMA: dict[str, Any] = {
     "required": ["proposals"],
 }
 
-_PROPOSAL_SCHEMA: dict[str, Any] = _RESPONSE_SCHEMA["properties"]["proposals"]["items"]
-
-#: The two readings of an ambiguous sentence, as sibling top-level fields
-#: rather than an array of reading objects each nesting its own proposals
-#: array: one level shallower for constrained decoding, and no slower than
-#: no readings at all on a sentence that needs none (see the eval README).
-_READING_FIELDS: tuple[tuple[str, str], ...] = (
-    ("reading_a_label", "reading_a"),
-    ("reading_b_label", "reading_b"),
-)
-
-_RESPONSE_SCHEMA["properties"].update(
-    {
-        name: schema
-        for label_field, proposals_field in _READING_FIELDS
-        for name, schema in (
-            (label_field, {"type": "string", "nullable": True}),
-            (proposals_field, {"type": "array", "items": _PROPOSAL_SCHEMA}),
-        )
-    }
-)
+# Two readings of one sentence, offered for the therapist to choose between.
+# Each reading's proposals have exactly the shape of a top-level proposal.
+_RESPONSE_SCHEMA["properties"]["readings"] = {
+    "type": "array",
+    "nullable": True,
+    "items": {
+        "type": "object",
+        "properties": {
+            "label": {"type": "string"},
+            "proposals": {
+                "type": "array",
+                "items": _RESPONSE_SCHEMA["properties"]["proposals"]["items"],
+            },
+        },
+        "required": ["label", "proposals"],
+    },
+}
 
 #: Each attempt's own bound. A typical parse returns in 1-3 s, but a call
 #: now and then stalls for 15-90 s with almost nothing to say, and the
@@ -418,6 +413,9 @@ class AvailabilityParseResult:
 
 
 _MAX_DAY_OF_WEEK = 6
+
+#: An ambiguous sentence is offered as exactly this many readings.
+_READING_COUNT = 2
 
 
 def _elapsed_ms(started: float) -> int:
@@ -800,23 +798,26 @@ class AvailabilityRuleParseService:
         less and the therapist gets the question alone, as before: a choice
         with one broken side is not a choice worth offering.
         """
+        raw_readings = data.get("readings")
+        if not isinstance(raw_readings, list) or len(raw_readings) != _READING_COUNT:
+            return []
         readings = [
-            self._coerce_reading(
-                data.get(label_field), data.get(proposals_field), reference_date, type_index, floor
-            )
-            for label_field, proposals_field in _READING_FIELDS
+            self._coerce_reading(raw, reference_date, type_index, floor) for raw in raw_readings
         ]
         return [r for r in readings if r is not None] if all(readings) else []
 
     def _coerce_reading(
         self,
-        label: object,
-        raw_proposals: object,
+        raw: object,
         reference_date: date | None,
         type_index: dict[str, str],
         floor: float,
     ) -> ParseReading | None:
         """One labelled reading, or None if any part of it is unusable."""
+        if not isinstance(raw, dict):
+            return None
+        label = raw.get("label")
+        raw_proposals = raw.get("proposals")
         if not isinstance(label, str) or not label.strip():
             return None
         if not isinstance(raw_proposals, list) or not raw_proposals:

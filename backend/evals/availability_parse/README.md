@@ -335,23 +335,23 @@ boundary underneath it refuses.**
 ## Latency and pass rate — recorded 2026-10-02
 
 Production parses had gone from 3-5 s to 20-35 s, and one run against
-dev took 168 s, with nothing logged to show it. Two full runs of the
-89-case corpus on each side of the change, `gemini-3.5-flash` on the
-Vertex global endpoint, from a laptop:
+dev took 168 s, with nothing logged to show it. Full runs of the 89-case
+corpus, `gemini-3.5-flash` on the Vertex global endpoint, from a laptop:
 
 | | recall | correct refusals | hard failures | soft findings | failed calls | p50 | p95 | max |
 |---|---|---|---|---|---|---|---|---|
 | before, run 1 | 43/47 | 37/42 | 7 | 1 | 0 | 1542 ms | 7511 ms | 23018 ms |
 | before, run 2 | 45/47 | 37/42 | 6 | 1 | 0 | 1566 ms | 3874 ms | 16196 ms |
-| after, run 1 | 44/47 | 40/42 | 2 | 0 | 0 | 1574 ms | 5105 ms | 10638 ms |
-| after, run 2 | 44/47 | 40/42 | 2 | 0 | 0 | 1606 ms | 6175 ms | 8627 ms |
+| after, run 1 | 44/46 | 40/42 | 2 | 1 | 1 | 1575 ms | 6207 ms | 20744 ms |
+| after, run 2 | 45/47 | 40/42 | 2 | 1 | 0 | 1678 ms | 6093 ms | 11901 ms |
 
 "Before" is the parser as it stood, graded against today's corpus: the
 five new cases account for four of its hard failures and its soft
 finding, and the rest are `only_until_noon_wednesdays`,
 `block_out_friday_ambiguous` and (once) `half_hour_between_clients`.
 "After" fails only the first two, which have failed since the 2026-08-30
-baseline below. The p95 after reflects the new readings cases: two
+baseline below. Its one failed call was a 429 from the project's quota,
+not a timeout. The p95 after reflects the new readings cases: two
 readings of a whole week is a dozen proposals, 6-8 s of output, where
 the old parser answered sooner with a guess.
 
@@ -369,24 +369,70 @@ What the time went into, measured before deciding anything:
   2 of 15 runs of "9 to 5" that otherwise take 6-8 s. With the bound
   client-side and the server's deadline left at 180 s, the same 45
   calls had no errors.
-- **Readings cost their output tokens and little else.** On ordinary
-  sentences the old nested `readings` array, flat `reading_a`/`reading_b`
-  siblings and no readings at all were within a few hundred milliseconds
-  of each other. Where readings are produced, time tracks output: 1,760
-  tokens took 6-8 s. The flat shape is kept because it is one level
-  shallower to decode and needs no second call; asking for readings in a
-  second request only after an ambiguous refusal would add a full round
-  trip to every refusal, including the ones with no readings to give.
-- **The flat shape needed the prompt to say more.** The first flat run
-  dropped `buffer_before` from every "N minutes between clients" case and
-  parsed "I hate Mondays" as a block, and a run with no readings in the
-  schema dropped the buffer too. The prompt now says that a gap between
-  appointments is a buffer on both sides, and that a feeling about a day
-  is not an instruction.
+- **Readings cost their output tokens and little else, so the schema
+  stays as it was.** The nested `readings` array, flat
+  `reading_a`/`reading_b` siblings and no readings at all came within a
+  few hundred milliseconds of each other on ordinary sentences. Five
+  runs each of three sentences a therapist typed into production
+  ("9-5, no Fridays, and a max of 2 intakes on Tuesdays", "I can see up
+  to 2 patients anytime on Saturday", "No meetings on Wednesday") took
+  a median of 3.8 / 1.9 / 1.6 s with the nested schema and 3.3 / 1.6 /
+  1.5 s with none, and produced no readings either way. Where readings
+  are produced, time tracks output: 1,760 tokens took 6-8 s. A flat
+  variant was tried and measured no faster, so it was dropped.
+- **The prompt says more than it did.** Partway through, both a flat
+  schema and one with no readings dropped `buffer_before` from "N
+  minutes between clients", and the flat one parsed "I hate Mondays" as
+  a block. The prompt now says that a gap between appointments is a
+  buffer on both sides, and that a feeling about a day is not an
+  instruction.
+- **Production's 24-36 s was not this code, this input or this
+  model.** The four slow production calls (2026-10-02 22:22-22:45Z)
+  each made one request to
+  `locations/global/publishers/google/models/gemini-3.5-flash`, the
+  same model and endpoint dev calls, and two of them returned a single
+  short proposal. The same code on dev, with the same sentences, takes
+  1.6-3.8 s. Production had taken 3.4-5.1 s with the same configuration the
+  week before. What the slow window shares is Vertex itself: stalls of
+  15-90 s turned up from a laptop too, in bursts, and a later run
+  against dev went from no timed-out calls to several within the hour.
 
 The parse result log line now carries `latency_ms` and `output_tokens`
 beside the rule types and refusal reason, so the next regression shows
 up in the logs rather than in a therapist's wait.
+
+### Model comparison — recorded 2026-10-03
+
+The same prompt and schema on four models, two full runs each with the
+15 s per-attempt bound (2026-10-02 23:50Z to 2026-10-03 00:40Z), plus one
+run of three of them with the bound lifted, to read quality free of
+timeouts. Every model accepted `thinking_budget=0` and the response
+schema.
+
+| model | hard failures | recall | failed calls | p50 | p95 | max |
+|---|---|---|---|---|---|---|
+| gemini-3.5-flash | 2, 2 (2 unbounded) | 44/47, 44/47 | 2, 1 | 1.7 s | 8.0-16.8 s | 30 s |
+| gemini-3.5-flash-lite | 3, 3 | 36/46, 39/47 | 1, 0 | 1.2 s | 3.4-4.8 s | 18-31 s |
+| gemini-3.8-flash | 0, 0 (1 unbounded) | 41/45, 36/39 | 7, 19 | 6.2-7.8 s | 30 s | 31 s |
+| gemini-3.1-pro-preview | 1, 1 (0 unbounded) | 43/45, 45/46 | 5, 3 | 4.6-4.9 s | 19.7-30.3 s | 31 s |
+
+A failed call is graded as nothing, so a model that times out on a hard
+case scores better than it should: 3.8-flash's two zeros include runs
+where `block_out_friday_ambiguous` timed out, and with the bound lifted
+it failed that case like the others. Read the hard failures that way.
+
+- 3.5-flash-lite is the fastest and the least accurate: it adds a hard
+  failure (`mornings_only_tuesdays`) and refuses more parseable cases.
+- 3.8-flash and 3.1-pro pass `only_until_noon_wednesdays`, which
+  3.5-flash fails, and pro sometimes passes `block_out_friday_ambiguous`.
+  Both take 2-4x as long per parse, and most of their failed calls are
+  the 15 s bound cutting off answers that would have arrived.
+- On the three production sentences, five runs each: 3.5-flash 1.6 /
+  1.6 / 2.0 s median (one 17 s stall), 3.8-flash 2.6 / 2.2 / 2.6 s,
+  flash-lite 1.1 / 1.2 / 1.2 s, pro 6.0 / 3.9 / 3.5 s.
+
+3.5-flash stays: one hard case is not worth tripling the wait, and both
+cases it misses are prompt work, not model work.
 
 ## Hard failures — recorded baseline
 

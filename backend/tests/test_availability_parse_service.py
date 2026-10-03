@@ -19,7 +19,6 @@ import pytest
 from app.scheduling_engine.models.appointment_type import AppointmentType
 from app.scheduling_engine.models.availability import RuleType
 from app.services.availability_parse_service import (
-    _RESPONSE_SCHEMA,
     COVERED_RULE_TYPES,
     AvailabilityRuleParseService,
 )
@@ -892,18 +891,13 @@ def _intake_tuesdays() -> dict[str, Any]:
     }
 
 
-def _ambiguous(readings: list[dict[str, Any]], refusal_reason: str = "ambiguous") -> dict[str, Any]:
-    """A refusal carrying ``readings`` the way the model returns them: the
-    first in reading_a/reading_a_label, the second in reading_b/_label."""
-    response: dict[str, Any] = {
+def _ambiguous(readings: object, refusal_reason: str = "ambiguous") -> dict[str, Any]:
+    return {
         "proposals": [],
         "could_not_parse": "A weekly cap, or a cap plus Tuesday hours?",
         "refusal_reason": refusal_reason,
+        "readings": readings,
     }
-    for side, reading in zip("ab", readings, strict=False):
-        response[f"reading_{side}_label"] = reading["label"]
-        response[f"reading_{side}"] = reading["proposals"]
-    return response
 
 
 class TestTwoReadings:
@@ -1004,17 +998,6 @@ class TestTwoReadings:
         )
 
         assert result.readings == []
-
-    def test_readings_are_flat_siblings_in_the_schema(self) -> None:
-        """No array of readings each holding its own array: that nesting is
-        what made every parse slow."""
-        properties = _RESPONSE_SCHEMA["properties"]
-        proposal = properties["proposals"]["items"]
-
-        assert "readings" not in properties
-        for side in "ab":
-            assert properties[f"reading_{side}_label"]["type"] == "string"
-            assert properties[f"reading_{side}"] == {"type": "array", "items": proposal}
 
     def test_day_less_hours_offer_weekdays_or_every_day(self) -> None:
         def hours(days: range) -> list[dict[str, Any]]:
