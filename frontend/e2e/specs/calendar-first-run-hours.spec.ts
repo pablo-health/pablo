@@ -114,8 +114,8 @@ test("hours described on first run show up as free time in the week and in Setti
         "aria-checked",
         "true",
       )
-      await expect(page.getByRole("combobox", { name: `${day} start` })).toHaveText("9 AM")
-      await expect(page.getByRole("combobox", { name: `${day} end` })).toHaveText("5 PM")
+      await expect(page.getByRole("combobox", { name: `${day} start` })).toHaveText("9:00 AM")
+      await expect(page.getByRole("combobox", { name: `${day} end` })).toHaveText("5:00 PM")
     }
     for (const day of DAYS_OFF) {
       await expect(page.getByRole("switch", { name: `${day} on` })).toHaveAttribute(
