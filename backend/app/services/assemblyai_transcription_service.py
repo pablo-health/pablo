@@ -508,6 +508,46 @@ class AssemblyAiTranscriptionService:
         """
         return _merge_segments([u for job in jobs for u in job.get("utterances", [])])
 
+    @staticmethod
+    def channel_word_counts(jobs: list[_JsonDict]) -> dict[str, int]:
+        """Words per channel (``job["speaker"]``), counted — never stored or logged as text.
+
+        Grouped by the job's channel label, not the utterance speaker: a
+        diarized channel labels its utterances "Client A"/"Client B".
+        """
+        counts: dict[str, int] = {}
+        for job in jobs:
+            speaker = str(job.get("speaker") or "")
+            words = sum(len(str(u.get("text") or "").split()) for u in job.get("utterances", []))
+            counts[speaker] = counts.get(speaker, 0) + words
+        return counts
+
+    @staticmethod
+    def recording_span_seconds(jobs: list[_JsonDict]) -> float:
+        """End time of the last utterance across all channels, in seconds."""
+        ends = [float(u.get("end") or 0) for job in jobs for u in job.get("utterances", [])]
+        return max(ends, default=0.0)
+
+
+# A two-channel recording whose client side is nearly silent: the system-audio
+# capture (the call) most likely recorded nothing — e.g. a missing System Audio
+# Recording permission on macOS. Judged only on two-channel sessions long
+# enough for the client to have spoken.
+ONE_SIDED_MIN_SECONDS = 300
+ONE_SIDED_MIN_THERAPIST_WORDS = 50
+ONE_SIDED_MAX_CLIENT_WORDS = 10
+ONE_SIDED_MAX_CLIENT_SHARE = 0.05
+
+
+def is_one_sided(counts: dict[str, int], span_seconds: float) -> bool:
+    """True when the client channel is nearly empty while the therapist talked."""
+    if "Therapist" not in counts or "Client" not in counts:
+        return False
+    therapist, client = counts["Therapist"], counts["Client"]
+    if span_seconds < ONE_SIDED_MIN_SECONDS or therapist < ONE_SIDED_MIN_THERAPIST_WORDS:
+        return False
+    return client < max(ONE_SIDED_MAX_CLIENT_WORDS, ONE_SIDED_MAX_CLIENT_SHARE * therapist)
+
 
 # --- Utilities ---
 
