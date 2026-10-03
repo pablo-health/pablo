@@ -33,14 +33,15 @@ SWEEP_SCENARIOS = ("healthy", "single_stalls", "bursty", "both_degraded_rho0")
 
 _HEADER = (
     f"{'scenario':<20} {'policy':<9} {'p50':>6} {'p95':>6} {'p99':>6} {'max':>6} "
-    f"{'>budget':>8} {'hedged':>7} {'2x-bill':>8} {'cost':>5} {'wrong':>6} {'failed':>7}"
+    f"{'>budget':>8} {'@budget':>8} {'hedged':>7} {'2x-bill':>8} {'cost':>5} {'wrong':>6} "
+    f"{'failed':>7}"
 )
 
 
 def _row(name: str, label: str, r: Report) -> str:
     return (
         f"{name:<20} {label:<9} {r.p50:>6.2f} {r.p95:>6.2f} {r.p99:>6.2f} {r.max:>6.1f} "
-        f"{r.over_budget:>8.2%} {r.hedge_rate:>7.2%} {r.double_billed:>8.2%} "
+        f"{r.over_budget:>8.2%} {r.at_budget:>8.2%} {r.hedge_rate:>7.2%} {r.double_billed:>8.2%} "
         f"{r.cost_per_request:>5.2f} {r.wrong_rate:>6.2%} {r.failure_rate:>7.2%}"
     )
 

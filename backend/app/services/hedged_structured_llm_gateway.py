@@ -9,13 +9,16 @@ them once more. Each leg goes to the gateway for its own model's
 provider, with no retry of its own, since a retry here is simply the
 next leg.
 
+Every call ends within 25 s, the deadline of the ``LLM_REQUEST`` retry
+this replaces: a leg that starts late is given what is left of it.
+
 With no fallbacks and no hedge delay configured, which is the default,
-this is one attempt and one retry on one model, bounded the way the
-gateway's own ``LLM_REQUEST`` retry bounds it: each attempt by the
-caller's timeout, the same failures retried, and no new attempt once
-25 s have passed. The one difference is that the retry starts at once,
-where ``LLM_REQUEST`` slept up to half a second of jittered backoff (or a
-429's ``Retry-After``, capped at 4 s) first.
+this is one attempt and one retry on one model, bounded as the gateway's
+own retry bounds it: each attempt by the caller's timeout, the retry cut
+to what is left of 25 s, and the same failures retried. The one
+difference is that the retry starts at once, where ``LLM_REQUEST`` slept
+up to half a second of jittered backoff (or a 429's ``Retry-After``,
+capped at 4 s) first.
 """
 
 from __future__ import annotations
@@ -46,8 +49,8 @@ if TYPE_CHECKING:
 
     from ..reliability import RetryPolicy
 
-#: No new leg starts after this long: the deadline of the one-retry
-#: ``LLM_REQUEST`` preset these legs replace.
+#: Every call, retries included, ends within this long: the deadline of the
+#: one-retry ``LLM_REQUEST`` preset these legs replace.
 _BUDGET_SECONDS = 25.0
 
 #: Workers shared by every hedged call in the process. An abandoned leg
@@ -145,7 +148,8 @@ class HedgedStructuredLLMGateway(StructuredLLMGateway):
                 max_output_tokens=max_output_tokens,
                 temperature=temperature,
                 thinking_budget=thinking_budget,
-                timeout_seconds=timeout_seconds,
+                # The caller's bound, or less when the leg starts late.
+                timeout_seconds=leg.timeout,
                 retry_policy=SINGLE_ATTEMPT,
             )
 

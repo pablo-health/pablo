@@ -25,8 +25,8 @@ The rules, in full:
   other leg still running is abandoned. An answer that fails it is never
   returned; whether the next leg is tried is ``retry_invalid``.
 - A fatal failure (the request itself is wrong) ends the run at once.
-- No leg starts once ``budget`` has elapsed. A leg already running keeps
-  its own timeout, so a run ends within ``budget`` plus one leg timeout.
+- Nothing outlasts ``budget``. A leg starting late is given only what is
+  left of it as its timeout, and none starts once it has run out.
 """
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ class Leg:
 class HedgePolicy:
     legs: tuple[Leg, ...]
     budget: float
-    """Seconds after the start in which a new leg may begin."""
+    """Seconds from the start to the end of the run, retries included."""
 
     hedge_after: float | None = None
     """Start the next leg beside a running one after this long. ``None``
@@ -202,6 +202,7 @@ class HedgeRun[T]:
         self._validate = validate
         self._begun = False
         self._budget_ends = 0.0
+        self._started: dict[int, Leg] = {}
         self._deadlines: dict[int, float] = {}
         self._next = 0
         self._last_start = 0.0
@@ -266,11 +267,15 @@ class HedgeRun[T]:
             if now >= deadline:
                 del self._deadlines[index]
                 actions.append(Abandon(index))
-                self._last_error = LegTimeoutError(self._legs[index])
+                self._last_error = LegTimeoutError(self._started[index])
         while self._may_start(now):
             index = self._next
             self._next += 1
             leg = self._legs[index]
+            left = self._budget_ends - now
+            if leg.timeout > left:
+                leg = Leg(leg.model, left)
+            self._started[index] = leg
             self._deadlines[index] = now + leg.timeout
             self._last_start = now
             actions.append(StartLeg(index, leg))

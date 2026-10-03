@@ -6,8 +6,8 @@ Every scenario runs the production :class:`HedgeRun` on a virtual clock
 (``evals/llm_routing``), seeded, so the bounds below are exact for a given
 seed rather than flaky. Each request is also checked against the policy's
 invariants as it runs: never more legs in flight than allowed, an end
-within the budget plus one leg timeout, and no answer returned that
-validation did not pass. A violation raises inside ``simulate``.
+within the budget, and no answer returned that validation did not pass.
+A violation raises inside ``simulate``.
 
 Today's policy (one model, one retry) runs beside the hedged one, so a
 bound can say "no worse than today" rather than quote a number.
@@ -38,7 +38,8 @@ def _run(name: str, *, hedged: bool = True) -> Report:
 def test_invariants_hold_under_both_policies(scenario: Scenario) -> None:
     for policy in (baseline_policy(), hedged_policy()):
         report = simulate(scenario, policy, n=N, seed=SEED)
-        assert report.max <= policy.budget + max(leg.timeout for leg in policy.legs)
+        assert report.over_budget == 0.0
+        assert report.max <= policy.budget
 
 
 def test_healthy_providers_are_rarely_hedged() -> None:
@@ -52,13 +53,13 @@ def test_single_stalls_are_absorbed() -> None:
     today, hedged = _run("single_stalls", hedged=False), _run("single_stalls")
     assert today.p99 >= 15.0, "the scenario should hurt without hedging"
     assert hedged.p99 <= 10.0
-    assert hedged.over_budget == 0.0
+    assert hedged.at_budget == 0.0
 
 
-def test_bursty_degradation_stays_inside_the_budget() -> None:
+def test_bursty_degradation_rarely_runs_to_the_deadline() -> None:
     today, hedged = _run("bursty", hedged=False), _run("bursty")
-    assert today.over_budget > 0.01
-    assert hedged.over_budget <= 0.001
+    assert today.at_budget > 0.01, "the scenario should run requests into the deadline"
+    assert hedged.at_budget <= 0.001
     assert hedged.p99 <= 12.0
     assert hedged.failure_rate <= 0.001
 
@@ -84,7 +85,7 @@ def test_a_slow_secondary_does_no_harm() -> None:
 def test_independent_degradation_is_hedged_away() -> None:
     today, hedged = _run("both_degraded_rho0", hedged=False), _run("both_degraded_rho0")
     assert hedged.p95 <= today.p95 / 2
-    assert hedged.over_budget <= 0.005
+    assert hedged.at_budget <= 0.005
 
 
 def test_a_flapping_primary_is_ridden_out() -> None:

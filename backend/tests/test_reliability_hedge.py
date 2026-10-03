@@ -77,7 +77,9 @@ class TestSequential:
     def test_a_timeout_abandons_the_leg_and_starts_the_next(self) -> None:
         run = _run(_policy())
         run.begin(0.0)
-        assert run.on(TimerFired(), 15.0) == [Abandon(0), StartLeg(1, B), SetTimer(30.0)]
+        # The next leg gets the 10 s left of the 25 s budget, not its own 15.
+        late_b = Leg("model-b", 10.0)
+        assert run.on(TimerFired(), 15.0) == [Abandon(0), StartLeg(1, late_b), SetTimer(25.0)]
 
     def test_a_timer_that_fires_early_changes_nothing(self) -> None:
         run = _run(_policy())
@@ -95,6 +97,7 @@ class TestSequential:
         run.begin(0.0)
         run.on(TimerFired(), 15.0)
         assert run.on(LegDone(0, "late"), 16.0) == []
+        assert run.in_flight == 1
         assert run.on(LegDone(1, "rules"), 17.0) == [Return(1, "rules")]
 
     def test_a_fatal_error_ends_the_run_without_trying_another_leg(self) -> None:
@@ -133,18 +136,25 @@ class TestBudget:
         error = RuntimeError("504")
         assert run.on(LegFailed(0, error, FailureKind.TRANSIENT), 10.0) == [Fail(error)]
 
-    def test_a_leg_started_inside_the_budget_keeps_its_own_timeout(self) -> None:
+    def test_a_late_leg_ends_with_the_budget(self) -> None:
         run = _run(_policy())
         run.begin(0.0)
-        run.on(TimerFired(), 15.0)  # leg 1 starts at 15, inside the 25 s budget
-        assert run.on(TimerFired(), 25.0) == [SetTimer(30.0)]
-        actions = run.on(TimerFired(), 30.0)
+        run.on(TimerFired(), 15.0)  # leg 1 starts at 15 with 10 s left
+        actions = run.on(TimerFired(), 25.0)
         assert actions[0] == Abandon(1)
         assert isinstance(actions[-1], Fail)
+        assert isinstance(actions[-1].error, LegTimeoutError)
+        assert actions[-1].error.leg == Leg("model-b", 10.0)
+
+    def test_a_fast_failure_leaves_the_next_leg_its_full_timeout(self) -> None:
+        run = _run(_policy())
+        run.begin(0.0)
+        actions = run.on(LegFailed(0, RuntimeError("429"), FailureKind.TRANSIENT), 0.1)
+        assert actions[0] == StartLeg(1, B)
 
     def test_no_hedge_is_scheduled_past_the_budget(self) -> None:
         run = _run(_policy(hedge_after=6.0, budget=5.0))
-        assert run.begin(0.0) == [StartLeg(0, A), SetTimer(15.0)]
+        assert run.begin(0.0) == [StartLeg(0, Leg("model-a", 5.0)), SetTimer(5.0)]
 
 
 class TestHedge:
@@ -172,7 +182,8 @@ class TestHedge:
         run = _run(_policy(hedge_after=6.0))
         run.begin(0.0)
         run.on(TimerFired(), 6.0)
-        assert run.on(TimerFired(), 15.0) == [Abandon(0), StartLeg(2, A), SetTimer(21.0)]
+        late_a = Leg("model-a", 10.0)
+        assert run.on(TimerFired(), 15.0) == [Abandon(0), StartLeg(2, late_a), SetTimer(21.0)]
 
     def test_without_hedging_a_slow_leg_is_left_alone(self) -> None:
         run = _run(_policy())

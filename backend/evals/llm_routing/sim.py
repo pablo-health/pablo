@@ -9,9 +9,9 @@ known up front, and time jumps from one event to the next, so thousands
 of requests through hours of bursty weather take well under a second.
 
 Each request is checked against the invariants every run must keep: no
-more legs in flight than the policy allows, an end within the budget plus
-one leg timeout, and nothing returned that ``validate`` did not pass. A
-violation raises :class:`InvariantError`.
+more legs in flight than the policy allows, an end within the budget,
+and nothing returned that ``validate`` did not pass. A violation raises
+:class:`InvariantError`.
 """
 
 from __future__ import annotations
@@ -47,6 +47,10 @@ if TYPE_CHECKING:
 
 class InvariantError(AssertionError):
     pass
+
+
+#: Float slack when comparing a request's virtual wall time to the budget.
+_EPSILON = 1e-9
 
 
 @dataclass(frozen=True)
@@ -142,8 +146,7 @@ def simulate_request(
             result = apply(run.on(TimerFired(), now))
 
     wall = now - t0
-    longest_leg = max(leg.timeout for leg in policy.legs)
-    if wall > policy.budget + longest_leg + 1e-9:
+    if wall > policy.budget + _EPSILON:
         raise InvariantError(f"request took {wall:.1f}s")
     return RequestRecord(wall, result, billed, cost, hedged)
 
@@ -156,6 +159,11 @@ class Report:
     p99: float
     max: float
     over_budget: float
+    """Ended after the budget. The invariant makes this zero; it is
+    reported so the claim stays visible."""
+    at_budget: float
+    """Ran the whole budget: someone waited the full bound for an answer
+    or for a failure."""
     hedge_rate: float
     double_billed: float
     cost_per_request: float
@@ -178,7 +186,8 @@ def summarize(records: list[RequestRecord], budget: float) -> Report:
         p95=_quantile(walls, 0.95),
         p99=_quantile(walls, 0.99),
         max=walls[-1],
-        over_budget=sum(r.wall > budget for r in records) / n,
+        over_budget=sum(r.wall > budget + _EPSILON for r in records) / n,
+        at_budget=sum(r.wall >= budget - _EPSILON for r in records) / n,
         hedge_rate=sum(r.hedged for r in records) / n,
         double_billed=sum(r.billed_calls > 1 for r in records) / n,
         cost_per_request=sum(r.cost for r in records) / n,
