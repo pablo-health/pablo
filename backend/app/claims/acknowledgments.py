@@ -31,7 +31,11 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 
 from ..models.claims import SubmissionFinding
-from .clearinghouse import ClearinghouseNotFoundError, ClearinghouseReportUnreadableError
+from .clearinghouse import (
+    ClearinghouseAccessDeniedError,
+    ClearinghouseNotFoundError,
+    ClearinghouseReportUnreadableError,
+)
 from .events import CodeRef
 from .receipts import codes_detail, move, record, reject
 from .responses import parse_277
@@ -90,9 +94,15 @@ def fetch_acknowledgment(
         return None
     try:
         report = client.get_claim_acknowledgment(transaction_id)
-    except ClearinghouseNotFoundError as exc:
+    except (ClearinghouseNotFoundError, ClearinghouseAccessDeniedError) as exc:
+        # The transaction read just succeeded with this same key, so a 403 on
+        # its report cannot mean "this key may not use the API". Observed: the
+        # vendor answers 403 for a report it is not serving yet — from seconds
+        # to hours after processing, often in bursts — then 200 on a later
+        # read of the same id. Escaping as access-denied made the webhook a
+        # 500 instead of the 503 that asks for a redelivery.
         raise ClearinghouseReportUnreadableError(
-            f"no 277 report for transaction {transaction_id}"
+            f"no 277 report for transaction {transaction_id}", code=exc.code
         ) from exc
     return FetchedAcknowledgment(
         transaction_id=transaction_id,

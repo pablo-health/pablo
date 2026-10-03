@@ -41,7 +41,8 @@ Errors
 ------
 
 A vendor outage while fetching the transaction is ``503`` so the vendor
-redelivers later. Everything else, including a transaction naming no
+redelivers later, and so is a report the vendor is not serving yet (a
+``403`` on a transaction we could read). Everything else, including a transaction naming no
 claim of ours, is ``200``: the vendor treats a non-2xx as retryable and a
 retry loop over an unhandleable event only gets the destination disabled.
 
@@ -60,6 +61,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 
 from ..auth.route_security import truly_public
 from ..claims.clearinghouse import (
+    ClearinghouseAccessDeniedError,
     ClearinghouseRateLimitedError,
     ClearinghouseReportUnreadableError,
     ClearinghouseUnavailableError,
@@ -145,7 +147,13 @@ async def clearinghouse_webhook(
         # purpose: this is what a changed or mis-configured report endpoint
         # looks like, and the alternative — reporting it as "unmatched" —
         # is indistinguishable from "no claim of ours" and alerts nobody.
-        logger.error(
+        # Except a 403: the vendor refuses a report it is not serving yet and
+        # then serves it on a later delivery, so that one waits for the
+        # redelivery quietly. If it never clears, the polling pass reads the
+        # same report endpoint and fails there too.
+        not_yet_served = isinstance(exc.__cause__, ClearinghouseAccessDeniedError)
+        logger.log(
+            logging.WARNING if not_yet_served else logging.ERROR,
             "clearinghouse_webhook_report_unreadable event=%s transaction=%s error=%s",
             event.id,
             event.transaction_id,

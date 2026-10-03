@@ -21,7 +21,12 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from app.claims import fanout
-from app.claims.clearinghouse import ClearinghouseUnavailableError
+from app.claims.clearinghouse import (
+    ClearinghouseAccessDeniedError,
+    ClearinghouseNotFoundError,
+    ClearinghouseReportUnreadableError,
+    ClearinghouseUnavailableError,
+)
 from app.claims.webhooks import WebhookEvent, parse_event, verify_signature
 from app.routes import claim_webhooks
 from fastapi import FastAPI
@@ -290,6 +295,35 @@ def test_a_vendor_outage_asks_for_a_redelivery(route: dict[str, Any]) -> None:
     assert _post(route, body, _sign(body)).status_code == 503
 
 
+def _unreadable(cause: Exception) -> ClearinghouseReportUnreadableError:
+    try:
+        raise ClearinghouseReportUnreadableError("no report") from cause
+    except ClearinghouseReportUnreadableError as exc:
+        return exc
+
+
+def test_a_report_not_served_yet_asks_for_a_redelivery_quietly(
+    route: dict[str, Any], caplog: pytest.LogCaptureFixture
+) -> None:
+    route["outcome"]["value"] = _unreadable(ClearinghouseAccessDeniedError("Forbidden"))
+    body = _event()
+
+    assert _post(route, body, _sign(body)).status_code == 503
+    [record] = [r for r in caplog.records if "report_unreadable" in r.getMessage()]
+    assert record.levelname == "WARNING"
+
+
+def test_a_missing_report_asks_for_a_redelivery_loudly(
+    route: dict[str, Any], caplog: pytest.LogCaptureFixture
+) -> None:
+    route["outcome"]["value"] = _unreadable(ClearinghouseNotFoundError("not found"))
+    body = _event()
+
+    assert _post(route, body, _sign(body)).status_code == 503
+    [record] = [r for r in caplog.records if "report_unreadable" in r.getMessage()]
+    assert record.levelname == "ERROR"
+
+
 # --- the fan-out over practices ------------------------------------------------------
 
 
@@ -473,6 +507,26 @@ def test_an_835_posts_the_remittance_immediately(practices: list[PipelineHarness
     posted = first.get(created.id)
     assert posted.state == "paid"
     assert posted.total_paid_cents == created.total_charge_cents
+
+
+def test_an_835_whose_report_is_refused_is_left_for_the_redelivery(
+    practices: list[PipelineHarness],
+) -> None:
+    """A 403 on the report surfaces as unreadable (the route's 503), not as
+    access-denied escaping the route as a 500; the redelivery then posts it."""
+    first, _ = practices
+    created = first.add(state="payer_accepted")
+    transaction = first.client.remit(created.control_number, paid_cents=created.total_charge_cents)
+    first.client.report_errors[transaction] = ClearinghouseAccessDeniedError("Forbidden")
+    event = WebhookEvent(id="evt-1", type="transaction.processed", transaction_id=transaction)
+
+    with pytest.raises(ClearinghouseReportUnreadableError):
+        fanout.ingest_transaction_event(event)
+    assert first.get(created.id).state == "payer_accepted"
+
+    del first.client.report_errors[transaction]
+    assert fanout.ingest_transaction_event(event) == "moved"
+    assert first.get(created.id).state == "paid"
 
 
 def test_an_835_redelivery_posts_nothing_twice(practices: list[PipelineHarness]) -> None:

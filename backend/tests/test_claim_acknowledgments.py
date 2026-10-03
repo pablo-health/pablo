@@ -22,7 +22,11 @@ from app.claims.acknowledgments import (
     apply_fetched,
     fetch_acknowledgment,
 )
-from app.claims.clearinghouse import ClearinghouseNotFoundError
+from app.claims.clearinghouse import (
+    ClearinghouseAccessDeniedError,
+    ClearinghouseNotFoundError,
+    ClearinghouseReportUnreadableError,
+)
 from app.claims.responses import parse_277
 
 from tests.claims_pipeline_fakes import (
@@ -271,3 +275,18 @@ def test_fetch_raises_for_a_transaction_this_account_does_not_own(
 ) -> None:
     with pytest.raises(ClearinghouseNotFoundError):
         fetch_acknowledgment(harness.client, "someone-elses")
+
+
+def test_a_refused_report_on_a_transaction_we_can_read_is_unreadable(
+    harness: PipelineHarness,
+) -> None:
+    """The vendor 403s a report it is not serving yet — not "this key may not
+    use the API", since the transaction read with the same key succeeded."""
+    created = harness.add(state="submitted", submitted_at=NOW)
+    transaction = harness.client.acknowledge("payer_accepted", created.control_number)
+    harness.client.report_errors[transaction] = ClearinghouseAccessDeniedError("Forbidden")
+
+    with pytest.raises(ClearinghouseReportUnreadableError) as raised:
+        fetch_acknowledgment(harness.client, transaction)
+
+    assert isinstance(raised.value.__cause__, ClearinghouseAccessDeniedError)
