@@ -9,6 +9,7 @@
  * confirm. Picking for them would quietly store a rule they did not state.
  */
 
+import { echoLines } from "@/components/calendar/connect/hoursCapture"
 import type { ParseReading } from "@/types/availability"
 
 interface ReadingChoiceProps {
@@ -30,10 +31,12 @@ export function ReadingChoice({ question, readings, onPick }: ReadingChoiceProps
             className="rounded-md border border-neutral-200 p-3 text-left hover:border-primary-300 hover:bg-primary-50"
           >
             <span className="block text-sm font-medium text-neutral-900">{reading.label}</span>
+            {/* Hours are written from the proposals, not the model's own
+                summaries, so a reading shows times the way Settings does. */}
             <ul className="mt-1 space-y-0.5">
-              {reading.proposals.map((proposal, index) => (
-                <li key={index} className="text-xs text-neutral-600">
-                  {proposal.human_summary}
+              {echoLines(reading.proposals).map((line) => (
+                <li key={line.indexes.join(",")} className="text-xs text-neutral-600">
+                  {line.text}
                 </li>
               ))}
             </ul>

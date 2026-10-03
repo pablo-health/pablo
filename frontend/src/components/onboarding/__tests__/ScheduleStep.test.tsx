@@ -103,7 +103,7 @@ describe("ScheduleStep", () => {
     render()
 
     await user.click(screen.getByRole("combobox", { name: /end/i }))
-    await user.click(screen.getByRole("option", { name: "09:00" }))
+    await user.click(screen.getByRole("option", { name: "9:00 AM" }))
 
     expect(screen.getByText("Save").closest("button")).toBeDisabled()
   })

@@ -21,6 +21,7 @@ import {
   useDeleteAvailabilityRule,
 } from "@/hooks/useAvailability"
 import { ApiError } from "@/lib/api/client"
+import { formatClockTime } from "@/lib/workingHours"
 import { RULE_TYPES, ENFORCEMENT_LEVELS, isPracticeWide } from "@/types/availability"
 import type {
   AvailabilityRule,
@@ -209,15 +210,20 @@ export function validate(ruleType: RuleType, fields: ParamFields, dates: string[
   }
 }
 
+/** "9:00 AM – 5:00 PM", the way the hours grid shows a range. */
+function timeRange(start: unknown, end: unknown): string {
+  return `${formatClockTime(String(start))} – ${formatClockTime(String(end))}`
+}
+
 export function summarize(rule: AvailabilityRule): string {
   const p = rule.params
   switch (rule.rule_type) {
     case "working_hours":
-      return `${dayLabel(p.day_of_week)} · ${p.start}–${p.end}`
+      return `${dayLabel(p.day_of_week)} · ${timeRange(p.start, p.end)}`
     case "block_day_of_week":
       return `${dayLabel(p.day_of_week)} blocked`
     case "block_time_range":
-      return `${p.start}–${p.end} blocked every day`
+      return `${timeRange(p.start, p.end)} blocked every day`
     case "max_per_day": {
       const max = Number(p.max)
       return `Max ${max} appointment${max === 1 ? "" : "s"} per day`

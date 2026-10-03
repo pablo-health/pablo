@@ -22,6 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { formatClockTime } from "@/lib/workingHours"
 import type { AvailabilityRule, CreateAvailabilityRuleRequest } from "@/types/availability"
 
 export const WEEKDAYS = [
@@ -48,8 +49,14 @@ export const DEFAULT_WORKING_HOURS: WorkingHoursSelection = {
   endHour: 17,
 }
 
+/** The "HH:00" a rule stores for a whole hour. */
 export function formatHour(hour: number): string {
   return `${String(hour).padStart(2, "0")}:00`
+}
+
+/** A whole hour as the clinician reads it: 9 -> "9:00 AM". */
+function hourLabel(hour: number): string {
+  return formatClockTime(formatHour(hour))
 }
 
 function dayLabel(day: number): string {
@@ -75,10 +82,17 @@ export function workingHoursRules(
   )
 }
 
-/** "Monday to Thursday, 09:00 to 17:00" — consecutive days collapse. */
+/** "Monday to Thursday, 9:00 AM to 5:00 PM" — consecutive days collapse. */
 export function describeWorkingHours(selection: WorkingHoursSelection): string {
-  const days = [...selection.days].sort((a, b) => a - b)
-  if (days.length === 0) return "No days selected"
+  if (selection.days.size === 0) return "No days selected"
+  const hours = `${hourLabel(selection.startHour)} to ${hourLabel(selection.endHour)}`
+  return `${describeDays(selection.days)}, ${hours}`
+}
+
+/** "Monday to Thursday", "Monday and Tuesday, Friday" — runs collapse. */
+export function describeDays(selected: ReadonlySet<number>): string {
+  const days = [...selected].sort((a, b) => a - b)
+  if (days.length === 0) return ""
 
   const runs: string[] = []
   let runStart = days[0]
@@ -93,9 +107,7 @@ export function describeWorkingHours(selection: WorkingHoursSelection): string {
     previous = day
   }
   runs.push(describeRun(runStart, previous))
-
-  const hours = `${formatHour(selection.startHour)} to ${formatHour(selection.endHour)}`
-  return `${runs.join(", ")}, ${hours}`
+  return runs.join(", ")
 }
 
 function describeRun(first: number, last: number): string {
@@ -185,7 +197,7 @@ export function WorkingHoursGrid({ value, onChange, disabled }: WorkingHoursGrid
             <SelectContent>
               {HOUR_OPTIONS.map((h) => (
                 <SelectItem key={h} value={String(h)}>
-                  {formatHour(h)}
+                  {hourLabel(h)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -205,7 +217,7 @@ export function WorkingHoursGrid({ value, onChange, disabled }: WorkingHoursGrid
             <SelectContent>
               {HOUR_OPTIONS.map((h) => (
                 <SelectItem key={h} value={String(h)}>
-                  {formatHour(h)}
+                  {hourLabel(h)}
                 </SelectItem>
               ))}
             </SelectContent>

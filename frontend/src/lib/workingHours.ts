@@ -35,12 +35,17 @@ export function deriveWorkingHoursWindow(rules: AvailabilityRule[]): WorkingHour
   }
 }
 
-/** "09:30" -> "9:30 AM"; "17:00" -> "5 PM". */
+/**
+ * "09:30" -> "9:30 AM"; "17:00" -> "5:00 PM". The one way a stored "HH:MM" is
+ * shown back to a clinician; inputs and API payloads stay "HH:MM". Anything
+ * that is not a clock time comes back unchanged.
+ */
 export function formatClockTime(time: string): string {
   const [h, m] = time.split(":").map(Number)
+  if (!Number.isInteger(h) || !Number.isInteger(m) || h < 0 || h > 23) return time
   const period = h >= 12 ? "PM" : "AM"
   const hour12 = h % 12 === 0 ? 12 : h % 12
-  return m ? `${hour12}:${String(m).padStart(2, "0")} ${period}` : `${hour12} ${period}`
+  return `${hour12}:${String(m).padStart(2, "0")} ${period}`
 }
 
 /** Short zone abbreviation (e.g. "EST") for an IANA timezone name. */
