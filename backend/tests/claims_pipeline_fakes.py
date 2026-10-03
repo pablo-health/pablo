@@ -195,6 +195,8 @@ class FakeClearinghouse:
         self.answers: deque[dict[str, Any] | Exception] = deque()
         self.feed: list[dict[str, Any]] = []
         self.reports: dict[str, dict[str, Any]] = {}
+        #: A report read for one of these transactions raises instead.
+        self.report_errors: dict[str, Exception] = {}
         self.feed_reads = 0
         self.report_reads = 0
 
@@ -282,11 +284,15 @@ class FakeClearinghouse:
         raise ClearinghouseNotFoundError("Transaction not found")
 
     def get_claim_acknowledgment(self, transaction_id: str) -> dict[str, Any]:
-        self.report_reads += 1
-        return copy.deepcopy(self.reports[transaction_id])
+        return self._report(transaction_id)
 
     def get_remittance_report(self, transaction_id: str) -> dict[str, Any]:
+        return self._report(transaction_id)
+
+    def _report(self, transaction_id: str) -> dict[str, Any]:
         self.report_reads += 1
+        if transaction_id in self.report_errors:
+            raise self.report_errors[transaction_id]
         return copy.deepcopy(self.reports[transaction_id])
 
     # -- the rest of the protocol is never reached by the pipeline -------------
