@@ -6,20 +6,86 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
 from app.models import User
-from app.people_term import people_words, resolve_people_term
-from app.repositories import InMemoryUserRepository
+from app.people_term import (
+    Suggestion,
+    people_words,
+    resolve_people_term,
+    suggest_people_term,
+)
+from app.repositories import (
+    ClinicianProfile,
+    InMemoryClinicianProfileRepository,
+    InMemoryUserRepository,
+)
+
+
+class TestSuggest:
+    @pytest.mark.parametrize(
+        "titles",
+        [["PMHNP-BC"], ["MD"], ["DO"], ["PA-C"], ["NP"], ["APRN", "LMFT"], ["M.D."]],
+    )
+    def test_a_prescriber_license_suggests_patients(self, titles: list[str]) -> None:
+        assert suggest_people_term(provider_type=None, credential_titles=titles) == Suggestion(
+            "patients", "license"
+        )
+
+    @pytest.mark.parametrize("titles", [["LCSW"], ["LPC"], ["LMFT"], ["Psy.D."], ["PhD", "LP"]])
+    def test_a_therapy_license_suggests_clients(self, titles: list[str]) -> None:
+        assert suggest_people_term(provider_type=None, credential_titles=titles) == Suggestion(
+            "clients", "license"
+        )
+
+    @pytest.mark.parametrize("provider_type", ["prescriber", "both"])
+    def test_a_prescribing_clinician_type_suggests_patients(self, provider_type: str) -> None:
+        assert suggest_people_term(provider_type=provider_type) == Suggestion(
+            "patients", "clinician_type"
+        )
+
+    def test_a_dea_number_suggests_patients(self) -> None:
+        assert suggest_people_term(provider_type=None, dea_number="AB1234563") == Suggestion(
+            "patients", "dea_number"
+        )
+
+    def test_prescribing_wins_over_the_therapist_type(self) -> None:
+        assert suggest_people_term(provider_type="therapist", credentials="MD") == Suggestion(
+            "patients", "license"
+        )
+        assert suggest_people_term(provider_type="therapist", dea_number="AB1234563") == (
+            Suggestion("patients", "dea_number")
+        )
+
+    def test_a_therapist_type_suggests_clients(self) -> None:
+        assert suggest_people_term(provider_type="therapist", credentials="LCSW") == Suggestion(
+            "clients", "clinician_type"
+        )
+
+    def test_nothing_known_settles_nothing(self) -> None:
+        assert suggest_people_term(provider_type=None, credential_titles=["RN"]) is None
 
 
 class TestResolve:
     def test_own_choice_wins(self) -> None:
-        assert resolve_people_term(choice="clients", practice_default="patients") == "clients"
+        assert (
+            resolve_people_term(choice="clients", suggested="patients", practice_default="patients")
+            == "clients"
+        )
 
-    def test_practice_default_when_the_clinician_has_not_chosen(self) -> None:
-        assert resolve_people_term(choice=None, practice_default="patients") == "patients"
+    def test_suggestion_comes_before_the_practice_default(self) -> None:
+        assert (
+            resolve_people_term(choice=None, suggested="clients", practice_default="patients")
+            == "clients"
+        )
+
+    def test_practice_default_when_nothing_suggests_a_word(self) -> None:
+        assert (
+            resolve_people_term(choice=None, suggested=None, practice_default="patients")
+            == "patients"
+        )
 
     def test_clients_when_nothing_is_set(self) -> None:
-        assert resolve_people_term(choice=None, practice_default=None) == "clients"
+        assert resolve_people_term(choice=None, suggested=None, practice_default=None) == "clients"
 
 
 def test_people_words_forms() -> None:
@@ -58,8 +124,28 @@ class TestRoutes:
         body = self._call(client, "get", "/api/users/me/people-term", _practice()).json()
         assert body["people_term"] == "clients"
         assert body["choice"] is None
+        assert body["suggested"] is None
+        assert body["suggested_from"] is None
         assert body["practice_default"] is None
         assert body["can_set_practice_default"] is True
+
+    def test_a_prescriber_license_reads_patients_and_says_why(
+        self,
+        client: Any,
+        mock_user: User,
+        mock_user_repo: InMemoryUserRepository,
+        mock_clinician_profile_repo: InMemoryClinicianProfileRepository,
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        mock_clinician_profile_repo.create(
+            ClinicianProfile(
+                user_id=mock_user.id, practice_id="practice-1", credential_titles=["PMHNP-BC"]
+            )
+        )
+        body = self._call(client, "get", "/api/users/me/people-term", _practice()).json()
+        assert body["suggested"] == "patients"
+        assert body["suggested_from"] == "license"
+        assert body["people_term"] == "patients"
 
     def test_own_choice_round_trips_and_clears(
         self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository

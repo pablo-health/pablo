@@ -238,7 +238,7 @@ def get_user_status(
     # Here so the dashboard has it on first paint. See app.people_term.
     from .people_term import load_people_term
 
-    result["people_term"] = load_people_term(user, user_repo).people_term
+    result["people_term"] = load_people_term(user, user_repo, profile_repo).people_term
 
     # Include subscription/trial info when subscription enforcement is enabled.
     settings = get_settings()

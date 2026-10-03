@@ -2,12 +2,20 @@
 
 """Whether the app says "clients" or "patients" to a clinician.
 
-Therapists usually say clients; prescribers usually say patients. The word is
-chosen per clinician, in this order:
+Therapists usually say clients; prescribers (PMHNPs, psychiatrists and other
+medical clinicians) usually say patients. The word is chosen per clinician, in
+this order:
 
 1. the clinician's own choice in Settings;
-2. the practice's default, which the practice owner sets;
-3. "clients".
+2. what their clinician type, licenses and prescriber details suggest, when
+   that settles it;
+3. the practice's default, which the practice owner sets;
+4. "clients".
+
+The suggestion comes before the practice default so that a group with a
+therapist and a prescriber gets each their own word without anyone choosing.
+Only a clinician whose details say nothing either way falls through to the
+practice.
 
 URLs, API paths, table names and code identifiers say "patient" regardless.
 This only decides the words a clinician reads.
@@ -15,12 +23,99 @@ This only decides the words a clinician reads.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 PeopleTerm = Literal["clients", "patients"]
 
+#: Which professional detail a suggestion came from.
+SuggestionSource = Literal["clinician_type", "dea_number", "license"]
+
 DEFAULT_PEOPLE_TERM: PeopleTerm = "clients"
+
+#: Licenses and degrees that prescribe. A board-certification suffix is
+#: dropped before matching, so ``PMHNP-BC`` and ``PA-C`` count.
+_PRESCRIBER_CREDENTIALS = frozenset({"PMHNP", "NP", "APRN", "FNP", "CNS", "CNP", "MD", "DO", "PA"})
+
+#: Therapy licenses, and the doctorates a psychologist holds.
+_THERAPIST_CREDENTIALS = frozenset(
+    {
+        "LCSW",
+        "LICSW",
+        "LISW",
+        "LMSW",
+        "LPC",
+        "LPCC",
+        "LCPC",
+        "LMHC",
+        "LCMHC",
+        "LMFT",
+        "MFT",
+        "LP",
+        "PSYD",
+        "PHD",
+        "LCADC",
+        "LADC",
+        "LAC",
+    }
+)
+
+_PRESCRIBING_PROVIDER_TYPES = frozenset({"prescriber", "both"})
+
+
+@dataclass(frozen=True)
+class Suggestion:
+    """The word a clinician's professional details point to, and which detail did."""
+
+    term: PeopleTerm
+    source: SuggestionSource
+
+
+def _credential_tokens(credentials: Iterable[str]) -> set[str]:
+    """Normalise credential titles: ``"Psy.D."`` → ``PSYD``, ``"PMHNP-BC"`` → ``PMHNP``."""
+    tokens: set[str] = set()
+    for raw in credentials:
+        for part in re.split(r"[,/;]", raw):
+            base = part.strip().upper().split("-")[0]
+            token = re.sub(r"[^A-Z]", "", base)
+            if token:
+                tokens.add(token)
+    return tokens
+
+
+def suggest_people_term(
+    *,
+    provider_type: str | None,
+    credential_titles: Iterable[str] | None = None,
+    credentials: str | None = None,
+    dea_number: str | None = None,
+) -> Suggestion | None:
+    """What a clinician's professional details suggest, or None if they don't settle it.
+
+    Prescribing wins over therapy: a PMHNP who also holds an LMFT prescribes,
+    and prescribers say patients. So does a therapist-typed clinician with an
+    MD on file.
+    """
+    titles = list(credential_titles or [])
+    if credentials:
+        titles.append(credentials)
+    tokens = _credential_tokens(titles)
+
+    if provider_type in _PRESCRIBING_PROVIDER_TYPES:
+        return Suggestion("patients", "clinician_type")
+    if dea_number:
+        return Suggestion("patients", "dea_number")
+    if tokens & _PRESCRIBER_CREDENTIALS:
+        return Suggestion("patients", "license")
+    if provider_type == "therapist":
+        return Suggestion("clients", "clinician_type")
+    if tokens & _THERAPIST_CREDENTIALS:
+        return Suggestion("clients", "license")
+    return None
 
 
 def as_people_term(value: object) -> PeopleTerm | None:
@@ -35,10 +130,11 @@ def as_people_term(value: object) -> PeopleTerm | None:
 def resolve_people_term(
     *,
     choice: PeopleTerm | None,
+    suggested: PeopleTerm | None,
     practice_default: PeopleTerm | None,
 ) -> PeopleTerm:
     """Apply the order in the module docstring."""
-    return choice or practice_default or DEFAULT_PEOPLE_TERM
+    return choice or suggested or practice_default or DEFAULT_PEOPLE_TERM
 
 
 @dataclass(frozen=True)

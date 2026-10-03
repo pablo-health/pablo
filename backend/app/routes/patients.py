@@ -260,7 +260,7 @@ def get_billing_record_source(
         tax_id=get_billing_tax_id_loader,
         license_for=profiles.get,
         timezone=lambda user_id: _practice_timezone(users, user_id),
-        people=lambda user_id: people_words_for(user_id, users),
+        people=lambda user_id: people_words_for(user_id, users, profiles),
     )
 
 

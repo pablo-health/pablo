@@ -94,8 +94,8 @@ class PracticeRow(PlatformBase):
     # via the Profile settings page). No format validation at this layer.
     phone: Mapped[str | None] = mapped_column(String(50))
     # What the practice calls the people it sees, "clients" or "patients".
-    # NULL = not chosen, which reads as "clients". A clinician's own choice
-    # comes first.
+    # NULL = not chosen. A clinician's own choice, then what their details
+    # suggest, come first; this is the fallback when neither settles it.
     people_term: Mapped[str | None] = mapped_column(String(10))
     # BAA snapshot — written once at acceptance time and immutable thereafter.
     # These are the legal record: who signed, under what credentials, on what text.

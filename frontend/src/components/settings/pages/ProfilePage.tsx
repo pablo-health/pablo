@@ -41,7 +41,7 @@ export function ProfilePage() {
       <SettingsCard
         // people-term-ok: this card is the choice between the two words
         title="Clients or patients"
-        description="The word Pablo uses for the people you see."
+        description="Pablo chooses from your clinician type and license. You can change it here."
       >
         <PeopleTermSettings />
       </SettingsCard>

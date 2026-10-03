@@ -4,8 +4,9 @@
  * Whether the app says "clients" or "patients" to a clinician.
  *
  * Therapists usually say clients; prescribers usually say patients. The
- * backend decides which one a clinician sees (their own choice, then the
- * practice default, then "clients") and every screen a
+ * backend decides which one a clinician sees (their own choice, then what
+ * their clinician type and licenses suggest, then the practice default, then
+ * "clients") and every screen a
  * clinician reads takes the word from `usePeopleTerm()` rather than spelling
  * it out. `peopleTermGuard.test.ts` fails on a new hard-coded one.
  *

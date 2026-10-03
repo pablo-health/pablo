@@ -103,7 +103,7 @@ def generate_superbill(
             detail="The period's end date is before its start date.",
         )
     patient = _require_patient(patients, patient_id, user.id)
-    people = people_words_for(user.id, users)
+    people = people_words_for(user.id, users, clinician_profiles)
     generated_at = utc_now()
     try:
         superbill = build_superbill(

@@ -8,6 +8,10 @@ export interface PeopleTermState {
   people_term: PeopleTerm
   /** The clinician's own choice; null when they have not made one. */
   choice: PeopleTerm | null
+  /** What their clinician type, licenses and prescriber details suggest; null when they don't settle it. */
+  suggested: PeopleTerm | null
+  /** Which detail the suggestion came from; null when there is no suggestion. */
+  suggested_from: "clinician_type" | "dea_number" | "license" | null
   /** The practice default; null when the practice has not set one. */
   practice_default: PeopleTerm | null
   can_set_practice_default: boolean
