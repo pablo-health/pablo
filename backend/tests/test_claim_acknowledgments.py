@@ -280,8 +280,8 @@ def test_fetch_raises_for_a_transaction_this_account_does_not_own(
 def test_a_refused_report_on_a_transaction_we_can_read_is_unreadable(
     harness: PipelineHarness,
 ) -> None:
-    """The vendor 403s a report it is not serving yet — not "this key may not
-    use the API", since the transaction read with the same key succeeded."""
+    """A 403 on the report is a transient refusal, not "this key may not use
+    the API", since the transaction read with the same key succeeded."""
     created = harness.add(state="submitted", submitted_at=NOW)
     transaction = harness.client.acknowledge("payer_accepted", created.control_number)
     harness.client.report_errors[transaction] = ClearinghouseAccessDeniedError("Forbidden")

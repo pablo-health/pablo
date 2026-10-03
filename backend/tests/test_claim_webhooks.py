@@ -302,7 +302,7 @@ def _unreadable(cause: Exception) -> ClearinghouseReportUnreadableError:
         return exc
 
 
-def test_a_report_not_served_yet_asks_for_a_redelivery_quietly(
+def test_a_refused_report_asks_for_a_redelivery_quietly(
     route: dict[str, Any], caplog: pytest.LogCaptureFixture
 ) -> None:
     route["outcome"]["value"] = _unreadable(ClearinghouseAccessDeniedError("Forbidden"))

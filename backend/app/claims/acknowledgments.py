@@ -97,10 +97,11 @@ def fetch_acknowledgment(
     except (ClearinghouseNotFoundError, ClearinghouseAccessDeniedError) as exc:
         # The transaction read just succeeded with this same key, so a 403 on
         # its report cannot mean "this key may not use the API". Observed: the
-        # vendor answers 403 for a report it is not serving yet — from seconds
-        # to hours after processing, often in bursts — then 200 on a later
-        # read of the same id. Escaping as access-denied made the webhook a
-        # 500 instead of the 503 that asks for a redelivery.
+        # vendor's edge sometimes refuses a request with a bare 403 (no vendor
+        # error code), in bursts that take in every call to the API, and the
+        # same read succeeds later. That points at the source address, not
+        # the key. Escaping as access-denied made the webhook a 500 instead
+        # of the 503 that asks for a redelivery.
         raise ClearinghouseReportUnreadableError(
             f"no 277 report for transaction {transaction_id}", code=exc.code
         ) from exc
