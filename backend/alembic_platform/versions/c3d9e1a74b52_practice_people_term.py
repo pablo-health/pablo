@@ -3,9 +3,8 @@
 """platform.practices.people_term: what the practice calls the people it sees
 
 A practice-wide default for the word the app uses, "clients" or "patients".
-``NULL`` means the practice has not chosen. Each clinician's own choice, and
-failing that what their license suggests, comes before it; see
-``app.people_term``.
+``NULL`` means the practice has not chosen, which reads as "clients". Each
+clinician's own choice comes before it; see ``app.people_term``.
 
 No PHI: a single vocabulary choice.
 

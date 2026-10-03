@@ -183,7 +183,7 @@ class UserPreferences(BaseModel):
     # See ``app.inbox.replies``.
     inbox_reply_earlier_messages: EarlierMessagesOnReply = "ask"
     # Whether the app says "clients" or "patients" to this clinician. None is
-    # "not chosen": the license, then the practice default, decide instead.
+    # "not chosen": the practice default, then "clients", decide instead.
     # See ``app.people_term``.
     people_term: PeopleTerm | None = None
 

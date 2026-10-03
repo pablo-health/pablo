@@ -30,8 +30,7 @@ const WORDS: { value: PeopleTerm; label: string }[] = [
  *
  * The clinician's own control shows the word in use, whatever decided it, so
  * picking the one already shown changes nothing they can see. The practice
- * default is the owner's, and only reaches a clinician whose license doesn't
- * settle it and who hasn't chosen.
+ * default is the owner's, and reaches every clinician who hasn't chosen.
  */
 export function PeopleTermSettings() {
   const { data } = usePeopleTermState()
@@ -83,7 +82,7 @@ export function PeopleTermSettings() {
             </SelectContent>
           </Select>
           <p className="text-sm text-neutral-600">
-            For clinicians whose license doesn&rsquo;t settle it. Anyone can still choose their own.
+            Used by anyone in the practice who hasn&rsquo;t chosen. Each clinician can still choose their own.
           </p>
         </div>
       )}

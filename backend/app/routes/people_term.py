@@ -23,14 +23,8 @@ from ..people_term import (
     as_people_term,
     people_words,
     resolve_people_term,
-    suggest_people_term,
 )
-from ..repositories import (
-    ClinicianProfileRepository,
-    UserRepository,
-    get_clinician_profile_repository,
-    get_user_repository,
-)
+from ..repositories import UserRepository, get_user_repository
 from .users import _get_own_practice_as_owner, _is_practice_owner, _resolve_practice_id_for
 
 if TYPE_CHECKING:
@@ -47,8 +41,6 @@ class PeopleTermResponse(BaseModel):
     people_term: PeopleTerm
     #: The clinician's own choice; None when they have not made one.
     choice: PeopleTerm | None
-    #: What their license and clinician type suggest; None when they don't settle it.
-    suggested: PeopleTerm | None
     #: The practice default; None when the practice has not set one.
     practice_default: PeopleTerm | None
     #: Whether this clinician may change the practice default.
@@ -71,54 +63,35 @@ def _practice_row(user: User) -> PracticeRow | None:
     return get_db_session().get(PracticeRow, practice_id)
 
 
-def load_people_term(
-    user: User,
-    user_repo: UserRepository,
-    profile_repo: ClinicianProfileRepository,
-) -> PeopleTermResponse:
+def load_people_term(user: User, user_repo: UserRepository) -> PeopleTermResponse:
     """Everything that decides the word for ``user``."""
     choice = user_repo.get_preferences(user.id).people_term
-    profile = profile_repo.get(user.id)
-    suggested = suggest_people_term(
-        provider_type=user.provider_type,
-        credential_titles=profile.credential_titles if profile else None,
-        credentials=profile.credentials if profile else None,
-        dea_number=profile.dea_number if profile else None,
-    )
     practice = _practice_row(user)
     practice_default = as_people_term(practice.people_term if practice else None)
     return PeopleTermResponse(
-        people_term=resolve_people_term(
-            choice=choice, suggested=suggested, practice_default=practice_default
-        ),
+        people_term=resolve_people_term(choice=choice, practice_default=practice_default),
         choice=choice,
-        suggested=suggested,
         practice_default=practice_default,
         can_set_practice_default=practice is not None and _is_practice_owner(practice, user),
     )
 
 
-def people_words_for(
-    user_id: str,
-    user_repo: UserRepository,
-    profile_repo: ClinicianProfileRepository,
-) -> PeopleWords:
+def people_words_for(user_id: str, user_repo: UserRepository) -> PeopleWords:
     """The words for backend copy ``user_id`` reads: ``words.many`` and friends."""
     user = user_repo.get(user_id)
     if user is None:
         return people_words(DEFAULT_PEOPLE_TERM)
-    return people_words(load_people_term(user, user_repo, profile_repo).people_term)
+    return people_words(load_people_term(user, user_repo).people_term)
 
 
 @router.get("/me/people-term")
 def get_people_term(
     user: User = Depends(get_current_user_no_mfa),
     user_repo: UserRepository = Depends(get_user_repository),
-    profile_repo: ClinicianProfileRepository = Depends(get_clinician_profile_repository),
     _: None = Depends(subscription_exempt),
 ) -> PeopleTermResponse:
     """The word the app uses for the caller, and what decided it."""
-    return load_people_term(user, user_repo, profile_repo)
+    return load_people_term(user, user_repo)
 
 
 @router.put("/me/people-term")
@@ -126,14 +99,13 @@ def set_people_term(
     request: UpdatePeopleTermRequest,
     user: User = Depends(get_current_user_no_mfa),
     user_repo: UserRepository = Depends(get_user_repository),
-    profile_repo: ClinicianProfileRepository = Depends(get_clinician_profile_repository),
     _: None = Depends(subscription_exempt),
 ) -> PeopleTermResponse:
     """Set the caller's own word. Reachable before MFA so onboarding can set it."""
     prefs = user_repo.get_preferences(user.id)
     prefs.people_term = request.people_term
     user_repo.save_preferences(user.id, prefs)
-    return load_people_term(user, user_repo, profile_repo)
+    return load_people_term(user, user_repo)
 
 
 @router.put("/me/practice/people-term")
@@ -141,7 +113,6 @@ def set_practice_people_term(
     request: UpdatePeopleTermRequest,
     user: User = Depends(get_current_user_no_mfa),
     user_repo: UserRepository = Depends(get_user_repository),
-    profile_repo: ClinicianProfileRepository = Depends(get_clinician_profile_repository),
     _: None = Depends(subscription_exempt),
 ) -> PeopleTermResponse:
     """Set the practice default. 403 unless the caller owns the practice."""
@@ -150,4 +121,4 @@ def set_practice_people_term(
     practice = _get_own_practice_as_owner(user)
     practice.people_term = request.people_term
     get_db_session().flush()
-    return load_people_term(user, user_repo, profile_repo)
+    return load_people_term(user, user_repo)
