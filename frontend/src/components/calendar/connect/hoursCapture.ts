@@ -7,10 +7,8 @@
  * (and tested) without rendering it.
  */
 
-import {
-  describeWorkingHours,
-  selectionFromRules,
-} from "@/components/availability/WorkingHoursGrid"
+import { describeDays } from "@/components/availability/WorkingHoursGrid"
+import { formatClockTime } from "@/lib/workingHours"
 import type { ProposedAvailabilityRule } from "@/types/availability"
 
 /** A short, common list for the deployments (and test runtimes) where the
@@ -42,8 +40,8 @@ export interface EchoLine {
 
 /**
  * Plain-language lines for a parse. Working-hours proposals sharing a
- * start/end collapse into one sentence ("Monday to Thursday, 09:00 to
- * 17:00"); every other rule keeps the parser's own summary. Grouping by
+ * start/end collapse into one sentence ("Monday to Thursday, 9:00 AM to
+ * 5:00 PM"); every other rule keeps the parser's own summary. Grouping by
  * range rather than all together keeps the echo exact when a day has
  * different hours from the rest.
  */
@@ -67,10 +65,20 @@ export function echoLines(proposals: readonly ProposedAvailabilityRule[]): EchoL
     else byRange.set(key, [index])
   })
 
+  // The range is read from the proposals themselves rather than rounded to
+  // the grid's whole hours, so "9:30 to 5" echoes as 9:30, not 9:00.
   const hours = [...byRange.values()].map((indexes) => {
-    const selection = selectionFromRules(indexes.map((index) => proposals[index]))
+    const group = indexes.map((index) => proposals[index])
+    const days = group.map((proposal) => proposal.params.day_of_week)
+    const { start, end } = group[0].params
+    const readable =
+      days.every((day): day is number => typeof day === "number") &&
+      typeof start === "string" &&
+      typeof end === "string"
     return {
-      text: selection ? describeWorkingHours(selection) : proposals[indexes[0]].human_summary,
+      text: readable
+        ? `${describeDays(new Set(days as number[]))}, ${formatClockTime(start)} to ${formatClockTime(end)}`
+        : group[0].human_summary,
       indexes,
     }
   })

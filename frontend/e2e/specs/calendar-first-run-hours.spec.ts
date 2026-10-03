@@ -73,7 +73,7 @@ test("hours described on first run show up as free time in the week and in Setti
 
     await page.getByLabel("Tell Pablo in your own words").fill(SENTENCE)
     await page.getByRole("button", { name: "Check this" }).click()
-    await expect(page.getByText("Monday to Thursday, 09:00 to 17:00")).toBeVisible()
+    await expect(page.getByText("Monday to Thursday, 9:00 AM to 5:00 PM")).toBeVisible()
     await page.getByRole("button", { name: "Yes, save this" }).click()
 
     // Every day is saved, and only then does the wizard move on — to
