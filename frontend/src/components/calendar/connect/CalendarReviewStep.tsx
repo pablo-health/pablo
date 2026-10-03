@@ -5,6 +5,7 @@
 import { ArrowLeft, Calendar, Check, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SetupStepHead } from "@/components/setup"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import type { ConfirmImportResult, ImportProposal, ProposedSeries } from "@/lib/api/scheduling"
 import { seenElsewhere, WhichClientsList } from "./WhichClientsList"
 
@@ -84,11 +85,12 @@ export function CalendarReviewStep({
   onFinish,
   following = false,
 }: CalendarReviewStepProps) {
+  const people = usePeopleTerm()
   if (result) {
     return (
       <div className="space-y-4 text-center">
         <h2 className="font-display text-2xl font-semibold text-neutral-900">
-          {result.patients_created} client{result.patients_created === 1 ? "" : "s"} added
+          {result.patients_created} {result.patients_created === 1 ? people.one : people.many} added
         </h2>
         <p className="mx-auto max-w-md text-sm text-muted-foreground">
           {result.appointments_created} appointment{result.appointments_created === 1 ? "" : "s"}{" "}
@@ -124,7 +126,7 @@ export function CalendarReviewStep({
       <div className="space-y-4">
         <SetupStepHead
           eyebrow={`Step ${step} · you decide`}
-          title="Which of these are clients?"
+          title={`Which of these are ${people.many}?`}
           lede="Look at your week first — this list fills in once Pablo has scanned it."
         />
         <Button variant="ghost" size="sm" onClick={onReviewAgain}>
@@ -153,14 +155,14 @@ export function CalendarReviewStep({
       : "Adding…"
     : savingOnly
       ? "Save"
-      : `Add ${checkedCount} client${checkedCount === 1 ? "" : "s"}`
+      : `Add ${checkedCount} ${checkedCount === 1 ? people.one : people.many}`
 
   return (
     <div className="space-y-4">
       <SetupStepHead
         eyebrow={`Step ${step} · you decide`}
-        title="Which of these are clients?"
-        lede={`These ${total} repeat on a weekly or biweekly rhythm. Check the ones that are clients. Uncheck standups, classes, and anything else that just happens to repeat.`}
+        title={`Which of these are ${people.many}?`}
+        lede={`These ${total} repeat on a weekly or biweekly rhythm. Check the ones that are ${people.many}. Uncheck standups, classes, and anything else that just happens to repeat.`}
       />
 
       <WhichClientsList
@@ -187,13 +189,13 @@ export function CalendarReviewStep({
         >
           {expanded
             ? `Hide the other ${total - VISIBLE_ROWS}`
-            : `Show the other ${hiddenCount} — all look like weekly clients`}
+            : `Show the other ${hiddenCount} — all look like weekly ${people.many}`}
         </button>
       ) : null}
 
       <p className="border-t border-border pt-3 text-xs text-muted-foreground">
         {
-          "If a client isn't in this list - someone you see monthly, or on a changing schedule - add them once you're in. It takes a minute."
+          `If a ${people.one} isn't in this list - someone you see monthly, or on a changing schedule - add them once you're in. It takes a minute.`
         }
       </p>
 

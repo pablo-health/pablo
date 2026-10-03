@@ -3,7 +3,9 @@
 "use client"
 
 import { Checkbox } from "@/components/ui/checkbox"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import type { ImportPatientChoice, SeriesMatch } from "@/lib/api/scheduling"
+import type { PeopleWords } from "@/lib/peopleTerm"
 
 /** Whether a match is a client of the practice that someone else sees. */
 export function seenElsewhere(match: SeriesMatch): boolean {
@@ -28,9 +30,9 @@ export interface ClientQuestionRow {
 const NEW_CLIENT = "new"
 
 /** The preselected client's name, for the offer to make them active again. */
-function clientNamed(row: ClientQuestionRow): string {
+function clientNamed(row: ClientQuestionRow, people: PeopleWords): string {
   const chosen = row.match.possible.find((c) => c.patient_id === row.match.suggested_patient_id)
-  return chosen?.display_name ?? "this client"
+  return chosen?.display_name ?? `this ${people.one}`
 }
 
 function choiceLabel(choice: ImportPatientChoice): string {
@@ -42,6 +44,7 @@ function choiceLabel(choice: ImportPatientChoice): string {
 /** A colleague's client: who sees them, and who to ask. Nothing about the
  * chart itself — the row's title is the calendar's own wording. */
 function SeenElsewhere({ names }: { names: string[] }) {
+  const people = usePeopleTerm()
   const seenBy =
     names.length > 0
       ? `, seen by ${new Intl.ListFormat("en", { type: "conjunction" }).format(names)}`
@@ -53,7 +56,7 @@ function SeenElsewhere({ names }: { names: string[] }) {
   return (
     <>
       <span className="block text-xs text-secondary-700">
-        Already a client of the practice{seenBy}.
+        Already a {people.one} of the practice{seenBy}.
       </span>
       <span className="block text-xs text-muted-foreground">Ask {ask} for access.</span>
     </>
@@ -72,17 +75,18 @@ function ClientChoice({
   onChoose: (patientId: string | null) => void
 }) {
   const { patient, possible } = row.match
+  const people = usePeopleTerm()
   if (patient) {
     return (
       <span className="block text-xs text-secondary-700">Matches {patient.display_name}</span>
     )
   }
   if (possible.length === 0) {
-    return <span className="block text-xs text-muted-foreground">New client</span>
+    return <span className="block text-xs text-muted-foreground">New {people.one}</span>
   }
   return (
     <select
-      aria-label={`Which client is ${row.title}?`}
+      aria-label={`Which ${people.one} is ${row.title}?`}
       value={patientId ?? NEW_CLIENT}
       onChange={(event) =>
         onChoose(event.target.value === NEW_CLIENT ? null : event.target.value)
@@ -94,7 +98,7 @@ function ClientChoice({
           {choiceLabel(choice)}
         </option>
       ))}
-      <option value={NEW_CLIENT}>New client</option>
+      <option value={NEW_CLIENT}>New {people.one}</option>
     </select>
   )
 }
@@ -130,6 +134,7 @@ export function WhichClientsList({
   reactivate = {},
   onToggleReactivate,
 }: WhichClientsListProps) {
+  const people = usePeopleTerm()
   return (
     <div className="flex flex-col">
       {rows.map((row) => {
@@ -174,7 +179,7 @@ export function WhichClientsList({
                 // Leaving a row unticked only skips it for now; this answer
                 // is kept, so it is not asked about again.
                 <span className="block text-xs text-muted-foreground">
-                  Not a client. Pablo will remember.{" "}
+                  Not a {people.one}. Pablo will remember.{" "}
                   <button
                     type="button"
                     onClick={() => onToggleNotClient(key)}
@@ -195,9 +200,9 @@ export function WhichClientsList({
                       <Checkbox
                         checked={reactivate[key] ?? true}
                         onCheckedChange={() => onToggleReactivate?.(key)}
-                        aria-label={`Make ${clientNamed(row)} active again`}
+                        aria-label={`Make ${clientNamed(row, people)} active again`}
                       />
-                      Make {clientNamed(row)} active again
+                      Make {clientNamed(row, people)} active again
                     </label>
                   ) : null}
                   <button
@@ -205,7 +210,7 @@ export function WhichClientsList({
                     onClick={() => onToggleNotClient(key)}
                     className="mt-0.5 block text-xs text-muted-foreground underline underline-offset-2 hover:text-neutral-700"
                   >
-                    Not a client
+                    Not a {people.one}
                   </button>
                 </>
               )}

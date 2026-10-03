@@ -52,15 +52,17 @@ import {
 import { MissingAppointmentTypeOffer } from "@/components/availability/MissingAppointmentTypeOffer"
 import { ReadingChoice } from "@/components/availability/ReadingChoice"
 import { PabloSpinner } from "@/components/ui/PabloSpinner"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
+import { sayPeople } from "@/lib/peopleTerm"
 import type { ParseReading } from "@/types/availability"
 
 /** They double as documentation of what the box understands — a blank box
  * is the classic way natural-language input fails. */
 const EXAMPLES = [
-  "I see clients Monday to Thursday, 9 to 5",
+  "I see {people} Monday to Thursday, 9 to 5",
   "No appointments before 10am",
   "Two intakes a week, Tuesdays only",
-  "Fridays are admin, no clients",
+  "Fridays are admin, no {people}",
 ] as const
 
 /** Two parses it could not pin down is enough: stop asking a practice to
@@ -95,6 +97,7 @@ interface CalendarHoursStepProps {
 
 export function CalendarHoursStep({ step, onSaved, onSkip }: CalendarHoursStepProps) {
   const { data: preferences } = usePreferences()
+  const people = usePeopleTerm()
   const savePreferences = useSavePreferences()
   const createRule = useCreateAvailabilityRule()
   const parseRules = useParseAvailabilityRules()
@@ -287,7 +290,7 @@ export function CalendarHoursStep({ step, onSaved, onSkip }: CalendarHoursStepPr
     <div className="space-y-6">
       <SetupStepHead
         eyebrow={step ? `Step ${step}` : "Your hours"}
-        title="When do you see clients?"
+        title={`When do you see ${people.many}?`}
         lede="Your general working hours. You can change them later in Settings."
       />
 
@@ -408,13 +411,13 @@ export function CalendarHoursStep({ step, onSaved, onSkip }: CalendarHoursStepPr
               ref={boxRef}
               value={text}
               onChange={(event) => setText(event.target.value)}
-              placeholder="I see clients Monday to Thursday, 9 to 5"
+              placeholder={sayPeople(EXAMPLES[0], people)}
               rows={3}
             />
           </div>
 
           <div className="flex flex-wrap gap-2">
-            {EXAMPLES.map((example) => (
+            {EXAMPLES.map((template) => sayPeople(template, people)).map((example) => (
               <button
                 key={example}
                 type="button"

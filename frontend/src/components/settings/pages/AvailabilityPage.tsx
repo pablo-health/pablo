@@ -6,6 +6,7 @@ import { BlockedTimeCard, LimitsAndBuffersCard } from "../AvailabilitySettings"
 import { OtherAvailabilityRulesCard, otherRules } from "../OtherAvailabilityRulesCard"
 import { WorkingHoursGrid } from "../WorkingHoursGrid"
 import { useAvailabilityRules } from "@/hooks/useAvailability"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { AvailabilityExtras } from "../settingsSlots.extensions"
 import { SettingsCard } from "../ui"
 
@@ -21,12 +22,13 @@ import { SettingsCard } from "../ui"
 export function AvailabilityPage() {
   const { data } = useAvailabilityRules()
   const hasOtherRules = otherRules(data?.data ?? []).length > 0
+  const people = usePeopleTerm()
 
   return (
     <>
       <SettingsCard
         title="Working hours"
-        description="When patients can be booked. Your calendar highlights these hours and opens at your earliest start."
+        description={`When ${people.many} can be booked. Your calendar highlights these hours and opens at your earliest start.`}
       >
         <WorkingHoursGrid />
       </SettingsCard>

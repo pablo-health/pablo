@@ -8,6 +8,8 @@ import { useAuthQuery } from "@/hooks/useAuthQuery"
 import { CheckCircle2 } from "lucide-react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
+import { sayPeople } from "@/lib/peopleTerm"
 import {
   SetupNav,
   SetupStepHead,
@@ -46,7 +48,7 @@ import {
 const GOOGLE_STEPS: SetupStepperStep[] = [
   { id: "connect", label: "Connect" },
   { id: "sessions", label: "Sessions" },
-  { id: "clients", label: "Your clients" },
+  { id: "clients", label: "Your {people}" },
   { id: "review", label: "Review" },
 ]
 
@@ -180,7 +182,11 @@ export function CalendarSetupWizard({
   const [hoursSaved, setHoursSaved] = useState(hoursSavedProp)
   // The one source of step numbers: the stepper reads this list, and every
   // card's "Step N" is its position in it.
-  const steps = withHoursStep ? [HOURS_STEP, ...GOOGLE_STEPS] : GOOGLE_STEPS
+  const people = usePeopleTerm()
+  const steps = (withHoursStep ? [HOURS_STEP, ...GOOGLE_STEPS] : GOOGLE_STEPS).map((s) => ({
+    ...s,
+    label: sayPeople(s.label, people),
+  }))
   const indexOf = (id: string) => steps.findIndex((step) => step.id === id)
   const connectIndex = indexOf("connect")
   const sessionsIndex = indexOf("sessions")
@@ -526,11 +532,13 @@ export function CalendarSetupWizard({
       const result = await confirmCalendarImport(series, notClients)
       setConfirmResult(result)
     } catch (err) {
-      setConfirmError(message(err, "Could not add those clients. Nothing was changed — try again."))
+      setConfirmError(
+        message(err, `Could not add those ${people.many}. Nothing was changed — try again.`),
+      )
     } finally {
       setConfirming(false)
     }
-  }, [proposal, checked, clientFor, notClient])
+  }, [proposal, checked, clientFor, notClient, people.many])
 
   const titlingSettled = selection.event_titling !== "full" || attested
   const isLastStep = activeIndex === steps.length - 1

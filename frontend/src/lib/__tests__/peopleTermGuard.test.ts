@@ -40,23 +40,7 @@ const CLIENT_FACING = [
 /** Demo fixtures: transcripts and notes, not interface copy. */
 const NOT_INTERFACE = ["src/lib/mockData.ts"]
 
-/**
- * Files another change in flight is editing. Converting them here would
- * collide with it, so they wait for a follow-up once it lands, and this list
- * shrinks to empty. Do not add to it.
- */
-const PENDING = [
-  "app/(dashboard)/dashboard/calendar/page.tsx",
-  "src/components/calendar/connect/",
-  "src/components/calendar/editorial/EditorialCalendar.tsx",
-  "src/components/calendar/editorial/EditorialDayView.tsx",
-  "src/components/calendar/editorial/EditorialWeekView.tsx",
-  "src/components/settings/FollowCalendarSetting.tsx",
-  "src/components/settings/ProfileSettings.tsx",
-  "src/components/settings/pages/AvailabilityPage.tsx",
-]
-
-const SKIPPED = [...CLIENT_FACING, ...NOT_INTERFACE, ...PENDING]
+const SKIPPED = [...CLIENT_FACING, ...NOT_INTERFACE]
 
 function sourceFiles(dir: string): string[] {
   const out: string[] = []
@@ -141,9 +125,5 @@ describe("people term guard", () => {
       "x.tsx:4: Add a client",
       "x.tsx:5: Patients",
     ])
-  })
-
-  it("lists only files that still exist as pending", () => {
-    for (const prefix of PENDING) expect(fs.existsSync(path.join(ROOT, prefix)), prefix).toBe(true)
   })
 })
