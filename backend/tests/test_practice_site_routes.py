@@ -174,6 +174,7 @@ class TestTheOwner:
                 },
                 "fonts": {"heading": None, "body": None},
                 "radius": None,
+                "header": None,
             },
             "skipped": [{"field": "radius", "reason": "Should be none, sm, md or lg."}],
         }

@@ -18,8 +18,9 @@ that is no longer the draft, after the change that left them has committed.
 
 A website's ``theme.json`` (:mod:`app.sites.theme`) is read when the draft is
 saved, so the practice sees what it gives the portal, and again as the draft is
-published; the theme is kept with the version, so a roll back brings back the
-theme that version had.
+published, each time against the practice's hosts as they are then (a header
+link may name only those); the theme is kept with the version, so a roll back
+brings back the theme that version had.
 
 Every change holds the practice's row lock (:meth:`PracticeSiteStore.lock`)
 from its first write to its commit, tidying included, so two changes to one
@@ -225,7 +226,7 @@ class PracticeSiteService:
         now = self._clock()
         row = self._store.lock(practice_id, now)
         draft_id = uuid.uuid4().hex
-        theme = read_theme(site.files.get(THEME_FILE))
+        theme = read_theme(site.files.get(THEME_FILE), self._store.practice_hosts(practice_id))
         self._write(draft_prefix(practice_id, draft_id), site.files)
         row.draft_id = draft_id
         row.draft_file_count = site.file_count
@@ -310,7 +311,7 @@ class PracticeSiteService:
             if path == THEME_FILE:
                 # Read again from the files being published, so the version
                 # carries exactly what the rules make of them now.
-                theme = read_theme(data)
+                theme = read_theme(data, self._store.practice_hosts(practice_id))
             file_count += 1
             total += len(data)
         version = PracticeSiteVersionRow(

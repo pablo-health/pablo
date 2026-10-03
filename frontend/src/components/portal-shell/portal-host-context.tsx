@@ -14,15 +14,18 @@
 "use client"
 
 import { createContext, useContext } from "react"
+import type { PracticeHeader } from "@/lib/portal-host/practice-header"
 
 export interface PortalHostInfo {
   /** Served on a host the practice holds, rather than this deployment's own. */
   onPracticeHost: boolean
   /** The host of the practice's live website, on its own host only. */
   siteHost: string | null
+  /** The header from the website's theme.json, on its own host only. */
+  header: PracticeHeader | null
 }
 
-const PortalHostContext = createContext<PortalHostInfo>({ onPracticeHost: false, siteHost: null })
+const PortalHostContext = createContext<PortalHostInfo>({ onPracticeHost: false, siteHost: null, header: null })
 
 export function PortalHostProvider({ value, children }: { value: PortalHostInfo; children: React.ReactNode }) {
   return <PortalHostContext.Provider value={value}>{children}</PortalHostContext.Provider>

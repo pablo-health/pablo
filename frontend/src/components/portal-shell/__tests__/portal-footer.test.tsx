@@ -55,7 +55,7 @@ describe.each([
   })
 
   it("on the practice's own host, names the practice and a crisis line instead", async () => {
-    render(<PortalHostProvider value={{ onPracticeHost: true, siteHost: null }}>{page()}</PortalHostProvider>)
+    render(<PortalHostProvider value={{ onPracticeHost: true, siteHost: null, header: null }}>{page()}</PortalHostProvider>)
 
     await screen.findByTestId("portal-shell-practice-name")
     const footer = screen.getByTestId("portal-footer")
@@ -68,7 +68,7 @@ describe.each([
 
   it("links back to the practice's live website", async () => {
     render(
-      <PortalHostProvider value={{ onPracticeHost: true, siteHost: "www.example-therapy.com" }}>
+      <PortalHostProvider value={{ onPracticeHost: true, siteHost: "www.example-therapy.com", header: null }}>
         {page()}
       </PortalHostProvider>,
     )

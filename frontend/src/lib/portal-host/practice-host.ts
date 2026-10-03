@@ -34,6 +34,7 @@
  * (`frontend/proxy.ts`) hands in what it found.
  */
 
+import type { PracticeHeader } from "./practice-header"
 import type { PracticeTheme } from "./practice-theme"
 import {
   CLINICIAN_ROUTE_SEGMENTS,
@@ -56,6 +57,8 @@ export interface PracticeHost {
   theme: PracticeTheme | null
   /** The host the practice's live website is served at, which the portal links back to. */
   siteHost: string | null
+  /** The header that matches the portal to the website (`./practice-header`), if any. */
+  header: PracticeHeader | null
 }
 
 /** The lookup's answer: found, serves nothing, or could not be asked. */

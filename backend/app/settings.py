@@ -1491,6 +1491,23 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Names a practice website's portal header may not take (app.sites.header),
+    # so a website can't dress its portal up as the software's own sign-in
+    # page. Comma-separated for the same reason as portal_modules.
+    portal_header_brand_names: str = Field(
+        default="Pablo",
+        description=(
+            "Comma-separated names a practice's portal header may not use as a "
+            "link label or begin its wordmark with: the name this deployment's "
+            "portal goes by. Compared without case."
+        ),
+    )
+
+    @property
+    def portal_header_brand_name_list(self) -> tuple[str, ...]:
+        """``portal_header_brand_names`` split and trimmed."""
+        return tuple(n.strip() for n in self.portal_header_brand_names.split(",") if n.strip())
+
     @property
     def portal_module_names(self) -> tuple[str, ...]:
         """``portal_modules`` split, trimmed, lowercased, de-duplicated.

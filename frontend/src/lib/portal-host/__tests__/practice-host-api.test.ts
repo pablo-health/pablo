@@ -19,7 +19,7 @@ function lookupAnswering(answer: PracticeHostAnswer) {
 
 describe("practiceHostApiOrigin", () => {
   it("is the request's own origin on a practice's working portal host", async () => {
-    const lookup = lookupAnswering({ slug: "acme", primaryHost: "portal.example.com", theme: null, siteHost: null })
+    const lookup = lookupAnswering({ slug: "acme", primaryHost: "portal.example.com", theme: null, siteHost: null, header: null })
 
     const origin = await practiceHostApiOrigin(
       request("Portal.Example.com", { "x-forwarded-proto": "https" }),
@@ -34,7 +34,7 @@ describe("practiceHostApiOrigin", () => {
   it("keeps the port and, with no balancer to say otherwise, the request's scheme", async () => {
     const origin = await practiceHostApiOrigin(
       request("portal.example.com:3080"),
-      lookupAnswering({ slug: "acme", primaryHost: null, theme: null, siteHost: null }),
+      lookupAnswering({ slug: "acme", primaryHost: null, theme: null, siteHost: null, header: null }),
       ENV,
     )
 
@@ -51,7 +51,7 @@ describe("practiceHostApiOrigin", () => {
   it.each(["app.example.org", "portal.example.org", "localhost:3000", "127.0.0.1:3000"])(
     "is null on this deployment's own host %s, without asking",
     async (host) => {
-      const lookup = lookupAnswering({ slug: "acme", primaryHost: null, theme: null, siteHost: null })
+      const lookup = lookupAnswering({ slug: "acme", primaryHost: null, theme: null, siteHost: null, header: null })
 
       expect(await practiceHostApiOrigin(request(host), lookup, ENV)).toBeNull()
       expect(lookup).not.toHaveBeenCalled()
@@ -59,7 +59,7 @@ describe("practiceHostApiOrigin", () => {
   )
 
   it("is null when APP_HOSTS is unset, without asking", async () => {
-    const lookup = lookupAnswering({ slug: "acme", primaryHost: null, theme: null, siteHost: null })
+    const lookup = lookupAnswering({ slug: "acme", primaryHost: null, theme: null, siteHost: null, header: null })
 
     expect(await practiceHostApiOrigin(request("portal.example.com"), lookup, {})).toBeNull()
     expect(lookup).not.toHaveBeenCalled()

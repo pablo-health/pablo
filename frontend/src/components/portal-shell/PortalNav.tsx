@@ -4,6 +4,12 @@
  * The shell's header: the practice's name, on the practice's own host a link
  * back to its website, Sign out, and the navigation.
  *
+ * Where the website's theme.json declares a header (`./WebsiteHeader`), the
+ * practice's own host shows it instead of the plain link back: the wordmark
+ * and subtitle linking to the website, its call to action, and its links in
+ * a row of their own above the portal's sections. Signed in or out, the
+ * header is the same.
+ *
  * The navigation is real links — Home, then one per section this practice
  * serves — and the page being shown is marked `aria-current="page"`, so a
  * screen reader hears where it is as well as where it could go. It wraps on
@@ -18,6 +24,7 @@ import { Button } from "@/components/ui/button"
 import { portalSectionHref } from "@/lib/portal-shell/paths"
 import { usePortalHost } from "./portal-host-context"
 import type { PortalSlot } from "./slots"
+import { PracticeBrand, WebsiteCta, WebsiteLinks } from "./WebsiteHeader"
 
 const LINK_CLASS =
   "text-sm text-neutral-600 underline-offset-4 hover:underline focus-visible:underline aria-[current=page]:font-semibold aria-[current=page]:text-neutral-900"
@@ -42,18 +49,26 @@ export function ShellHeader({
   // without one still has a tile and a page of its own.
   const navSlots = slots.filter((slot) => slot.label !== undefined)
   // On the practice's own host, the way back to the practice's website.
-  const { siteHost } = usePortalHost()
+  const { siteHost, header } = usePortalHost()
   return (
-    <header className="border-b border-neutral-200 bg-white px-4 py-4">
+    <header
+      // With a wordmark of its own on screen, the record's name is still what
+      // the header is called.
+      aria-label={header && displayName ? displayName : undefined}
+      className="border-b border-neutral-200 bg-white px-4 py-4"
+    >
       <div className="mx-auto flex max-w-md flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        {displayName ? (
+        {header ? (
+          <PracticeBrand displayName={displayName} header={header} siteHost={siteHost} />
+        ) : displayName ? (
           <h1 data-testid="portal-shell-practice-name" className="font-display text-lg font-semibold">
             {displayName}
           </h1>
         ) : (
           <div className="h-5 w-40 animate-pulse rounded bg-neutral-200" aria-hidden="true" />
         )}
-        {siteHost && (
+        {header && <WebsiteCta header={header} />}
+        {siteHost && !header && (
           // The visible text stays short and the hostname stays out of it; a
           // screen reader also hears whose website. The accessible name starts
           // with the visible words so voice control can still say them.
@@ -77,6 +92,7 @@ export function ShellHeader({
             {signingOut ? "Signing out…" : "Sign out"}
           </Button>
         )}
+        {header && <WebsiteLinks header={header} />}
         {navSlots.length > 0 && (
           <nav
             data-testid="portal-shell-nav"

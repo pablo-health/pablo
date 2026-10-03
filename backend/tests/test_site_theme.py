@@ -11,6 +11,7 @@ are proven against Postgres in
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -242,3 +243,16 @@ def test_groups_of_the_wrong_shape_are_skipped_whole() -> None:
 def test_a_theme_with_nothing_usable_is_no_theme() -> None:
     assert _read({}).theme is None
     assert _read({"version": 1}).skipped == []
+
+
+def test_a_live_practice_websites_theme_reads_whole() -> None:
+    """``fixtures/sites/theme.json`` is captured from a practice website as it
+    was uploaded, not written for this test."""
+    report = read_theme((Path(__file__).parent / "fixtures" / "sites" / "theme.json").read_bytes())
+
+    assert report is not None
+    assert report.skipped == []
+    assert report.theme is not None
+    assert report.theme.colors.accent == "#24504c"
+    assert report.theme.fonts.heading == "Fraunces"
+    assert report.theme.header is None
