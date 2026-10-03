@@ -11,14 +11,17 @@ like the site. It is a fixed set of tokens, never code::
                  "background": "#fbf8f3", "surface": "#ffffff",
                  "text": "#1d2726", "mutedText": "#55605e"},
       "fonts": {"heading": "Fraunces", "body": "Inter"},
-      "radius": "md"
+      "radius": "md",
+      "header": {"wordmark": "Riverside Counseling", "links": [...], "cta": {...}}
     }
 
 * a color is ``#rgb`` or ``#rrggbb``, kept as lowercase ``#rrggbb``;
 * a font is one of :data:`FONTS`, which the web app serves itself (the same
   list is in ``frontend/src/lib/portal-host/practice-theme.ts``), so a theme
   never makes a visitor's browser fetch anything from elsewhere;
-* ``radius`` is one of :data:`RADII`.
+* ``radius`` is one of :data:`RADII`;
+* ``header`` is how the portal's header matches the website's: a wordmark,
+  subtitle, links and a call to action, read by :mod:`app.sites.header`.
 
 Each value is judged on its own: one that is wrong is skipped with a reason and
 the rest still apply. Colors are then held to WCAG AA (4.5:1) in the pairs the
@@ -33,7 +36,7 @@ portal keeps its own look.
 A logo is not read yet. When it is, it belongs here as a path to an image in the
 same website, sanitised before the portal shows it.
 
-No PHI: a practice's public colors and fonts.
+No PHI: a practice's public colors, fonts and website header.
 """
 
 from __future__ import annotations
@@ -44,6 +47,8 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from .header import PracticeHeader, read_header
 
 THEME_FILE = "theme.json"
 THEME_VERSION = 1
@@ -130,6 +135,7 @@ class PracticeTheme(BaseModel):
     colors: ThemeColors = ThemeColors()
     fonts: ThemeFonts = ThemeFonts()
     radius: Radius | None = None
+    header: PracticeHeader | None = None
 
 
 class SkippedValue(BaseModel):
@@ -156,6 +162,7 @@ class _Reading:
     colors: dict[ColorName, str] = field(default_factory=dict)
     fonts: dict[FontRole, str] = field(default_factory=dict)
     radius: Radius | None = None
+    header: PracticeHeader | None = None
     skipped: list[SkippedValue] = field(default_factory=list)
 
     def skip(self, where: str, reason: str) -> None:
@@ -257,12 +264,13 @@ def _read_radius(raw: object, reading: _Reading) -> None:
 
 
 def _theme(reading: _Reading) -> PracticeTheme | None:
-    if not (reading.colors or reading.fonts or reading.radius):
+    if not (reading.colors or reading.fonts or reading.radius or reading.header):
         return None
     return PracticeTheme(
         colors=ThemeColors.model_validate(reading.colors),
         fonts=ThemeFonts(**reading.fonts),
         radius=reading.radius,
+        header=reading.header,
     )
 
 
@@ -270,8 +278,17 @@ def _unreadable(reason: str) -> ThemeReport:
     return ThemeReport(theme=None, skipped=[SkippedValue(field=THEME_FILE, reason=reason)])
 
 
-def read_theme(data: bytes | None) -> ThemeReport | None:
-    """The theme in a website's ``theme.json`` bytes; ``None`` when it has none."""
+def read_theme(
+    data: bytes | None,
+    hosts: frozenset[str] = frozenset(),
+    brands: tuple[str, ...] | None = None,
+) -> ThemeReport | None:
+    """The theme in a website's ``theme.json`` bytes; ``None`` when it has none.
+
+    *hosts* are the practice's own, the only ones a header link may name in
+    full (:mod:`app.sites.header`); with none, only paths on the website pass.
+    *brands* are the names a header may not take, the deployment's by default.
+    """
     if data is None:
         return None
     try:
@@ -288,6 +305,7 @@ def read_theme(data: bytes | None) -> ThemeReport | None:
     _hold_to_contrast(reading)
     _read_fonts(raw.get("fonts"), reading)
     _read_radius(raw.get("radius"), reading)
+    reading.header = read_header(raw.get("header"), hosts, reading.skip, brands)
     return ThemeReport(theme=_theme(reading), skipped=reading.skipped)
 
 

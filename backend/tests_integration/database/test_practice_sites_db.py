@@ -23,6 +23,7 @@ Zip reading, path rules and the routes' permission checks are unit-tested in
 
 from __future__ import annotations
 
+import json
 import os
 import uuid
 from dataclasses import dataclass, field
@@ -347,6 +348,59 @@ def test_a_broken_theme_never_stops_a_publish(session: Session, bucket: str, row
 
     assert _service(session, bucket).status(practice_id).live_version == 1
     assert portal_theme(session, practice_id) is None
+
+
+def test_a_header_links_to_the_practices_hosts_while_it_holds_them(
+    session: Session, bucket: str, rows: _Rows
+) -> None:
+    practice_id = rows.practice()
+    site = rows.host(practice_id, primary=True)
+    portal = rows.host(practice_id, purpose="portal", primary=True)
+    pending = rows.host(practice_id, status="pending", primary=False)
+    header = {
+        "wordmark": "Riverside Counseling",
+        "links": [
+            {"label": "About", "href": "/about"},
+            {"label": "Fees", "href": f"https://{site}/fees"},
+            {"label": "Soon", "href": f"https://{pending}/"},
+        ],
+        "cta": {"label": "Messages", "href": f"https://{portal}/messaging"},
+    }
+    service = _service(session, bucket)
+    service.save_draft_files(
+        practice_id, {**SITE, "theme.json": json.dumps({"header": header}).encode()}, PUBLISHER
+    )
+    session.commit()
+    draft = service.status(practice_id).draft
+    assert draft is not None
+    assert draft.theme is not None
+    assert [s.field for s in draft.theme.skipped] == ["header.links[2].href"]
+
+    service.publish_draft(practice_id, PUBLISHER)
+    session.commit()
+    theme = portal_theme(session, practice_id)
+    assert theme is not None
+    assert theme.header is not None
+    assert [link.label for link in theme.header.links] == ["About", "Fees"]
+    assert theme.header.cta is not None
+
+    # The portal host stops working: the call to action on it goes, the
+    # version keeps it.
+    with rows.engine.begin() as conn:
+        conn.execute(
+            text("UPDATE platform.practice_domains SET status = 'error' WHERE domain = :d"),
+            {"d": portal},
+        )
+    session.expire_all()
+    served = portal_theme(session, practice_id)
+    assert served is not None
+    assert served.header is not None
+    assert served.header.cta is None
+    assert [link.label for link in served.header.links] == ["About", "Fees"]
+    (version,) = service.status(practice_id).versions
+    assert version.theme is not None
+    assert version.theme.header is not None
+    assert version.theme.header.cta is not None
 
 
 def test_a_practice_with_no_website_has_no_theme(session: Session, rows: _Rows) -> None:

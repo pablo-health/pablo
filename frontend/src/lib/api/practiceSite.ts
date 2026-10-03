@@ -13,6 +13,13 @@ export interface SiteTheme {
   colors: Record<"accent" | "accentText" | "background" | "surface" | "text" | "mutedText", string | null>
   fonts: Record<"heading" | "body", string | null>
   radius: "none" | "sm" | "md" | "lg" | null
+  /** The portal header that matches the website, from theme.json's `header` block. */
+  header: {
+    wordmark: string | null
+    subtitle: string | null
+    links: { label: string; href: string }[]
+    cta: { label: string; href: string } | null
+  } | null
 }
 
 export interface SiteThemeReport {

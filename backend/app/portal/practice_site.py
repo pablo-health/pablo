@@ -1,7 +1,8 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 """What a practice's portal takes from the practice's website, on the
-practice's own host: the theme it wears, and the address it links back to.
+practice's own host: the theme it wears (its header included), and the address
+it links back to.
 
 One place decides each, so a new source is one more line here. Both come from
 the practice's live website version (:mod:`app.sites`): with nothing live, the
@@ -9,13 +10,14 @@ portal keeps its own look and links to no website. Unpublishing a website
 therefore takes both away, and rolling back brings back the theme that version
 had.
 
-No PHI: a practice's public colors, fonts and website host.
+No PHI: a practice's public colors, fonts, website header and website host.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from ..sites.header import for_hosts
 from ..sites.store import PracticeSiteStore
 from ..sites.theme import stored_theme
 
@@ -32,7 +34,14 @@ def portal_theme(session: Session, practice_id: str) -> PracticeTheme | None:
     if site is None or site.live_version is None:
         return None
     live = store.version(practice_id, site.live_version)
-    return stored_theme(live.theme) if live else None
+    theme = stored_theme(live.theme) if live else None
+    if theme is None or theme.header is None:
+        return theme
+    # A full address in the header was on one of the practice's hosts when the
+    # version was published; one it no longer holds is dropped here.
+    return theme.model_copy(
+        update={"header": for_hosts(theme.header, store.practice_hosts(practice_id))}
+    )
 
 
 def live_site_host(session: Session, practice_id: str) -> str | None:

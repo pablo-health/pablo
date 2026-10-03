@@ -20,6 +20,7 @@
  */
 
 import { type PracticeHost, type PracticeHostAnswer, practiceHostname } from "./practice-host"
+import { parsePracticeHeader } from "./practice-header"
 import { parsePracticeTheme } from "./practice-theme"
 
 export interface PracticeHostLookupOptions {
@@ -54,12 +55,16 @@ function parsePortalHost(body: unknown): PracticeHost | "unavailable" {
   if (primaryHost !== null && typeof primaryHost !== "string") return "unavailable"
   // A theme or website host that does not parse is none: the portal is still
   // served, in its own look and with no link back. The website host becomes a
-  // link, so only a plain hostname gets through.
+  // link, so only a plain hostname gets through. The header rides in the
+  // theme and is read on its own, its paths made addresses on that host.
+  const site = typeof siteHost === "string" ? practiceHostname(siteHost) : null
+  const header = typeof theme === "object" && theme !== null ? (theme as Record<string, unknown>).header : null
   return {
     slug,
     primaryHost,
     theme: parsePracticeTheme(theme),
-    siteHost: typeof siteHost === "string" ? practiceHostname(siteHost) : null,
+    siteHost: site,
+    header: parsePracticeHeader(header, site),
   }
 }
 

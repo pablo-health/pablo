@@ -25,7 +25,7 @@ describe("createPracticeHostLookup", () => {
   it("asks the backend for the host and reads the answer", async () => {
     const { lookup, fetch } = setup(() => json(200, { slug: "acme", primary_host: "portal.example.com" }))
 
-    expect(await lookup("portal.example.com")).toEqual({ slug: "acme", primaryHost: "portal.example.com", theme: null, siteHost: null })
+    expect(await lookup("portal.example.com")).toEqual({ slug: "acme", primaryHost: "portal.example.com", theme: null, siteHost: null, header: null })
     expect(fetch).toHaveBeenCalledWith(`${API}/api/portal/hosts/portal.example.com`, expect.anything())
   })
 
@@ -38,6 +38,38 @@ describe("createPracticeHostLookup", () => {
       primaryHost: null,
       theme: { colors: { accent: "#24504c" }, fonts: { body: "Inter" }, radius: "md" },
       siteHost: null,
+      header: null,
+    })
+  })
+
+  it("reads the header from the theme, its paths made addresses on the live website", async () => {
+    const theme = {
+      version: 1,
+      colors: {},
+      fonts: {},
+      header: {
+        wordmark: "Riverside Counseling",
+        subtitle: null,
+        links: [
+          { label: "About", href: "/about" },
+          { label: "Bad", href: "javascript:alert(1)" },
+        ],
+        cta: { label: "Book", href: "https://www.acme-therapy.com/book" },
+      },
+    }
+    const { lookup } = setup(() =>
+      json(200, { slug: "acme", primary_host: null, theme, site_host: "www.acme-therapy.com" }),
+    )
+
+    expect(await lookup("portal.example.com")).toMatchObject({
+      theme: null,
+      siteHost: "www.acme-therapy.com",
+      header: {
+        wordmark: "Riverside Counseling",
+        subtitle: null,
+        links: [{ label: "About", href: "https://www.acme-therapy.com/about" }],
+        cta: { label: "Book", href: "https://www.acme-therapy.com/book" },
+      },
     })
   })
 
@@ -60,7 +92,7 @@ describe("createPracticeHostLookup", () => {
       json(200, { slug: "acme", primary_host: null, theme: { colors: { accent: "red;}" }, fonts: "x" } }),
     )
 
-    expect(await lookup("portal.example.com")).toEqual({ slug: "acme", primaryHost: null, theme: null, siteHost: null })
+    expect(await lookup("portal.example.com")).toEqual({ slug: "acme", primaryHost: null, theme: null, siteHost: null, header: null })
   })
 
   it("keeps a found host for a minute, then asks again", async () => {

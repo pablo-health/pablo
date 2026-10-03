@@ -49,8 +49,9 @@ class PortalHostResponse(BaseModel):
     #: The practice's primary portal host when it is working. A request on any
     #: other of its hosts is sent there.
     primary_host: str | None
-    #: The colors and fonts the portal wears on the practice's hosts, from its
-    #: live website (:mod:`app.portal.practice_site`); ``None`` for its own look.
+    #: The colors, fonts and header the portal wears on the practice's hosts,
+    #: from its live website (:mod:`app.portal.practice_site`); ``None`` for its
+    #: own look.
     theme: PracticeTheme | None = None
     #: The host the practice's live website is served at, which the portal links
     #: back to; ``None`` with no live website.

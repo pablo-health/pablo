@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "colors": {
+    "accent": "#24504c",
+    "accentText": "#ffffff",
+    "background": "#fbf8f3",
+    "surface": "#ffffff",
+    "text": "#1d2726",
+    "mutedText": "#55605e"
+  },
+  "fonts": { "heading": "Fraunces", "body": "Inter" },
+  "radius": "lg"
+}

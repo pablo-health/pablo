@@ -115,7 +115,7 @@ describe("portalPracticeHost", () => {
   const answering = (answer: PracticeHostAnswer) => vi.fn(async () => answer)
 
   it("is the practice's own host, with its theme", async () => {
-    const found = { slug: "acme", primaryHost: null, theme: THEME, siteHost: null }
+    const found = { slug: "acme", primaryHost: null, theme: THEME, siteHost: null, header: null }
     const lookup = answering(found)
 
     expect(await portalPracticeHost("clients.acme-therapy.com", "acme", lookup, ENV)).toEqual(found)
@@ -123,7 +123,7 @@ describe("portalPracticeHost", () => {
   })
 
   it("is the practice's own host even when it has no theme", async () => {
-    const found = { slug: "acme", primaryHost: null, theme: null, siteHost: null }
+    const found = { slug: "acme", primaryHost: null, theme: null, siteHost: null, header: null }
 
     expect(await portalPracticeHost("clients.acme-therapy.com", "acme", answering(found), ENV)).toEqual(found)
   })
@@ -134,7 +134,7 @@ describe("portalPracticeHost", () => {
     ["a local address", "localhost:3000"],
     ["no host at all", null],
   ])("is not on %s, which is never looked up", async (_name, host) => {
-    const lookup = answering({ slug: "acme", primaryHost: null, theme: THEME, siteHost: null })
+    const lookup = answering({ slug: "acme", primaryHost: null, theme: THEME, siteHost: null, header: null })
 
     expect(await portalPracticeHost(host, "acme", lookup, ENV)).toBeNull()
     expect(lookup).not.toHaveBeenCalled()
@@ -143,13 +143,13 @@ describe("portalPracticeHost", () => {
   it.each([
     ["serves nothing", null],
     ["could not be asked", "unavailable"],
-    ["is another practice's", { slug: "other", primaryHost: null, theme: THEME, siteHost: null }],
+    ["is another practice's", { slug: "other", primaryHost: null, theme: THEME, siteHost: null, header: null }],
   ] as const)("is not when the host %s", async (_name, answer) => {
     expect(await portalPracticeHost("clients.acme-therapy.com", "acme", answering(answer), ENV)).toBeNull()
   })
 
   it("is not where practice hosts are not looked up at all", async () => {
-    const lookup = answering({ slug: "acme", primaryHost: null, theme: THEME, siteHost: null })
+    const lookup = answering({ slug: "acme", primaryHost: null, theme: THEME, siteHost: null, header: null })
 
     expect(await portalPracticeHost("clients.acme-therapy.com", "acme", lookup, {})).toBeNull()
   })

@@ -35,7 +35,9 @@ export default async function PortalLayout({ children, params }: LayoutProps) {
   const { practice } = await params
   const found = await portalPracticeHost((await headers()).get("host"), practice)
   return (
-    <PortalHostProvider value={{ onPracticeHost: found !== null, siteHost: found?.siteHost ?? null }}>
+    <PortalHostProvider
+      value={{ onPracticeHost: found !== null, siteHost: found?.siteHost ?? null, header: found?.header ?? null }}
+    >
       <PracticeThemeScope theme={found?.theme ?? null}>{children}</PracticeThemeScope>
     </PortalHostProvider>
   )

@@ -4,13 +4,14 @@
 
 import type { SiteTheme, SiteThemeReport } from "@/lib/api/practiceSite"
 
-/** "colors, fonts and corner style" — the parts of the portal a theme sets. */
+/** "colors, fonts, corner style and header" — the parts of the portal a theme sets. */
 export function themeParts(theme: SiteTheme | null): string | null {
   if (!theme) return null
   const parts = [
     Object.values(theme.colors).some(Boolean) && "colors",
     Object.values(theme.fonts).some(Boolean) && "fonts",
     theme.radius && "corner style",
+    theme.header && "header",
   ].filter((part): part is string => Boolean(part))
   if (parts.length === 0) return null
   return parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`

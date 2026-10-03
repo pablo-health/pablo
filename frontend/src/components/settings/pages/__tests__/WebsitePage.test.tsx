@@ -219,6 +219,7 @@ describe("WebsitePage", () => {
           colors: { ...NO_COLORS, accent: "#24504c", accentText: "#ffffff" },
           fonts: { heading: "Fraunces", body: null },
           radius: null,
+          header: null,
         },
         skipped: [{ field: "colors.text", reason: "Too little contrast with background to read easily." }],
       }),
@@ -233,6 +234,39 @@ describe("WebsitePage", () => {
     expect(within(theme).getByRole("listitem")).toHaveTextContent(
       "colors.text: Too little contrast with background to read easily.",
     )
+  })
+
+  it("says the portal takes the header, and lists each header value it leaves out and why", async () => {
+    mockGet.mockResolvedValue(
+      withTheme({
+        theme: {
+          version: 1,
+          colors: NO_COLORS,
+          fonts: { heading: null, body: null },
+          radius: null,
+          header: {
+            wordmark: "Riverside Counseling",
+            subtitle: null,
+            links: [{ label: "About", href: "/about" }],
+            cta: null,
+          },
+        },
+        skipped: [
+          { field: "header.links[1].href", reason: "Must be a page on your website, like /about." },
+          { field: "header.cta.label", reason: "Mixes alphabets in a way browsers warn about." },
+        ],
+      }),
+    )
+    renderWithProviders(<WebsitePage />)
+
+    const theme = await screen.findByTestId("website-theme")
+    expect(theme).toHaveTextContent(
+      "Once this is published, your portal on your own domain will use the header from theme.json.",
+    )
+    expect(within(theme).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+      "header.links[1].href: Must be a page on your website, like /about.",
+      "header.cta.label: Mixes alphabets in a way browsers warn about.",
+    ])
   })
 
   it("says only why when nothing in theme.json could be used", async () => {
