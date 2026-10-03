@@ -115,7 +115,8 @@ class ProviderHealth(Protocol):
     A hook for a later circuit breaker; nothing implements it yet.
     """
 
-    def order(self, legs: tuple[Leg, ...]) -> tuple[Leg, ...]: ...
+    def order(self, legs: tuple[Leg, ...]) -> tuple[Leg, ...]:
+        """Return the legs in the order to try them."""
 
 
 class LegTimeoutError(TimeoutError):
@@ -316,8 +317,6 @@ class HedgeRun[T]:
 
 __all__ = [
     "Abandon",
-    "Action",
-    "Event",
     "Fail",
     "FailureKind",
     "HedgePolicy",
