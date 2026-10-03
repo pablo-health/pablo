@@ -64,7 +64,7 @@ describe("FollowCalendarSetting", () => {
     render(<FollowCalendarSetting followedCalendarId="primary" importGranted onChanged={vi.fn()} />)
 
     const picker = await screen.findByRole("combobox", {
-      name: "Calendar to bring sessions in from",
+      name: "Bring sessions in from",
     })
     expect(Array.from((picker as HTMLSelectElement).options).map((o) => o.value)).toEqual([
       MAIN,
@@ -88,7 +88,7 @@ describe("FollowCalendarSetting", () => {
     render(<FollowCalendarSetting followedCalendarId={MAIN} importGranted onChanged={vi.fn()} />)
 
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Calendar to bring sessions in from" }),
+      await screen.findByRole("combobox", { name: "Bring sessions in from" }),
       TEAM
     )
 
@@ -148,7 +148,7 @@ describe("FollowCalendarSetting", () => {
     )
     expect(screen.queryByTestId("followed-calendar-line")).not.toBeInTheDocument()
     expect(
-      screen.getByRole("combobox", { name: "Calendar to bring sessions in from" })
+      screen.getByRole("combobox", { name: "Bring sessions in from" })
     ).not.toHaveValue(MAIN)
   })
 
@@ -164,7 +164,7 @@ describe("FollowCalendarSetting", () => {
     setFollowed.mockResolvedValue({ follow_calendar_id: TEAM })
     render(<FollowCalendarSetting followedCalendarId={MAIN} importGranted onChanged={vi.fn()} />)
     const picker = await screen.findByRole("combobox", {
-      name: "Calendar to bring sessions in from",
+      name: "Bring sessions in from",
     })
 
     await user.selectOptions(picker, TEAM)

@@ -63,6 +63,9 @@ const TITLING_COPY: Record<
 const TITLING_ORDER: EventTitling[] = ["generic", "initials", "full"]
 
 interface CalendarSessionsStepProps {
+  /** Where this step sits in the wizard's stepper, so the card and the
+   * stepper always give the same number. */
+  step: number
   status: GoogleCalendarStatus | undefined
   options: GoogleCalendarConsentOptions | undefined
   selection: GoogleCalendarSelection
@@ -81,6 +84,7 @@ interface CalendarSessionsStepProps {
 }
 
 export function CalendarSessionsStep({
+  step,
   status,
   options,
   selection,
@@ -109,7 +113,7 @@ export function CalendarSessionsStep({
   return (
     <div className="space-y-5">
       <SetupStepHead
-        eyebrow="Step 2"
+        eyebrow={`Step ${step}`}
         title="Where your sessions go"
         lede="Pick where Pablo writes your sessions. Google is only asked for what you pick here."
       />

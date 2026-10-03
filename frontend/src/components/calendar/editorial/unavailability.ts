@@ -1,20 +1,13 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 /**
- * Pure geometry + attribution helpers for shading unavailable time in the
- * day/week views. Shading is the complement of the free-slots response
- * (geometry); labels are only ever `summarize()` of a matched rule, never a
- * re-derivation of the availability engine's own semantics — see the header
- * comment on each export below for exactly what it's allowed to know.
+ * Attribution helpers for the day/week views: which rule blanks a whole day,
+ * and which rules are in force on a date. Labels are only ever `summarize()`
+ * of a matched rule. The shading itself is drawn from schedule.ts.
  */
 
-import type { AvailabilityRule, RuleType, TimeSlot } from "@/types/availability"
-import { format, minutesSinceMidnight } from "./dateUtils"
-
-export interface UnavailableGap {
-  startMin: number
-  endMin: number
-}
+import type { AvailabilityRule, RuleType } from "@/types/availability"
+import { format } from "./dateUtils"
 
 /** Rule types whose effect applies to every day rather than a specific
  * weekday or date — always "in force" once the rule exists. */
@@ -97,36 +90,4 @@ export function rulesInForceForDate(
     if (rule.rule_type === "block_specific_dates") return specificDatesMatch(rule, dateStr)
     return false
   })
-}
-
-/**
- * The complement of the free slots within [dayStartHour, dayEndHour) —
- * the bands to shade as unavailable, in minutes since midnight. Pure
- * geometry against an assumed duration and the calendar as it stood a
- * moment ago; see the module doc in EditorialDayView.tsx/EditorialWeekView.tsx
- * for why this can only ever be guidance.
- */
-export function computeUnavailableGaps(
-  slots: TimeSlot[],
-  dayStartHour: number,
-  dayEndHour: number,
-): UnavailableGap[] {
-  const windowStart = dayStartHour * 60
-  const windowEnd = dayEndHour * 60
-  const free = slots
-    .map((s) => ({
-      start: Math.min(Math.max(minutesSinceMidnight(s.start), windowStart), windowEnd),
-      end: Math.min(Math.max(minutesSinceMidnight(s.end), windowStart), windowEnd),
-    }))
-    .filter((s) => s.end > s.start)
-    .sort((a, b) => a.start - b.start)
-
-  const gaps: UnavailableGap[] = []
-  let cursor = windowStart
-  for (const f of free) {
-    if (f.start > cursor) gaps.push({ startMin: cursor, endMin: f.start })
-    cursor = Math.max(cursor, f.end)
-  }
-  if (cursor < windowEnd) gaps.push({ startMin: cursor, endMin: windowEnd })
-  return gaps
 }

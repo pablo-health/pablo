@@ -136,13 +136,13 @@ export function PatientTable() {
   return (
     <>
       <div className="space-y-4">
-        {/* Search and Add Patient */}
+        {/* Search and Add Client */}
         <div className="flex justify-between items-center gap-4">
           <div className="relative flex-1 max-w-md">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-neutral-400 w-4 h-4" />
             <Input
               type="text"
-              placeholder="Search patients..."
+              placeholder="Search clients..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="pl-10"
@@ -150,7 +150,7 @@ export function PatientTable() {
           </div>
           {!readOnly && (
             <Button onClick={handleAddPatient} className="btn-primary">
-              Add Patient
+              Add Client
             </Button>
           )}
         </div>
@@ -159,28 +159,28 @@ export function PatientTable() {
         <div className="card">
           {error ? (
             <div className="text-center py-12">
-              <p className="text-red-500">Failed to load patients. Please try again.</p>
+              <p className="text-red-500">Failed to load clients. Please try again.</p>
             </div>
           ) : isLoading ? (
             <div className="text-center py-12">
-              <p className="text-neutral-500">Loading patients...</p>
+              <p className="text-neutral-500">Loading clients...</p>
             </div>
           ) : patients.length === 0 ? (
             <div className="text-center py-12">
               <p className="text-neutral-500">
                 {searchTerm
-                  ? "No patients found matching your search."
+                  ? "No clients found matching your search."
                   : readOnly
-                    ? "No patients on file."
-                    : "No patients yet. Click \"Add Patient\" to get started."}
+                    ? "No clients on file."
+                    : "No clients yet. Click \"Add Client\" to get started."}
               </p>
             </div>
           ) : (
             <div className="overflow-x-auto">
               <p className="mb-3 text-sm text-neutral-500">
                 {patients.length < total
-                  ? `Showing ${patients.length} of ${total} patients`
-                  : `${total} ${total === 1 ? "patient" : "patients"}`}
+                  ? `Showing ${patients.length} of ${total} clients`
+                  : `${total} ${total === 1 ? "client" : "clients"}`}
               </p>
               <Table>
                 <TableHeader>
@@ -217,7 +217,7 @@ export function PatientTable() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              aria-label={`Edit patient ${patient.first_name} ${patient.last_name}`}
+                              aria-label={`Edit client ${patient.first_name} ${patient.last_name}`}
                               onClick={() => handleEditPatient(patient)}
                             >
                               <Pencil className="w-4 h-4" />
@@ -225,7 +225,7 @@ export function PatientTable() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              aria-label={`Delete patient ${patient.first_name} ${patient.last_name}`}
+                              aria-label={`Delete client ${patient.first_name} ${patient.last_name}`}
                               onClick={() => handleDeleteClick(patient)}
                             >
                               <Trash2 className="w-4 h-4 text-red-500" />
@@ -254,7 +254,7 @@ export function PatientTable() {
       <Dialog open={deleteDialogOpen} onOpenChange={handleDeleteDialogChange}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete Patient</DialogTitle>
+            <DialogTitle>Delete Client</DialogTitle>
             <DialogDescription>
               Are you sure you want to delete{" "}
               <strong>

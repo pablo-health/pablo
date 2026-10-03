@@ -39,7 +39,7 @@ export default function PatientDetailPage({ params, searchParams }: PatientDetai
             className="flex items-center gap-2 text-neutral-600 hover:text-neutral-900 transition-colors"
           >
             <ArrowLeft className="w-5 h-5" />
-            <span>Back to Patients</span>
+            <span>Back to Clients</span>
           </Link>
         </div>
         <div className="card text-center py-12">
@@ -58,7 +58,7 @@ export default function PatientDetailPage({ params, searchParams }: PatientDetai
             className="flex items-center gap-2 text-neutral-600 hover:text-neutral-900 transition-colors"
           >
             <ArrowLeft className="w-5 h-5" />
-            <span>Back to Patients</span>
+            <span>Back to Clients</span>
           </Link>
         </div>
         <div className="card text-center py-12">
@@ -79,7 +79,7 @@ export default function PatientDetailPage({ params, searchParams }: PatientDetai
           className="flex items-center gap-2 text-neutral-600 hover:text-neutral-900 transition-colors"
         >
           <ArrowLeft className="w-5 h-5" />
-          <span>Back to Patients</span>
+          <span>Back to Clients</span>
         </Link>
         <div className="flex items-center gap-2">
           <EditPatientButton patient={patient} />

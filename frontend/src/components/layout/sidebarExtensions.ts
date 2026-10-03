@@ -70,7 +70,7 @@ const baseClinicianNavigation: NavItem[] = [
   // to sign and calendar changes to settle.
   { name: "Inbox", href: "/dashboard/inbox", icon: Inbox, badge: "inbox" },
   { name: "Calendar", href: "/dashboard/calendar", icon: Calendar },
-  { name: "Patients", href: "/dashboard/patients", icon: Users },
+  { name: "Clients", href: "/dashboard/patients", icon: Users },
   { name: "Review", href: "/dashboard/sessions", icon: ClipboardCheck },
   // Only a deployment that serves the portal's refills module has requests
   // to answer, so the item is dark until FEATURES_ENABLED names it.

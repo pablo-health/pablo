@@ -214,12 +214,12 @@ export function PatientForm({ mode, patient, open, onOpenChange }: PatientFormPr
       <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
           <DialogTitle>
-            {mode === "create" ? "Add Patient" : "Edit Patient"}
+            {mode === "create" ? "Add Client" : "Edit Client"}
           </DialogTitle>
           <DialogDescription>
             {mode === "create"
-              ? "Enter patient information to create a new record."
-              : "Update patient information."}
+              ? "Enter client information to create a new record."
+              : "Update client information."}
           </DialogDescription>
         </DialogHeader>
 
@@ -374,8 +374,8 @@ export function PatientForm({ mode, patient, open, onOpenChange }: PatientFormPr
                   ? "Creating..."
                   : "Updating..."
                 : mode === "create"
-                  ? "Create Patient"
-                  : "Update Patient"}
+                  ? "Create Client"
+                  : "Update Client"}
             </Button>
           </DialogFooter>
         </form>

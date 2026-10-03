@@ -74,6 +74,7 @@ describe("CalendarClientsStep", () => {
   it("renders the pre-scan grid from the busy grant, undifferentiated", () => {
     const { container } = render(
       <CalendarClientsStep
+        step={4}
         busyWindows={GRANTED}
         proposal={null}
         scanning={false}
@@ -92,6 +93,7 @@ describe("CalendarClientsStep", () => {
   it("carries no event summary anywhere in the grid, before or after a scan", () => {
     const { container, rerender } = render(
       <CalendarClientsStep
+        step={4}
         busyWindows={GRANTED}
         proposal={null}
         scanning={false}
@@ -105,6 +107,7 @@ describe("CalendarClientsStep", () => {
 
     rerender(
       <CalendarClientsStep
+        step={4}
         busyWindows={GRANTED}
         proposal={proposal()}
         scanning={false}
@@ -125,6 +128,7 @@ describe("CalendarClientsStep", () => {
   it("sorts qualifying and non-qualifying blocks into two visually distinct end states", () => {
     render(
       <CalendarClientsStep
+        step={4}
         busyWindows={GRANTED}
         proposal={proposal()}
         scanning={false}
@@ -143,6 +147,7 @@ describe("CalendarClientsStep", () => {
     setMatchMedia(true)
     render(
       <CalendarClientsStep
+        step={4}
         busyWindows={GRANTED}
         proposal={proposal()}
         scanning={false}
@@ -166,6 +171,7 @@ describe("CalendarClientsStep", () => {
     })
     render(
       <CalendarClientsStep
+        step={4}
         busyWindows={GRANTED}
         proposal={twoSeries}
         scanning={false}
@@ -188,6 +194,7 @@ describe("CalendarClientsStep", () => {
     const onScan = vi.fn()
     render(
       <CalendarClientsStep
+        step={4}
         busyWindows={GRANTED}
         proposal={null}
         scanning={false}
@@ -206,6 +213,7 @@ describe("CalendarClientsStep", () => {
     const onSkip = vi.fn()
     render(
       <CalendarClientsStep
+        step={4}
         busyWindows={GRANTED}
         proposal={null}
         scanning={false}
@@ -222,6 +230,7 @@ describe("CalendarClientsStep", () => {
   it("renders the exact fought-over title, lede, and button copy", () => {
     render(
       <CalendarClientsStep
+        step={4}
         busyWindows={GRANTED}
         proposal={null}
         scanning={false}
@@ -243,6 +252,7 @@ describe("CalendarClientsStep", () => {
   it("renders left_alone matching the scan response", () => {
     render(
       <CalendarClientsStep
+        step={4}
         busyWindows={GRANTED}
         proposal={proposal({ left_alone: 9 })}
         scanning={false}
@@ -258,6 +268,7 @@ describe("CalendarClientsStep", () => {
   it("never asserts a category the heuristic can't verify", () => {
     const { container } = render(
       <CalendarClientsStep
+        step={4}
         busyWindows={GRANTED}
         proposal={proposal()}
         scanning={false}

@@ -130,7 +130,7 @@ function PatientCombobox({
         <ul
           id="patient-listbox"
           role="listbox"
-          aria-label="Patients"
+          aria-label="Clients"
           className="absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-[10px] border py-1 shadow-lg"
           style={{
             backgroundColor: "var(--ed-canvas-elev)",
@@ -139,7 +139,7 @@ function PatientCombobox({
         >
           {patients.length === 0 ? (
             <li className="px-3 py-2 text-[13px]" style={{ color: "var(--ed-ink-soft)" }}>
-              No patients found
+              No clients found
             </li>
           ) : (
             patients.map((p) => (

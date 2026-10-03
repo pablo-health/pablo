@@ -1,14 +1,20 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-import { describe, it, expect, vi, beforeEach } from "vitest"
+import { afterEach, describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, fireEvent } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { EditorialCalendar } from "../EditorialCalendar"
 import { ToastProvider } from "@/components/ui/Toast"
 import { ApiError } from "@/lib/api/client"
 import type { AppointmentResponse } from "@/types/scheduling"
+import type { AvailabilityRule } from "@/types/availability"
 
 const APPOINTMENTS: AppointmentResponse[] = []
+const RULES: AvailabilityRule[] = []
+
+vi.mock("@/hooks/useAvailability", () => ({
+  useAvailabilityRules: () => ({ data: { data: RULES, total: RULES.length } }),
+}))
 const updateMutate = vi.fn()
 
 vi.mock("@/hooks/useAppointments", () => ({
@@ -53,6 +59,7 @@ function defaults() {
 
 beforeEach(() => {
   APPOINTMENTS.length = 0
+  RULES.length = 0
   updateMutate.mockReset()
 })
 
@@ -350,5 +357,44 @@ describe("EditorialCalendar", () => {
     expect(
       screen.getByText("Couldn't update the appointment. Please try again."),
     ).toBeInTheDocument()
+  })
+})
+
+describe("EditorialCalendar right after setup", () => {
+  // Friday October 2 2026, 7 PM, in a week that runs Sep 27 to Oct 3.
+  const FRIDAY_EVENING = new Date(2026, 9, 2, 19, 0)
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] })
+    vi.setSystemTime(FRIDAY_EVENING)
+    for (const day of [0, 1, 2, 3]) {
+      RULES.push({
+        id: `wh-${day}`,
+        user_id: "u1",
+        rule_type: "working_hours",
+        enforcement: "hard",
+        params: { day_of_week: day, start: "09:00", end: "17:00" },
+        created_at: null,
+        updated_at: null,
+      })
+    }
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone
+
+  it("opens on the week the hours start when nothing is left in this one", () => {
+    render(<EditorialCalendar {...defaults()} skipSpentWeek timeZone={browserZone} />, {
+      wrapper: wrap(),
+    })
+    expect(screen.getByText("Oct 4 – 10")).toBeInTheDocument()
+  })
+
+  it("stays on this week on any other visit", () => {
+    render(<EditorialCalendar {...defaults()} timeZone={browserZone} />, { wrapper: wrap() })
+    expect(screen.getByText("Sep 27 – Oct 3")).toBeInTheDocument()
   })
 })

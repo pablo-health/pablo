@@ -132,13 +132,16 @@ export function FollowCalendarSetting({
         <p className="pl-6 text-xs text-muted-foreground">Loading your calendars…</p>
       ) : null}
       {following && (listed.length > 1 || unreadable) ? (
-        <div className="pl-6">
+        <div className="flex flex-col gap-1 pl-6">
+          <label htmlFor="settings-follow-calendar-choice" className="text-xs text-muted-foreground">
+            Bring sessions in from
+          </label>
           <select
-            aria-label="Calendar to bring sessions in from"
+            id="settings-follow-calendar-choice"
             value={selected ?? ""}
             disabled={saving}
             onChange={(event) => follow(event.target.value)}
-            className="rounded-md border border-border bg-card px-1.5 py-0.5 text-xs text-neutral-900"
+            className="w-fit rounded-md border border-border bg-card px-1.5 py-0.5 text-xs text-neutral-900"
           >
             {unreadable ? (
               <option value={selected ?? ""} disabled>

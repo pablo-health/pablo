@@ -84,17 +84,16 @@ const PARTIAL_SAVE_ERROR = "Some of those hours could not be saved. Try again to
  * (`UserPreferences.timezone` in backend/app/models/user.py). */
 const SERVER_DEFAULT_TIMEZONE = "America/New_York"
 
-const SKIP_CONSEQUENCE =
-  "Until Pablo knows your hours it cannot offer times to a client, send session reminders, or let anyone book themselves."
-
 interface CalendarHoursStepProps {
+  /** Its place in the setup wizard's stepper, when it is shown inside it. */
+  step?: number
   /** Rules were created — the host moves on (to Google, or the calendar). */
   onSaved: () => void
   /** Left without creating anything. */
   onSkip: () => void
 }
 
-export function CalendarHoursStep({ onSaved, onSkip }: CalendarHoursStepProps) {
+export function CalendarHoursStep({ step, onSaved, onSkip }: CalendarHoursStepProps) {
   const { data: preferences } = usePreferences()
   const savePreferences = useSavePreferences()
   const createRule = useCreateAvailabilityRule()
@@ -287,9 +286,9 @@ export function CalendarHoursStep({ onSaved, onSkip }: CalendarHoursStepProps) {
   return (
     <div className="space-y-6">
       <SetupStepHead
-        eyebrow="Your hours"
+        eyebrow={step ? `Step ${step}` : "Your hours"}
         title="When do you see clients?"
-        lede="Pablo needs your general hours before it can offer a time, remind anyone about a session, or let a client book themselves."
+        lede="Your general working hours. You can change them later in Settings."
       />
 
       {onGrid ? (
@@ -414,8 +413,6 @@ export function CalendarHoursStep({ onSaved, onSkip }: CalendarHoursStepProps) {
             />
           </div>
 
-          {parseRules.isPending ? <PabloSpinner label="Reading your hours" /> : null}
-
           <div className="flex flex-wrap gap-2">
             {EXAMPLES.map((example) => (
               <button
@@ -473,10 +470,14 @@ export function CalendarHoursStep({ onSaved, onSkip }: CalendarHoursStepProps) {
             </button>
             {skipLink}
           </div>
+
+          {/* Its height is held while nothing is being read, so the spinner
+              appearing never moves the button that was just pressed. */}
+          <div className="flex h-8 items-center" data-testid="hours-reading-slot">
+            {parseRules.isPending ? <PabloSpinner label="Reading your hours" size={24} /> : null}
+          </div>
         </div>
       )}
-
-      <p className="text-xs text-muted-foreground">{SKIP_CONSEQUENCE}</p>
     </div>
   )
 }

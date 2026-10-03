@@ -4,12 +4,8 @@
 
 import { useEffect, useMemo, useRef } from "react"
 import { format, isSameDay, isToday, startOfDay } from "date-fns"
-import { useQueries } from "@tanstack/react-query"
 import type { AppointmentResponse } from "@/types/scheduling"
-import type { AvailabilityRule, FreeSlotsResponse } from "@/types/availability"
-import { getFreeSlots } from "@/lib/api/availability"
-import { queryKeys } from "@/lib/api/queryKeys"
-import { useAuth } from "@/lib/auth-context"
+import type { AvailabilityRule } from "@/types/availability"
 import { summarize } from "@/components/settings/AvailabilitySettings"
 import {
   EditorialEventCard,
@@ -19,9 +15,10 @@ import {
 import { EditorialEventWrapper } from "./EditorialEventWrapper"
 import { OutsideSessionLayer } from "./OutsideSessionBlock"
 import type { OutsideSession } from "@/lib/api/outsideSessions"
-import { UnavailableLayer } from "./UnavailableLayer"
+import { ScheduleLayer } from "./ScheduleLayer"
 import { assignLanes } from "./laneLayout"
 import { matchWholeDayBlockRule, rulesInForceForDate } from "./unavailability"
+import { pastUntilMinute, workingRangesForDay, type MinuteRange } from "./schedule"
 import {
   DAY_END_HOUR,
   DAY_START_HOUR,
@@ -38,10 +35,12 @@ interface EditorialWeekViewProps {
   anchor: Date
   appointments: AppointmentResponse[]
   patientMap: Map<string, string>
-  /** All of the therapist's availability rules — used only to attribute a
-   * fully-blocked day and to list what's in force for each day's tooltip;
-   * the shading itself comes from the per-day free-slots fetch below. */
+  /** All of the therapist's availability rules — the working hours drawn on
+   * each day, the label on a fully-blocked day, and each day's tooltip. */
   availabilityRules: AvailabilityRule[]
+  /** The practice's zone, which the rules are kept in. Defaults to the
+   * browser's. */
+  timeZone?: string
   onSelectSlot: (start: string) => void
   /** Single click on an event → open the peek popover anchored to its rect. */
   onPeek: (appointment: AppointmentResponse, anchorRect: DOMRect) => void
@@ -68,6 +67,7 @@ export function EditorialWeekView({
   appointments,
   patientMap,
   availabilityRules,
+  timeZone,
   onSelectSlot,
   onPeek,
   onEdit,
@@ -84,24 +84,15 @@ export function EditorialWeekView({
   const hours = useMemo(() => gridHours(dayStart, dayEnd), [dayStart, dayEnd])
   const scrollerRef = useRef<HTMLDivElement>(null)
 
-  // One free-slots query per visible day (a fixed 7, so this is a stable
-  // number/order of hook calls across renders — see unavailability.ts for
-  // why shading needs the real per-day response rather than re-deriving it
-  // from `availabilityRules`).
-  const { loading: authLoading } = useAuth()
-  const dateStrs = useMemo(() => days.map((d) => format(d, "yyyy-MM-dd")), [days])
-  const freeSlotsQueries = useQueries({
-    queries: dateStrs.map((dateStr) => ({
-      queryKey: queryKeys.availability.slots(dateStr, undefined),
-      queryFn: () => getFreeSlots(dateStr),
-      staleTime: 30 * 1000,
-      enabled: !authLoading,
-    })),
-  })
-  const freeSlotsByDay = useMemo(
-    () => freeSlotsQueries.map((q) => q.data),
-    [freeSlotsQueries],
+  // The schedule, not "can a session start here" — see schedule.ts. A
+  // practice with no rules at all is never drawn as closed.
+  const configured = availabilityRules.length > 0
+  const workingByDay = useMemo(
+    () =>
+      configured ? days.map((day) => workingRangesForDay(availabilityRules, day, timeZone)) : null,
+    [configured, days, availabilityRules, timeZone],
   )
+  const now = new Date()
 
   useEffect(() => {
     if (scrollerRef.current) {
@@ -127,11 +118,7 @@ export function EditorialWeekView({
         boxShadow: "var(--ed-shadow-card)",
       }}
     >
-      <DayHeaderRow
-        days={days}
-        availabilityRules={availabilityRules}
-        freeSlotsByDay={freeSlotsByDay}
-      />
+      <DayHeaderRow days={days} availabilityRules={availabilityRules} configured={configured} />
       <div ref={scrollerRef} className="relative max-h-[68vh] overflow-y-auto">
         <div className="flex">
           <HourRail hours={hours} rowHeightPx={rowHeightPx} />
@@ -148,7 +135,8 @@ export function EditorialWeekView({
                 lanes={dayBuckets[idx]}
                 patientMap={patientMap}
                 availabilityRules={availabilityRules}
-                freeSlots={freeSlotsByDay[idx]}
+                working={workingByDay?.[idx] ?? null}
+                pastUntil={pastUntilMinute(day, now)}
                 onSelectSlot={onSelectSlot}
                 onPeek={onPeek}
                 onEdit={onEdit}
@@ -172,11 +160,11 @@ export function EditorialWeekView({
 function DayHeaderRow({
   days,
   availabilityRules,
-  freeSlotsByDay,
+  configured,
 }: {
   days: Date[]
   availabilityRules: AvailabilityRule[]
-  freeSlotsByDay: (FreeSlotsResponse | undefined)[]
+  configured: boolean
 }) {
   return (
     <div
@@ -188,11 +176,10 @@ function DayHeaderRow({
         className="ed-daycols grid flex-1"
         style={{ gridTemplateColumns: "repeat(7, minmax(0, 1fr))" }}
       >
-        {days.map((day, idx) => {
+        {days.map((day) => {
           const today = isToday(day)
-          // `configured === false` (no rules at all) must never render a
-          // blocked label — only a real whole-day-blocking rule does.
-          const configured = freeSlotsByDay[idx]?.configured === true
+          // A practice with no rules at all never shows a blocked label —
+          // only a real whole-day-blocking rule does.
           const blockRule = configured
             ? matchWholeDayBlockRule(availabilityRules, day)
             : undefined
@@ -263,7 +250,8 @@ function DayColumn({
   lanes,
   patientMap,
   availabilityRules,
-  freeSlots,
+  working,
+  pastUntil,
   onSelectSlot,
   onPeek,
   onEdit,
@@ -282,11 +270,12 @@ function DayColumn({
   lanes: ReturnType<typeof assignLanes>
   patientMap: Map<string, string>
   /** All of the therapist's availability rules — used only for the
-   * in-force tooltip; shading comes from `freeSlots`. */
+   * in-force tooltip; shading comes from `working`. */
   availabilityRules: AvailabilityRule[]
-  /** This day's free slots. Undefined while loading — renders no shading
-   * until it resolves. */
-  freeSlots?: FreeSlotsResponse
+  /** This day's working time; null when the practice has no rules. */
+  working: MinuteRange[] | null
+  /** Minutes since midnight up to which this day is already past. */
+  pastUntil: number
   onSelectSlot: (start: string) => void
   onPeek: (appointment: AppointmentResponse, anchorRect: DOMRect) => void
   onEdit: (appointment: AppointmentResponse) => void
@@ -312,10 +301,7 @@ function DayColumn({
     onSelectSlot(start.toISOString())
   }
 
-  // `configured === false` means the therapist has no rules at all — never
-  // shade an unconfigured calendar as unavailable.
-  const showUnavailable = freeSlots?.configured === true
-  const inForceLabel = showUnavailable
+  const inForceLabel = working
     ? rulesInForceForDate(availabilityRules, day).map(summarize).filter(Boolean).join(" · ")
     : ""
 
@@ -330,14 +316,13 @@ function DayColumn({
       aria-label={`${format(day, "EEEE MMM d")} schedule. Click to add appointment.`}
       title={inForceLabel || undefined}
     >
-      {freeSlots && freeSlots.configured && (
-        <UnavailableLayer
-          slots={freeSlots.slots}
-          dayStartHour={dayStart}
-          dayEndHour={dayEnd}
-          rowHeightPx={rowHeightPx}
-        />
-      )}
+      <ScheduleLayer
+        working={working}
+        pastUntil={pastUntil}
+        dayStartHour={dayStart}
+        dayEndHour={dayEnd}
+        rowHeightPx={rowHeightPx}
+      />
       {lanes.map(({ appointment, lane, laneCount }) => {
         const startMin = minutesSinceMidnight(appointment.start_at)
         const endMin = minutesSinceMidnight(appointment.end_at)

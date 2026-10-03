@@ -3,7 +3,6 @@
 import { describe, it, expect } from "vitest"
 import type { AvailabilityRule } from "@/types/availability"
 import {
-  computeUnavailableGaps,
   jsWeekdayToRuleDay,
   matchWholeDayBlockRule,
   rulesInForceForDate,
@@ -25,37 +24,6 @@ function rule(overrides: Partial<AvailabilityRule> = {}): AvailabilityRule {
     ...overrides,
   }
 }
-
-describe("computeUnavailableGaps", () => {
-  it("shades only the hours outside a partial day's free slots", () => {
-    const slots = [{ start: "2026-06-05T09:00:00", end: "2026-06-05T12:00:00" }]
-    expect(computeUnavailableGaps(slots, 7, 20)).toEqual([
-      { startMin: 7 * 60, endMin: 9 * 60 },
-      { startMin: 12 * 60, endMin: 20 * 60 },
-    ])
-  })
-
-  it("shades nothing when free slots cover the whole window", () => {
-    const slots = [{ start: "2026-06-05T07:00:00", end: "2026-06-05T20:00:00" }]
-    expect(computeUnavailableGaps(slots, 7, 20)).toEqual([])
-  })
-
-  it("shades the entire window when there are no free slots (a blocked day)", () => {
-    expect(computeUnavailableGaps([], 7, 20)).toEqual([{ startMin: 7 * 60, endMin: 20 * 60 }])
-  })
-
-  it("merges multiple free slots into the remaining gaps, in order", () => {
-    const slots = [
-      { start: "2026-06-05T14:00:00", end: "2026-06-05T15:00:00" },
-      { start: "2026-06-05T09:00:00", end: "2026-06-05T10:00:00" },
-    ]
-    expect(computeUnavailableGaps(slots, 7, 20)).toEqual([
-      { startMin: 7 * 60, endMin: 9 * 60 },
-      { startMin: 10 * 60, endMin: 14 * 60 },
-      { startMin: 15 * 60, endMin: 20 * 60 },
-    ])
-  })
-})
 
 describe("jsWeekdayToRuleDay", () => {
   it("maps date-fns/JS weekday numbering onto the rule's Monday=0 numbering", () => {

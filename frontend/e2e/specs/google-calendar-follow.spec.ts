@@ -417,7 +417,7 @@ test("choosing another calendar reads its sessions and leaves the main calendar'
 
   await page.goto("/dashboard/settings/calendars")
   await expect(page.getByLabel("Keep bringing in new sessions")).toBeChecked()
-  const picker = page.getByRole("combobox", { name: "Calendar to bring sessions in from" })
+  const picker = page.getByRole("combobox", { name: "Bring sessions in from" })
   // Main first, and the second calendar offered. (Today the list also
   // carries the calendar Pablo made for its own sessions, as Google's
   // calendar list does; whether to offer that one is the product's call,

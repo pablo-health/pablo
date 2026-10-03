@@ -388,15 +388,11 @@ describe("CalendarHoursStep", () => {
     expect(savePreferences).not.toHaveBeenCalled()
   })
 
-  it("lets the practice skip, having said what will not work", async () => {
+  it("lets the practice skip, without reciting what will not work", async () => {
     const user = userEvent.setup()
     renderStep()
 
-    expect(
-      screen.getByText(
-        "Until Pablo knows your hours it cannot offer times to a client, send session reminders, or let anyone book themselves."
-      )
-    ).toBeInTheDocument()
+    expect(screen.queryByText(/until pablo knows your hours/i)).not.toBeInTheDocument()
 
     await user.click(screen.getByRole("button", { name: "Skip for now" }))
 
@@ -421,6 +417,26 @@ describe("CalendarHoursStep while Pablo reads", () => {
     expect(screen.queryByText("Reading…")).toBeNull()
     expect(screen.getByLabelText("Tell Pablo in your own words")).toBeEnabled()
     expect(screen.getByRole("button", { name: "No appointments before 10am" })).toBeEnabled()
+  })
+
+  it("holds the bear's place below the button, so reading never moves the button", () => {
+    const { rerender } = renderStep()
+    const button = screen.getByRole("button", { name: "Check this" })
+    const slot = screen.getByTestId("hours-reading-slot")
+    // Held open while idle, and after the button rather than above it.
+    expect(slot).toBeEmptyDOMElement()
+    expect(button.compareDocumentPosition(slot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+    parseState.pending = true
+    rerender(<CalendarHoursStep onSaved={onSaved} onSkip={onSkip} />)
+
+    expect(screen.getByTestId("hours-reading-slot")).toBe(slot)
+    expect(slot).toHaveTextContent("Reading your hours")
+  })
+
+  it("takes its number from the wizard around it", () => {
+    render(<CalendarHoursStep step={1} onSaved={onSaved} onSkip={onSkip} />)
+    expect(screen.getByText("Step 1")).toBeInTheDocument()
   })
 
   it("shows only the answer to the latest sentence when a correction overtakes the first", async () => {

@@ -83,7 +83,7 @@ export function RecentlyDeletedPatients() {
     } catch {
       // The auth-mutation hook surfaces API errors; we still want a
       // user-visible toast here so the action's outcome is obvious.
-      showToast("Could not restore patient. Please try again.", "error")
+      showToast("Could not restore client. Please try again.", "error")
     }
   }
 
@@ -91,7 +91,7 @@ export function RecentlyDeletedPatients() {
     return (
       <div className="card text-center py-12">
         <p className="text-red-500">
-          Failed to load recently deleted patients. Please try again.
+          Failed to load recently deleted clients. Please try again.
         </p>
       </div>
     )
@@ -100,7 +100,7 @@ export function RecentlyDeletedPatients() {
   if (isLoading) {
     return (
       <div className="card text-center py-12">
-        <p className="text-neutral-500">Loading recently deleted patients...</p>
+        <p className="text-neutral-500">Loading recently deleted clients...</p>
       </div>
     )
   }
@@ -109,7 +109,7 @@ export function RecentlyDeletedPatients() {
     return (
       <div className="card text-center py-12">
         <p className="text-neutral-500">
-          No recently deleted patients. Deleted patients can be restored here
+          No recently deleted clients. Deleted clients can be restored here
           for 30 days; after that they are permanently removed.
         </p>
       </div>
@@ -151,7 +151,7 @@ export function RecentlyDeletedPatients() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        aria-label={`Restore patient ${patient.first_name} ${patient.last_name}`}
+                        aria-label={`Restore client ${patient.first_name} ${patient.last_name}`}
                         disabled={restore.isPending}
                         onClick={() => handleRestore(patient)}
                       >
