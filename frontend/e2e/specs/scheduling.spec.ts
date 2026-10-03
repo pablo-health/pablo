@@ -116,7 +116,7 @@ test("a clinician books and cancels an appointment", async ({ signedInPage: page
   await page.goto("/dashboard/calendar")
   await page.getByRole("button", { name: /new appointment/i }).click()
 
-  const patientPicker = page.getByRole("combobox", { name: "Patient" })
+  const patientPicker = page.getByRole("combobox", { name: "Client" })
   await patientPicker.click()
   // Search by the first name, which is unique to this patient. Every
   // patient the suite makes shares the last name, and the picker shows only

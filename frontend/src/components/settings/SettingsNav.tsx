@@ -8,6 +8,8 @@ import { Search } from "lucide-react"
 import { useMemo, useState } from "react"
 import { cn } from "@/lib/utils"
 import { useFeaturePredicate } from "@/lib/featureGates"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
+import { sayPeople } from "@/lib/peopleTerm"
 import { settingsGroups } from "./registry"
 
 const BASE = "/dashboard/settings"
@@ -23,6 +25,7 @@ export function SettingsNav() {
   const pathname = usePathname()
   const isOn = useFeaturePredicate()
   const [query, setQuery] = useState("")
+  const people = usePeopleTerm()
 
   const active = pathname?.startsWith(`${BASE}/`) ? pathname.slice(BASE.length + 1).split("/")[0] : ""
 
@@ -31,14 +34,20 @@ export function SettingsNav() {
     return settingsGroups
       .map((group) => ({
         ...group,
-        items: group.items.filter((item) => {
-          if (!isOn(item.feature)) return false
-          if (!needle) return true
-          return `${item.label} ${item.desc} ${group.label}`.toLowerCase().includes(needle)
-        }),
+        items: group.items
+          .map((item) => ({
+            ...item,
+            label: sayPeople(item.label, people),
+            desc: sayPeople(item.desc, people),
+          }))
+          .filter((item) => {
+            if (!isOn(item.feature)) return false
+            if (!needle) return true
+            return `${item.label} ${item.desc} ${group.label}`.toLowerCase().includes(needle)
+          }),
       }))
       .filter((group) => group.items.length > 0)
-  }, [query, isOn])
+  }, [query, isOn, people])
 
   return (
     <aside aria-label="Settings sections" className="flex min-h-0 flex-col border-r border-border bg-foreground/[0.03]">

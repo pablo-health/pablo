@@ -17,14 +17,16 @@
  */
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { PatientTable } from "./PatientTable"
 import { RecentlyDeletedPatients } from "./RecentlyDeletedPatients"
 
 export function PatientsView() {
+  const people = usePeopleTerm()
   return (
     <Tabs defaultValue="all" className="w-full">
       <TabsList>
-        <TabsTrigger value="all">All patients</TabsTrigger>
+        <TabsTrigger value="all">All {people.many}</TabsTrigger>
         <TabsTrigger value="recently-deleted">Recently deleted</TabsTrigger>
       </TabsList>
       <TabsContent value="all">

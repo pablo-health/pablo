@@ -4,6 +4,8 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
+import { sayPeople } from "@/lib/peopleTerm"
 import { AdminNav } from "./AdminNav"
 import { NavBadge } from "./NavBadge"
 import { PabloNote } from "./PabloNote"
@@ -24,6 +26,7 @@ interface SidebarProps {
 export function Sidebar({ isAdmin = false, hideClinicianMenus = false }: SidebarProps) {
   const pathname = usePathname()
   const isVisible = useNavVisibility()
+  const people = usePeopleTerm()
 
   const items = (
     hideClinicianMenus ? [settingsItem] : [...clinicianNavigation, settingsItem]
@@ -55,7 +58,7 @@ export function Sidebar({ isAdmin = false, hideClinicianMenus = false }: Sidebar
               `}
             >
               <item.icon className={`h-5 w-5 transition-transform duration-200 ${isActive ? "" : "group-hover:scale-110"}`} />
-              {item.name}
+              {sayPeople(item.name, people)}
               {item.badge && <NavBadge kind={item.badge} />}
             </Link>
           )

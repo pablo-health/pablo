@@ -32,3 +32,20 @@ export function peopleWords(term: PeopleTerm): PeopleWords {
   const one = term.slice(0, -1)
   return { term, one, many, One: capitalise(one), Many: capitalise(many) }
 }
+
+/**
+ * Fill `{person}`, `{Person}`, `{people}` and `{People}` in a string.
+ *
+ * For copy kept as data rather than JSX, like the settings registry and the
+ * sidebar, where a downstream build may also supply plain strings. Text with
+ * no placeholder comes back unchanged.
+ */
+export function sayPeople(text: string, people: PeopleWords): string {
+  const forms: Record<string, string> = {
+    person: people.one,
+    Person: people.One,
+    people: people.many,
+    People: people.Many,
+  }
+  return text.replace(/\{(person|Person|people|People)\}/g, (_, key: string) => forms[key])
+}

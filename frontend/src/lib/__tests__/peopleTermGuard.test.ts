@@ -47,22 +47,12 @@ const NOT_INTERFACE = ["src/lib/mockData.ts"]
  */
 const PENDING = [
   "app/(dashboard)/dashboard/calendar/page.tsx",
-  "app/(dashboard)/dashboard/patients/[id]/page.tsx",
-  "app/(dashboard)/dashboard/patients/page.tsx",
-  "src/components/calendar/AppointmentModal.tsx",
   "src/components/calendar/connect/",
   "src/components/calendar/editorial/EditorialCalendar.tsx",
   "src/components/calendar/editorial/EditorialDayView.tsx",
   "src/components/calendar/editorial/EditorialWeekView.tsx",
-  "src/components/layout/sidebarExtensions.ts",
-  "src/components/patients/PatientForm.tsx",
-  "src/components/patients/PatientTable.tsx",
-  "src/components/patients/PatientsView.tsx",
-  "src/components/patients/RecentlyDeletedPatients.tsx",
   "src/components/settings/FollowCalendarSetting.tsx",
-  "src/components/settings/ProfileSettings.tsx",
   "src/components/settings/pages/AvailabilityPage.tsx",
-  "src/components/settings/registry.ts",
 ]
 
 const SKIPPED = [...CLIENT_FACING, ...NOT_INTERFACE, ...PENDING]

@@ -15,6 +15,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { usePatientList } from "@/hooks/usePatients"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import {
   useCreateAppointment,
   useCreateRecurringAppointment,
@@ -94,6 +95,7 @@ function PatientCombobox({
   onQueryChange: (query: string) => void
   total: number
 }) {
+  const people = usePeopleTerm()
   const [open, setOpen] = useState(false)
   const selected = patients.find((p) => p.id === patientId)
   // While the field isn't focused, show the selected patient's name even if
@@ -106,13 +108,13 @@ function PatientCombobox({
       <input
         id="patient"
         role="combobox"
-        aria-label="Patient"
+        aria-label={people.One}
         aria-required="true"
         aria-expanded={open}
         aria-controls="patient-listbox"
         aria-autocomplete="list"
         autoComplete="off"
-        placeholder="Select patient…"
+        placeholder={`Select ${people.one}…`}
         className={FIELD_CLASS}
         style={fieldStyle()}
         value={displayValue}
@@ -130,7 +132,7 @@ function PatientCombobox({
         <ul
           id="patient-listbox"
           role="listbox"
-          aria-label="Patients"
+          aria-label={people.Many}
           className="absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-[10px] border py-1 shadow-lg"
           style={{
             backgroundColor: "var(--ed-canvas-elev)",
@@ -139,7 +141,7 @@ function PatientCombobox({
         >
           {patients.length === 0 ? (
             <li className="px-3 py-2 text-[13px]" style={{ color: "var(--ed-ink-soft)" }}>
-              No patients found
+              No {people.many} found
             </li>
           ) : (
             patients.map((p) => (
@@ -361,6 +363,7 @@ function AppointmentForm({
   onClose: () => void
   preferences?: UserPreferences
 }) {
+  const people = usePeopleTerm()
   const [patientQuery, setPatientQuery] = useState(appointment?.patient_name ?? "")
   const [debouncedPatientQuery, setDebouncedPatientQuery] = useState(patientQuery)
   useEffect(() => {
@@ -684,7 +687,7 @@ function AppointmentForm({
       <div className="flex flex-1 flex-col gap-5 overflow-y-auto px-[22px] py-[18px]">
         {/* Patient */}
         <div>
-          <FieldLabel>Patient</FieldLabel>
+          <FieldLabel>{people.One}</FieldLabel>
           <PatientCombobox
             patients={patients}
             patientId={patientId}

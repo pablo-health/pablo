@@ -120,7 +120,7 @@ async function fillBookingForm(page: Page, patient: Patient, date: Date): Promis
   await page.goto("/dashboard/calendar")
   await page.getByRole("button", { name: /new appointment/i }).click()
 
-  const patientPicker = page.getByRole("combobox", { name: "Patient" })
+  const patientPicker = page.getByRole("combobox", { name: "Client" })
   await patientPicker.click()
   // The first name is unique to this patient; the shared last name can match
   // more patients than the picker's first page holds.
