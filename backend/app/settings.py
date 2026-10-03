@@ -1560,6 +1560,34 @@ class Settings(BaseSettings):
             "unset, chat callers fall through to ``ai_model``."
         ),
     )
+    # Comma-separated rather than a list field, for the reason given on
+    # ``portal_modules``: a list is parsed from the environment as JSON.
+    ai_model_flash_fallbacks: str = Field(
+        default="",
+        description=(
+            "Comma-separated models an interactive structured call (parsing "
+            "availability) moves on to, in order, when ai_model_flash fails "
+            "or stalls. A provider prefix selects the provider, e.g. "
+            "``anthropic:claude-haiku-4-5``. Empty (default) keeps one model: "
+            "one attempt and one retry on it."
+        ),
+    )
+    ai_hedge_after_seconds: float | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Start the next model in line while the current one is still "
+            "running once it has taken this long; the first usable answer "
+            "wins and the other is abandoned (and still billed). Unset "
+            "(default) tries models strictly one after another."
+        ),
+    )
+
+    @property
+    def flash_fallback_models(self) -> tuple[str, ...]:
+        """``ai_model_flash_fallbacks`` split into model ids, in order."""
+        return tuple(m.strip() for m in self.ai_model_flash_fallbacks.split(",") if m.strip())
+
     note_max_output_tokens: int = Field(
         default=16384,
         description=(

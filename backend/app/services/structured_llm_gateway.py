@@ -35,6 +35,8 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from ..reliability import RetryPolicy
+
 from ..reliability import LLM_JOB, LLM_REQUEST, Idempotency, call_with_retry
 from .llm_provider import LLMProvider, strip_provider_prefix
 from .llm_telemetry import LLMSpanRequest, llm_span, usage_tokens
@@ -64,16 +66,16 @@ _MISTRAL_VERTEX_REGION = os.environ.get("MISTRAL_VERTEX_REGION", "us-central1")
 _MIN_ATTEMPT_TIMEOUT_SECONDS = 0.001
 
 
-def _attempt_timeout(timeout_seconds: float, started: float) -> float:
+def _attempt_timeout(timeout_seconds: float, started: float, policy: RetryPolicy) -> float:
     """This attempt's bound: the caller's, cut to what the policy has left.
 
-    ``call_with_retry`` checks ``LLM_REQUEST.deadline`` only before it backs
+    ``call_with_retry`` checks the policy's deadline only before it backs
     off, never against the attempt it is about to start, so a stalled first
     attempt followed by a full-length second one would run past it. Shrinking
     the second attempt to the time remaining keeps the whole call, retry
     included, inside the deadline.
     """
-    deadline = LLM_REQUEST.deadline
+    deadline = policy.deadline
     if deadline is None:
         return timeout_seconds
     remaining = deadline - (time.monotonic() - started)
@@ -131,6 +133,7 @@ class StructuredLLMGateway(ABC):
         temperature: float = 0.3,
         thinking_budget: int | None = None,
         timeout_seconds: float | None = None,
+        retry_policy: RetryPolicy | None = None,
     ) -> StructuredCompletion:
         """Issue one structured completion and return the parsed JSON.
 
@@ -152,6 +155,10 @@ class StructuredLLMGateway(ABC):
         a timed-out attempt is retried like any other transient failure, and
         the retry is cut to whatever is left of the retry policy's deadline,
         so the call as a whole never outlasts it.
+
+        ``retry_policy`` replaces the implementation's own retry preset.
+        A caller that runs its own attempts (a hedged run, where a retry
+        is another leg) passes ``SINGLE_ATTEMPT``.
 
         Raises:
             ValueError: model returned invalid JSON or violated the schema.
@@ -187,6 +194,7 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
         temperature: float = 0.3,
         thinking_budget: int | None = None,
         timeout_seconds: float | None = None,
+        retry_policy: RetryPolicy | None = None,
     ) -> StructuredCompletion:
         # Never hold a pooled DB connection across the model round-trip — the
         # caller must release_db_connection() first (raises in dev/test).
@@ -217,6 +225,7 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
                 else None
             ),
         )
+        policy = retry_policy or LLM_REQUEST
         started = time.monotonic()
 
         def attempt() -> Any:
@@ -234,7 +243,7 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
                 update={
                     "http_options": types.HttpOptions(
                         timeout=seconds_to_genai_timeout_ms(
-                            _attempt_timeout(timeout_seconds, started)
+                            _attempt_timeout(timeout_seconds, started, policy)
                         ),
                         headers={"X-Server-Timeout": str(int(_STRUCTURED_LLM_TIMEOUT_SECONDS))},
                     )
@@ -246,9 +255,7 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
 
         with llm_span(LLMSpanRequest(operation="structured", model=normalized_model)) as span:
             try:
-                response = call_with_retry(
-                    attempt, policy=LLM_REQUEST, idempotency=Idempotency.SAFE
-                )
+                response = call_with_retry(attempt, policy=policy, idempotency=Idempotency.SAFE)
             except Exception as exc:
                 logger.exception("Gemini structured completion failed")
                 raise RuntimeError(f"Structured LLM call failed: {exc}") from exc
@@ -337,6 +344,7 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
         temperature: float = 0.3,
         thinking_budget: int | None = None,
         timeout_seconds: float | None = None,
+        retry_policy: RetryPolicy | None = None,
     ) -> StructuredCompletion:
         # Never hold a pooled DB connection across the model round-trip — the
         # caller must release_db_connection() first (raises in dev/test).
@@ -375,7 +383,7 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
                         messages=[{"role": "user", "content": user_prompt}],
                         **({"timeout": timeout_seconds} if timeout_seconds is not None else {}),
                     ),
-                    policy=LLM_REQUEST,
+                    policy=retry_policy or LLM_REQUEST,
                     idempotency=Idempotency.SAFE,
                 )
             except Exception as exc:
@@ -493,6 +501,7 @@ class MistralStructuredLLMGateway(StructuredLLMGateway):
         temperature: float = 0.3,
         thinking_budget: int | None = None,
         timeout_seconds: float | None = None,
+        retry_policy: RetryPolicy | None = None,
     ) -> StructuredCompletion:
         from ..db import assert_no_held_db_connection
 
@@ -536,7 +545,7 @@ class MistralStructuredLLMGateway(StructuredLLMGateway):
                         if timeout_seconds is None
                         else self._do_request(url, payload, timeout_seconds)
                     ),
-                    policy=LLM_JOB,
+                    policy=retry_policy or LLM_JOB,
                     idempotency=Idempotency.SAFE,
                 )
             except Exception as exc:
@@ -647,6 +656,7 @@ class FakeStructuredLLMGateway(StructuredLLMGateway):
         temperature: float = 0.3,
         thinking_budget: int | None = None,
         timeout_seconds: float | None = None,
+        retry_policy: RetryPolicy | None = None,
     ) -> StructuredCompletion:
         self.calls.append(
             {
@@ -658,6 +668,7 @@ class FakeStructuredLLMGateway(StructuredLLMGateway):
                 "temperature": temperature,
                 "thinking_budget": thinking_budget,
                 "timeout_seconds": timeout_seconds,
+                "retry_policy": retry_policy,
             }
         )
         if self.responses:

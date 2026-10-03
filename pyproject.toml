@@ -250,6 +250,9 @@ ignore = [
     "PLR0913",  # Allow many keyword-only args in eval entry points (run_eval orchestration)
     "PLR2004",  # Allow magic values in smoke tests (small fixed counts)
 ]
+"backend/evals/llm_routing/*.py" = [
+    "S311",     # A seeded PRNG is what makes the routing simulation reproducible
+]
 "backend/tests_integration/**/*.py" = [
     "S101",     # Allow assert in tests
     "ARG001",   # Allow unused function args (pytest fixtures)

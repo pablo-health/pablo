@@ -220,12 +220,16 @@ HTTP_REQUEST = RetryPolicy(max_attempts=2, base_delay=0.3, max_delay=3.0, deadli
 HTTP_JOB = RetryPolicy(max_attempts=4, base_delay=1.0, max_delay=30.0, deadline=None)
 """Batch/cron HTTP calls."""
 
+SINGLE_ATTEMPT = RetryPolicy(max_attempts=1, deadline=None)
+"""No retry here: the caller owns attempts, as each leg of a hedged run does."""
+
 
 __all__ = [
     "HTTP_JOB",
     "HTTP_REQUEST",
     "LLM_JOB",
     "LLM_REQUEST",
+    "SINGLE_ATTEMPT",
     "Idempotency",
     "RetryExhaustedError",
     "RetryPolicy",
