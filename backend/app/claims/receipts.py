@@ -185,6 +185,7 @@ def announce(  # noqa: PLR0913 — the event's fields, keyword-only
     deadline_kind: DeadlineKind | None = None,
     deadline_date: datetime | None = None,
     days_left: int | None = None,
+    filing_refused: bool = False,
 ) -> None:
     """Tell the listeners something about ``claim`` needs a person.
 
@@ -208,6 +209,7 @@ def announce(  # noqa: PLR0913 — the event's fields, keyword-only
                 deadline_kind=deadline_kind,
                 deadline_date=deadline_date.date() if deadline_date else None,
                 days_left=days_left,
+                filing_refused=filing_refused,
             ),
         ),
     )
@@ -239,20 +241,35 @@ def reject(  # noqa: PLR0913 — the receipt's provenance, keyword-only
     return rejected
 
 
-def stall(pipeline: ClaimPipeline, claim: Claim, *, code: str, description: str) -> Claim:
+def stall(
+    pipeline: ClaimPipeline,
+    claim: Claim,
+    *,
+    code: str,
+    description: str,
+    filing_refused: bool = False,
+) -> Claim:
     """Nobody has heard from the next hop in time: park the claim and say so.
 
     ``description`` is the state and the age in words — never an
     identifier — and is what the reminder shows.
+
+    ``filing_refused`` is for the outbox: the claim is parked because it
+    could not be sent, not because an answer is late. The state is the same
+    — a person has to look, and it must not be sent again on its own — but
+    the receipt and the event say which of the two it was.
     """
     codes = (CodeRef(system="status", code=code, description=description),)
+    detail: dict[str, object] = {**codes_detail(codes), "reason": description}
+    if filing_refused:
+        detail["filing_refused"] = True
     stalled = move(
         pipeline,
         claim,
         "stall",
         kind="stalled",
-        detail={**codes_detail(codes), "reason": description},
+        detail=detail,
         updates={"submission_pending_at": None},
     )
-    announce(pipeline, stalled, "stalled", codes=codes)
+    announce(pipeline, stalled, "stalled", codes=codes, filing_refused=filing_refused)
     return stalled

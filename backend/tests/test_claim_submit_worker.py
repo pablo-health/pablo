@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from app.claims.clearinghouse import (
+    ClearinghouseAccessDeniedError,
     ClearinghouseInFlightError,
     ClearinghouseNotProvisionedError,
     ClearinghouseUnavailableError,
@@ -319,6 +320,36 @@ def test_a_permanent_refusal_stalls_the_claim_with_the_reason(
     assert _run(harness).stalled == 0, "a stalled claim is not retried"
 
 
+def test_a_forbidden_submission_is_announced_as_not_filed(
+    harness: PipelineHarness,
+) -> None:
+    """The clearinghouse turning the key away is a filing that did not happen.
+
+    Recorded as ``stalled`` like any refusal, but marked so nothing downstream
+    words it as a wait on a payer: the claim never reached one. Before the mark
+    existed this read "stalled at" the payer, and the follow-up wording
+    counted days the claim had supposedly been waiting.
+    """
+    created = harness.add(state="validated")
+    harness.client.answers.append(
+        ClearinghouseAccessDeniedError("Forbidden", code="ForbiddenException")
+    )
+
+    summary = _run(harness)
+
+    saved = harness.get(created.id)
+    assert summary.stalled == 1
+    assert saved.state == "stalled"
+    assert saved.submitted_at is None
+    [receipt] = harness.receipts.list_for_claim(created.id)
+    assert receipt.detail["filing_refused"] is True
+    assert receipt.detail["codes"] == [{"system": "status", "code": "access_denied"}]
+    [event] = harness.listener.events
+    assert event.kind == "stalled"
+    assert event.detail.filing_refused is True
+    assert event.to_dict()["detail"]["filing_refused"] is True
+
+
 def test_the_submission_log_carries_the_vendors_code_and_not_its_sentence(
     harness: PipelineHarness, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -358,6 +389,7 @@ def test_a_claim_the_transport_cannot_build_is_stalled_without_a_call(
     assert harness.client.submissions == []
     [event] = harness.listener.events
     assert event.detail.codes[0].code == "claim_incomplete"
+    assert event.detail.filing_refused is True
 
 
 # --- lineage and bounds ------------------------------------------------------
