@@ -10,9 +10,12 @@ import type { GoogleCalendarStatus } from "@/lib/api/scheduling"
 import { DisconnectCalendarDialog } from "./DisconnectCalendarDialog"
 
 interface CalendarConnectStepProps {
+  /** Where this step sits in the wizard's stepper, so the card and the
+   * stepper always give the same number. */
+  step: number
   status: GoogleCalendarStatus | undefined
-  /** Human summary of the current selection, so this step can say what
-   * Google's permission screen is about to ask for. */
+  /** One sentence on what connecting sets up, from the current choices
+   * under Sessions. */
   selectionSummary: string
   connecting: boolean
   disconnecting: boolean
@@ -22,6 +25,7 @@ interface CalendarConnectStepProps {
 }
 
 export function CalendarConnectStep({
+  step,
   status,
   selectionSummary,
   connecting,
@@ -36,7 +40,7 @@ export function CalendarConnectStep({
     return (
       <div className="space-y-4">
         <SetupStepHead
-          eyebrow="Step 1"
+          eyebrow={`Step ${step}`}
           title="Google Calendar is connected"
           lede="Sessions you book in Pablo show up on the calendar below."
         />
@@ -79,14 +83,12 @@ export function CalendarConnectStep({
   return (
     <div className="space-y-4">
       <SetupStepHead
-        eyebrow="Step 1"
+        eyebrow={`Step ${step}`}
         title="Connect Google Calendar"
         lede="Sign in with Google so the sessions you book in Pablo show up on your calendar."
       />
       <p className="text-sm text-muted-foreground">
-        Google&rsquo;s permission screen asks for exactly what you choose under Sessions and nothing
-        else. Right now that is {selectionSummary}. You can change it in the next step before you
-        connect.
+        {selectionSummary} You can change this in the next step.
       </p>
       <Button onClick={onConnect} disabled={connecting}>
         {connecting ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}

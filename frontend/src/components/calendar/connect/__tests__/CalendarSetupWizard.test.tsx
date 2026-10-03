@@ -835,14 +835,14 @@ describe("CalendarSetupWizard returning from Google", () => {
     expect(completeConnect).not.toHaveBeenCalled()
   })
 
-  it("moves on to the clients step after a connect, and says it is connected", async () => {
+  it("lands on Sessions after a connect, and says it is connected", async () => {
     getStatus.mockResolvedValue(CONNECTED)
     getBusyWindows.mockResolvedValue({ windows: [] })
 
     renderWizard()
 
     await waitFor(() => expect(completeConnect).toHaveBeenCalled())
-    await screen.findByText("Bring over your week")
+    await screen.findByText("Where your sessions go")
     expect(screen.getByRole("status")).toHaveTextContent("Google Calendar is connected.")
   })
 
@@ -957,5 +957,107 @@ describe("CalendarSetupWizard hosted on another page", () => {
     await user.click(await screen.findByRole("button", { name: /finish later/i }))
 
     expect(routerPush).toHaveBeenCalledWith("/dashboard/settings")
+  })
+})
+
+/** The stepper's pill for a step, and the number it shows (empty once done). */
+function stepperPill(label: string): HTMLElement {
+  const pill = screen
+    .getAllByRole("button")
+    .find((button) => button.textContent?.replace(/^\d+/, "") === label)
+  if (!pill) throw new Error(`no stepper pill for ${label}`)
+  return pill
+}
+
+function stepperNumber(label: string): string {
+  return stepperPill(label).textContent?.match(/^\d+/)?.[0] ?? "done"
+}
+
+describe("CalendarSetupWizard step numbers", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    window.sessionStorage.clear()
+    searchParams.delete("code")
+    searchParams.delete("state")
+    getStatus.mockResolvedValue(DISCONNECTED)
+    getConsentOptions.mockResolvedValue(CONSENT_OPTIONS)
+    completeConnect.mockResolvedValue({ status: "connected" })
+    getBusyWindows.mockResolvedValue({ windows: [] })
+    Object.defineProperty(window, "location", {
+      value: { origin: "https://app.example.test", assign: vi.fn() },
+      writable: true,
+    })
+  })
+
+  it("gives the card the stepper's number, with the hours step in front", async () => {
+    const user = userEvent.setup()
+    renderWizard({ withHoursStep: true })
+
+    await user.click(screen.getByRole("button", { name: "Save hours" }))
+
+    expect(await screen.findByText("Step 2")).toBeInTheDocument()
+    expect(screen.getByRole("heading", { name: "Connect Google Calendar" })).toBeInTheDocument()
+    expect(stepperNumber("Connect")).toBe("2")
+  })
+
+  it("keeps 'Your hours' and every number after it through the round trip to Google", async () => {
+    searchParams.set("code", "auth-code")
+    searchParams.set("state", "state-from-google")
+    getStatus.mockResolvedValue(CONNECTED)
+
+    // Back from Google on a fresh page load: the hours now exist.
+    renderWizard({ withHoursStep: true, hoursSaved: true })
+
+    await screen.findByText("Where your sessions go")
+    expect(screen.getByText("Step 3")).toBeInTheDocument()
+    expect(stepperNumber("Sessions")).toBe("3")
+    expect(stepperNumber("Your clients")).toBe("4")
+    expect(stepperNumber("Your hours")).toBe("done")
+    expect(stepperNumber("Connect")).toBe("done")
+  })
+
+  it("does not tick Sessions off before it has been shown", async () => {
+    searchParams.set("code", "auth-code")
+    searchParams.set("state", "state-from-google")
+    getStatus.mockResolvedValue(CONNECTED)
+
+    renderWizard({ withHoursStep: true, hoursSaved: true })
+
+    await screen.findByText("Where your sessions go")
+    expect(stepperNumber("Sessions")).not.toBe("done")
+  })
+
+  it("opens on Connect, with the hours shown as saved, when they already exist", async () => {
+    const user = userEvent.setup()
+    renderWizard({ withHoursStep: true, hoursSaved: true })
+
+    expect(
+      await screen.findByRole("heading", { name: "Connect Google Calendar" })
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId("calendar-hours-step")).not.toBeInTheDocument()
+
+    await user.click(stepperPill("Your hours"))
+    expect(screen.getByRole("heading", { name: "Your hours are saved" })).toBeInTheDocument()
+    expect(screen.queryByTestId("calendar-hours-step")).not.toBeInTheDocument()
+  })
+
+  it("titles the page for the whole setup, not for Google, while it asks for hours", () => {
+    renderWizard({ withHoursStep: true })
+
+    expect(screen.getByRole("heading", { name: "Set up your calendar" })).toBeInTheDocument()
+    expect(screen.queryByRole("heading", { name: "Google Calendar" })).not.toBeInTheDocument()
+  })
+
+  it("only promises what the next step really offers", async () => {
+    renderWizard()
+
+    await screen.findByRole("heading", { name: "Connect Google Calendar" })
+    expect(screen.queryByText(/before you connect/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/permission screen/i)).not.toBeInTheDocument()
+    expect(
+      screen.getByText(
+        "Pablo will put your sessions on a calendar it makes for them and keep clear of your busy times. You can change this in the next step."
+      )
+    ).toBeInTheDocument()
   })
 })

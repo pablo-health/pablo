@@ -60,6 +60,7 @@
   --ed-accent: #E8A849;
   --ed-shadow-modal: 0 24px 60px rgba(44, 24, 16, 0.22);
   --ed-today-tint: rgba(232, 168, 73, 0.06);
+  --ed-past-wash: rgba(240, 230, 216, 0.55);
   --ed-pill-hover: rgba(44, 24, 16, 0.05);
   --ed-cta-bg: #3D2B1F;
   --ed-cta-fg: #FDF6EC;
@@ -87,6 +88,7 @@
   --ed-hairline: rgba(245, 241, 234, 0.08);
   --ed-hairline-strong: rgba(245, 241, 234, 0.16);
   --ed-today-tint: rgba(122, 158, 126, 0.10);
+  --ed-past-wash: rgba(10, 8, 6, 0.32);
   --ed-pill-hover: rgba(232, 168, 73, 0.14);
   --ed-field-bg: #2E2820;
   --ed-field-border: rgba(245, 241, 234, 0.16);
@@ -275,4 +277,12 @@
     transparent 1px,
     transparent 7px
   );
+}
+
+/* Time already gone — a flat wash of the canvas over the day, with no
+ * texture, so a past working day reads as worked rather than closed. Drawn
+ * over the out-of-hours hatching (which shows through it) and behind event
+ * cards. */
+.ed-past {
+  background-color: var(--ed-past-wash);
 }

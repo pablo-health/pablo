@@ -42,6 +42,7 @@ function proposal(series_: ProposedSeries[]): ImportProposal {
 
 function baseProps() {
   return {
+    step: 5,
     checked: {},
     onToggle: vi.fn(),
     clientFor: {} as Record<string, string | null>,

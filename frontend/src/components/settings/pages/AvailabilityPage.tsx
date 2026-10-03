@@ -26,7 +26,7 @@ export function AvailabilityPage() {
     <>
       <SettingsCard
         title="Working hours"
-        description="When patients can be booked. Your calendar highlights these hours and opens at your earliest start. There is no separate display setting."
+        description="When patients can be booked. Your calendar highlights these hours and opens at your earliest start."
       >
         <WorkingHoursGrid />
       </SettingsCard>

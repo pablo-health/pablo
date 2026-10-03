@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef } from "react"
 import { format, isSameDay, isToday, startOfDay } from "date-fns"
 import type { AppointmentResponse } from "@/types/scheduling"
-import type { AvailabilityRule, FreeSlotsResponse } from "@/types/availability"
+import type { AvailabilityRule } from "@/types/availability"
 import { summarize } from "@/components/settings/AvailabilitySettings"
 import {
   EditorialEventCard,
@@ -15,9 +15,10 @@ import {
 import { EditorialEventWrapper } from "./EditorialEventWrapper"
 import { OutsideSessionLayer } from "./OutsideSessionBlock"
 import type { OutsideSession } from "@/lib/api/outsideSessions"
-import { UnavailableLayer } from "./UnavailableLayer"
+import { ScheduleLayer } from "./ScheduleLayer"
 import { assignLanes } from "./laneLayout"
 import { rulesInForceForDate } from "./unavailability"
+import { pastUntilMinute, workingRangesForDay } from "./schedule"
 import {
   DAY_END_HOUR,
   DAY_START_HOUR,
@@ -33,14 +34,12 @@ interface EditorialDayViewProps {
   anchor: Date
   appointments: AppointmentResponse[]
   patientMap: Map<string, string>
-  /** All of the therapist's availability rules — used only to attribute a
-   * fully-blocked day and to list what's in force for the tooltip; the
-   * shading itself comes from `freeSlots`, not from these. */
+  /** All of the therapist's availability rules — the working hours drawn on
+   * the day and what's in force for the tooltip. */
   availabilityRules: AvailabilityRule[]
-  /** Free slots for `anchor`, at whatever duration the caller queried with.
-   * Undefined while loading — renders no shading until it resolves, rather
-   * than flashing "fully unavailable". */
-  freeSlots?: FreeSlotsResponse
+  /** The practice's zone, which the rules are kept in. Defaults to the
+   * browser's. */
+  timeZone?: string
   onSelectSlot: (start: string) => void
   /** Single click on an event → open the peek popover anchored to its rect. */
   onPeek: (appointment: AppointmentResponse, anchorRect: DOMRect) => void
@@ -66,7 +65,7 @@ export function EditorialDayView({
   appointments,
   patientMap,
   availabilityRules,
-  freeSlots,
+  timeZone,
   onSelectSlot,
   onPeek,
   onEdit,
@@ -96,18 +95,22 @@ export function EditorialDayView({
     return assignLanes(dayAppts)
   }, [appointments, anchor])
 
-  // `configured === false` means the therapist has no rules at all — never
-  // shade an unconfigured calendar as unavailable.
-  const showUnavailable = freeSlots?.configured === true
+  // The schedule, not "can a session start here" — see schedule.ts. A
+  // practice with no rules at all is never drawn as closed.
+  const configured = availabilityRules.length > 0
+  const working = useMemo(
+    () => (configured ? workingRangesForDay(availabilityRules, anchor, timeZone) : null),
+    [configured, availabilityRules, anchor, timeZone],
+  )
   const inForceLabel = useMemo(
     () =>
-      showUnavailable
+      configured
         ? rulesInForceForDate(availabilityRules, anchor)
             .map(summarize)
             .filter(Boolean)
             .join(" · ")
         : "",
-    [showUnavailable, availabilityRules, anchor],
+    [configured, availabilityRules, anchor],
   )
 
   const handleSlotClick = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -156,14 +159,13 @@ export function EditorialDayView({
             aria-label={`${format(anchor, "EEEE MMM d")} schedule. Click to add appointment.`}
             title={inForceLabel || undefined}
           >
-            {freeSlots && freeSlots.configured && (
-              <UnavailableLayer
-                slots={freeSlots.slots}
-                dayStartHour={dayStart}
-                dayEndHour={dayEnd}
-                rowHeightPx={rowHeightPx}
-              />
-            )}
+            <ScheduleLayer
+              working={working}
+              pastUntil={pastUntilMinute(anchor, new Date())}
+              dayStartHour={dayStart}
+              dayEndHour={dayEnd}
+              rowHeightPx={rowHeightPx}
+            />
             {lanes.map(({ appointment, lane, laneCount }) => {
               const startMin = minutesSinceMidnight(appointment.start_at)
               const endMin = minutesSinceMidnight(appointment.end_at)

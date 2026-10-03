@@ -144,9 +144,11 @@ async function connectThroughSetup(page: Page, { follow }: { follow: boolean }):
   await page.goto(SETUP_PATH)
   await page.getByRole("button", { name: "Connect Google Calendar" }).click()
   // Google (the stand-in) sends the browser back with a code; the page
-  // exchanges it and moves on to the clients step.
+  // exchanges it and lands on Sessions, where the choices can still change.
   await expect(page.getByText("Google Calendar is connected.")).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Where your sessions go" })).toBeVisible()
   expect(await google.grant()).toEqual([SCOPE_APP_CALENDAR, SCOPE_FREEBUSY].sort())
+  await page.getByRole("button", { name: "Continue", exact: true }).click()
 
   await page.getByRole("button", { name: "Look at my week" }).click()
   // Reading events is a second grant, asked for only now, and added to
@@ -417,7 +419,7 @@ test("choosing another calendar reads its sessions and leaves the main calendar'
 
   await page.goto("/dashboard/settings/calendars")
   await expect(page.getByLabel("Keep bringing in new sessions")).toBeChecked()
-  const picker = page.getByRole("combobox", { name: "Calendar to bring sessions in from" })
+  const picker = page.getByRole("combobox", { name: "Bring sessions in from" })
   // Main first, and the second calendar offered. (Today the list also
   // carries the calendar Pablo made for its own sessions, as Google's
   // calendar list does; whether to offer that one is the product's call,

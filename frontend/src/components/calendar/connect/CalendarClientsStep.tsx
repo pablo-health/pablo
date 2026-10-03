@@ -31,6 +31,9 @@ function hourLabel(hour: number): string {
 }
 
 interface CalendarClientsStepProps {
+  /** Where this step sits in the wizard's stepper, so the card and the
+   * stepper always give the same number. */
+  step: number
   busyWindows: BusyWindowsGranted | BusyWindowsNotGranted | undefined
   proposal: ImportProposal | null
   scanning: boolean
@@ -46,6 +49,7 @@ interface CalendarClientsStepProps {
 }
 
 export function CalendarClientsStep({
+  step,
   busyWindows,
   proposal,
   scanning,
@@ -80,7 +84,7 @@ export function CalendarClientsStep({
   return (
     <div className="space-y-4">
       <SetupStepHead
-        eyebrow="Step 3 · one-time look · optional"
+        eyebrow={`Step ${step} · one-time look · optional`}
         title="Bring over your week"
         lede="Pablo looks at the rhythm of your calendar - events that repeat weekly or every other week, the way sessions do. It can't tell a client from a standing meeting, so nothing is added until you say so."
       />
