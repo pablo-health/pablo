@@ -184,7 +184,7 @@ export function EmailSignIn({ slug, captchaSiteKey, note, testId }: EmailSignInP
             </Button>
           </form>
 
-          <p className="mt-6 text-sm text-neutral-600">New clients get their first link from the practice.</p>
+          <p className="mt-6 text-sm text-neutral-600">New here? Your practice will send you an invitation.</p>
         </>
       )}
     </CardShell>

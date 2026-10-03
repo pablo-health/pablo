@@ -59,7 +59,7 @@ describe("signing in from the portal's landing", () => {
     const card = await screen.findByTestId("portal-shell-no-session")
     expect(screen.getByRole("heading", { name: "Sign in" })).toBeTruthy()
     expect(card).toHaveTextContent("Enter your email and we'll send you a link to sign in.")
-    expect(card).toHaveTextContent("New clients get their first link from the practice.")
+    expect(card).toHaveTextContent("New here? Your practice will send you an invitation.")
     expect(screen.getByRole("button", { name: "Email me a sign-in link" })).toBeTruthy()
     expect(screen.queryByText("Check your email")).toBeNull()
     expect(screen.queryByTestId("portal-shell-expired-note")).toBeNull()

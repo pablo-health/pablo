@@ -4,8 +4,11 @@
 
 import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools"
+import { usePathname } from "next/navigation"
 import { useEffect, useState } from "react"
+import { PortalBootLoading } from "@/components/portal-shell/PortalBootLoading"
 import { ConfigProvider } from "@/lib/config-provider"
+import { isUnder } from "@/lib/portal-host/routing"
 import { AuthProvider } from "@/lib/auth-context"
 import { ToastProvider, useToast } from "@/components/ui/Toast"
 import { ThemeProvider } from "@/components/theme/ThemeProvider"
@@ -13,7 +16,14 @@ import { installGlobalErrorReporter } from "@/lib/feErrorReporter"
 import { OidcSessionProviderWrapper } from "@/lib/auth/oidc/SessionProviderWrapper"
 import { outerProviderWrappers } from "./providers.extensions"
 
-export function Providers({ children }: { children: React.ReactNode }) {
+export function Providers({
+  children,
+  portalOnlyHost = false,
+}: {
+  children: React.ReactNode
+  /** The request's host serves nothing but the patient portal (`servesOnlyPortal`). */
+  portalOnlyHost?: boolean
+}) {
   useEffect(() => {
     installGlobalErrorReporter()
   }, [])
@@ -23,9 +33,17 @@ export function Providers({ children }: { children: React.ReactNode }) {
   // toast surface components already use, with no per-call-site opt-in.
   return (
     <ToastProvider>
-      <QueryProviders>{children}</QueryProviders>
+      <QueryProviders portalOnlyHost={portalOnlyHost}>{children}</QueryProviders>
     </ToastProvider>
   )
+}
+
+/**
+ * Whether the page being loaded is the patient portal: anywhere on a host that
+ * serves only the portal, or under `/portal` on this deployment's own host.
+ */
+export function isPortalPage(pathname: string | null, portalOnlyHost: boolean): boolean {
+  return portalOnlyHost || (pathname !== null && isUnder(pathname, "/portal"))
 }
 
 /**
@@ -50,8 +68,9 @@ export function createAppQueryClient(showToast: (message: string) => void): Quer
   })
 }
 
-function QueryProviders({ children }: { children: React.ReactNode }) {
+function QueryProviders({ children, portalOnlyHost }: { children: React.ReactNode; portalOnlyHost: boolean }) {
   const { showToast } = useToast()
+  const pathname = usePathname()
 
   const [queryClient] = useState(() => createAppQueryClient(showToast))
 
@@ -59,7 +78,8 @@ function QueryProviders({ children }: { children: React.ReactNode }) {
   // `oidc` — the Firebase path is unchanged at runtime.
   const core = (
     <OidcSessionProviderWrapper>
-      <ConfigProvider>
+      {/* A portal visitor waits on the portal's own quiet screen, not the clinician app's. */}
+      <ConfigProvider loading={isPortalPage(pathname, portalOnlyHost) ? <PortalBootLoading /> : undefined}>
         <AuthProvider>
           <ThemeProvider>
             {children}
