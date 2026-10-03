@@ -34,6 +34,8 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from ..reliability import RetryPolicy
+
 from ..reliability import LLM_JOB, LLM_REQUEST, Idempotency, call_with_retry
 from .llm_provider import LLMProvider, strip_provider_prefix
 from .llm_telemetry import LLMSpanRequest, llm_span, usage_tokens
@@ -109,6 +111,7 @@ class StructuredLLMGateway(ABC):
         temperature: float = 0.3,
         thinking_budget: int | None = None,
         timeout_seconds: float | None = None,
+        retry_policy: RetryPolicy | None = None,
     ) -> StructuredCompletion:
         """Issue one structured completion and return the parsed JSON.
 
@@ -128,6 +131,10 @@ class StructuredLLMGateway(ABC):
         client's generous default. An interactive caller that would rather
         retry a stalled call than wait out the default passes a short one;
         a timed-out attempt is retried like any other transient failure.
+
+        ``retry_policy`` replaces the implementation's own retry preset.
+        A caller that runs its own attempts (a hedged run, where a retry
+        is another leg) passes ``SINGLE_ATTEMPT``.
 
         Raises:
             ValueError: model returned invalid JSON or violated the schema.
@@ -163,6 +170,7 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
         temperature: float = 0.3,
         thinking_budget: int | None = None,
         timeout_seconds: float | None = None,
+        retry_policy: RetryPolicy | None = None,
     ) -> StructuredCompletion:
         # Never hold a pooled DB connection across the model round-trip — the
         # caller must release_db_connection() first (raises in dev/test).
@@ -216,7 +224,7 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
                         contents=user_prompt,
                         config=config,
                     ),
-                    policy=LLM_REQUEST,
+                    policy=retry_policy or LLM_REQUEST,
                     idempotency=Idempotency.SAFE,
                 )
             except Exception as exc:
@@ -307,6 +315,7 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
         temperature: float = 0.3,
         thinking_budget: int | None = None,
         timeout_seconds: float | None = None,
+        retry_policy: RetryPolicy | None = None,
     ) -> StructuredCompletion:
         # Never hold a pooled DB connection across the model round-trip — the
         # caller must release_db_connection() first (raises in dev/test).
@@ -345,7 +354,7 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
                         messages=[{"role": "user", "content": user_prompt}],
                         **({"timeout": timeout_seconds} if timeout_seconds is not None else {}),
                     ),
-                    policy=LLM_REQUEST,
+                    policy=retry_policy or LLM_REQUEST,
                     idempotency=Idempotency.SAFE,
                 )
             except Exception as exc:
@@ -463,6 +472,7 @@ class MistralStructuredLLMGateway(StructuredLLMGateway):
         temperature: float = 0.3,
         thinking_budget: int | None = None,
         timeout_seconds: float | None = None,
+        retry_policy: RetryPolicy | None = None,
     ) -> StructuredCompletion:
         from ..db import assert_no_held_db_connection
 
@@ -506,7 +516,7 @@ class MistralStructuredLLMGateway(StructuredLLMGateway):
                         if timeout_seconds is None
                         else self._do_request(url, payload, timeout_seconds)
                     ),
-                    policy=LLM_JOB,
+                    policy=retry_policy or LLM_JOB,
                     idempotency=Idempotency.SAFE,
                 )
             except Exception as exc:
@@ -617,6 +627,7 @@ class FakeStructuredLLMGateway(StructuredLLMGateway):
         temperature: float = 0.3,
         thinking_budget: int | None = None,
         timeout_seconds: float | None = None,
+        retry_policy: RetryPolicy | None = None,
     ) -> StructuredCompletion:
         self.calls.append(
             {
@@ -628,6 +639,7 @@ class FakeStructuredLLMGateway(StructuredLLMGateway):
                 "temperature": temperature,
                 "thinking_budget": thinking_budget,
                 "timeout_seconds": timeout_seconds,
+                "retry_policy": retry_policy,
             }
         )
         if self.responses:
