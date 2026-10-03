@@ -16,11 +16,14 @@ Only reachable through a setting that refuses to load outside
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
 from .structured_llm_gateway import StructuredCompletion, StructuredLLMGateway
+
+if TYPE_CHECKING:
+    from ..reliability import RetryPolicy
 
 _TIMEOUT_SECONDS = 10.0
 
@@ -41,7 +44,11 @@ class HttpStructuredLLMGateway(StructuredLLMGateway):
         max_output_tokens: int,
         temperature: float = 0.3,
         thinking_budget: int | None = None,
+        timeout_seconds: float | None = None,
+        retry_policy: RetryPolicy | None = None,
     ) -> StructuredCompletion:
+        # One attempt, always: the stand-in answers at once or not at all.
+        del retry_policy
         response = httpx.post(
             self._url,
             json={
@@ -53,7 +60,7 @@ class HttpStructuredLLMGateway(StructuredLLMGateway):
                 "temperature": temperature,
                 "thinking_budget": thinking_budget,
             },
-            timeout=_TIMEOUT_SECONDS,
+            timeout=timeout_seconds or _TIMEOUT_SECONDS,
         )
         response.raise_for_status()
         body = response.json()
