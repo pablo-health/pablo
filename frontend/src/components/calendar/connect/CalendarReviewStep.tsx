@@ -39,6 +39,9 @@ function whenLabel(series: ProposedSeries): string {
 }
 
 interface CalendarReviewStepProps {
+  /** Where this step sits in the wizard's stepper, so the card and the
+   * stepper always give the same number. */
+  step: number
   proposal: ImportProposal | null
   checked: Record<string, boolean>
   onToggle: (candidateKey: string) => void
@@ -62,6 +65,7 @@ interface CalendarReviewStepProps {
 }
 
 export function CalendarReviewStep({
+  step,
   proposal,
   checked,
   onToggle,
@@ -119,7 +123,7 @@ export function CalendarReviewStep({
     return (
       <div className="space-y-4">
         <SetupStepHead
-          eyebrow="Step 4 · you decide"
+          eyebrow={`Step ${step} · you decide`}
           title="Which of these are clients?"
           lede="Look at your week first — this list fills in once Pablo has scanned it."
         />
@@ -154,7 +158,7 @@ export function CalendarReviewStep({
   return (
     <div className="space-y-4">
       <SetupStepHead
-        eyebrow="Step 4 · you decide"
+        eyebrow={`Step ${step} · you decide`}
         title="Which of these are clients?"
         lede={`These ${total} repeat on a weekly or biweekly rhythm. Check the ones that are clients. Uncheck standups, classes, and anything else that just happens to repeat.`}
       />

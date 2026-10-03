@@ -46,7 +46,9 @@ vi.mock("@/lib/api/scheduling", () => ({
 // The calendar and the sheet are their own components with their own
 // tests; here they only need to be tellable apart from the wizard.
 vi.mock("@/components/calendar/editorial", () => ({
-  EditorialCalendar: () => <div data-testid="editorial-calendar" />,
+  EditorialCalendar: ({ skipSpentWeek }: { skipSpentWeek?: boolean }) => (
+    <div data-testid="editorial-calendar" data-skip-spent-week={String(Boolean(skipSpentWeek))} />
+  ),
 }))
 vi.mock("@/components/calendar/AppointmentModal", () => ({
   AppointmentModal: () => null,
@@ -65,18 +67,21 @@ vi.mock("@/components/calendar/connect/CalendarSetupWizard", () => ({
     onFinishLater,
     onDone,
     withHoursStep,
+    hoursSaved,
     onHoursAnswered,
   }: {
     returnPath?: string
     onFinishLater?: () => void
     onDone?: () => void
     withHoursStep?: boolean
+    hoursSaved?: boolean
     onHoursAnswered?: () => void
   }) => (
     <div
       data-testid="calendar-setup-wizard"
       data-return-path={returnPath}
       data-with-hours-step={String(Boolean(withHoursStep))}
+      data-hours-saved={String(Boolean(hoursSaved))}
     >
       <button onClick={onFinishLater}>Finish later</button>
       <button onClick={onDone}>Done</button>
@@ -231,17 +236,19 @@ describe("CalendarPage hours capture", () => {
     expect(screen.queryByTestId("calendar-hours-step")).not.toBeInTheDocument()
   })
 
-  it("leaves the wizard's own gate alone when the practice already has rules", () => {
+  it("keeps the hours step in the wizard, already saved, when the practice has rules", () => {
+    // How the browser comes back from Google: a fresh load, by when the
+    // hours step has done its work. The step keeps its place in the
+    // stepper, so nothing after it is renumbered.
     runtimeConfig.googleCalendarEnabled = true
     preferencesState.data = { ...PREFERENCES }
     rulesState.data = { data: [WORKING_HOURS_RULE], total: 1 }
 
     render(<CalendarPage />)
 
-    expect(screen.getByTestId("calendar-setup-wizard")).toHaveAttribute(
-      "data-with-hours-step",
-      "false"
-    )
+    const wizard = screen.getByTestId("calendar-setup-wizard")
+    expect(wizard).toHaveAttribute("data-with-hours-step", "true")
+    expect(wizard).toHaveAttribute("data-hours-saved", "true")
   })
 
   it("skipping shows the calendar without recording anything", async () => {
