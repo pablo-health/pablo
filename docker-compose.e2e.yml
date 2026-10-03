@@ -127,6 +127,11 @@ services:
       # the provider. The URL a spec types still has to pass the provider's
       # host and path allowlist; only the fetch is redirected, same path.
       - ICAL_FEED_BASE_URL=http://fake-ical:8082
+      # A sentence describing a practice's hours is read by the stand-in
+      # below (scripts/fake_llm.py), which gives the same reading every run,
+      # rather than by a model this stack has no credentials for. Honoured
+      # by the backend only under ENVIRONMENT=development.
+      - AVAILABILITY_PARSE_BASE_URL=http://fake-llm:8083
       - CLEARINGHOUSE_WEBHOOK_SECRET=e2e-clearinghouse-webhook-shared-secret
       # The practice's tax id is stored encrypted under this key, and filing a
       # claim needs a billing profile, so without it saving one is a 500. The
@@ -264,6 +269,8 @@ services:
       fake-nppes:
         condition: service_healthy
       fake-ical:
+        condition: service_healthy
+      fake-llm:
         condition: service_healthy
       fake-mail:
         condition: service_healthy
@@ -621,6 +628,24 @@ services:
           "python",
           "-c",
           "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://localhost:8082/_fake/health').getcode() == 200 else 1)",
+        ]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    networks:
+      - e2e-net
+
+  fake-llm:
+    build:
+      context: .
+      dockerfile: scripts/e2e/fake-llm.Dockerfile
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://localhost:8083/_fake/health').getcode() == 200 else 1)",
         ]
       interval: 3s
       timeout: 3s

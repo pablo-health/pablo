@@ -25,7 +25,15 @@ import type { Browser, BrowserContext, BrowserContextOptions, Page } from "@play
 import { ApiClient, ensureEmulatorUser } from "./api"
 import { BASE_URL } from "./stack"
 
-export type FreshPracticeName = "yes" | "no" | "messages" | "feed" | "domains" | "hosted" | "reserved"
+export type FreshPracticeName =
+  | "yes"
+  | "no"
+  | "messages"
+  | "feed"
+  | "domains"
+  | "hosted"
+  | "reserved"
+  | "hours"
 
 const PASSWORD = "E2e-fresh-practice-password-long-enough"
 

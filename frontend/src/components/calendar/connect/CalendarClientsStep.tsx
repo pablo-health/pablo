@@ -2,11 +2,12 @@
 
 "use client"
 
-import { Fragment, useSyncExternalStore } from "react"
+import { Fragment } from "react"
 import { Check, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { SetupStepHead } from "@/components/setup"
+import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion"
 import type { BusyWindowsGranted, BusyWindowsNotGranted, ImportProposal } from "@/lib/api/scheduling"
 import { busyWindowsGranted } from "@/lib/api/scheduling"
 import { GRID_HOURS, GRID_WEEKDAYS, busyCellKeys, cellKey, seriesCellKeys } from "./weekGrid"
@@ -27,23 +28,6 @@ const DAY_LABELS: Record<(typeof GRID_WEEKDAYS)[number], string> = {
 function hourLabel(hour: number): string {
   if (hour === 12) return "12"
   return hour > 12 ? String(hour - 12) : String(hour)
-}
-
-// Reads a client-only browser feature the same way OnboardingPasskeyForm
-// reads WebAuthn support: false on the server, the real value once mounted,
-// no setState-in-effect and no hydration mismatch.
-function subscribe(): () => void {
-  return () => {}
-}
-function reducedMotionSnapshot(): boolean {
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches
-}
-function reducedMotionServerSnapshot(): boolean {
-  return false
-}
-
-function usePrefersReducedMotion(): boolean {
-  return useSyncExternalStore(subscribe, reducedMotionSnapshot, reducedMotionServerSnapshot)
 }
 
 interface CalendarClientsStepProps {

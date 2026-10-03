@@ -550,6 +550,12 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "GOOGLE_CALENDAR_BASE_URL must not be set outside ENVIRONMENT=development"
                 )
+            if self.availability_parse_base_url:
+                # Replaces the model with whatever answers at that address,
+                # and the sentence a clinician types goes there with it.
+                raise ValueError(
+                    "AVAILABILITY_PARSE_BASE_URL must not be set outside ENVIRONMENT=development"
+                )
         return self
 
     # Firebase Blocking Function OIDC Verification
@@ -1696,6 +1702,17 @@ class Settings(BaseSettings):
             "host and path allowlist as typed; only the fetch is redirected, "
             "keeping the validated path. Unset (the ordinary case) means the "
             "provider itself."
+        ),
+    )
+
+    availability_parse_base_url: str | None = Field(
+        default=None,
+        description=(
+            "Origin that answers availability-sentence parses instead of the "
+            "model — the end-to-end harness's stand-in, which returns a fixed "
+            "reading for each sentence a spec types. The answer still goes "
+            "through the same validation a model's does. Unset (the ordinary "
+            "case) means the model."
         ),
     )
 
