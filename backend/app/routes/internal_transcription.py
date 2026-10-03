@@ -42,7 +42,7 @@ from ..db import (
     publish_request_session,
     restore_request_session,
 )
-from ..db.models import TherapySessionRow
+from ..db.models import NoteRow, TherapySessionRow
 from ..db.platform_models import PlatformUserRow, PracticeRow
 
 # Optional billing extension point, mirroring the trial gate in
@@ -72,6 +72,7 @@ from ..services import (
 )
 from ..services.assemblyai_transcription_service import (
     AssemblyAiTranscriptionService,
+    is_one_sided,
     sniff_audio_container,
 )
 from ..services.cloud_tasks_service import enqueue_cloud_task
@@ -743,6 +744,48 @@ def _awaiting_segments(job_metadata: dict[str, Any], jobs: list[dict]) -> bool:
     return any(seg["index"] not in tagged for seg in segments)
 
 
+def _warn_if_one_sided(
+    jobs: list[dict[str, Any]],
+    session_id: str,
+    *,
+    video_platform: str | None,
+    note_type: str | None,
+) -> None:
+    """Flag a video-call SOAP session whose client channel is nearly empty.
+
+    Only video calls are judged: there the client's voice arrives through the
+    call, on the system-audio channel, so an empty client channel means the
+    capture failed. In person, both voices land on the mic and the client
+    channel is legitimately empty — no ``video_platform``, no judgement.
+    Meeting summaries are skipped too (a dictation or a room has no client
+    channel to expect).
+
+    The note still generates; this only makes the problem visible (an ops
+    alert keys on ``alert_type``). Counts only — no transcript text is logged.
+    """
+    if not video_platform or (note_type or "soap") != "soap":
+        return
+    counts = AssemblyAiTranscriptionService.channel_word_counts(jobs)
+    span = AssemblyAiTranscriptionService.recording_span_seconds(jobs)
+    if not is_one_sided(counts, span):
+        return
+    logger.warning(
+        "companion_session_alert one_sided session=%s therapist_words=%d client_words=%d",
+        session_id,
+        counts.get("Therapist", 0),
+        counts.get("Client", 0),
+        extra={
+            "alert_type": "companion_session_alert",
+            "condition": "one_sided",
+            "session_id": session_id,
+            "therapist_words": counts.get("Therapist", 0),
+            "client_words": counts.get("Client", 0),
+            "span_seconds": round(span),
+            "page": False,
+        },
+    )
+
+
 @router.post("/api/internal/transcription-poll")
 def transcription_poll(
     request: TranscriptionPollRequest,
@@ -778,6 +821,14 @@ def transcription_poll(
             )
 
         audio_gcs_path = session_row.audio_gcs_path
+        video_platform = session_row.video_platform
+        # The session's note type lives on its Note row (set at schedule
+        # time); no row yet means the default, SOAP — as in session_service.
+        note_type = (
+            db.execute(select(NoteRow.note_type).filter_by(session_id=request.session_id))
+            .scalars()
+            .first()
+        )
         job_metadata = session_row.transcription_job_metadata
         if not job_metadata or not job_metadata.get("jobs"):
             raise HTTPException(
@@ -844,6 +895,7 @@ def transcription_poll(
 
         db.commit()
 
+    _warn_if_one_sided(jobs, request.session_id, video_platform=video_platform, note_type=note_type)
     transcript = AssemblyAiTranscriptionService.merge_utterances(jobs)
     _delete_staged_speech_objects(audio_gcs_path, request.session_id)
 

@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import pytest
 from app.services import assemblyai_transcription_service
+from app.services import assemblyai_transcription_service as _svc
 from app.services.assemblyai_transcription_service import (
     AssemblyAiTranscriptionService,
     _ensure_wav,
@@ -775,3 +776,51 @@ class TestFormatTimestamp:
     )
     def test_formats_hh_mm_ss(self, seconds: float, expected: str) -> None:
         assert _format_timestamp(seconds) == expected
+
+
+# --- One-sided recording detection ---
+
+
+def _job(speaker: str, texts: list[str], end: float = 0.0) -> dict[str, object]:
+    utterances = [
+        {"start": float(i), "end": end or float(i + 1), "speaker": speaker, "text": t}
+        for i, t in enumerate(texts)
+    ]
+    return {"speaker": speaker, "utterances": utterances}
+
+
+def test_channel_word_counts_group_by_channel_not_utterance_speaker() -> None:
+    client = _job("Client", ["hi there", "fine thanks"])
+    client["utterances"][0]["speaker"] = "Client A"  # type: ignore[index]
+    counts = _svc.AssemblyAiTranscriptionService.channel_word_counts(
+        [_job("Therapist", ["how are you doing today"]), client]
+    )
+    assert counts == {"Therapist": 5, "Client": 4}
+
+
+def test_recording_span_is_the_last_utterance_end() -> None:
+    jobs = [_job("Therapist", ["a"], end=120.0), _job("Client", ["b"], end=971.5)]
+    assert _svc.AssemblyAiTranscriptionService.recording_span_seconds(jobs) == 971.5
+    assert _svc.AssemblyAiTranscriptionService.recording_span_seconds([]) == 0.0
+
+
+def test_a_silent_client_channel_is_one_sided() -> None:
+    # A 16-minute session where the call audio never reached the recording:
+    # hundreds of therapist words, a few one-syllable client fragments.
+    assert _svc.is_one_sided({"Therapist": 900, "Client": 4}, 971.0)
+
+
+def test_a_real_conversation_is_not_one_sided() -> None:
+    assert not _svc.is_one_sided({"Therapist": 900, "Client": 600}, 2700.0)
+    # A quiet client still clears 5% of the therapist's words.
+    assert not _svc.is_one_sided({"Therapist": 900, "Client": 60}, 2700.0)
+
+
+def test_short_or_quiet_sessions_are_not_judged() -> None:
+    assert not _svc.is_one_sided({"Therapist": 900, "Client": 0}, 120.0)  # too short
+    assert not _svc.is_one_sided({"Therapist": 20, "Client": 0}, 1800.0)  # therapist barely spoke
+
+
+def test_single_channel_sessions_are_not_judged() -> None:
+    assert not _svc.is_one_sided({"Therapist": 900}, 1800.0)
+    assert not _svc.is_one_sided({"": 900}, 1800.0)

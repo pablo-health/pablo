@@ -10,6 +10,7 @@ mocked — no HTTP client, no tenant fixtures.
 
 from __future__ import annotations
 
+import logging
 import types
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
@@ -32,6 +33,7 @@ def _fake_session_db(session_row: object) -> tuple[MagicMock, MagicMock]:
 class TestAssemblyAiSubmitWorker:
     def test_submits_channels_and_enqueues_poll(self) -> None:
         session_row = types.SimpleNamespace(
+            video_platform=None,
             transcription_job_metadata=None,
             audio_gcs_path="audio/s1/therapist.pcm,audio/s1/client.pcm",
             status="transcribing",
@@ -82,6 +84,7 @@ class TestAssemblyAiSubmitWorker:
 
     def test_already_submitted_is_idempotent(self) -> None:
         session_row = types.SimpleNamespace(
+            video_platform=None,
             transcription_job_metadata={"provider": "assemblyai", "jobs": [_JOB]},
             audio_gcs_path="audio/s1/therapist.pcm,audio/s1/client.pcm",
             status="transcribing",
@@ -113,6 +116,7 @@ class TestAssemblyAiSubmitWorker:
 
     def test_missing_audio_marks_failed(self) -> None:
         session_row = types.SimpleNamespace(
+            video_platform=None,
             transcription_job_metadata=None,
             audio_gcs_path=None,
             status="transcribing",
@@ -165,6 +169,7 @@ class TestAssemblyAiSubmitWorker:
         recording would burn the poll budget on a job that isn't done.
         """
         session_row = types.SimpleNamespace(
+            video_platform=None,
             transcription_job_metadata={
                 "provider": "assemblyai",
                 "final": False,
@@ -230,6 +235,7 @@ class TestAssemblyAiSubmitWorker:
         """
         prior_job = {"transcript_id": "t0", "speaker": "Therapist", "segment_index": 0}
         session_row = types.SimpleNamespace(
+            video_platform=None,
             transcription_job_metadata={
                 "provider": "assemblyai",
                 "final": True,
@@ -304,6 +310,7 @@ class TestTranscriptionPoll:
         guards that regression: the poll hand-off must pass google_meet.
         """
         session_row = types.SimpleNamespace(
+            video_platform=None,
             transcription_job_metadata={"provider": "assemblyai", "jobs": [dict(_JOB)]},
             audio_gcs_path="audio/s1/therapist.pcm,audio/s1/client.pcm",
             status="transcribing",
@@ -338,6 +345,7 @@ class TestTranscriptionPoll:
 
     def test_completion_deletes_the_transcript_after_the_merge_hands_off(self) -> None:
         session_row = types.SimpleNamespace(
+            video_platform=None,
             transcription_job_metadata={"provider": "assemblyai", "jobs": [dict(_JOB)]},
             audio_gcs_path="audio/s1/therapist.pcm,audio/s1/client.pcm",
             status="transcribing",
@@ -372,6 +380,7 @@ class TestTranscriptionPoll:
 
     def test_delete_failure_is_logged_and_does_not_fail_the_poll(self) -> None:
         session_row = types.SimpleNamespace(
+            video_platform=None,
             transcription_job_metadata={"provider": "assemblyai", "jobs": [dict(_JOB)]},
             audio_gcs_path="audio/s1/therapist.pcm,audio/s1/client.pcm",
             status="transcribing",
@@ -414,6 +423,7 @@ class TestTranscriptionPoll:
         cycles only poll the pending job, and the next cycle is scheduled
         with a delay instead of hot-looping."""
         session_row = types.SimpleNamespace(
+            video_platform=None,
             transcription_job_metadata={
                 "provider": "assemblyai",
                 "jobs": [
@@ -467,6 +477,7 @@ class TestTranscriptionPoll:
             "utterances": [{"start": 0.0, "end": 1.0, "speaker": "Therapist", "text": "hi"}],
         }
         session_row = types.SimpleNamespace(
+            video_platform=None,
             transcription_job_metadata={
                 "provider": "assemblyai",
                 "jobs": [
@@ -503,6 +514,7 @@ class TestTranscriptionPoll:
 
     def test_poll_budget_exhaustion_fails_the_session(self) -> None:
         session_row = types.SimpleNamespace(
+            video_platform=None,
             transcription_job_metadata={
                 "provider": "assemblyai",
                 "jobs": [dict(_JOB)],
@@ -543,6 +555,7 @@ class TestTranscriptionPoll:
         provider failures.
         """
         session_row = types.SimpleNamespace(
+            video_platform=None,
             transcription_job_metadata={"provider": "assemblyai", "jobs": [dict(_JOB)]},
             audio_gcs_path=None,
             status="transcribing",
@@ -585,6 +598,7 @@ class TestTranscriptionPoll:
     def test_provider_read_timeout_retries_next_cycle(self) -> None:
         """Same tolerance as the 5xx case, for a network-level timeout."""
         session_row = types.SimpleNamespace(
+            video_platform=None,
             transcription_job_metadata={"provider": "assemblyai", "jobs": [dict(_JOB)]},
             audio_gcs_path=None,
             status="transcribing",
@@ -635,6 +649,7 @@ class TestTranscriptionPoll:
             "utterances": [{"start": 0.0, "end": 1.0, "speaker": "Therapist", "text": "hi"}],
         }
         session_row = types.SimpleNamespace(
+            video_platform=None,
             transcription_job_metadata={
                 "provider": "assemblyai",
                 "final": False,
@@ -675,6 +690,7 @@ class TestTranscriptionPoll:
             "utterances": [{"start": 0.0, "end": 1.0, "speaker": "Therapist", "text": "hi"}],
         }
         session_row = types.SimpleNamespace(
+            video_platform=None,
             transcription_job_metadata={
                 "provider": "assemblyai",
                 "final": True,
@@ -726,6 +742,7 @@ class TestTranscriptionPoll:
             "segment_index": 0,
         }
         session_row = types.SimpleNamespace(
+            video_platform=None,
             transcription_job_metadata={
                 "provider": "assemblyai",
                 "final": True,
@@ -881,3 +898,71 @@ class TestEmptyTranscript:
 
         session_service.prepare_transcript_session_for_generation.assert_called_once()
         enqueue.assert_called_once()
+
+
+# --- One-sided recording warning ---
+
+
+def _channel(speaker: str, words: int, end: float) -> dict[str, object]:
+    return {
+        "speaker": speaker,
+        "utterances": [
+            {"start": 0.0, "end": end, "speaker": speaker, "text": " ".join(["w"] * words)}
+        ],
+    }
+
+
+def test_one_sided_recording_logs_a_counts_only_warning(caplog) -> None:  # type: ignore[no-untyped-def]
+    with caplog.at_level(logging.WARNING, logger=it.logger.name):
+        it._warn_if_one_sided(
+            [_channel("Therapist", 900, 971.0), _channel("Client", 4, 600.0)],
+            "sess-1",
+            video_platform="zoom",
+            note_type="soap",
+        )
+
+    [record] = [r for r in caplog.records if getattr(r, "alert_type", None)]
+    assert record.alert_type == "companion_session_alert"  # type: ignore[attr-defined]
+    assert record.condition == "one_sided"  # type: ignore[attr-defined]
+    assert record.session_id == "sess-1"  # type: ignore[attr-defined]
+    assert (record.therapist_words, record.client_words) == (900, 4)  # type: ignore[attr-defined]
+    assert record.page is False  # type: ignore[attr-defined]
+    # Counts only — no transcript text in the message.
+    assert " w " not in record.getMessage()
+
+
+def test_a_two_sided_recording_logs_nothing(caplog) -> None:  # type: ignore[no-untyped-def]
+    with caplog.at_level(logging.WARNING, logger=it.logger.name):
+        it._warn_if_one_sided(
+            [_channel("Therapist", 900, 2700.0), _channel("Client", 700, 2690.0)],
+            "sess-2",
+            video_platform="zoom",
+            note_type="soap",
+        )
+
+    assert not [r for r in caplog.records if getattr(r, "alert_type", None)]
+
+
+def test_in_person_sessions_are_not_judged(caplog) -> None:  # type: ignore[no-untyped-def]
+    # No call: both voices land on the mic, so an empty client channel is expected.
+    with caplog.at_level(logging.WARNING, logger=it.logger.name):
+        it._warn_if_one_sided(
+            [_channel("Therapist", 900, 971.0), _channel("Client", 0, 0.0)],
+            "sess-3",
+            video_platform=None,
+            note_type="soap",
+        )
+
+    assert not [r for r in caplog.records if getattr(r, "alert_type", None)]
+
+
+def test_meeting_summaries_are_not_judged(caplog) -> None:  # type: ignore[no-untyped-def]
+    with caplog.at_level(logging.WARNING, logger=it.logger.name):
+        it._warn_if_one_sided(
+            [_channel("Therapist", 900, 971.0), _channel("Client", 0, 0.0)],
+            "sess-4",
+            video_platform="zoom",
+            note_type="meeting_summary",
+        )
+
+    assert not [r for r in caplog.records if getattr(r, "alert_type", None)]
