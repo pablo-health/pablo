@@ -90,7 +90,7 @@ describe("CalendarHoursStep", () => {
 
     await describe_(user, "I see clients Monday to Thursday, 9 to 5")
 
-    expect(await screen.findByText("Monday to Thursday, 09:00 to 17:00")).toBeInTheDocument()
+    expect(await screen.findByText("Monday to Thursday, 9:00 AM to 5:00 PM")).toBeInTheDocument()
     expect(createRule).not.toHaveBeenCalled()
 
     await user.click(screen.getByRole("button", { name: "Yes, save this" }))
@@ -440,8 +440,8 @@ describe("CalendarHoursStep while Pablo reads", () => {
     )
     await act(async () => answers[0]({ proposals: MON_TO_THU, could_not_parse: null }))
 
-    expect(screen.getByText("Monday to Friday, 09:00 to 17:00")).toBeInTheDocument()
-    expect(screen.queryByText("Monday to Thursday, 09:00 to 17:00")).toBeNull()
+    expect(screen.getByText("Monday to Friday, 9:00 AM to 5:00 PM")).toBeInTheDocument()
+    expect(screen.queryByText("Monday to Thursday, 9:00 AM to 5:00 PM")).toBeNull()
   })
 })
 
@@ -456,7 +456,7 @@ describe("CalendarHoursStep saving", () => {
 
   async function confirmMonToThu(user: ReturnType<typeof userEvent.setup>) {
     await describe_(user, "Monday to Thursday, 9 to 5")
-    await screen.findByText("Monday to Thursday, 09:00 to 17:00")
+    await screen.findByText("Monday to Thursday, 9:00 AM to 5:00 PM")
     await user.click(screen.getByRole("button", { name: "Yes, save this" }))
   }
 
@@ -536,7 +536,7 @@ describe("CalendarHoursStep saving", () => {
 describe("echoLines", () => {
   it("collapses consecutive days that share a range into one sentence", () => {
     expect(echoLines(MON_TO_THU)).toEqual([
-      { text: "Monday to Thursday, 09:00 to 17:00", indexes: [0, 1, 2, 3] },
+      { text: "Monday to Thursday, 9:00 AM to 5:00 PM", indexes: [0, 1, 2, 3] },
     ])
   })
 
@@ -549,8 +549,21 @@ describe("echoLines", () => {
     }
 
     expect(echoLines([...MON_TO_THU, friday])).toEqual([
-      { text: "Monday to Thursday, 09:00 to 17:00", indexes: [0, 1, 2, 3] },
-      { text: "Friday, 09:00 to 12:00", indexes: [4] },
+      { text: "Monday to Thursday, 9:00 AM to 5:00 PM", indexes: [0, 1, 2, 3] },
+      { text: "Friday, 9:00 AM to 12:00 PM", indexes: [4] },
+    ])
+  })
+
+  it("echoes the minutes a range was given with, not the whole hour", () => {
+    const halfPast: ProposedAvailabilityRule = {
+      rule_type: "working_hours",
+      enforcement: "hard",
+      params: { day_of_week: 0, start: "09:30", end: "17:00" },
+      human_summary: "Mondays 9:30 to 5",
+    }
+
+    expect(echoLines([halfPast])).toEqual([
+      { text: "Monday, 9:30 AM to 5:00 PM", indexes: [0] },
     ])
   })
 

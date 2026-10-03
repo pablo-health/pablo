@@ -127,8 +127,8 @@ describe("WorkingHoursGrid", () => {
 
     expect(screen.getByRole("switch", { name: "Saturday on" })).toHaveAttribute("aria-checked", "true")
     const footer = screen.getByTestId("working-hours-footer")
-    expect(footer).toHaveTextContent("9 AM")
-    expect(footer).toHaveTextContent("5 PM")
+    expect(footer).toHaveTextContent("9:00 AM")
+    expect(footer).toHaveTextContent("5:00 PM")
     expect(screen.queryByRole("button", { name: "Set Monday to Friday, 9 to 5" })).not.toBeInTheDocument()
   })
 })
