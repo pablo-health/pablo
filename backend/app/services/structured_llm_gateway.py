@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
@@ -56,6 +57,27 @@ _STRUCTURED_LLM_TIMEOUT_SECONDS = 180.0
 # Mistral publisher models on Vertex are reached via the regional rawPredict
 # endpoint (no global endpoint); default to us-central1, overridable.
 _MISTRAL_VERTEX_REGION = os.environ.get("MISTRAL_VERTEX_REGION", "us-central1")
+
+
+#: Floor on an attempt's timeout, so a spent budget still times out at once
+#: rather than reading as "no timeout" to the SDK.
+_MIN_ATTEMPT_TIMEOUT_SECONDS = 0.001
+
+
+def _attempt_timeout(timeout_seconds: float, started: float) -> float:
+    """This attempt's bound: the caller's, cut to what the policy has left.
+
+    ``call_with_retry`` checks ``LLM_REQUEST.deadline`` only before it backs
+    off, never against the attempt it is about to start, so a stalled first
+    attempt followed by a full-length second one would run past it. Shrinking
+    the second attempt to the time remaining keeps the whole call, retry
+    included, inside the deadline.
+    """
+    deadline = LLM_REQUEST.deadline
+    if deadline is None:
+        return timeout_seconds
+    remaining = deadline - (time.monotonic() - started)
+    return max(min(timeout_seconds, remaining), _MIN_ATTEMPT_TIMEOUT_SECONDS)
 
 
 class StructuredOutputTruncatedError(ValueError):
@@ -127,7 +149,9 @@ class StructuredLLMGateway(ABC):
         ``timeout_seconds`` bounds each attempt when set, in place of the
         client's generous default. An interactive caller that would rather
         retry a stalled call than wait out the default passes a short one;
-        a timed-out attempt is retried like any other transient failure.
+        a timed-out attempt is retried like any other transient failure, and
+        the retry is cut to whatever is left of the retry policy's deadline,
+        so the call as a whole never outlasts it.
 
         Raises:
             ValueError: model returned invalid JSON or violated the schema.
@@ -192,32 +216,38 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
                 if thinking_budget is not None
                 else None
             ),
+        )
+        started = time.monotonic()
+
+        def attempt() -> Any:
+            if timeout_seconds is None:
+                return client.models.generate_content(
+                    model=normalized_model, contents=user_prompt, config=config
+                )
             # A per-attempt bound is enforced here, client-side, only. The SDK
             # would otherwise also send it as the server's own deadline
             # (X-Server-Timeout), and Vertex then answers 504 DEADLINE_EXCEEDED
             # well short of it -- at 10 s of a 15 s deadline, and on 2 of 15
             # ordinary 6-8 s answers in testing. The server is given the
             # client's default instead, as it would be with no bound at all.
-            http_options=(
-                types.HttpOptions(
-                    timeout=seconds_to_genai_timeout_ms(timeout_seconds),
-                    headers={"X-Server-Timeout": str(int(_STRUCTURED_LLM_TIMEOUT_SECONDS))},
-                )
-                if timeout_seconds is not None
-                else None
-            ),
-        )
+            bounded = config.model_copy(
+                update={
+                    "http_options": types.HttpOptions(
+                        timeout=seconds_to_genai_timeout_ms(
+                            _attempt_timeout(timeout_seconds, started)
+                        ),
+                        headers={"X-Server-Timeout": str(int(_STRUCTURED_LLM_TIMEOUT_SECONDS))},
+                    )
+                }
+            )
+            return client.models.generate_content(
+                model=normalized_model, contents=user_prompt, config=bounded
+            )
 
         with llm_span(LLMSpanRequest(operation="structured", model=normalized_model)) as span:
             try:
                 response = call_with_retry(
-                    lambda: client.models.generate_content(
-                        model=normalized_model,
-                        contents=user_prompt,
-                        config=config,
-                    ),
-                    policy=LLM_REQUEST,
-                    idempotency=Idempotency.SAFE,
+                    attempt, policy=LLM_REQUEST, idempotency=Idempotency.SAFE
                 )
             except Exception as exc:
                 logger.exception("Gemini structured completion failed")

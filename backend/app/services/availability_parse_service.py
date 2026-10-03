@@ -357,7 +357,10 @@ _RESPONSE_SCHEMA["properties"]["readings"] = {
 #: now and then stalls for 15-90 s with almost nothing to say, and the
 #: client's default would wait 180 s for it. The longest real answer, two
 #: readings of a whole week, takes 6-8 s and now and then 12, so this
-#: leaves it room. One retry (LLM_REQUEST) follows a timed-out attempt.
+#: leaves it room. One retry (LLM_REQUEST) follows a failed attempt, bounded
+#: by what is left of that policy's 25 s deadline, so the worst a therapist
+#: waits is 25 s: a 15 s stall and a 10 s retry. A fast failure (a 429, a
+#: 504) leaves the retry its full 15 s.
 _ATTEMPT_TIMEOUT_SECONDS = 15.0
 
 

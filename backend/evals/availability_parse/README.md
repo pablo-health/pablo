@@ -362,7 +362,8 @@ What the time went into, measured before deciding anything:
   that produced 112 output tokens with the old nested schema, and a 26 s
   call that produced 80 with no readings in the schema at all. A stalled
   call was bounded only by the client's 180 s read timeout. Each attempt
-  is now bounded at 15 s and retried once.
+  is now bounded at 15 s and retried once, the retry cut to what is left
+  of the 25 s request deadline, so no parse waits longer than 25 s.
 - **That bound has to stay client-side.** Given as the server's deadline
   (the SDK's default when a request sets a timeout), Vertex answered 504
   DEADLINE_EXCEEDED well short of it: at 10 s of a 15 s deadline, and on

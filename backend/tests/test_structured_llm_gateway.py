@@ -11,11 +11,13 @@ exceptions, falls back to ``default_response``, and records calls.
 from __future__ import annotations
 
 import json
+import time
 from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
 
+from backend.app.reliability import LLM_REQUEST
 from backend.app.services.structured_llm_gateway import (
     AnthropicStructuredLLMGateway,
     FakeStructuredLLMGateway,
@@ -390,6 +392,72 @@ class TestGeminiAttemptTimeout:
         with pytest.raises(RuntimeError, match="Structured LLM call failed"):
             self._complete(gw, timeout_seconds=10.0)
         assert len(models.configs) == 2
+
+
+assert LLM_REQUEST.deadline is not None
+_DEADLINE: float = LLM_REQUEST.deadline
+
+
+class _FakeClock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class _ClockedGeminiModels:
+    """Each failing attempt spends ``costs[i]`` seconds of fake time, capped
+    at the attempt's own timeout, then raises the SDK's read timeout."""
+
+    def __init__(self, clock: _FakeClock, costs: list[float]) -> None:
+        self.clock = clock
+        self.costs = costs
+        self.timeouts_ms: list[int] = []
+
+    def generate_content(self, **kwargs: Any) -> _GeminiResponse:
+        timeout_ms = kwargs["config"].http_options.timeout
+        self.timeouts_ms.append(timeout_ms)
+        cost = self.costs[len(self.timeouts_ms) - 1]
+        self.clock.now += min(cost, timeout_ms / 1000)
+        raise httpx.ReadTimeout("The read operation timed out")
+
+
+class TestGeminiCallDeadline:
+    """A stalled first attempt and a retry fit inside LLM_REQUEST's deadline
+    together, not 15 s apiece."""
+
+    def _run(self, monkeypatch: pytest.MonkeyPatch, costs: list[float]) -> tuple[float, list[int]]:
+        clock = _FakeClock()
+        monkeypatch.setattr(time, "monotonic", clock)
+        models = _ClockedGeminiModels(clock, costs)
+        gw = GeminiStructuredLLMGateway()
+        gw._client = type("_Client", (), {"models": models})()
+        started = clock.now
+        with pytest.raises(RuntimeError):
+            gw.complete_structured(
+                model="gemini-3.5-flash",
+                system_prompt="s",
+                user_prompt="u",
+                response_schema={"type": "object"},
+                max_output_tokens=64,
+                timeout_seconds=15.0,
+            )
+        return clock.now - started, models.timeouts_ms
+
+    def test_two_stalls_end_at_the_deadline(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        elapsed, timeouts_ms = self._run(monkeypatch, costs=[60.0, 60.0])
+
+        assert timeouts_ms == [15_000, 10_000]
+        assert elapsed <= _DEADLINE
+
+    def test_a_fast_failure_leaves_the_retry_its_full_bound(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        elapsed, timeouts_ms = self._run(monkeypatch, costs=[2.0, 60.0])
+
+        assert timeouts_ms == [15_000, 15_000]
+        assert elapsed <= _DEADLINE
 
 
 class TestMistralStructuredLLMGateway:
