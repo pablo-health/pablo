@@ -8,6 +8,7 @@
  */
 
 import jsPDF from "jspdf"
+import type { PeopleWords } from "@/lib/peopleTerm"
 import type { SOAPNoteModel } from "@/types/sessions"
 import { parseNarrativeBlocks } from "./narrativeParser"
 
@@ -78,6 +79,7 @@ function renderContentBlock(
 export function exportSOAPToPDF(
   meta: PDFExportMetadata,
   soapNote: SOAPNoteModel,
+  people: PeopleWords,
 ): void {
   const doc = new jsPDF()
   let yPosition = 20
@@ -91,7 +93,7 @@ export function exportSOAPToPDF(
   // Session metadata
   doc.setFontSize(12)
   doc.setFont("helvetica", "normal")
-  doc.text(`Patient: ${meta.patient_name}`, LEFT_MARGIN, yPosition)
+  doc.text(`${people.One}: ${meta.patient_name}`, LEFT_MARGIN, yPosition)
   yPosition += 7
   if (meta.session_number !== undefined) {
     doc.text(`Session #${meta.session_number}`, LEFT_MARGIN, yPosition)

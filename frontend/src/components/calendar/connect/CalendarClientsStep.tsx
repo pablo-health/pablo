@@ -7,6 +7,7 @@ import { Check, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { SetupStepHead } from "@/components/setup"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion"
 import type { BusyWindowsGranted, BusyWindowsNotGranted, ImportProposal } from "@/lib/api/scheduling"
 import { busyWindowsGranted } from "@/lib/api/scheduling"
@@ -62,6 +63,7 @@ export function CalendarClientsStep({
   followError = null,
 }: CalendarClientsStepProps) {
   const reducedMotion = usePrefersReducedMotion()
+  const people = usePeopleTerm()
   const scanned = proposal !== null
 
   const busyKeys =
@@ -86,7 +88,7 @@ export function CalendarClientsStep({
       <SetupStepHead
         eyebrow={`Step ${step} · one-time look · optional`}
         title="Bring over your week"
-        lede="Pablo looks at the rhythm of your calendar - events that repeat weekly or every other week, the way sessions do. It can't tell a client from a standing meeting, so nothing is added until you say so."
+        lede={`Pablo looks at the rhythm of your calendar - events that repeat weekly or every other week, the way sessions do. It can't tell a ${people.one} from a standing meeting, so nothing is added until you say so.`}
       />
 
       <div className="rounded-xl border border-border bg-card p-3.5 pb-3">
@@ -191,7 +193,7 @@ export function CalendarClientsStep({
               {proposal.left_alone}
             </b>{" "}
             other calendar event{proposal.left_alone === 1 ? "" : "s"} didn&rsquo;t fit that
-            pattern. Next: you decide which ones are clients.
+            pattern. Next: you decide which ones are {people.many}.
           </span>
         </div>
       ) : null}
@@ -209,7 +211,7 @@ export function CalendarClientsStep({
               Keep bringing in new sessions from this calendar
             </span>
             <span className="block text-xs text-muted-foreground">
-              Pablo asks who each new client is, once.
+              Pablo asks who each new {people.one} is, once.
             </span>
           </label>
         </div>

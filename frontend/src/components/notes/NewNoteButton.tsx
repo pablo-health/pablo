@@ -37,6 +37,7 @@ import { ImportNotesDialog } from "@/components/sessions/ImportNotesDialog"
 import { useToast } from "@/components/ui/Toast"
 import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
 import { useNoteTypes } from "@/hooks/useNoteTypes"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { useCreateStandaloneNote } from "@/hooks/useNotes"
 import type { NoteTypeSchema } from "@/types/noteTypes"
 
@@ -53,6 +54,7 @@ export function NewNoteButton({ patientId }: NewNoteButtonProps) {
   const { data: catalog, isLoading } = useNoteTypes()
   const createNote = useCreateStandaloneNote()
   const { readOnly } = useReadOnlyMode()
+  const people = usePeopleTerm()
 
   // Both on-ramps (transcript upload, blank note) and the import dialog hang
   // off this button, so hiding it closes the whole note-authoring flow.
@@ -100,7 +102,7 @@ export function NewNoteButton({ patientId }: NewNoteButtonProps) {
           <DialogTitle>New note</DialogTitle>
           <DialogDescription>
             Start from a session transcript, or create a blank note to fill in
-            yourself. Everything is saved against this patient.
+            yourself. Everything is saved against this {people.one}.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 pt-2">

@@ -41,6 +41,7 @@ import {
 import { centsToDollars, dollarsToCents } from "@/lib/money"
 import { useCreateCoverage, usePayers, useUpdateCoverage } from "@/hooks/useCoverage"
 import { usePatient, useUpdatePatient } from "@/hooks/usePatients"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import type { CoverageResponse, CreateCoverageRequest } from "@/types/coverage"
 
 /** Radix `Select.Item` rejects an empty value, so "type a new payer" needs a
@@ -175,6 +176,7 @@ export function CoverageDialog({ patientId, coverage, open, onOpenChange }: Cove
   const update = useUpdateCoverage()
   const { data: patient } = usePatient(patientId)
   const updatePatient = useUpdatePatient()
+  const people = usePeopleTerm()
   const patientSex = asSex(patient?.sex)
   const {
     register,
@@ -249,7 +251,7 @@ export function CoverageDialog({ patientId, coverage, open, onOpenChange }: Cove
       <DialogContent className="sm:max-w-[560px]">
         <DialogHeader>
           <DialogTitle>{coverage ? "Edit coverage" : "Add coverage"}</DialogTitle>
-          <DialogDescription>Copy the details from the client&apos;s insurance card.</DialogDescription>
+          <DialogDescription>Copy the details from the {people.one}&apos;s insurance card.</DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
@@ -319,7 +321,7 @@ export function CoverageDialog({ patientId, coverage, open, onOpenChange }: Cove
           </div>
 
           <div className="form-group">
-            <Label htmlFor="subscriber_relationship">Client&apos;s relationship to the subscriber</Label>
+            <Label htmlFor="subscriber_relationship">{people.One}&apos;s relationship to the subscriber</Label>
             <Select
               value={relationship}
               onValueChange={(v) =>
@@ -330,7 +332,7 @@ export function CoverageDialog({ patientId, coverage, open, onOpenChange }: Cove
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="self">Self — the client is the subscriber</SelectItem>
+                <SelectItem value="self">Self — the {people.one} is the subscriber</SelectItem>
                 <SelectItem value="spouse">Spouse</SelectItem>
                 <SelectItem value="child">Child</SelectItem>
                 <SelectItem value="other">Other</SelectItem>
@@ -340,7 +342,7 @@ export function CoverageDialog({ patientId, coverage, open, onOpenChange }: Cove
 
           <SexSelect
             id="client_sex"
-            label={isSelf ? "Sex on insurance card" : "Client's sex"}
+            label={isSelf ? "Sex on insurance card" : `${people.One}'s sex`}
             value={clientSex}
             onChange={(v) => setValue("client_sex", v)}
           />

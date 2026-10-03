@@ -7,6 +7,8 @@
  * renders, rather than against a copy of them that drifts.
  */
 
+import { type PeopleWords } from "@/lib/peopleTerm"
+
 /** What each item type is called on the screen, and one line of what it does. */
 export const ITEM_TYPE_LABELS: Record<string, string> = {
   section: "Section heading",
@@ -92,7 +94,9 @@ export const MEASURE_NEEDS_PERMISSION =
  * the publish and names the question, which is the moment it matters.
  */
 export const LABEL_FIELD = "Question"
-export const LABEL_PLACEHOLDER = "Question the patient will see"
+export function labelPlaceholder(people: PeopleWords): string {
+  return `Question the ${people.one} will see`
+}
 export const HELP_TEXT_FIELD = "Help text (optional)"
 export const HELP_TEXT_PLACEHOLDER = "Anything that helps them answer it"
 
@@ -155,8 +159,9 @@ export const CARD_SIDES_LABEL = "How many photos"
 export const CARD_SIDES_BOTH = "Front and back"
 export const CARD_SIDES_FRONT = "Front only"
 export const CARD_COLLECT_FIELDS_LABEL = "Also ask them to type the plan details"
-export const CARD_COLLECT_FIELDS_HELP =
-  "Payer, member ID and group number. These go on the client's coverage record."
+export function cardCollectFieldsHelp(people: PeopleWords): string {
+  return `Payer, member ID and group number. These go on the ${people.one}'s coverage record.`
+}
 
 /**
  * The paper fallback on a question that asks for a document back.

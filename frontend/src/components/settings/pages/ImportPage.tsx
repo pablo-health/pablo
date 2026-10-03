@@ -30,6 +30,7 @@ import {
 import { ImportHistory } from "../import/ImportHistory"
 import { ImportReview } from "../import/ImportReview"
 import { importKeys, useImportHistory, useImportRun } from "../import/useImport"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 
 const GENERIC_ERROR = "Something went wrong. Please try again."
 
@@ -39,6 +40,7 @@ function message(error: unknown): string {
 }
 
 function Receipt({ run }: { run: ImportRunDetail }) {
+  const people = usePeopleTerm()
   const counts = run.report?.counts ?? {}
   const clients = (counts.contact?.created ?? 0) + (counts.contact?.merged ?? 0)
   const notes = counts.note?.new ?? 0
@@ -46,7 +48,7 @@ function Receipt({ run }: { run: ImportRunDetail }) {
   return (
     <div role="status" data-testid="import-receipt" className="space-y-1 text-sm">
       <p className="text-foreground">
-        Imported {clients} {clients === 1 ? "client" : "clients"} and {notes}{" "}
+        Imported {clients} {clients === 1 ? people.one : people.many} and {notes}{" "}
         {notes === 1 ? "note" : "notes"}.
       </p>
       {skipped > 0 && (
@@ -56,7 +58,7 @@ function Receipt({ run }: { run: ImportRunDetail }) {
       )}
       <p className="text-xs text-muted-foreground">
         <Link href="/dashboard/patients" className="underline underline-offset-2">
-          See your clients
+          See your {people.many}
         </Link>
         . Upcoming appointments come from your calendar, not the export —{" "}
         <Link href="/dashboard/settings/calendar" className="underline underline-offset-2">
@@ -70,6 +72,7 @@ function Receipt({ run }: { run: ImportRunDetail }) {
 
 export function ImportPage() {
   const queryClient = useQueryClient()
+  const people = usePeopleTerm()
   const history = useImportHistory()
   const [activeId, setActiveId] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
@@ -156,7 +159,7 @@ export function ImportPage() {
     <div className="space-y-6">
       <SettingsCard
         title="Import from SimplePractice"
-        description="Upload your SimplePractice export to bring your clients and notes across. You can upload a newer export later; only what's new is added."
+        description={`Upload your SimplePractice export to bring your ${people.many} and notes across. You can upload a newer export later; only what's new is added.`}
       >
         <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">
           {uploading && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}

@@ -62,6 +62,7 @@ from .claims import _practice_timezone
 from .patient_documents import download_action_for, get_patient_documents_service
 from .patient_intake_export import get_intake_form_files
 from .patient_statements import get_practice_block
+from .people_term import people_words_for
 from .superbills import get_billing_tax_id_loader
 
 logger = logging.getLogger(__name__)
@@ -247,6 +248,7 @@ def get_billing_record_source(
     handed.
     """
     users = repositories.get_user_repository()
+    profiles = _clinician_profile_repo_factory()
     return BillingRecordSource(
         payments=repositories.get_patient_payment_repository(),
         coverage=repositories.get_patient_coverage_repository(),
@@ -256,8 +258,9 @@ def get_billing_record_source(
         appointments=repositories.get_appointment_repository(),
         practice=get_practice_block,
         tax_id=get_billing_tax_id_loader,
-        license_for=_clinician_profile_repo_factory().get,
+        license_for=profiles.get,
         timezone=lambda user_id: _practice_timezone(users, user_id),
+        people=lambda user_id: people_words_for(user_id, users, profiles),
     )
 
 

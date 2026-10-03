@@ -22,6 +22,7 @@ import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
 import { useToast } from "@/components/ui/Toast"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { formatInUserTimeZone, useUserTimeZone } from "@/hooks/usePreferences"
 import { isAlreadyAnswered, useDecideRefill, useRefillQueue } from "@/hooks/useRefillRequests"
 import type {
@@ -61,6 +62,7 @@ export function RefillQueue() {
 
 function PendingRequests() {
   const { data, isLoading, isError, refetch } = useRefillQueue("pending")
+  const people = usePeopleTerm()
 
   if (isLoading) {
     return (
@@ -90,7 +92,7 @@ function PendingRequests() {
         <Pill className="mx-auto h-8 w-8 text-neutral-300" />
         <p className="mt-3 text-sm font-medium text-neutral-900">No refill requests waiting</p>
         <p className="mt-1 text-sm text-neutral-500">
-          Requests your patients send from the portal show up here.
+          Requests your {people.many} send from the portal show up here.
         </p>
       </div>
     )
@@ -108,6 +110,7 @@ function PendingRequests() {
 function PendingRow({ request }: { request: ClinicianRefillRequest }) {
   const timeZone = useUserTimeZone()
   const decide = useDecideRefill()
+  const people = usePeopleTerm()
   const { showToast } = useToast()
   const [choice, setChoice] = useState<RefillDecision | null>(null)
   const [note, setNote] = useState("")
@@ -141,7 +144,7 @@ function PendingRow({ request }: { request: ClinicianRefillRequest }) {
             href={`/dashboard/patients/${request.patient_id}`}
             className="text-sm font-medium text-neutral-900 hover:underline"
           >
-            {request.patient_name ?? "Patient"}
+            {request.patient_name ?? people.One}
           </Link>
           <p className="text-sm text-neutral-900" data-testid="refill-medication">
             {request.medication_text}
@@ -216,6 +219,7 @@ function PendingRow({ request }: { request: ClinicianRefillRequest }) {
 
 function RecentDecisions() {
   const { data } = useRefillQueue("recent")
+  const people = usePeopleTerm()
   const timeZone = useUserTimeZone()
   const decided = data?.data ?? []
 
@@ -234,7 +238,7 @@ function RecentDecisions() {
             className="flex flex-wrap items-center justify-between gap-2 text-sm"
           >
             <span className="min-w-0 truncate">
-              <span className="font-medium text-neutral-900">{request.patient_name ?? "Patient"}</span>
+              <span className="font-medium text-neutral-900">{request.patient_name ?? people.One}</span>
               <span className="text-neutral-600"> · {request.medication_text}</span>
             </span>
             <span className="shrink-0 text-xs text-neutral-600">

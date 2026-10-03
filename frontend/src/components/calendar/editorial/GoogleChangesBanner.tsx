@@ -8,6 +8,7 @@ import {
   type AppointmentResponse,
   type GoogleChangeResolution,
 } from "@/types/scheduling"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { NoticeButton, type ResolveGoogleChange } from "./GoogleChangeNotice"
 
 interface GoogleChangesBannerProps {
@@ -47,6 +48,7 @@ export function GoogleChangesBanner({
   pending = false,
   now = new Date(),
 }: GoogleChangesBannerProps) {
+  const people = usePeopleTerm()
   const removed = appointments.filter(
     (a) =>
       a.google_sync_status === GOOGLE_SYNC_STATUS.removedInGoogle &&
@@ -68,8 +70,8 @@ export function GoogleChangesBanner({
         <div data-testid="outside-sessions-line" className="flex flex-wrap items-center gap-2">
           <p className="mr-auto font-medium">
             {outsideCount === 1
-              ? `1 session from ${outsideFrom} needs a client`
-              : `${outsideCount} sessions from ${outsideFrom} need a client`}
+              ? `1 session from ${outsideFrom} needs a ${people.one}`
+              : `${outsideCount} sessions from ${outsideFrom} need a ${people.one}`}
           </p>
           <NoticeButton disabled={pending} onClick={() => onReviewOutside?.()}>
             Review

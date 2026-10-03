@@ -16,6 +16,8 @@
 
 import type { ImportClient, ImportDecisions, ImportPreview, ImportRecord } from "@/lib/api/migration"
 import { recordKey } from "@/lib/api/migration"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
+import { type PeopleWords } from "@/lib/peopleTerm"
 import { ImportFileViewer } from "./ImportFileViewer"
 
 interface Props {
@@ -25,8 +27,8 @@ interface Props {
   onChange: (next: ImportDecisions) => void
 }
 
-function describe(client: ImportClient | undefined): string {
-  if (!client) return "Unknown client"
+function describe(client: ImportClient | undefined, people: PeopleWords): string {
+  if (!client) return `Unknown ${people.one}`
   const parts = [client.display_name]
   if (client.birthday) parts.push(`born ${client.birthday}`)
   if (client.email) parts.push(client.email)
@@ -35,6 +37,7 @@ function describe(client: ImportClient | undefined): string {
 }
 
 export function ImportQuestions({ runId, preview, decisions, onChange }: Props) {
+  const people = usePeopleTerm()
   const clients = new Map(preview.clients.map((c) => [c.card_id, c]))
   const records = new Map(preview.records.map((r) => [recordKey(r.record_type, r.source_id), r]))
 
@@ -55,9 +58,9 @@ export function ImportQuestions({ runId, preview, decisions, onChange }: Props) 
   return (
     <div className="space-y-6">
       {sameName.map((group) => (
-        <section key={group.folder_name} aria-label={`Two clients are named ${group.folder_name}`}>
+        <section key={group.folder_name} aria-label={`Two ${people.many} are named ${group.folder_name}`}>
           <h3 className="text-sm font-semibold text-foreground">
-            Two clients are named {group.folder_name}. Which one is each of these for?
+            Two {people.many} are named {group.folder_name}. Which one is each of these for?
           </h3>
           <ul className="mt-2 space-y-3">
             {group.records.map((ref) => {
@@ -80,7 +83,7 @@ export function ImportQuestions({ runId, preview, decisions, onChange }: Props) 
                           checked={decisions.assignments[key] === cardId}
                           onChange={() => assign(key, cardId)}
                         />
-                        {describe(clients.get(cardId))}
+                        {describe(clients.get(cardId), people)}
                       </label>
                     ))}
                     <label className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -105,9 +108,9 @@ export function ImportQuestions({ runId, preview, decisions, onChange }: Props) 
         return (
           <section key={dup.card_id} aria-label={`Is ${client?.display_name} already here?`}>
             <h3 className="text-sm font-semibold text-foreground">
-              You already have a client named {client?.folder_name}. Is this the same person?
+              You already have a {people.one} named {client?.folder_name}. Is this the same person?
             </h3>
-            <p className="mt-1 text-xs text-muted-foreground">{describe(client)}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{describe(client, people)}</p>
             <fieldset className="mt-2 space-y-1">
               <legend className="sr-only">{`Same person as ${client?.folder_name}`}</legend>
               {dup.possible_duplicates.map((patientId) => (
@@ -118,7 +121,7 @@ export function ImportQuestions({ runId, preview, decisions, onChange }: Props) 
                     checked={decisions.duplicates[dup.card_id] === `merge:${patientId}`}
                     onChange={() => decideDuplicate(dup.card_id, `merge:${patientId}`)}
                   />
-                  Same person — add to the existing client
+                  Same person — add to the existing {people.one}
                 </label>
               ))}
               <label className="flex items-center gap-2 text-sm">
@@ -128,7 +131,7 @@ export function ImportQuestions({ runId, preview, decisions, onChange }: Props) 
                   checked={decisions.duplicates[dup.card_id] === "create"}
                   onChange={() => decideDuplicate(dup.card_id, "create")}
                 />
-                Different person — add a new client
+                Different person — add a new {people.one}
               </label>
             </fieldset>
           </section>

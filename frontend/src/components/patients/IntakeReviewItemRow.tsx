@@ -8,14 +8,16 @@ import { RENDERED_ITEM_TYPES, rendererFor } from "@/components/portal/forms/rend
 import type { ReadOnlySource } from "@/components/portal/forms/renderers/types"
 import type { IntakeReviewItem } from "@/lib/api/intakeReview"
 import type { IntakeArtifact, IntakeForm } from "@/lib/api/patientIntake"
+import type { PeopleWords } from "@/lib/peopleTerm"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 
 const COPY = {
   notAsked: "Not asked.",
   noAnswer: "No answer",
-  provenance: { patient: "Patient", clinician: "Entered by practice" },
+  provenance: (people: PeopleWords) => ({ patient: people.One, clinician: "Entered by practice" }),
   earlier: (n: number) => (n === 1 ? "1 earlier answer" : `${n} earlier answers`),
   earlierDetail: (n: number) => (n === 1 ? "One earlier answer was replaced." : `${n} earlier answers were replaced.`),
-  enter: "Enter for patient",
+  enter: (people: PeopleWords) => `Enter for ${people.one}`,
   entryLabel: "Answer",
   entrySave: "Save",
   entryCancel: "Cancel",
@@ -71,6 +73,7 @@ export function IntakeReviewItemRow(props: IntakeReviewItemRowProps) {
   const [showEarlier, setShowEarlier] = useState(false)
   const [entryOpen, setEntryOpen] = useState(false)
   const [entryText, setEntryText] = useState("")
+  const people = usePeopleTerm()
   const id = item.id
   const drawable = RENDERED_ITEM_TYPES.includes(item.item_type)
   const renderer = rendererFor(item.item_type)
@@ -110,7 +113,7 @@ export function IntakeReviewItemRow(props: IntakeReviewItemRowProps) {
           <div className="mt-2 flex flex-wrap items-center gap-3 print:hidden">
             {item.provenance && (
               <span className={CHIP} data-testid={`intake-review-provenance-${id}`}>
-                {COPY.provenance[item.provenance]}
+                {COPY.provenance(people)[item.provenance]}
               </span>
             )}
             {item.superseded_count > 0 && (
@@ -123,7 +126,7 @@ export function IntakeReviewItemRow(props: IntakeReviewItemRowProps) {
             {canEnter && enterable && !entryOpen && (
               <button type="button" className={LINK} onClick={() => setEntryOpen(true)}
                 data-testid={`intake-review-enter-${id}`}>
-                {COPY.enter}
+                {COPY.enter(people)}
               </button>
             )}
           </div>

@@ -148,6 +148,7 @@ def get_user_status(
     user: User = Depends(get_current_user_no_mfa),
     profile_repo: ClinicianProfileRepository = Depends(get_clinician_profile_repository),
     passkey_service: PasskeyService = Depends(get_passkey_service),
+    user_repo: UserRepository = Depends(get_user_repository),
 ) -> dict:
     """
     Get current user status without requiring MFA.
@@ -232,6 +233,12 @@ def get_user_status(
             # from "set to nothing".
             address = (practice_row.address or "").strip()
             result["practice_address"] = address or None
+
+    # "clients" or "patients": the word every clinician-facing screen uses.
+    # Here so the dashboard has it on first paint. See app.people_term.
+    from .people_term import load_people_term
+
+    result["people_term"] = load_people_term(user, user_repo, profile_repo).people_term
 
     # Include subscription/trial info when subscription enforcement is enabled.
     settings = get_settings()

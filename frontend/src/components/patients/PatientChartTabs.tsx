@@ -28,6 +28,7 @@ import { InsuranceCard } from "@/components/insurance/InsuranceCard"
 import { IntakeCard } from "@/components/patients/IntakeCard"
 import { usePatientNotes } from "@/hooks/useNotes"
 import { useNoteTypeLabel } from "@/hooks/useNoteTypes"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { usePatientDocuments } from "@/hooks/usePatientDocuments"
 import { usePatientOutcomeMeasures } from "@/hooks/useOutcomeMeasures"
 import { usePatientDiagnoses } from "@/hooks/useDiagnoses"
@@ -67,6 +68,7 @@ function CountBadge({ count }: { count: number }) {
 function NotesTab({ patientId }: { patientId: string }) {
   const { data, isLoading, error } = usePatientNotes(patientId)
   const noteTypeLabel = useNoteTypeLabel()
+  const people = usePeopleTerm()
 
   if (isLoading) {
     return (
@@ -90,7 +92,7 @@ function NotesTab({ patientId }: { patientId: string }) {
     return (
       <div className="flex flex-col items-center gap-3 py-8 text-center">
         <FileText className="h-8 w-8 text-neutral-300" />
-        <p className="text-sm text-neutral-600">No notes yet for this patient.</p>
+        <p className="text-sm text-neutral-600">No notes yet for this {people.one}.</p>
         <NewNoteButton patientId={patientId} />
       </div>
     )

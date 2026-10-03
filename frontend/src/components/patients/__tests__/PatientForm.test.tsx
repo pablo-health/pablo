@@ -13,8 +13,17 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { PatientForm } from "../PatientForm"
 import * as patientsApi from "@/lib/api/patients"
 import type { PatientResponse } from "@/types/patients"
+import { peopleWords, type PeopleTerm } from "@/lib/peopleTerm"
 
 vi.mock("@/lib/api/patients")
+
+// The clinician's word for the people they see. "clients" unless a test
+// switches it.
+const peopleTerm = vi.hoisted(() => ({ current: "clients" as PeopleTerm }))
+vi.mock("@/hooks/usePeopleTerm", async (orig) => ({
+  ...(await orig<typeof import("@/hooks/usePeopleTerm")>()),
+  usePeopleTerm: () => peopleWords(peopleTerm.current),
+}))
 
 // The portal is off unless a test turns it on: most of this file is about
 // the form itself, which closes on save when there is no next step.
@@ -97,6 +106,20 @@ describe("PatientForm", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockFeature.mockImplementation(() => false)
+    peopleTerm.current = "clients"
+  })
+
+  it("says patients when that is the clinician's word", () => {
+    peopleTerm.current = "patients"
+    const { Wrapper } = createWrapper()
+
+    render(<PatientForm mode="create" open={true} onOpenChange={vi.fn()} />, {
+      wrapper: Wrapper,
+    })
+
+    expect(screen.getByText("Add Patient")).toBeInTheDocument()
+    expect(screen.getByText("Enter patient information to create a new record.")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Create Patient" })).toBeInTheDocument()
   })
 
   describe("Create Mode", () => {
@@ -112,7 +135,7 @@ describe("PatientForm", () => {
         { wrapper: Wrapper }
       )
 
-      expect(screen.getByText("Add Patient")).toBeInTheDocument()
+      expect(screen.getByText("Add Client")).toBeInTheDocument()
       expect(screen.getByLabelText(/first name/i)).toHaveValue("")
       expect(screen.getByLabelText(/last name/i)).toHaveValue("")
       expect(screen.getByLabelText(/email/i)).toHaveValue("")
@@ -151,7 +174,7 @@ describe("PatientForm", () => {
       await user.type(screen.getByLabelText(/diagnosis/i), "Anxiety")
 
       // Submit form
-      await user.click(screen.getByRole("button", { name: /create patient/i }))
+      await user.click(screen.getByRole("button", { name: /create client/i }))
 
       await waitFor(() => {
         expect(patientsApi.createPatient).toHaveBeenCalledWith({
@@ -199,7 +222,7 @@ describe("PatientForm", () => {
       await user.type(screen.getByLabelText(/last name/i), "Doe")
 
       // Submit form
-      await user.click(screen.getByRole("button", { name: /create patient/i }))
+      await user.click(screen.getByRole("button", { name: /create client/i }))
 
       await waitFor(() => {
         expect(patientsApi.createPatient).toHaveBeenCalledWith({
@@ -231,7 +254,7 @@ describe("PatientForm", () => {
         { wrapper: Wrapper }
       )
 
-      expect(screen.getByText("Edit Patient")).toBeInTheDocument()
+      expect(screen.getByText("Edit Client")).toBeInTheDocument()
       expect(screen.getByLabelText(/first name/i)).toHaveValue("Jane")
       expect(screen.getByLabelText(/last name/i)).toHaveValue("Doe")
       expect(screen.getByLabelText(/email/i)).toHaveValue("jane.doe@example.com")
@@ -268,7 +291,7 @@ describe("PatientForm", () => {
       await user.type(emailInput, "jane.updated@example.com")
 
       // Submit form
-      await user.click(screen.getByRole("button", { name: /update patient/i }))
+      await user.click(screen.getByRole("button", { name: /update client/i }))
 
       await waitFor(() => {
         expect(patientsApi.updatePatient).toHaveBeenCalledWith(
@@ -339,7 +362,7 @@ describe("PatientForm", () => {
       await user.type(screen.getByLabelText(/state/i), "IL")
       await user.type(screen.getByLabelText(/zip/i), "62704")
 
-      await user.click(screen.getByRole("button", { name: /create patient/i }))
+      await user.click(screen.getByRole("button", { name: /create client/i }))
 
       await waitFor(() => {
         expect(patientsApi.createPatient).toHaveBeenCalledWith(
@@ -407,7 +430,7 @@ describe("PatientForm", () => {
         { wrapper: Wrapper }
       )
 
-      await user.click(screen.getByRole("button", { name: /update patient/i }))
+      await user.click(screen.getByRole("button", { name: /update client/i }))
 
       await waitFor(() => {
         expect(patientsApi.updatePatient).toHaveBeenCalled()
@@ -439,7 +462,7 @@ describe("PatientForm", () => {
       })
       await user.type(screen.getByLabelText(/first name/i), "Robin")
       await user.type(screen.getByLabelText(/last name/i), "Reyes")
-      await user.click(screen.getByRole("button", { name: /create patient/i }))
+      await user.click(screen.getByRole("button", { name: /create client/i }))
 
       expect(await screen.findByTestId("new-client-next-step")).toBeInTheDocument()
       expect(screen.getByText("What should Robin do next?")).toBeInTheDocument()
@@ -459,7 +482,7 @@ describe("PatientForm", () => {
         <PatientForm mode="edit" patient={mockPatient} open={true} onOpenChange={onOpenChange} />,
         { wrapper: Wrapper },
       )
-      await user.click(screen.getByRole("button", { name: /update patient/i }))
+      await user.click(screen.getByRole("button", { name: /update client/i }))
 
       await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false))
       expect(screen.queryByTestId("new-client-next-step")).not.toBeInTheDocument()
@@ -490,7 +513,7 @@ describe("PatientForm", () => {
       })
       await user.type(screen.getByLabelText(/first name/i), "Robin")
       await user.type(screen.getByLabelText(/last name/i), "Reyes")
-      await user.click(screen.getByRole("button", { name: /create patient/i }))
+      await user.click(screen.getByRole("button", { name: /create client/i }))
       return user
     }
 
@@ -571,7 +594,7 @@ describe("PatientForm", () => {
       )
 
       // Try to submit without first name
-      await user.click(screen.getByRole("button", { name: /create patient/i }))
+      await user.click(screen.getByRole("button", { name: /create client/i }))
 
       await waitFor(() => {
         expect(screen.getByText(/first name is required/i)).toBeInTheDocument()
@@ -597,7 +620,7 @@ describe("PatientForm", () => {
       await user.type(screen.getByLabelText(/first name/i), "Jane")
 
       // Try to submit
-      await user.click(screen.getByRole("button", { name: /create patient/i }))
+      await user.click(screen.getByRole("button", { name: /create client/i }))
 
       await waitFor(() => {
         expect(screen.getByText(/last name is required/i)).toBeInTheDocument()
@@ -624,7 +647,7 @@ describe("PatientForm", () => {
       await user.type(screen.getByLabelText(/last name/i), "Doe")
       await user.type(screen.getByLabelText(/phone/i), "123")
 
-      await user.click(screen.getByRole("button", { name: /create patient/i }))
+      await user.click(screen.getByRole("button", { name: /create client/i }))
 
       await waitFor(() => {
         expect(screen.getByText(/phone must be at least 10 digits/i)).toBeInTheDocument()
@@ -653,7 +676,7 @@ describe("PatientForm", () => {
       await user.type(screen.getByLabelText(/last name/i), "Doe")
       await user.type(screen.getByLabelText(/phone/i), "(555) 123-4567")
 
-      await user.click(screen.getByRole("button", { name: /create patient/i }))
+      await user.click(screen.getByRole("button", { name: /create client/i }))
 
       await waitFor(() => {
         expect(patientsApi.createPatient).toHaveBeenCalledWith(
@@ -710,7 +733,7 @@ describe("PatientForm", () => {
       await user.type(screen.getByLabelText(/first name/i), "Jane")
       await user.type(screen.getByLabelText(/last name/i), "Doe")
 
-      await user.click(screen.getByRole("button", { name: /create patient/i }))
+      await user.click(screen.getByRole("button", { name: /create client/i }))
 
       await waitFor(() => {
         expect(patientsApi.createPatient).toHaveBeenCalled()
@@ -770,7 +793,7 @@ describe("PatientForm", () => {
       await user.type(screen.getByLabelText(/first name/i), "Jane")
       await user.type(screen.getByLabelText(/last name/i), "Doe")
 
-      const submitButton = screen.getByRole("button", { name: /create patient/i })
+      const submitButton = screen.getByRole("button", { name: /create client/i })
       await user.click(submitButton)
 
       // Button should be disabled during submission
@@ -797,7 +820,7 @@ describe("PatientForm", () => {
         { wrapper: Wrapper }
       )
 
-      const submitButton = screen.getByRole("button", { name: /update patient/i })
+      const submitButton = screen.getByRole("button", { name: /update client/i })
       await user.click(submitButton)
 
       await waitFor(() => {

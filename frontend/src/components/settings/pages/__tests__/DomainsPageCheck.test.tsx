@@ -274,8 +274,8 @@ describe("DomainsPage portal address with the portal off", () => {
     renderWithProviders(<DomainsPage />)
 
     const note = await screen.findByTestId("domains-portal-off")
-    expect(note).toHaveTextContent("Turn on the portal in Patient portal before these addresses can show it.")
-    expect(within(note).getByRole("link", { name: "Patient portal" })).toHaveAttribute(
+    expect(note).toHaveTextContent("Turn on the portal in Client portal before these addresses can show it.")
+    expect(within(note).getByRole("link", { name: "Client portal" })).toHaveAttribute(
       "href",
       "/dashboard/settings/portal",
     )

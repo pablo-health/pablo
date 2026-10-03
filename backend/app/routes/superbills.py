@@ -41,6 +41,7 @@ from ..services import AuditService, get_audit_service
 from ..services.practice_billing_profile import load_billing_tax_id
 from ..utcnow import utc_now
 from .claims import _practice_timezone, _require_patient
+from .people_term import people_words_for
 
 if TYPE_CHECKING:
     from ..models import User
@@ -102,6 +103,7 @@ def generate_superbill(
             detail="The period's end date is before its start date.",
         )
     patient = _require_patient(patients, patient_id, user.id)
+    people = people_words_for(user.id, users, clinician_profiles)
     generated_at = utc_now()
     try:
         superbill = build_superbill(
@@ -115,6 +117,7 @@ def generate_superbill(
             tax_id=tax_id,
             license_for=clinician_profiles.get,
             generated_at=generated_at,
+            people=people,
         )
     except SuperbillRefusedError as exc:
         findings = [
@@ -139,7 +142,7 @@ def generate_superbill(
             detail=SuperbillRefusedResponse(message=str(exc), findings=findings).model_dump(),
         ) from exc
 
-    pdf = render_superbill_pdf(superbill)
+    pdf = render_superbill_pdf(superbill, people)
     audit.log(
         AuditAction.SUPERBILL_GENERATED,
         user,

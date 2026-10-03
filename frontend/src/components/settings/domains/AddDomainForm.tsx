@@ -8,14 +8,10 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useAddPracticeDomain, useDescribePracticeDomain } from "@/hooks/usePracticeDomains"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { ApiError } from "@/lib/api/client"
 import type { DomainPurpose } from "@/lib/api/practiceDomains"
 import { SegmentedControl } from "../ui"
-
-const PURPOSES = [
-  { value: "portal" as const, label: "Client portal" },
-  { value: "site" as const, label: "Website" },
-]
 
 /** The bare host as typed, for the `www.` label — the server does the real normalising. */
 function displayHost(raw: string): string {
@@ -29,6 +25,11 @@ export function AddDomainForm() {
   // null leaves www. to the server's default for the name; a click makes it the reader's.
   const [wwwChoice, setWwwChoice] = useState<boolean | null>(null)
   const add = useAddPracticeDomain()
+  const people = usePeopleTerm()
+  const purposes = [
+    { value: "portal" as const, label: `${people.One} portal` },
+    { value: "site" as const, label: "Website" },
+  ]
 
   const host = displayHost(domain)
   const offersWww = purpose === "site" && host.length > 0 && !host.startsWith("www.")
@@ -79,7 +80,7 @@ export function AddDomainForm() {
           spellCheck={false}
         />
       </div>
-      <SegmentedControl label="Use for" value={purpose} onChange={setPurpose} options={PURPOSES} />
+      <SegmentedControl label="Use for" value={purpose} onChange={setPurpose} options={purposes} />
       {showWww && (
         <label htmlFor="practice-domain-www" className="flex items-center gap-2 text-sm text-foreground">
           <input

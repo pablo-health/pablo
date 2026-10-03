@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
+import type { PeopleWords } from "@/lib/peopleTerm"
 import type { IntakeTemplate, IntakeVersion } from "@/types/intakePackets"
 
 /** One form a practice can send, and the frozen version it would send. */
@@ -66,7 +67,7 @@ export interface DeliveryFacts {
  * email or mobile on file has the forms waiting and no way to reach them, and
  * that is the one state worth interrupting for.
  */
-export function deliveryOutcome(facts: DeliveryFacts): DeliveryOutcome {
+export function deliveryOutcome(facts: DeliveryFacts, people: PeopleWords): DeliveryOutcome {
   const { formCount, invited, inviteError, hadAccess, email, phone } = facts
   const forms = formCount > 0
   if (inviteError) {
@@ -76,7 +77,7 @@ export function deliveryOutcome(facts: DeliveryFacts): DeliveryOutcome {
       return {
         heading,
         lines: [
-          "This client needs an email address and a mobile number on file before they can be invited.",
+          `This ${people.one} needs an email address and a mobile number on file before they can be invited.`,
         ],
         complete: false,
       }
@@ -117,7 +118,11 @@ export function deliveryOutcome(facts: DeliveryFacts): DeliveryOutcome {
  * loading and the button being pressed. Telling somebody to try again there
  * would send them round a loop that cannot end, so it names what changed.
  */
-export function assignErrorMessage(error: unknown, alreadySent: string[]): string {
+export function assignErrorMessage(
+  error: unknown,
+  alreadySent: string[],
+  people: PeopleWords,
+): string {
   const status = (error as { status?: number } | null)?.status
   const sofar =
     alreadySent.length > 0 ? ` ${alreadySent.join(", ")} went out; the rest did not.` : ""
@@ -126,5 +131,5 @@ export function assignErrorMessage(error: unknown, alreadySent: string[]): strin
   }
   return alreadySent.length > 0
     ? `Not every form could be sent.${sofar} You can send the others from the chart.`
-    : "The forms could not be sent. Nothing went to the client; you can try again."
+    : `The forms could not be sent. Nothing went to the ${people.one}; you can try again.`
 }

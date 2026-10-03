@@ -93,6 +93,10 @@ class PracticeRow(PlatformBase):
     # Practice phone number (set at professional-info onboarding step, or later
     # via the Profile settings page). No format validation at this layer.
     phone: Mapped[str | None] = mapped_column(String(50))
+    # What the practice calls the people it sees, "clients" or "patients".
+    # NULL = not chosen. A clinician's own choice, then what their details
+    # suggest, come first; this is the fallback when neither settles it.
+    people_term: Mapped[str | None] = mapped_column(String(10))
     # BAA snapshot — written once at acceptance time and immutable thereafter.
     # These are the legal record: who signed, under what credentials, on what text.
     baa_accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -134,6 +138,11 @@ class PracticeRow(PlatformBase):
         CheckConstraint(
             "edition IN ('therapist', 'personal')",
             name="ck_practices_edition",
+        ),
+        # Added by ``c3d9e1a74b52``.
+        CheckConstraint(
+            "people_term IN ('clients', 'patients')",
+            name="ck_practices_people_term",
         ),
         # Added by ``a4f7e2c81b9d``.
         CheckConstraint(

@@ -24,6 +24,7 @@
 import { render, screen } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
+import { peopleWords } from "@/lib/peopleTerm"
 import { type CurrentStateId, stepsForState } from "../routes"
 import { STEP_BODIES } from "../stepBodies"
 
@@ -128,7 +129,7 @@ beforeEach(() => {
 
 describe("every reachable step has a real screen", () => {
   it.each(CASES)("%s renders no placeholder on any step", (_label, state, wants) => {
-    for (const step of stepsForState(state, wants)) {
+    for (const step of stepsForState(peopleWords("clients"), state, wants)) {
       const Body = STEP_BODIES[step.id]
       const { unmount } = render(<Body {...props(state, wants)} />)
       expect(

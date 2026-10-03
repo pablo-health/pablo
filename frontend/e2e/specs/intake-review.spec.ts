@@ -164,7 +164,7 @@ test.describe("intake review", () => {
     )
     await expect(
       review.getByTestId(`intake-review-provenance-${reason!.id}`),
-    ).toContainText("Patient")
+    ).toContainText("Client")
 
     await review.getByTestId(`intake-review-select-${reason!.id}`).check()
     await review.getByTestId("intake-review-note").fill(NOTE)

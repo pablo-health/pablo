@@ -35,6 +35,7 @@ import { ApiError } from "@/lib/api/client"
 import { dollarsToCents, formatCents } from "@/lib/money"
 import { declineReason } from "@/lib/paymentDisplay"
 import { useCreateCharge } from "@/hooks/usePayments"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import type { UnbilledSessionItem } from "@/types/billing"
 
 /**
@@ -50,6 +51,7 @@ export function offersCopay(item: UnbilledSessionItem): boolean {
 
 export function ChargeCopay({ item }: { item: UnbilledSessionItem }) {
   const charge = useCreateCharge()
+  const people = usePeopleTerm()
   const [prompting, setPrompting] = useState(false)
   const [typedAmount, setTypedAmount] = useState("")
   const [charged, setCharged] = useState<number | null>(null)
@@ -74,13 +76,13 @@ export function ChargeCopay({ item }: { item: UnbilledSessionItem }) {
         setCharged(row.amount_cents)
         setPrompting(false)
       } else {
-        setFailure(declineReason(row))
+        setFailure(declineReason(row, people))
       }
     } catch (error) {
       setFailure(
         error instanceof ApiError
           ? error.message
-          : "The copay could not be charged. Check the client's charges before retrying.",
+          : `The copay could not be charged. Check the ${people.one}'s charges before retrying.`,
       )
     }
   }
@@ -122,7 +124,7 @@ export function ChargeCopay({ item }: { item: UnbilledSessionItem }) {
           <DialogHeader>
             <DialogTitle>What is the copay?</DialogTitle>
             <DialogDescription>
-              Neither this client&rsquo;s coverage nor the last eligibility check says what they
+              Neither this {people.one}&rsquo;s coverage nor the last eligibility check says what they
               pay at the door. Put it on the coverage to stop being asked.
             </DialogDescription>
           </DialogHeader>

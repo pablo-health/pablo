@@ -26,6 +26,7 @@
 import { useState } from "react"
 import { Check, ChevronDown, Info, Plus, Stethoscope } from "lucide-react"
 import { ApiError } from "@/lib/api/client"
+import { type PeopleWords } from "@/lib/peopleTerm"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -42,6 +43,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { useToast } from "@/components/ui/Toast"
 import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
 import { useCreateDiagnosis, useDiagnosticDefinitions } from "@/hooks/useDiagnoses"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { evaluateDefinition } from "@/lib/diagnostics/evaluate"
 import type { DiagnosticDefinition } from "@/types/diagnoses"
 
@@ -62,7 +64,7 @@ function nowLocalInput(): string {
 }
 
 /** Map a known backend error code to a clinician-facing message. */
-function messageForError(err: unknown): string {
+function messageForError(err: unknown, people: PeopleWords): string {
   if (err instanceof ApiError) {
     switch (err.code) {
       case "UNKNOWN_DEFINITION":
@@ -72,7 +74,7 @@ function messageForError(err: unknown): string {
       case "INVALID_CODE":
         return "That ICD-10 code isn't an option for this diagnosis."
       case "NOT_FOUND":
-        return "You don't have access to this patient."
+        return `You don't have access to this ${people.one}.`
       default:
         return err.message
     }
@@ -137,6 +139,7 @@ function DiagnosisForm({ patientId, prominence, onClose }: DiagnosisFormProps) {
 
   const { showToast } = useToast()
   const createDiagnosis = useCreateDiagnosis()
+  const people = usePeopleTerm()
 
   // The active definition: the chosen one, else the first available.
   const definition: DiagnosticDefinition | undefined =
@@ -206,7 +209,7 @@ function DiagnosisForm({ patientId, prominence, onClose }: DiagnosisFormProps) {
       showToast("Diagnosis recorded.", "success")
       onClose()
     } catch (err) {
-      showToast(messageForError(err), "error")
+      showToast(messageForError(err, people), "error")
     }
   }
 

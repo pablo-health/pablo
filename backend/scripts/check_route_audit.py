@@ -508,6 +508,10 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("post", "/api/users/me/mfa-enrolled"),  # records caller's own MFA enrollment
         ("put", "/api/users/me/preferences"),  # saves caller's own preferences
         ("put", "/api/users/me/preferences/theme"),  # saves caller's own theme
+        # people_term.py — the word the UI uses ("clients"/"patients"), no PHI
+        ("get", "/api/users/me/people-term"),  # caller's own vocabulary and what set it
+        ("put", "/api/users/me/people-term"),  # saves caller's own vocabulary choice
+        ("put", "/api/users/me/practice/people-term"),  # owner sets the practice default word
         # supervision.py — clinician's own oversight relationships + accrued hours (no patient PHI)
         ("get", "/api/supervision"),  # lists clinician's own supervision relationships
         ("post", "/api/supervision"),  # creates a clinician supervision relationship

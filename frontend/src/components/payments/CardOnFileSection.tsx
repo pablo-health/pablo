@@ -20,6 +20,7 @@ import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
 import { isPaymentsUnconfigured } from "@/lib/api/payments"
 import { formatCard, formatCardExpiry } from "@/lib/paymentDisplay"
 import { usePatientCard } from "@/hooks/usePayments"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { AddCardDialog } from "./AddCardDialog"
 
 interface CardOnFileSectionProps {
@@ -28,6 +29,7 @@ interface CardOnFileSectionProps {
 
 export function CardOnFileSection({ patientId }: CardOnFileSectionProps) {
   const { data: card, isLoading, error } = usePatientCard(patientId)
+  const people = usePeopleTerm()
   const { readOnly } = useReadOnlyMode()
   const [dialogOpen, setDialogOpen] = useState(false)
 
@@ -69,7 +71,7 @@ export function CardOnFileSection({ patientId }: CardOnFileSectionProps) {
       ) : (
         <div className="flex flex-col items-center gap-3 py-8 text-center">
           <CreditCard className="h-8 w-8 text-neutral-300" />
-          <p className="text-sm text-neutral-600">No card on file for this client.</p>
+          <p className="text-sm text-neutral-600">No card on file for this {people.one}.</p>
           {!readOnly && <Button onClick={() => setDialogOpen(true)}>Add a card</Button>}
         </div>
       )}

@@ -19,6 +19,7 @@ import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
 import { ApiError } from "@/lib/api/client"
 import { getPatientDocumentDownloadUrl } from "@/lib/api/patientDocuments"
 import { queryKeys } from "@/lib/api/queryKeys"
+import type { PeopleWords } from "@/lib/peopleTerm"
 import { DocumentViewerSheet } from "@/components/patients/DocumentViewerSheet"
 import {
   EXTRACTION_POLL_TIMEOUT_TICKS,
@@ -27,34 +28,40 @@ import {
   usePatientDocuments,
   useUploadPatientDocument,
 } from "@/hooks/usePatientDocuments"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import {
   ALLOWED_DOCUMENT_MIME_TYPES,
   type DocumentCategory,
   type PatientDocumentResponse,
 } from "@/types/patientDocuments"
 
-const CATEGORY_OPTIONS: { value: DocumentCategory; label: string; hint: string }[] = [
-  {
-    value: "chart",
-    label: "Patient chart",
-    hint: "Shared with co-treating clinicians. Releasable to the patient via standard records request.",
-  },
-  {
-    value: "consent",
-    label: "Consent",
-    hint: "Signed consent or authorization form. Part of the patient record, same as patient chart.",
-  },
-  {
-    value: "therapist_private",
-    label: "Therapist private",
-    hint: "Only visible to you. Working material kept out of the patient record.",
-  },
-  {
-    value: "psychotherapy_notes",
-    label: "Psychotherapy notes",
-    hint: "Only visible to you. HIPAA §164.501 — requires separate authorization to release; not subject to patient right-of-access.",
-  },
-]
+function categoryOptions(
+  people: PeopleWords,
+): { value: DocumentCategory; label: string; hint: string }[] {
+  return [
+    {
+      value: "chart",
+      label: `${people.One} chart`,
+      hint: `Shared with co-treating clinicians. Releasable to the ${people.one} via standard records request.`,
+    },
+    {
+      value: "consent",
+      label: "Consent",
+      hint: `Signed consent or authorization form. Part of the ${people.one} record, same as ${people.one} chart.`,
+    },
+    {
+      value: "therapist_private",
+      label: "Therapist private",
+      hint: `Only visible to you. Working material kept out of the ${people.one} record.`,
+    },
+    {
+      value: "psychotherapy_notes",
+      label: "Psychotherapy notes",
+      // people-term-ok: "patient right of access" is the HIPAA term for this right
+      hint: "Only visible to you. HIPAA §164.501 — requires separate authorization to release; not subject to patient right-of-access.",
+    },
+  ]
+}
 
 function categoryBadge(category: DocumentCategory): string | null {
   if (category === "therapist_private") return "therapist private"
@@ -107,6 +114,8 @@ function formatDate(iso: string): string {
 
 export function PatientDocuments({ patientId }: PatientDocumentsProps) {
   const { readOnly } = useReadOnlyMode()
+  const people = usePeopleTerm()
+  const categoryChoices = categoryOptions(people)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [downloadError, setDownloadError] = useState<string | null>(null)
@@ -237,8 +246,8 @@ export function PatientDocuments({ patientId }: PatientDocumentsProps) {
       <div className="flex items-end justify-between gap-3 mb-4">
         <p className="text-sm text-neutral-500">
           {readOnly
-            ? "Documents attached to this patient's chart."
-            : "Upload PDFs, PNGs, or JPEGs to attach to this patient's chart."}
+            ? `Documents attached to this ${people.one}'s chart.`
+            : `Upload PDFs, PNGs, or JPEGs to attach to this ${people.one}'s chart.`}
         </p>
         {!readOnly && (
           <div className="flex items-end gap-3">
@@ -251,10 +260,10 @@ export function PatientDocuments({ patientId }: PatientDocumentsProps) {
                 className="rounded border border-neutral-300 px-2 py-1 text-sm"
                 data-testid="patient-document-category-select"
                 title={
-                  CATEGORY_OPTIONS.find((o) => o.value === category)?.hint ?? ""
+                  categoryChoices.find((o) => o.value === category)?.hint ?? ""
                 }
               >
-                {CATEGORY_OPTIONS.map((opt) => (
+                {categoryChoices.map((opt) => (
                   <option key={opt.value} value={opt.value}>
                     {opt.label}
                   </option>

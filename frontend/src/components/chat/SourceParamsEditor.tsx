@@ -21,6 +21,7 @@ import { Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { usePatientDocuments } from "@/hooks/usePatientDocuments"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import type { SourceKey, SourceParams } from "@/lib/chat/types"
 
 interface SourceParamsEditorProps {
@@ -89,6 +90,7 @@ function DocumentsEditor({
   onApply: (params: SourceParams) => void
 }) {
   const { data, isLoading } = usePatientDocuments(patientId)
+  const people = usePeopleTerm()
   const documents = data?.data ?? []
 
   const initialIds =
@@ -143,7 +145,7 @@ function DocumentsEditor({
           </p>
         ) : documents.length === 0 ? (
           <p className="text-sm text-neutral-500">
-            No documents uploaded for this patient yet.
+            No documents uploaded for this {people.one} yet.
           </p>
         ) : (
           <ul

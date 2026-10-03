@@ -7,6 +7,8 @@ import { SetupStepHead } from "@/components/setup"
 import { billingProfileGaps } from "@/components/settings/billingProfileGaps"
 import { useSettingsUserStatus } from "@/components/settings/useSettingsPreferences"
 import { useBillingProfile } from "@/hooks/useBillingProfile"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
+import type { PeopleWords } from "@/lib/peopleTerm"
 import type { CurrentStateId } from "./routes"
 import { usePaymentsConnected } from "./setupSlots.extensions"
 
@@ -53,6 +55,7 @@ export function DoneStep({
   // `null` on a deployment with no processor concept, and while the read is in
   // flight. Only an explicit `false` is grounds for saying something is left.
   const paymentsConnected = usePaymentsConnected()
+  const people = usePeopleTerm()
 
   const onPlatform = selected.includes("platform")
   const billsInsurance = selected.includes("own_insurance")
@@ -88,7 +91,7 @@ export function DoneStep({
           billingReady,
           profileReady,
         })}
-        lede={lede({ seeingNobodyYet, onPlatform, wantsCredentialing, billsInsurance })}
+        lede={lede({ seeingNobodyYet, onPlatform, wantsCredentialing, billsInsurance, people })}
       />
 
       <ul className="space-y-3 text-sm text-neutral-700">
@@ -99,7 +102,7 @@ export function DoneStep({
               Billing
             </Link>
             {paymentsConnected === false ? (
-              <>. Clients can pay by card once you connect a payment processor.</>
+              <>. {people.Many} can pay by card once you connect a payment processor.</>
             ) : (
               <>, ready to charge.</>
             )}
@@ -107,7 +110,7 @@ export function DoneStep({
         )}
 
         {takesDirectPay && superbillReady && (
-          <li>When a client needs a superbill, Pablo prepares it from your practice details.</li>
+          <li>When a {people.one} needs a superbill, Pablo prepares it from your practice details.</li>
         )}
 
         {billsInsurance && (
@@ -126,7 +129,7 @@ export function DoneStep({
               </Link>
               .
             </li>
-            <li>While an application is pending, you can still bill a client by superbill.</li>
+            <li>While an application is pending, you can still bill a {people.one} by superbill.</li>
           </>
         )}
 
@@ -158,7 +161,7 @@ export function DoneStep({
           worse than one that reminds them it exists. */}
       {onPlatform && takesDirectPay && (
         <p className="text-[12.5px] text-muted-foreground" data-testid="platform-agreement-note">
-          If you start seeing clients outside the service, check its agreement for any restrictions
+          If you start seeing {people.many} outside the service, check its agreement for any restrictions
           first.
         </p>
       )}
@@ -221,14 +224,16 @@ function lede({
   onPlatform,
   wantsCredentialing,
   billsInsurance,
+  people,
 }: {
   seeingNobodyYet: boolean
   onPlatform: boolean
   wantsCredentialing: boolean
   billsInsurance: boolean
+  people: PeopleWords
 }): string {
   if (seeingNobodyYet) {
-    return "What you entered is saved. You can finish setting up payments when you start seeing clients."
+    return `What you entered is saved. You can finish setting up payments when you start seeing ${people.many}.`
   }
   // NAMES what "the service" is, on its first mention, because this is the
   // first line the reader meets. "The service" alone could be Pablo, a

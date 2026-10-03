@@ -18,6 +18,7 @@ import { ArrowLeft, Paperclip } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { formatInUserTimeZone, useUserTimeZone } from "@/hooks/usePreferences"
 import {
   useCloseThread,
@@ -68,6 +69,7 @@ export function ThreadView({
   const { data: thread, isLoading, isError, refetch } = useThread(threadId)
   const markRead = useMarkThreadRead()
   const markedFor = useRef<string | null>(null)
+  const people = usePeopleTerm()
 
   // Marked read once per thread AND per message count: a message that arrives
   // while the thread is open is seen too, rather than holding the badge up
@@ -140,7 +142,7 @@ export function ThreadView({
         <p className="border-t border-neutral-200 p-4 text-sm text-neutral-600" data-testid="thread-replies-off">
           {repliesOffNote}{" "}
           <Link href="/dashboard/settings/portal" className="font-medium underline">
-            Client portal settings
+            {people.One} portal settings
           </Link>
         </p>
       ) : (
@@ -157,6 +159,7 @@ export function ThreadView({
 
 function MessageBubble({ message, highlighted }: { message: ThreadMessage; highlighted: boolean }) {
   const timeZone = useUserTimeZone()
+  const people = usePeopleTerm()
   const fromClient = message.sender === "patient"
   return (
     <li
@@ -175,7 +178,7 @@ function MessageBubble({ message, highlighted }: { message: ThreadMessage; highl
         </ul>
       )}
       <p className="mt-1 text-xs text-neutral-500">
-        {fromClient ? "Client" : "You"} · {formatInUserTimeZone(message.created_at, timeZone, WHEN)}
+        {fromClient ? people.One : "You"} · {formatInUserTimeZone(message.created_at, timeZone, WHEN)}
       </p>
     </li>
   )

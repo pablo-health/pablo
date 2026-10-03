@@ -4,6 +4,8 @@
 
 import { SetupStepHead } from "@/components/setup"
 import { Button } from "@/components/ui/button"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
+import type { PeopleWords } from "@/lib/peopleTerm"
 import type { CurrentStateId } from "./routes"
 import { HAS_PAYMENTS_SETUP } from "./setupSlots.extensions"
 
@@ -13,10 +15,12 @@ import { HAS_PAYMENTS_SETUP } from "./setupSlots.extensions"
  * Named per tick because a line true of every practice tells her nothing about
  * her own.
  */
-const PLAN_LINES: Record<CurrentStateId, string> = {
-  self_pay: "Payments from clients, plus superbills when a client needs one",
-  platform: "Billing for work you do outside the service",
-  own_insurance: "Claims for contracts you already have in your own name",
+function planLines(people: PeopleWords): Record<CurrentStateId, string> {
+  return {
+    self_pay: `Payments from ${people.many}, plus superbills when a ${people.one} needs one`,
+    platform: "Billing for work you do outside the service",
+    own_insurance: "Claims for contracts you already have in your own name",
+  }
 }
 
 /**
@@ -50,6 +54,8 @@ export function PlanStep({
   onBack: () => void
   onContinue: () => void
 }) {
+  const people = usePeopleTerm()
+  const planLine = planLines(people)
   const onPlatform = selected.includes("platform")
 
   return (
@@ -63,7 +69,7 @@ export function PlanStep({
       <ul className="space-y-2 text-sm text-neutral-700" data-testid="plan-lines">
         {selected.map((id) => (
           <li key={id} className="rounded-lg border border-border bg-card p-3">
-            {PLAN_LINES[id]}
+            {planLine[id]}
           </li>
         ))}
       </ul>
@@ -75,7 +81,7 @@ export function PlanStep({
           and makes the safe default sound dangerous. */}
       {onPlatform && (
         <p className="text-[12.5px] text-muted-foreground" data-testid="platform-untouched">
-          This won&rsquo;t change how the service handles your current clients or payments.
+          This won&rsquo;t change how the service handles your current {people.many} or payments.
         </p>
       )}
 
@@ -101,7 +107,7 @@ export function PlanStep({
           />
           <span>
             <span className="block text-sm font-medium text-neutral-900">
-              I want clients to be able to pay by card
+              I want {people.many} to be able to pay by card
             </span>
             <span className="mt-1 block text-sm text-muted-foreground">
               Connect a payment processor and every invoice carries a payment link. You can set

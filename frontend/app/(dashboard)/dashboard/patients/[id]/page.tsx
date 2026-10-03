@@ -13,6 +13,7 @@ import { PatientChatDialog } from "@/components/patients/PatientChatDialog"
 import { PatientChartExtras } from "@/components/patients/PatientChartExtras"
 import { NewNoteButton } from "@/components/notes/NewNoteButton"
 import { usePatient } from "@/hooks/usePatients"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 
 interface PatientDetailPageProps {
   params: Promise<{
@@ -26,6 +27,7 @@ interface PatientDetailPageProps {
 const NO_SEARCH = Promise.resolve({})
 
 export default function PatientDetailPage({ params, searchParams }: PatientDetailPageProps) {
+  const people = usePeopleTerm()
   const { id } = use(params)
   const { tab } = use<{ tab?: string }>(searchParams ?? NO_SEARCH)
   const { data: patient, isLoading, error } = usePatient(id)
@@ -39,11 +41,11 @@ export default function PatientDetailPage({ params, searchParams }: PatientDetai
             className="flex items-center gap-2 text-neutral-600 hover:text-neutral-900 transition-colors"
           >
             <ArrowLeft className="w-5 h-5" />
-            <span>Back to Patients</span>
+            <span>Back to {people.Many}</span>
           </Link>
         </div>
         <div className="card text-center py-12">
-          <p className="text-neutral-500">Loading patient details...</p>
+          <p className="text-neutral-500">Loading {people.one} details...</p>
         </div>
       </div>
     )
@@ -58,12 +60,12 @@ export default function PatientDetailPage({ params, searchParams }: PatientDetai
             className="flex items-center gap-2 text-neutral-600 hover:text-neutral-900 transition-colors"
           >
             <ArrowLeft className="w-5 h-5" />
-            <span>Back to Patients</span>
+            <span>Back to {people.Many}</span>
           </Link>
         </div>
         <div className="card text-center py-12">
           <p className="text-red-500">
-            {error ? "Failed to load patient details." : "Patient not found"}
+            {error ? `Failed to load ${people.one} details.` : `${people.One} not found`}
           </p>
         </div>
       </div>
@@ -79,7 +81,7 @@ export default function PatientDetailPage({ params, searchParams }: PatientDetai
           className="flex items-center gap-2 text-neutral-600 hover:text-neutral-900 transition-colors"
         >
           <ArrowLeft className="w-5 h-5" />
-          <span>Back to Patients</span>
+          <span>Back to {people.Many}</span>
         </Link>
         <div className="flex items-center gap-2">
           <EditPatientButton patient={patient} />

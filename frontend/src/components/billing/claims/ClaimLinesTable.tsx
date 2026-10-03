@@ -8,6 +8,7 @@
 
 "use client"
 
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { formatCents } from "@/lib/money"
 import type { ClaimLine } from "@/types/claims"
 import {
@@ -26,6 +27,7 @@ interface ClaimLinesTableProps {
 }
 
 export function ClaimLinesTable({ lines, adjudicated }: ClaimLinesTableProps) {
+  const people = usePeopleTerm()
   const pending = <span className="text-neutral-400">Pending</span>
   return (
     <div className="overflow-x-auto">
@@ -39,7 +41,7 @@ export function ClaimLinesTable({ lines, adjudicated }: ClaimLinesTableProps) {
             <TableHead>Charged</TableHead>
             <TableHead>Allowed</TableHead>
             <TableHead>Paid</TableHead>
-            <TableHead>Client owes</TableHead>
+            <TableHead>{people.One} owes</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>

@@ -36,6 +36,7 @@ from app.claims.superbill import (
     render_superbill_pdf,
 )
 from app.models.payments import PatientCharge
+from app.people_term import people_words
 from app.repositories.clinician_profile import ClinicianProfile
 from app.scheduling_engine.models.appointment import Appointment
 from app.services import structured_llm_gateway, vertex_client
@@ -54,6 +55,7 @@ from tests.claims_fixtures import (
 
 _TZ = ZoneInfo("America/New_York")
 _GENERATED_AT = datetime(2026, 9, 6, 12, 0, tzinfo=UTC)
+_CLIENTS = people_words("clients")
 _SECOND_APPOINTMENT_ID = "77777777-7777-4777-8777-777777777777"
 _SECOND_CLAIM_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
 _TAX_ID = "123456789"
@@ -138,6 +140,7 @@ def _build(**overrides: Any) -> Any:
         "tax_id": _TAX_ID,
         "license_for": _license_for,
         "generated_at": _GENERATED_AT,
+        "people": _CLIENTS,
     }
     fields.update(overrides)
     return build_superbill(**fields)
@@ -375,7 +378,7 @@ def _second_line(**overrides: Any) -> Any:
 
 class TestRender:
     def test_the_pdf_carries_every_block(self) -> None:
-        pdf = render_superbill_pdf(_build())
+        pdf = render_superbill_pdf(_build(), _CLIENTS)
         assert pdf.startswith(b"%PDF")
         text = pdf.decode("latin-1")
         for expected in (
@@ -399,11 +402,11 @@ class TestRender:
             assert expected in text, expected
 
     def test_the_same_inputs_give_the_same_bytes(self) -> None:
-        assert render_superbill_pdf(_build()) == render_superbill_pdf(_build())
+        assert render_superbill_pdf(_build(), _CLIENTS) == render_superbill_pdf(_build(), _CLIENTS)
 
     def test_a_different_period_gives_different_bytes(self) -> None:
-        assert render_superbill_pdf(_build()) != render_superbill_pdf(
-            _build(period_end=date(2026, 9, 5))
+        assert render_superbill_pdf(_build(), _CLIENTS) != render_superbill_pdf(
+            _build(period_end=date(2026, 9, 5)), _CLIENTS
         )
 
 
@@ -449,4 +452,4 @@ def test_build_and_render_call_no_model(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(vertex_client, "anthropic_vertex_client", forbidden)
     monkeypatch.setattr(structured_llm_gateway, "get_default_structured_llm_gateway", forbidden)
     monkeypatch.setattr(structured_llm_gateway, "resolve_structured_llm_gateway", forbidden)
-    assert render_superbill_pdf(_build()).startswith(b"%PDF")
+    assert render_superbill_pdf(_build(), _CLIENTS).startswith(b"%PDF")

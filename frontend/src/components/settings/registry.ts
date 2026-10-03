@@ -71,9 +71,13 @@ import { settingsExtensions } from "./registry.extensions"
 export interface SettingsItem {
   /** URL segment and stable identity across builds. */
   id: string
+  /** May hold `{people}`-style placeholders; render it through `sayPeople`. */
   label: string
   icon: LucideIcon
-  /** One line, shown under the page title and searched by the nav filter. */
+  /**
+   * One line, shown under the page title and searched by the nav filter. Like
+   * `label`, it may hold `{people}`-style placeholders (see `sayPeople`).
+   */
   desc: string
   /** What renders at `/dashboard/settings/<id>`. */
   page: ComponentType
@@ -146,14 +150,14 @@ const baseGroups: SettingsGroup[] = [
         label: "Availability",
         icon: Clock,
         page: AvailabilityPage,
-        desc: "When you see patients. Drives booking, reminders and your calendar view.",
+        desc: "When you see {people}. Drives booking, reminders and your calendar view.",
       },
       {
         id: "scheduling",
         label: "Scheduling",
         icon: CalendarClock,
         page: SchedulingPage,
-        desc: "Which appointments exist, how new patients start, and what Pablo may offer versus what patients may book.",
+        desc: "Which appointments exist, how new {people} start, and what Pablo may offer versus what {people} may book.",
       },
       {
         id: "calendars",
@@ -171,18 +175,18 @@ const baseGroups: SettingsGroup[] = [
       },
       {
         id: PATIENT_PORTAL_SETTINGS_ID,
-        label: "Patient portal",
+        label: "{Person} portal",
         icon: Users,
         page: PatientPortalPage,
         feature: "patient_portal",
-        desc: "Intake forms, self-report measures and patient sign-in.",
+        desc: "Intake forms, self-report measures and {person} sign-in.",
       },
       {
         id: DOMAINS_SETTINGS_ID,
         label: "Domains",
         icon: Globe,
         page: DomainsPage,
-        desc: "Your own addresses for the client portal and your website.",
+        desc: "Your own addresses for the {person} portal and your website.",
       },
       {
         id: "website",
@@ -196,7 +200,7 @@ const baseGroups: SettingsGroup[] = [
         label: "Import",
         icon: FileInput,
         page: ImportPage,
-        desc: "Bring clients and notes across from another EHR.",
+        desc: "Bring {people} and notes across from another EHR.",
       },
       {
         id: "export",

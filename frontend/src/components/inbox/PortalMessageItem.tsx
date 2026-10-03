@@ -5,6 +5,7 @@
 import { useState } from "react"
 import { ThreadView } from "@/components/messages/ThreadView"
 import { usePortalSettings } from "@/hooks/usePortalSettings"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import type { ReplyInboxOutcome } from "@/lib/api/messageInbox"
 import { EarlierMessagesPrompt } from "./EarlierMessagesPrompt"
 import type { InboxItemRendererProps } from "./itemRenderers"
@@ -17,9 +18,10 @@ import { repliesOffNote } from "./portalOff"
  */
 export function PortalMessageItem({ item, onClose }: InboxItemRendererProps) {
   const { data: portal } = usePortalSettings()
+  const people = usePeopleTerm()
   // Counted, so a second reply asks afresh rather than inheriting the first answer.
   const [reply, setReply] = useState<{ outcome: ReplyInboxOutcome; count: number } | null>(null)
-  const patientName = item.patient_name ?? "This client"
+  const patientName = item.patient_name ?? `This ${people.one}`
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -29,7 +31,7 @@ export function PortalMessageItem({ item, onClose }: InboxItemRendererProps) {
           patientId={item.patient_id ?? ""}
           patientName={patientName}
           onBack={onClose}
-          repliesOffNote={repliesOffNote(portal)}
+          repliesOffNote={repliesOffNote(portal, people)}
           highlightMessageId={item.source_id}
           inReplyToMessageId={item.source_id}
           onReplied={(outcome) =>

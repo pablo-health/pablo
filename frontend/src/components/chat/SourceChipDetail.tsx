@@ -15,6 +15,7 @@
 import { ExternalLink } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import {
   Dialog,
   DialogContent,
@@ -30,7 +31,7 @@ import type {
   SourceKey,
   SourceParams,
 } from "@/lib/chat/types"
-import { SOURCE_META } from "@/lib/chat/sourceMeta"
+import { SOURCE_META, sourceDescription } from "@/lib/chat/sourceMeta"
 
 import { SourceParamsEditor } from "./SourceParamsEditor"
 
@@ -72,6 +73,7 @@ export function SourceChipDetail({
   onSetAsDefault,
   onOpenNote,
 }: SourceChipDetailProps) {
+  const people = usePeopleTerm()
   if (!sourceKey) return null
 
   const meta = SOURCE_META[sourceKey]
@@ -91,7 +93,7 @@ export function SourceChipDetail({
             <meta.icon className="size-4 text-neutral-600" />
             {meta.label}
           </DialogTitle>
-          <DialogDescription>{meta.description}</DialogDescription>
+          <DialogDescription>{sourceDescription(sourceKey, people)}</DialogDescription>
         </DialogHeader>
 
         {isEditable ? (
