@@ -4,10 +4,11 @@
 
 import { useRef } from "react"
 import { Button } from "@/components/ui/button"
-import type { SiteDraft } from "@/lib/api/practiceSite"
+import type { SiteDraft, SiteHeader } from "@/lib/api/practiceSite"
 import { SettingsCard } from "../ui"
 import { WebsiteCreateOptions } from "../settingsSlots.extensions"
 import { describeFiles, formatWhen } from "./format"
+import { SuggestedHeader } from "./SuggestedHeader"
 import { ThemeReport } from "./ThemeReport"
 
 interface DraftCardProps {
@@ -19,6 +20,7 @@ interface DraftCardProps {
   onPreview: () => void
   onPublish: () => void
   onDiscard: () => void
+  onSetHeader: (header: SiteHeader) => void
   onDraftSaved: () => void
 }
 
@@ -32,6 +34,7 @@ export function DraftCard({
   onPreview,
   onPublish,
   onDiscard,
+  onSetHeader,
   onDraftSaved,
 }: DraftCardProps) {
   const input = useRef<HTMLInputElement>(null)
@@ -51,6 +54,14 @@ export function DraftCard({
         </p>
       )}
       {draft?.theme && <ThemeReport report={draft.theme} />}
+      {draft?.suggested_header?.header && (
+        <SuggestedHeader
+          header={draft.suggested_header.header}
+          canManage={canManage}
+          busy={busy}
+          onSave={onSetHeader}
+        />
+      )}
       {canManage && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <input
