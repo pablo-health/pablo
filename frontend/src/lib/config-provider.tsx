@@ -47,7 +47,18 @@ async function fetchConfig(): Promise<RuntimeConfig> {
   return response.json()
 }
 
-export function ConfigProvider({ children }: { children: ReactNode }) {
+export function ConfigProvider({
+  children,
+  loading,
+}: {
+  children: ReactNode
+  /**
+   * Shown in place of the default screen while the config loads. The patient
+   * portal passes its own, so a client never sees the clinician app's spinner
+   * or the word "configuration" before the practice's theme applies.
+   */
+  loading?: ReactNode
+}) {
   const { data: config, isLoading, error } = useQuery<RuntimeConfig, Error>({
     queryKey: ['runtime-config'],
     queryFn: fetchConfig,
@@ -81,6 +92,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   }
 
   if (isLoading) {
+    if (loading !== undefined) return <>{loading}</>
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="text-center">

@@ -18,7 +18,6 @@ export function PortalWelcome({ displayName }: { displayName: string | null }) {
       ) : (
         <div className="h-8 w-56 animate-pulse rounded bg-neutral-200" aria-hidden="true" />
       )}
-      <p className="mt-2 text-neutral-600">This is your client portal.</p>
     </section>
   )
 }

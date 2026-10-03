@@ -74,8 +74,11 @@ describe.each([
     )
 
     const back = await screen.findByTestId("portal-back-to-site")
-    expect(back).toHaveTextContent("Back to www.example-therapy.com")
+    // A short label, never the raw hostname; a screen reader hears whose site.
+    expect(back).toHaveTextContent(/^Back to website$/)
     expect(back).toHaveAttribute("href", "https://www.example-therapy.com")
+    await screen.findByTestId("portal-shell-practice-name")
+    expect(back).toHaveAccessibleName("Back to website of Example Therapy")
   })
 
   it("greets the visitor with the practice's name, in the heading font", async () => {
@@ -83,7 +86,7 @@ describe.each([
 
     const welcome = await screen.findByTestId("portal-welcome")
     expect(await screen.findByRole("heading", { name: "Welcome to Example Therapy" })).toHaveClass("font-display")
-    expect(welcome).toHaveTextContent("This is your client portal.")
+    expect(welcome).toHaveTextContent(/^Welcome to Example Therapy$/)
     expect(screen.getByTestId("portal-shell-practice-name")).toHaveClass("font-display")
   })
 })

@@ -8,6 +8,7 @@ import {
   isAppHost,
   practiceHostname,
   routePracticeHost,
+  servesOnlyPortal,
 } from "../practice-host"
 
 const APP = ["app.example.org", "*.run.example.net"]
@@ -86,6 +87,25 @@ describe("classifyHost", () => {
 
   it("refuses a host no practice could hold", () => {
     expect(classifyHost("under_score.example.com", APP, PORTAL)).toEqual({ kind: "unknown" })
+  })
+})
+
+describe("servesOnlyPortal", () => {
+  it.each([
+    ["portal.example.org", APP, true],
+    ["portal.example.org:443", [], true],
+    ["clients.example-therapy.com", APP, true],
+  ])("holds for %s, where the clinician app is not served", (host, appHosts, expected) => {
+    expect(servesOnlyPortal(host, appHosts, PORTAL)).toBe(expected)
+  })
+
+  it.each([
+    ["app.example.org", APP],
+    ["localhost:3000", APP],
+    ["clients.example-therapy.com", []],
+    [null, APP],
+  ])("does not hold for %s, which also serves the clinician app", (host, appHosts) => {
+    expect(servesOnlyPortal(host, appHosts, PORTAL)).toBe(false)
   })
 })
 

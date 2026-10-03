@@ -137,6 +137,21 @@ export function classifyHost(
   return hostname ? { kind: "practice", hostname } : { kind: "unknown" }
 }
 
+/**
+ * Whether every page on `host` is the patient portal: one of `PORTAL_HOSTS`,
+ * or a host a practice could hold, where the proxy serves nothing of the
+ * clinician app. The root layout asks, so what is drawn before the portal
+ * itself (the config loading screen) can already look like the portal there,
+ * where the address carries no `/portal` to tell the browser.
+ */
+export function servesOnlyPortal(
+  host: string | null,
+  appHosts: readonly string[],
+  portalHosts: readonly string[],
+): boolean {
+  return isPortalHost(host, portalHosts) || classifyHost(host, appHosts, portalHosts).kind === "practice"
+}
+
 export interface PracticeHostRequest {
   /** The `Host` header as the request carried it. */
   host: string

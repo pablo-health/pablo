@@ -69,8 +69,16 @@ export function ShellHeader({
         )}
         {header && <WebsiteCta header={header} />}
         {siteHost && !header && (
-          <a href={`https://${siteHost}`} data-testid="portal-back-to-site" className={LINK_CLASS}>
-            Back to {siteHost}
+          // The visible text stays short and the hostname stays out of it; a
+          // screen reader also hears whose website. The accessible name starts
+          // with the visible words so voice control can still say them.
+          <a
+            href={`https://${siteHost}`}
+            data-testid="portal-back-to-site"
+            aria-label={displayName ? `Back to website of ${displayName}` : undefined}
+            className={LINK_CLASS}
+          >
+            Back to website
           </a>
         )}
         {onSignOut && (
