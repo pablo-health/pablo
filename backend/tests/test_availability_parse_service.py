@@ -11,6 +11,7 @@ output) is what reaches the caller.
 
 from __future__ import annotations
 
+import logging
 from datetime import date
 from typing import Any
 
@@ -357,6 +358,7 @@ class TestPromptContract:
         assert call["temperature"] == 0.0
         assert call["thinking_budget"] == 0
         assert call["max_output_tokens"] == 2048
+        assert call["timeout_seconds"] == 15.0
         assert call["user_prompt"] == "No appointments on Fridays"
 
         system_prompt = call["system_prompt"]
@@ -367,6 +369,34 @@ class TestPromptContract:
         # Clock-free by construction: no date or timezone context anywhere.
         assert "today" not in system_prompt.lower()
         assert "timezone" not in system_prompt.lower()
+
+    def test_result_log_carries_latency_and_tokens_but_not_the_sentence(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        sentence = "No appointments on Fridays, marker-7f3a"
+        response = {
+            "proposals": [
+                {
+                    "rule_type": "block_day_of_week",
+                    "enforcement": "hard",
+                    "day_of_week": 4,
+                    "human_summary": "No Fridays, marker-7f3a.",
+                    "confidence": 0.95,
+                }
+            ],
+        }
+        gateway = FakeStructuredLLMGateway(
+            default_response=StructuredCompletion(data=response, output_tokens=57)
+        )
+
+        with caplog.at_level(logging.INFO, logger="app.services.availability_parse_service"):
+            _service(gateway).parse(sentence)
+
+        result_lines = [r.getMessage() for r in caplog.records if "parse result" in r.getMessage()]
+        assert len(result_lines) == 1
+        assert "latency_ms=" in result_lines[0]
+        assert "output_tokens=57" in result_lines[0]
+        assert all("marker-7f3a" not in r.getMessage() for r in caplog.records)
 
 
 class TestExclusivity:
@@ -968,3 +998,36 @@ class TestTwoReadings:
         )
 
         assert result.readings == []
+
+    def test_day_less_hours_offer_weekdays_or_every_day(self) -> None:
+        def hours(days: range) -> list[dict[str, Any]]:
+            return [
+                {
+                    "rule_type": "working_hours",
+                    "enforcement": "hard",
+                    "day_of_week": d,
+                    "start": "09:00",
+                    "end": "17:00",
+                    "human_summary": "9 to 5.",
+                    "confidence": 0.9,
+                }
+                for d in days
+            ]
+
+        service = _fake_service(
+            _ambiguous(
+                [
+                    {"label": "Weekdays", "proposals": hours(range(5))},
+                    {"label": "Every day", "proposals": hours(range(7))},
+                ]
+            )
+        )
+
+        result = service.parse("9 to 5")
+
+        assert result.proposals == []
+        assert [r.label for r in result.readings] == ["Weekdays", "Every day"]
+        assert [sorted(p.params["day_of_week"] for p in r.proposals) for r in result.readings] == [
+            [0, 1, 2, 3, 4],
+            [0, 1, 2, 3, 4, 5, 6],
+        ]

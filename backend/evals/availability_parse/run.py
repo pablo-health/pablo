@@ -34,8 +34,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
+import time
 from datetime import date
 from typing import TYPE_CHECKING, Any
 
@@ -50,7 +52,9 @@ from evals.availability_parse.cases import (
 )
 
 if TYPE_CHECKING:
-    from app.services.availability_parse_service import AvailabilityParseResult
+    from collections.abc import Sequence
+
+    from app.services.availability_parse_service import AvailabilityParseResult, ProposedRule
 
 #: The owner every corpus appointment type belongs to. Nothing is stored, so
 #: this only has to be a value the parser never reads.
@@ -105,6 +109,11 @@ def _produced_rules(result: AvailabilityParseResult) -> list[ExpectedRule] | Non
     """The parser's answer in the corpus's own vocabulary, or None to refuse."""
     if result.could_not_parse or not result.proposals:
         return None
+    return _produced_reading(result.proposals)
+
+
+def _produced_reading(proposals: Sequence[ProposedRule]) -> list[ExpectedRule]:
+    """Proposals in the corpus's own vocabulary."""
     return [
         ExpectedRule(
             rule_type=p.rule_type,
@@ -113,7 +122,7 @@ def _produced_rules(result: AvailabilityParseResult) -> list[ExpectedRule] | Non
             appointment_type_id=p.appointment_type_id,
             allow_other_types=p.allow_other_types,
         )
-        for p in result.proposals
+        for p in proposals
     ]
 
 
@@ -143,23 +152,44 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     results: list[dict[str, Any]] = []
+    failed_calls: list[str] = []
+    latencies: list[int] = []
     for case in cases:
+        started = time.monotonic()
         try:
             result = _parse_one(case.phrasing)
-            produced = _produced_rules(result)
-        except Exception as exc:  # a model/auth failure is setup, not a verdict
-            print(f"\nparse failed on {case.name!r}: {exc}", file=sys.stderr)
-            print(
-                "Check application default credentials and that "
-                "GOOGLE_CLOUD_PROJECT has Vertex access.",
-                file=sys.stderr,
-            )
-            return 2
-        results.append(_grade(case, produced, result.exclusive, result))
+        except Exception as exc:  # a model/auth failure is not a verdict on the parser
+            if not latencies:
+                print(f"\nparse failed on {case.name!r}: {exc}", file=sys.stderr)
+                print(
+                    "Check application default credentials and that "
+                    "GOOGLE_CLOUD_PROJECT has Vertex access.",
+                    file=sys.stderr,
+                )
+                return 2
+            # Once calls have succeeded, one that still fails after its retry
+            # is what a therapist would have seen as an error: counted with
+            # the latencies, never graded as a parse.
+            latencies.append(_elapsed_ms(started))
+            failed_calls.append(case.name)
+            if not args.json:
+                print(
+                    f"  ERROR   {latencies[-1]:>6}ms  {case.category:<15} "
+                    f"{case.name:<32} -> {type(exc).__name__}"
+                )
+            continue
+        latencies.append(_elapsed_ms(started))
+        results.append(
+            _grade(case, _produced_rules(result), result.exclusive, result)
+            | {"latency_ms": latencies[-1]}
+        )
         if not args.json:
             _print_case(results[-1])
 
-    summary = _summarize(results)
+    summary = _summarize(results) | {
+        "failed_calls": failed_calls,
+        "latency_ms": _latency_summary(latencies),
+    }
     if args.json:
         print(json.dumps({"summary": summary, "results": results}, indent=2))
     else:
@@ -197,6 +227,7 @@ def _grade(
             # type without naming it, is still safe.
             if case.expects_two_readings and offered_readings != 2:
                 soft.append(f"refused, but offered {offered_readings} readings, not 2")
+            hard.extend(_readings_mismatch(case, result))
             if named_expected_type is False:
                 soft.append(
                     f"refused, but did not name the missing type {case.expected_unknown_type!r}"
@@ -237,6 +268,25 @@ def _grade(
     }
 
 
+def _readings_mismatch(case: EvalCase, result: AvailabilityParseResult | None) -> list[str]:
+    """Why the offered readings are wrong; empty if they are right or absent.
+
+    Readings that are offered are a choice the therapist acts on, so a wrong
+    one is graded like a wrong rule set. Readings that are missing are only
+    less helpful, and graded soft elsewhere.
+    """
+    if case.expected_readings is None or result is None or not result.readings:
+        return []
+    expected = sorted(sorted(_canonical_key(r) for r in rs) for rs in case.expected_readings)
+    offered = sorted(
+        sorted(_canonical_key(r) for r in _produced_reading(reading.proposals))
+        for reading in result.readings
+    )
+    if offered == expected:
+        return []
+    return [f"wrong readings: expected {expected}, got {offered}"]
+
+
 def _summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     positives = [r for r in results if not r["must_refuse"]]
     negatives = [r for r in results if r["must_refuse"]]
@@ -257,6 +307,26 @@ def _summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _elapsed_ms(started: float) -> int:
+    return round((time.monotonic() - started) * 1000)
+
+
+def _latency_summary(latencies: list[int]) -> dict[str, int] | None:
+    """p50, p95 and max of the per-case parse time, failed calls included.
+
+    Nearest-rank percentiles: the corpus is under a hundred cases, so an
+    interpolated p95 would report a time no case actually took.
+    """
+    if not latencies:
+        return None
+    ordered = sorted(latencies)
+
+    def rank(p: float) -> int:
+        return ordered[max(0, math.ceil(p * len(ordered)) - 1)]
+
+    return {"p50": rank(0.50), "p95": rank(0.95), "max": ordered[-1]}
+
+
 def _print_case(r: dict[str, Any]) -> None:
     if r["hard_failures"]:
         status = "FAIL x"
@@ -265,7 +335,7 @@ def _print_case(r: dict[str, Any]) -> None:
     else:
         status = "PASS  "
     tag = "refuse" if r["refused_parseable_case"] else ",".join(r["produced"]) or "-"
-    print(f"  {status}  {r['category']:<15} {r['case']:<32} -> {tag}")
+    print(f"  {status}  {r['latency_ms']:>6}ms  {r['category']:<15} {r['case']:<32} -> {tag}")
     for f in r["hard_failures"]:
         print(f"          x {f}")
     for f in r["soft_findings"]:
@@ -286,6 +356,15 @@ def _print_summary(s: dict[str, Any]) -> None:
     print(f"  soft findings ............................ {len(s['soft_findings'])}")
     for f in s["soft_findings"]:
         print(f"      ~ {f}")
+    if s["failed_calls"]:
+        print(f"  failed calls (not graded) ................ {len(s['failed_calls'])}")
+        print(f"      {', '.join(s['failed_calls'])}")
+    if s["latency_ms"]:
+        lat = s["latency_ms"]
+        print(
+            f"  latency (per parse) ...................... "
+            f"p50 {lat['p50']}ms  p95 {lat['p95']}ms  max {lat['max']}ms"
+        )
     print(f"  OVERALL .................................. {'PASS' if s['overall_pass'] else 'FAIL'}")
     print(bar)
 

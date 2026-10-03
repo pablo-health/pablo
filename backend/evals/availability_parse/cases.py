@@ -66,8 +66,9 @@ class EvalCase:
 
     ``expected=None`` means the phrasing must be refused. ``category``
     groups cases for reporting: ``positive``, ``ambiguous``,
-    ``out_of_scope``, ``date_token_gap``, ``multi_intent``, or
-    ``unknown_appointment_type``.
+    ``out_of_scope``, ``date_token_gap``, ``multi_intent``,
+    ``unknown_appointment_type``, or ``no_rule_type`` (a real scheduling
+    rule none of the rule types can store).
 
     ``expected_exclusive`` grades the parser's top-level ``exclusive``
     flag (set when a sentence states a complete set of working hours,
@@ -88,6 +89,11 @@ class EvalCase:
     #: both as readings for the therapist to pick. Graded soft: a refusal
     #: without them is still a safe refusal, just a less helpful one.
     expects_two_readings: bool = False
+    #: The two readings themselves, in any order, when the case pins them.
+    #: Missing readings stay a soft finding; readings that are offered but
+    #: wrong are a hard failure, since the therapist saves whichever one
+    #: they pick.
+    expected_readings: tuple[tuple[ExpectedRule, ...], ...] | None = None
     #: On an unknown-appointment-type refusal, the kind the parser should
     #: name so the screen can offer to add it. Graded soft, case-insensitive.
     expected_unknown_type: str | None = None
@@ -117,6 +123,7 @@ def _refuse(
     category: str,
     *,
     expects_two_readings: bool = False,
+    expected_readings: tuple[tuple[ExpectedRule, ...], ...] | None = None,
     expected_unknown_type: str | None = None,
 ) -> EvalCase:
     return EvalCase(
@@ -125,8 +132,16 @@ def _refuse(
         description=description,
         category=category,
         expected=None,
-        expects_two_readings=expects_two_readings,
+        expects_two_readings=expects_two_readings or expected_readings is not None,
+        expected_readings=expected_readings,
         expected_unknown_type=expected_unknown_type,
+    )
+
+
+def _hours(days: range | tuple[int, ...], start: str, end: str) -> tuple[ExpectedRule, ...]:
+    """One working_hours rule per day, the way a multi-day range is stored."""
+    return tuple(
+        ExpectedRule("working_hours", {"day_of_week": d, "start": start, "end": end}) for d in days
     )
 
 
@@ -893,5 +908,59 @@ def all_cases() -> list[EvalCase]:
             "hours given to encode. All or nothing: a confident Friday block "
             "shown alone would hide that the intake half was dropped",
             "ambiguous",
+        ),
+        # ---------------------------------------------------------------
+        # Day-less ranges and weekday caps — a range of hours with no day
+        # named, and a cap that only holds on some days. Both have
+        # tempting single answers that write the wrong week.
+        # ---------------------------------------------------------------
+        _refuse(
+            "nine_to_five_no_days",
+            "9 to 5",
+            "working hours with no day named. Guessing one day saves one rule and "
+            "shades the other six; guessing a scope saves a week nobody stated. "
+            "Weekdays or every day is the therapist's call, so both come back as "
+            "readings",
+            "ambiguous",
+            expected_readings=(
+                _hours(range(5), "09:00", "17:00"),
+                _hours(range(7), "09:00", "17:00"),
+            ),
+        ),
+        _refuse(
+            "my_hours_are_ten_to_four",
+            "my hours are 10 to 4",
+            "the same day-less range in other words, so the readings are not keyed "
+            "to the digits 9 and 5",
+            "ambiguous",
+            expected_readings=(
+                _hours(range(5), "10:00", "16:00"),
+                _hours(range(7), "10:00", "16:00"),
+            ),
+        ),
+        _positive(
+            "nine_dash_five_no_fridays",
+            "9-5, no Fridays",
+            "a therapist's own sentence (2026-10-02). Excluding a weekday says the "
+            "range is a working week, so this is Monday to Thursday hours. No "
+            "block_day_of_week for Friday: a day with no hours already takes no "
+            "appointments, and a block on top of it is a second rule to undo",
+            *_hours(range(4), "09:00", "17:00"),
+        ),
+        _refuse(
+            "max_two_on_saturdays",
+            "Max 2 on Saturdays",
+            "a cap that holds on one weekday. max_per_day applies to every day and "
+            "has no day field, so the only rules that fit would cap the whole week "
+            "at two a day",
+            "no_rule_type",
+        ),
+        _refuse(
+            "up_to_two_anytime_saturday",
+            "up to 2 patients anytime on Saturday",
+            "the same weekday cap, with 'anytime' inviting 00:00-23:59 Saturday "
+            "hours. Either rule is wrong: a practice-wide daily cap, or a "
+            "midnight-to-midnight Saturday nobody offered",
+            "no_rule_type",
         ),
     ]
