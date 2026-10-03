@@ -52,6 +52,7 @@ const PENDING = [
   "src/components/calendar/editorial/EditorialDayView.tsx",
   "src/components/calendar/editorial/EditorialWeekView.tsx",
   "src/components/settings/FollowCalendarSetting.tsx",
+  "src/components/settings/ProfileSettings.tsx",
   "src/components/settings/pages/AvailabilityPage.tsx",
 ]
 
