@@ -51,6 +51,7 @@ import {
 } from "@/types/availability"
 import { MissingAppointmentTypeOffer } from "@/components/availability/MissingAppointmentTypeOffer"
 import { ReadingChoice } from "@/components/availability/ReadingChoice"
+import { PabloSpinner } from "@/components/ui/PabloSpinner"
 import type { ParseReading } from "@/types/availability"
 
 /** They double as documentation of what the box understands — a blank box
@@ -75,7 +76,13 @@ const PARSER_UNSURE =
 const GENERIC_UNSURE =
   "Pablo could not turn that into hours. Try naming the days and the times, or use the grid."
 
-const SAVE_ERROR = "Those hours could not be saved. Nothing was changed — try again."
+const SAVE_ERROR = "Those hours could not be saved. Try again."
+
+const PARTIAL_SAVE_ERROR = "Some of those hours could not be saved. Try again to save the rest."
+
+/** What the preferences API returns for a practice that never saved a zone
+ * (`UserPreferences.timezone` in backend/app/models/user.py). */
+const SERVER_DEFAULT_TIMEZONE = "America/New_York"
 
 const SKIP_CONSEQUENCE =
   "Until Pablo knows your hours it cannot offer times to a client, send session reminders, or let anyone book themselves."
@@ -108,22 +115,41 @@ export function CalendarHoursStep({ onSaved, onSkip }: CalendarHoursStepProps) {
   const [selection, setSelection] = useState<WorkingHoursSelection>(DEFAULT_WORKING_HOURS)
   const [timezone, setTimezone] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  // After a partial save, the rules that did not land. Only these are sent
+  // on the retry — the ones that did land are not created twice — and the
+  // echo is frozen until they are in, because editing it now would describe
+  // hours that are already half saved.
+  const [unsaved, setUnsaved] = useState<CreateAvailabilityRuleRequest[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Each read is numbered so that only the latest one is shown: the box
+  // stays editable while Pablo reads, and a corrected sentence sent mid-read
+  // must not be overwritten by the answer to the one before it.
+  const latestCheck = useRef(0)
 
-  const detected = preferences?.timezone || detectBrowserTimezone()
+  // The server answers with its default zone for a practice that has never
+  // saved one, so a saved value equal to that default cannot be told apart
+  // from nobody having chosen. For that case the browser's own zone is the
+  // better first guess; any other saved value was a person's choice and is
+  // kept. Either way the zone is shown, and saved only once confirmed.
+  const savedTimezone = preferences?.timezone
+  const fromSettings = !!savedTimezone && savedTimezone !== SERVER_DEFAULT_TIMEZONE
+  const detected = fromSettings ? savedTimezone : detectBrowserTimezone()
   const chosenTimezone = timezone ?? detected
+  const locked = saving || unsaved !== null
 
   // Typing and clicking a chip are the same path: the chip only fills the
   // box, and this is what reads it.
   const check = useCallback(async () => {
     const sentence = text.trim()
-    if (!sentence || parseRules.isPending) return
+    if (!sentence) return
+    const request = ++latestCheck.current
     setError(null)
     setUnsure(null)
     setMissingType(null)
     setReadings(null)
     try {
       const result = await parseRules.mutateAsync({ text: sentence })
+      if (request !== latestCheck.current) return
       if (result.proposals.length === 0 && result.readings?.length === 2) {
         // Understood, two ways: a choice, not a failure, so it does not
         // count toward handing the practice the grid.
@@ -158,6 +184,7 @@ export function CalendarHoursStep({ onSaved, onSkip }: CalendarHoursStepProps) {
       setProposals(result.proposals)
       setKept(result.proposals.map(() => true))
     } catch {
+      if (request !== latestCheck.current) return
       setFallbackReason(PARSER_DOWN)
       setOnGrid(true)
     }
@@ -174,22 +201,34 @@ export function CalendarHoursStep({ onSaved, onSkip }: CalendarHoursStepProps) {
       if (rules.length === 0 || saving) return
       setSaving(true)
       setError(null)
-      try {
-        for (const rule of rules) {
-          await createRule.mutateAsync(rule)
-        }
-        // Confirming a zone the practice can see beats leaving the one
-        // the browser happened to detect while they were travelling.
-        if (preferences && chosenTimezone !== preferences.timezone) {
+      // Confirming a zone the practice can see beats leaving the one the
+      // browser happened to detect while they were travelling. It goes
+      // first because the rules are read in it: every refresh the creates
+      // below trigger then already uses the zone the hours were given in.
+      if (preferences && chosenTimezone !== preferences.timezone) {
+        try {
           await savePreferences.mutateAsync({ ...preferences, timezone: chosenTimezone })
+        } catch {
+          setError(SAVE_ERROR)
+          setSaving(false)
+          return
         }
-        onSaved()
-      } catch {
-        setError(SAVE_ERROR)
-        setSaving(false)
       }
+      // All at once rather than one after another: a week of hours is
+      // several rules, and none of them depends on another.
+      const results = await Promise.allSettled(rules.map((rule) => createRule.mutateAsync(rule)))
+      const failed = rules.filter((_, index) => results[index].status === "rejected")
+      if (failed.length === 0) {
+        setUnsaved(null)
+        onSaved()
+        return
+      }
+      const partial = unsaved !== null || failed.length < rules.length
+      setUnsaved(partial ? failed : null)
+      setError(partial ? PARTIAL_SAVE_ERROR : SAVE_ERROR)
+      setSaving(false)
     },
-    [chosenTimezone, createRule, onSaved, preferences, savePreferences, saving]
+    [chosenTimezone, createRule, onSaved, preferences, savePreferences, saving, unsaved]
   )
 
   const lines = proposals ? echoLines(proposals) : []
@@ -215,7 +254,7 @@ export function CalendarHoursStep({ onSaved, onSkip }: CalendarHoursStepProps) {
   const timezoneField = (
     <div className="grid gap-2">
       <Label htmlFor="hours-timezone">Times are in</Label>
-      <Select value={chosenTimezone} onValueChange={setTimezone} disabled={saving}>
+      <Select value={chosenTimezone} onValueChange={setTimezone} disabled={locked}>
         <SelectTrigger id="hours-timezone" className="w-72">
           <SelectValue />
         </SelectTrigger>
@@ -228,7 +267,8 @@ export function CalendarHoursStep({ onSaved, onSkip }: CalendarHoursStepProps) {
         </SelectContent>
       </Select>
       <p className="text-xs text-muted-foreground">
-        Detected from this browser. Change it if that is not where you practise.
+        {fromSettings ? "From your settings." : "Detected from this browser."} Change it if that is
+        not where you practice.
       </p>
     </div>
   )
@@ -260,7 +300,7 @@ export function CalendarHoursStep({ onSaved, onSkip }: CalendarHoursStepProps) {
             </p>
           ) : null}
 
-          <WorkingHoursGrid value={selection} onChange={setSelection} disabled={saving} />
+          <WorkingHoursGrid value={selection} onChange={setSelection} disabled={locked} />
           {timezoneField}
 
           {error ? (
@@ -272,7 +312,7 @@ export function CalendarHoursStep({ onSaved, onSkip }: CalendarHoursStepProps) {
           <div className="flex items-center gap-4">
             <Button
               type="button"
-              onClick={() => save(workingHoursRules(selection))}
+              onClick={() => save(unsaved ?? workingHoursRules(selection))}
               disabled={!isCompleteSelection(selection) || saving}
             >
               Save these hours
@@ -281,7 +321,7 @@ export function CalendarHoursStep({ onSaved, onSkip }: CalendarHoursStepProps) {
               <button
                 type="button"
                 onClick={() => setOnGrid(false)}
-                disabled={saving}
+                disabled={locked}
                 className="text-sm font-medium text-muted-foreground underline underline-offset-2"
               >
                 Describe them instead
@@ -309,7 +349,7 @@ export function CalendarHoursStep({ onSaved, onSkip }: CalendarHoursStepProps) {
                     <button
                       type="button"
                       onClick={() => toggleLine(line)}
-                      disabled={saving}
+                      disabled={locked}
                       className="text-xs font-medium text-muted-foreground underline underline-offset-2"
                     >
                       {on ? "Remove" : "Put back"}
@@ -334,7 +374,7 @@ export function CalendarHoursStep({ onSaved, onSkip }: CalendarHoursStepProps) {
           <div className="flex items-center gap-4">
             <Button
               type="button"
-              onClick={() => save(keptRules)}
+              onClick={() => save(unsaved ?? keptRules)}
               disabled={keptRules.length === 0 || saving}
             >
               Yes, save this
@@ -342,7 +382,7 @@ export function CalendarHoursStep({ onSaved, onSkip }: CalendarHoursStepProps) {
             <button
               type="button"
               onClick={startOver}
-              disabled={saving}
+              disabled={locked}
               className="text-sm font-medium text-muted-foreground underline underline-offset-2"
             >
               Say it differently
@@ -353,7 +393,7 @@ export function CalendarHoursStep({ onSaved, onSkip }: CalendarHoursStepProps) {
                 setSelection(selectionFromRules(proposals) ?? DEFAULT_WORKING_HOURS)
                 setOnGrid(true)
               }}
-              disabled={saving}
+              disabled={locked}
               className="text-sm font-medium text-muted-foreground underline underline-offset-2"
             >
               Pick from a grid instead
@@ -371,9 +411,10 @@ export function CalendarHoursStep({ onSaved, onSkip }: CalendarHoursStepProps) {
               onChange={(event) => setText(event.target.value)}
               placeholder="I see clients Monday to Thursday, 9 to 5"
               rows={3}
-              disabled={parseRules.isPending}
             />
           </div>
+
+          {parseRules.isPending ? <PabloSpinner label="Reading your hours" /> : null}
 
           <div className="flex flex-wrap gap-2">
             {EXAMPLES.map((example) => (
@@ -381,7 +422,6 @@ export function CalendarHoursStep({ onSaved, onSkip }: CalendarHoursStepProps) {
                 key={example}
                 type="button"
                 onClick={() => fillExample(example)}
-                disabled={parseRules.isPending}
                 className="rounded-full border border-border px-3 py-1 text-xs text-neutral-600 hover:bg-muted"
               >
                 {example}
@@ -421,8 +461,8 @@ export function CalendarHoursStep({ onSaved, onSkip }: CalendarHoursStepProps) {
           ) : null}
 
           <div className="flex items-center gap-4">
-            <Button type="button" onClick={check} disabled={!text.trim() || parseRules.isPending}>
-              {parseRules.isPending ? "Reading…" : "Check this"}
+            <Button type="button" onClick={check} disabled={!text.trim()}>
+              Check this
             </Button>
             <button
               type="button"

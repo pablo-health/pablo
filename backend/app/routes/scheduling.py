@@ -155,6 +155,7 @@ from ..services.google_calendar_service import (
     RetitleOutcome,
     google_consent_surface,
 )
+from ..services.http_structured_llm_gateway import HttpStructuredLLMGateway
 from ..services.telehealth import (
     GOOGLE_MEET,
     Attendee,
@@ -1439,6 +1440,11 @@ def delete_availability_rule(
 
 def get_availability_rule_parse_service() -> AvailabilityRuleParseService:
     """Get the natural-language availability-rule parse service instance."""
+    base_url = get_settings().availability_parse_base_url
+    if base_url:
+        # The end-to-end stack's stand-in; the setting refuses to load
+        # outside development.
+        return AvailabilityRuleParseService(llm_gateway=HttpStructuredLLMGateway(base_url))
     return AvailabilityRuleParseService()
 
 

@@ -160,6 +160,17 @@ FRESH_RESERVED = SeededPractice(
     name="Fresh Practice Reserved",
     slug="status",
 )
+# A practice that has never described its hours, for the spec that walks the
+# calendar's first-run hours step. The step is only asked of a practice with
+# no availability rules at all, and the spec saves some, so they are emptied
+# on every bring-up.
+FRESH_HOURS = SeededPractice(
+    id="e2e-fresh-hours",
+    schema="practice_e2e_fresh_hours",
+    email="e2e-fresh-hours@example.com",
+    name="Fresh Practice Hours",
+    emptied=("availability_rules",),
+)
 SEEDED = (
     SECOND_PRACTICE,
     FRESH_YES,
@@ -169,6 +180,7 @@ SEEDED = (
     FRESH_DOMAINS,
     FRESH_HOSTED,
     FRESH_RESERVED,
+    FRESH_HOURS,
 )
 
 # Kept for anything that still reads the second practice by its old names.
