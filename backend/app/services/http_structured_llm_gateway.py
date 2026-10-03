@@ -60,7 +60,7 @@ class HttpStructuredLLMGateway(StructuredLLMGateway):
                 "temperature": temperature,
                 "thinking_budget": thinking_budget,
             },
-            timeout=timeout_seconds or _TIMEOUT_SECONDS,
+            timeout=timeout_seconds if timeout_seconds is not None else _TIMEOUT_SECONDS,
         )
         response.raise_for_status()
         body = response.json()
