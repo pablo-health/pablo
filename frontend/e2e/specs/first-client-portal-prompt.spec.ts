@@ -35,12 +35,12 @@ let sequence = 0
 async function addClient(page: Page, firstName: string): Promise<void> {
   const { email, phone } = givePortalContactDetails()
   await page.goto("/dashboard/patients")
-  await page.getByRole("button", { name: /add client/i }).click()
+  await page.getByRole("button", { name: /add patient/i }).click()
   await page.getByLabel(/first name/i).fill(firstName)
   await page.getByLabel(/last name/i).fill(`Fresh${Date.now().toString(36)}${sequence++}`)
   await page.getByLabel(/email/i).fill(email)
   await page.getByLabel(/phone/i).fill(phone)
-  await page.getByRole("button", { name: /create client/i }).click()
+  await page.getByRole("button", { name: /create patient/i }).click()
 }
 
 async function settingsOf(api: ApiClient): Promise<PortalSettings> {

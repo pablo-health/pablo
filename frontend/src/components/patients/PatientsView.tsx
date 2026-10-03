@@ -5,7 +5,7 @@
 /**
  * Patients view with two tabs:
  *
- *   1. "All clients" — the existing live patient table.
+ *   1. "All patients" — the existing live patient table.
  *   2. "Recently deleted" — soft-deleted patients still inside the
  *      30-day undo window (THERAPY-yg2). After 30 days the row
  *      disappears from this UI; the day-30 hard-purge cron
@@ -24,7 +24,7 @@ export function PatientsView() {
   return (
     <Tabs defaultValue="all" className="w-full">
       <TabsList>
-        <TabsTrigger value="all">All clients</TabsTrigger>
+        <TabsTrigger value="all">All patients</TabsTrigger>
         <TabsTrigger value="recently-deleted">Recently deleted</TabsTrigger>
       </TabsList>
       <TabsContent value="all">

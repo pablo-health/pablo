@@ -12,7 +12,7 @@ import { givePatient } from "../fixtures/scenarios"
 
 async function openPatients(page: Page): Promise<void> {
   await page.goto("/dashboard/patients")
-  await expect(page.getByRole("heading", { name: /clients/i })).toBeVisible()
+  await expect(page.getByRole("heading", { name: /patients/i })).toBeVisible()
 }
 
 /**
@@ -26,10 +26,10 @@ async function skipNextStep(page: Page): Promise<void> {
 }
 
 async function createPatientViaDialog(page: Page, firstName: string, lastName: string): Promise<void> {
-  await page.getByRole("button", { name: /add client/i }).click()
+  await page.getByRole("button", { name: /add patient/i }).click()
   await page.getByLabel(/first name/i).fill(firstName)
   await page.getByLabel(/last name/i).fill(lastName)
-  await page.getByRole("button", { name: /create client/i }).click()
+  await page.getByRole("button", { name: /create patient/i }).click()
   await skipNextStep(page)
 }
 
@@ -52,7 +52,7 @@ test.describe("Patient Management", () => {
     })
 
     test("shows empty state or patients", async ({ signedInPage: page }) => {
-      const emptyMessage = page.getByText(/no clients yet/i)
+      const emptyMessage = page.getByText(/no patients yet/i)
       const rows = page.locator("table tbody tr")
 
       const isEmpty = await emptyMessage.isVisible().catch(() => false)
@@ -62,13 +62,13 @@ test.describe("Patient Management", () => {
     })
 
     test("displays Add Patient button", async ({ signedInPage: page }) => {
-      await expect(page.getByRole("button", { name: /add client/i })).toBeVisible()
+      await expect(page.getByRole("button", { name: /add patient/i })).toBeVisible()
     })
   })
 
   test.describe("Search Functionality", () => {
     test("renders search input", async ({ signedInPage: page }) => {
-      await expect(page.getByPlaceholder(/search clients/i)).toBeVisible()
+      await expect(page.getByPlaceholder(/search patients/i)).toBeVisible()
     })
 
     test("filters patients by search term", async ({ signedInPage: page, api }) => {
@@ -76,30 +76,30 @@ test.describe("Patient Management", () => {
       const other = await givePatient(api, { last_name: "Jones" })
       await openPatients(page)
 
-      await page.getByPlaceholder(/search clients/i).fill("Smith")
+      await page.getByPlaceholder(/search patients/i).fill("Smith")
 
       await expect(page.getByText(`${smith.first_name} Smith`)).toBeVisible()
       await expect(page.getByText(`${other.first_name} Jones`)).not.toBeVisible()
     })
 
     test("shows no results message for non-existent name", async ({ signedInPage: page }) => {
-      await page.getByPlaceholder(/search clients/i).fill("NonexistentPatientName12345")
+      await page.getByPlaceholder(/search patients/i).fill("NonexistentPatientName12345")
 
-      await expect(page.getByText(/no clients found matching your search/i)).toBeVisible()
+      await expect(page.getByText(/no patients found matching your search/i)).toBeVisible()
     })
   })
 
   test.describe("Create Patient Flow", () => {
     test("opens create patient dialog", async ({ signedInPage: page }) => {
-      await page.getByRole("button", { name: /add client/i }).click()
+      await page.getByRole("button", { name: /add patient/i }).click()
 
       await expect(page.getByRole("dialog")).toBeVisible()
-      await expect(page.getByRole("heading", { name: /add client/i })).toBeVisible()
+      await expect(page.getByRole("heading", { name: /add patient/i })).toBeVisible()
     })
 
     test("validates required fields", async ({ signedInPage: page }) => {
-      await page.getByRole("button", { name: /add client/i }).click()
-      await page.getByRole("button", { name: /create client/i }).click()
+      await page.getByRole("button", { name: /add patient/i }).click()
+      await page.getByRole("button", { name: /create patient/i }).click()
 
       await expect(page.getByText(/first name is required/i)).toBeVisible()
       await expect(page.getByText(/last name is required/i)).toBeVisible()
@@ -113,7 +113,7 @@ test.describe("Patient Management", () => {
     })
 
     test("creates patient with all fields", async ({ signedInPage: page }) => {
-      await page.getByRole("button", { name: /add client/i }).click()
+      await page.getByRole("button", { name: /add patient/i }).click()
 
       const timestamp = Date.now()
       await page.getByLabel(/first name/i).fill(`John-${timestamp}`)
@@ -126,7 +126,7 @@ test.describe("Patient Management", () => {
       await page.getByRole("combobox", { name: /status/i }).click()
       await page.getByRole("option", { name: "Active", exact: true }).click()
 
-      await page.getByRole("button", { name: /create client/i }).click()
+      await page.getByRole("button", { name: /create patient/i }).click()
       await skipNextStep(page)
 
       await expect(page.getByText(`John-${timestamp} Doe`)).toBeVisible()
@@ -134,14 +134,14 @@ test.describe("Patient Management", () => {
     })
 
     test("validates email format", async ({ signedInPage: page }) => {
-      await page.getByRole("button", { name: /add client/i }).click()
+      await page.getByRole("button", { name: /add patient/i }).click()
 
       await page.getByLabel(/first name/i).fill("Test")
       await page.getByLabel(/last name/i).fill("Patient")
       const emailInput = page.getByLabel(/email/i)
       await emailInput.fill("invalid-email")
 
-      await page.getByRole("button", { name: /create client/i }).click()
+      await page.getByRole("button", { name: /create patient/i }).click()
 
       // The field is type="email": the browser refuses the submit and reports
       // the format problem itself, before the form's own validator runs.
@@ -150,19 +150,19 @@ test.describe("Patient Management", () => {
     })
 
     test("validates phone number length", async ({ signedInPage: page }) => {
-      await page.getByRole("button", { name: /add client/i }).click()
+      await page.getByRole("button", { name: /add patient/i }).click()
 
       await page.getByLabel(/first name/i).fill("Test")
       await page.getByLabel(/last name/i).fill("Patient")
       await page.getByLabel(/phone/i).fill("123")
 
-      await page.getByRole("button", { name: /create client/i }).click()
+      await page.getByRole("button", { name: /create patient/i }).click()
 
       await expect(page.getByText(/phone must be at least 10 digits/i)).toBeVisible()
     })
 
     test("allows changing status dropdown", async ({ signedInPage: page }) => {
-      await page.getByRole("button", { name: /add client/i }).click()
+      await page.getByRole("button", { name: /add patient/i }).click()
 
       await page.getByRole("combobox", { name: /status/i }).click()
 
@@ -176,7 +176,7 @@ test.describe("Patient Management", () => {
     })
 
     test("cancels creation without saving", async ({ signedInPage: page }) => {
-      await page.getByRole("button", { name: /add client/i }).click()
+      await page.getByRole("button", { name: /add patient/i }).click()
 
       await page.getByLabel(/first name/i).fill("Test")
       await page.getByLabel(/last name/i).fill("Canceled")
@@ -197,7 +197,7 @@ test.describe("Patient Management", () => {
       await row.locator("button").first().click()
 
       await expect(page.getByRole("dialog")).toBeVisible()
-      await expect(page.getByRole("heading", { name: /edit client/i })).toBeVisible()
+      await expect(page.getByRole("heading", { name: /edit patient/i })).toBeVisible()
       await expect(page.getByLabel(/first name/i)).toHaveValue(`Edit-${timestamp}`)
       await expect(page.getByLabel(/last name/i)).toHaveValue("Test")
     })
@@ -213,7 +213,7 @@ test.describe("Patient Management", () => {
       await page.getByLabel(/last name/i).fill("Updated")
       await page.getByLabel(/email/i).fill(`updated${timestamp}@example.com`)
 
-      await page.getByRole("button", { name: /update client/i }).click()
+      await page.getByRole("button", { name: /update patient/i }).click()
       await expect(page.getByRole("dialog")).not.toBeVisible({ timeout: 5000 })
 
       await expect(page.getByText(`Update-${timestamp} Updated`)).toBeVisible()
@@ -230,7 +230,7 @@ test.describe("Patient Management", () => {
       await row.locator("button").nth(1).click()
 
       await expect(page.getByRole("dialog")).toBeVisible()
-      await expect(page.getByRole("heading", { name: /delete client/i })).toBeVisible()
+      await expect(page.getByRole("heading", { name: /delete patient/i })).toBeVisible()
       await expect(page.getByText(/are you sure you want to delete.*Delete-/i)).toBeVisible()
     })
 
@@ -280,10 +280,10 @@ test.describe("Patient Management", () => {
       await createPatientViaDialog(page, `Back-${timestamp}`, "Test")
       await page.getByText(`Back-${timestamp} Test`).click()
 
-      await page.getByRole("link", { name: /back to clients/i }).click()
+      await page.getByRole("link", { name: /back to patients/i }).click()
 
       await expect(page).toHaveURL(/\/dashboard\/patients$/)
-      await expect(page.getByRole("heading", { name: /^clients$/i })).toBeVisible()
+      await expect(page.getByRole("heading", { name: /^patients$/i })).toBeVisible()
     })
   })
 
@@ -292,7 +292,7 @@ test.describe("Patient Management", () => {
       const statuses = { active: "Active", inactive: "Inactive", on_hold: "On Hold" }
 
       for (const [status, label] of Object.entries(statuses)) {
-        await page.getByRole("button", { name: /add client/i }).click()
+        await page.getByRole("button", { name: /add patient/i }).click()
         const timestamp = Date.now()
         await page.getByLabel(/first name/i).fill(`Status-${status}-${timestamp}`)
         await page.getByLabel(/last name/i).fill("Test")
@@ -300,7 +300,7 @@ test.describe("Patient Management", () => {
         await page.getByRole("combobox", { name: /status/i }).click()
         await page.getByRole("option", { name: label, exact: true }).click()
 
-        await page.getByRole("button", { name: /create client/i }).click()
+        await page.getByRole("button", { name: /create patient/i }).click()
         await skipNextStep(page)
 
         const row = page.locator("tr", { hasText: `Status-${status}-${timestamp}` })

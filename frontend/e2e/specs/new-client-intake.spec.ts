@@ -78,12 +78,12 @@ test.describe("A new client's intake", () => {
     const { email, phone } = givePortalContactDetails()
     const lastName = `Intake${Date.now().toString(36)}`
     await page.goto("/dashboard/patients")
-    await page.getByRole("button", { name: /add client/i }).click()
+    await page.getByRole("button", { name: /add patient/i }).click()
     await page.getByLabel(/first name/i).fill("Robin")
     await page.getByLabel(/last name/i).fill(lastName)
     await page.getByLabel(/email/i).fill(email)
     await page.getByLabel(/phone/i).fill(phone)
-    await page.getByRole("button", { name: /create client/i }).click()
+    await page.getByRole("button", { name: /create patient/i }).click()
 
     // --- the dialog runs on to what they should do ----------------------
     const next = page.getByTestId("new-client-next-step")
@@ -170,10 +170,10 @@ test.describe("A new client's intake", () => {
   test("a new client can be added without sending anything", async ({ api, signedInPage: page }) => {
     const lastName = `Later${Date.now().toString(36)}`
     await page.goto("/dashboard/patients")
-    await page.getByRole("button", { name: /add client/i }).click()
+    await page.getByRole("button", { name: /add patient/i }).click()
     await page.getByLabel(/first name/i).fill("Sam")
     await page.getByLabel(/last name/i).fill(lastName)
-    await page.getByRole("button", { name: /create client/i }).click()
+    await page.getByRole("button", { name: /create patient/i }).click()
 
     await page.getByTestId("new-client-next-step").getByRole("button", { name: "Not now" }).click()
     await expect(page.getByRole("dialog")).not.toBeVisible()

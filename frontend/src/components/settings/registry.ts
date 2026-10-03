@@ -146,7 +146,7 @@ const baseGroups: SettingsGroup[] = [
         label: "Availability",
         icon: Clock,
         page: AvailabilityPage,
-        desc: "When you see clients. Drives booking, reminders and your calendar view.",
+        desc: "When you see patients. Drives booking, reminders and your calendar view.",
       },
       {
         id: "scheduling",
