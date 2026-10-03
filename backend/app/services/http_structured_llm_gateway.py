@@ -41,6 +41,7 @@ class HttpStructuredLLMGateway(StructuredLLMGateway):
         max_output_tokens: int,
         temperature: float = 0.3,
         thinking_budget: int | None = None,
+        timeout_seconds: float | None = None,
     ) -> StructuredCompletion:
         response = httpx.post(
             self._url,
@@ -53,7 +54,7 @@ class HttpStructuredLLMGateway(StructuredLLMGateway):
                 "temperature": temperature,
                 "thinking_budget": thinking_budget,
             },
-            timeout=_TIMEOUT_SECONDS,
+            timeout=timeout_seconds if timeout_seconds is not None else _TIMEOUT_SECONDS,
         )
         response.raise_for_status()
         body = response.json()
