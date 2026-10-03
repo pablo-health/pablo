@@ -20,6 +20,7 @@ from typing import Any
 
 import httpx
 
+from ..reliability import LLM_REQUEST, RetryPolicy
 from .structured_llm_gateway import StructuredCompletion, StructuredLLMGateway
 
 _TIMEOUT_SECONDS = 10.0
@@ -42,7 +43,9 @@ class HttpStructuredLLMGateway(StructuredLLMGateway):
         temperature: float = 0.3,
         thinking_budget: int | None = None,
         timeout_seconds: float | None = None,
+        policy: RetryPolicy = LLM_REQUEST,
     ) -> StructuredCompletion:
+        del policy  # the stand-in is local; it has no per-attempt bound to set
         response = httpx.post(
             self._url,
             json={

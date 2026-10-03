@@ -15,11 +15,16 @@ from __future__ import annotations
 
 import asyncio
 import random
+import time
 from typing import TYPE_CHECKING
 
 import httpx
 import pytest
 from app.reliability import (
+    HTTP_JOB,
+    HTTP_REQUEST,
+    LLM_JOB,
+    LLM_REQUEST,
     Idempotency,
     RetryExhaustedError,
     RetryPolicy,
@@ -388,3 +393,119 @@ class TestHttpxIntegration:
                     sleep=lambda _d: None,
                 )
         assert calls == 1
+
+
+def _status_error(status: int, headers: dict[str, str] | None = None) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "https://example.test")
+    response = httpx.Response(status, request=request, headers=headers)
+    return httpx.HTTPStatusError(str(status), request=request, response=response)
+
+
+class _SlowFailure:
+    """Each call advances a fake clock by ``costs[i]`` seconds, then fails or answers."""
+
+    def __init__(
+        self, clock: list[float], costs: list[float], failures: list[BaseException]
+    ) -> None:
+        self.clock = clock
+        self.costs = costs
+        self.failures = failures
+        self.calls = 0
+
+    def __call__(self) -> str:
+        self.calls += 1
+        self.clock[0] += self.costs[self.calls - 1]
+        if self.calls <= len(self.failures):
+            raise self.failures[self.calls - 1]
+        return "ok"
+
+
+class TestRequestPathPolicy:
+    def _clock(self, monkeypatch: pytest.MonkeyPatch) -> list[float]:
+        clock = [1000.0]
+        monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+        return clock
+
+    def test_a_slow_504_is_retried_when_the_second_attempt_fits(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        clock = self._clock(monkeypatch)
+        fn = _SlowFailure(clock, [54.0, 10.0], [_status_error(504)])
+        sleeps: list[float] = []
+
+        result = call_with_retry(
+            fn, policy=LLM_REQUEST, idempotency=Idempotency.SAFE, sleep=_sleeps(sleeps)
+        )
+
+        assert result == "ok"
+        assert fn.calls == 2
+
+    def test_a_retry_that_cannot_finish_is_not_started(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        clock = self._clock(monkeypatch)
+        fn = _SlowFailure(clock, [100.0, 10.0], [_status_error(504)])
+
+        with pytest.raises(RetryExhaustedError) as caught:
+            call_with_retry(
+                fn, policy=LLM_REQUEST, idempotency=Idempotency.SAFE, sleep=lambda _d: None
+            )
+
+        assert caught.value.attempts == 1
+        assert fn.calls == 1
+
+    def test_a_rate_limit_waits_the_retry_after_it_was_given(self) -> None:
+        flaky = _Flaky([_status_error(429, {"Retry-After": "6"})])
+        sleeps: list[float] = []
+
+        call_with_retry(
+            flaky, policy=LLM_REQUEST, idempotency=Idempotency.SAFE, sleep=_sleeps(sleeps)
+        )
+
+        assert sleeps == [6.0]
+
+    def test_a_long_retry_after_is_capped_at_max_delay(self) -> None:
+        flaky = _Flaky([_status_error(429, {"Retry-After": "300"})])
+        sleeps: list[float] = []
+
+        call_with_retry(
+            flaky, policy=LLM_REQUEST, idempotency=Idempotency.SAFE, sleep=_sleeps(sleeps)
+        )
+
+        assert sleeps == [LLM_REQUEST.max_delay]
+
+    def test_a_rate_limit_without_a_hint_waits_at_least_base_delay(self) -> None:
+        for _ in range(20):
+            flaky = _Flaky([_status_error(429)])
+            sleeps: list[float] = []
+            call_with_retry(
+                flaky, policy=LLM_REQUEST, idempotency=Idempotency.SAFE, sleep=_sleeps(sleeps)
+            )
+            assert sleeps[0] >= LLM_REQUEST.base_delay
+
+    @pytest.mark.parametrize("status", [400, 401, 403, 404])
+    def test_client_errors_are_not_retried(self, status: int) -> None:
+        flaky = _Flaky([_status_error(status), _status_error(status)])
+
+        with pytest.raises(httpx.HTTPStatusError):
+            call_with_retry(
+                flaky,
+                policy=LLM_REQUEST,
+                idempotency=Idempotency.SAFE,
+                sleep=lambda _d: None,
+            )
+
+        assert flaky.calls == 1
+
+
+_PRESETS_WITH_DEADLINE = [
+    p for p in (LLM_REQUEST, LLM_JOB, HTTP_REQUEST, HTTP_JOB) if p.deadline is not None
+]
+
+
+@pytest.mark.parametrize("policy", _PRESETS_WITH_DEADLINE)
+def test_a_deadline_leaves_room_for_every_attempt_and_its_backoff(policy: RetryPolicy) -> None:
+    assert policy.deadline is not None
+    attempts = policy.max_attempts * (policy.attempt_timeout or 0.0)
+    backoff = (policy.max_attempts - 1) * policy.max_delay
+    assert policy.deadline >= attempts + backoff

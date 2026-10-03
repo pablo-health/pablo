@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import pytest
 
-from backend.app.reliability import LLM_REQUEST
+from backend.app.reliability import LLM_JOB, LLM_REQUEST
 from backend.app.services.structured_llm_gateway import (
     AnthropicStructuredLLMGateway,
     FakeStructuredLLMGateway,
@@ -310,7 +310,7 @@ class TestAnthropicStructuredLLMGateway:
 
 
 class TestAnthropicAttemptTimeout:
-    def test_timeout_reaches_the_request_only_when_set(self) -> None:
+    def test_timeout_reaches_the_request_from_the_policy_or_the_caller(self) -> None:
         client = _FakeAnthropic(_tool_response())
         gw = AnthropicStructuredLLMGateway(client=client)
         call = {
@@ -322,7 +322,10 @@ class TestAnthropicAttemptTimeout:
         }
 
         gw.complete_structured(**call)
-        assert "timeout" not in client.captured
+        assert client.captured["timeout"] == 55.0
+
+        gw.complete_structured(**call, policy=LLM_JOB)
+        assert client.captured["timeout"] == 180.0
 
         gw.complete_structured(**call, timeout_seconds=10.0)
         assert client.captured["timeout"] == 10.0
@@ -377,10 +380,15 @@ class TestGeminiAttemptTimeout:
         self._complete(gw, timeout_seconds=10.0)
         assert models.configs[0].http_options.headers == {"X-Server-Timeout": "180"}
 
-    def test_no_timeout_keeps_the_client_default(self) -> None:
+    def test_request_calls_are_bounded_at_55_seconds(self) -> None:
         gw, models = self._gateway(stalls=0)
-        self._complete(gw)
-        assert models.configs[0].http_options is None
+        self._complete(gw, policy=LLM_REQUEST)
+        assert models.configs[0].http_options.timeout == 55_000
+
+    def test_job_calls_keep_180_seconds(self) -> None:
+        gw, models = self._gateway(stalls=0)
+        self._complete(gw, policy=LLM_JOB)
+        assert models.configs[0].http_options.timeout == 180_000
 
     def test_a_stalled_attempt_is_retried_once(self) -> None:
         gw, models = self._gateway(stalls=1)
@@ -445,10 +453,10 @@ class TestGeminiCallDeadline:
             )
         return clock.now - started, models.timeouts_ms
 
-    def test_two_stalls_end_at_the_deadline(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_two_stalls_stay_inside_the_deadline(self, monkeypatch: pytest.MonkeyPatch) -> None:
         elapsed, timeouts_ms = self._run(monkeypatch, costs=[60.0, 60.0])
 
-        assert timeouts_ms == [15_000, 10_000]
+        assert timeouts_ms == [15_000, 15_000]
         assert elapsed <= _DEADLINE
 
     def test_a_fast_failure_leaves_the_retry_its_full_bound(

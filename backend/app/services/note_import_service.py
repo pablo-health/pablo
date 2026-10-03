@@ -21,9 +21,13 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
+from time import monotonic
 from typing import Any
 
+from ..api_errors import ServiceUnavailableError
 from ..notes import NoteTypeDefinition, NoteTypeRegistry, get_default_registry
+from ..reliability import RetryExhaustedError
+from ..reliability.classify import status_code
 from ..settings import get_settings
 
 # These helpers build/validate the registry-shaped JSON for a note type.
@@ -88,6 +92,13 @@ EXTRACT_SYSTEM_PROMPT = (
     "- If the source has no content for a field, return an empty string (or "
     "an empty list for list fields). Never fabricate text to fill a field."
 )
+
+
+class NoteImportUnavailableError(ServiceUnavailableError):
+    """The model did not answer, even after its retry. Resubmitting is the fix."""
+
+    code = "note_import_unavailable"
+    default_message = "We couldn't read that note just now. Please try again in a minute."
 
 
 class DocumentTextExtractionError(ValueError):
@@ -458,6 +469,7 @@ class NoteImportService:
         """
         base_budget = get_settings().note_max_output_tokens
         last_truncation: StructuredOutputTruncatedError | None = None
+        started = monotonic()
         for budget in (base_budget, base_budget * 2):
             try:
                 return self._llm_gateway.complete_structured(
@@ -480,6 +492,18 @@ class NoteImportService:
                     "retrying at 2x" if budget == base_budget else "giving up",
                 )
                 continue
+            except RuntimeError as exc:
+                # Provider status, attempts and elapsed time only: the
+                # exception text can carry the request.
+                cause = exc.__cause__
+                exhausted = cause if isinstance(cause, RetryExhaustedError) else None
+                logger.warning(
+                    "Imported-note parse unavailable: status=%s attempts=%d elapsed_s=%.1f",
+                    status_code(exhausted.last_exc if exhausted else cause or exc),
+                    exhausted.attempts if exhausted else 1,
+                    monotonic() - started,
+                )
+                raise NoteImportUnavailableError from exc
             except Exception as exc:
                 logger.exception("Imported-note parse failed")
                 raise ValueError(f"Note import parse failed: {exc}") from exc

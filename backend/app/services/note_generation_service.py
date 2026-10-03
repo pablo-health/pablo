@@ -35,6 +35,7 @@ from ..models import (
 from ..notes import NoteTypeDefinition, NoteTypeRegistry, get_default_registry
 from ..notes.practice_types import render_user_prompt
 from ..notes.prompts.soap import SOAP_SYSTEM_PROMPT
+from ..reliability import LLM_JOB
 from ..settings import get_settings
 from .source_attribution_service import (
     build_attribution_prompt,
@@ -316,6 +317,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
                     max_output_tokens=budget,
                     temperature=temp,
                     thinking_budget=settings.note_thinking_budget,
+                    policy=LLM_JOB,
                 )
             except StructuredOutputTruncatedError as exc:
                 last_truncation = exc
@@ -381,6 +383,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
                 max_output_tokens=settings.note_source_attribution_max_output_tokens,
                 thinking_budget=settings.note_source_attribution_thinking_budget,
                 temperature=0.0,
+                policy=LLM_JOB,
             )
             parse_attribution_response(
                 json.dumps(completion.data),

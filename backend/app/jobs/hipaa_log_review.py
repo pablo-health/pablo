@@ -478,7 +478,6 @@ def _ask_model(
 
     from ..reliability import LLM_JOB, Idempotency, call_with_retry  # noqa: PLC0415
     from ..services.vertex_client import (  # noqa: PLC0415
-        DEFAULT_VERTEX_TIMEOUT_SECONDS,
         seconds_to_genai_timeout_ms,
     )
     from ..settings import get_settings  # noqa: PLC0415
@@ -494,7 +493,7 @@ def _ask_model(
     max_output_tokens = int(os.environ.get("HIPAA_REVIEW_MAX_OUTPUT_TOKENS", "8192"))
 
     http_options = types.HttpOptions(
-        timeout=seconds_to_genai_timeout_ms(DEFAULT_VERTEX_TIMEOUT_SECONDS)
+        timeout=seconds_to_genai_timeout_ms(LLM_JOB.attempt_timeout or 180.0)
     )
     client = genai.Client(
         vertexai=True, project=project, location=location, http_options=http_options

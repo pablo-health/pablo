@@ -19,18 +19,17 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from ..reliability import LLM_REQUEST
+
 # Anthropic publisher models on Vertex are served from the ``global`` endpoint;
 # the Gemini region (``GOOGLE_CLOUD_LOCATION``) often differs and would 404 for
 # Claude, so default independently and allow an explicit override.
 _ANTHROPIC_VERTEX_REGION = os.environ.get("ANTHROPIC_VERTEX_REGION", "global")
 
-# Per-call deadline for a single Vertex request, both request-path and
-# job/cron callers. Generous relative to the request-path retry presets
-# (``reliability.LLM_REQUEST`` budgets 25s across all attempts) because a
-# streaming chat completion or a large structured extraction can
-# legitimately run long; this exists to fail a truly hung connection, not
-# to shape p99 latency.
-DEFAULT_VERTEX_TIMEOUT_SECONDS = 60.0
+# Per-attempt timeout for a request-path Vertex call: the bound
+# ``reliability.LLM_REQUEST`` budgets its deadline around. Job callers pass
+# ``LLM_JOB.attempt_timeout`` instead.
+DEFAULT_VERTEX_TIMEOUT_SECONDS: float = LLM_REQUEST.attempt_timeout or 55.0
 
 
 def seconds_to_genai_timeout_ms(seconds: float) -> int:
@@ -88,7 +87,7 @@ def anthropic_vertex_client(
         # The SDK's own retry loop (default 2) would otherwise stack with
         # the reliability engine's attempts — up to 3x SDK tries per engine
         # attempt, with the SDK's internal backoff able to blow LLM_REQUEST's
-        # 25s deadline from inside a single attempt. Mirrors `retry=None` on
+        # 125s deadline from inside a single attempt. Mirrors `retry=None` on
         # the Document AI gax client: this module owns the retry policy.
         max_retries=0,
     )

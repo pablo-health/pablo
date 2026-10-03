@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from .classify import is_pre_dispatch, is_transient, retry_after_seconds
+from .classify import is_pre_dispatch, is_transient, retry_after_seconds, status_code
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -77,6 +77,15 @@ class RetryPolicy:
     spent.
     """
 
+    attempt_timeout: float | None = None
+    """Per-attempt timeout, in seconds, that the call site hands to its SDK.
+
+    With a ``deadline`` the policy must hold
+    ``deadline >= max_attempts * attempt_timeout + (max_attempts - 1) * max_delay``,
+    so a slow first failure still leaves room for a full second attempt.
+    A retry that would not fit is not started.
+    """
+
     jitter: bool = True
     """Full jitter (``random.uniform(0, delay)``) on the backoff."""
 
@@ -95,6 +104,9 @@ class RetryExhaustedError(Exception):
         super().__init__(f"retry exhausted after {attempts} attempt(s): {last_exc}")
         self.attempts = attempts
         self.last_exc = last_exc
+
+
+_RATE_LIMITED = 429
 
 
 def _is_retryable(
@@ -119,6 +131,9 @@ def _is_retryable(
 def _backoff_seconds(attempt: int, exc: BaseException, policy: RetryPolicy) -> float:
     """Compute the sleep before the next attempt, honoring Retry-After.
 
+    A 429 with no hint waits at least ``base_delay``: a rate limit has not
+    cleared a fraction of a second later.
+
     The hint is capped at ``policy.max_delay`` — for deadline-free
     presets (``LLM_JOB``/``HTTP_JOB``) an absurd or misconfigured
     ``Retry-After`` would otherwise sleep unbounded.
@@ -129,7 +144,17 @@ def _backoff_seconds(attempt: int, exc: BaseException, policy: RetryPolicy) -> f
     delay: float = min(policy.max_delay, policy.base_delay * (2 ** (attempt - 1)))
     if policy.jitter:
         delay = random.uniform(0, delay)  # noqa: S311 — backoff jitter, not cryptographic use
+    if status_code(exc) == _RATE_LIMITED:
+        delay = max(delay, min(policy.base_delay, policy.max_delay))
     return delay
+
+
+def _next_attempt_fits(elapsed: float, delay: float, policy: RetryPolicy) -> bool:
+    """Can another attempt, after ``delay``, finish inside the deadline?"""
+    if policy.deadline is None:
+        return True
+    needed = policy.attempt_timeout or 0.0
+    return elapsed + delay + needed <= policy.deadline
 
 
 def call_with_retry[T](
@@ -154,10 +179,8 @@ def call_with_retry[T](
             if attempt >= policy.max_attempts:
                 raise RetryExhaustedError(attempts=attempt, last_exc=exc) from exc
             delay = _backoff_seconds(attempt, exc, policy)
-            if policy.deadline is not None:
-                elapsed = time.monotonic() - start
-                if elapsed + delay >= policy.deadline:
-                    raise RetryExhaustedError(attempts=attempt, last_exc=exc) from exc
+            if not _next_attempt_fits(time.monotonic() - start, delay, policy):
+                raise RetryExhaustedError(attempts=attempt, last_exc=exc) from exc
             if on_retry is not None:
                 on_retry(attempt, exc, delay)
             if delay > 0:
@@ -194,10 +217,8 @@ async def acall_with_retry[T](
             if attempt >= policy.max_attempts:
                 raise RetryExhaustedError(attempts=attempt, last_exc=exc) from exc
             delay = _backoff_seconds(attempt, exc, policy)
-            if policy.deadline is not None:
-                elapsed = time.monotonic() - start
-                if elapsed + delay >= policy.deadline:
-                    raise RetryExhaustedError(attempts=attempt, last_exc=exc) from exc
+            if not _next_attempt_fits(time.monotonic() - start, delay, policy):
+                raise RetryExhaustedError(attempts=attempt, last_exc=exc) from exc
             if on_retry is not None:
                 on_retry(attempt, exc, delay)
             if delay > 0:
@@ -208,10 +229,17 @@ async def acall_with_retry[T](
 # Preset policies
 # ---------------------------------------------------------------------------
 
-LLM_REQUEST = RetryPolicy(max_attempts=2, base_delay=0.5, max_delay=4.0, deadline=25.0)
-"""One retry, tight budget — the request path of an interactive call."""
+LLM_REQUEST = RetryPolicy(
+    max_attempts=2, base_delay=2.0, max_delay=8.0, deadline=125.0, attempt_timeout=55.0
+)
+"""One retry inside a 125 s budget — the request path of an interactive call.
 
-LLM_JOB = RetryPolicy(max_attempts=4, base_delay=1.0, max_delay=30.0, deadline=None)
+Each attempt is bounded at 55 s, so a provider that answers 504 near that
+bound still leaves room for a second full attempt."""
+
+LLM_JOB = RetryPolicy(
+    max_attempts=4, base_delay=1.0, max_delay=30.0, deadline=None, attempt_timeout=180.0
+)
 """More attempts, no overall deadline — batch/cron work bounded by the job timeout."""
 
 HTTP_REQUEST = RetryPolicy(max_attempts=2, base_delay=0.3, max_delay=3.0, deadline=20.0)

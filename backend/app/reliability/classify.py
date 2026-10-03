@@ -33,7 +33,7 @@ def status_is_transient(status: int, retry_status: frozenset[int]) -> bool:
     return status in retry_status
 
 
-def _status_code(exc: BaseException) -> int | None:
+def status_code(exc: BaseException) -> int | None:
     """Pull an HTTP-ish status code off ``exc``, whatever SDK raised it.
 
     Covers ``httpx.HTTPStatusError`` (``.response.status_code``), the
@@ -45,9 +45,9 @@ def _status_code(exc: BaseException) -> int | None:
     code = getattr(exc, "code", None)
     if isinstance(code, int):
         return code
-    status_code = getattr(exc, "status_code", None)
-    if isinstance(status_code, int):
-        return status_code
+    attr_status = getattr(exc, "status_code", None)
+    if isinstance(attr_status, int):
+        return attr_status
     response = getattr(exc, "response", None)
     response_status = getattr(response, "status_code", None)
     if isinstance(response_status, int):
@@ -90,7 +90,7 @@ def _gax_transient(exc: BaseException) -> bool:
     except ImportError:
         return False
     # RetryError has no HTTP-status mapping (it means "the SDK's own
-    # internal retry budget ran out"), so it isn't caught by _status_code.
+    # internal retry budget ran out"), so it isn't caught by status_code.
     return isinstance(exc, gax_exceptions.RetryError)
 
 
@@ -141,7 +141,7 @@ def is_transient(exc: BaseException, *, retry_status: frozenset[int]) -> bool:
     """
     if isinstance(exc, (TimeoutError, ConnectionError)):
         return True
-    status = _status_code(exc)
+    status = status_code(exc)
     if status is not None:
         return status_is_transient(status, retry_status)
     return _httpx_transient(exc) or _gax_transient(exc) or _anthropic_transient(exc)

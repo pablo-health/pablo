@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-from ..reliability import LLM_JOB, LLM_REQUEST, Idempotency, call_with_retry
+from ..reliability import LLM_JOB, LLM_REQUEST, Idempotency, RetryPolicy, call_with_retry
 from .llm_provider import LLMProvider, strip_provider_prefix
 from .llm_telemetry import LLMSpanRequest, llm_span, usage_tokens
 from .vertex_client import (
@@ -64,16 +64,22 @@ _MISTRAL_VERTEX_REGION = os.environ.get("MISTRAL_VERTEX_REGION", "us-central1")
 _MIN_ATTEMPT_TIMEOUT_SECONDS = 0.001
 
 
-def _attempt_timeout(timeout_seconds: float, started: float) -> float:
+def _attempt_bound(timeout_seconds: float | None, policy: RetryPolicy) -> float:
+    """The per-attempt timeout: the caller's override, else the policy's."""
+    if timeout_seconds is not None:
+        return timeout_seconds
+    return policy.attempt_timeout or _STRUCTURED_LLM_TIMEOUT_SECONDS
+
+
+def _attempt_timeout(timeout_seconds: float, started: float, policy: RetryPolicy) -> float:
     """This attempt's bound: the caller's, cut to what the policy has left.
 
-    ``call_with_retry`` checks ``LLM_REQUEST.deadline`` only before it backs
-    off, never against the attempt it is about to start, so a stalled first
-    attempt followed by a full-length second one would run past it. Shrinking
-    the second attempt to the time remaining keeps the whole call, retry
-    included, inside the deadline.
+    A caller-supplied bound can be longer than the policy's own, so a stalled
+    first attempt followed by a full-length second one would run past the
+    deadline. Shrinking the second attempt to the time remaining keeps the
+    whole call, retry included, inside it.
     """
-    deadline = LLM_REQUEST.deadline
+    deadline = policy.deadline
     if deadline is None:
         return timeout_seconds
     remaining = deadline - (time.monotonic() - started)
@@ -131,6 +137,7 @@ class StructuredLLMGateway(ABC):
         temperature: float = 0.3,
         thinking_budget: int | None = None,
         timeout_seconds: float | None = None,
+        policy: RetryPolicy = LLM_REQUEST,
     ) -> StructuredCompletion:
         """Issue one structured completion and return the parsed JSON.
 
@@ -152,6 +159,10 @@ class StructuredLLMGateway(ABC):
         a timed-out attempt is retried like any other transient failure, and
         the retry is cut to whatever is left of the retry policy's deadline,
         so the call as a whole never outlasts it.
+
+        ``policy`` sets the attempt count and, unless ``timeout_seconds`` is
+        given, the per-attempt timeout (``policy.attempt_timeout``). Calls on
+        a request path use ``LLM_REQUEST``; background jobs pass ``LLM_JOB``.
 
         Raises:
             ValueError: model returned invalid JSON or violated the schema.
@@ -187,6 +198,7 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
         temperature: float = 0.3,
         thinking_budget: int | None = None,
         timeout_seconds: float | None = None,
+        policy: RetryPolicy = LLM_REQUEST,
     ) -> StructuredCompletion:
         # Never hold a pooled DB connection across the model round-trip — the
         # caller must release_db_connection() first (raises in dev/test).
@@ -218,12 +230,9 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
             ),
         )
         started = time.monotonic()
+        bound = _attempt_bound(timeout_seconds, policy)
 
         def attempt() -> Any:
-            if timeout_seconds is None:
-                return client.models.generate_content(
-                    model=normalized_model, contents=user_prompt, config=config
-                )
             # A per-attempt bound is enforced here, client-side, only. The SDK
             # would otherwise also send it as the server's own deadline
             # (X-Server-Timeout), and Vertex then answers 504 DEADLINE_EXCEEDED
@@ -234,7 +243,7 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
                 update={
                     "http_options": types.HttpOptions(
                         timeout=seconds_to_genai_timeout_ms(
-                            _attempt_timeout(timeout_seconds, started)
+                            _attempt_timeout(bound, started, policy)
                         ),
                         headers={"X-Server-Timeout": str(int(_STRUCTURED_LLM_TIMEOUT_SECONDS))},
                     )
@@ -246,9 +255,7 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
 
         with llm_span(LLMSpanRequest(operation="structured", model=normalized_model)) as span:
             try:
-                response = call_with_retry(
-                    attempt, policy=LLM_REQUEST, idempotency=Idempotency.SAFE
-                )
+                response = call_with_retry(attempt, policy=policy, idempotency=Idempotency.SAFE)
             except Exception as exc:
                 logger.exception("Gemini structured completion failed")
                 raise RuntimeError(f"Structured LLM call failed: {exc}") from exc
@@ -337,6 +344,7 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
         temperature: float = 0.3,
         thinking_budget: int | None = None,
         timeout_seconds: float | None = None,
+        policy: RetryPolicy = LLM_REQUEST,
     ) -> StructuredCompletion:
         # Never hold a pooled DB connection across the model round-trip — the
         # caller must release_db_connection() first (raises in dev/test).
@@ -373,9 +381,9 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
                         tools=[tool],
                         tool_choice={"type": "tool", "name": self._TOOL_NAME},
                         messages=[{"role": "user", "content": user_prompt}],
-                        **({"timeout": timeout_seconds} if timeout_seconds is not None else {}),
+                        timeout=_attempt_bound(timeout_seconds, policy),
                     ),
-                    policy=LLM_REQUEST,
+                    policy=policy,
                     idempotency=Idempotency.SAFE,
                 )
             except Exception as exc:
@@ -493,13 +501,15 @@ class MistralStructuredLLMGateway(StructuredLLMGateway):
         temperature: float = 0.3,
         thinking_budget: int | None = None,
         timeout_seconds: float | None = None,
+        policy: RetryPolicy = LLM_REQUEST,
     ) -> StructuredCompletion:
         from ..db import assert_no_held_db_connection
 
         assert_no_held_db_connection("structured-llm")
 
-        # ``thinking_budget`` is part of the shared contract but unused here.
-        del thinking_budget
+        # ``thinking_budget`` and ``policy`` are part of the shared contract but
+        # unused here: Mistral calls always run under ``LLM_JOB``.
+        del thinking_budget, policy
 
         normalized_model = strip_provider_prefix(model)
         project = os.environ.get("GOOGLE_CLOUD_PROJECT")
@@ -647,6 +657,7 @@ class FakeStructuredLLMGateway(StructuredLLMGateway):
         temperature: float = 0.3,
         thinking_budget: int | None = None,
         timeout_seconds: float | None = None,
+        policy: RetryPolicy = LLM_REQUEST,
     ) -> StructuredCompletion:
         self.calls.append(
             {
@@ -658,6 +669,7 @@ class FakeStructuredLLMGateway(StructuredLLMGateway):
                 "temperature": temperature,
                 "thinking_budget": thinking_budget,
                 "timeout_seconds": timeout_seconds,
+                "policy": policy,
             }
         )
         if self.responses:
