@@ -72,7 +72,7 @@ describe("FollowCalendarSetting", () => {
     ])
     expect(picker).toHaveValue(MAIN)
     expect(screen.getByTestId("followed-calendar-line")).toHaveTextContent(
-      `Pablo reads ${MAIN} and asks about anything that looks like a session.`
+      "Pablo reads your main calendar and asks about anything that looks like a session."
     )
   })
 
@@ -91,7 +91,7 @@ describe("FollowCalendarSetting", () => {
     )
 
     expect(await screen.findByTestId("followed-calendar-line")).toHaveTextContent(
-      `Pablo reads ${MAIN}. It adds sessions that show a client’s full name and asks about anything else that looks like a session.`
+      "Pablo reads your main calendar. It adds sessions that show a client’s full name and asks about anything else that looks like a session."
     )
   })
 
@@ -103,9 +103,30 @@ describe("FollowCalendarSetting", () => {
     render(<FollowCalendarSetting followedCalendarId="primary" importGranted onChanged={vi.fn()} />)
 
     expect(await screen.findByTestId("followed-calendar-line")).toHaveTextContent(
-      `Pablo reads ${MAIN}`
+      "Pablo reads your main calendar"
     )
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument()
+  })
+
+  it("names the main calendar in the picker and any other calendar by its own name", async () => {
+    listCalendars.mockResolvedValue({
+      calendars: [
+        { id: MAIN, name: MAIN, primary: true },
+        { id: TEAM, name: "Group practice", primary: false },
+      ],
+      follow_calendar_id: TEAM,
+    })
+    render(<FollowCalendarSetting followedCalendarId={TEAM} importGranted onChanged={vi.fn()} />)
+
+    const picker = await screen.findByRole("combobox", { name: "Import sessions from" })
+    expect(Array.from((picker as HTMLSelectElement).options).map((o) => o.text)).toEqual([
+      "Main calendar",
+      "Group practice",
+    ])
+    expect(screen.getByTestId("followed-calendar-line")).toHaveTextContent(
+      "Pablo reads Group practice and asks about anything that looks like a session."
+    )
+    expect(screen.queryByText(new RegExp(MAIN))).not.toBeInTheDocument()
   })
 
   it("flags a calendar another Pablo setup writes to, and confirms before importing from it", async () => {
@@ -121,7 +142,7 @@ describe("FollowCalendarSetting", () => {
     render(<FollowCalendarSetting followedCalendarId={MAIN} importGranted onChanged={vi.fn()} />)
     const picker = await screen.findByRole("combobox", { name: "Import sessions from" })
     expect(Array.from((picker as HTMLSelectElement).options).map((o) => o.text)).toEqual([
-      MAIN,
+      "Main calendar",
       "Old sessions (another Pablo setup)",
     ])
 

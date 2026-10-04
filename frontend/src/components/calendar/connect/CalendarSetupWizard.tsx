@@ -764,7 +764,7 @@ export function CalendarSetupWizard({
         <SetupStepHead
           eyebrow={`Step ${stepNumber(reviewIndex)}`}
           title="Nothing to import"
-          lede={alreadyComingIn(calendars?.find((c) => c.id === followCalendarId)?.name)}
+          lede={alreadyComingIn(calendars?.find((c) => c.id === followCalendarId))}
         />
       ) : (
         <CalendarReviewStep

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { CALENDAR_SETUP_PATH } from "@/components/calendar/connect/CalendarSetupWizard"
 import { FollowCalendarPicker } from "@/components/calendar/connect/FollowCalendarPicker"
+import { calendarInSentence } from "@/components/calendar/connect/calendarNames"
 import {
   rememberFollowWanted,
   rememberImportPending,
@@ -117,11 +118,11 @@ export function FollowCalendarSetting({
 
   const selected = shownAs ?? followedCalendarId
   const listed = calendars ?? []
-  const followedName = listed.find((c) => c.id === selected)?.name
+  const followed = listed.find((c) => c.id === selected)
   // Followed, but not among the calendars this connection can read now:
   // unshared or deleted since it was chosen. Said plainly rather than
   // showing another calendar as the one read.
-  const unreadable = following && calendars !== null && selected !== null && !followedName
+  const unreadable = following && calendars !== null && selected !== null && !followed
 
   return (
     <div className="space-y-1.5 border-t border-border pt-2">
@@ -158,12 +159,12 @@ export function FollowCalendarSetting({
           Pablo can no longer read the calendar it was importing from. Choose another.
         </p>
       ) : null}
-      {following && followedName ? (
+      {following && followed ? (
         <p data-testid="followed-calendar-line" className="pl-6 text-xs text-muted-foreground">
           {/* "A full name" stands for the backend's rule: one active chart
               bears it. Shared names, initials and inactive charts are asked
               about, which "asks about others" covers. */}
-          Pablo reads <strong className="font-medium">{followedName}</strong>
+          Pablo reads <strong className="font-medium">{calendarInSentence(followed)}</strong>
           {booksNamedSessions ? (
             <>
               . It adds sessions that show a {people.one}&rsquo;s full name and asks about

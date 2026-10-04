@@ -343,10 +343,13 @@ describe("CalendarClientsStep", () => {
       expect(screen.getByRole("checkbox", { name: /^Keep importing new sessions/ })).toBeInTheDocument()
       const picker = screen.getByRole("combobox", { name: "From" })
       expect(picker).toHaveValue("me@example.test")
+      // The main calendar is named for what it is, not Google's name for it
+      // (the account's email address); others keep their own names.
       expect(Array.from((picker as HTMLSelectElement).options).map((o) => o.text)).toEqual([
-        "me@example.test",
+        "Main calendar",
         "Booked sessions",
       ])
+      expect(screen.queryByText(/me@example\.test/)).not.toBeInTheDocument()
 
       await user.selectOptions(picker, "booked@group.calendar.google.test")
 
@@ -509,7 +512,7 @@ describe("CalendarClientsStep", () => {
 
       // Said once, in place of the step's own lede.
       expect(
-        screen.getAllByText("Sessions on me@example.test already come in on their own.")
+        screen.getAllByText("Already importing your main calendar.")
       ).toHaveLength(1)
       expect(screen.queryByText(/repeat weekly or every other week/)).not.toBeInTheDocument()
       expect(screen.queryByRole("button", { name: "Scan calendar" })).not.toBeInTheDocument()
