@@ -214,41 +214,63 @@ class AvailabilityEngine:
                 conflicts.append(conflict)
 
         if include_busy:
-            conflicts.extend(self._busy_conflicts(user_id, proposed_start, proposed_end, tz))
+            conflicts.extend(self._busy_conflicts(user_id, rules, proposed_start, proposed_end, tz))
 
         return ConflictCheckResult(configured=bool(rules), conflicts=conflicts)
 
     def _busy_conflicts(
         self,
         user_id: str,
+        rules: list[AvailabilityRule],
         proposed_start: datetime,
         proposed_end: datetime,
         tz: tzinfo,
     ) -> list[Conflict]:
         """One SOFT conflict per kind of busy time the proposed window overlaps.
 
-        Time Pablo's own appointments already fill is taken out first. Those
-        appointments are on the connected calendar too, so without this an
-        appointment being edited would report its own event as busy.
+        Busy time is held to the clinician's buffers, as their appointments
+        are: a proposed time that leaves less than the gap they keep before
+        or after a busy window is reported too. The buffers are the
+        practice-wide ones, because this check is not type-scoped (see
+        :meth:`_check_rule`).
+
+        Time Pablo's own appointments already fill is taken out of each busy
+        window BEFORE the buffers go round what is left. Those appointments
+        are on the connected calendar too, so otherwise an appointment being
+        edited or nudged would report its own event, or its own buffer, back
+        as busy.
         """
         if self._busy_source is None or proposed_end <= proposed_start:
             return []
-        windows = self._busy_source.busy_between(user_id, proposed_start, proposed_end)
+        try:
+            buffer_before, buffer_after = self._get_buffers(
+                [r for r in rules if r.appointment_type_id is None]
+            )
+        except (KeyError, TypeError, ValueError):
+            # The same stance check_conflicts takes on a rule it cannot read.
+            buffer_before, buffer_after = 0, 0
+        before = timedelta(minutes=buffer_before)
+        after = timedelta(minutes=buffer_after)
+        # Wide enough to catch a window whose buffer, not its own span,
+        # reaches into the proposed time.
+        reach_start, reach_end = proposed_start - after, proposed_end + before
+        windows = self._busy_source.busy_between(user_id, reach_start, reach_end)
         if not windows:
             return []
         booked = [
             (_local(a.start_at, tz), _local(a.end_at, tz))
-            for a in self._appt_repo.list_by_range(user_id, proposed_start, proposed_end)
+            for a in self._appt_repo.list_by_range(user_id, reach_start, reach_end)
             if a.status != "cancelled"
         ]
         kinds: list[BusyKind] = []
         for window in windows:
-            start = max(_local(window.start, tz), proposed_start)
-            end = min(_local(window.end, tz), proposed_end)
-            if start >= end or window.kind in kinds:
+            if window.kind in kinds:
                 continue
-            if _subtract_spans((start, end), booked):
-                kinds.append(window.kind)
+            span = (_local(window.start, tz), _local(window.end, tz))
+            for start, end in _subtract_spans(span, booked):
+                if start - before < proposed_end and proposed_start < end + after:
+                    kinds.append(window.kind)
+                    break
         return [
             Conflict(rule=None, enforcement=EnforcementLevel.SOFT, message=_BUSY_MESSAGES[kind])
             for kind in sorted(kinds)
@@ -369,9 +391,17 @@ class AvailabilityEngine:
 
         if self._busy_source is not None:
             # Asked for only once the day has hours left to offer, so a
-            # closed or full day never costs a calendar read.
-            busy = self._busy_source.busy_between(user_id, day_start, day_end)
-            blocked_minutes = blocked_minutes | _busy_to_blocked_minutes(busy, day_start, tz)
+            # closed or full day never costs a calendar read. Widened by the
+            # buffers, so a window just outside the day whose buffer reaches
+            # into it still counts.
+            busy = self._busy_source.busy_between(
+                user_id,
+                day_start - timedelta(minutes=buffer_after),
+                day_end + timedelta(minutes=buffer_before),
+            )
+            blocked_minutes = blocked_minutes | _busy_to_blocked_minutes(
+                busy, day_start, tz, buffer_before, buffer_after
+            )
 
         alignment_step = self._get_alignment_step(rules)
 
@@ -889,15 +919,23 @@ class AvailabilityEngine:
 
 
 def _busy_to_blocked_minutes(
-    windows: list[BusyInterval], day_start: datetime, tz: tzinfo
+    windows: list[BusyInterval],
+    day_start: datetime,
+    tz: tzinfo,
+    buffer_before: int = 0,
+    buffer_after: int = 0,
 ) -> set[int]:
     """The minutes of the day starting at ``day_start`` that busy windows cover.
 
     Read in ``tz``, the same frame appointments are read in, so a busy window
     and an appointment at the same instant block the same minutes. Partial
     minutes round outward: a window ending at 10:00:30 still holds 10:00.
-    No buffer is added — a buffer is the gap a clinician keeps around their
-    own sessions, and a busy window says nothing about what it holds.
+
+    The clinician's buffers go round each window exactly as they go round an
+    appointment (see :meth:`AvailabilityEngine._appointments_to_blocked_minutes`).
+    A buffer is the gap kept around a commitment, whatever the commitment is
+    — an outside session is a session, and a meeting on the calendar still
+    needs the time before the next client.
     """
     blocked: set[int] = set()
     for window in windows:
@@ -905,8 +943,8 @@ def _busy_to_blocked_minutes(
         end = _local(window.end, tz)
         # Same tzinfo on both sides, so the difference is wall-clock minutes,
         # which is what the day's minute grid counts.
-        start_min = max(math.floor((start - day_start).total_seconds() / 60), 0)
-        end_min = min(math.ceil((end - day_start).total_seconds() / 60), 24 * 60)
+        start_min = max(math.floor((start - day_start).total_seconds() / 60) - buffer_before, 0)
+        end_min = min(math.ceil((end - day_start).total_seconds() / 60) + buffer_after, 24 * 60)
         if start_min < end_min:
             blocked.update(range(start_min, end_min))
     return blocked

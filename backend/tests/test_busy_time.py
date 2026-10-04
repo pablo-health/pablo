@@ -253,6 +253,111 @@ def test_a_google_error_falls_back_to_rules_and_appointments(
     assert "J.M." not in message
 
 
+# --- Buffers -----------------------------------------------------------------
+
+
+def _buffer(rule_type: str, minutes: int, *, rule_id: str | None = None) -> AvailabilityRule:
+    return AvailabilityRule(
+        id=rule_id or f"{rule_type}-{minutes}",
+        user_id=USER_ID,
+        rule_type=rule_type,
+        enforcement=EnforcementLevel.HARD,
+        params={"minutes": minutes},
+    )
+
+
+def test_without_a_buffer_the_time_right_after_busy_time_is_offered() -> None:
+    world = _World(_gcal((_at(10, 0), _at(11, 0))))
+
+    assert world.starts() == ["2026-04-15T09:00:00Z", "2026-04-15T11:00:00Z"]
+
+
+def test_a_buffer_after_keeps_its_gap_after_google_busy_time() -> None:
+    world = _World(_gcal((_at(10, 0), _at(11, 0))))
+    world.rules.create(_buffer(RuleType.BUFFER_AFTER, 15))
+
+    assert "2026-04-15T11:00:00Z" not in world.starts()
+
+
+def test_a_buffer_after_keeps_its_gap_after_an_open_outside_session() -> None:
+    """An outside session is a session: the gap after it is kept the same."""
+    world = _World(_gcal())
+    world.outside.save(_outside(_at(10, 0), minutes=60))
+    world.rules.create(_buffer(RuleType.BUFFER_AFTER, 15))
+
+    assert "2026-04-15T11:00:00Z" not in world.starts()
+
+
+def test_a_buffer_before_keeps_its_gap_before_busy_time() -> None:
+    """09:00-09:50 ends ten minutes before a 10:00 busy block; a 15-minute
+    buffer before it needs more than that."""
+    world = _World(_gcal((_at(10, 0), _at(10, 30))))
+    world.rules.create(_buffer(RuleType.BUFFER_BEFORE, 15))
+
+    assert "2026-04-15T09:00:00Z" not in world.starts()
+
+
+def test_the_larger_buffer_wins_around_busy_time() -> None:
+    world = _World(_gcal((_at(10, 0), _at(11, 0))))
+    world.rules.create(_buffer(RuleType.BUFFER_AFTER, 5, rule_id="small"))
+    world.rules.create(_buffer(RuleType.BUFFER_AFTER, 15, rule_id="large"))
+
+    assert "2026-04-15T11:00:00Z" not in world.starts()
+
+
+def test_a_buffer_reaches_into_the_day_from_busy_time_just_before_it() -> None:
+    """A window ending at midnight UTC still holds the first minutes of the
+    next day when a buffer follows it."""
+    rules = InMemoryAvailabilityRuleRepository()
+    rules.create(
+        AvailabilityRule(
+            id="early",
+            user_id=USER_ID,
+            rule_type=RuleType.WORKING_HOURS,
+            enforcement=EnforcementLevel.HARD,
+            params={"day_of_week": 2, "start": "00:00", "end": "02:00"},
+        )
+    )
+    rules.create(_hourly_rule())
+    rules.create(_buffer(RuleType.BUFFER_AFTER, 15))
+    gcal = _gcal((_at(23, 0, day="2026-04-14"), _at(0, 0)))
+    source = CalendarBusySource(
+        calendar=gcal, outside_sessions=None, cache=FreeBusyCache(clock=_Clock())
+    )
+    engine = AvailabilityEngine(rules, InMemoryAppointmentRepository(), source)
+
+    starts = [s.start for s in engine.get_free_slots(USER_ID, DAY).slots]
+
+    assert "2026-04-15T00:00:00Z" not in starts
+    assert "2026-04-15T01:00:00Z" in starts
+
+
+def test_the_conflict_check_holds_busy_time_to_the_buffers() -> None:
+    world = _World(_gcal((_at(10, 0), _at(11, 0))))
+
+    assert (
+        world.engine.check_conflicts(USER_ID, _at(11, 0), _at(11, 50), include_busy=True).conflicts
+        == []
+    )
+
+    world.rules.create(_buffer(RuleType.BUFFER_AFTER, 15))
+    result = world.engine.check_conflicts(USER_ID, _at(11, 0), _at(11, 50), include_busy=True)
+
+    assert [c.rule_type for c in result.conflicts] == [CALENDAR_BUSY]
+
+
+def test_moving_an_appointment_does_not_report_its_own_buffer_as_busy() -> None:
+    """The appointment's own event is busy on the calendar. Nudging it later
+    must not find that event's buffer in the way."""
+    world = _World(_gcal((_at(10, 0), _at(10, 50))))
+    world.rules.create(_buffer(RuleType.BUFFER_AFTER, 15))
+    world.appointments.create(_appointment(_at(10, 0)))
+
+    result = world.engine.check_conflicts(USER_ID, _at(10, 15), _at(11, 5), include_busy=True)
+
+    assert [c for c in result.conflicts if c.rule_type == CALENDAR_BUSY] == []
+
+
 # --- The cache ---------------------------------------------------------------
 
 
