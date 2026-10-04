@@ -149,21 +149,18 @@ function CreateLinkForm({ onCancel, onCreated }: { onCancel: () => void; onCreat
 }
 
 export function BookingLinkSettings() {
-  const { data, isLoading, error } = useBookingLinks()
+  // isPending, not isLoading. The list query waits for sign-in to resolve, and
+  // while it waits it is pending but not fetching, so isLoading is false and
+  // the page used to render an empty list with a working "New booking link"
+  // button. When sign-in resolved the fetch started, isLoading flipped true,
+  // and the early-return skeleton unmounted an already-open create form,
+  // throwing away whatever had been typed into it.
+  const { data, isPending, error } = useBookingLinks()
   const [formOpen, setFormOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [deletingLink, setDeletingLink] = useState<BookingLink | null>(null)
 
   const links = data?.data ?? []
-
-  if (isLoading) {
-    return (
-      <div className="space-y-2" role="status">
-        <Skeleton className="h-16 w-full" />
-        <Skeleton className="h-16 w-full" />
-      </div>
-    )
-  }
 
   if (error) {
     return <p className="text-sm text-red-600">Couldn&apos;t load your booking links.</p>
@@ -171,7 +168,18 @@ export function BookingLinkSettings() {
 
   return (
     <div className="space-y-4">
-      {links.length === 0 && <p className="text-sm text-neutral-600">No booking links yet.</p>}
+      {/* The skeleton stands in for the list only, so nothing below it is
+          ever unmounted by a load. */}
+      {isPending && (
+        <div className="space-y-2" role="status">
+          <Skeleton className="h-16 w-full" />
+          <Skeleton className="h-16 w-full" />
+        </div>
+      )}
+
+      {!isPending && links.length === 0 && (
+        <p className="text-sm text-neutral-600">No booking links yet.</p>
+      )}
 
       {links.length > 0 && (
         <ul className="space-y-2">
@@ -192,9 +200,11 @@ export function BookingLinkSettings() {
       {formOpen ? (
         <CreateLinkForm onCancel={() => setFormOpen(false)} onCreated={() => setFormOpen(false)} />
       ) : (
-        <Button size="sm" onClick={() => setFormOpen(true)}>
-          New booking link
-        </Button>
+        !isPending && (
+          <Button size="sm" onClick={() => setFormOpen(true)}>
+            New booking link
+          </Button>
+        )
       )}
 
       {deletingLink && (

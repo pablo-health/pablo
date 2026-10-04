@@ -121,6 +121,31 @@ describe("RuleOverrideDialog", () => {
     expect(screen.getByRole("button", { name: "Override this series" })).toBeInTheDocument()
   })
 
+  it("names busy time on the calendar plainly, not as a rule", () => {
+    const busy: ConflictResponse = {
+      rule_type: "calendar_busy",
+      enforcement: "soft",
+      message: "Your calendar shows you as busy at this time",
+    }
+    render(
+      <RuleOverrideDialog open recurring conflicts={[busy]} onOverride={vi.fn()} onCancel={vi.fn()} />,
+    )
+
+    expect(screen.getByText("Your calendar shows you as busy then.")).toBeInTheDocument()
+    expect(screen.queryByText(/availability rules/)).not.toBeInTheDocument()
+    expect(screen.getByText("Details")).toBeInTheDocument()
+    expect(screen.queryByText(/rule in full/)).not.toBeInTheDocument()
+  })
+
+  it("puts a crossed rule ahead of busy time", () => {
+    expect(
+      summarizeConflicts([
+        { rule_type: "calendar_busy", enforcement: "soft", message: "busy" },
+        conflict("block_day_of_week"),
+      ]),
+    ).toBe("You've blocked that day of the week and your calendar shows you as busy then.")
+  })
+
   it("fires the override", async () => {
     const user = userEvent.setup()
     const onOverride = vi.fn()

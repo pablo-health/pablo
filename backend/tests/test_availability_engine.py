@@ -967,7 +967,7 @@ class TestMultipleRulesInteraction:
             USER_ID, "2026-03-18T12:30:00Z", "2026-03-18T13:20:00Z"
         ).conflicts
         assert len(conflicts) == 1
-        assert conflicts[0].rule.rule_type == RuleType.BLOCK_TIME_RANGE
+        assert conflicts[0].rule_type == RuleType.BLOCK_TIME_RANGE
 
     def test_multiple_conflicts_returned(
         self,

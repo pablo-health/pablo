@@ -28,11 +28,13 @@ if TYPE_CHECKING:
 
     from ..repositories.booking_link import BookingLinkRepository
     from ..repositories.coverage import PatientCoverageRepository, PayerRepository
+    from ..repositories.external_calendar_event import ExternalCalendarEventRepository
     from ..repositories.google_calendar_token import GoogleCalendarTokenRepository
     from ..repositories.patient import PatientRepository
     from ..repositories.user import UserRepository
     from ..scheduling_engine.models.appointment import Appointment
     from ..scheduling_engine.models.appointment_type import AppointmentType
+    from ..scheduling_engine.models.busy import BusyTimeSource
     from ..scheduling_engine.models.conflict import TimeSlot
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
     from ..scheduling_engine.repositories.appointment_type import AppointmentTypeRepository
@@ -68,6 +70,7 @@ from ..repositories import (
     get_appointment_repository,
     get_availability_rule_repository,
     get_booking_link_repository,
+    get_external_calendar_event_repository,
     get_google_calendar_token_repository,
     get_patient_coverage_repository,
     get_patient_repository,
@@ -82,6 +85,7 @@ from ..scheduling_engine.services.booking_link_gate import assess_link
 from ..scheduling_engine.services.scheduling import SchedulingService
 from ..scheduling_engine.services.scheduling_policy import current_policy_or_defaults
 from ..services import AuditService, get_audit_service
+from ..services.busy_time import CalendarBusySource
 from ..services.captcha import CaptchaVerifier, get_captcha_verifier
 from ..services.coverage_intake import record_intake_coverage
 from ..services.email_sender import EmailSender, OutboundEmail, get_email_sender
@@ -273,11 +277,31 @@ def get_public_booking_context(
     return PublicBookingContext(link=link, owner=owner, appointment_type=appointment_type)
 
 
+def get_public_gcal_service(
+    token_repo: GoogleCalendarTokenRepository = Depends(get_google_calendar_token_repository),
+    appt_repo: AppointmentRepository = Depends(get_appointment_repository),
+) -> GoogleCalendarService:
+    return GoogleCalendarService.from_surface(
+        google_consent_surface(get_settings()),
+        token_repo=token_repo,
+        appointment_repo=appt_repo,
+    )
+
+
+def get_public_busy_source(
+    gcal_service: GoogleCalendarService = Depends(get_public_gcal_service),
+    events: ExternalCalendarEventRepository = Depends(get_external_calendar_event_repository),
+) -> BusyTimeSource:
+    """Busy time on the link owner's calendar, so a page never offers it."""
+    return CalendarBusySource(calendar=gcal_service, outside_sessions=events)
+
+
 def get_public_availability_engine(
     rule_repo: AvailabilityRuleRepository = Depends(get_availability_rule_repository),
     appt_repo: AppointmentRepository = Depends(get_appointment_repository),
+    busy_source: BusyTimeSource = Depends(get_public_busy_source),
 ) -> AvailabilityEngine:
-    return AvailabilityEngine(rule_repo, appt_repo)
+    return AvailabilityEngine(rule_repo, appt_repo, busy_source)
 
 
 def get_public_scheduling_service(
@@ -296,17 +320,6 @@ def get_public_appointment_repository(
     level ``get_appointment_repository`` directly.
     """
     return appt_repo
-
-
-def get_public_gcal_service(
-    token_repo: GoogleCalendarTokenRepository = Depends(get_google_calendar_token_repository),
-    appt_repo: AppointmentRepository = Depends(get_appointment_repository),
-) -> GoogleCalendarService:
-    return GoogleCalendarService.from_surface(
-        google_consent_surface(get_settings()),
-        token_repo=token_repo,
-        appointment_repo=appt_repo,
-    )
 
 
 def sweep_expired_holds(

@@ -18,7 +18,7 @@ export function CalendarsPage() {
       {googleCalendarEnabled && (
         <SettingsCard
           title="Google Calendar"
-          description="Sessions you book in Pablo appear on your Google Calendar, and busy time from Google blocks booking."
+          description="Sessions you book in Pablo appear on your Google Calendar. With conflict checks on, Pablo won't offer times your calendar shows as busy."
         >
           <GoogleCalendarSettings />
         </SettingsCard>

@@ -9,8 +9,10 @@ import {
   previewPracticeSiteDraft,
   publishPracticeSite,
   rollBackPracticeSite,
+  setPracticeSiteDraftHeader,
   uploadPracticeSiteDraft,
   type PracticeSite,
+  type SiteHeader,
   type SitePreview,
 } from "@/lib/api/practiceSite"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
@@ -34,6 +36,13 @@ function keep(data: PracticeSite, _variables: unknown, queryClient: QueryClient)
 export function useUploadPracticeSiteDraft() {
   return useAuthMutation<PracticeSite, File>({
     mutationFn: (file) => uploadPracticeSiteDraft(file),
+    onSuccess: keep,
+  })
+}
+
+export function useSetPracticeSiteDraftHeader() {
+  return useAuthMutation<PracticeSite, SiteHeader>({
+    mutationFn: (header) => setPracticeSiteDraftHeader(header),
     onSuccess: keep,
   })
 }

@@ -29,14 +29,28 @@ class TimeSlot:
     over_cap: bool = False
 
 
+#: ``Conflict.rule_type`` for an overlap with busy time rather than a rule.
+CALENDAR_BUSY = "calendar_busy"
+
+
 @dataclass
 class Conflict:
-    """A scheduling conflict detected by the availability engine."""
+    """A scheduling conflict detected by the availability engine.
 
-    rule: AvailabilityRule
+    ``rule`` is None for an overlap with busy time on the clinician's
+    calendar, which no rule of theirs describes. Those are always SOFT: the
+    engine reports them and leaves the booking to the clinician.
+    """
+
+    rule: AvailabilityRule | None
     enforcement: str  # EnforcementLevel value
     message: str
     suggested_alternatives: list[TimeSlot] = field(default_factory=list)
+
+    @property
+    def rule_type(self) -> str:
+        """The crossed rule's type, or :data:`CALENDAR_BUSY` for busy time."""
+        return self.rule.rule_type if self.rule is not None else CALENDAR_BUSY
 
 
 @dataclass

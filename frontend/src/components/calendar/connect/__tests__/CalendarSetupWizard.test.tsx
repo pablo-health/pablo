@@ -242,6 +242,18 @@ describe("CalendarSetupWizard", () => {
     expect(getAuthUrl.mock.calls[0][1]).toEqual({ write_target: "primary", busy: true, event_titling: "initials" })
   })
 
+  it("says what busy times are used for, and only that", async () => {
+    const user = userEvent.setup()
+    renderWizard()
+    await goToSessionsStep(user)
+
+    expect(
+      screen.getByText(
+        "Pablo won't offer times your calendar shows as busy.",
+      ),
+    ).toBeInTheDocument()
+  })
+
   it("does not ask for busy times when that is unchecked", async () => {
     const user = userEvent.setup()
     renderWizard()

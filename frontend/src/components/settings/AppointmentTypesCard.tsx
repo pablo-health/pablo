@@ -16,6 +16,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { SettingsCard, SettingsRow } from "@/components/settings/ui"
 import { AppointmentTypeRow } from "./AppointmentTypeRow"
+import { ApiError } from "@/lib/api/client"
 import {
   useAppointmentTypes,
   useCreateAppointmentType,
@@ -57,6 +58,22 @@ const NEW_TYPE_DEFAULTS = {
   horizon_unit: "business" as const,
 }
 
+/** Names are unique per clinician; the server answers a collision with 409. */
+const NAME_TAKEN = "An appointment type with that name already exists."
+const SAVE_FAILED = "Couldn't save that change. Please try again."
+
+function saveErrorMessage(err: unknown): string {
+  return err instanceof ApiError && err.status === 409 ? NAME_TAKEN : SAVE_FAILED
+}
+
+/** "New type", or "New type 2", 3, ... so a second click does not collide. */
+function unusedNewTypeName(types: AppointmentTypeResponse[]): string {
+  const taken = new Set(types.map((t) => t.name))
+  let name = NEW_TYPE_DEFAULTS.name
+  for (let n = 2; taken.has(name); n++) name = `${NEW_TYPE_DEFAULTS.name} ${n}`
+  return name
+}
+
 /**
  * The practice's appointment types, in Settings > Scheduling and in the
  * billing setup wizard.
@@ -85,6 +102,7 @@ export function AppointmentTypesCard({
   const [openId, setOpenId] = useState<string | null>(null)
   const [defaultsOpen, setDefaultsOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<AppointmentTypeResponse | null>(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   const types = typesData?.data ?? []
   const selfBookOn = Boolean(policy?.self_book_existing || policy?.self_book_new)
@@ -92,13 +110,19 @@ export function AppointmentTypesCard({
   const defaultNoticeHours = policy?.min_notice_hours ?? 24
 
   function handleAdd() {
-    createType.mutate(NEW_TYPE_DEFAULTS, {
-      onSuccess: (created) => setOpenId(created.id),
-    })
+    setSaveError(null)
+    createType.mutate(
+      { ...NEW_TYPE_DEFAULTS, name: unusedNewTypeName(types) },
+      {
+        onSuccess: (created) => setOpenId(created.id),
+        onError: (err) => setSaveError(saveErrorMessage(err)),
+      },
+    )
   }
 
   function handleChange(id: string, patch: UpdateAppointmentTypeRequest) {
-    updateType.mutate({ id, data: patch })
+    setSaveError(null)
+    updateType.mutate({ id, data: patch }, { onError: (err) => setSaveError(saveErrorMessage(err)) })
   }
 
   function handleConfirmDelete() {
@@ -134,6 +158,11 @@ export function AppointmentTypesCard({
               />
             ))}
           </ul>
+          {saveError && (
+            <p role="alert" className="mt-2 text-sm text-red-600">
+              {saveError}
+            </p>
+          )}
           <div className="mt-2 flex items-center justify-between gap-3">
             <Button type="button" size="sm" onClick={handleAdd} disabled={createType.isPending}>
               <Plus className="h-4 w-4" />

@@ -94,6 +94,9 @@ from app.repositories import (  # noqa: E402
     get_identity_repository,
     get_user_repository,
 )
+from app.repositories.external_calendar_event import (  # noqa: E402
+    InMemoryExternalCalendarEventRepository,
+)
 from app.repositories.patient_source_mapping import (  # noqa: E402
     InMemoryPatientSourceMappingRepository,
 )
@@ -132,6 +135,7 @@ from app.routes.patients import (  # noqa: E402
 )
 from app.routes.scheduling import (  # noqa: E402
     get_google_calendar_service,
+    get_outside_session_repository,
 )
 from app.routes.sessions import (  # noqa: E402
     get_notes_repository as get_sessions_notes_repository,
@@ -444,7 +448,13 @@ def client(
     mock_gcal_service = MagicMock()
     mock_gcal_service.push_appointment.return_value = None
     mock_gcal_service.delete_event.return_value = False
+    # No busy grant, and no outside sessions: slot lists come from rules
+    # and appointments alone unless a test says otherwise.
+    mock_gcal_service.busy_calendars.return_value = None
     app.dependency_overrides[get_google_calendar_service] = lambda: mock_gcal_service
+    app.dependency_overrides[get_outside_session_repository] = (
+        InMemoryExternalCalendarEventRepository
+    )
 
     # Create client
     test_client = TestClient(app)

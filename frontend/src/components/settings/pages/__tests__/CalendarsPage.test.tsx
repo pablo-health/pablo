@@ -44,6 +44,17 @@ describe("CalendarsPage", () => {
     expect(screen.getByTestId("google-calendar-settings")).toBeInTheDocument()
   })
 
+  it("describes busy time as limiting offered times, not as blocking booking", () => {
+    runtimeConfig.googleCalendarEnabled = true
+
+    render(<CalendarsPage />)
+
+    expect(
+      screen.getByText(/With conflict checks on, Pablo won't offer times your calendar shows as busy\./),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/blocks booking/)).not.toBeInTheDocument()
+  })
+
   it("keeps EHR calendar feeds available regardless of the Google toggle", () => {
     render(<CalendarsPage />)
 

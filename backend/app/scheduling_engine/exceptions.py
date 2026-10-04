@@ -39,6 +39,19 @@ class OutsideEventAlreadyBookedError(SchedulingError):
     """
 
 
+class AppointmentTypeNameTakenError(SchedulingError):
+    """The clinician already has an appointment type with this name.
+
+    Names are unique per clinician (``uq_appointment_types_user_name``),
+    because a picker that lists two "Consultation" entries gives the reader
+    no way to tell which one they are choosing.
+    """
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        super().__init__(f"Appointment type name already in use: {name}")
+
+
 class InvalidAppointmentError(SchedulingError):
     """Raised when appointment data is invalid."""
 

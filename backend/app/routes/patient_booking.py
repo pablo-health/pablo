@@ -64,6 +64,10 @@ from ..models.scheduling import (
 from ..repositories.postgres.appointment import PostgresAppointmentRepository
 from ..repositories.postgres.appointment_type import PostgresAppointmentTypeRepository
 from ..repositories.postgres.availability_rule import PostgresAvailabilityRuleRepository
+from ..repositories.postgres.external_calendar_event import (
+    PostgresExternalCalendarEventRepository,
+)
+from ..repositories.postgres.google_calendar_token import PostgresGoogleCalendarTokenRepository
 from ..repositories.postgres.user import PostgresUserRepository
 from ..scheduling_engine.exceptions import (
     AppointmentConflictError,
@@ -83,6 +87,8 @@ from ..scheduling_engine.services.scheduling_policy import (
 )
 from ..scheduling_engine.services.scheduling_policy import load_policy, may_self_book
 from ..services.audit_service import AuditService, get_audit_service
+from ..services.busy_time import CalendarBusySource
+from ..services.google_calendar_service import GoogleCalendarService, google_consent_surface
 from ..settings import get_settings
 
 if TYPE_CHECKING:
@@ -189,6 +195,25 @@ def owner_session(patient: PatientContext) -> Iterator[tuple[Session, str]]:
         yield session, owner
     finally:
         session.close()
+
+
+def _owner_engine(session: Session) -> AvailabilityEngine:
+    """The availability engine over the owner-armed session, busy time included.
+
+    Busy time on the clinician's calendar, and sessions there nobody has
+    sorted yet, are left out of what a patient is offered — and, through the
+    offered-slot check, out of what they can book or move to.
+    """
+    appointments = PostgresAppointmentRepository(session)
+    busy = CalendarBusySource(
+        calendar=GoogleCalendarService.from_surface(
+            google_consent_surface(get_settings()),
+            token_repo=PostgresGoogleCalendarTokenRepository(session),
+            appointment_repo=appointments,
+        ),
+        outside_sessions=PostgresExternalCalendarEventRepository(session),
+    )
+    return AvailabilityEngine(PostgresAvailabilityRuleRepository(session), appointments, busy)
 
 
 def _owner_timezone(session: Session, owner: str) -> tzinfo:
@@ -545,10 +570,7 @@ def list_bookable_slots(
         policy = load_policy(session)
         _require_self_booking(policy)
 
-        engine = AvailabilityEngine(
-            PostgresAvailabilityRuleRepository(session),
-            PostgresAppointmentRepository(session),
-        )
+        engine = _owner_engine(session)
         tz = _owner_timezone(session, owner)
         # No type is named: this surface offers a duration, not a type, and
         # the patient picks one when they book. Practice-wide rules only,
@@ -641,10 +663,7 @@ def book_appointment(
             )
 
         tz = _owner_timezone(session, owner)
-        engine = AvailabilityEngine(
-            PostgresAvailabilityRuleRepository(session),
-            PostgresAppointmentRepository(session),
-        )
+        engine = _owner_engine(session)
 
         # The client is never trusted about availability. Two independent
         # guards, because they fail differently:
@@ -745,10 +764,7 @@ def reschedule_appointment(
         _require_self_booking(policy)
 
         tz = _owner_timezone(session, owner)
-        engine = AvailabilityEngine(
-            PostgresAvailabilityRuleRepository(session),
-            PostgresAppointmentRepository(session),
-        )
+        engine = _owner_engine(session)
         service = SchedulingService(PostgresAppointmentRepository(session), engine)
 
         appointment = _own_appointment(service, owner, patient, appointment_id)

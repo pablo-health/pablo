@@ -10,6 +10,7 @@ import {
   usePreviewPracticeSiteDraft,
   usePublishPracticeSite,
   useRollBackPracticeSite,
+  useSetPracticeSiteDraftHeader,
   useUploadPracticeSiteDraft,
 } from "@/hooks/usePracticeSite"
 import { ApiError, buildApiUrl } from "@/lib/api/client"
@@ -34,9 +35,10 @@ export function WebsitePage() {
   const preview = usePreviewPracticeSiteDraft()
   const publish = usePublishPracticeSite()
   const rollBack = useRollBackPracticeSite()
+  const setHeader = useSetPracticeSiteDraftHeader()
 
   const canManage = canManageDomains(userStatus)
-  const mutations = [upload, discard, preview, publish, rollBack]
+  const mutations = [upload, discard, preview, publish, rollBack, setHeader]
   const busy = mutations.some((m) => m.isPending)
   const failure = mutations.map((m) => m.error).find(Boolean)
   const failureMessage =
@@ -95,6 +97,7 @@ export function WebsitePage() {
         onPreview={openPreview}
         onPublish={() => publish.mutate()}
         onDiscard={() => discard.mutate()}
+        onSetHeader={(header) => setHeader.mutate(header)}
         onDraftSaved={() => void queryClient.invalidateQueries({ queryKey: practiceSiteKeys.all })}
       />
       <VersionHistory

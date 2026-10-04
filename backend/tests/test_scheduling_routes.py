@@ -12,16 +12,22 @@ from unittest.mock import MagicMock, patch
 import pytest
 from app.calendar_providers.capabilities import CalendarCapability, CalendarWriteTarget
 from app.calendar_providers.oauth_state import OAuthStateError
+from app.calendar_providers.provider import BusyWindow
 from app.main import app
 from app.models import Patient, SessionStatus, UserPreferences
 from app.models.session import TherapySession, Transcript
 from app.notes import get_note_type_authorizer
+from app.repositories.external_calendar_event import (
+    ExternalCalendarEvent,
+    InMemoryExternalCalendarEventRepository,
+)
 from app.routes.scheduling import (
     _get_session_service,
     get_appointment_type_repository,
     get_availability_rule_parse_service,
     get_availability_rule_repository,
     get_google_calendar_service,
+    get_outside_session_repository,
     get_scheduling_service,
 )
 from app.routes.scheduling import (
@@ -43,11 +49,14 @@ from app.scheduling_engine.services.availability import AvailabilityEngine
 from app.scheduling_engine.services.scheduling import SchedulingService
 from app.services import get_audit_service
 from app.services.availability_parse_service import AvailabilityRuleParseService
-from app.services.google_calendar_service import GoogleCalendarService
+from app.services.busy_time import FREE_BUSY_CACHE, CalendarBusySource
+from app.services.google_calendar_service import BusyCalendars, GoogleCalendarService
 from app.services.structured_llm_gateway import FakeStructuredLLMGateway, StructuredCompletion
 from fastapi import HTTPException, status
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from app.repositories import InMemoryUserRepository
     from fastapi.testclient import TestClient
 
@@ -545,6 +554,122 @@ def test_free_slots_invalid_timezone_preference_falls_back_to_utc(
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1
     assert "Not/AZone" not in warnings[0].getMessage()
+
+
+# --- Busy time on the clinician's calendar ---
+
+
+def _busy_gcal(*windows: tuple[str, str]) -> MagicMock:
+    """A connected calendar holding the busy grant, busy at ``windows``."""
+    gcal = MagicMock()
+    gcal.push_appointment.return_value = None
+    gcal.busy_calendars.return_value = BusyCalendars(
+        account="clinician@example.test", calendar_ids=("primary",)
+    )
+    gcal.query_busy_windows.return_value = [
+        BusyWindow(start=datetime.fromisoformat(s), end=datetime.fromisoformat(e))
+        for s, e in windows
+    ]
+    return gcal
+
+
+@pytest.fixture
+def busy_client(
+    client: TestClient,
+    rule_repo: InMemoryAvailabilityRuleRepository,
+    mock_user_repo: InMemoryUserRepository,
+) -> Iterator[TestClient]:
+    """The shared client with Wednesday 09:00-17:00 hours in UTC and an empty cache."""
+    FREE_BUSY_CACHE.clear()
+    mock_user_repo.save_preferences("test-user-123", UserPreferences(timezone="UTC"))
+    app.dependency_overrides[get_availability_rule_repository] = lambda: rule_repo
+    rule_repo.create(_wednesday_working_hours_rule())
+    yield client
+    FREE_BUSY_CACHE.clear()
+
+
+def test_slot_picker_leaves_out_google_busy_time(busy_client: TestClient) -> None:
+    app.dependency_overrides[get_google_calendar_service] = lambda: _busy_gcal(
+        ("2026-08-26T10:00:00+00:00", "2026-08-26T10:30:00+00:00")
+    )
+
+    response = busy_client.get(
+        "/api/availability/slots", params={"date": "2026-08-26", "duration": 50}
+    )
+
+    assert response.status_code == 200, response.text
+    starts = [s["start"] for s in response.json()["slots"]]
+    assert starts[:2] == ["2026-08-26T09:00:00Z", "2026-08-26T10:30:00Z"]
+    for slot in response.json()["slots"]:
+        assert not (slot["start"] < "2026-08-26T10:30:00Z" and slot["end"] > "2026-08-26T10:00:00Z")
+
+
+def test_slot_picker_leaves_out_open_outside_sessions(busy_client: TestClient) -> None:
+    events = InMemoryExternalCalendarEventRepository()
+    events.save(
+        ExternalCalendarEvent(
+            id="ev-1",
+            user_id="test-user-123",
+            source="google",
+            source_event_id="ev-1",
+            start_at=datetime(2026, 8, 26, 9, 0, tzinfo=UTC),
+            end_at=datetime(2026, 8, 26, 9, 50, tzinfo=UTC),
+        )
+    )
+    app.dependency_overrides[get_outside_session_repository] = lambda: events
+
+    response = busy_client.get(
+        "/api/availability/slots", params={"date": "2026-08-26", "duration": 50}
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["slots"][0]["start"] == "2026-08-26T09:50:00Z"
+
+
+def test_conflict_check_reports_busy_time_without_blocking(busy_client: TestClient) -> None:
+    app.dependency_overrides[get_google_calendar_service] = lambda: _busy_gcal(
+        ("2026-08-26T10:00:00+00:00", "2026-08-26T10:30:00+00:00")
+    )
+
+    response = busy_client.post(
+        "/api/availability/check",
+        json={"start_at": "2026-08-26T10:00:00Z", "end_at": "2026-08-26T10:50:00Z"},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["conflicts"] == [
+        {
+            "rule_type": "calendar_busy",
+            "enforcement": "soft",
+            "message": "Your calendar shows you as busy at this time",
+        }
+    ]
+    assert body["has_hard_conflicts"] is False
+
+
+def test_a_clinician_can_still_book_into_busy_time(
+    busy_client: TestClient,
+    appt_repo: InMemoryAppointmentRepository,
+    rule_repo: InMemoryAvailabilityRuleRepository,
+) -> None:
+    """Busy time limits what Pablo offers. A time chosen by hand is booked,
+    with no warning attached — the check before saving is where it shows."""
+    gcal = _busy_gcal(("2026-08-26T10:00:00+00:00", "2026-08-26T11:00:00+00:00"))
+    app.dependency_overrides[get_google_calendar_service] = lambda: gcal
+    engine = AvailabilityEngine(
+        rule_repo, appt_repo, CalendarBusySource(calendar=gcal, outside_sessions=None)
+    )
+    app.dependency_overrides[get_scheduling_service] = lambda: SchedulingService(appt_repo, engine)
+
+    response = busy_client.post(
+        "/api/appointments",
+        json=_create_payload(start_at="2026-08-26T10:00:00Z", end_at="2026-08-26T10:50:00Z"),
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json().get("warnings", []) == []
+    gcal.query_busy_windows.assert_not_called()
 
 
 def test_create_appointment_succeeds_with_no_availability_rules(client: TestClient) -> None:

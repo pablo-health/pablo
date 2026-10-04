@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import uuid
 from collections.abc import Collection, Sequence
@@ -125,6 +126,7 @@ from ..repositories import (
 from ..scheduling_engine.exceptions import (
     AppointmentConflictError,
     AppointmentNotFoundError,
+    AppointmentTypeNameTakenError,
     InvalidAppointmentError,
     InvalidRecurrenceError,
     RuleViolationError,
@@ -143,6 +145,7 @@ from ..services import (
     get_audit_service,
 )
 from ..services.availability_parse_service import AvailabilityRuleParseService, ProposedRule
+from ..services.busy_time import CalendarBusySource
 from ..services.google_calendar_follow import (
     GoogleChangeFollower,
     GoogleChangeUnavailableError,
@@ -175,7 +178,9 @@ _is_valid_gcal_redirect_uri = is_allowed_oauth_redirect_uri
 
 
 if TYPE_CHECKING:
+    from ..repositories.external_calendar_event import ExternalCalendarEventRepository
     from ..scheduling_engine.models.appointment import Appointment
+    from ..scheduling_engine.models.busy import BusyTimeSource
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
     from ..scheduling_engine.repositories.appointment_type import AppointmentTypeRepository
     from ..scheduling_engine.repositories.availability_rule import AvailabilityRuleRepository
@@ -252,22 +257,6 @@ def _apply_appointment_type(
     data["session_type"] = appointment_type.name
 
 
-def get_availability_engine(
-    rule_repo: AvailabilityRuleRepository = Depends(get_availability_rule_repository),
-    appt_repo: AppointmentRepository = Depends(get_appointment_repository),
-) -> AvailabilityEngine:
-    """Get availability engine with injected repositories."""
-    return AvailabilityEngine(rule_repo, appt_repo)
-
-
-def get_scheduling_service(
-    repo: AppointmentRepository = Depends(get_appointment_repository),
-    engine: AvailabilityEngine = Depends(get_availability_engine),
-) -> SchedulingService:
-    """Get scheduling service with injected repository and availability engine."""
-    return SchedulingService(repo, engine)
-
-
 def _owner_timezone(user_repo: UserRepository, user_id: str) -> tzinfo:
     """Resolve the rule owner's IANA timezone preference.
 
@@ -326,6 +315,42 @@ def get_google_calendar_service(
         appointment_repo=_appt_repo_factory(),
         patient_repo=_patient_repo_factory(),
     )
+
+
+def get_outside_session_repository(
+    _ctx: TenantContext = Depends(get_tenant_context),
+) -> ExternalCalendarEventRepository:
+    """Sessions on followed calendars and feeds, scoped to the tenant's database."""
+    return get_external_calendar_event_repository()
+
+
+def get_busy_time_source(
+    gcal_service: GoogleCalendarService = Depends(get_google_calendar_service),
+    outside_sessions: ExternalCalendarEventRepository = Depends(get_outside_session_repository),
+) -> BusyTimeSource:
+    """Busy time from the clinician's calendar and their unsorted outside sessions.
+
+    Building it reads nothing; the calendar is only asked when a slot list
+    or a conflict check needs it.
+    """
+    return CalendarBusySource(calendar=gcal_service, outside_sessions=outside_sessions)
+
+
+def get_availability_engine(
+    rule_repo: AvailabilityRuleRepository = Depends(get_availability_rule_repository),
+    appt_repo: AppointmentRepository = Depends(get_appointment_repository),
+    busy_source: BusyTimeSource = Depends(get_busy_time_source),
+) -> AvailabilityEngine:
+    """Get availability engine with injected repositories and busy time."""
+    return AvailabilityEngine(rule_repo, appt_repo, busy_source)
+
+
+def get_scheduling_service(
+    repo: AppointmentRepository = Depends(get_appointment_repository),
+    engine: AvailabilityEngine = Depends(get_availability_engine),
+) -> SchedulingService:
+    """Get scheduling service with injected repository and availability engine."""
+    return SchedulingService(repo, engine)
 
 
 def get_google_change_follower(
@@ -1303,11 +1328,17 @@ def check_conflicts(
     engine: AvailabilityEngine = Depends(get_availability_engine),
     tz: tzinfo = Depends(get_owner_timezone),
 ) -> CheckConflictsResponse:
-    """Check scheduling conflicts for a proposed time."""
-    result = engine.check_conflicts(ctx.user_id, request.start_at, request.end_at, tz=tz)
+    """Check scheduling conflicts for a proposed time.
+
+    Busy time on the clinician's calendar comes back as a soft conflict, so
+    it is shown before they save. It never refuses the booking itself.
+    """
+    result = engine.check_conflicts(
+        ctx.user_id, request.start_at, request.end_at, tz=tz, include_busy=True
+    )
     conflict_responses = [
         ConflictResponse(
-            rule_type=c.rule.rule_type,
+            rule_type=c.rule_type,
             enforcement=c.enforcement,
             message=c.message,
         )
@@ -1531,6 +1562,10 @@ def parse_availability_rules(
 
 # --- Appointment type endpoints ---
 
+#: Shown on the settings page when a create or rename collides with a name
+#: the clinician already uses.
+APPOINTMENT_TYPE_NAME_TAKEN = "An appointment type with that name already exists."
+
 #: Names of the two seeded types every practice is supposed to have alongside
 #: whatever it already had, per the scheduling settings brief. Kept separate
 #: from ``_SEED_APPOINTMENT_TYPES`` below so a migrated practice can be
@@ -1609,21 +1644,16 @@ def _ensure_default_appointment_types(
     settings page's card description names.
 
     Reading is not usually where writes happen, but the seed values are fixed
-    and idempotent (checked by name), so a concurrent double-read produces at
-    worst a duplicate seed row rather than corrupt state.
+    and idempotent (checked by name). Names are unique per clinician, so when
+    two first reads race, the slower one's seed insert is refused; it skips
+    that seed and reads back the row the faster one wrote.
     """
     existing = type_repo.list_by_user(user_id)
     if not existing:
         now = utc_now()
-        created = [
-            type_repo.create(
-                AppointmentType(
-                    id=str(uuid.uuid4()), user_id=user_id, created_at=now, updated_at=now, **seed
-                )
-            )
-            for seed in _SEED_APPOINTMENT_TYPES
-        ]
-        return created, False
+        for seed in _SEED_APPOINTMENT_TYPES:
+            _create_seed(type_repo, user_id, now, seed)
+        return type_repo.list_by_user(user_id), False
 
     existing_names = {t.name for t in existing}
     missing = [
@@ -1637,12 +1667,23 @@ def _ensure_default_appointment_types(
 
     now = utc_now()
     for seed in missing:
+        _create_seed(type_repo, user_id, now, seed)
+    return type_repo.list_by_user(user_id), True
+
+
+def _create_seed(
+    type_repo: AppointmentTypeRepository,
+    user_id: str,
+    now: datetime,
+    seed: _SeedAppointmentType,
+) -> None:
+    """Write one seed type, leaving it be if a concurrent read already did."""
+    with contextlib.suppress(AppointmentTypeNameTakenError):
         type_repo.create(
             AppointmentType(
                 id=str(uuid.uuid4()), user_id=user_id, created_at=now, updated_at=now, **seed
             )
         )
-    return type_repo.list_by_user(user_id), True
 
 
 def _appointment_type_to_response(appointment_type: AppointmentType) -> AppointmentTypeResponse:
@@ -1752,7 +1793,10 @@ def create_appointment_type(
         created_at=now,
         updated_at=now,
     )
-    created = type_repo.create(appointment_type)
+    try:
+        created = type_repo.create(appointment_type)
+    except AppointmentTypeNameTakenError as e:
+        raise ConflictError(APPOINTMENT_TYPE_NAME_TAKEN) from e
     return _appointment_type_to_response(created)
 
 
@@ -1782,7 +1826,10 @@ def update_appointment_type(
         setattr(appointment_type, name, value)
 
     appointment_type.updated_at = utc_now()
-    updated = type_repo.update(appointment_type)
+    try:
+        updated = type_repo.update(appointment_type)
+    except AppointmentTypeNameTakenError as e:
+        raise ConflictError(APPOINTMENT_TYPE_NAME_TAKEN) from e
     return _appointment_type_to_response(updated)
 
 

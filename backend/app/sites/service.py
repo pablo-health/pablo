@@ -20,7 +20,11 @@ A website's ``theme.json`` (:mod:`app.sites.theme`) is read when the draft is
 saved, so the practice sees what it gives the portal, and again as the draft is
 published, each time against the practice's hosts as they are then (a header
 link may name only those); the theme is kept with the version, so a roll back
-brings back the theme that version had.
+brings back the theme that version had. When ``theme.json`` declares no portal
+header, one is suggested from the draft's ``index.html`` (:mod:`app.sites.suggest`)
+and kept with the draft; the practice accepts or edits it
+(:meth:`PracticeSiteService.set_draft_header`), which writes it into the
+draft's ``theme.json``, and only then can it be published.
 
 Every change holds the practice's row lock (:meth:`PracticeSiteStore.lock`)
 from its first write to its commit, tidying included, so two changes to one
@@ -37,6 +41,7 @@ by :func:`app.sites.files.check_files` and audited like an upload.
 from __future__ import annotations
 
 import hashlib
+import json
 import secrets
 import uuid
 from dataclasses import dataclass
@@ -53,7 +58,16 @@ from ..utcnow import utc_now
 from .files import SiteFiles, check_files, content_type_for
 from .storage import site_storage
 from .store import PracticeSiteStore
-from .theme import THEME_FILE, PracticeTheme, ThemeReport, read_theme, storable_theme, stored_theme
+from .suggest import HeaderSuggestion, suggest_header
+from .theme import (
+    THEME_FILE,
+    THEME_VERSION,
+    PracticeTheme,
+    ThemeReport,
+    read_theme,
+    storable_theme,
+    stored_theme,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -64,6 +78,7 @@ if TYPE_CHECKING:
 
     from ..db.platform_models import PracticeSiteRow
     from ..models import User
+    from ..portal.hosted import HostedPurpose
     from ..services.file_storage import FileStorageProvider
 
 #: How many of the newest published versions are kept to roll back to.
@@ -71,6 +86,9 @@ RETAINED_VERSIONS = 10
 #: How long a draft's preview address works.
 PREVIEW_TTL = timedelta(hours=1)
 _OCTET_STREAM = "application/octet-stream"
+_INDEX_FILE = "index.html"
+#: The hosts a suggested header leaves links to out: the portal's own.
+_PORTAL: tuple[HostedPurpose, ...] = ("portal",)
 
 
 class SiteNotConfiguredError(Exception):
@@ -108,6 +126,9 @@ class SiteDraft:
     uploaded_at: datetime
     #: What the draft's ``theme.json`` gives the portal; ``None`` without one.
     theme: ThemeReport | None = None
+    #: A portal header suggested from ``index.html``, when ``theme.json``
+    #: declares none; ``None`` when there is nothing to suggest.
+    suggested_header: HeaderSuggestion | None = None
 
 
 @dataclass(frozen=True)
@@ -160,7 +181,32 @@ def _draft(row: PracticeSiteRow | None) -> SiteDraft | None:
         total_bytes=row.draft_bytes or 0,
         uploaded_at=row.draft_uploaded_at,
         theme=_draft_theme(row),
+        suggested_header=HeaderSuggestion.model_validate(row.draft_suggested_header)
+        if row.draft_suggested_header
+        else None,
     )
+
+
+def _declares_header(theme: ThemeReport | None) -> bool:
+    """Whether a ``theme.json`` has a header block, usable or not."""
+    if theme is None:
+        return False
+    if theme.theme is not None and theme.theme.header is not None:
+        return True
+    return any(s.field == "header" or s.field.startswith("header.") for s in theme.skipped)
+
+
+def _with_header(theme_json: bytes | None, header: dict[str, object]) -> bytes:
+    """*theme_json* with its ``header`` block replaced by *header*. A file that
+    isn't one JSON object could give the portal nothing, so it starts over."""
+    try:
+        raw = json.loads(theme_json.decode("utf-8-sig")) if theme_json else None
+    except (UnicodeDecodeError, ValueError):
+        raw = None
+    if not isinstance(raw, dict):
+        raw = {"version": THEME_VERSION}
+    raw["header"] = header
+    return (json.dumps(raw, indent=2, ensure_ascii=False) + "\n").encode()
 
 
 def _clear_draft(row: PracticeSiteRow) -> None:
@@ -170,6 +216,7 @@ def _clear_draft(row: PracticeSiteRow) -> None:
     row.draft_uploaded_at = None
     row.draft_uploaded_by = None
     row.draft_theme = None
+    row.draft_suggested_header = None
     row.preview_token_hash = None
     row.preview_expires_at = None
 
@@ -226,7 +273,17 @@ class PracticeSiteService:
         now = self._clock()
         row = self._store.lock(practice_id, now)
         draft_id = uuid.uuid4().hex
-        theme = read_theme(site.files.get(THEME_FILE), self._store.practice_hosts(practice_id))
+        hosts = self._store.practice_hosts(practice_id)
+        theme = read_theme(site.files.get(THEME_FILE), hosts)
+        suggestion = (
+            None
+            if _declares_header(theme)
+            else suggest_header(
+                site.files[_INDEX_FILE],
+                hosts,
+                self._store.practice_hosts(practice_id, purposes=_PORTAL),
+            )
+        )
         self._write(draft_prefix(practice_id, draft_id), site.files)
         row.draft_id = draft_id
         row.draft_file_count = site.file_count
@@ -234,6 +291,7 @@ class PracticeSiteService:
         row.draft_uploaded_at = now
         row.draft_uploaded_by = user.id
         row.draft_theme = theme.model_dump(mode="json") if theme else None
+        row.draft_suggested_header = suggestion.model_dump(mode="json") if suggestion else None
         row.preview_token_hash = None
         row.preview_expires_at = None
         row.updated_at = now
@@ -245,7 +303,11 @@ class PracticeSiteService:
             {"file_count": site.file_count, "total_bytes": site.total_bytes},
         )
         return SiteDraft(
-            file_count=site.file_count, total_bytes=site.total_bytes, uploaded_at=now, theme=theme
+            file_count=site.file_count,
+            total_bytes=site.total_bytes,
+            uploaded_at=now,
+            theme=theme,
+            suggested_header=suggestion,
         )
 
     def save_draft_files(
@@ -257,6 +319,32 @@ class PracticeSiteService:
     ) -> SiteDraft:
         """Make files made in memory the draft: relative path to bytes, held to
         the same rules as an uploaded zip (:func:`app.sites.files.check_files`)."""
+        return self.save_draft(practice_id, check_files(files), user, request)
+
+    def set_draft_header(
+        self,
+        practice_id: str,
+        header: dict[str, object],
+        user: User,
+        request: Request | None = None,
+    ) -> SiteDraft:
+        """Write *header* into the draft's ``theme.json`` as its portal header,
+        as accepted or edited from the suggestion, and save that as the draft.
+
+        The values are written as given and read back like any ``theme.json``,
+        so one that fails is reported with its reason, as it would be from an
+        upload.
+        """
+        bucket = self._require_bucket()
+        row = self._store.lock(practice_id, self._clock())
+        if row.draft_id is None:
+            raise NoDraftError
+        source = draft_prefix(practice_id, row.draft_id)
+        files = {
+            name.removeprefix(source): self._storage.download_bytes(bucket=bucket, object_name=name)
+            for name in self._storage.list_names(bucket=bucket, prefix=source)
+        }
+        files[THEME_FILE] = _with_header(files.get(THEME_FILE), header)
         return self.save_draft(practice_id, check_files(files), user, request)
 
     def discard_draft(self, practice_id: str) -> None:

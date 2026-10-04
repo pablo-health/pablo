@@ -4,16 +4,23 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from ...db.models import AppointmentTypeRow
+from ...scheduling_engine.exceptions import AppointmentTypeNameTakenError
 from ...scheduling_engine.models.appointment_type import AppointmentType
 from ...scheduling_engine.repositories.appointment_type import AppointmentTypeRepository
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from sqlalchemy.orm import Session
+
+_NAME_CONSTRAINT = "uq_appointment_types_user_name"
 
 
 class PostgresAppointmentTypeRepository(AppointmentTypeRepository):
@@ -41,17 +48,19 @@ class PostgresAppointmentTypeRepository(AppointmentTypeRepository):
     def create(self, appointment_type: AppointmentType) -> AppointmentType:
         row = AppointmentTypeRow()
         _appointment_type_to_row(appointment_type, row)
-        self._session.add(row)
-        self._session.flush()
+        with self._name_must_be_free(appointment_type.name):
+            self._session.add(row)
+            self._session.flush()
         return appointment_type
 
     def update(self, appointment_type: AppointmentType) -> AppointmentType:
         row = self._session.get(AppointmentTypeRow, appointment_type.id)
-        if row is None:
-            row = AppointmentTypeRow()
-            self._session.add(row)
-        _appointment_type_to_row(appointment_type, row)
-        self._session.flush()
+        with self._name_must_be_free(appointment_type.name):
+            if row is None:
+                row = AppointmentTypeRow()
+                self._session.add(row)
+            _appointment_type_to_row(appointment_type, row)
+            self._session.flush()
         return appointment_type
 
     def delete(self, appointment_type_id: str, user_id: str) -> bool:
@@ -61,6 +70,25 @@ class PostgresAppointmentTypeRepository(AppointmentTypeRepository):
         self._session.delete(row)
         self._session.flush()
         return True
+
+    @contextmanager
+    def _name_must_be_free(self, name: str) -> Iterator[None]:
+        """Turn a name collision into a domain error, undoing only this write.
+
+        A SAVEPOINT rather than a bare flush: rolling back the whole request
+        session would throw away whatever else the caller had staged, and a
+        repository is the wrong place to make that call. Only the per-user
+        name constraint is translated; any other integrity failure is a
+        different bug and propagates as itself.
+        """
+        try:
+            with self._session.begin_nested():
+                yield
+        except IntegrityError as e:
+            diag = getattr(e.orig, "diag", None)
+            if getattr(diag, "constraint_name", None) != _NAME_CONSTRAINT:
+                raise
+            raise AppointmentTypeNameTakenError(name) from e
 
 
 # Mapped in both directions from one list, so a column added to the model
