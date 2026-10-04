@@ -146,7 +146,7 @@ class SchedulingService:
         """
         for conflict in hard:
             entry = {
-                "rule_type": conflict.rule.rule_type,
+                "rule_type": conflict.rule_type,
                 "enforcement": str(conflict.enforcement),
             }
             if entry not in self.overridden_rules:

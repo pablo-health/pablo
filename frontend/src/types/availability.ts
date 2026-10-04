@@ -130,10 +130,17 @@ export function proposalToCreateRequest(
  * enforcement level plus the engine's message, with no rule params.
  */
 export interface ConflictResponse {
-  rule_type: RuleType
+  rule_type: ConflictKind
   enforcement: EnforcementLevel
   message: string
 }
+
+/** A time that overlaps busy time on the therapist's calendar. No rule
+ * describes it, it is always soft, and it never refuses a booking. */
+export const CALENDAR_BUSY = "calendar_busy"
+
+/** What a conflict is about: one of the therapist's rules, or busy time. */
+export type ConflictKind = RuleType | typeof CALENDAR_BUSY
 
 export interface CheckConflictsRequest {
   start_at: string

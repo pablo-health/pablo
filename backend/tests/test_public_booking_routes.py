@@ -19,11 +19,12 @@ import sys
 import types
 import uuid
 from datetime import datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import pytest
 from app.api_errors import register_exception_handlers
+from app.calendar_providers.provider import BusyWindow
 from app.claims.eligibility import EligibilityAutoCheck
 from app.main import app as real_app
 from app.models import Patient, User
@@ -41,7 +42,10 @@ from app.rate_limit import (
     require_public_booking_write_rate_limit,
 )
 from app.repositories import (
+    get_appointment_repository,
+    get_availability_rule_repository,
     get_booking_link_repository,
+    get_external_calendar_event_repository,
     get_patient_repository,
     get_user_repository,
 )
@@ -50,6 +54,10 @@ from app.repositories.booking_link import InMemoryBookingLinkRepository, SlugTak
 from app.repositories.coverage import (
     InMemoryPatientCoverageRepository,
     InMemoryPayerRepository,
+)
+from app.repositories.external_calendar_event import (
+    ExternalCalendarEvent,
+    InMemoryExternalCalendarEventRepository,
 )
 from app.repositories.patient import InMemoryPatientRepository
 from app.routes import public_booking as public_booking_module
@@ -93,6 +101,7 @@ from app.scheduling_engine.services.scheduling import SchedulingService
 from app.scheduling_engine.services.scheduling_policy import DEFAULTS
 from app.services import get_audit_service
 from app.services.audit_service import AuditService
+from app.services.busy_time import FREE_BUSY_CACHE
 from app.services.captcha import CaptchaVerifier, NoneCaptchaVerifier, get_captcha_verifier
 from app.services.coverage_intake import record_intake_coverage
 from app.services.email_sender import (
@@ -101,11 +110,15 @@ from app.services.email_sender import (
     NoneEmailSender,
     get_email_sender,
 )
+from app.services.google_calendar_service import BusyCalendars
 from app.settings import get_settings
 from app.utcnow import utc_now
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 OWNER_ID = "test-user-123"
 
@@ -553,6 +566,101 @@ def test_booked_slot_is_no_longer_offered_or_bookable(
 
     second = _book(public_client, "intro-call", f"{date_str}T09:00:00Z", email="other@example.com")
     assert second.status_code == 409
+
+
+# ------------------------------------------------------ public: busy calendar
+
+
+@pytest.fixture
+def busy_public_client(public_client: Any) -> Iterator[Any]:
+    """The public app with the real engine and busy-time wiring.
+
+    Only Google and the database are stood in for: the engine, the busy
+    source and the cache are the ones the route builds for itself.
+    """
+    FREE_BUSY_CACHE.clear()
+    overrides = public_client.app.dependency_overrides
+    del overrides[get_public_availability_engine]
+    overrides[get_availability_rule_repository] = lambda: public_client.rule_repo
+    overrides[get_appointment_repository] = lambda: public_client.appt_repo
+    events = InMemoryExternalCalendarEventRepository()
+    overrides[get_external_calendar_event_repository] = lambda: events
+    public_client.gcal.busy_calendars.return_value = BusyCalendars(
+        account="clinician@example.test", calendar_ids=("primary",)
+    )
+    public_client.gcal.query_busy_windows.return_value = []
+    public_client.events = events
+    yield public_client
+    FREE_BUSY_CACHE.clear()
+
+
+def _busy(client: Any, date_str: str, start: str, end: str) -> None:
+    client.gcal.query_busy_windows.return_value = [
+        BusyWindow(
+            start=datetime.fromisoformat(f"{date_str}T{start}:00+00:00"),
+            end=datetime.fromisoformat(f"{date_str}T{end}:00+00:00"),
+        )
+    ]
+
+
+def test_busy_time_on_the_calendar_is_not_offered_or_bookable(
+    busy_public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    link_repo.create(_link(require_email_confirmation=False))
+    date_str = _bookable_date()
+    busy_public_client.rule_repo.create(_working_hours_rule(date_str))
+    _busy(busy_public_client, date_str, "09:30", "10:00")
+
+    resp = busy_public_client.get(f"/api/public/booking-links/intro-call/slots?date={date_str}")
+
+    assert resp.status_code == 200, resp.text
+    assert [s["start"] for s in resp.json()["slots"]] == [
+        f"{date_str}T09:00:00Z",
+        f"{date_str}T10:00:00Z",
+        f"{date_str}T10:30:00Z",
+    ]
+    refused = _book(busy_public_client, "intro-call", f"{date_str}T09:30:00Z")
+    assert refused.status_code == 409
+
+
+def test_an_open_outside_session_is_not_offered(
+    busy_public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    link_repo.create(_link())
+    date_str = _bookable_date()
+    busy_public_client.rule_repo.create(_working_hours_rule(date_str))
+    start = datetime.fromisoformat(f"{date_str}T10:00:00+00:00")
+    busy_public_client.events.save(
+        ExternalCalendarEvent(
+            id="ev-1",
+            user_id=OWNER_ID,
+            source="ical",
+            source_event_id="ev-1",
+            start_at=start,
+            end_at=start + timedelta(minutes=50),
+        )
+    )
+
+    resp = busy_public_client.get(f"/api/public/booking-links/intro-call/slots?date={date_str}")
+
+    assert [s["start"] for s in resp.json()["slots"]] == [
+        f"{date_str}T09:00:00Z",
+        f"{date_str}T09:30:00Z",
+    ]
+
+
+def test_an_unreachable_calendar_still_shows_the_page(
+    busy_public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    link_repo.create(_link())
+    date_str = _bookable_date()
+    busy_public_client.rule_repo.create(_working_hours_rule(date_str))
+    busy_public_client.gcal.query_busy_windows.side_effect = TimeoutError()
+
+    resp = busy_public_client.get(f"/api/public/booking-links/intro-call/slots?date={date_str}")
+
+    assert resp.status_code == 200, resp.text
+    assert len(resp.json()["slots"]) == 4
 
 
 class _RacingAppointmentRepository(InMemoryAppointmentRepository):

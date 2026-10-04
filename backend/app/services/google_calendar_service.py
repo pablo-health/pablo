@@ -89,6 +89,19 @@ class PushedEvent(NamedTuple):
     conference_url: str | None
 
 
+class BusyCalendars(NamedTuple):
+    """Which calendars to read busy time from, for one connection.
+
+    ``account`` is the connection's own calendar id. It tells two Google
+    accounts apart where ``calendar_ids`` alone would not — both start with
+    ``primary`` — so a cache keyed on it never hands one account's busy time
+    to another.
+    """
+
+    account: str
+    calendar_ids: tuple[str, ...]
+
+
 def _conference_request_id(appointment: Appointment) -> str:
     """A stable idempotency key for the conference this appointment asks for.
 
@@ -1380,33 +1393,80 @@ class GoogleCalendarService:
         it is opt-in at connect and not requested again later.
         """
         self._require_busy_grant(user_id)
+        return self.query_busy_windows(user_id, ("primary",), start, end)
 
+    def busy_calendars(self, user_id: str) -> BusyCalendars | None:
+        """The calendars whose busy time limits the times Pablo offers.
+
+        The main calendar, plus the calendar Pablo follows when it is a
+        different one: sessions another service puts there are time the
+        clinician is not free, whether or not they have been sorted yet.
+        The calendar Pablo writes to is left out — everything on it is an
+        appointment Pablo already holds.
+
+        None when the connection never granted BUSY, so a caller can tell
+        "nothing to read" from "read and found nothing" without catching.
+        """
+        token_doc = self._token_repo.get(user_id)
+        if token_doc is None or CalendarCapability.BUSY.value not in _split_capabilities(
+            token_doc.granted_capabilities
+        ):
+            return None
+        ids = ["primary"]
+        followed = token_doc.follow_calendar_id
+        if followed and followed != "primary" and not token_doc.follows_main_calendar:
+            ids.append(followed)
+        return BusyCalendars(account=token_doc.calendar_id or "", calendar_ids=tuple(ids))
+
+    def query_busy_windows(
+        self,
+        user_id: str,
+        calendar_ids: Sequence[str],
+        start: datetime,
+        end: datetime,
+    ) -> list[BusyWindow]:
+        """Free/busy across ``calendar_ids`` in one freebusy.query call.
+
+        Callers check the BUSY grant first (:meth:`busy_calendars` or
+        :meth:`list_busy_windows`). A calendar Google answers with errors
+        for — gone, or no longer shared — contributes nothing rather than
+        failing the rest; which one is logged by position, not by id.
+        """
         credentials = self._get_credentials(user_id)
-        if not credentials:
+        if not credentials or not calendar_ids:
             return []
 
         service = self._calendar(credentials)
         body = {
             "timeMin": start.isoformat(),
             "timeMax": end.isoformat(),
-            "items": [{"id": "primary"}],
+            "items": [{"id": calendar_id} for calendar_id in calendar_ids],
         }
         result: dict[str, Any] = _with_calendar_retry(
             lambda: service.freebusy().query(body=body).execute()
         )
-        busy = result.get("calendars", {}).get("primary", {}).get("busy", [])
+        answered = result.get("calendars", {})
         windows: list[BusyWindow] = []
-        for block in busy:
-            block_start = block.get("start")
-            block_end = block.get("end")
-            if not block_start or not block_end:
-                continue
-            windows.append(
-                BusyWindow(
-                    start=datetime.fromisoformat(block_start),
-                    end=datetime.fromisoformat(block_end),
+        for index, calendar_id in enumerate(calendar_ids):
+            entry = answered.get(calendar_id, {})
+            if entry.get("errors"):
+                logger.warning(
+                    "Free/busy unavailable for calendar %d of %d for user %s",
+                    index + 1,
+                    len(calendar_ids),
+                    user_id,
                 )
-            )
+            for block in entry.get("busy", []):
+                block_start = block.get("start")
+                block_end = block.get("end")
+                if not block_start or not block_end:
+                    continue
+                windows.append(
+                    BusyWindow(
+                        start=datetime.fromisoformat(block_start),
+                        end=datetime.fromisoformat(block_end),
+                    )
+                )
         return windows
 
     def _require_busy_grant(self, user_id: str) -> None:
