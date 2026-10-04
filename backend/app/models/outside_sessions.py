@@ -116,6 +116,33 @@ class OutsideAnswerResponse(BaseModel):
     not_added: list[NotAddedSession] = Field(default_factory=list)
 
 
+class AutoBookedSession(BaseModel):
+    """A session Pablo booked without asking, because its title named the client."""
+
+    appointment_id: str
+    patient_id: str
+    client_name: str
+    start_at: datetime
+    end_at: datetime
+    source: str = Field(description="``google_calendar`` or ``ical:<feed>``")
+
+
+class AutoBookedResponse(BaseModel):
+    """Upcoming ones the clinician hasn't acknowledged yet, soonest first."""
+
+    sessions: list[AutoBookedSession]
+
+
+class AutoBookedAcknowledgeRequest(BaseModel):
+    """The automatic bookings the clinician acknowledged, which leave the list."""
+
+    appointment_ids: list[str] = Field(min_length=1, max_length=500)
+
+
+class AutoBookedAcknowledgeResponse(BaseModel):
+    acknowledged: int
+
+
 class FollowedCalendarRequest(BaseModel):
     """Which calendar to follow: an id from the calendar list, ``primary`` for
     the main calendar, or None to stop following."""

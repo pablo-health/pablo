@@ -34,6 +34,7 @@ from ..repositories import (
 )
 from ..repositories import (
     get_external_calendar_event_repository,
+    get_user_repository,
 )
 from ..repositories import (
     get_ical_sync_config_repository as _config_repo_factory,
@@ -66,6 +67,7 @@ def _get_service(
         patient_repo=_patient_repo_factory(),
         mapping_repo=_mapping_repo_factory(),
         external_events=get_external_calendar_event_repository(),
+        users=get_user_repository(),
     )
 
 

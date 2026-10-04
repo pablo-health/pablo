@@ -59,6 +59,8 @@ from app.services.token_encryption import encrypt_tokens
 from app.settings import get_settings
 from app.utcnow import utc_now
 
+from ._name_booking import choosing
+
 if TYPE_CHECKING:
     from collections.abc import Generator
 
@@ -307,8 +309,14 @@ class _Practice:
         self.appointments = InMemoryAppointmentRepository()
         self.mappings = InMemoryPatientSourceMappingRepository()
         self.events = InMemoryExternalCalendarEventRepository()
+        self.users = choosing(books=True, user_ids=(A, B))
         self.outside = OutsideSessions(
-            self.events, self.appointments, self.patients, self.mappings, main_calendar_id=MAIN
+            self.events,
+            self.appointments,
+            self.patients,
+            self.mappings,
+            main_calendar_id=MAIN,
+            users=self.users,
         )
 
     def shared_client(self, patient_id: str, first: str, last: str) -> None:
@@ -339,6 +347,7 @@ class _Practice:
             patient_repo=self.patients,
             mapping_repo=self.mappings,
             external_events=self.events,
+            users=self.users,
         )
 
     def sync(self, user_id: str) -> Any:
@@ -402,12 +411,13 @@ class TestAFeedCodeIsItsClinicians:
 # --- Two followers of one calendar ---------------------------------------------------
 
 
-def _shared_event(event_id: str, days: int) -> dict[str, Any]:
+def _shared_event(event_id: str, days: int, *, title: str = "Weekly 1:1") -> dict[str, Any]:
     start = (utc_now() + timedelta(days=days)).replace(minute=0, second=0, microsecond=0)
     return {
         "google_event_id": event_id,
         "status": "confirmed",
-        "summary": "Jane Smith",
+        # By default a title naming no one, so the answer is what books it.
+        "summary": title,
         "series_id": "wk",
         "start": {"dateTime": start.isoformat()},
         "end": {"dateTime": (start + timedelta(minutes=50)).isoformat()},
@@ -434,6 +444,23 @@ class TestTwoFollowersOfOneCalendar:
             if a.outside_event_id == "e1" and a.status != AppointmentStatus.CANCELLED
         ]
         assert [a.id for a in live] == [a_row.appointment_id]
+
+    def test_a_title_naming_the_client_books_once_for_both_followers(self) -> None:
+        practice = _Practice()
+        practice.shared_client("p1", "Jane", "Smith")
+
+        a = practice.outside.ingest_google(
+            A, [_shared_event("e1", 3, title="Jane Smith")], calendar_id=MAIN
+        )
+        b = practice.outside.ingest_google(
+            B, [_shared_event("e1", 3, title="Jane Smith")], calendar_id=MAIN
+        )
+
+        [booked] = a.booked
+        assert b.booked == []
+        b_row = practice.events.get(B, GOOGLE_CALENDAR_SOURCE, "e1")
+        assert b_row is not None
+        assert (b_row.answer, b_row.appointment_id) == (ANSWER_CLIENT, booked.id)
 
     def test_the_first_answer_settles_it_for_the_other_follower_on_their_next_read(self) -> None:
         practice = _Practice()
@@ -474,6 +501,7 @@ class TestTwoFollowersOfOneCalendar:
             practice.patients,
             practice.mappings,
             main_calendar_id=MAIN,
+            users=practice.users,
         )
         practice.shared_client("p1", "Jane", "Smith")
         start = utc_now() + timedelta(days=3)

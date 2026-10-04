@@ -119,6 +119,12 @@ class UpdateUserRequest(BaseModel):
         return cleaned
 
 
+#: For a clinician who hasn't chosen: whether a session whose title is the full
+#: name of exactly one of their clients books on its own (True), or is asked
+#: about with that client already filled in (False).
+BOOK_SESSIONS_NAMED_IN_TITLE_BY_DEFAULT = True
+
+
 class UserPreferences(BaseModel):
     """User preferences for the companion app."""
 
@@ -186,6 +192,18 @@ class UserPreferences(BaseModel):
     # "not chosen": the clinician's details, then the practice default, decide.
     # See ``app.people_term``.
     people_term: PeopleTerm | None = None
+    # Whether a session another calendar puts on the diary books on its own
+    # when its title is the full name of exactly one of this clinician's
+    # clients. None is "not chosen": BOOK_SESSIONS_NAMED_IN_TITLE_BY_DEFAULT
+    # decides. Answers already given still book either way. See
+    # ``app.services.outside_sessions``.
+    book_sessions_named_in_title: bool | None = None
+
+    def books_sessions_named_in_title(self) -> bool:
+        """Whether a title naming exactly one client books, as chosen or by default."""
+        if self.book_sessions_named_in_title is None:
+            return BOOK_SESSIONS_NAMED_IN_TITLE_BY_DEFAULT
+        return self.book_sessions_named_in_title
 
     @model_validator(mode="after")
     def _seed_state_from_superseded_route(self) -> UserPreferences:
