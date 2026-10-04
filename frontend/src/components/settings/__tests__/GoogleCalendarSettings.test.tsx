@@ -100,3 +100,46 @@ describe("GoogleCalendarSettings disconnect", () => {
     expect(await screen.findByText("Could not reach Pablo.")).toBeInTheDocument()
   })
 })
+
+describe("GoogleCalendarSettings reading the calendar", () => {
+  it("shows when the calendar was last read, in 12-hour time", async () => {
+    getStatus.mockResolvedValue({
+      connected: true,
+      calendar_id: "me@example.test",
+      calendar_name: null,
+      last_synced_at: "2026-01-02T15:42:00",
+      write_target: "primary",
+      follow_calendar_id: "primary",
+      import_granted: true,
+    })
+    renderCard()
+
+    expect(await screen.findByTestId("calendar-last-read")).toHaveTextContent(
+      /^Last read Jan 2, 3:42 PM$/,
+    )
+    expect(screen.queryByText(/Last synced/)).not.toBeInTheDocument()
+    expect(screen.queryByTestId("calendar-read-problem")).not.toBeInTheDocument()
+  })
+
+  it("says Pablo can't read the calendar, with Reconnect, once the grant is gone", async () => {
+    getStatus.mockResolvedValue({
+      connected: true,
+      calendar_id: "me@example.test",
+      calendar_name: null,
+      last_synced_at: "2026-01-02T15:42:00",
+      write_target: "primary",
+      follow_calendar_id: "primary",
+      import_granted: true,
+      read_error: "access_revoked",
+      reads_paused: false,
+    })
+    renderCard()
+
+    const line = await screen.findByTestId("calendar-read-problem")
+    expect(line).toHaveTextContent("Pablo can\u2019t read your Google Calendar.")
+    expect(within(line).getByRole("button", { name: "Reconnect" })).toBeInTheDocument()
+    // Still connected: the connection is there, it just can't be read.
+    expect(screen.getByRole("button", { name: "Disconnect" })).toBeInTheDocument()
+  })
+})
+

@@ -327,6 +327,7 @@ const CLIENTS = [
   "Taylor Quinn",
   "Jamie Ortiz",
   "Quinlan Okafor",
+  "Marlowe Adeyemi",
 ]
 
 let addedRules: string[] = []
@@ -668,6 +669,80 @@ test("a session moved in the calendar shows its new time on the open week withou
   await returnToTab(page)
   await expect(page.getByRole("button", { name: /^Quinlan Okafor at 4:30 PM/ })).toBeVisible()
   await expect(page.getByRole("button", { name: /^Quinlan Okafor at 9:30 AM/ })).toHaveCount(0)
+  expect(
+    await page.evaluate(() => (window as unknown as { stillThisLoad?: boolean }).stillThisLoad),
+  ).toBe(true)
+})
+
+test("a calendar Pablo can't read says so, reconnects, and Check calendars brings a move in", async ({
+  signedInPage: page,
+  api,
+}) => {
+  await freshGoogle(api)
+  await forgetClients(api, ["Marlowe Adeyemi"])
+  await connectThroughSetup(page, { follow: true })
+  const before = localDateTime(1, "10:30")
+  const seriesId = await seedWeekly("primary", "Marlowe Adeyemi", before, 2)
+  await readCalendarsNow(api)
+  await answerAsNewClient(api, "Marlowe Adeyemi")
+  const clientId = await patientNamed(api, "Marlowe Adeyemi")
+  expect(await upcomingFor(api, clientId)).toHaveLength(2)
+
+  // The clinician removes Pablo from the account in Google's settings. The
+  // next read is refused, and the connection still looks connected.
+  await google.revokeGrant()
+  await readCalendarsNow(api)
+  const status = await api.get<{ connected: boolean; read_error: string | null }>(
+    "/api/google-calendar/status",
+  )
+  expect(status).toMatchObject({ connected: true, read_error: "access_revoked" })
+
+  await showTomorrow(page)
+  const problem = page.getByTestId("calendar-read-problem")
+  await expect(problem).toHaveText(/Pablo can’t read your Google Calendar\./)
+
+  // Reconnect goes to Google and comes back to the calendar, which finishes
+  // the connection and reads the calendars: the line clears because a read
+  // worked. Reading events is asked for again with the rest, so the
+  // calendar is still followed without a second trip to Google.
+  const reconnected = page.waitForResponse(
+    (response) => response.url().includes("/api/google-calendar/callback") && response.ok(),
+  )
+  const readAfter = page.waitForResponse(
+    (response) => response.url().includes("/api/calendar/sync") && response.ok(),
+  )
+  await problem.getByRole("button", { name: "Reconnect" }).click()
+  await reconnected
+  await readAfter
+  await expect(page).toHaveURL(/\/dashboard\/calendar$/)
+  await expect(problem).toBeHidden()
+  expect(await google.grant()).toEqual(
+    [SCOPE_APP_CALENDAR, SCOPE_FREEBUSY, SCOPE_READ_EVENTS].sort(),
+  )
+  await expect
+    .poll(async () => (await api.get<{ read_error: string | null }>("/api/google-calendar/status")).read_error)
+    .toBeNull()
+
+  if (localWeekday(1) === 0) {
+    await page.getByRole("button", { name: "Next", exact: true }).click()
+  }
+  await expect(page.getByRole("button", { name: /^Marlowe Adeyemi at 10:30 AM/ })).toBeVisible()
+  await expect(page.getByTestId("calendar-last-read")).toHaveText(/^Last read \d{1,2}:\d{2} [AP]M$/)
+  // Set on this page load only: a reload would take it away.
+  await page.evaluate(() => {
+    ;(window as unknown as { stillThisLoad?: boolean }).stillThisLoad = true
+  })
+
+  // The other service moves tomorrow's session; Check calendars reads it in
+  // and the open week shows it, with no reload.
+  const after = localDateTime(1, "15:30")
+  await google.change("primary", instanceId(seriesId, before), {
+    start: after,
+    end: plusMinutes(after, SESSION_MINUTES),
+  })
+  await page.getByRole("button", { name: "Check calendars" }).click()
+  await expect(page.getByRole("button", { name: /^Marlowe Adeyemi at 3:30 PM/ })).toBeVisible()
+  await expect(page.getByRole("button", { name: /^Marlowe Adeyemi at 10:30 AM/ })).toHaveCount(0)
   expect(
     await page.evaluate(() => (window as unknown as { stillThisLoad?: boolean }).stillThisLoad),
   ).toBe(true)

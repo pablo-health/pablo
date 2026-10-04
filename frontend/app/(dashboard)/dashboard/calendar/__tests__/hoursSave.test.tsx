@@ -19,9 +19,16 @@ vi.mock("@/lib/config", () => ({ useConfig: () => ({ googleCalendarEnabled: fals
 vi.mock("@/lib/auth-context", () => ({ useAuth: () => ({ loading: false }) }))
 vi.mock("@/components/theme/ThemeProvider", () => ({ useTheme: () => ({ theme: "warm-paper" }) }))
 vi.mock("@/lib/access/readOnlyMode", () => ({ useReadOnlyMode: () => ({ readOnly: false }) }))
+// The read controls have their own tests, and their own queries.
+vi.mock("@/components/calendar/CalendarReadProblem", () => ({
+  CalendarReadProblem: () => null,
+  useFinishReconnect: () => null,
+}))
+vi.mock("@/components/calendar/CheckCalendarsControl", () => ({
+  CheckCalendarsControl: () => null,
+}))
 vi.mock("@/lib/api/scheduling", () => ({
   getICalSyncStatus: vi.fn().mockResolvedValue({ connections: [] }),
-  triggerICalSync: vi.fn(),
 }))
 vi.mock("@/components/calendar/editorial", () => ({
   EditorialCalendar: () => <div data-testid="editorial-calendar" />,

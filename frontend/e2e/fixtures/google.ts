@@ -130,6 +130,14 @@ export const google = {
     await call("POST", `/_fake/calendars/${encodeURIComponent(calendarId)}/expire-sync-tokens`)
   },
 
+  /**
+   * Remove the app from the account, as its owner can in Google's settings:
+   * every token stops working and a refresh is refused, until a reconnect.
+   */
+  async revokeGrant(): Promise<void> {
+    await call("POST", "/_fake/revoke-grant")
+  },
+
   /** Age out every access token: the next API call is answered 401, and a refresh follows. */
   async expireAccessTokens(): Promise<void> {
     await call("POST", "/_fake/expire-access-tokens")

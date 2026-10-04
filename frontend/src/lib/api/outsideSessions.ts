@@ -159,6 +159,9 @@ export interface CalendarSyncResult {
   ical_errors: number
   google_synced: boolean
   google_error: boolean
+  /** Left out of a scheduled pass after repeated failures. Never true for a
+   * read on request, which reads it anyway. */
+  google_paused?: boolean
   google_changes_processed: number
   outside_sessions_followed: number
   reminders_sent: number

@@ -796,6 +796,21 @@ async def fake_expire_access_tokens() -> dict[str, int]:
     return {"expired": expired}
 
 
+@app.post("/_fake/revoke-grant")
+async def fake_revoke_grant() -> dict[str, int]:
+    """Remove the app from the account, as its owner can in Google's settings.
+
+    Every access and refresh token stops working, so the next API call is
+    answered 401 and the refresh that follows is refused ``invalid_grant``.
+    Only connecting again brings the access back.
+    """
+    revoked = len(state.tokens) + len(state.refresh_tokens)
+    state.tokens.clear()
+    state.refresh_tokens.clear()
+    state.granted = set()
+    return {"revoked": revoked}
+
+
 @app.post("/_fake/calendars/{calendar_id}/expire-sync-tokens")
 async def fake_expire_sync_tokens(calendar_id: str) -> dict[str, int]:
     """Age out every sync token for this calendar: the next resumed read gets 410."""

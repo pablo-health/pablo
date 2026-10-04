@@ -265,6 +265,9 @@ export interface GoogleCalendarSelection {
   busy: boolean
   /** How the pushed events should read. */
   event_titling: EventTitling
+  /** Also ask to read events. Only a reconnect sets it, for a connection
+   * that could read them before its grant was removed. */
+  read_events?: boolean
 }
 
 export interface GoogleCalendarConsentOption {
@@ -306,13 +309,21 @@ export interface GoogleCalendarStatus {
   /** The connection can read events ("Scan calendar"), which following
    * needs. */
   import_granted?: boolean
+  /** The kind of failure the last read ended in, while reads keep failing:
+   * "access_revoked", "calendar_not_found" or "read_failed". Null once a
+   * read works. Optional: an older backend omits it. */
+  read_error?: string | null
+  /** Scheduled reads stopped after repeated failures. A read on request, or
+   * connecting again, starts them. */
+  reads_paused?: boolean
 }
 
 function selectionParams(selection: GoogleCalendarSelection): string {
   return (
     `write_target=${encodeURIComponent(selection.write_target)}` +
     `&busy=${selection.busy}` +
-    `&event_titling=${encodeURIComponent(selection.event_titling)}`
+    `&event_titling=${encodeURIComponent(selection.event_titling)}` +
+    (selection.read_events ? "&read_events=true" : "")
   )
 }
 
