@@ -608,6 +608,14 @@ class GoogleCalendarStatusResponse(BaseModel):
             "it is confirmed again for this one"
         ),
     )
+    titling_attestation_statement: str | None = Field(
+        default=None,
+        description=(
+            "The exact wording a therapist confirms to choose full names. "
+            "Shown beside the confirmation and recorded with it, so the "
+            "screen and the audit record cannot disagree"
+        ),
+    )
 
 
 class SetEventTitlingRequest(BaseModel):

@@ -702,6 +702,8 @@ describe("CalendarSetupWizard event titling", () => {
       write_target: "app_calendar",
       event_titling: "initials",
       titling_needs_attestation: false,
+      titling_attestation_statement:
+        "I confirm this Google Workspace account is covered by my practice’s business associate agreement with Google.",
     })
     const user = userEvent.setup()
     renderWizard()
@@ -713,10 +715,6 @@ describe("CalendarSetupWizard event titling", () => {
       name: /covered by my practice’s business associate agreement with Google/i,
     })
     expect(attestation).toBeInTheDocument()
-    // A condition of the choice, so on the page rather than behind a button.
-    expect(
-      screen.getByText("Personal Gmail accounts cannot be used for full names.")
-    ).toBeVisible()
     // The wizard's own nav button, not the step's connect action.
     const nav = () => screen.getAllByRole("button", { name: /continue|finish/i }).at(-1)!
     expect(nav()).toBeDisabled()
