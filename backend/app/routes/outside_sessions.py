@@ -45,6 +45,7 @@ from ..models.outside_sessions import (
     ReadableCalendarsResponse,
 )
 from ..models.patient import Patient
+from ..patients.new_client_name import chart_name
 from ..patients.seen_by import SeenBy
 from ..rate_limit import get_calendar_sync_limiter
 from ..repositories import (
@@ -82,6 +83,7 @@ from .calendar_import import (
     SEEN_BY_SOMEONE_ELSE,
     get_patient_source_mapping_repository,
     series_match,
+    suggested_name_for,
 )
 from .patients import get_patient_repository
 from .scheduling import (
@@ -102,7 +104,6 @@ router = APIRouter(tags=["outside-sessions"], dependencies=[Depends(require_acti
 PATIENT_ORIGIN = "calendar_follow"
 #: A chart's name when the event had no title to take one from.
 UNNAMED_CLIENT = "New client"
-_NAME_MAX = 255
 #: The statuses confirming a session may lift. A pending chart is not one.
 REACTIVATABLE = frozenset({"inactive", "on_hold"})
 
@@ -275,6 +276,7 @@ def outside_session_questions(
                 sessions=len(q.rows),
                 next_start_at=q.next_start_at,
                 match=_question_match(q, ctx, seen_by),
+                suggested_name=suggested_name_for(q.title),
                 outside_session_id=q.outside_session_id,
                 client_inactive=q.client_inactive,
             )
@@ -487,17 +489,24 @@ def _new_client(
     http_request: Request,
     audit: AuditService,
 ) -> Patient:
-    """A chart named as the calendar names them; the clinician can correct it.
+    """A chart with the name the clinician typed, or the title's name part.
 
-    Nothing tries to split the name into first and last — a guess there is a
-    wrong name on a chart.
+    Nothing splits a title into first and last on its own — a guess there is
+    a wrong name on a chart. With no name typed, the chart has no last name
+    and shows as needing one.
     """
+    first_name, last_name = chart_name(
+        item.new_client_first_name,
+        item.new_client_last_name,
+        item.new_client_name,
+        unnamed=UNNAMED_CLIENT,
+    )
     now = utc_now()
     patient = patient_repo.create(
         Patient(
             id=str(uuid.uuid4()),
-            first_name=(item.new_client_name or "").strip()[:_NAME_MAX] or UNNAMED_CLIENT,
-            last_name="",
+            first_name=first_name,
+            last_name=last_name,
             created_at=now,
             updated_at=now,
             origin=PATIENT_ORIGIN,

@@ -67,6 +67,7 @@ from ..models.scheduling import (
     ImportProposalResponse,
     ProposedSeriesResponse,
     SeriesMatchResponse,
+    SuggestedNameResponse,
 )
 from ..patients.matching import (
     NAME_ONLY,
@@ -78,6 +79,7 @@ from ..patients.matching import (
     remember_match,
     remember_not_a_client,
 )
+from ..patients.new_client_name import chart_name, suggested_name
 from ..patients.seen_by import SeenBy
 from ..repositories import (
     PatientRepository,
@@ -126,6 +128,8 @@ router = APIRouter(
 
 MAX_LOOKBACK_DAYS = 400
 PATIENT_ORIGIN = "calendar_import"
+#: A new chart's name when the summary has nothing left once session wording is out.
+UNNAMED_CLIENT = "New client"
 #: The source a confirmed series is remembered under.
 MATCH_SOURCE = GOOGLE_CALENDAR_SOURCE
 #: Refusing to chart or book a client of the practice the caller doesn't see.
@@ -194,6 +198,18 @@ def series_match(result: MatchResult, ctx: MatchContext, seen_by: SeenBy) -> Ser
     return SeriesMatchResponse(possible=choices(result.visible_possible_ids))
 
 
+def suggested_name_for(title: str) -> SuggestedNameResponse | None:
+    """The new-client name to fill in, as far as an event title plainly says.
+
+    Worked out here rather than in the browser so a title is read one way
+    everywhere: by the same readings the matcher uses.
+    """
+    suggestion = suggested_name(title)
+    if suggestion is None:
+        return None
+    return SuggestedNameResponse(first_name=suggestion.first_name, last_name=suggestion.last_name)
+
+
 def _series_hint(summary: str, identifier: str | None, scope: str | None) -> PatientHint:
     """What a series says about its client. ``scope`` is the main calendar's, when known."""
     return PatientHint(
@@ -245,6 +261,7 @@ def _to_response(
                 summary=series.summary,
                 source_identifier=identifier,
                 match=match,
+                suggested_name=suggested_name_for(series.summary),
                 weekday=series.weekday,
                 local_start_time=series.local_start_time,
                 duration_minutes=series.duration_minutes,
@@ -461,10 +478,12 @@ def confirm_calendar_import(
     stored in the first place.
 
     A series that names an existing patient is scheduled on that chart. One
-    that doesn't gets a new patient, and the calendar's wording becomes the
-    patient's initial name as-is. Nothing tries to split it into a first and
-    last name — a guess there is a wrong name on a chart, and the therapist
-    can correct it in seconds. Either way the series is remembered against
+    that doesn't gets a new patient, named as the therapist typed it
+    (``new_client_first_name`` / ``new_client_last_name``). With nothing
+    typed, the name part of the calendar's wording, without session words,
+    becomes the first name and the chart shows as needing a name. Nothing
+    splits the wording into a first and last name on its own — a guess there
+    is a wrong name on a chart. Either way the series is remembered against
     its patient, so the next scan shows it as that client.
 
     A series an existing patient already has booked in the same slot is not
@@ -521,11 +540,17 @@ def confirm_calendar_import(
         start = item.start_at if item.start_at.tzinfo else item.start_at.replace(tzinfo=UTC)
 
         if existing is None:
+            first_name, last_name = chart_name(
+                item.new_client_first_name,
+                item.new_client_last_name,
+                item.display_name,
+                unnamed=UNNAMED_CLIENT,
+            )
             patient = patient_repo.create(
                 Patient(
                     id=str(uuid.uuid4()),
-                    first_name=item.display_name,
-                    last_name="",
+                    first_name=first_name,
+                    last_name=last_name,
                     created_at=now,
                     updated_at=now,
                     origin=PATIENT_ORIGIN,

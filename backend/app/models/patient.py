@@ -141,6 +141,9 @@ class PatientResponse(BaseModel):
     state: str | None = None
     postal_code: str | None = None
     sex: str | None = None
+    needs_name: bool = Field(
+        default=False, description="The chart has no first or no last name yet"
+    )
 
     @classmethod
     def from_patient(
@@ -182,6 +185,7 @@ class PatientResponse(BaseModel):
             state=patient.state,
             postal_code=patient.postal_code,
             sex=patient.sex,
+            needs_name=patient.needs_name,
         )
 
 
@@ -282,6 +286,16 @@ class Patient:
     def display_name(self) -> str:
         """Return display name as 'First Last'."""
         return f"{self.first_name} {self.last_name}"
+
+    @property
+    def needs_name(self) -> bool:
+        """The chart has no first or no last name yet.
+
+        A client added from a calendar event with no name typed is charted
+        under the event's wording with no last name; this is what shows it
+        still needs one. Adding the name in the chart clears it.
+        """
+        return not self.first_name.strip() or not self.last_name.strip()
 
     @property
     def formal_name(self) -> str:
