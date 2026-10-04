@@ -28,6 +28,14 @@ const SETTINGS_URL = "/dashboard/settings/scheduling"
 const PRACTICE_CLOSED = "Your practice does not let new clients book themselves."
 const NOT_SELF_BOOKABLE = "This appointment type is not marked as bookable by clients."
 
+/**
+ * Type names are unique per clinician, and a retry or a repeated run signs in
+ * as the same clinician, so a fixed name collides with the type the previous
+ * attempt left behind.
+ */
+const uniqueSuffix = (): string =>
+  `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
+
 test.describe("Booking link gates", () => {
   test("a link stays closed until its type and the practice both allow self-booking", async ({
     api,
@@ -36,7 +44,10 @@ test.describe("Booking link gates", () => {
   }) => {
     // Start with every switch off: a type nobody may self-book, and a
     // practice that has not opened self-booking to new clients.
-    const type = await giveBookableType(api, { name: "Gated intake", self_bookable: false })
+    const type = await giveBookableType(api, {
+      name: `Gated intake ${uniqueSuffix()}`,
+      self_bookable: false,
+    })
     await letNewClientsSelfBook(api, false)
     const link = await api.post<BookingLink>("/api/booking-links", {
       slug: `e2e-gated-${Date.now()}`,
@@ -93,7 +104,10 @@ test.describe("Booking link gates", () => {
     api,
     signedInPage: page,
   }) => {
-    const type = await giveBookableType(api, { name: "Consultation call", duration_minutes: 20 })
+    const type = await giveBookableType(api, {
+      name: `Consultation call ${uniqueSuffix()}`,
+      duration_minutes: 20,
+    })
     await letNewClientsSelfBook(api)
     const slug = `e2e-form-${Date.now()}`
 
