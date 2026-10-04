@@ -155,7 +155,7 @@ export function FollowCalendarSetting({
       ) : null}
       {unreadable ? (
         <p data-testid="followed-calendar-unreadable" className="pl-6 text-xs text-amber-700">
-          Pablo can&rsquo;t read the calendar it was following any more. Choose another.
+          Pablo can no longer read the calendar it was importing from. Choose another.
         </p>
       ) : null}
       {following && followedName ? (
@@ -163,14 +163,14 @@ export function FollowCalendarSetting({
           {/* "A full name" stands for the backend's rule: one active chart
               bears it. Shared names, initials and inactive charts are asked
               about, which "asks about others" covers. */}
-          Pablo reads the events on <strong className="font-medium">{followedName}</strong>
+          Pablo reads <strong className="font-medium">{followedName}</strong>
           {booksNamedSessions ? (
             <>
-              . It books the ones titled with a {people.one}&rsquo;s full name, and asks about
-              others that look like sessions.
+              . It adds sessions that show a {people.one}&rsquo;s full name and asks about
+              anything else that looks like a session.
             </>
           ) : (
-            <> and asks about the ones that look like sessions.</>
+            <> and asks about anything that looks like a session.</>
           )}
         </p>
       ) : null}

@@ -237,7 +237,7 @@ export function CalendarClientsStep({
               </span>
               <span className="block text-xs text-muted-foreground">
                 {booksNamedSessions
-                  ? `Pablo books sessions whose title has a ${people.one}\u2019s full name and asks about the rest.`
+                  ? `Pablo adds sessions that show a ${people.one}\u2019s full name and asks about the rest.`
                   : "Pablo asks who each new session is with and remembers your answer."}
               </span>
             </label>

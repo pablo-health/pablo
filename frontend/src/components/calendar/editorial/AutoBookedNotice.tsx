@@ -32,6 +32,14 @@ export function AutoBookedNotice() {
   const sessions = data?.sessions ?? []
   if (sessions.length === 0) return null
   const pending = undo.isPending || acknowledge.isPending
+  // These were already booked wherever the event came from; Pablo only adds
+  // them to its own calendar, so the notice says "added", never "booked".
+  // Google is named so "your calendar" isn't read as Pablo's own.
+  const from = sessions.every((s) => s.source === "google_calendar")
+    ? "your Google Calendar"
+    : sessions.every((s) => s.source.startsWith("ical:"))
+      ? "your calendar feed"
+      : "your calendars"
 
   return (
     <div
@@ -47,8 +55,8 @@ export function AutoBookedNotice() {
       <div className="flex flex-wrap items-center gap-2">
         <p className="mr-auto font-medium">
           {sessions.length === 1
-            ? "Pablo booked 1 session from your calendar"
-            : `Pablo booked ${sessions.length} sessions from your calendar`}
+            ? `Pablo added a session from ${from}`
+            : `Pablo added ${sessions.length} sessions from ${from}`}
         </p>
         <NoticeButton disabled={pending} onClick={() => setOpen((o) => !o)}>
           {open ? "Hide" : "Show"}
@@ -63,9 +71,9 @@ export function AutoBookedNotice() {
       {open && (
         <>
           <p className="text-xs" style={{ color: "var(--ed-ink-muted)" }}>
-            Each title had a {people.one}&rsquo;s full name.
+            Each one showed a {people.one}&rsquo;s full name.
           </p>
-          <ul aria-label="Sessions Pablo booked" className="flex flex-col gap-1.5">
+          <ul aria-label="Sessions Pablo added" className="flex flex-col gap-1.5">
             {sessions.map((session) => (
               <li
                 key={session.appointment_id}

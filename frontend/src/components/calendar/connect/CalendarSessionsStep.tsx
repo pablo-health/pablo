@@ -189,7 +189,8 @@ export function CalendarSessionsStep({
       <fieldset className="space-y-3">
         <legend className="text-sm font-medium text-neutral-900">How should sessions appear?</legend>
         <p className="text-sm text-muted-foreground">
-          This title may appear in notifications and shared calendars.
+          This is how each session appears in Google Calendar, including in notifications and on
+          calendars you share.
         </p>
         {TITLING_ORDER.map((style) => {
           const copy = TITLING_COPY[style]
@@ -225,8 +226,8 @@ export function CalendarSessionsStep({
 
         {status?.titling_needs_attestation ? (
           <p className="rounded-lg border border-amber-300 bg-amber-50/60 p-3 text-sm text-neutral-900">
-            You chose full names for a different Google account. Events are reading as initials
-            until you confirm this account is covered too.
+            You chose full names for a different Google account. Sessions show as initials until
+            you confirm this account is covered too.
           </p>
         ) : null}
 
@@ -270,7 +271,7 @@ export function CalendarSessionsStep({
       ) : titlingChanged ? (
         <Button onClick={onSaveTitling} disabled={connecting}>
           {connecting ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
-          Save event titles
+          Save how sessions appear
         </Button>
       ) : null}
 

@@ -72,7 +72,7 @@ describe("FollowCalendarSetting", () => {
     ])
     expect(picker).toHaveValue(MAIN)
     expect(screen.getByTestId("followed-calendar-line")).toHaveTextContent(
-      `Pablo reads the events on ${MAIN} and asks about the ones that look like sessions.`
+      `Pablo reads ${MAIN} and asks about anything that looks like a session.`
     )
   })
 
@@ -91,7 +91,7 @@ describe("FollowCalendarSetting", () => {
     )
 
     expect(await screen.findByTestId("followed-calendar-line")).toHaveTextContent(
-      `Pablo reads the events on ${MAIN}. It books the ones titled with a client’s full name, and asks about others that look like sessions.`
+      `Pablo reads ${MAIN}. It adds sessions that show a client’s full name and asks about anything else that looks like a session.`
     )
   })
 
@@ -103,7 +103,7 @@ describe("FollowCalendarSetting", () => {
     render(<FollowCalendarSetting followedCalendarId="primary" importGranted onChanged={vi.fn()} />)
 
     expect(await screen.findByTestId("followed-calendar-line")).toHaveTextContent(
-      `Pablo reads the events on ${MAIN}`
+      `Pablo reads ${MAIN}`
     )
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument()
   })
@@ -128,7 +128,7 @@ describe("FollowCalendarSetting", () => {
     await user.selectOptions(picker, ANOTHER)
 
     expect(screen.getByRole("alertdialog")).toHaveTextContent(
-      "Pablo made this calendar for another setup. Importing from it brings in its upcoming sessions, including any it books from now on."
+      "Pablo made this calendar for another Pablo setup. Importing from it brings in its upcoming sessions, including any booked there from now on."
     )
     expect(setFollowed).not.toHaveBeenCalled()
 
@@ -211,7 +211,7 @@ describe("FollowCalendarSetting", () => {
     )
 
     expect(await screen.findByTestId("followed-calendar-unreadable")).toHaveTextContent(
-      "Pablo can’t read the calendar it was following any more. Choose another."
+      "Pablo can no longer read the calendar it was importing from. Choose another."
     )
     expect(screen.queryByTestId("followed-calendar-line")).not.toBeInTheDocument()
     expect(
