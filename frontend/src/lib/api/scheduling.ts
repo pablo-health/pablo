@@ -399,6 +399,13 @@ export interface ImportPatientChoice {
   date_of_birth: string | null
 }
 
+/** A new client's name, read from an event title that plainly holds it:
+ * "Casey Morgan" gives both parts, "Jane S." only the first. */
+export interface SuggestedName {
+  first_name: string
+  last_name: string
+}
+
 /** Which existing client a series is: certain, one of a few, or nobody. */
 export interface SeriesMatch {
   /** Set only when the match rests on more than a name. */
@@ -432,6 +439,9 @@ export interface ProposedSeries {
   status: "active" | "looks_finished"
   confidence: number
   preselected: boolean
+  /** The name to fill in if this becomes a new client, when the summary
+   * plainly gives one. A part it doesn't give whole is empty. */
+  suggested_name?: SuggestedName | null
 }
 
 export interface ImportProposal {
@@ -474,6 +484,10 @@ export interface ConfirmImportSeriesInput {
   display_name: string
   /** An existing client this series belongs to; null creates a new one. */
   patient_id: string | null
+  /** A new client's name as typed. Left blank, the chart takes the name
+   * part of `display_name` and shows as needing a name. */
+  new_client_first_name?: string
+  new_client_last_name?: string
   source_identifier: string
   /** First occurrence to create — must be in the future. */
   start_at: string

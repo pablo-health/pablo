@@ -4,8 +4,9 @@
 
 import { Checkbox } from "@/components/ui/checkbox"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
-import type { ImportPatientChoice, SeriesMatch } from "@/lib/api/scheduling"
+import type { ImportPatientChoice, SeriesMatch, SuggestedName } from "@/lib/api/scheduling"
 import type { PeopleWords } from "@/lib/peopleTerm"
+import { NewClientNameFields, newClientName, type NewClientName } from "./NewClientNameFields"
 
 /** Whether a match is a client of the practice that someone else sees. */
 export function seenElsewhere(match: SeriesMatch): boolean {
@@ -25,6 +26,15 @@ export interface ClientQuestionRow {
   /** The preselected client's chart is inactive or on hold. Confirming the
    * session offers to make them active again. */
   clientInactive?: boolean
+  /** The name to fill in if this becomes a new client, when the title
+   * plainly gives one. */
+  suggestedName?: SuggestedName | null
+}
+
+/** Whether a row, as chosen, adds a new client: nobody certain, and no
+ * existing client picked. */
+export function isNewClientRow(row: ClientQuestionRow, patientId: string | null): boolean {
+  return !row.match.patient && patientId === null && !seenElsewhere(row.match)
 }
 
 const NEW_CLIENT = "new"
@@ -115,6 +125,9 @@ interface WhichClientsListProps {
   /** Rows whose inactive client is made active again on save. Default on. */
   reactivate?: Record<string, boolean>
   onToggleReactivate?: (key: string) => void
+  /** Names typed for new-client rows. A row with none shows its suggestion. */
+  names: Record<string, NewClientName>
+  onChangeName: (key: string, name: NewClientName) => void
 }
 
 /**
@@ -132,6 +145,8 @@ export function WhichClientsList({
   onToggleNotClient,
   reactivate = {},
   onToggleReactivate,
+  names,
+  onChangeName,
 }: WhichClientsListProps) {
   const people = usePeopleTerm()
   return (
@@ -194,6 +209,15 @@ export function WhichClientsList({
                     patientId={clientFor[key] ?? null}
                     onChoose={(patientId) => onChooseClient(key, patientId)}
                   />
+                  {isNewClientRow(row, clientFor[key] ?? null) ? (
+                    <NewClientNameFields
+                      rowKey={key}
+                      title={row.title}
+                      name={newClientName(names[key], row.suggestedName)}
+                      suggested={row.suggestedName}
+                      onChange={(name) => onChangeName(key, name)}
+                    />
+                  ) : null}
                   {offerReactivate ? (
                     <label className="mt-1 flex cursor-pointer items-center gap-1.5 text-xs text-neutral-700">
                       <Checkbox

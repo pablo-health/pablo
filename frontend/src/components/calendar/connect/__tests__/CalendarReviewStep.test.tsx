@@ -1,10 +1,11 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 import { describe, expect, it, vi } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import type { ConfirmImportResult, ImportProposal, ProposedSeries } from "@/lib/api/scheduling"
 import { CalendarReviewStep } from "../CalendarReviewStep"
+import type { NewClientName } from "../NewClientNameFields"
 
 function series(overrides: Partial<ProposedSeries> = {}): ProposedSeries {
   return {
@@ -49,6 +50,8 @@ function baseProps() {
     onChooseClient: vi.fn(),
     notClient: {} as Record<string, boolean>,
     onToggleNotClient: vi.fn(),
+    names: {} as Record<string, NewClientName>,
+    onChangeName: vi.fn(),
     expanded: false,
     onToggleExpanded: vi.fn(),
     onBack: vi.fn(),
@@ -282,6 +285,136 @@ describe("CalendarReviewStep", () => {
       ])
       // Choosing a client is not ticking or unticking the row.
       expect(onToggle).not.toHaveBeenCalled()
+    })
+  })
+
+  describe("a new client's name", () => {
+    function fields(key: string) {
+      const row = screen.getByTestId(`new-client-name-${key}`)
+      return {
+        row,
+        first: within(row).getByLabelText("First name"),
+        last: within(row).getByLabelText("Last name"),
+      }
+    }
+
+    it("shows name fields only on rows that add a new client", () => {
+      const jane = { patient_id: "p-1", display_name: "Jane Adams", date_of_birth: null }
+      render(
+        <CalendarReviewStep
+          {...baseProps()}
+          proposal={proposal([
+            series({
+              candidate_key: "certain",
+              summary: "Jane A weekly",
+              match: { patient: jane, possible: [], suggested_patient_id: null },
+            }),
+            series({
+              candidate_key: "picked",
+              summary: "Jane Adams",
+              match: { patient: null, possible: [jane], suggested_patient_id: "p-1" },
+            }),
+            series({ candidate_key: "new", summary: "Robin Tran" }),
+          ])}
+          clientFor={{ certain: "p-1", picked: "p-1", new: null }}
+        />
+      )
+
+      expect(screen.getByTestId("new-client-name-new")).toBeInTheDocument()
+      expect(screen.queryByTestId("new-client-name-certain")).not.toBeInTheDocument()
+      expect(screen.queryByTestId("new-client-name-picked")).not.toBeInTheDocument()
+    })
+
+    it("fills in both parts of a clear full name, bare or after a session word", () => {
+      render(
+        <CalendarReviewStep
+          {...baseProps()}
+          proposal={proposal([
+            series({
+              candidate_key: "bare",
+              summary: "Casey Morgan",
+              suggested_name: { first_name: "Casey", last_name: "Morgan" },
+            }),
+            series({
+              candidate_key: "session",
+              summary: "Session with Casey Morgan",
+              suggested_name: { first_name: "Casey", last_name: "Morgan" },
+            }),
+          ])}
+        />
+      )
+
+      for (const key of ["bare", "session"]) {
+        const { row, first, last } = fields(key)
+        expect(first).toHaveValue("Casey")
+        expect(last).toHaveValue("Morgan")
+        // Both parts given: nothing to refer back to.
+        expect(within(row).queryByText(/On the calendar/)).not.toBeInTheDocument()
+      }
+    })
+
+    it("fills in only the whole part of a name cut short, and shows the title", () => {
+      render(
+        <CalendarReviewStep
+          {...baseProps()}
+          proposal={proposal([
+            series({
+              candidate_key: "last-cut",
+              summary: "Jane S.",
+              suggested_name: { first_name: "Jane", last_name: "" },
+            }),
+            series({
+              candidate_key: "first-cut",
+              summary: "J. Smith",
+              suggested_name: { first_name: "", last_name: "Smith" },
+            }),
+          ])}
+        />
+      )
+
+      const lastCut = fields("last-cut")
+      expect(lastCut.first).toHaveValue("Jane")
+      expect(lastCut.last).toHaveValue("")
+      expect(within(lastCut.row).getByText("On the calendar: Jane S.")).toBeInTheDocument()
+
+      const firstCut = fields("first-cut")
+      expect(firstCut.first).toHaveValue("")
+      expect(firstCut.last).toHaveValue("Smith")
+      expect(within(firstCut.row).getByText("On the calendar: J. Smith")).toBeInTheDocument()
+    })
+
+    it.each([
+      ["one word", "Jane"],
+      ["initials", "K.M."],
+      ["initials without dots", "KM"],
+    ])("leaves the fields empty for %s and shows the title", (_shape, summary) => {
+      render(
+        <CalendarReviewStep
+          {...baseProps()}
+          proposal={proposal([series({ candidate_key: "row", summary, suggested_name: null })])}
+        />
+      )
+
+      const { row, first, last } = fields("row")
+      expect(first).toHaveValue("")
+      expect(last).toHaveValue("")
+      expect(within(row).getByText(`On the calendar: ${summary}`)).toBeInTheDocument()
+    })
+
+    it("reports what is typed", async () => {
+      const user = userEvent.setup()
+      const onChangeName = vi.fn()
+      render(
+        <CalendarReviewStep
+          {...baseProps()}
+          onChangeName={onChangeName}
+          proposal={proposal([series({ candidate_key: "row", summary: "K.M." })])}
+        />
+      )
+
+      await user.type(fields("row").first, "K")
+
+      expect(onChangeName).toHaveBeenLastCalledWith("row", { first_name: "K", last_name: "" })
     })
   })
 

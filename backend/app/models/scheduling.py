@@ -718,6 +718,21 @@ class SeriesMatchResponse(BaseModel):
     )
 
 
+class SuggestedNameResponse(BaseModel):
+    """A new client's name to fill in, as far as an event title plainly says.
+
+    A part the title doesn't give whole is empty: "Jane S." gives a first name
+    and no last name.
+    """
+
+    first_name: str
+    last_name: str
+
+
+#: The most a new client's first or last name may run to: the chart column.
+NEW_CLIENT_NAME_MAX = 255
+
+
 class ProposedSeriesResponse(BaseModel):
     """One candidate client series a scan found.
 
@@ -731,6 +746,13 @@ class ProposedSeriesResponse(BaseModel):
         description="How a confirmed series is remembered. Hand it back on confirm"
     )
     match: SeriesMatchResponse
+    suggested_name: SuggestedNameResponse | None = Field(
+        default=None,
+        description=(
+            "A first and last name to fill in if this becomes a new client. Set only "
+            "when the summary plainly gives a whole name part; a part it does not is empty"
+        ),
+    )
     weekday: int = Field(description="Monday is 0, matching Python's weekday()")
     local_start_time: str = Field(description="HH:MM in the calendar's timezone")
     duration_minutes: int
@@ -791,6 +813,16 @@ class ConfirmImportSeries(BaseModel):
     display_name: str = Field(min_length=1, max_length=255)
     patient_id: str | None = Field(
         default=None, description="An existing patient this series belongs to; none creates one"
+    )
+    new_client_first_name: str | None = Field(
+        default=None,
+        max_length=NEW_CLIENT_NAME_MAX,
+        description="A new client's first name, as typed. Ignored with patient_id",
+    )
+    new_client_last_name: str | None = Field(
+        default=None,
+        max_length=NEW_CLIENT_NAME_MAX,
+        description="A new client's last name, as typed. Ignored with patient_id",
     )
     source_identifier: str | None = Field(
         default=None,

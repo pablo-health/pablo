@@ -25,6 +25,8 @@ from app.models.patient import Patient
 from app.models.user import BOOK_SESSIONS_NAMED_IN_TITLE_BY_DEFAULT, UserPreferences
 from app.patients.identifiers import calendar_scope
 from app.patients.matching import remember_match, remember_not_a_client
+from app.patients.new_client_name import SuggestedName, suggested_name
+from app.patients.titles import NOT_NAME_WORDS, SESSION_WORDS
 from app.repositories.audit import InMemoryAuditRepository
 from app.repositories.external_calendar_event import (
     ANSWER_CLIENT,
@@ -649,6 +651,19 @@ class TestWhichPartOfATitleBooks:
         assert clients.followed("e1") is None
         [question] = clients.outside.questions(USER_ID)
         assert question.match.patient_id == "p1"
+
+    def test_a_call_is_asked_and_its_new_client_name_leaves_the_call_out(
+        self, h: _Harness, mock_user: User
+    ) -> None:
+        # Words kept out of a name ("Call") are not words that book: the two
+        # lists are separate, so "Call with" still asks.
+        assert "call" in NOT_NAME_WORDS
+        assert "call" not in SESSION_WORDS
+        h.poll(mock_user, [_event("e1", _in(2), title="Call with Jane Smith")])
+
+        assert h.followed("e1") is None
+        [question] = h.outside.questions(USER_ID)
+        assert suggested_name(question.title) == SuggestedName("Jane", "Smith")
 
 
 class TestWhatWasAutoBooked:

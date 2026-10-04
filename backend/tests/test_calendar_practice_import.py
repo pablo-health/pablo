@@ -1028,6 +1028,65 @@ class TestConfirmRoute:
         assert len(patients) == 1
         assert patients[0].first_name == "Only this one"
 
+    def test_a_new_client_is_named_as_typed(
+        self,
+        import_client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+    ) -> None:
+        response = import_client.post(
+            "/api/calendar/import/confirm",
+            json={
+                "series": [
+                    _confirm_item(
+                        display_name="K.M.",
+                        new_client_first_name="Kim",
+                        new_client_last_name=" Moreau ",
+                    )
+                ]
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        [patient] = _patients(mock_repo)
+        assert (patient.first_name, patient.last_name) == ("Kim", "Moreau")
+        assert not patient.needs_name
+
+    def test_a_new_client_with_no_name_typed_gets_the_name_part_and_needs_a_name(
+        self,
+        import_client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+    ) -> None:
+        import_client.post(
+            "/api/calendar/import/confirm",
+            json={
+                "series": [
+                    _confirm_item(
+                        display_name="Session with K.M.",
+                        new_client_first_name="",
+                        new_client_last_name="",
+                    )
+                ]
+            },
+        )
+
+        [patient] = _patients(mock_repo)
+        # Never "Session with K.M.": session wording is not a name.
+        assert (patient.first_name, patient.last_name) == ("K.M.", "")
+        assert patient.needs_name
+
+    def test_a_typed_name_longer_than_a_chart_holds_is_refused(
+        self,
+        import_client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+    ) -> None:
+        response = import_client.post(
+            "/api/calendar/import/confirm",
+            json={"series": [_confirm_item(new_client_last_name="x" * 256)]},
+        )
+
+        assert response.status_code == 422
+        assert _patients(mock_repo) == []
+
     def test_a_past_occurrence_is_refused(
         self,
         import_client: TestClient,
@@ -1150,6 +1209,24 @@ class TestMatchOrAsk:
         assert stored.identifier_digest == identifier_digest("series:rec-1")
         assert "rec-1" not in stored.identifier_digest
         assert stored.answered_by_user_id == _USER
+
+    @pytest.mark.parametrize(
+        ("summary", "suggested"),
+        [
+            ("Session with Casey Morgan", {"first_name": "Casey", "last_name": "Morgan"}),
+            ("Jane S.", {"first_name": "Jane", "last_name": ""}),
+            ("J. Smith", {"first_name": "", "last_name": "Smith"}),
+            ("Jane", None),
+            ("K.M.", None),
+        ],
+        ids=["full-name", "last-cut", "first-cut", "one-word", "initials"],
+    )
+    def test_a_series_suggests_only_the_name_its_summary_plainly_gives(
+        self, import_client: TestClient, summary: str, suggested: dict[str, str] | None
+    ) -> None:
+        [series] = self._scan(import_client, summary=summary)
+
+        assert series["suggested_name"] == suggested
 
     def test_two_clients_with_the_series_name_are_offered_as_a_choice(
         self,
