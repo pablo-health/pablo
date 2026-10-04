@@ -5,11 +5,13 @@
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import type { FollowableCalendar } from "@/lib/api/outsideSessions"
+import { calendarTitle } from "./calendarNames"
 
 /** Beside a calendar Pablo made for another setup. A select option carries
  * text only, so the flag is part of its name. */
 export function calendarOptionLabel(calendar: FollowableCalendar): string {
-  return calendar.made_by_pablo ? `${calendar.name} (another Pablo setup)` : calendar.name
+  const title = calendarTitle(calendar)
+  return calendar.made_by_pablo ? `${title} (another Pablo setup)` : title
 }
 
 /**

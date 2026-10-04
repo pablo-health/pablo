@@ -532,10 +532,13 @@ test("choosing another calendar reads its sessions and leaves the main calendar'
   // its own sessions is on Google's list too, and is not offered: importing
   // from it would read Pablo's own bookings back.
   expect((await google.calendars()).map((c) => c.summary)).toContain("Pablo Sessions")
-  await expect(picker.locator("option")).toHaveText([account, "Practice"])
+  // Google names the main calendar after the account's address; Pablo calls
+  // it the main calendar and keeps the address off the screen.
+  await expect(picker.locator("option")).toHaveText(["Main calendar", "Practice"])
   await expect(page.getByTestId("followed-calendar-line")).toContainText(
-    `Pablo reads ${account}`,
+    "Pablo reads your main calendar",
   )
+  await expect(page.getByText(account)).toHaveCount(0)
   const chosen = page.waitForResponse(
     (response) =>
       response.url().includes("/api/google-calendar/followed-calendar") && response.ok(),
@@ -1011,7 +1014,7 @@ test("the setup page follows the calendar picked there, and not the main one", a
   await expect(box).not.toBeChecked()
   const picker = page.getByRole("combobox", { name: "From" })
   // The main calendar first and chosen; Pablo's own calendar not offered.
-  await expect(picker.locator("option")).toHaveText([account, "Booked sessions"])
+  await expect(picker.locator("option")).toHaveText(["Main calendar", "Booked sessions"])
   await expect(picker).toHaveValue(account)
   await picker.selectOption("Booked sessions")
   const followed = page.waitForResponse(
@@ -1022,7 +1025,7 @@ test("the setup page follows the calendar picked there, and not the main one", a
   await followed
   await expect(box).toBeChecked()
   // Following another calendar leaves the main one's import on offer.
-  await expect(page.getByText(/already come in on their own/)).toHaveCount(0)
+  await expect(page.getByText(/^Already importing/)).toHaveCount(0)
   await expect(page.getByRole("button", { name: "Scan calendar" })).toHaveCount(0)
 
   await seedWeekly(booked.id, "Sam Patel", localDateTime(1, "14:00"), 3)
@@ -1050,9 +1053,8 @@ test("following the main calendar on the setup page offers no import of it", asy
   const account = await freshGoogle(api)
   await connectThroughSetup(page, { follow: true })
 
-  await expect(
-    page.getByText(`Sessions on ${account} already come in on their own.`),
-  ).toBeVisible()
+  await expect(page.getByText("Already importing your main calendar.")).toBeVisible()
+  await expect(page.getByText(account)).toHaveCount(0)
   await page.getByRole("button", { name: "Finish", exact: true }).click()
   await page.waitForURL(/\/dashboard\/settings$/)
 })

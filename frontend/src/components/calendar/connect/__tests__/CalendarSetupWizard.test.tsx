@@ -1264,7 +1264,7 @@ describe("CalendarSetupWizard choosing the calendar to follow", () => {
     await goToClientsStep(user)
 
     expect(
-      await screen.findByText("Sessions on clinician@example.test already come in on their own.")
+      await screen.findByText("Already importing your main calendar.")
     ).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Scan calendar" })).not.toBeInTheDocument()
 
@@ -1281,13 +1281,13 @@ describe("CalendarSetupWizard choosing the calendar to follow", () => {
     const user = userEvent.setup()
     renderWizard()
     await goToClientsStep(user)
-    await screen.findByText("Sessions on clinician@example.test already come in on their own.")
+    await screen.findByText("Already importing your main calendar.")
 
     await user.click(screen.getByRole("button", { name: /review/i }))
 
     expect(await screen.findByText("Nothing to import")).toBeInTheDocument()
     expect(
-      screen.getByText("Sessions on clinician@example.test already come in on their own.")
+      screen.getByText("Already importing your main calendar.")
     ).toBeInTheDocument()
     expect(screen.queryByText("Which of these are clients?")).not.toBeInTheDocument()
   })
@@ -1303,7 +1303,7 @@ describe("CalendarSetupWizard choosing the calendar to follow", () => {
     await waitFor(() =>
       expect(screen.getByRole("combobox", { name: "From" })).toHaveValue(BOOKED)
     )
-    expect(screen.queryByText(/already come in on their own/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/^Already importing/)).not.toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: "Scan calendar" }))
     await screen.findByTestId("qualifying-count")
     await user.click(screen.getByRole("button", { name: /continue/i }))

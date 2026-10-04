@@ -12,6 +12,7 @@ import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion"
 import type { BusyWindowsGranted, BusyWindowsNotGranted, ImportProposal } from "@/lib/api/scheduling"
 import type { FollowableCalendar } from "@/lib/api/outsideSessions"
 import { FollowCalendarPicker } from "./FollowCalendarPicker"
+import { isMainCalendar } from "./calendarNames"
 import { busyWindowsGranted } from "@/lib/api/scheduling"
 import { GRID_HOURS, GRID_WEEKDAYS, busyCellKeys, cellKey, seriesCellKeys } from "./weekGrid"
 
@@ -28,9 +29,12 @@ const DAY_LABELS: Record<(typeof GRID_WEEKDAYS)[number], string> = {
   4: "F",
 }
 
-/** Said instead of offering an import from a calendar already followed. */
-export function alreadyComingIn(calendarName: string | undefined): string {
-  return `Sessions on ${calendarName ?? "your main calendar"} already come in on their own.`
+/** Said instead of offering an import from a calendar already followed. The
+ * lede is plain text, so another calendar's name is quoted to read as a name
+ * ("Already importing “Booked sessions”." rather than a remark about sessions). */
+export function alreadyComingIn(calendar: FollowableCalendar | undefined): string {
+  if (!calendar || isMainCalendar(calendar)) return "Already importing your main calendar."
+  return `Already importing “${calendar.name}”.`
 }
 
 function hourLabel(hour: number): string {
@@ -110,7 +114,7 @@ export function CalendarClientsStep({
 
   let sageIndex = 0
 
-  const followName = calendars?.find((c) => c.id === followCalendarId)?.name
+  const followed = calendars?.find((c) => c.id === followCalendarId)
   const showFollow = Boolean(onFollowingChange) && (scanned || canFollow)
 
   return (
@@ -124,7 +128,7 @@ export function CalendarClientsStep({
               // its series in, and importing them as well left each session
               // booked as Pablo's own series and then asked about (and refused
               // as an overlap) when the followed event arrived.
-              alreadyComingIn(followName)
+              alreadyComingIn(followed)
             : "Pablo can find events that repeat weekly or every other week. You'll choose which ones to import."
         }
       />
