@@ -40,6 +40,9 @@ export interface PatientResponse {
   postal_code: string | null
   /** X12 DMG03 administrative sex code (M/F/U) — "Sex on insurance card". */
   sex: string | null
+  /** The chart has no first or no last name yet — for one added from a
+   * calendar event with the name left blank. Adding the name clears it. */
+  needs_name?: boolean
 }
 
 /**

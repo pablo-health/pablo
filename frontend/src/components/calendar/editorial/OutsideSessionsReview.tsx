@@ -18,6 +18,11 @@ import {
   WhichClientsList,
   type ClientQuestionRow,
 } from "@/components/calendar/connect/WhichClientsList"
+import {
+  newClientName,
+  newClientNameFields,
+  type NewClientName,
+} from "@/components/calendar/connect/NewClientNameFields"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import type {
   NotAddedSession,
@@ -60,6 +65,7 @@ function toRow(question: OutsideQuestion): ClientQuestionRow {
     aside: `${question.sessions} session${question.sessions === 1 ? "" : "s"}`,
     match: question.match,
     clientInactive: question.client_inactive ?? false,
+    suggestedName: question.suggested_name ?? null,
   }
 }
 
@@ -98,6 +104,8 @@ export function OutsideSessionsReview({
   const [notClient, setNotClient] = useState<Record<string, boolean>>({})
   // An inactive client is made active again on confirm unless unticked.
   const [reactivate, setReactivate] = useState<Record<string, boolean>>({})
+  // Names typed for new clients; a row with none uses its suggestion.
+  const [names, setNames] = useState<Record<string, NewClientName>>({})
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notAdded, setNotAdded] = useState<NotAddedSession[]>([])
@@ -128,6 +136,7 @@ export function OutsideSessionsReview({
         source_identifier: q.source_identifier,
         patient_id: patientId,
         new_client_name: patientId ? null : q.title,
+        ...(patientId ? {} : newClientNameFields(newClientName(names[q.key], q.suggested_name))),
         not_a_client: false,
         ...event,
         ...(reactivating ? { reactivate: true } : {}),
@@ -188,6 +197,12 @@ export function OutsideSessionsReview({
           onToggleReactivate={(key) =>
             setReactivate((current) => ({ ...current, [key]: !(current[key] ?? true) }))
           }
+          names={names}
+          onChangeName={(key, name) => {
+            setNames((current) => ({ ...current, [key]: name }))
+            // Typing a name is an answer: the row is checked to go with it.
+            setChecked((current) => ({ ...current, [key]: true }))
+          }}
         />
         )}
 

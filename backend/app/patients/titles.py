@@ -54,6 +54,33 @@ SESSION_WORDS: frozenset[str] = frozenset(
     }
 )
 
+#: Words that are never part of a person's name, one word at a time and
+#: lowercased: every word of ``SESSION_WORDS`` and more besides. Used to keep
+#: session wording out of a new client's name, never to decide what books —
+#: "Call with Jane Smith" still asks, though "Call" is no name.
+NOT_NAME_WORDS: frozenset[str] = frozenset(
+    {word for phrase in SESSION_WORDS for word in phrase.split()}
+    | {
+        "appt",
+        "call",
+        "check-in",
+        "couples",
+        "eval",
+        "evaluation",
+        "family",
+        "followup",
+        "group",
+        "initial",
+        "meds",
+        "meeting",
+        "video",
+        "virtual",
+        "visit",
+        "with",
+        "zoom",
+    }
+)
+
 
 @dataclass(frozen=True)
 class TitleReading:
@@ -128,4 +155,4 @@ def _read(piece: str) -> TitleReading | None:
     return None
 
 
-__all__ = ["SESSION_WORDS", "TitleReading", "is_session_word", "title_readings"]
+__all__ = ["NOT_NAME_WORDS", "SESSION_WORDS", "TitleReading", "is_session_word", "title_readings"]

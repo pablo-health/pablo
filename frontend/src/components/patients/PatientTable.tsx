@@ -207,6 +207,14 @@ export function PatientTable() {
                     >
                       <TableCell className="font-medium">
                         {patient.first_name} {patient.last_name}
+                        {patient.needs_name ? (
+                          <span
+                            data-testid="needs-name"
+                            className="ml-2 text-xs font-normal text-muted-foreground"
+                          >
+                            Needs full name
+                          </span>
+                        ) : null}
                       </TableCell>
                       <TableCell>{patient.email || "N/A"}</TableCell>
                       <TableCell>{patient.phone || "N/A"}</TableCell>

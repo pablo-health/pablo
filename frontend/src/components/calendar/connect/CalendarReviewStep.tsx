@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { SetupStepHead } from "@/components/setup"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import type { ConfirmImportResult, ImportProposal, ProposedSeries } from "@/lib/api/scheduling"
+import type { NewClientName } from "./NewClientNameFields"
 import { seenElsewhere, WhichClientsList } from "./WhichClientsList"
 
 const VISIBLE_ROWS = 5
@@ -52,6 +53,9 @@ interface CalendarReviewStepProps {
   /** Series marked as not a client; remembered on confirm. */
   notClient: Record<string, boolean>
   onToggleNotClient: (candidateKey: string) => void
+  /** Names typed for series that become new clients. */
+  names: Record<string, NewClientName>
+  onChangeName: (candidateKey: string, name: NewClientName) => void
   expanded: boolean
   onToggleExpanded: () => void
   onBack: () => void
@@ -72,6 +76,8 @@ export function CalendarReviewStep({
   onChooseClient,
   notClient,
   onToggleNotClient,
+  names,
+  onChangeName,
   expanded,
   onToggleExpanded,
   onBack,
@@ -164,6 +170,7 @@ export function CalendarReviewStep({
           detail: `${whenLabel(series)} · ${cadenceLabel(series.cadence)}`,
           aside: `${series.occurrences_ahead} ahead`,
           match: series.match,
+          suggestedName: series.suggested_name ?? null,
         }))}
         checked={checked}
         onToggle={onToggle}
@@ -171,6 +178,8 @@ export function CalendarReviewStep({
         onChooseClient={onChooseClient}
         notClient={notClient}
         onToggleNotClient={onToggleNotClient}
+        names={names}
+        onChangeName={onChangeName}
       />
 
       {hiddenCount > 0 || expanded ? (
