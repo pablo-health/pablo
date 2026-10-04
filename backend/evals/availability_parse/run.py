@@ -90,6 +90,44 @@ def _canonical_key(rule: ExpectedRule) -> tuple[str, tuple[tuple[str, Any], ...]
     )
 
 
+def _normalize(rules: Sequence[ExpectedRule]) -> list[ExpectedRule]:
+    """A rule set reduced to its effect, so equivalent shapes grade equal.
+
+    Blocking two dates with one rule or with two rules closes the same
+    days, so ``block_specific_dates`` rules that share a scope (appointment
+    type, exclusivity) are merged into one rule over the sorted,
+    de-duplicated union of their dates. Merged rules that disagree on
+    enforcement carry ``"mixed"``, which matches neither side and so stays
+    a soft finding. A rule repeated exactly adds nothing, so exact
+    duplicates collapse to one. Nothing else is merged: any difference
+    that changes what the calendar offers still makes two sets unequal.
+    """
+    merged_dates: dict[tuple[str | None, bool], set[str]] = {}
+    merged_enforcement: dict[tuple[str | None, bool], set[str]] = {}
+    others: list[ExpectedRule] = []
+    for rule in rules:
+        if rule.rule_type == "block_specific_dates" and isinstance(rule.params.get("dates"), list):
+            key = (rule.appointment_type_id, rule.allow_other_types)
+            merged_dates.setdefault(key, set()).update(rule.params["dates"])
+            merged_enforcement.setdefault(key, set()).add(rule.enforcement)
+        else:
+            others.append(rule)
+    merged = [
+        ExpectedRule(
+            "block_specific_dates",
+            {"dates": sorted(dates)},
+            next(iter(merged_enforcement[key])) if len(merged_enforcement[key]) == 1 else "mixed",
+            appointment_type_id=key[0],
+            allow_other_types=key[1],
+        )
+        for key, dates in merged_dates.items()
+    ]
+    unique: dict[tuple[Any, str], ExpectedRule] = {}
+    for rule in [*others, *merged]:
+        unique.setdefault((_canonical_key(rule), rule.enforcement), rule)
+    return list(unique.values())
+
+
 def _parse_one(phrasing: str, model: str | None = None) -> AvailabilityParseResult:
     """One real parse. Imported lazily so ``--list`` needs no model access.
 
@@ -259,13 +297,15 @@ def _grade(
     elif not produced:
         refused_parseable = True
     else:
-        expected_keys = sorted(_canonical_key(r) for r in case.expected)
-        produced_keys = sorted(_canonical_key(r) for r in produced)
+        expected_rules = _normalize(case.expected)
+        produced_rules = _normalize(produced)
+        expected_keys = sorted(_canonical_key(r) for r in expected_rules)
+        produced_keys = sorted(_canonical_key(r) for r in produced_rules)
         if expected_keys != produced_keys:
             hard.append(f"wrong rule set: expected {expected_keys}, got {produced_keys}")
         else:
-            expected_enf = sorted((_canonical_key(r), r.enforcement) for r in case.expected)
-            produced_enf = sorted((_canonical_key(r), r.enforcement) for r in produced)
+            expected_enf = sorted((_canonical_key(r), r.enforcement) for r in expected_rules)
+            produced_enf = sorted((_canonical_key(r), r.enforcement) for r in produced_rules)
             if expected_enf != produced_enf:
                 soft.append("rule set correct, enforcement (hard/soft) mismatched")
             if (
@@ -301,9 +341,11 @@ def _readings_mismatch(case: EvalCase, result: AvailabilityParseResult | None) -
     """
     if case.expected_readings is None or result is None or not result.readings:
         return []
-    expected = sorted(sorted(_canonical_key(r) for r in rs) for rs in case.expected_readings)
+    expected = sorted(
+        sorted(_canonical_key(r) for r in _normalize(rs)) for rs in case.expected_readings
+    )
     offered = sorted(
-        sorted(_canonical_key(r) for r in _produced_reading(reading.proposals))
+        sorted(_canonical_key(r) for r in _normalize(_produced_reading(reading.proposals)))
         for reading in result.readings
     )
     if offered == expected:
