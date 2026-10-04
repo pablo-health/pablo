@@ -285,6 +285,34 @@ async function showTomorrow(page: Page): Promise<void> {
   }
 }
 
+/** The id the stand-in (like Google) gives one instance of a series: the series id and its UTC start. */
+function instanceId(seriesId: string, start: EventTime): string {
+  const utc = toUtc(start)
+    .toISOString()
+    .replace(/[-:]|\.\d{3}/g, "")
+  return `${seriesId}_${utc}`
+}
+
+/**
+ * Bring the tab back to the front the way switching back from another app
+ * does: hidden, then visible again, each announced with `visibilitychange`.
+ * A headless browser never loses visibility on its own.
+ */
+async function returnToTab(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const show = (state: "hidden" | "visible") => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state })
+      Object.defineProperty(document, "hidden", {
+        configurable: true,
+        get: () => state === "hidden",
+      })
+      document.dispatchEvent(new Event("visibilitychange", { bubbles: true }))
+    }
+    show("hidden")
+    show("visible")
+  })
+}
+
 test.describe.configure({ mode: "serial" })
 
 /** Every client these specs make, so the diary and the client list are put back after each. */
@@ -298,6 +326,7 @@ const CLIENTS = [
   "Dana Brooks",
   "Taylor Quinn",
   "Jamie Ortiz",
+  "Quinlan Okafor",
 ]
 
 let addedRules: string[] = []
@@ -600,6 +629,48 @@ test("a session titled with a client's initials is offered that client", async (
   await expect(review.getByRole("combobox", { name: "Which client is T.Q.?" })).toHaveValue(
     taylor.id,
   )
+})
+
+test("a session moved in the calendar shows its new time on the open week without a reload", async ({
+  signedInPage: page,
+  api,
+}) => {
+  await freshGoogle(api)
+  await forgetClients(api, ["Quinlan Okafor"])
+  await connectThroughSetup(page, { follow: true })
+  const before = localDateTime(1, "09:30")
+  const seriesId = await seedWeekly("primary", "Quinlan Okafor", before, 2)
+  await readCalendarsNow(api)
+  await answerAsNewClient(api, "Quinlan Okafor")
+  const quinlanId = await patientNamed(api, "Quinlan Okafor")
+  expect(await upcomingFor(api, quinlanId)).toHaveLength(2)
+
+  await showTomorrow(page)
+  await expect(page.getByRole("button", { name: /^Quinlan Okafor at 9:30 AM/ })).toBeVisible()
+  // Set on this page load only: a reload would take it away.
+  await page.evaluate(() => {
+    ;(window as unknown as { stillThisLoad?: boolean }).stillThisLoad = true
+  })
+
+  // The clinician moves tomorrow's session in Google Calendar, and a read
+  // follows the move.
+  const after = localDateTime(1, "16:30")
+  await google.change("primary", instanceId(seriesId, before), {
+    start: after,
+    end: plusMinutes(after, SESSION_MINUTES),
+  })
+  await readCalendarsNow(api)
+  const moved = (await upcomingFor(api, quinlanId)).map((a) => a.start_at)
+  expect(moved).toContainEqual(expect.stringMatching(toUtc(after).toISOString().slice(0, 16)))
+
+  // Switching back to the tab is enough: the open week refetches, well
+  // before the once-a-minute refresh would.
+  await returnToTab(page)
+  await expect(page.getByRole("button", { name: /^Quinlan Okafor at 4:30 PM/ })).toBeVisible()
+  await expect(page.getByRole("button", { name: /^Quinlan Okafor at 9:30 AM/ })).toHaveCount(0)
+  expect(
+    await page.evaluate(() => (window as unknown as { stillThisLoad?: boolean }).stillThisLoad),
+  ).toBe(true)
 })
 
 test("a new client from an initials event is named as typed", async ({

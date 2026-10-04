@@ -13,6 +13,7 @@ import {
   resolveHeldGoogleRemovals,
 } from "@/lib/api/scheduling"
 import { queryKeys } from "@/lib/api/queryKeys"
+import { calendarFreshness } from "./calendarFreshness"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
 
 /** Sessions removed from Google Calendar in bulk and held for the therapist. */
@@ -21,6 +22,7 @@ export function useHeldGoogleRemovals() {
     queryKey: queryKeys.appointments.heldGoogleRemovals(),
     queryFn: () => getHeldGoogleRemovals(),
     staleTime: 60 * 1000,
+    ...calendarFreshness,
   })
 }
 

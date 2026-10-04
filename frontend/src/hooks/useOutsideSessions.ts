@@ -9,10 +9,13 @@ import {
   listAutoBooked,
   listOutsideSessions,
   acknowledgeAutoBooked,
+  syncCalendarsNow,
+  type CalendarSyncResult,
   type OutsideAnswer,
   type OutsideAnswerResult,
 } from "@/lib/api/outsideSessions"
 import { queryKeys } from "@/lib/api/queryKeys"
+import { calendarFreshness } from "./calendarFreshness"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
 
 /** Open events from the clinician's own calendar over a range. */
@@ -21,6 +24,7 @@ export function useOutsideSessions(start: string, end: string) {
     queryKey: queryKeys.appointments.outsideSessions({ start, end }),
     queryFn: () => listOutsideSessions(start, end),
     staleTime: 60 * 1000,
+    ...calendarFreshness,
     enabled: !!start && !!end,
   })
 }
@@ -31,6 +35,7 @@ export function useOutsideQuestions() {
     queryKey: queryKeys.appointments.outsideQuestions(),
     queryFn: () => getOutsideQuestions(),
     staleTime: 60 * 1000,
+    ...calendarFreshness,
   })
 }
 
@@ -40,6 +45,7 @@ export function useAutoBooked() {
     queryKey: queryKeys.appointments.autoBooked(),
     queryFn: () => listAutoBooked(),
     staleTime: 60 * 1000,
+    ...calendarFreshness,
   })
 }
 
@@ -64,5 +70,17 @@ export function useAnswerOutsideSessions() {
     mutationFn: (answers) => answerOutsideSessions(answers),
     // Appointments appear, open rows go, and a new client may join the list.
     invalidateKeys: [queryKeys.appointments.all, queryKeys.patients.all],
+  })
+}
+
+/**
+ * Read the clinician's calendars now rather than at the next scheduled pass.
+ * A read can move, add or cancel sessions and raise new questions, so every
+ * calendar query refetches once it succeeds.
+ */
+export function useSyncCalendarsNow() {
+  return useAuthMutation<CalendarSyncResult, void>({
+    mutationFn: () => syncCalendarsNow(),
+    invalidateKeys: [queryKeys.appointments.all],
   })
 }
