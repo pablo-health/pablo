@@ -90,8 +90,9 @@ export function FollowCalendarSetting({
     }
   }
 
-  // The permission is asked for from the setup page, which finishes the
-  // round trip, turns following on and shows the week it read.
+  // Google returns to the setup page, the one redirect registered for it,
+  // which finishes the round trip, turns following on and sends the browser
+  // back here, where the calendar can be changed.
   const askForAccess = async () => {
     setSaving(true)
     setError(null)
@@ -137,7 +138,8 @@ export function FollowCalendarSetting({
       {following && calendars === null && !error ? (
         <p className="pl-6 text-xs text-muted-foreground">Loading your calendars…</p>
       ) : null}
-      {following && (listed.length > 1 || unreadable) ? (
+      {/* Shown with a single calendar too, so it is clear which one is read. */}
+      {following && (listed.length > 0 || unreadable) ? (
         <div className="flex flex-col gap-1 pl-6">
           <label htmlFor="settings-follow-calendar-choice" className="text-xs text-muted-foreground">
             Import sessions from

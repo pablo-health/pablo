@@ -142,7 +142,7 @@ async function seedWeeklyUntil(
  */
 async function connectThroughSetup(
   page: Page,
-  { follow }: { follow: boolean },
+  { follow, writeToMain = false }: { follow: boolean; writeToMain?: boolean },
 ): Promise<{ leftAlone: number }> {
   await page.goto(SETUP_PATH)
   await page.getByRole("button", { name: "Continue with Google" }).click()
@@ -151,6 +151,20 @@ async function connectThroughSetup(
   await expect(page.getByText("Google Calendar is connected.")).toBeVisible()
   await expect(page.getByRole("heading", { name: "Choose a calendar" })).toBeVisible()
   expect(await google.grant()).toEqual([SCOPE_APP_CALENDAR, SCOPE_FREEBUSY].sort())
+  if (writeToMain) {
+    // Sessions go to the main calendar instead: a second trip to Google.
+    // "Connected" is still showing from the first trip, so it can't say the
+    // second one is back; the exchange of its code can.
+    await page.getByRole("radio", { name: /My main calendar/ }).check()
+    const exchanged = page.waitForResponse(
+      (response) => response.url().includes("/api/google-calendar/callback") && response.ok(),
+    )
+    await page.getByRole("button", { name: "Continue with Google" }).click()
+    await exchanged
+    await page.waitForURL((url) => !url.searchParams.has("code"))
+    await expect(page.getByText("Google Calendar is connected.")).toBeVisible()
+    await expect(page.getByRole("radio", { name: /My main calendar/ })).toBeChecked()
+  }
   await page.getByRole("button", { name: "Continue", exact: true }).click()
 
   // The first scan only asks for the grant; the one after Google sends the
@@ -171,15 +185,18 @@ async function connectThroughSetup(
   // time from the moment the connection can answer for it, before any scan.
   const proposal = (await (await scanned).json()) as { left_alone: number }
   await expect(page.getByTestId("qualifying-count")).toBeVisible()
-  expect(await google.grant()).toEqual(
-    [SCOPE_APP_CALENDAR, SCOPE_FREEBUSY, SCOPE_READ_EVENTS].sort(),
-  )
+  if (!writeToMain) {
+    expect(await google.grant()).toEqual(
+      [SCOPE_APP_CALENDAR, SCOPE_FREEBUSY, SCOPE_READ_EVENTS].sort(),
+    )
+  }
 
   if (follow) {
     // Nothing is followed yet (freshGoogle turned it off), and the page
     // knows it: the checkbox is rendered from a status read that waited
-    // for sign-in, so this click turns following ON.
-    const box = page.getByLabel("Keep importing new sessions from this calendar")
+    // for sign-in, so this click turns following ON. It names the calendar
+    // it follows: the main one, unless another is picked.
+    const box = page.getByLabel(/Keep importing new sessions from/)
     await expect(box).not.toBeChecked()
     const followed = page.waitForResponse(
       (response) =>
@@ -831,3 +848,93 @@ test("disconnecting takes Pablo off the account and forgets what it read, keepin
     booked.map((a) => a.id).sort(),
   )
 })
+
+test("the setup page follows the calendar picked there, and not the main one", async ({
+  signedInPage: page,
+  api,
+}) => {
+  const account = await freshGoogle(api)
+  await forgetClients(api, ["Sam Patel", "Morgan Lee"])
+  // Another booking system writes to a calendar of its own.
+  const booked = await google.addCalendar("Booked sessions")
+  await connectThroughSetup(page, { follow: false })
+
+  const box = page.getByLabel(/Keep importing new sessions from/)
+  await expect(box).toHaveAccessibleName(new RegExp(`from ${account.replace(/[.]/g, "\\.")}`))
+  await expect(box).not.toBeChecked()
+  const picker = page.getByRole("combobox", { name: "Calendar" })
+  await expect(picker.locator("option").first()).toHaveText(account)
+  await picker.selectOption("Booked sessions")
+  await expect(box).toHaveAccessibleName(/from Booked sessions/)
+  const followed = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/google-calendar/followed-calendar") && response.ok(),
+  )
+  await box.click()
+  await followed
+  await expect(box).toBeChecked()
+  // Following another calendar leaves the main one's import on offer.
+  await expect(page.getByTestId("import-not-needed")).toHaveCount(0)
+
+  await seedWeekly(booked.id, "Sam Patel", localDateTime(1, "14:00"), 3)
+  await seedWeekly("primary", "Morgan Lee", localDateTime(1, "15:00"), 3)
+  await readCalendarsNow(api)
+
+  expect((await questions(api)).map((q) => q.title)).toEqual(["Sam Patel"])
+  await answerAsNewClient(api, "Sam Patel")
+  expect(await upcomingFor(api, await patientNamed(api, "Sam Patel"))).toHaveLength(3)
+  expect(await patientsNamed(api, "Morgan Lee")).toEqual([])
+  expect(await questions(api)).toHaveLength(0)
+
+  // Settings shows the same calendar, by name.
+  await page.goto("/dashboard/settings/calendars")
+  await expect(page.getByRole("combobox", { name: "Import sessions from" })).toHaveValue(booked.id)
+  await expect(page.getByTestId("followed-calendar-line")).toContainText(
+    "Pablo reads the events on Booked sessions",
+  )
+})
+
+test("following the main calendar on the setup page offers no import of it", async ({
+  signedInPage: page,
+  api,
+}) => {
+  const account = await freshGoogle(api)
+  await connectThroughSetup(page, { follow: true })
+
+  await expect(page.getByTestId("import-not-needed")).toHaveText(
+    `Pablo is following ${account}, so there’s nothing to import from it.`,
+  )
+  await page.getByRole("button", { name: "Finish", exact: true }).click()
+  await page.waitForURL(/\/dashboard\/settings$/)
+})
+
+for (const writeToMain of [false, true]) {
+  test(`an import adds no copy of the originals to Google (sessions on ${
+    writeToMain ? "the main calendar" : "a Pablo calendar"
+  })`, async ({ signedInPage: page, api }) => {
+    const account = await freshGoogle(api)
+    await forgetClients(api, ["Taylor Quinn"])
+    await seedWeeklyUntil("primary", "Taylor Quinn", localDateTime(1 - 8 * 7, "09:00"), 1 + 7 * 7)
+
+    await connectThroughSetup(page, { follow: false, writeToMain })
+    const before = (await google.requests()).length
+    await page.getByRole("button", { name: "Continue", exact: true }).click()
+    await expect(page.getByRole("checkbox", { name: "Taylor Quinn" })).toBeChecked()
+    await page.getByRole("button", { name: "Add 1 client", exact: true }).click()
+    await expect(page.getByText("8 upcoming appointments added.")).toBeVisible()
+    const taylor = await upcomingFor(api, await patientNamed(api, "Taylor Quinn"))
+    expect(taylor).toHaveLength(8)
+
+    // What Google holds: the one original series on the main calendar, and
+    // nothing Pablo wrote anywhere, whichever calendar it writes to.
+    const calendars = await google.calendars()
+    for (const calendar of calendars) {
+      const titles = (await google.events(calendar.id)).map((e) => e.summary)
+      expect(titles, calendar.id).toEqual(calendar.id === account ? ["Taylor Quinn"] : [])
+    }
+    const writes = (await google.requests())
+      .slice(before)
+      .filter((r) => r.path.includes("/events") && r.method !== "GET")
+    expect(writes).toEqual([])
+  })
+}

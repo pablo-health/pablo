@@ -29,7 +29,7 @@ import {
   recallAndClearImportPending,
   rememberImportPending,
 } from "./importConsent"
-import { setFollowedCalendar } from "@/lib/api/outsideSessions"
+import { listFollowableCalendars, setFollowedCalendar } from "@/lib/api/outsideSessions"
 import {
   completeGoogleCalendarConnect,
   completeGoogleCalendarImportConsent,
@@ -127,6 +127,14 @@ function busyWindowRange(): { start: string; end: string } {
 /** The full-page home of the wizard, and where it sends the browser back to
  * after Google unless a host says otherwise. */
 export const CALENDAR_SETUP_PATH = "/dashboard/settings/calendar"
+
+/** Settings > Calendars, where "Keep importing new sessions" lives. Its
+ * "Allow access" goes to Google by way of this page (the only redirect
+ * registered for it) and comes back here once following is on. */
+export const CALENDAR_SETTINGS_PATH = "/dashboard/settings/calendars"
+
+/** What following "the main calendar" is stored as until a read resolves it. */
+const MAIN_CALENDAR = "primary"
 
 interface CalendarSetupWizardProps {
   /** The route this wizard is mounted on. Google sends the browser back
@@ -289,15 +297,37 @@ export function CalendarSetupWizard({
     setNames({})
   }, [proposal])
 
-  const following = Boolean(status?.follow_calendar_id)
+  // Which calendars can be followed, once events can be read at all.
+  const readGranted = Boolean(status?.connected && status.import_granted)
+  const { data: followable } = useAuthQuery({
+    queryKey: ["google-calendar", "calendars"],
+    queryFn: listFollowableCalendars,
+    enabled: readGranted,
+  })
+  const calendars = followable?.calendars ?? null
+  const mainCalendarId = calendars?.find((c) => c.primary)?.id ?? null
+  // A calendar picked before following is turned on; following follows it.
+  const [pickedCalendar, setPickedCalendar] = useState<string | null>(null)
 
-  const changeFollowing = useCallback(
-    async (enabled: boolean) => {
+  const followedId = status?.follow_calendar_id ?? null
+  const following = Boolean(followedId)
+  const asListed = (id: string | null) => (id === MAIN_CALENDAR ? mainCalendarId ?? id : id)
+  const followCalendarId = following
+    ? asListed(followable?.follow_calendar_id ?? followedId)
+    : (pickedCalendar ?? mainCalendarId)
+  // The import reads the main calendar, so following that one already
+  // brings in what an import would (see CalendarClientsStep).
+  const followingMain =
+    following &&
+    (followedId === MAIN_CALENDAR ||
+      (mainCalendarId !== null && followCalendarId === mainCalendarId))
+
+  const saveFollowed = useCallback(
+    async (calendarId: string | null) => {
       setFollowSaving(true)
       setFollowError(null)
       try {
-        // The wizard reads the main calendar, so that is the one followed.
-        await setFollowedCalendar(enabled ? "primary" : null)
+        await setFollowedCalendar(calendarId)
         await queryClient.invalidateQueries({ queryKey: ["google-calendar"] })
       } catch (err) {
         setFollowError(message(err, "Could not save that. Try again in a moment."))
@@ -306,6 +336,19 @@ export function CalendarSetupWizard({
       }
     },
     [queryClient]
+  )
+
+  const changeFollowing = useCallback(
+    (enabled: boolean) => saveFollowed(enabled ? (followCalendarId ?? MAIN_CALENDAR) : null),
+    [saveFollowed, followCalendarId]
+  )
+
+  const changeFollowCalendar = useCallback(
+    (calendarId: string) => {
+      setPickedCalendar(calendarId)
+      if (following) void saveFollowed(calendarId)
+    },
+    [following, saveFollowed]
   )
 
   const redirectUri = typeof window === "undefined" ? "" : `${window.location.origin}${returnPath}`
@@ -368,7 +411,35 @@ export function CalendarSetupWizard({
     exchangedCode.current = code
     let cancelled = false
 
-    if (recallAndClearImportPending()) {
+    const importPending = recallAndClearImportPending()
+    // Started from the "keep importing new sessions" setting: the grant was
+    // asked for to turn following on, so do that once it lands and go back
+    // to the setting, rather than into an import nobody asked for.
+    const followWanted = recallAndClearFollowWanted()
+    if (importPending && followWanted) {
+      setConnecting(true)
+      completeGoogleCalendarImportConsent(code, state, redirectUri)
+        .then(async () => {
+          if (cancelled) return
+          await setFollowedCalendar(MAIN_CALENDAR)
+          await queryClient.invalidateQueries({ queryKey: ["google-calendar"] })
+          if (!cancelled) router.replace(CALENDAR_SETTINGS_PATH)
+        })
+        .catch((err: unknown) => {
+          if (cancelled) return
+          // Reported here, where the code is scrubbed, rather than lost on a
+          // page that never saw the round trip.
+          setConnecting(false)
+          setActiveIndex(clientsIndex)
+          setScanError(message(err, "Google did not finish granting access."))
+          router.replace(returnPath)
+        })
+      return () => {
+        cancelled = true
+      }
+    }
+
+    if (importPending) {
       // "Scan calendar" sent the therapist to Google for the IMPORT
       // grant alone. Completing it picks the flow back up: land on the
       // clients step and finish what the button started, without making
@@ -376,17 +447,9 @@ export function CalendarSetupWizard({
       // that fails is reported where it was asked for, not on step 1.
       setActiveIndex(clientsIndex)
       setScanning(true)
-      // Started from the "keep importing new sessions" setting: the grant
-      // was asked for to turn following on, so do that once it lands.
-      const followWanted = recallAndClearFollowWanted()
       completeGoogleCalendarImportConsent(code, state, redirectUri)
         .then(async () => {
           if (cancelled) return
-          if (followWanted) {
-            await setFollowedCalendar("primary").catch((err: unknown) =>
-              setFollowError(message(err, "Could not save that. Try again in a moment."))
-            )
-          }
           queryClient.invalidateQueries({ queryKey: ["google-calendar"] })
           return runScan()
         })
@@ -553,8 +616,13 @@ export function CalendarSetupWizard({
   }, [proposal, checked, clientFor, notClient, names, people.many])
 
   const titlingSettled = selection.event_titling !== "full" || attested
-  const isLastStep = activeIndex === steps.length - 1
-  const onReviewStep = activeIndex === reviewIndex
+  // Following the main calendar replaces importing from it, so the clients
+  // step ends the wizard and the review has nothing to show (see
+  // CalendarClientsStep). An import from main is still offered whenever a
+  // different calendar, or none, is followed.
+  const importSkipped = followingMain && activeIndex >= clientsIndex
+  const isLastStep = activeIndex === steps.length - 1 || importSkipped
+  const onReviewStep = activeIndex === reviewIndex && !followingMain
   // The hours step owns its own buttons while it asks, and "Finish later"
   // there would answer the Google steps' gate for a question that was not
   // asked. Once the hours are in, it is an ordinary step with the usual nav.
@@ -598,7 +666,9 @@ export function CalendarSetupWizard({
             canContinue={
               activeIndex === connectIndex || onHoursStep
                 ? true
-                : activeIndex === clientsIndex
+                : importSkipped
+                  ? !followSaving
+                  : activeIndex === clientsIndex
                   ? proposal !== null
                   : // Full names are the therapist's disclosure to make, so
                     // this step doesn't move on until they've said the
@@ -669,10 +739,23 @@ export function CalendarSetupWizard({
           onScan={runScan}
           onSkip={finishWizard}
           following={following}
+          canFollow={readGranted}
+          calendars={calendars}
+          followCalendarId={followCalendarId}
+          onFollowCalendarChange={changeFollowCalendar}
+          followingMain={followingMain}
           onFollowingChange={changeFollowing}
           followSaving={followSaving}
           followError={followError}
           booksNamedSessions={booksNamedSessions}
+        />
+      ) : followingMain ? (
+        <SetupStepHead
+          eyebrow={`Step ${stepNumber(reviewIndex)}`}
+          title="Nothing to import"
+          lede={`Pablo is following ${
+            calendars?.find((c) => c.id === followCalendarId)?.name ?? "your main calendar"
+          }, so there’s nothing to import from it.`}
         />
       ) : (
         <CalendarReviewStep

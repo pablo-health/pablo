@@ -286,7 +286,7 @@ describe("CalendarClientsStep", () => {
     )
 
     expect(
-      screen.getByRole("checkbox", { name: /Keep importing new sessions from this calendar/ })
+      screen.getByRole("checkbox", { name: /Keep importing new sessions from your main calendar/ })
     ).toBeInTheDocument()
     expect(
       screen.getByText(
@@ -313,6 +313,116 @@ describe("CalendarClientsStep", () => {
     expect(
       screen.getByText("Pablo asks who each new session is with and remembers your answer.")
     ).toBeInTheDocument()
+  })
+
+  describe("choosing the calendar to follow", () => {
+    const CALENDARS = [
+      { id: "me@example.test", name: "me@example.test", primary: true },
+      { id: "booked@group.calendar.google.test", name: "Booked sessions", primary: false },
+    ]
+
+    it("names the calendar it would follow and lets another be picked", async () => {
+      const user = userEvent.setup()
+      const onPick = vi.fn()
+      render(
+        <CalendarClientsStep
+          step={4}
+          busyWindows={GRANTED}
+          proposal={proposal()}
+          scanning={false}
+          error={null}
+          onScan={vi.fn()}
+          onSkip={vi.fn()}
+          onFollowingChange={vi.fn()}
+          calendars={CALENDARS}
+          followCalendarId="me@example.test"
+          onFollowCalendarChange={onPick}
+        />
+      )
+
+      expect(
+        screen.getByRole("checkbox", {
+          name: /Keep importing new sessions from me@example\.test/,
+        })
+      ).toBeInTheDocument()
+      const picker = screen.getByRole("combobox", { name: "Calendar" })
+      expect(Array.from((picker as HTMLSelectElement).options).map((o) => o.text)).toEqual([
+        "me@example.test",
+        "Booked sessions",
+      ])
+
+      await user.selectOptions(picker, "booked@group.calendar.google.test")
+
+      expect(onPick).toHaveBeenCalledWith("booked@group.calendar.google.test")
+    })
+
+    it("is offered before any scan once the calendar can be read", () => {
+      render(
+        <CalendarClientsStep
+          step={4}
+          busyWindows={GRANTED}
+          proposal={null}
+          scanning={false}
+          error={null}
+          onScan={vi.fn()}
+          onSkip={vi.fn()}
+          onFollowingChange={vi.fn()}
+          canFollow
+          calendars={CALENDARS}
+          followCalendarId="booked@group.calendar.google.test"
+          onFollowCalendarChange={vi.fn()}
+        />
+      )
+
+      expect(
+        screen.getByRole("checkbox", { name: /Keep importing new sessions from Booked sessions/ })
+      ).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: "Scan calendar" })).toBeInTheDocument()
+    })
+
+    it("isn't offered before a scan without read access", () => {
+      render(
+        <CalendarClientsStep
+          step={4}
+          busyWindows={GRANTED}
+          proposal={null}
+          scanning={false}
+          error={null}
+          onScan={vi.fn()}
+          onSkip={vi.fn()}
+          onFollowingChange={vi.fn()}
+        />
+      )
+
+      expect(screen.queryByRole("checkbox")).not.toBeInTheDocument()
+    })
+
+    it("offers no import from the main calendar while following it", () => {
+      render(
+        <CalendarClientsStep
+          step={4}
+          busyWindows={GRANTED}
+          proposal={null}
+          scanning={false}
+          error={null}
+          onScan={vi.fn()}
+          onSkip={vi.fn()}
+          onFollowingChange={vi.fn()}
+          canFollow
+          following
+          followingMain
+          calendars={CALENDARS}
+          followCalendarId="me@example.test"
+          onFollowCalendarChange={vi.fn()}
+        />
+      )
+
+      expect(screen.getByTestId("import-not-needed")).toHaveTextContent(
+        "Pablo is following me@example.test, so there’s nothing to import from it."
+      )
+      expect(screen.queryByRole("button", { name: "Scan calendar" })).not.toBeInTheDocument()
+      expect(screen.queryByRole("button", { name: "Skip import" })).not.toBeInTheDocument()
+    })
   })
 
   it("never asserts a category the heuristic can't verify", () => {

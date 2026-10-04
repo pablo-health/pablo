@@ -95,6 +95,26 @@ describe("FollowCalendarSetting", () => {
     )
   })
 
+  it("shows which calendar it reads even when there is only one", async () => {
+    listCalendars.mockResolvedValue({
+      calendars: [{ id: MAIN, name: MAIN, primary: true }],
+      follow_calendar_id: MAIN,
+    })
+    render(<FollowCalendarSetting followedCalendarId="primary" importGranted onChanged={vi.fn()} />)
+
+    const picker = await screen.findByRole("combobox", { name: "Import sessions from" })
+    expect(picker).toHaveValue(MAIN)
+    expect(screen.getByTestId("followed-calendar-line")).toHaveTextContent(
+      `Pablo reads the events on ${MAIN}`
+    )
+  })
+
+  it("shows no picker while nothing is followed", () => {
+    render(<FollowCalendarSetting followedCalendarId={null} importGranted onChanged={vi.fn()} />)
+
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument()
+  })
+
   it("follows another calendar when one is picked", async () => {
     const user = userEvent.setup()
     listCalendars.mockResolvedValue({
