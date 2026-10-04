@@ -20,6 +20,7 @@ import {
   updateAppointment,
 } from "@/lib/api/scheduling"
 import { queryKeys } from "@/lib/api/queryKeys"
+import { calendarFreshness } from "./calendarFreshness"
 import { useAuthQuery, useAuthMutation } from "./useAuthQuery"
 
 export function useAppointmentList(start: string, end: string, token?: string) {
@@ -27,6 +28,7 @@ export function useAppointmentList(start: string, end: string, token?: string) {
     queryKey: queryKeys.appointments.list({ start, end }),
     queryFn: () => listAppointments(start, end, token),
     staleTime: 60 * 1000,
+    ...calendarFreshness,
     enabled: !!start && !!end,
   })
 }

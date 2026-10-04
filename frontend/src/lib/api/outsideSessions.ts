@@ -124,6 +124,22 @@ export async function setFollowedCalendar(
   })
 }
 
+/** What one read of the clinician's calendars did, in counts. */
+export interface CalendarSyncResult {
+  ical_sources_synced: number
+  ical_errors: number
+  google_synced: boolean
+  google_error: boolean
+  google_changes_processed: number
+  outside_sessions_followed: number
+  reminders_sent: number
+}
+
+/** Read the clinician's calendars now: the same pass the schedule runs. */
+export async function syncCalendarsNow(): Promise<CalendarSyncResult> {
+  return post<CalendarSyncResult>("/api/calendar/sync", {})
+}
+
 /** Start the session (and its note) for an appointment. */
 export async function startSessionFromAppointment(
   appointmentId: string
