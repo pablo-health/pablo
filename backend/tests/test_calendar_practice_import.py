@@ -706,7 +706,7 @@ class TestBusyWindows:
         calendar_service: GoogleCalendarService,
         token_repo: MagicMock,
     ) -> None:
-        """Declining "Also check when I'm busy" at connect lands here — not
+        """Declining "Check for scheduling conflicts" at connect lands here — not
         a failure, the caller falls back to the scan-only grid."""
         token_repo.get.return_value = GoogleCalendarTokenDoc(
             user_id="user-001",

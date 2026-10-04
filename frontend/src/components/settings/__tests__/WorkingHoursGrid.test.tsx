@@ -131,4 +131,19 @@ describe("WorkingHoursGrid", () => {
     expect(footer).toHaveTextContent("5:00 PM")
     expect(screen.queryByRole("button", { name: "Set Monday to Friday, 9 to 5" })).not.toBeInTheDocument()
   })
+
+  // jsdom does no layout, so the e2e availability spec measures the clipping
+  // itself. This pins the cause: a fixed width sized for shorter labels.
+  it("sizes each time select to its label rather than a fixed width", () => {
+    rulesData = [makeRule({ params: { day_of_week: 0, start: "12:30", end: "21:30" } })]
+
+    render(<WorkingHoursGrid />)
+
+    for (const name of ["Monday start", "Monday end"]) {
+      const trigger = screen.getByRole("combobox", { name })
+      expect(trigger.className).toMatch(/\bw-fit\b/)
+      expect(trigger.className).not.toMatch(/(^|\s)w-\[/)
+    }
+    expect(screen.getByRole("combobox", { name: "Monday start" })).toHaveTextContent("12:30 PM")
+  })
 })

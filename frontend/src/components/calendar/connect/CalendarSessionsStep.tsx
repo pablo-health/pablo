@@ -5,6 +5,7 @@
 import { Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import { InfoPopover } from "@/components/ui/InfoPopover"
 import { SetupStepHead } from "@/components/setup"
 import type {
   CalendarWriteTarget,
@@ -17,21 +18,23 @@ import type {
 /** What each choice does, in the therapist's terms. The guarantee that goes
  * with it is never written here — it comes back from the API, generated from
  * the provider's own declaration of how far the underlying permission
- * reaches, so this copy cannot promise a limit that isn't real. */
+ * reaches, so this copy cannot promise a limit that isn't real. The guarantee
+ * sits behind "About this permission": it is how far the access reaches, not a
+ * condition of choosing it. */
 const WRITE_TARGET_COPY: Record<CalendarWriteTarget, { label: string; does: string }> = {
   app_calendar: {
-    label: "A calendar Pablo makes",
-    does: "Pablo adds a calendar to your Google account and puts your sessions on it.",
+    label: "A separate Pablo calendar",
+    does: "Keeps Pablo sessions separate from your main calendar.",
   },
   primary: {
     label: "My main calendar",
-    does: "Your sessions go onto the calendar you already use.",
+    does: "Adds Pablo sessions to the calendar you already use.",
   },
 }
 
 const BUSY_COPY = {
-  label: "Also check when I'm busy",
-  does: "Pablo looks at your calendar before offering a time, so you aren't double-booked.",
+  label: "Check for scheduling conflicts",
+  does: "Uses your busy times to avoid offering times when you're unavailable.",
 }
 
 /** The three rungs, each with what an event actually ends up saying.
@@ -44,18 +47,19 @@ const TITLING_COPY: Record<
 > = {
   generic: {
     label: "Therapy Session",
-    does: "Nothing identifying leaves Pablo.",
+    does: "Shows no identifying details.",
     preview: "Therapy Session",
   },
   initials: {
     label: "Initials",
-    does: "Enough for you to recognise. Nothing for anyone reading over your shoulder.",
+    does: "Easy to recognize without showing a full name.",
     preview: "J.M.",
     recommended: true,
   },
   full: {
     label: "Full name",
-    does: "Only if this Google account is covered by your practice's own agreement.",
+    does:
+      "Use only with a Google Workspace account covered by your practice's agreement with Google.",
     preview: "Jane Miller",
   },
 }
@@ -114,71 +118,72 @@ export function CalendarSessionsStep({
     <div className="space-y-5">
       <SetupStepHead
         eyebrow={`Step ${step}`}
-        title="Where your sessions go"
-        lede="Pick where Pablo writes your sessions. Google is only asked for what you pick here."
+        title="Choose a calendar"
+        lede="Choose where sessions booked in Pablo should appear."
       />
 
       <fieldset className="space-y-3">
-        <legend className="sr-only">Where Pablo writes your sessions</legend>
+        <legend className="sr-only">Where sessions booked in Pablo appear</legend>
         {(Object.keys(WRITE_TARGET_COPY) as CalendarWriteTarget[]).map((target) => {
           const copy = WRITE_TARGET_COPY[target]
           const promise = promiseFor(target)
           return (
-            <label
+            // The info button sits beside the label, not in it, so opening
+            // it never picks the option.
+            <div
               key={target}
-              className="flex cursor-pointer gap-3 rounded-lg border border-border p-4 hover:bg-muted/40"
+              className="flex items-start gap-2 rounded-lg border border-border p-4 hover:bg-muted/40"
             >
-              <input
-                type="radio"
-                name="calendar-write-target"
-                className="mt-1"
-                checked={selection.write_target === target}
-                onChange={() => onSelectionChange({ ...selection, write_target: target })}
-              />
-              <span className="space-y-1">
-                <span className="flex items-center gap-2 text-sm font-medium text-neutral-900">
-                  {copy.label}
-                  {options?.default_write_target === target ? (
-                    <span className="rounded-full bg-primary-100 px-2 py-0.5 text-[11px] font-medium text-primary-700">
-                      Recommended
-                    </span>
-                  ) : null}
+              <label className="flex flex-1 cursor-pointer gap-3">
+                <input
+                  type="radio"
+                  name="calendar-write-target"
+                  className="mt-1"
+                  checked={selection.write_target === target}
+                  onChange={() => onSelectionChange({ ...selection, write_target: target })}
+                />
+                <span className="space-y-1">
+                  <span className="flex items-center gap-2 text-sm font-medium text-neutral-900">
+                    {copy.label}
+                    {options?.default_write_target === target ? (
+                      <span className="rounded-full bg-primary-100 px-2 py-0.5 text-[11px] font-medium text-primary-700">
+                        Recommended
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="block text-sm text-muted-foreground">{copy.does}</span>
                 </span>
-                <span className="block text-sm text-muted-foreground">{copy.does}</span>
-                {promise ? (
-                  <span className="block text-xs text-muted-foreground">{promise}</span>
-                ) : null}
-              </span>
-            </label>
+              </label>
+              {promise ? <InfoPopover label="About this permission">{promise}</InfoPopover> : null}
+            </div>
           )
         })}
       </fieldset>
 
-      <label className="flex cursor-pointer gap-3 rounded-lg border border-border p-4 hover:bg-muted/40">
-        <Checkbox
-          className="mt-1"
-          checked={selection.busy}
-          onCheckedChange={(checked) =>
-            onSelectionChange({ ...selection, busy: checked === true })
-          }
-          aria-label={BUSY_COPY.label}
-        />
-        <span className="space-y-1">
-          <span className="block text-sm font-medium text-neutral-900">{BUSY_COPY.label}</span>
-          <span className="block text-sm text-muted-foreground">{BUSY_COPY.does}</span>
-          {options?.busy.promise ? (
-            <span className="block text-xs text-muted-foreground">{options.busy.promise}</span>
-          ) : null}
-        </span>
-      </label>
+      <div className="flex items-start gap-2 rounded-lg border border-border p-4 hover:bg-muted/40">
+        <label className="flex flex-1 cursor-pointer gap-3">
+          <Checkbox
+            className="mt-1"
+            checked={selection.busy}
+            onCheckedChange={(checked) =>
+              onSelectionChange({ ...selection, busy: checked === true })
+            }
+            aria-label={BUSY_COPY.label}
+          />
+          <span className="space-y-1">
+            <span className="block text-sm font-medium text-neutral-900">{BUSY_COPY.label}</span>
+            <span className="block text-sm text-muted-foreground">{BUSY_COPY.does}</span>
+          </span>
+        </label>
+        {options?.busy.promise ? (
+          <InfoPopover label="About this permission">{options.busy.promise}</InfoPopover>
+        ) : null}
+      </div>
 
       <fieldset className="space-y-3">
-        <legend className="text-sm font-medium text-neutral-900">
-          How should those events read?
-        </legend>
+        <legend className="text-sm font-medium text-neutral-900">How should sessions appear?</legend>
         <p className="text-sm text-muted-foreground">
-          Whatever you pick is what shows on your phone&rsquo;s lock screen, and in any calendar you
-          share.
+          This title may appear in notifications and shared calendars.
         </p>
         {TITLING_ORDER.map((style) => {
           const copy = TITLING_COPY[style]
@@ -220,41 +225,46 @@ export function CalendarSessionsStep({
         ) : null}
 
         {selection.event_titling === "full" ? (
-          <label className="flex cursor-pointer gap-3 rounded-lg border border-amber-300 bg-amber-50/60 p-4">
-            <Checkbox
-              className="mt-1"
-              checked={attested}
-              onCheckedChange={(checked) => onAttestedChange(checked === true)}
-              aria-label="Confirm this Google account is covered by your practice's agreement"
-            />
-            <span className="text-sm text-neutral-900">
-              I confirm this Google account is covered by a business associate agreement my practice
-              holds. <strong>Pablo&rsquo;s agreement does not cover your Google account</strong> — a
-              personal Gmail address never qualifies.
-            </span>
-          </label>
+          // The Gmail limit stays on the page: it is a condition of this
+          // choice, not background detail.
+          <div className="space-y-2 rounded-lg border border-amber-300 bg-amber-50/60 p-4">
+            <label className="flex cursor-pointer gap-3">
+              <Checkbox
+                className="mt-1"
+                checked={attested}
+                onCheckedChange={(checked) => onAttestedChange(checked === true)}
+              />
+              <span className="text-sm text-neutral-900">
+                I confirm this Google Workspace account is covered by my practice&rsquo;s business
+                associate agreement with Google.
+              </span>
+            </label>
+            <p className="pl-7 text-sm text-neutral-900">
+              Personal Gmail accounts cannot be used for full names.
+            </p>
+          </div>
         ) : null}
       </fieldset>
 
       {!connected ? (
         <Button onClick={onConnect} disabled={connecting}>
           {connecting ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
-          Connect Google Calendar
+          Continue with Google
         </Button>
       ) : googleChanged ? (
         <div className="space-y-2">
           <p className="text-sm text-muted-foreground">
-            You changed what Pablo can do on your calendar, so Google will ask you again.
+            Google will ask you to approve the updated access.
           </p>
           <Button onClick={onConnect} disabled={connecting}>
             {connecting ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
-            Update access with Google
+            Continue with Google
           </Button>
         </div>
       ) : titlingChanged ? (
         <Button onClick={onSaveTitling} disabled={connecting}>
           {connecting ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
-          Save how events read
+          Save event titles
         </Button>
       ) : null}
 

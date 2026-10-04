@@ -219,7 +219,7 @@ describe("sessions from the clinician's own calendar", () => {
 
     const dialog = screen.getByRole("dialog")
     expect(
-      within(dialog).getByText("Already a client of the practice, seen by Dr. Rivera.")
+      within(dialog).getByText("Already in your practice, seen by Dr. Rivera.")
     ).toBeInTheDocument()
     expect(
       within(dialog).getByText("Ask Dr. Rivera or your practice owner for access.")

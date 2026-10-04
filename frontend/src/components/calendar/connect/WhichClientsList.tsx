@@ -44,7 +44,6 @@ function choiceLabel(choice: ImportPatientChoice): string {
 /** A colleague's client: who sees them, and who to ask. Nothing about the
  * chart itself — the row's title is the calendar's own wording. */
 function SeenElsewhere({ names }: { names: string[] }) {
-  const people = usePeopleTerm()
   const seenBy =
     names.length > 0
       ? `, seen by ${new Intl.ListFormat("en", { type: "conjunction" }).format(names)}`
@@ -56,7 +55,7 @@ function SeenElsewhere({ names }: { names: string[] }) {
   return (
     <>
       <span className="block text-xs text-secondary-700">
-        Already a {people.one} of the practice{seenBy}.
+        Already in your practice{seenBy}.
       </span>
       <span className="block text-xs text-muted-foreground">Ask {ask} for access.</span>
     </>
@@ -179,7 +178,7 @@ export function WhichClientsList({
                 // Leaving a row unticked only skips it for now; this answer
                 // is kept, so it is not asked about again.
                 <span className="block text-xs text-muted-foreground">
-                  Not a {people.one}. Pablo will remember.{" "}
+                  Marked as not a {people.one}.{" "}
                   <button
                     type="button"
                     onClick={() => onToggleNotClient(key)}

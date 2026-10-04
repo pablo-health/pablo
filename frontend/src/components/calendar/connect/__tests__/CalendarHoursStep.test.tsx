@@ -53,8 +53,8 @@ function renderStep() {
 }
 
 async function describe_(user: ReturnType<typeof userEvent.setup>, sentence: string) {
-  await user.type(screen.getByLabelText("Tell Pablo in your own words"), sentence)
-  await user.click(screen.getByRole("button", { name: "Check this" }))
+  await user.type(screen.getByLabelText("Describe your usual hours"), sentence)
+  await user.click(screen.getByRole("button", { name: "Review hours" }))
 }
 
 describe("CalendarHoursStep", () => {
@@ -74,11 +74,11 @@ describe("CalendarHoursStep", () => {
 
     await user.click(screen.getByRole("button", { name: "No appointments before 10am" }))
 
-    expect(screen.getByLabelText("Tell Pablo in your own words")).toHaveValue(
+    expect(screen.getByLabelText("Describe your usual hours")).toHaveValue(
       "No appointments before 10am"
     )
 
-    await user.click(screen.getByRole("button", { name: "Check this" }))
+    await user.click(screen.getByRole("button", { name: "Review hours" }))
 
     expect(parseRules).toHaveBeenCalledWith({ text: "No appointments before 10am" })
   })
@@ -93,7 +93,7 @@ describe("CalendarHoursStep", () => {
     expect(await screen.findByText("Monday to Thursday, 9:00 AM to 5:00 PM")).toBeInTheDocument()
     expect(createRule).not.toHaveBeenCalled()
 
-    await user.click(screen.getByRole("button", { name: "Yes, save this" }))
+    await user.click(screen.getByRole("button", { name: "Save hours" }))
 
     await waitFor(() => expect(createRule).toHaveBeenCalledTimes(4))
     expect(createRule.mock.calls[0][0]).toEqual({
@@ -125,7 +125,7 @@ describe("CalendarHoursStep", () => {
 
     await describe_(user, "only two intakes a week")
     expect(await screen.findByText("At most 2 intakes a week")).toBeInTheDocument()
-    await user.click(screen.getByRole("button", { name: "Yes, save this" }))
+    await user.click(screen.getByRole("button", { name: "Save hours" }))
 
     await waitFor(() => expect(createRule).toHaveBeenCalledTimes(1))
     expect(createRule.mock.calls[0][0]).toMatchObject({
@@ -194,7 +194,7 @@ describe("CalendarHoursStep", () => {
 
     await describe_(user, "two intakes a week on Tuesdays")
     await screen.findByText("Which?")
-    await user.click(screen.getByRole("button", { name: "Check this" }))
+    await user.click(screen.getByRole("button", { name: "Review hours" }))
     await screen.findByText("Which?")
 
     expect(screen.queryByText(/here is the grid instead/)).toBeNull()
@@ -259,7 +259,7 @@ describe("CalendarHoursStep", () => {
 
     const removeFriday = screen.getAllByRole("button", { name: "Remove" })[1]
     await user.click(removeFriday)
-    await user.click(screen.getByRole("button", { name: "Yes, save this" }))
+    await user.click(screen.getByRole("button", { name: "Save hours" }))
 
     await waitFor(() => expect(createRule).toHaveBeenCalledTimes(4))
     expect(
@@ -291,10 +291,10 @@ describe("CalendarHoursStep", () => {
 
     await describe_(user, "afternoons I guess")
     await screen.findByText("Not sure what you mean.")
-    await user.click(screen.getByRole("button", { name: "Check this" }))
+    await user.click(screen.getByRole("button", { name: "Review hours" }))
 
     expect(await screen.findByLabelText("Monday")).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Save these hours" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Save hours" })).toBeInTheDocument()
   })
 
   it("falls back to the grid when the parser cannot be reached at all", async () => {
@@ -306,16 +306,16 @@ describe("CalendarHoursStep", () => {
 
     expect(await screen.findByLabelText("Monday")).toBeInTheDocument()
     // Nothing to go back to while the parser is down.
-    expect(screen.queryByRole("button", { name: "Describe them instead" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Describe my hours" })).not.toBeInTheDocument()
   })
 
   it("keeps the grid reachable on purpose, and saves the same rules from it", async () => {
     const user = userEvent.setup()
     renderStep()
 
-    await user.click(screen.getByRole("button", { name: "Pick from a grid instead" }))
+    await user.click(screen.getByRole("button", { name: "Use the hours grid" }))
     await user.click(screen.getByLabelText("Tuesday"))
-    await user.click(screen.getByRole("button", { name: "Save these hours" }))
+    await user.click(screen.getByRole("button", { name: "Save hours" }))
 
     await waitFor(() => expect(createRule).toHaveBeenCalledTimes(4))
     expect(createRule.mock.calls.map((call) => call[0].params.day_of_week)).toEqual([0, 2, 3, 4])
@@ -326,14 +326,14 @@ describe("CalendarHoursStep", () => {
     const user = userEvent.setup()
     renderStep()
 
-    await user.click(screen.getByRole("button", { name: "Pick from a grid instead" }))
-    expect(screen.getByRole("combobox", { name: "Times are in" })).toHaveTextContent(
+    await user.click(screen.getByRole("button", { name: "Use the hours grid" }))
+    expect(screen.getByRole("combobox", { name: "Time zone" })).toHaveTextContent(
       "America/New York"
     )
 
-    await user.click(screen.getByRole("combobox", { name: "Times are in" }))
+    await user.click(screen.getByRole("combobox", { name: "Time zone" }))
     await user.click(screen.getByRole("option", { name: "America/Chicago" }))
-    await user.click(screen.getByRole("button", { name: "Save these hours" }))
+    await user.click(screen.getByRole("button", { name: "Save hours" }))
 
     await waitFor(() =>
       expect(savePreferences).toHaveBeenCalledWith({ timezone: "America/Chicago" })
@@ -347,13 +347,13 @@ describe("CalendarHoursStep", () => {
     preferencesState.browserTimezone = "America/Los_Angeles"
     renderStep()
 
-    await user.click(screen.getByRole("button", { name: "Pick from a grid instead" }))
-    expect(screen.getByRole("combobox", { name: "Times are in" })).toHaveTextContent(
+    await user.click(screen.getByRole("button", { name: "Use the hours grid" }))
+    expect(screen.getByRole("combobox", { name: "Time zone" })).toHaveTextContent(
       "America/Los Angeles"
     )
-    expect(screen.getByText(/Detected from this browser\./)).toBeInTheDocument()
+    expect(screen.getByText(/Detected from your browser\./)).toBeInTheDocument()
 
-    await user.click(screen.getByRole("button", { name: "Save these hours" }))
+    await user.click(screen.getByRole("button", { name: "Save hours" }))
     await waitFor(() =>
       expect(savePreferences).toHaveBeenCalledWith({ timezone: "America/Los_Angeles" })
     )
@@ -365,14 +365,14 @@ describe("CalendarHoursStep", () => {
     preferencesState.browserTimezone = "America/Los_Angeles"
     renderStep()
 
-    await user.click(screen.getByRole("button", { name: "Pick from a grid instead" }))
-    expect(screen.getByRole("combobox", { name: "Times are in" })).toHaveTextContent(
+    await user.click(screen.getByRole("button", { name: "Use the hours grid" }))
+    expect(screen.getByRole("combobox", { name: "Time zone" })).toHaveTextContent(
       "America/Chicago"
     )
     expect(screen.getByText(/From your settings\./)).toBeInTheDocument()
-    expect(screen.queryByText(/Detected from this browser/)).toBeNull()
+    expect(screen.queryByText(/Detected from your browser/)).toBeNull()
 
-    await user.click(screen.getByRole("button", { name: "Save these hours" }))
+    await user.click(screen.getByRole("button", { name: "Save hours" }))
     await waitFor(() => expect(createRule).toHaveBeenCalled())
     expect(savePreferences).not.toHaveBeenCalled()
   })
@@ -381,8 +381,8 @@ describe("CalendarHoursStep", () => {
     const user = userEvent.setup()
     renderStep()
 
-    await user.click(screen.getByRole("button", { name: "Pick from a grid instead" }))
-    await user.click(screen.getByRole("button", { name: "Save these hours" }))
+    await user.click(screen.getByRole("button", { name: "Use the hours grid" }))
+    await user.click(screen.getByRole("button", { name: "Save hours" }))
 
     await waitFor(() => expect(createRule).toHaveBeenCalled())
     expect(savePreferences).not.toHaveBeenCalled()
@@ -415,13 +415,13 @@ describe("CalendarHoursStep while Pablo reads", () => {
 
     expect(screen.getByRole("status")).toHaveTextContent("Reading your hours")
     expect(screen.queryByText("Reading…")).toBeNull()
-    expect(screen.getByLabelText("Tell Pablo in your own words")).toBeEnabled()
+    expect(screen.getByLabelText("Describe your usual hours")).toBeEnabled()
     expect(screen.getByRole("button", { name: "No appointments before 10am" })).toBeEnabled()
   })
 
   it("holds the bear's place below the button, so reading never moves the button", () => {
     const { rerender } = renderStep()
-    const button = screen.getByRole("button", { name: "Check this" })
+    const button = screen.getByRole("button", { name: "Review hours" })
     const slot = screen.getByTestId("hours-reading-slot")
     // Held open while idle, and after the button rather than above it.
     expect(slot).toBeEmptyDOMElement()
@@ -446,8 +446,8 @@ describe("CalendarHoursStep while Pablo reads", () => {
     renderStep()
 
     await describe_(user, "Monday to Thursday, 9 to 5")
-    await user.type(screen.getByLabelText("Tell Pablo in your own words"), ", and Fridays")
-    await user.click(screen.getByRole("button", { name: "Check this" }))
+    await user.type(screen.getByLabelText("Describe your usual hours"), ", and Fridays")
+    await user.click(screen.getByRole("button", { name: "Review hours" }))
     expect(parseRules).toHaveBeenCalledTimes(2)
 
     const friday = { ...workingHours(4) }
@@ -473,7 +473,7 @@ describe("CalendarHoursStep saving", () => {
   async function confirmMonToThu(user: ReturnType<typeof userEvent.setup>) {
     await describe_(user, "Monday to Thursday, 9 to 5")
     await screen.findByText("Monday to Thursday, 9:00 AM to 5:00 PM")
-    await user.click(screen.getByRole("button", { name: "Yes, save this" }))
+    await user.click(screen.getByRole("button", { name: "Save hours" }))
   }
 
   it("creates every confirmed rule at once rather than waiting on each in turn", async () => {
@@ -507,11 +507,11 @@ describe("CalendarHoursStep saving", () => {
     )
     expect(onSaved).not.toHaveBeenCalled()
     // The echo is frozen: changing it now would describe hours already half saved.
-    expect(screen.getByRole("button", { name: "Say it differently" })).toBeDisabled()
+    expect(screen.getByRole("button", { name: "Edit description" })).toBeDisabled()
 
     createRule.mockClear()
     createRule.mockResolvedValue({})
-    await user.click(screen.getByRole("button", { name: "Yes, save this" }))
+    await user.click(screen.getByRole("button", { name: "Save hours" }))
 
     await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1))
     expect(createRule).toHaveBeenCalledTimes(1)
@@ -526,9 +526,9 @@ describe("CalendarHoursStep saving", () => {
     await confirmMonToThu(user)
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Those hours could not be saved. Try again."
+      "Pablo couldn't save your hours. Try again."
     )
-    expect(screen.getByRole("button", { name: "Say it differently" })).toBeEnabled()
+    expect(screen.getByRole("button", { name: "Edit description" })).toBeEnabled()
   })
 
   it("saves a changed timezone before the hours that are read in it", async () => {
@@ -538,10 +538,10 @@ describe("CalendarHoursStep saving", () => {
     createRule.mockImplementation(async () => order.push("rule"))
     renderStep()
 
-    await user.click(screen.getByRole("button", { name: "Pick from a grid instead" }))
-    await user.click(screen.getByRole("combobox", { name: "Times are in" }))
+    await user.click(screen.getByRole("button", { name: "Use the hours grid" }))
+    await user.click(screen.getByRole("combobox", { name: "Time zone" }))
     await user.click(screen.getByRole("option", { name: "America/Chicago" }))
-    await user.click(screen.getByRole("button", { name: "Save these hours" }))
+    await user.click(screen.getByRole("button", { name: "Save hours" }))
 
     await waitFor(() => expect(onSaved).toHaveBeenCalled())
     expect(order[0]).toBe("timezone")

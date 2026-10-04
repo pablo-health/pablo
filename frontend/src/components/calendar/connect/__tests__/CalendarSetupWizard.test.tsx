@@ -96,10 +96,18 @@ const DISCONNECTED: GoogleCalendarStatus = {
 
 const CONSENT_OPTIONS: GoogleCalendarConsentOptions = {
   write_targets: [
-    { id: "app_calendar", promise: "Google Calendar limits this to the calendar Pablo creates." },
-    { id: "primary", promise: "Pablo uses this only for the sessions you book in Pablo." },
+    { id: "app_calendar", promise: "Google Calendar limits access to the calendar Pablo creates." },
+    {
+      id: "primary",
+      promise:
+        "Google Calendar grants broader access. Pablo uses it only for adding, updating and removing sessions booked in Pablo.",
+    },
   ],
-  busy: { id: "busy", promise: "Google Calendar limits this to when you are busy." },
+  busy: {
+    id: "busy",
+    promise:
+      "Google Calendar limits access to busy times; event titles and guests are not shared.",
+  },
   default_write_target: "app_calendar",
   busy_default: true,
 }
@@ -114,13 +122,13 @@ function renderWizard(props: React.ComponentProps<typeof CalendarSetupWizard> = 
 }
 
 async function goToSessionsStep(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(await screen.findByRole("button", { name: /sessions/i }))
-  await screen.findByText("Where your sessions go")
+  await user.click(await screen.findByRole("button", { name: /session calendar/i }))
+  await screen.findByText("Choose a calendar")
 }
 
 async function goToClientsStep(user: ReturnType<typeof userEvent.setup>) {
   await user.click(await screen.findByRole("button", { name: /your clients/i }))
-  await screen.findByText("Bring over your week")
+  await screen.findByText("Import recurring sessions")
 }
 
 const CONNECTED: GoogleCalendarStatus = {
@@ -201,7 +209,7 @@ describe("CalendarSetupWizard", () => {
     const user = userEvent.setup()
     renderWizard()
 
-    await user.click(await screen.findByRole("button", { name: /connect google calendar/i }))
+    await user.click(await screen.findByRole("button", { name: "Continue with Google" }))
 
     await waitFor(() => expect(getAuthUrl).toHaveBeenCalled())
     expect(getAuthUrl.mock.calls[0][1]).toEqual({ write_target: "app_calendar", busy: true, event_titling: "initials" })
@@ -210,13 +218,13 @@ describe("CalendarSetupWizard", () => {
     )
   })
 
-  it("a connect is never mistaken for an abandoned 'Look at my week' grant", async () => {
+  it("a connect is never mistaken for an abandoned 'Scan calendar' grant", async () => {
     // The consent for the import was abandoned at Google; its marker stayed.
     window.sessionStorage.setItem("pablo.calendar-import.pending", "1")
     const user = userEvent.setup()
     renderWizard()
 
-    await user.click(await screen.findByRole("button", { name: /connect google calendar/i }))
+    await user.click(await screen.findByRole("button", { name: "Continue with Google" }))
 
     await waitFor(() => expect(getAuthUrl).toHaveBeenCalled())
     expect(window.sessionStorage.getItem("pablo.calendar-import.pending")).toBeNull()
@@ -228,7 +236,7 @@ describe("CalendarSetupWizard", () => {
     await goToSessionsStep(user)
 
     await user.click(screen.getByRole("radio", { name: /my main calendar/i }))
-    await user.click(screen.getByRole("button", { name: /connect google calendar/i }))
+    await user.click(screen.getByRole("button", { name: "Continue with Google" }))
 
     await waitFor(() => expect(getAuthUrl).toHaveBeenCalled())
     expect(getAuthUrl.mock.calls[0][1]).toEqual({ write_target: "primary", busy: true, event_titling: "initials" })
@@ -239,26 +247,44 @@ describe("CalendarSetupWizard", () => {
     renderWizard()
     await goToSessionsStep(user)
 
-    await user.click(screen.getByRole("checkbox", { name: /also check when i'm busy/i }))
-    await user.click(screen.getByRole("button", { name: /connect google calendar/i }))
+    await user.click(screen.getByRole("checkbox", { name: "Check for scheduling conflicts" }))
+    await user.click(screen.getByRole("button", { name: "Continue with Google" }))
 
     await waitFor(() => expect(getAuthUrl).toHaveBeenCalled())
     expect(getAuthUrl.mock.calls[0][1]).toEqual({ write_target: "app_calendar", busy: false, event_titling: "initials" })
   })
 
-  it("shows each choice's promise as the API generated it", async () => {
+  it("shows each choice's promise as the API generated it, behind its info button", async () => {
     const user = userEvent.setup()
     renderWizard()
     await goToSessionsStep(user)
 
+    const [appCalendar, primary, busy] = screen.getAllByRole("button", {
+      name: "About this permission",
+    })
     expect(
-      screen.getByText("Google Calendar limits this to the calendar Pablo creates.")
+      screen.queryByText("Google Calendar limits access to the calendar Pablo creates.")
+    ).not.toBeInTheDocument()
+
+    await user.click(appCalendar)
+    expect(
+      screen.getByText("Google Calendar limits access to the calendar Pablo creates.")
     ).toBeInTheDocument()
+    await user.keyboard("{Escape}")
+
+    await user.click(primary)
     expect(
-      screen.getByText("Pablo uses this only for the sessions you book in Pablo.")
+      screen.getByText(
+        "Google Calendar grants broader access. Pablo uses it only for adding, updating and removing sessions booked in Pablo."
+      )
     ).toBeInTheDocument()
+    await user.keyboard("{Escape}")
+
+    await user.click(busy)
     expect(
-      screen.getByText("Google Calendar limits this to when you are busy.")
+      screen.getByText(
+        "Google Calendar limits access to busy times; event titles and guests are not shared."
+      )
     ).toBeInTheDocument()
   })
 
@@ -292,7 +318,7 @@ describe("CalendarSetupWizard", () => {
     // says nothing — this test used to assert the hash was on screen.
     expect(await screen.findByText("Pablo Sessions")).toBeInTheDocument()
     expect(screen.queryByText("pablo-made@group.calendar.google.com")).not.toBeInTheDocument()
-    expect(screen.getByText("A calendar Pablo made for your sessions")).toBeInTheDocument()
+    expect(screen.getByText("A separate calendar for Pablo sessions")).toBeInTheDocument()
 
     await user.click(screen.getByRole("button", { name: /disconnect/i }))
     // Nothing happens until the clinician confirms.
@@ -329,7 +355,7 @@ describe("CalendarSetupWizard", () => {
     const user = userEvent.setup()
     renderWizard()
 
-    await user.click(await screen.findByRole("button", { name: /connect google calendar/i }))
+    await user.click(await screen.findByRole("button", { name: "Continue with Google" }))
 
     expect(await screen.findByText("Google is unreachable")).toBeInTheDocument()
   })
@@ -340,7 +366,7 @@ describe("CalendarSetupWizard", () => {
     renderWizard()
     await goToClientsStep(user)
 
-    await user.click(screen.getByRole("button", { name: /skip, i.ll add them myself/i }))
+    await user.click(screen.getByRole("button", { name: "Skip import" }))
 
     expect(routerPush).toHaveBeenCalledWith("/dashboard/settings")
     expect(scanForImport).not.toHaveBeenCalled()
@@ -360,7 +386,7 @@ describe("CalendarSetupWizard", () => {
     renderWizard()
     await goToClientsStep(user)
 
-    await user.click(screen.getByRole("button", { name: "Look at my week" }))
+    await user.click(screen.getByRole("button", { name: "Scan calendar" }))
     await waitFor(() => expect(scanForImport).toHaveBeenCalled())
     await screen.findByTestId("qualifying-count")
 
@@ -421,7 +447,7 @@ describe("CalendarSetupWizard", () => {
     renderWizard()
     await goToClientsStep(user)
 
-    await user.click(screen.getByRole("button", { name: "Look at my week" }))
+    await user.click(screen.getByRole("button", { name: "Scan calendar" }))
     await screen.findByTestId("qualifying-count")
     await user.click(screen.getByRole("button", { name: /continue/i }))
     await screen.findByText("Matches Jane Miller")
@@ -475,7 +501,7 @@ describe("CalendarSetupWizard", () => {
     renderWizard()
     await goToClientsStep(user)
 
-    await user.click(screen.getByRole("button", { name: "Look at my week" }))
+    await user.click(screen.getByRole("button", { name: "Scan calendar" }))
     await screen.findByTestId("qualifying-count")
     await user.click(screen.getByRole("button", { name: /continue/i }))
     await screen.findByText("Which of these are clients?")
@@ -512,7 +538,7 @@ describe("CalendarSetupWizard", () => {
     renderWizard()
     await goToClientsStep(user)
 
-    await user.click(screen.getByRole("button", { name: "Look at my week" }))
+    await user.click(screen.getByRole("button", { name: "Scan calendar" }))
     await screen.findByTestId("qualifying-count")
     await user.click(screen.getByRole("button", { name: /continue/i }))
     await screen.findByText("Which of these are clients?")
@@ -541,7 +567,7 @@ describe("CalendarSetupWizard", () => {
     renderWizard()
     await goToClientsStep(user)
 
-    await user.click(screen.getByRole("button", { name: "Look at my week" }))
+    await user.click(screen.getByRole("button", { name: "Scan calendar" }))
 
     await waitFor(() =>
       expect(window.location.assign).toHaveBeenCalledWith(
@@ -582,7 +608,7 @@ describe("CalendarSetupWizard event titling", () => {
 
     expect(screen.getByRole("radio", { name: /initials/i })).toBeChecked()
 
-    await user.click(screen.getByRole("button", { name: /connect google calendar/i }))
+    await user.click(screen.getByRole("button", { name: "Continue with Google" }))
     await waitFor(() => expect(getAuthUrl).toHaveBeenCalled())
     expect(getAuthUrl.mock.calls[0][1].event_titling).toBe("initials")
   })
@@ -593,7 +619,7 @@ describe("CalendarSetupWizard event titling", () => {
     await goToSessionsStep(user)
 
     await user.click(screen.getByRole("radio", { name: /therapy session/i }))
-    await user.click(screen.getByRole("button", { name: /connect google calendar/i }))
+    await user.click(screen.getByRole("button", { name: "Continue with Google" }))
 
     await waitFor(() => expect(getAuthUrl).toHaveBeenCalled())
     expect(getAuthUrl.mock.calls[0][1].event_titling).toBe("generic")
@@ -613,12 +639,16 @@ describe("CalendarSetupWizard event titling", () => {
     renderWizard()
     await goToSessionsStep(user)
 
-    await user.click(screen.getByRole("radio", { name: /full name/i }))
+    await user.click(screen.getByRole("radio", { name: /^full name/i }))
 
     const attestation = screen.getByRole("checkbox", {
-      name: /covered by your practice's agreement/i,
+      name: /covered by my practice’s business associate agreement with Google/i,
     })
     expect(attestation).toBeInTheDocument()
+    // A condition of the choice, so on the page rather than behind a button.
+    expect(
+      screen.getByText("Personal Gmail accounts cannot be used for full names.")
+    ).toBeVisible()
     // The wizard's own nav button, not the step's connect action.
     const nav = () => screen.getAllByRole("button", { name: /continue|finish/i }).at(-1)!
     expect(nav()).toBeDisabled()
@@ -661,8 +691,8 @@ describe("CalendarSetupWizard event titling", () => {
     await goToSessionsStep(user)
 
     await user.click(screen.getByRole("radio", { name: /therapy session/i }))
-    expect(screen.queryByRole("button", { name: /update access with google/i })).toBeNull()
-    await user.click(screen.getByRole("button", { name: /save how events read/i }))
+    expect(screen.queryByRole("button", { name: "Continue with Google" })).toBeNull()
+    await user.click(screen.getByRole("button", { name: "Save event titles" }))
 
     await waitFor(() => expect(setTitling).toHaveBeenCalledWith("generic", false))
     expect(getAuthUrl).not.toHaveBeenCalled()
@@ -695,9 +725,9 @@ describe("CalendarSetupWizard changing an existing connection", () => {
     renderWizard()
     await goToSessionsStep(user)
 
-    expect(screen.queryByRole("button", { name: /update access with google/i })).toBeNull()
-    expect(screen.queryByRole("button", { name: /save how events read/i })).toBeNull()
-    expect(screen.queryByRole("button", { name: /connect google calendar/i })).toBeNull()
+    expect(screen.queryByRole("button", { name: "Continue with Google" })).toBeNull()
+    expect(screen.queryByRole("button", { name: "Save event titles" })).toBeNull()
+    expect(screen.queryByRole("button", { name: "Continue with Google" })).toBeNull()
   })
 
   it("goes to Google when where sessions go changes", async () => {
@@ -706,8 +736,8 @@ describe("CalendarSetupWizard changing an existing connection", () => {
     await goToSessionsStep(user)
 
     await user.click(screen.getByRole("radio", { name: /my main calendar/i }))
-    expect(screen.getByText(/google will ask you again/i)).toBeInTheDocument()
-    await user.click(screen.getByRole("button", { name: /update access with google/i }))
+    expect(screen.getByText("Google will ask you to approve the updated access.")).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Continue with Google" }))
 
     await waitFor(() => expect(getAuthUrl).toHaveBeenCalled())
     expect(getAuthUrl.mock.calls[0][1].write_target).toBe("primary")
@@ -719,8 +749,8 @@ describe("CalendarSetupWizard changing an existing connection", () => {
     renderWizard()
     await goToSessionsStep(user)
 
-    await user.click(screen.getByRole("checkbox", { name: /also check when i'm busy/i }))
-    await user.click(screen.getByRole("button", { name: /update access with google/i }))
+    await user.click(screen.getByRole("checkbox", { name: "Check for scheduling conflicts" }))
+    await user.click(screen.getByRole("button", { name: "Continue with Google" }))
 
     await waitFor(() => expect(getAuthUrl).toHaveBeenCalled())
     expect(getAuthUrl.mock.calls[0][1].busy).toBe(false)
@@ -777,7 +807,7 @@ describe("CalendarSetupWizard returning from Google", () => {
 
     // Mounted, and holding everything until sign-in settles: the exchange,
     // and the status read that would otherwise go out with no token.
-    await screen.findByRole("button", { name: "Connect Google Calendar" })
+    await screen.findByRole("button", { name: "Continue with Google" })
     expect(getStatus).not.toHaveBeenCalled()
     expect(completeConnect).not.toHaveBeenCalled()
     // Scrubbing the code now would strip it before anyone could spend it.
@@ -805,7 +835,7 @@ describe("CalendarSetupWizard returning from Google", () => {
     expect(routerReplace).not.toHaveBeenCalled()
   })
 
-  it("completes an incremental import grant and finishes what 'Look at my week' started", async () => {
+  it("completes an incremental import grant and finishes what 'Scan calendar' started", async () => {
     getStatus.mockResolvedValue(CONNECTED)
     completeImportConsent.mockResolvedValue({ status: "connected" })
     scanForImport.mockResolvedValue(proposalWith())
@@ -827,7 +857,7 @@ describe("CalendarSetupWizard returning from Google", () => {
     expect(scanForImport.mock.calls[0][1]).toBe(
       Intl.DateTimeFormat().resolvedOptions().timeZone
     )
-    await screen.findByText("Bring over your week")
+    await screen.findByText("Import recurring sessions")
     await screen.findByTestId("qualifying-count")
 
     expect(window.sessionStorage.getItem("pablo.calendar-import.pending")).toBeNull()
@@ -842,7 +872,7 @@ describe("CalendarSetupWizard returning from Google", () => {
     renderWizard()
 
     await waitFor(() => expect(completeConnect).toHaveBeenCalled())
-    await screen.findByText("Where your sessions go")
+    await screen.findByText("Choose a calendar")
     expect(screen.getByRole("status")).toHaveTextContent("Google Calendar is connected.")
   })
 
@@ -854,7 +884,7 @@ describe("CalendarSetupWizard returning from Google", () => {
 
     renderWizard()
 
-    await screen.findByText("Bring over your week")
+    await screen.findByText("Import recurring sessions")
     await screen.findByText(/google did not finish granting access/i)
     expect(scanForImport).not.toHaveBeenCalled()
   })
@@ -880,7 +910,7 @@ describe("CalendarSetupWizard hosted on another page", () => {
     const user = userEvent.setup()
     renderWizard({ returnPath: "/dashboard/calendar" })
 
-    await user.click(await screen.findByRole("button", { name: /connect google calendar/i }))
+    await user.click(await screen.findByRole("button", { name: "Continue with Google" }))
 
     await waitFor(() => expect(getAuthUrl).toHaveBeenCalled())
     expect(getAuthUrl.mock.calls[0][0]).toBe("https://app.example.test/dashboard/calendar")
@@ -917,7 +947,7 @@ describe("CalendarSetupWizard hosted on another page", () => {
     renderWizard({ onDone })
     await goToClientsStep(user)
 
-    await user.click(screen.getByRole("button", { name: /skip, i.ll add them myself/i }))
+    await user.click(screen.getByRole("button", { name: "Skip import" }))
 
     expect(onDone).toHaveBeenCalled()
     expect(routerPush).not.toHaveBeenCalled()
@@ -1000,7 +1030,7 @@ describe("CalendarSetupWizard step numbers", () => {
     expect(stepperNumber("Connect")).toBe("2")
   })
 
-  it("keeps 'Your hours' and every number after it through the round trip to Google", async () => {
+  it("keeps 'Hours' and every number after it through the round trip to Google", async () => {
     searchParams.set("code", "auth-code")
     searchParams.set("state", "state-from-google")
     getStatus.mockResolvedValue(CONNECTED)
@@ -1008,23 +1038,23 @@ describe("CalendarSetupWizard step numbers", () => {
     // Back from Google on a fresh page load: the hours now exist.
     renderWizard({ withHoursStep: true, hoursSaved: true })
 
-    await screen.findByText("Where your sessions go")
+    await screen.findByText("Choose a calendar")
     expect(screen.getByText("Step 3")).toBeInTheDocument()
-    expect(stepperNumber("Sessions")).toBe("3")
+    expect(stepperNumber("Session calendar")).toBe("3")
     expect(stepperNumber("Your clients")).toBe("4")
-    expect(stepperNumber("Your hours")).toBe("done")
+    expect(stepperNumber("Hours")).toBe("done")
     expect(stepperNumber("Connect")).toBe("done")
   })
 
-  it("does not tick Sessions off before it has been shown", async () => {
+  it("does not tick the session calendar step off before it has been shown", async () => {
     searchParams.set("code", "auth-code")
     searchParams.set("state", "state-from-google")
     getStatus.mockResolvedValue(CONNECTED)
 
     renderWizard({ withHoursStep: true, hoursSaved: true })
 
-    await screen.findByText("Where your sessions go")
-    expect(stepperNumber("Sessions")).not.toBe("done")
+    await screen.findByText("Choose a calendar")
+    expect(stepperNumber("Session calendar")).not.toBe("done")
   })
 
   it("opens on Connect, with the hours shown as saved, when they already exist", async () => {
@@ -1036,7 +1066,7 @@ describe("CalendarSetupWizard step numbers", () => {
     ).toBeInTheDocument()
     expect(screen.queryByTestId("calendar-hours-step")).not.toBeInTheDocument()
 
-    await user.click(stepperPill("Your hours"))
+    await user.click(stepperPill("Hours"))
     expect(screen.getByRole("heading", { name: "Your hours are saved" })).toBeInTheDocument()
     expect(screen.queryByTestId("calendar-hours-step")).not.toBeInTheDocument()
   })
@@ -1048,15 +1078,20 @@ describe("CalendarSetupWizard step numbers", () => {
     expect(screen.queryByRole("heading", { name: "Google Calendar" })).not.toBeInTheDocument()
   })
 
-  it("only promises what the next step really offers", async () => {
+  it("keeps the permission detail behind About Google access", async () => {
+    const user = userEvent.setup()
     renderWizard()
 
     await screen.findByRole("heading", { name: "Connect Google Calendar" })
     expect(screen.queryByText(/before you connect/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/permission screen/i)).not.toBeInTheDocument()
+    const about = screen.getByRole("button", { name: "About Google access" })
+    expect(screen.queryByText(/choose which calendar Pablo can use/)).not.toBeInTheDocument()
+
+    await user.click(about)
     expect(
       screen.getByText(
-        "Pablo will put your sessions on a calendar it makes for them and keep clear of your busy times. You can change this in the next step."
+        "You’ll choose which calendar Pablo can use and whether Pablo can check your busy times."
       )
     ).toBeInTheDocument()
   })

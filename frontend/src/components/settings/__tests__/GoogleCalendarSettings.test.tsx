@@ -65,10 +65,10 @@ describe("GoogleCalendarSettings disconnect", () => {
     const { dialog } = await openDialog()
 
     expect(dialog).toHaveTextContent(
-      "Pablo will stop using your Google Calendar and remove what it read from it.",
+      "Pablo stops using your Google Calendar and deletes what it read from it.",
     )
     expect(dialog).toHaveTextContent(
-      "Your sessions in Pablo stay, but changes made in Google won’t reach them.",
+      "Sessions already in Pablo stay, but changes in Google won’t reach them.",
     )
     expect(disconnect).not.toHaveBeenCalled()
   })

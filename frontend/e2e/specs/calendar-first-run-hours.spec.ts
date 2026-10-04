@@ -123,12 +123,12 @@ test("hours described on a Friday evening show up as working time in the week an
     const nextSunday = new Date(fridayEvening.getTime() + 2 * DAY_MS)
 
     await page.goto("/dashboard/calendar")
-    await expect(page.getByRole("heading", { name: "When do you see clients?" })).toBeVisible()
+    await expect(page.getByRole("heading", { name: "What are your usual hours?" })).toBeVisible()
 
-    await page.getByLabel("Tell Pablo in your own words").fill(SENTENCE)
-    await page.getByRole("button", { name: "Check this" }).click()
+    await page.getByLabel("Describe your usual hours").fill(SENTENCE)
+    await page.getByRole("button", { name: "Review hours" }).click()
     await expect(page.getByText("Monday to Thursday, 9:00 AM to 5:00 PM")).toBeVisible()
-    await page.getByRole("button", { name: "Yes, save this" }).click()
+    await page.getByRole("button", { name: "Save hours" }).click()
 
     // Every day is saved, and only then does the wizard move on — to
     // Google, the step it had put the hours in front of, not past it. This
