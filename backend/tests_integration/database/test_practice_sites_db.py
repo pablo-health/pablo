@@ -403,6 +403,73 @@ def test_a_header_links_to_the_practices_hosts_while_it_holds_them(
     assert version.theme.header.cta is not None
 
 
+SUGGESTIBLE = {
+    **SITE,
+    "index.html": (
+        b'<header><a href="/"><strong>Riverside Counseling</strong><span>Therapy</span></a>'
+        b'<nav><a href="#services">Services</a><a class="btn" href="#book">Book</a></nav>'
+        b"</header><h1>Home</h1>"
+    ),
+    "theme.json": b'{"colors": {"accent": "#24504c"}}',
+}
+
+
+def test_a_header_is_suggested_and_once_accepted_is_published(
+    session: Session, bucket: str, rows: _Rows
+) -> None:
+    practice_id = rows.practice()
+    service = _service(session, bucket)
+    service.save_draft_files(practice_id, SUGGESTIBLE, PUBLISHER)
+    session.commit()
+
+    draft = service.status(practice_id).draft
+    assert draft is not None
+    assert draft.suggested_header is not None
+    suggested = draft.suggested_header.header
+    assert suggested is not None
+    assert suggested.wordmark == "Riverside Counseling"
+    assert [link.href for link in suggested.links] == ["/#services"]
+    # A suggestion alone gives the portal nothing.
+    assert draft.theme is not None
+    assert draft.theme.theme is not None
+    assert draft.theme.theme.header is None
+
+    service.set_draft_header(practice_id, suggested.model_dump(exclude_none=True), PUBLISHER)
+    session.commit()
+
+    draft = service.status(practice_id).draft
+    assert draft is not None
+    assert draft.suggested_header is None
+    assert draft.theme is not None
+    assert draft.theme.theme is not None
+    assert draft.theme.theme.header == suggested
+    # The rest of theme.json is as the practice wrote it.
+    assert draft.theme.theme.colors.accent == "#24504c"
+    assert draft.file_count == len(SUGGESTIBLE)
+
+    service.publish_draft(practice_id, PUBLISHER)
+    session.commit()
+    theme = portal_theme(session, practice_id)
+    assert theme is not None
+    assert theme.header == suggested
+    written = json.loads((Path(bucket) / "sites" / practice_id / "v1" / "theme.json").read_text())
+    assert written["header"]["wordmark"] == "Riverside Counseling"
+
+
+def test_no_header_is_suggested_when_theme_json_declares_one(
+    session: Session, bucket: str, rows: _Rows
+) -> None:
+    practice_id = rows.practice()
+    service = _service(session, bucket)
+    declared = {**SUGGESTIBLE, "theme.json": b'{"header": {"wordmark": ""}}'}
+    service.save_draft_files(practice_id, declared, PUBLISHER)
+    session.commit()
+
+    draft = service.status(practice_id).draft
+    assert draft is not None
+    assert draft.suggested_header is None
+
+
 def test_a_practice_with_no_website_has_no_theme(session: Session, rows: _Rows) -> None:
     assert portal_theme(session, rows.practice()) is None
 

@@ -76,6 +76,25 @@ describe("FollowCalendarSetting", () => {
     )
   })
 
+  it("says it books by full name when that setting is on", async () => {
+    listCalendars.mockResolvedValue({
+      calendars: [{ id: MAIN, name: MAIN, primary: true }],
+      follow_calendar_id: MAIN,
+    })
+    render(
+      <FollowCalendarSetting
+        followedCalendarId="primary"
+        importGranted
+        booksNamedSessions
+        onChanged={vi.fn()}
+      />
+    )
+
+    expect(await screen.findByTestId("followed-calendar-line")).toHaveTextContent(
+      `Pablo reads the events on ${MAIN}. It books the ones titled with a client’s full name, and asks about others that look like sessions.`
+    )
+  })
+
   it("follows another calendar when one is picked", async () => {
     const user = userEvent.setup()
     listCalendars.mockResolvedValue({

@@ -7,6 +7,8 @@
 * ``POST /api/practice/website/draft`` — upload a zip of a static folder as
   the draft (multipart, field ``file``), replacing any draft.
 * ``DELETE /api/practice/website/draft`` — discard the draft.
+* ``PUT /api/practice/website/draft/header`` — write a portal header into the
+  draft's ``theme.json``: the suggested one accepted, or edited.
 * ``POST /api/practice/website/draft/preview`` — a new address for previewing
   the draft, working for an hour (:mod:`app.sites.public_routes`).
 * ``POST /api/practice/website/publish`` — publish the draft as a new version
@@ -31,7 +33,7 @@ from datetime import datetime  # noqa: TC003 — pydantic resolves it at runtime
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Request, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..api_errors import (
     APIError,
@@ -56,6 +58,7 @@ from .service import (
     get_practice_site_service,
     tidy_practice_site,
 )
+from .suggest import HeaderSuggestion  # noqa: TC001 — pydantic resolves it at runtime
 from .theme import ThemeReport  # noqa: TC001 — pydantic resolves it at runtime
 
 if TYPE_CHECKING:
@@ -76,6 +79,9 @@ class SiteDraftResponse(BaseModel):
     #: What the draft's ``theme.json`` gives the portal and what it skips;
     #: ``None`` when the draft has none.
     theme: ThemeReport | None
+    #: A portal header suggested from the draft's ``index.html`` when its
+    #: ``theme.json`` declares none; ``None`` when there is nothing to suggest.
+    suggested_header: HeaderSuggestion | None = None
 
 
 class SiteVersionResponse(BaseModel):
@@ -101,6 +107,22 @@ class PracticeSiteResponse(BaseModel):
     versions: list[SiteVersionResponse]
 
 
+class DraftHeaderLink(BaseModel):
+    # Generous bounds on what is accepted; the header's own rules
+    # (app.sites.header) decide what is used, with reasons.
+    label: str = Field(max_length=200)
+    href: str = Field(max_length=2048)
+
+
+class DraftHeaderRequest(BaseModel):
+    """A portal header, as ``theme.json``'s ``header`` block has it."""
+
+    wordmark: str | None = Field(default=None, max_length=500)
+    subtitle: str | None = Field(default=None, max_length=500)
+    links: list[DraftHeaderLink] = Field(default_factory=list, max_length=20)
+    cta: DraftHeaderLink | None = None
+
+
 class SitePreviewResponse(BaseModel):
     #: The draft's address on the API's origin, ending in ``/``.
     path: str
@@ -120,6 +142,7 @@ def _response(service: PracticeSiteService, practice_id: str) -> PracticeSiteRes
             total_bytes=draft.total_bytes,
             uploaded_at=draft.uploaded_at,
             theme=draft.theme,
+            suggested_header=draft.suggested_header,
         )
         if draft
         else None,
@@ -201,6 +224,26 @@ def discard_practice_site_draft(
     """Discard the draft."""
     practice_id = _manageable_practice_id(user)
     _translated(lambda: service.discard_draft(practice_id))
+    background.add_task(tidy_practice_site, practice_id)
+    return _response(service, practice_id)
+
+
+@router.put("/draft/header", response_model=PracticeSiteResponse)
+def set_practice_site_draft_header(
+    body: DraftHeaderRequest,
+    http_request: Request,
+    background: BackgroundTasks,
+    user: User = Depends(require_active_subscription),
+    service: PracticeSiteService = Depends(get_practice_site_service),
+) -> PracticeSiteResponse:
+    """Write *body* into the draft's ``theme.json`` as its portal header. 409
+    with no draft. What the header gives and skips comes back on the draft's
+    theme, as after an upload."""
+    practice_id = _manageable_practice_id(user)
+    header = body.model_dump(exclude_none=True)
+    if not header.get("links"):
+        header.pop("links", None)
+    _translated(lambda: service.set_draft_header(practice_id, header, user, http_request))
     background.add_task(tidy_practice_site, practice_id)
     return _response(service, practice_id)
 

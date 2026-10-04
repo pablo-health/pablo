@@ -68,6 +68,7 @@ if TYPE_CHECKING:
     from ..repositories.external_calendar_event import ExternalCalendarEventRepository
     from ..repositories.patient import PatientRepository
     from ..repositories.patient_source_mapping import PatientSourceMappingRepository
+    from ..repositories.user import UserRepository
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
 
 logger = logging.getLogger(__name__)
@@ -179,6 +180,7 @@ class ICalSyncService:
         patient_repo: PatientRepository,
         mapping_repo: PatientSourceMappingRepository,
         external_events: ExternalCalendarEventRepository | None = None,
+        users: UserRepository | None = None,
     ) -> None:
         self._config_repo = config_repo
         self._appt_repo = appointment_repo
@@ -190,8 +192,10 @@ class ICalSyncService:
             from ..repositories import get_external_calendar_event_repository
 
             external_events = get_external_calendar_event_repository()
+        # ``users`` holds each clinician's choice to let a title's name book;
+        # without it, the default applies.
         self._outside = OutsideSessions(
-            external_events, appointment_repo, patient_repo, mapping_repo
+            external_events, appointment_repo, patient_repo, mapping_repo, users=users
         )
 
     def configure(self, user_id: str, ehr_system: str, feed_url: str) -> ConfigureResult:
@@ -419,6 +423,9 @@ class ICalSyncService:
             appt = self._create_appointment(user_id, ehr_system, event, patient_id)
             if client_id:
                 appt.notes = f"ical_client:{client_id}"
+            if self._outside.booked_by_name(row, ctx):
+                # Booked on the title's name alone: listed for the clinician.
+                appt.auto_booked_at = _now()
             self._appt_repo.create(appt)
             self._outside.settle(user_id, source, event.uid, appt)
             result.created += 1

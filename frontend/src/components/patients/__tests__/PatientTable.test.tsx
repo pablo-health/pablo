@@ -144,6 +144,23 @@ describe("PatientTable", () => {
       expect(screen.getByText("Alice Johnson")).toBeInTheDocument()
     })
 
+    it("marks a chart that still needs its full name, and no other", async () => {
+      const { Wrapper } = createWrapper()
+
+      vi.mocked(patientsApi.listPatients).mockResolvedValue({
+        data: [{ ...mockPatients[0], first_name: "K.M.", last_name: "", needs_name: true }],
+        total: 1,
+        page: 1,
+        page_size: 50,
+      })
+
+      render(<PatientTable />, { wrapper: Wrapper })
+
+      const flag = await screen.findByTestId("needs-name")
+      expect(flag).toHaveTextContent("Needs full name")
+      expect(screen.getAllByTestId("needs-name")).toHaveLength(1)
+    })
+
     it("displays patient email or N/A", async () => {
       const { Wrapper } = createWrapper()
 

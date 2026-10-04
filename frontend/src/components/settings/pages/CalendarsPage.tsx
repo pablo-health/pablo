@@ -4,6 +4,7 @@
 
 import { GoogleCalendarSettings } from "../GoogleCalendarSettings"
 import { IntegrationSettings } from "../IntegrationSettings"
+import { NameBookingSetting } from "../NameBookingSetting"
 import { SettingsCard } from "../ui"
 import { isEnabled } from "@/lib/featureFlags"
 import { useConfig } from "@/lib/config"
@@ -29,6 +30,14 @@ export function CalendarsPage() {
           description="Read appointments from another system's calendar feed so Pablo can prepare notes."
         >
           <IntegrationSettings />
+        </SettingsCard>
+      )}
+
+      {/* One choice for both: sessions from a followed Google Calendar and
+          from a calendar feed book the same way. */}
+      {(googleCalendarEnabled || isEnabled("calendar_integrations")) && (
+        <SettingsCard title="Sessions from your calendars">
+          <NameBookingSetting />
         </SettingsCard>
       )}
     </>

@@ -28,6 +28,8 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session
 
+    from ..portal.hosted import HostedPurpose
+
 
 class PracticeSiteStore:
     def __init__(self, session: Session) -> None:
@@ -106,17 +108,20 @@ class PracticeSiteStore:
         slug = practice_slug(self._session, practice_id)
         return hosted_site_host(slug) if slug else None
 
-    def practice_hosts(self, practice_id: str) -> frozenset[str]:
-        """Every working host of the practice's, website and portal, its hosted
-        addresses included where they are served: the hosts a website's header
-        may link to (:mod:`app.sites.header`)."""
+    def practice_hosts(
+        self, practice_id: str, purposes: Collection[HostedPurpose] = ("site", "portal")
+    ) -> frozenset[str]:
+        """Every working host of the practice's for *purposes*, website and
+        portal by default, its hosted addresses included where they are served:
+        the hosts a website's header may link to (:mod:`app.sites.header`)."""
         stmt = select(PracticeDomainRow.domain).where(
             PracticeDomainRow.practice_id == practice_id,
-            PracticeDomainRow.purpose.in_(("site", "portal")),
+            PracticeDomainRow.purpose.in_(tuple(purposes)),
             PracticeDomainRow.status == "active",
         )
         hosts = set(self._session.execute(stmt).scalars())
         slug = practice_slug(self._session, practice_id) if hosted_addresses_ready() else None
         if slug:
-            hosts.update(h for h in (hosted_site_host(slug), hosted_portal_host(slug)) if h)
+            hosted = {"site": hosted_site_host(slug), "portal": hosted_portal_host(slug)}
+            hosts.update(h for purpose in purposes if (h := hosted[purpose]))
         return frozenset(hosts)

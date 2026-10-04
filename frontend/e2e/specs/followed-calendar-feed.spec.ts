@@ -41,6 +41,7 @@ import { signInToFreshPractice, type FreshPractice } from "../fixtures/freshPrac
 import {
   givePatient,
   giveWorkingHours,
+  letNamesBook,
   markCalendarSetupComplete,
   type Patient,
 } from "../fixtures/scenarios"
@@ -341,6 +342,8 @@ test("a full name books the one chart that bears it, and a stranger is one quest
 }) => {
   const { page, context, api } = await signIn(browser)
   try {
+    // The clinician lets a title naming one client book; off, it is asked.
+    await letNamesBook(api, true)
     await followFeed(api, FULL_NAMES_FEED)
     const john = await givePatient(api, { first_name: "John", last_name: "Adams" })
 
@@ -366,6 +369,7 @@ test("a full name books the one chart that bears it, and a stranger is one quest
     await expect(row).not.toBeChecked()
     await expect(review.getByText(`${FEED.jamesAndersonEvents} sessions`)).toBeVisible()
   } finally {
+    await letNamesBook(api, null)
     await context.close()
   }
 })

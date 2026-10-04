@@ -486,6 +486,62 @@ describe("CalendarSetupWizard", () => {
     ])
   })
 
+  it("sends a new client's name as typed or as filled in", async () => {
+    getStatus.mockResolvedValue(CONNECTED)
+    const base = proposalWith()
+    scanForImport.mockResolvedValue({
+      ...base,
+      series: [
+        {
+          ...base.series[0],
+          summary: "K.M.",
+          preselected: true,
+          suggested_name: null,
+        },
+        {
+          ...base.series[1],
+          summary: "Session with Casey Morgan",
+          preselected: true,
+          suggested_name: { first_name: "Casey", last_name: "Morgan" },
+        },
+      ],
+    })
+    confirmImport.mockResolvedValue({
+      confirmed: [],
+      patients_created: 2,
+      appointments_created: 0,
+      skipped: [],
+      already_scheduled: [],
+    })
+    const user = userEvent.setup()
+    renderWizard()
+    await goToClientsStep(user)
+
+    await user.click(screen.getByRole("button", { name: "Scan calendar" }))
+    await screen.findByTestId("qualifying-count")
+    await user.click(screen.getByRole("button", { name: /continue/i }))
+
+    const initials = await screen.findByTestId("new-client-name-a")
+    await user.type(within(initials).getByLabelText("First name"), "Kim")
+    await user.type(within(initials).getByLabelText("Last name"), "Moreau")
+    await user.click(screen.getByRole("button", { name: /add 2 clients/i }))
+
+    await waitFor(() => expect(confirmImport).toHaveBeenCalled())
+    const [series] = confirmImport.mock.calls[0] as unknown as [
+      Array<{ candidate_key: string; new_client_first_name: string; new_client_last_name: string }>,
+    ]
+    expect(
+      series.map(({ candidate_key, new_client_first_name, new_client_last_name }) => ({
+        candidate_key,
+        new_client_first_name,
+        new_client_last_name,
+      }))
+    ).toEqual([
+      { candidate_key: "a", new_client_first_name: "Kim", new_client_last_name: "Moreau" },
+      { candidate_key: "b", new_client_first_name: "Casey", new_client_last_name: "Morgan" },
+    ])
+  })
+
   it("offers a name-only match as a choice, preselected, rather than as settled", async () => {
     getStatus.mockResolvedValue(CONNECTED)
     const base = proposalWith()

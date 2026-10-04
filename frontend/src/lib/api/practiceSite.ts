@@ -5,7 +5,7 @@
  * answers with the whole status, so the page never has to merge one by hand.
  */
 
-import { del, get, post, postForm } from "./client"
+import { del, get, post, postForm, put } from "./client"
 
 /** The portal theme a website's `theme.json` gives; a value it does not give is `null`. */
 export interface SiteTheme {
@@ -14,12 +14,26 @@ export interface SiteTheme {
   fonts: Record<"heading" | "body", string | null>
   radius: "none" | "sm" | "md" | "lg" | null
   /** The portal header that matches the website, from theme.json's `header` block. */
-  header: {
-    wordmark: string | null
-    subtitle: string | null
-    links: { label: string; href: string }[]
-    cta: { label: string; href: string } | null
-  } | null
+  header: SiteHeader | null
+}
+
+export interface SiteHeaderLink {
+  label: string
+  href: string
+}
+
+/** A portal header, as theme.json's `header` block has it. */
+export interface SiteHeader {
+  wordmark: string | null
+  subtitle: string | null
+  links: SiteHeaderLink[]
+  cta: SiteHeaderLink | null
+}
+
+/** A header suggested from the draft's index.html, and what was found but failed and why. */
+export interface SiteHeaderSuggestion {
+  header: SiteHeader | null
+  skipped: { field: string; reason: string }[]
 }
 
 export interface SiteThemeReport {
@@ -35,6 +49,8 @@ export interface SiteDraft {
   uploaded_at: string
   /** What the draft's `theme.json` gives the portal; `null` when it has none. */
   theme: SiteThemeReport | null
+  /** A portal header suggested from index.html, when theme.json declares none. */
+  suggested_header: SiteHeaderSuggestion | null
 }
 
 export interface SiteVersion {
@@ -80,6 +96,11 @@ export function uploadPracticeSiteDraft(file: File): Promise<PracticeSite> {
   const form = new FormData()
   form.append("file", file)
   return postForm<PracticeSite>(`${WEBSITE}/draft`, form)
+}
+
+/** Write a portal header into the draft's theme.json: the suggestion, accepted or edited. */
+export function setPracticeSiteDraftHeader(header: SiteHeader): Promise<PracticeSite> {
+  return put<PracticeSite>(`${WEBSITE}/draft/header`, header)
 }
 
 export function discardPracticeSiteDraft(): Promise<PracticeSite> {

@@ -10,7 +10,12 @@ from typing import Self
 from pydantic import BaseModel, Field, model_validator
 
 # Runtime import: Pydantic resolves this annotation at runtime.
-from .scheduling import MAX_SOURCE_IDENTIFIER, SeriesMatchResponse
+from .scheduling import (
+    MAX_SOURCE_IDENTIFIER,
+    NEW_CLIENT_NAME_MAX,
+    SeriesMatchResponse,
+    SuggestedNameResponse,
+)
 
 
 class OutsideSessionResponse(BaseModel):
@@ -39,6 +44,13 @@ class OutsideQuestionResponse(BaseModel):
     sessions: int = Field(description="How many open events the answer settles")
     next_start_at: datetime
     match: SeriesMatchResponse
+    suggested_name: SuggestedNameResponse | None = Field(
+        default=None,
+        description=(
+            "A first and last name to fill in if this becomes a new client. Set only "
+            "when the title plainly gives a whole name part; a part it does not is empty"
+        ),
+    )
     outside_session_id: str | None = Field(
         default=None,
         description=(
@@ -62,7 +74,13 @@ class OutsideQuestionsResponse(BaseModel):
 
 
 class OutsideAnswer(BaseModel):
-    """Exactly one of: an existing client, a new client's name, or not a client."""
+    """Exactly one of: an existing client, a new client, or not a client.
+
+    A new client is asked for with ``new_client_first_name`` and
+    ``new_client_last_name`` as the clinician typed them, with
+    ``new_client_name`` (the calendar's wording, as older callers send it), or
+    both. With no name typed, the chart is called by the wording's name part.
+    """
 
     source: str = Field(min_length=1, max_length=64)
     source_identifier: str = Field(min_length=1, max_length=MAX_SOURCE_IDENTIFIER)
@@ -72,6 +90,8 @@ class OutsideAnswer(BaseModel):
         max_length=1024,
         description="The calendar's wording, as-is; an empty one still adds a client",
     )
+    new_client_first_name: str | None = Field(default=None, max_length=NEW_CLIENT_NAME_MAX)
+    new_client_last_name: str | None = Field(default=None, max_length=NEW_CLIENT_NAME_MAX)
     not_a_client: bool = False
     outside_session_id: str | None = Field(
         default=None,
@@ -85,7 +105,15 @@ class OutsideAnswer(BaseModel):
 
     @model_validator(mode="after")
     def _one_answer(self) -> Self:
-        given = sum([self.patient_id is not None, self.new_client_name is not None])
+        new_client = any(
+            value is not None
+            for value in (
+                self.new_client_name,
+                self.new_client_first_name,
+                self.new_client_last_name,
+            )
+        )
+        given = sum([self.patient_id is not None, new_client])
         if given + self.not_a_client != 1:
             msg = "Answer with a client, a new client, or not a client"
             raise ValueError(msg)
@@ -114,6 +142,33 @@ class OutsideAnswerResponse(BaseModel):
     appointments_created: int
     appointments: list[AnsweredAppointment]
     not_added: list[NotAddedSession] = Field(default_factory=list)
+
+
+class AutoBookedSession(BaseModel):
+    """A session Pablo booked without asking, because its title named the client."""
+
+    appointment_id: str
+    patient_id: str
+    client_name: str
+    start_at: datetime
+    end_at: datetime
+    source: str = Field(description="``google_calendar`` or ``ical:<feed>``")
+
+
+class AutoBookedResponse(BaseModel):
+    """Upcoming ones the clinician hasn't acknowledged yet, soonest first."""
+
+    sessions: list[AutoBookedSession]
+
+
+class AutoBookedAcknowledgeRequest(BaseModel):
+    """The automatic bookings the clinician acknowledged, which leave the list."""
+
+    appointment_ids: list[str] = Field(min_length=1, max_length=500)
+
+
+class AutoBookedAcknowledgeResponse(BaseModel):
+    acknowledged: int
 
 
 class FollowedCalendarRequest(BaseModel):

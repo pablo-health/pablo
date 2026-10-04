@@ -144,6 +144,9 @@ const baseQueryKeys = {
       [...baseQueryKeys.appointments.all, "outside-sessions", params] as const,
     outsideQuestions: () =>
       [...baseQueryKeys.appointments.all, "outside-questions"] as const,
+    // Also under `all`: cancelling one takes it off the list.
+    autoBooked: () =>
+      [...baseQueryKeys.appointments.all, "auto-booked"] as const,
   },
 
   // Availability rule query keys

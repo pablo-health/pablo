@@ -70,16 +70,19 @@ def build_sync_scheduler(
     google_token_repo = google_token_repo or get_google_calendar_token_repository()
     appointment_repo = get_appointment_repository()
 
+    user_repo = user_repo or get_user_repository()
+
     return SyncSchedulerService(
         ical_config_repo=ical_config_repo,
         google_token_repo=google_token_repo,
-        user_repo=user_repo or get_user_repository(),
+        user_repo=user_repo,
         ical_sync_service=ICalSyncService(
             config_repo=ical_config_repo,
             appointment_repo=appointment_repo,
             patient_repo=get_patient_repository(),
             mapping_repo=get_patient_source_mapping_repository(),
             external_events=get_external_calendar_event_repository(),
+            users=user_repo,
         ),
         google_calendar_service=GoogleCalendarService.from_surface(
             google_consent_surface(get_settings()),

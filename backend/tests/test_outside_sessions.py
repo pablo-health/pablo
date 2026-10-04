@@ -16,13 +16,17 @@ from app.calendar_providers.disconnect import forget_google_calendar
 from app.calendar_providers.practice_import import Cadence, ProposedSeries, SeriesStatus
 from app.calendar_providers.source_identity import (
     GOOGLE_CALENDAR_SOURCE,
+    answered_title_digest,
     calendar_source_identifier,
     event_source_identifier,
     ical_source,
 )
 from app.models.patient import Patient
+from app.models.user import BOOK_SESSIONS_NAMED_IN_TITLE_BY_DEFAULT, UserPreferences
 from app.patients.identifiers import calendar_scope
 from app.patients.matching import remember_match, remember_not_a_client
+from app.patients.new_client_name import SuggestedName, suggested_name
+from app.patients.titles import NOT_NAME_WORDS, SESSION_WORDS
 from app.repositories.audit import InMemoryAuditRepository
 from app.repositories.external_calendar_event import (
     ANSWER_CLIENT,
@@ -43,6 +47,8 @@ from app.services.google_calendar_follow import (
 from app.services.outside_sessions import OutsideSessions, Question
 from app.settings import get_settings
 from app.utcnow import utc_now
+
+from ._name_booking import choosing
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -100,8 +106,16 @@ class _Harness:
         self.appointments = InMemoryAppointmentRepository()
         self.patients = InMemoryPatientRepository()
         self.mappings = InMemoryPatientSourceMappingRepository()
+        # The clinician lets a title naming one client book; tests of the
+        # other choice turn it off.
+        self.users = choosing(books=True, user_ids=(USER_ID,))
         self.outside = OutsideSessions(
-            self.events, self.appointments, self.patients, self.mappings, main_calendar_id=MAIN
+            self.events,
+            self.appointments,
+            self.patients,
+            self.mappings,
+            main_calendar_id=MAIN,
+            users=self.users,
         )
         self.calendar = MagicMock()
         self.follower = GoogleChangeFollower(self.appointments, self.calendar)
@@ -162,15 +176,17 @@ class TestWhatBecomesAQuestion:
         assert h.open_ids() == []
         assert h.outside.questions(USER_ID) == []
 
-    def test_a_one_off_naming_a_client_is_asked_with_the_match_offered(
+    def test_a_one_off_naming_an_inactive_client_is_asked_with_the_match_offered(
         self, h: _Harness, mock_user: User
     ) -> None:
-        h.patient("p1", "Jane", "Smith")
+        patient = h.patient("p1", "Jane", "Smith")
+        patient.status = "inactive"
+        h.patients.update(patient)
 
         h.poll(mock_user, [_event("x", _in(2), title="Jane Smith", series=None)])
 
         [question] = h.outside.questions(USER_ID)
-        # Still a question — a name alone never books anyone — but the
+        # Still a question — an inactive chart never books — but the
         # clinician only has to confirm it.
         assert question.match.patient_id == "p1"
         assert h.followed("x") is None
@@ -178,7 +194,9 @@ class TestWhatBecomesAQuestion:
     def test_same_titled_events_without_a_series_id_are_one_client_per_slot(
         self, h: _Harness, mock_user: User
     ) -> None:
+        # Two charts share the name, so the title alone books neither.
         h.patient("p1", "Jane", "Smith")
+        h.patient("p2", "Jane", "Smith")
         monday = _in(7 - utc_now().weekday())  # a Monday ahead, 14:00 UTC
 
         h.poll(
@@ -216,7 +234,8 @@ class TestWhatBecomesAQuestion:
 class TestWhatATitleSuggests:
     """A calendar title names its client in many ways; each is read before matching.
 
-    The suggestion is all that changes: an event is never booked on its title.
+    A full name exactly one chart bears books (``TestATitleThatNamesOneClient``);
+    anything less is a suggestion.
     """
 
     @pytest.fixture
@@ -236,16 +255,24 @@ class TestWhatATitleSuggests:
         [
             "Jane Smith",
             "Smith, Jane",
-            "J.S.",
-            "JS",
-            "J. S.",
             "Session with Jane Smith",
             "Jane Smith - Therapy",
             "Jane Smith \N{EN DASH} Therapy",
             "Therapy: Jane Smith",
         ],
     )
-    def test_a_title_that_names_one_client_suggests_them(
+    def test_a_title_that_carries_one_clients_full_name_books_them(
+        self, clients: _Harness, mock_user: User, title: str
+    ) -> None:
+        clients.poll(mock_user, [_event("e1", _in(2), title=title)])
+
+        booked = clients.followed("e1")
+        assert booked is not None
+        assert booked.patient_id == "p1"
+        assert clients.outside.questions(USER_ID) == []
+
+    @pytest.mark.parametrize("title", ["J.S.", "JS", "J. S."])
+    def test_initials_that_fit_one_client_suggest_them(
         self, clients: _Harness, mock_user: User, title: str
     ) -> None:
         question = self._asked(clients, mock_user, title)
@@ -303,13 +330,468 @@ class TestWhatATitleSuggests:
     def test_a_remembered_answer_still_decides_whatever_the_title_says(
         self, clients: _Harness, mock_user: User
     ) -> None:
-        """The title is read only when nothing is remembered for the series."""
-        clients.poll(mock_user, [_event("e1", _in(2), title="Robert Jones")])
-        clients.answer("p1")
+        """A series answered under its title follows the answer, whoever the title names."""
+        remember_match(
+            GOOGLE_CALENDAR_SOURCE,
+            calendar_source_identifier(SERIES, "", 0, "00:00"),
+            "p1",
+            clients.outside.context(USER_ID),
+            scope=SCOPE,
+            answered_title=answered_title_digest("Robert Jones"),
+        )
 
         clients.poll(mock_user, [_event("e2", _in(9), title="Robert Jones")])
 
         booked = clients.followed("e2")
+        assert booked is not None
+        assert booked.patient_id == "p1"
+
+
+class TestATitleThatNamesOneClient:
+    """A full name exactly one active chart bears books, as a feed's does.
+
+    The same rule as a feed's (``same_name_charts``, middle names aside).
+    Anything less certain stays a question, and every booking guard holds.
+    """
+
+    @pytest.fixture
+    def clients(self, h: _Harness) -> _Harness:
+        h.patient("p1", "Jane", "Smith")
+        h.patient("p2", "Robert", "Jones")
+        return h
+
+    @staticmethod
+    def _series_answer(h: _Harness) -> Any:
+        return h.outside.context(USER_ID).lookup(
+            GOOGLE_CALENDAR_SOURCE, SCOPE, calendar_source_identifier(SERIES, "", 0, "00:00")
+        )
+
+    def test_a_one_off_books_and_nothing_is_remembered_for_its_slot(
+        self, clients: _Harness, mock_user: User
+    ) -> None:
+        start = _in(2)
+
+        clients.poll(mock_user, [_event("x", start, title="Jane Smith", series=None)])
+
+        booked = clients.followed("x")
+        assert booked is not None
+        assert booked.patient_id == "p1"
+        assert clients.outside.questions(USER_ID) == []
+        slot = event_source_identifier(None, "Jane Smith", start, UTC)
+        assert clients.outside.context(USER_ID).lookup(GOOGLE_CALENDAR_SOURCE, SCOPE, slot) is None
+
+    def test_a_series_books_and_its_later_events_follow(
+        self, clients: _Harness, mock_user: User
+    ) -> None:
+        clients.poll(mock_user, [_event("e1", _in(2), title="Jane Smith")])
+        clients.poll(mock_user, [_event("e2", _in(9), title="Jane Smith")])
+
+        for event_id in ("e1", "e2"):
+            booked = clients.followed(event_id)
+            assert booked is not None
+            assert booked.patient_id == "p1"
+        remembered = self._series_answer(clients)
+        assert remembered is not None
+        assert remembered.patient_id == "p1"
+        assert remembered.answered_title == answered_title_digest("Jane Smith")
+
+    def test_middle_names_aside_as_for_a_feed(self, h: _Harness, mock_user: User) -> None:
+        h.patient("p1", "Jane Q", "Smith")
+
+        h.poll(mock_user, [_event("e1", _in(2), title="Jane Smith")])
+
+        booked = h.followed("e1")
+        assert booked is not None
+        assert booked.patient_id == "p1"
+
+    @pytest.mark.parametrize("series", [SERIES, None])
+    def test_a_name_two_charts_share_is_asked(
+        self, clients: _Harness, mock_user: User, series: str | None
+    ) -> None:
+        clients.patient("p3", "Jane", "Smith")
+
+        clients.poll(mock_user, [_event("e1", _in(2), title="Jane Smith", series=series)])
+
+        assert clients.followed("e1") is None
+        [question] = clients.outside.questions(USER_ID)
+        assert sorted(question.match.possible_ids) == ["p1", "p3"]
+
+    def test_initials_are_asked(self, clients: _Harness, mock_user: User) -> None:
+        clients.poll(mock_user, [_event("e1", _in(2), title="J.S.")])
+
+        assert clients.followed("e1") is None
+        assert clients.open_ids() == ["e1"]
+
+    def test_a_one_off_under_initials_books_nothing(
+        self, clients: _Harness, mock_user: User
+    ) -> None:
+        clients.poll(mock_user, [_event("x", _in(2), title="J.S.", series=None)])
+
+        assert clients.followed("x") is None
+
+    def test_a_title_that_could_be_two_clients_is_asked(
+        self, clients: _Harness, mock_user: User
+    ) -> None:
+        """One reading names Jane Smith; another is Robert Jones's initials."""
+        clients.poll(mock_user, [_event("e1", _in(2), title="Jane Smith - RJ")])
+
+        assert clients.followed("e1") is None
+        [question] = clients.outside.questions(USER_ID)
+        assert sorted(question.match.possible_ids) == ["p1", "p2"]
+
+    def test_a_one_off_naming_no_one_stays_busy_time(
+        self, clients: _Harness, mock_user: User
+    ) -> None:
+        clients.poll(mock_user, [_event("x", _in(2), title="Alex Rivera", series=None)])
+
+        assert clients.followed("x") is None
+        assert clients.events.list_by_source(USER_ID, GOOGLE_CALENDAR_SOURCE) == []
+
+    def test_an_inactive_chart_is_asked(self, h: _Harness, mock_user: User) -> None:
+        patient = h.patient("p1", "Jane", "Smith")
+        patient.status = "inactive"
+        h.patients.update(patient)
+
+        h.poll(mock_user, [_event("e1", _in(2), title="Jane Smith")])
+
+        assert h.followed("e1") is None
+        [question] = h.outside.questions(USER_ID)
+        assert question.match.patient_id == "p1"
+        assert question.client_inactive is True
+
+    def test_a_chart_only_a_colleague_sees_books_nothing(
+        self, h: _Harness, mock_user: User
+    ) -> None:
+        now = utc_now()
+        h.patients.create(
+            Patient(
+                id="theirs", first_name="Jane", last_name="Smith", created_at=now, updated_at=now
+            ),
+            "colleague",
+        )
+
+        h.poll(mock_user, [_event("e1", _in(2), title="Jane Smith")])
+
+        assert h.followed("e1") is None
+
+    def test_a_series_retitled_to_someone_else_asks_again(
+        self, clients: _Harness, mock_user: User
+    ) -> None:
+        clients.poll(mock_user, [_event("e1", _in(2), title="Jane Smith")])
+
+        clients.poll(mock_user, [_event("e2", _in(9), title="Robert Jones")])
+
+        assert clients.followed("e2") is None
+        [question] = clients.outside.questions(USER_ID)
+        assert [row.source_event_id for row in question.rows] == ["e2"]
+        assert question.suggested_patient_id == "p1"
+
+    def test_a_series_retitled_to_the_same_client_keeps_booking(
+        self, clients: _Harness, mock_user: User
+    ) -> None:
+        clients.poll(mock_user, [_event("e1", _in(2), title="Jane Smith")])
+
+        clients.poll(mock_user, [_event("e2", _in(9), title="Session with Jane Smith")])
+
+        booked = clients.followed("e2")
+        assert booked is not None
+        assert booked.patient_id == "p1"
+
+    def test_a_series_said_to_be_no_client_is_never_booked_by_name(
+        self, clients: _Harness, mock_user: User
+    ) -> None:
+        remember_not_a_client(
+            GOOGLE_CALENDAR_SOURCE,
+            calendar_source_identifier(SERIES, "", 0, "00:00"),
+            clients.outside.context(USER_ID),
+            scope=SCOPE,
+        )
+
+        clients.poll(mock_user, [_event("e1", _in(2), title="Jane Smith")])
+
+        assert clients.followed("e1") is None
+        assert clients.open_ids() == []
+
+    def test_an_event_that_has_started_is_not_booked(
+        self, clients: _Harness, mock_user: User
+    ) -> None:
+        clients.poll(mock_user, [_event("e1", _in(-1), title="Jane Smith")])
+
+        assert clients.followed("e1") is None
+        assert self._series_answer(clients) is None
+
+    def test_it_never_books_over_a_session_already_booked(
+        self, clients: _Harness, mock_user: User
+    ) -> None:
+        start = _in(2)
+        clients.appointments.create(
+            Appointment(
+                id="booked-here",
+                user_id=USER_ID,
+                patient_id="p1",
+                title="Session",
+                start_at=start,
+                end_at=start + timedelta(minutes=50),
+                duration_minutes=50,
+                status=AppointmentStatus.CONFIRMED,
+                session_type="individual",
+            )
+        )
+
+        result = clients.outside.ingest_google(
+            USER_ID, [_event("e1", start, title="Jane Smith")], calendar_id=MAIN
+        )
+
+        assert result.booked == []
+        assert clients.followed("e1") is None
+        [row] = clients.events.list_by_source(USER_ID, GOOGLE_CALENDAR_SOURCE)
+        assert row.answer == ANSWER_CLIENT
+
+    def test_a_booking_from_its_title_is_reported_as_one(
+        self, clients: _Harness, mock_user: User
+    ) -> None:
+        clients.poll(mock_user, [_event("e1", _in(2), title="Weekly 1:1")])
+        clients.answer("p1")
+
+        result = clients.outside.ingest_google(
+            USER_ID,
+            [
+                _event("e2", _in(9), title="Weekly 1:1"),
+                _event("x", _in(3), title="Robert Jones", series=None),
+            ],
+            calendar_id=MAIN,
+        )
+
+        by_patient = {a.patient_id: a.id for a in result.booked}
+        assert set(by_patient) == {"p1", "p2"}
+        assert result.by_name == {by_patient["p2"]}
+
+    def test_a_session_with_a_note_does_not_move(self, clients: _Harness, mock_user: User) -> None:
+        clients.poll(mock_user, [_event("e1", _in(2), title="Jane Smith")])
+        started = clients.followed("e1")
+        assert started is not None
+        started.session_id = "session-1"
+        clients.appointments.update(started)
+
+        clients.poll(mock_user, [_event("e1", _in(4), title="Jane Smith")])
+
+        still = clients.followed("e1")
+        assert still is not None
+        assert still.start_at == started.start_at
+
+    def test_cancelling_it_in_pablo_is_not_undone_by_the_next_read(
+        self, clients: _Harness, mock_user: User
+    ) -> None:
+        clients.poll(mock_user, [_event("e1", _in(2), title="Jane Smith")])
+        booked = clients.followed("e1")
+        assert booked is not None
+        booked.status = AppointmentStatus.CANCELLED
+        clients.appointments.update(booked)
+
+        clients.poll(mock_user, [_event("e1", _in(2), title="Jane Smith")])
+
+        live = [
+            a
+            for a in clients.appointments.list_by_range(USER_ID, _in(0), _in(30))
+            if a.status != AppointmentStatus.CANCELLED
+        ]
+        assert live == []
+
+    def test_a_removal_in_google_can_be_undone(self, clients: _Harness, mock_user: User) -> None:
+        clients.poll(mock_user, [_event("e1", _in(2), title="Jane Smith")])
+        clients.poll(mock_user, [_event("e1", cancelled=True)])
+        gone = clients.followed("e1")
+        assert gone is not None
+        assert gone.status == AppointmentStatus.CANCELLED
+
+        restored = clients.follower.resolve(USER_ID, gone.id, Resolution.KEEP_PABLO)
+
+        assert restored.status == AppointmentStatus.CONFIRMED
+
+
+class TestWhichPartOfATitleBooks:
+    """Only the session's own name books: the whole title, a whole piece of it,
+    or the name after a session word and "with"."""
+
+    @pytest.fixture
+    def clients(self, h: _Harness) -> _Harness:
+        h.patient("p1", "Jane", "Smith")
+        return h
+
+    @pytest.mark.parametrize(
+        "title",
+        [
+            "Jane Smith",
+            "Smith, Jane",
+            "Jane Smith - Therapy",
+            "Session with Jane Smith",
+            "Therapy session with Jane Smith",
+            "Med management with Jane Smith",
+            "INTAKE with Jane Smith",
+            "Follow-up with Jane Smith",
+        ],
+    )
+    def test_the_sessions_own_name_books(
+        self, clients: _Harness, mock_user: User, title: str
+    ) -> None:
+        clients.poll(mock_user, [_event("e1", _in(2), title=title, series=None)])
+
+        booked = clients.followed("e1")
+        assert booked is not None
+        assert booked.patient_id == "p1"
+
+    @pytest.mark.parametrize(
+        "title", ["Lunch with Jane Smith", "Call with Jane Smith", "Coffee with Jane Smith"]
+    )
+    def test_a_name_the_title_only_mentions_is_asked_with_the_client_filled_in(
+        self, clients: _Harness, mock_user: User, title: str
+    ) -> None:
+        clients.poll(mock_user, [_event("e1", _in(2), title=title)])
+
+        assert clients.followed("e1") is None
+        [question] = clients.outside.questions(USER_ID)
+        assert question.match.patient_id == "p1"
+
+    def test_a_call_is_asked_and_its_new_client_name_leaves_the_call_out(
+        self, h: _Harness, mock_user: User
+    ) -> None:
+        # Words kept out of a name ("Call") are not words that book: the two
+        # lists are separate, so "Call with" still asks.
+        assert "call" in NOT_NAME_WORDS
+        assert "call" not in SESSION_WORDS
+        h.poll(mock_user, [_event("e1", _in(2), title="Call with Jane Smith")])
+
+        assert h.followed("e1") is None
+        [question] = h.outside.questions(USER_ID)
+        assert suggested_name(question.title) == SuggestedName("Jane", "Smith")
+
+
+class TestWhatWasAutoBooked:
+    """Bookings a title's name made are listed for the clinician until seen."""
+
+    @pytest.fixture
+    def clients(self, h: _Harness) -> _Harness:
+        h.patient("p1", "Jane", "Smith")
+        h.patient("p2", "Robert", "Jones")
+        return h
+
+    def test_a_booking_from_a_name_is_listed_and_one_from_an_answer_is_not(
+        self, clients: _Harness, mock_user: User
+    ) -> None:
+        clients.poll(mock_user, [_event("w1", _in(2), title="Weekly 1:1")])
+        clients.answer("p2")
+        clients.poll(
+            mock_user,
+            [
+                _event("w2", _in(9), title="Weekly 1:1"),
+                _event("x", _in(3), title="Jane Smith", series=None),
+            ],
+        )
+
+        [listed] = clients.outside.auto_booked(USER_ID)
+        assert (listed.patient_id, listed.outside_event_id) == ("p1", "x")
+
+    def test_every_event_of_a_series_a_title_booked_in_one_read_is_listed(
+        self, clients: _Harness, mock_user: User
+    ) -> None:
+        clients.poll(
+            mock_user,
+            [_event(f"s{i}", _in(2 + 7 * i), title="Jane Smith") for i in range(3)],
+        )
+        assert [a.outside_event_id for a in clients.outside.auto_booked(USER_ID)] == [
+            "s0",
+            "s1",
+            "s2",
+        ]
+
+        # A later read's new event follows the series the title settled.
+        clients.poll(mock_user, [_event("s3", _in(23), title="Jane Smith")])
+
+        later = clients.followed("s3")
+        assert later is not None
+        assert later.auto_booked_at is None
+
+    def test_acknowledged_bookings_leave_the_list_and_stay_auto_booked(
+        self, clients: _Harness, mock_user: User
+    ) -> None:
+        clients.poll(mock_user, [_event("x", _in(3), title="Jane Smith", series=None)])
+        [listed] = clients.outside.auto_booked(USER_ID)
+        booked_at = listed.auto_booked_at
+
+        assert clients.outside.acknowledge(USER_ID, {listed.id}) == 1
+
+        assert clients.outside.auto_booked(USER_ID) == []
+        still = clients.followed("x")
+        assert still is not None
+        assert still.status == AppointmentStatus.CONFIRMED
+        # How it was booked is kept; the acknowledgement is recorded beside it.
+        assert still.auto_booked_at == booked_at
+        assert still.auto_booked_acknowledged_at is not None
+
+    def test_undoing_one_cancels_it_and_the_next_read_leaves_it_cancelled(
+        self, clients: _Harness, mock_user: User
+    ) -> None:
+        clients.poll(mock_user, [_event("x", _in(3), title="Jane Smith", series=None)])
+        [listed] = clients.outside.auto_booked(USER_ID)
+        listed.status = AppointmentStatus.CANCELLED
+        clients.appointments.update(listed)
+
+        clients.poll(mock_user, [_event("x", _in(3), title="Jane Smith", series=None)])
+
+        assert clients.outside.auto_booked(USER_ID) == []
+        undone = clients.followed("x")
+        assert undone is not None
+        assert undone.status == AppointmentStatus.CANCELLED
+        assert undone.auto_booked_at is not None
+
+
+class TestWhenANameDoesNotBook:
+    """The clinician's choice: a title naming one client is asked, pre-filled."""
+
+    @pytest.fixture
+    def asking(self, h: _Harness) -> _Harness:
+        h.users.save_preferences(USER_ID, UserPreferences(book_sessions_named_in_title=False))
+        h.patient("p1", "Jane", "Smith")
+        return h
+
+    @pytest.mark.parametrize("series", [SERIES, None])
+    def test_a_title_naming_one_client_is_asked_with_them_filled_in(
+        self, asking: _Harness, mock_user: User, series: str | None
+    ) -> None:
+        asking.poll(mock_user, [_event("e1", _in(2), title="Jane Smith", series=series)])
+
+        assert asking.followed("e1") is None
+        [question] = asking.outside.questions(USER_ID)
+        assert question.match.patient_id == "p1"
+
+    def test_a_series_already_answered_still_books(self, asking: _Harness, mock_user: User) -> None:
+        asking.poll(mock_user, [_event("e1", _in(2), title="Jane Smith")])
+        asking.answer("p1")
+
+        asking.poll(mock_user, [_event("e2", _in(9), title="Jane Smith")])
+
+        booked = asking.followed("e2")
+        assert booked is not None
+        assert booked.patient_id == "p1"
+
+    def test_a_clinician_who_has_not_chosen_gets_the_default(
+        self, h: _Harness, mock_user: User
+    ) -> None:
+        h.users.save_preferences(USER_ID, UserPreferences())
+        h.patient("p1", "Jane", "Smith")
+
+        h.poll(mock_user, [_event("e1", _in(2), title="Jane Smith", series=None)])
+
+        assert (h.followed("e1") is not None) is BOOK_SESSIONS_NAMED_IN_TITLE_BY_DEFAULT
+
+    def test_turning_it_on_books_the_next_read(self, asking: _Harness, mock_user: User) -> None:
+        asking.poll(mock_user, [_event("e1", _in(2), title="Jane Smith", series=None)])
+        assert asking.followed("e1") is None
+
+        asking.users.save_preferences(USER_ID, UserPreferences(book_sessions_named_in_title=True))
+        asking.poll(mock_user, [_event("e1", _in(2), title="Jane Smith", series=None)])
+
+        booked = asking.followed("e1")
         assert booked is not None
         assert booked.patient_id == "p1"
 
@@ -717,9 +1199,11 @@ class TestReadingAnAnsweredEventAgain:
         self, h: _Harness, mock_user: User
     ) -> None:
         h.patient("p1", "Jane", "Smith")
+        h.patient("p2", "Jane", "Smith")
         h.poll(mock_user, [_event("x", _in(2), title="Jane Smith", series=None)])
         assert h.open_ids() == ["x"]
         h.patients.delete("p1", USER_ID)
+        h.patients.delete("p2", USER_ID)
 
         h.poll(mock_user, [_event("x", _in(2), title="Jane Smith", series=None)])
 

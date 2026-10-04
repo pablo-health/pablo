@@ -30,6 +30,10 @@ from ..models import AuditAction, User
 from ..models.audit import ResourceType
 from ..models.outside_sessions import (
     AnsweredAppointment,
+    AutoBookedAcknowledgeRequest,
+    AutoBookedAcknowledgeResponse,
+    AutoBookedResponse,
+    AutoBookedSession,
     CalendarSyncResponse,
     FollowedCalendarRequest,
     FollowedCalendarResponse,
@@ -45,6 +49,7 @@ from ..models.outside_sessions import (
     ReadableCalendarsResponse,
 )
 from ..models.patient import Patient
+from ..patients.new_client_name import chart_name
 from ..patients.seen_by import SeenBy
 from ..rate_limit import get_calendar_sync_limiter
 from ..repositories import (
@@ -82,6 +87,7 @@ from .calendar_import import (
     SEEN_BY_SOMEONE_ELSE,
     get_patient_source_mapping_repository,
     series_match,
+    suggested_name_for,
 )
 from .patients import get_patient_repository
 from .scheduling import (
@@ -102,7 +108,6 @@ router = APIRouter(tags=["outside-sessions"], dependencies=[Depends(require_acti
 PATIENT_ORIGIN = "calendar_follow"
 #: A chart's name when the event had no title to take one from.
 UNNAMED_CLIENT = "New client"
-_NAME_MAX = 255
 #: The statuses confirming a session may lift. A pending chart is not one.
 REACTIVATABLE = frozenset({"inactive", "on_hold"})
 
@@ -275,6 +280,7 @@ def outside_session_questions(
                 sessions=len(q.rows),
                 next_start_at=q.next_start_at,
                 match=_question_match(q, ctx, seen_by),
+                suggested_name=suggested_name_for(q.title),
                 outside_session_id=q.outside_session_id,
                 client_inactive=q.client_inactive,
             )
@@ -322,6 +328,69 @@ def _checked_client(
     if patient is None:
         raise NotFoundError("One of those clients could not be found")
     return patient
+
+
+@router.get("/api/calendar/outside-sessions/auto-booked", response_model=AutoBookedResponse)
+def auto_booked_sessions(
+    http_request: Request,
+    user: User = Depends(require_baa_acceptance),
+    outside: OutsideSessions = Depends(get_outside_sessions),
+    patient_repo: PatientRepository = Depends(get_patient_repository),
+    audit: AuditService = Depends(get_audit_service),
+) -> AutoBookedResponse:
+    """Upcoming sessions booked from an event's title, not yet acknowledged.
+
+    Each names its client, so the clinician can check them and cancel any
+    that are wrong (the ordinary cancel; the next read doesn't book it again).
+    """
+    sessions: list[AutoBookedSession] = []
+    for appointment in outside.auto_booked(user.id):
+        patient = patient_repo.get(appointment.patient_id, user.id)
+        sessions.append(
+            AutoBookedSession(
+                appointment_id=appointment.id,
+                patient_id=appointment.patient_id,
+                client_name=(
+                    " ".join(f"{patient.first_name} {patient.last_name}".split()) if patient else ""
+                ),
+                start_at=appointment.start_at,
+                end_at=appointment.end_at,
+                source=appointment.outside_source or "",
+            )
+        )
+    audit.log(
+        AuditAction.APPOINTMENT_LISTED,
+        user,
+        http_request,
+        resource_type=ResourceType.APPOINTMENT,
+        resource_id="auto-booked",
+        changes={"auto_booked": len(sessions)},
+    )
+    return AutoBookedResponse(sessions=sessions)
+
+
+@router.post(
+    "/api/calendar/outside-sessions/auto-booked/acknowledge",
+    response_model=AutoBookedAcknowledgeResponse,
+)
+def acknowledge_auto_booked(
+    request: AutoBookedAcknowledgeRequest,
+    http_request: Request,
+    user: User = Depends(require_baa_acceptance),
+    outside: OutsideSessions = Depends(get_outside_sessions),
+    audit: AuditService = Depends(get_audit_service),
+) -> AutoBookedAcknowledgeResponse:
+    """Record that the clinician acknowledged these automatic bookings; they leave the list."""
+    acknowledged = outside.acknowledge(user.id, set(request.appointment_ids))
+    audit.log(
+        AuditAction.APPOINTMENT_UPDATED,
+        user,
+        http_request,
+        resource_type=ResourceType.APPOINTMENT,
+        resource_id="auto-booked",
+        changes={"acknowledged": acknowledged},
+    )
+    return AutoBookedAcknowledgeResponse(acknowledged=acknowledged)
 
 
 @router.post("/api/calendar/outside-sessions/answer", response_model=OutsideAnswerResponse)
@@ -487,17 +556,24 @@ def _new_client(
     http_request: Request,
     audit: AuditService,
 ) -> Patient:
-    """A chart named as the calendar names them; the clinician can correct it.
+    """A chart with the name the clinician typed, or the title's name part.
 
-    Nothing tries to split the name into first and last — a guess there is a
-    wrong name on a chart.
+    Nothing splits a title into first and last on its own — a guess there is
+    a wrong name on a chart. With no name typed, the chart has no last name
+    and shows as needing one.
     """
+    first_name, last_name = chart_name(
+        item.new_client_first_name,
+        item.new_client_last_name,
+        item.new_client_name,
+        unnamed=UNNAMED_CLIENT,
+    )
     now = utc_now()
     patient = patient_repo.create(
         Patient(
             id=str(uuid.uuid4()),
-            first_name=(item.new_client_name or "").strip()[:_NAME_MAX] or UNNAMED_CLIENT,
-            last_name="",
+            first_name=first_name,
+            last_name=last_name,
             created_at=now,
             updated_at=now,
             origin=PATIENT_ORIGIN,

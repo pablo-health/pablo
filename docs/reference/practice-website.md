@@ -99,3 +99,44 @@ left out whole, and so is the call to action unless both its parts pass.
 
 A full address is checked again whenever the portal is shown: if the practice
 stops using that host, the link disappears.
+
+### A header suggested from index.html
+
+When `theme.json` has no `header` block, Settings > Website suggests one from
+the site's `index.html` when the zip is uploaded. The practice can accept it or
+edit it first. Either way it is written into the draft's `theme.json` and
+checked like any header there, and the portal shows it once the draft is
+published. A suggestion nobody accepts never reaches the portal.
+
+The suggestion is a guess from the page's first `<header>` (or its first
+`<nav>`): the link to the home page is the name, a link styled as a button is
+the call to action, and the other links are the links. Links that start with
+`#` or are relative to the page become paths, so `#services` becomes
+`/#services`. Links to the practice's own portal are left out.
+
+To make the suggestion exact rather than guessed, mark the header:
+
+```html
+<header data-pablo-header>
+  <a href="/">
+    <strong data-pablo="brand">Riverside Counseling</strong>
+    <span data-pablo="subtitle">Individual and couples therapy</span>
+  </a>
+  <nav data-pablo="nav">
+    <a href="#services">Services</a>
+    <a href="/about">About</a>
+  </nav>
+  <a data-pablo="cta" class="button" href="#schedule">Schedule a visit</a>
+</header>
+```
+
+- `data-pablo-header` marks the element holding the rest.
+- `data-pablo="brand"` is the name; its text is used.
+- `data-pablo="subtitle"` is the line under it.
+- `data-pablo="nav"` on a container makes every link inside it a link; on a
+  single `<a>`, just that one.
+- `data-pablo="cta"` is the call to action: an `<a>`, or an element with one
+  inside.
+
+The markers change nothing about how the website looks. Only `index.html` is
+read, and only when it is 256 KB or smaller.

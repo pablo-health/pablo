@@ -7,6 +7,7 @@ import { Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { SetupStepHead } from "@/components/setup"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion"
 import type { BusyWindowsGranted, BusyWindowsNotGranted, ImportProposal } from "@/lib/api/scheduling"
 import { busyWindowsGranted } from "@/lib/api/scheduling"
@@ -46,6 +47,10 @@ interface CalendarClientsStepProps {
   onFollowingChange?: (enabled: boolean) => void
   followSaving?: boolean
   followError?: string | null
+  /** Whether a session whose title is one client's full name books on its
+   * own (Settings > Calendars), so the follow helper says what happens.
+   * Undefined until it loads, which reads as the server's default, on. */
+  booksNamedSessions?: boolean
 }
 
 export function CalendarClientsStep({
@@ -60,7 +65,9 @@ export function CalendarClientsStep({
   onFollowingChange,
   followSaving = false,
   followError = null,
+  booksNamedSessions = true,
 }: CalendarClientsStepProps) {
+  const people = usePeopleTerm()
   const reducedMotion = usePrefersReducedMotion()
   const scanned = proposal !== null
 
@@ -195,7 +202,9 @@ export function CalendarClientsStep({
               Keep importing new sessions from this calendar
             </span>
             <span className="block text-xs text-muted-foreground">
-              You&rsquo;ll review each new match before it&rsquo;s added.
+              {booksNamedSessions
+                ? `Pablo books sessions whose title has a ${people.one}\u2019s full name and asks about the rest.`
+                : "Pablo asks who each new session is with and remembers your answer."}
             </span>
           </label>
         </div>

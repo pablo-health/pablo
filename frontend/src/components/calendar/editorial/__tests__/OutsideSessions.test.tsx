@@ -23,6 +23,10 @@ vi.mock("@/hooks/useOutsideSessions", () => ({
   useOutsideSessions: () => ({ data: { events: OUTSIDE } }),
   useOutsideQuestions: () => ({ data: { count: QUESTIONS.length, questions: QUESTIONS } }),
   useAnswerOutsideSessions: () => ({ mutateAsync: answerMutateAsync }),
+  // Its own notice, tested in AutoBookedNotice.test.tsx.
+  useAutoBooked: () => ({ data: { sessions: [] } }),
+  useUndoAutoBooked: () => ({ mutate: vi.fn(), isPending: false }),
+  useAcknowledgeAutoBooked: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 vi.mock("@/hooks/usePatients", () => ({
@@ -431,5 +435,101 @@ describe("sessions from the clinician's own calendar", () => {
     expect(answerMutateAsync).toHaveBeenCalledWith([
       expect.objectContaining({ source_identifier: "J.A.", outside_session_id: "o1" }),
     ])
+  })
+
+  describe("a new client's name", () => {
+    function openReview() {
+      render(<EditorialCalendar {...defaults()} />, { wrapper: wrap() })
+      fireEvent.click(
+        within(screen.getByTestId("outside-sessions-line")).getByRole("button", { name: "Review" })
+      )
+      return screen.getByRole("dialog")
+    }
+
+    function nameFields(dialog: HTMLElement, key: string) {
+      const row = within(dialog).getByTestId(`new-client-name-${key}`)
+      return {
+        row,
+        first: within(row).getByLabelText("First name"),
+        last: within(row).getByLabelText("Last name"),
+      }
+    }
+
+    it("sends a name typed for initials, and checks the row", () => {
+      QUESTIONS.push(UNKNOWN)
+      const dialog = openReview()
+
+      const { row, first, last } = nameFields(dialog, UNKNOWN.key)
+      expect(first).toHaveValue("")
+      expect(last).toHaveValue("")
+      expect(within(row).getByText("On the calendar: R.K.")).toBeInTheDocument()
+      fireEvent.change(first, { target: { value: "Robin" } })
+      fireEvent.change(last, { target: { value: " Kaur " } })
+      expect(within(dialog).getByRole("checkbox", { name: "R.K." })).toBeChecked()
+
+      fireEvent.click(within(dialog).getByRole("button", { name: "Save" }))
+      expect(answerMutateAsync).toHaveBeenCalledWith([
+        {
+          source: "google_calendar",
+          source_identifier: "title:def",
+          patient_id: null,
+          new_client_name: "R.K.",
+          new_client_first_name: "Robin",
+          new_client_last_name: "Kaur",
+          not_a_client: false,
+        },
+      ])
+    })
+
+    it("sends a suggested name as filled in", () => {
+      QUESTIONS.push({
+        ...UNKNOWN,
+        title: "Session with Casey Morgan",
+        suggested_name: { first_name: "Casey", last_name: "Morgan" },
+      })
+      const dialog = openReview()
+
+      const { first, last } = nameFields(dialog, UNKNOWN.key)
+      expect(first).toHaveValue("Casey")
+      expect(last).toHaveValue("Morgan")
+      fireEvent.click(within(dialog).getByRole("checkbox", { name: "Session with Casey Morgan" }))
+      fireEvent.click(within(dialog).getByRole("button", { name: "Save" }))
+
+      expect(answerMutateAsync).toHaveBeenCalledWith([
+        expect.objectContaining({
+          patient_id: null,
+          new_client_name: "Session with Casey Morgan",
+          new_client_first_name: "Casey",
+          new_client_last_name: "Morgan",
+        }),
+      ])
+    })
+
+    it("saves with the fields left empty", () => {
+      QUESTIONS.push(UNKNOWN)
+      const dialog = openReview()
+
+      fireEvent.click(within(dialog).getByRole("checkbox", { name: "R.K." }))
+      fireEvent.click(within(dialog).getByRole("button", { name: "Save" }))
+
+      expect(answerMutateAsync).toHaveBeenCalledWith([
+        expect.objectContaining({
+          new_client_name: "R.K.",
+          new_client_first_name: "",
+          new_client_last_name: "",
+        }),
+      ])
+    })
+
+    it("hides the fields once an existing client is picked", () => {
+      QUESTIONS.push(MATCHED)
+      const dialog = openReview()
+
+      expect(within(dialog).queryByTestId(`new-client-name-${MATCHED.key}`)).not.toBeInTheDocument()
+      fireEvent.change(within(dialog).getByRole("combobox", { name: "Which client is Jane Doe?" }), {
+        target: { value: "new" },
+      })
+      expect(within(dialog).getByTestId(`new-client-name-${MATCHED.key}`)).toBeInTheDocument()
+    })
   })
 })

@@ -8,7 +8,7 @@
 // Titles are the calendar's own wording, shown to the clinician and nowhere
 // else.
 
-import type { SeriesMatch } from "./scheduling"
+import type { SeriesMatch, SuggestedName } from "./scheduling"
 import type { SessionResponse } from "@/types/sessions"
 import { get, post, put } from "./client"
 
@@ -39,6 +39,9 @@ export interface OutsideQuestion {
   sessions: number
   next_start_at: string
   match: SeriesMatch
+  /** The name to fill in if this becomes a new client, when the title
+   * plainly gives one. A part it doesn't give whole is empty. */
+  suggested_name?: SuggestedName | null
   /** Set when the question is about this one event; handed back with the answer. */
   outside_session_id?: string | null
   /** The suggested client's chart is inactive or on hold; confirming may reactivate it. */
@@ -50,13 +53,16 @@ export interface OutsideQuestions {
   questions: OutsideQuestion[]
 }
 
-/** An answer to one question. `patient_id` null with `new_client_name`
- * adds a new client under that name. */
+/** An answer to one question. `patient_id` null with `new_client_name` (the
+ * title) adds a new client, named as typed in `new_client_first_name` and
+ * `new_client_last_name`; left blank, by the title's name part. */
 export interface OutsideAnswer {
   source: string
   source_identifier: string
   patient_id: string | null
   new_client_name: string | null
+  new_client_first_name?: string
+  new_client_last_name?: string
   not_a_client: boolean
   /** The one event this answers, when the question was about one event. */
   outside_session_id?: string | null
@@ -95,6 +101,29 @@ export async function answerOutsideSessions(
   answers: OutsideAnswer[]
 ): Promise<OutsideAnswerResult> {
   return post<OutsideAnswerResult>("/api/calendar/outside-sessions/answer", { answers })
+}
+
+/** A session Pablo booked without asking, because its title named the client. */
+export interface AutoBookedSession {
+  appointment_id: string
+  patient_id: string
+  client_name: string
+  start_at: string
+  end_at: string
+  /** `google_calendar` or `ical:<feed>`. */
+  source: string
+}
+
+/** Upcoming ones the clinician hasn't acknowledged yet, soonest first. */
+export async function listAutoBooked(): Promise<{ sessions: AutoBookedSession[] }> {
+  return get<{ sessions: AutoBookedSession[] }>("/api/calendar/outside-sessions/auto-booked")
+}
+
+/** The clinician acknowledged these; they leave the list and stay booked. */
+export async function acknowledgeAutoBooked(appointmentIds: string[]): Promise<{ acknowledged: number }> {
+  return post<{ acknowledged: number }>("/api/calendar/outside-sessions/auto-booked/acknowledge", {
+    appointment_ids: appointmentIds,
+  })
 }
 
 /** A calendar the connection can read, offered to be followed. */
