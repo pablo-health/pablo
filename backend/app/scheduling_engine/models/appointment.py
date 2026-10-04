@@ -145,10 +145,11 @@ class Appointment:
     outside_event_id: str | None = None
     # The followed calendar that event is on; None for a feed.
     outside_calendar_id: str | None = None
-    # When Pablo booked this on its own because the event's title named the
-    # client, until the clinician has seen it; None for any other booking.
+    # When this was booked without asking because the event's title named the
+    # client; set once, never cleared. And when the clinician acknowledged it.
     # See ``outside_sessions``.
-    booked_on_its_own_at: datetime | None = None
+    auto_booked_at: datetime | None = None
+    auto_booked_acknowledged_at: datetime | None = None
 
     # Clinical link
     session_id: str | None = None
@@ -267,7 +268,8 @@ class Appointment:
             outside_source=data.get("outside_source"),
             outside_event_id=data.get("outside_event_id"),
             outside_calendar_id=data.get("outside_calendar_id"),
-            booked_on_its_own_at=data.get("booked_on_its_own_at"),
+            auto_booked_at=data.get("auto_booked_at"),
+            auto_booked_acknowledged_at=data.get("auto_booked_acknowledged_at"),
             session_id=data.get("session_id"),
             service_code=data.get("service_code"),
             modifiers=data.get("modifiers"),
@@ -325,7 +327,8 @@ class Appointment:
             "outside_source": self.outside_source,
             "outside_event_id": self.outside_event_id,
             "outside_calendar_id": self.outside_calendar_id,
-            "booked_on_its_own_at": self.booked_on_its_own_at,
+            "auto_booked_at": self.auto_booked_at,
+            "auto_booked_acknowledged_at": self.auto_booked_acknowledged_at,
             "session_id": self.session_id,
             "service_code": self.service_code,
             "modifiers": self.modifiers,

@@ -651,7 +651,7 @@ class TestWhichPartOfATitleBooks:
         assert question.match.patient_id == "p1"
 
 
-class TestWhatWasBookedOnItsOwn:
+class TestWhatWasAutoBooked:
     """Bookings a title's name made are listed for the clinician until seen."""
 
     @pytest.fixture
@@ -673,7 +673,7 @@ class TestWhatWasBookedOnItsOwn:
             ],
         )
 
-        [listed] = clients.outside.booked_on_its_own(USER_ID)
+        [listed] = clients.outside.auto_booked(USER_ID)
         assert (listed.patient_id, listed.outside_event_id) == ("p1", "x")
 
     def test_every_event_of_a_series_a_title_booked_in_one_read_is_listed(
@@ -683,7 +683,7 @@ class TestWhatWasBookedOnItsOwn:
             mock_user,
             [_event(f"s{i}", _in(2 + 7 * i), title="Jane Smith") for i in range(3)],
         )
-        assert [a.outside_event_id for a in clients.outside.booked_on_its_own(USER_ID)] == [
+        assert [a.outside_event_id for a in clients.outside.auto_booked(USER_ID)] == [
             "s0",
             "s1",
             "s2",
@@ -694,33 +694,40 @@ class TestWhatWasBookedOnItsOwn:
 
         later = clients.followed("s3")
         assert later is not None
-        assert later.booked_on_its_own_at is None
+        assert later.auto_booked_at is None
 
-    def test_seen_bookings_leave_the_list(self, clients: _Harness, mock_user: User) -> None:
+    def test_acknowledged_bookings_leave_the_list_and_stay_auto_booked(
+        self, clients: _Harness, mock_user: User
+    ) -> None:
         clients.poll(mock_user, [_event("x", _in(3), title="Jane Smith", series=None)])
-        [listed] = clients.outside.booked_on_its_own(USER_ID)
+        [listed] = clients.outside.auto_booked(USER_ID)
+        booked_at = listed.auto_booked_at
 
-        assert clients.outside.seen(USER_ID, {listed.id}) == 1
+        assert clients.outside.acknowledge(USER_ID, {listed.id}) == 1
 
-        assert clients.outside.booked_on_its_own(USER_ID) == []
+        assert clients.outside.auto_booked(USER_ID) == []
         still = clients.followed("x")
         assert still is not None
         assert still.status == AppointmentStatus.CONFIRMED
+        # How it was booked is kept; the acknowledgement is recorded beside it.
+        assert still.auto_booked_at == booked_at
+        assert still.auto_booked_acknowledged_at is not None
 
     def test_undoing_one_cancels_it_and_the_next_read_leaves_it_cancelled(
         self, clients: _Harness, mock_user: User
     ) -> None:
         clients.poll(mock_user, [_event("x", _in(3), title="Jane Smith", series=None)])
-        [listed] = clients.outside.booked_on_its_own(USER_ID)
+        [listed] = clients.outside.auto_booked(USER_ID)
         listed.status = AppointmentStatus.CANCELLED
         clients.appointments.update(listed)
 
         clients.poll(mock_user, [_event("x", _in(3), title="Jane Smith", series=None)])
 
-        assert clients.outside.booked_on_its_own(USER_ID) == []
+        assert clients.outside.auto_booked(USER_ID) == []
         undone = clients.followed("x")
         assert undone is not None
         assert undone.status == AppointmentStatus.CANCELLED
+        assert undone.auto_booked_at is not None
 
 
 class TestWhenANameDoesNotBook:

@@ -193,7 +193,8 @@ CREATE TABLE __TENANT_SCHEMA__.appointments (
     outside_source character varying(64),
     outside_event_id text,
     outside_calendar_id text,
-    booked_on_its_own_at timestamp with time zone
+    auto_booked_at timestamp with time zone,
+    auto_booked_acknowledged_at timestamp with time zone
 );
 
 

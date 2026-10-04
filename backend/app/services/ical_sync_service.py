@@ -425,7 +425,7 @@ class ICalSyncService:
                 appt.notes = f"ical_client:{client_id}"
             if self._outside.booked_by_name(row, ctx):
                 # Booked on the title's name alone: listed for the clinician.
-                appt.booked_on_its_own_at = _now()
+                appt.auto_booked_at = _now()
             self._appt_repo.create(appt)
             self._outside.settle(user_id, source, event.uid, appt)
             result.created += 1

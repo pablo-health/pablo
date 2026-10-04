@@ -6,35 +6,37 @@ import { useState } from "react"
 import { format } from "date-fns"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import {
-  useBookedOnItsOwn,
-  useSeenBookedOnItsOwn,
-  useUndoBookedOnItsOwn,
+  useAutoBooked,
+  useAcknowledgeAutoBooked,
+  useUndoAutoBooked,
 } from "@/hooks/useOutsideSessions"
 import { NoticeButton } from "./GoogleChangeNotice"
 
 /**
- * The sessions Pablo booked on its own because an event's title named the
+ * The sessions booked automatically because an event's title named the
  * client, above the grid until the clinician has looked.
  *
  * The first read after connecting a calendar can book a dozen at once, and
  * none of them asked, so each is listed with its client and time and can be
  * undone. Undo is the ordinary cancel: the event stays answered, so the next
- * read leaves it cancelled. OK clears the list; the sessions stay booked.
+ * read leaves it cancelled. OK acknowledges them: the list clears, the
+ * sessions stay booked, and each keeps the record that it was booked
+ * automatically.
  */
-export function BookedOnItsOwnNotice() {
+export function AutoBookedNotice() {
   const people = usePeopleTerm()
-  const { data } = useBookedOnItsOwn()
-  const undo = useUndoBookedOnItsOwn()
-  const seen = useSeenBookedOnItsOwn()
+  const { data } = useAutoBooked()
+  const undo = useUndoAutoBooked()
+  const acknowledge = useAcknowledgeAutoBooked()
   const [open, setOpen] = useState(true)
   const sessions = data?.sessions ?? []
   if (sessions.length === 0) return null
-  const pending = undo.isPending || seen.isPending
+  const pending = undo.isPending || acknowledge.isPending
 
   return (
     <div
       role="status"
-      data-testid="booked-on-its-own"
+      data-testid="auto-booked"
       className="flex flex-col gap-2 rounded-lg px-4 py-2.5 text-sm"
       style={{
         backgroundColor: "var(--ed-canvas-elev)",
@@ -53,7 +55,7 @@ export function BookedOnItsOwnNotice() {
         </NoticeButton>
         <NoticeButton
           disabled={pending}
-          onClick={() => seen.mutate(sessions.map((s) => s.appointment_id))}
+          onClick={() => acknowledge.mutate(sessions.map((s) => s.appointment_id))}
         >
           OK
         </NoticeButton>
@@ -67,7 +69,7 @@ export function BookedOnItsOwnNotice() {
             {sessions.map((session) => (
               <li
                 key={session.appointment_id}
-                data-testid="booked-on-its-own-row"
+                data-testid="auto-booked-row"
                 className="flex flex-wrap items-center gap-2"
               >
                 <span className="mr-auto">

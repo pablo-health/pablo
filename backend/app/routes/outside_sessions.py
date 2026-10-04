@@ -30,10 +30,10 @@ from ..models import AuditAction, User
 from ..models.audit import ResourceType
 from ..models.outside_sessions import (
     AnsweredAppointment,
-    BookedOnItsOwn,
-    BookedOnItsOwnResponse,
-    BookedOnItsOwnSeenRequest,
-    BookedOnItsOwnSeenResponse,
+    AutoBookedAcknowledgeRequest,
+    AutoBookedAcknowledgeResponse,
+    AutoBookedResponse,
+    AutoBookedSession,
     CalendarSyncResponse,
     FollowedCalendarRequest,
     FollowedCalendarResponse,
@@ -328,24 +328,24 @@ def _checked_client(
     return patient
 
 
-@router.get("/api/calendar/outside-sessions/booked", response_model=BookedOnItsOwnResponse)
-def booked_on_its_own(
+@router.get("/api/calendar/outside-sessions/auto-booked", response_model=AutoBookedResponse)
+def auto_booked_sessions(
     http_request: Request,
     user: User = Depends(require_baa_acceptance),
     outside: OutsideSessions = Depends(get_outside_sessions),
     patient_repo: PatientRepository = Depends(get_patient_repository),
     audit: AuditService = Depends(get_audit_service),
-) -> BookedOnItsOwnResponse:
-    """Upcoming sessions Pablo booked on its own from an event's title, not yet seen.
+) -> AutoBookedResponse:
+    """Upcoming sessions booked from an event's title, not yet acknowledged.
 
     Each names its client, so the clinician can check them and cancel any
     that are wrong (the ordinary cancel; the next read doesn't book it again).
     """
-    sessions: list[BookedOnItsOwn] = []
-    for appointment in outside.booked_on_its_own(user.id):
+    sessions: list[AutoBookedSession] = []
+    for appointment in outside.auto_booked(user.id):
         patient = patient_repo.get(appointment.patient_id, user.id)
         sessions.append(
-            BookedOnItsOwn(
+            AutoBookedSession(
                 appointment_id=appointment.id,
                 patient_id=appointment.patient_id,
                 client_name=(
@@ -361,33 +361,34 @@ def booked_on_its_own(
         user,
         http_request,
         resource_type=ResourceType.APPOINTMENT,
-        resource_id="booked-on-its-own",
-        changes={"booked_on_its_own": len(sessions)},
+        resource_id="auto-booked",
+        changes={"auto_booked": len(sessions)},
     )
-    return BookedOnItsOwnResponse(sessions=sessions)
+    return AutoBookedResponse(sessions=sessions)
 
 
 @router.post(
-    "/api/calendar/outside-sessions/booked/seen", response_model=BookedOnItsOwnSeenResponse
+    "/api/calendar/outside-sessions/auto-booked/acknowledge",
+    response_model=AutoBookedAcknowledgeResponse,
 )
-def booked_on_its_own_seen(
-    request: BookedOnItsOwnSeenRequest,
+def acknowledge_auto_booked(
+    request: AutoBookedAcknowledgeRequest,
     http_request: Request,
     user: User = Depends(require_baa_acceptance),
     outside: OutsideSessions = Depends(get_outside_sessions),
     audit: AuditService = Depends(get_audit_service),
-) -> BookedOnItsOwnSeenResponse:
-    """The clinician has seen these bookings; they leave the list. Nothing else changes."""
-    seen = outside.seen(user.id, set(request.appointment_ids))
+) -> AutoBookedAcknowledgeResponse:
+    """Record that the clinician acknowledged these automatic bookings; they leave the list."""
+    acknowledged = outside.acknowledge(user.id, set(request.appointment_ids))
     audit.log(
         AuditAction.APPOINTMENT_UPDATED,
         user,
         http_request,
         resource_type=ResourceType.APPOINTMENT,
-        resource_id="booked-on-its-own",
-        changes={"seen": seen},
+        resource_id="auto-booked",
+        changes={"acknowledged": acknowledged},
     )
-    return BookedOnItsOwnSeenResponse(seen=seen)
+    return AutoBookedAcknowledgeResponse(acknowledged=acknowledged)
 
 
 @router.post("/api/calendar/outside-sessions/answer", response_model=OutsideAnswerResponse)

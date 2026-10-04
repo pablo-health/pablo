@@ -6,9 +6,9 @@ import { cancelAppointment } from "@/lib/api/scheduling"
 import {
   answerOutsideSessions,
   getOutsideQuestions,
-  listBookedOnItsOwn,
+  listAutoBooked,
   listOutsideSessions,
-  markBookedOnItsOwnSeen,
+  acknowledgeAutoBooked,
   type OutsideAnswer,
   type OutsideAnswerResult,
 } from "@/lib/api/outsideSessions"
@@ -34,17 +34,17 @@ export function useOutsideQuestions() {
   })
 }
 
-/** Sessions Pablo booked on its own from a title, not yet seen. */
-export function useBookedOnItsOwn() {
+/** Sessions booked automatically from a title, not yet acknowledged. */
+export function useAutoBooked() {
   return useAuthQuery({
-    queryKey: queryKeys.appointments.bookedOnItsOwn(),
-    queryFn: () => listBookedOnItsOwn(),
+    queryKey: queryKeys.appointments.autoBooked(),
+    queryFn: () => listAutoBooked(),
     staleTime: 60 * 1000,
   })
 }
 
 /** Undo one: the ordinary cancel, so the next read leaves it cancelled. */
-export function useUndoBookedOnItsOwn() {
+export function useUndoAutoBooked() {
   return useAuthMutation<unknown, string>({
     mutationFn: (appointmentId) => cancelAppointment(appointmentId),
     invalidateKeys: [queryKeys.appointments.all],
@@ -52,10 +52,10 @@ export function useUndoBookedOnItsOwn() {
 }
 
 /** The clinician has looked; the list clears and the sessions stay booked. */
-export function useSeenBookedOnItsOwn() {
-  return useAuthMutation<{ seen: number }, string[]>({
-    mutationFn: (appointmentIds) => markBookedOnItsOwnSeen(appointmentIds),
-    invalidateKeys: [queryKeys.appointments.bookedOnItsOwn()],
+export function useAcknowledgeAutoBooked() {
+  return useAuthMutation<{ acknowledged: number }, string[]>({
+    mutationFn: (appointmentIds) => acknowledgeAutoBooked(appointmentIds),
+    invalidateKeys: [queryKeys.appointments.autoBooked()],
   })
 }
 

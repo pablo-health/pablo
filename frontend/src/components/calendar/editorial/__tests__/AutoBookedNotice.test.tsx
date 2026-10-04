@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 /**
- * What Pablo booked on its own from an event's title: listed with client and
+ * What was booked automatically from an event's title: listed with client and
  * time, each undoable through the ordinary cancel, and cleared by OK.
  */
 
@@ -9,17 +9,17 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { renderWithProviders } from "@/test/renderWithProviders"
-import { BookedOnItsOwnNotice } from "../BookedOnItsOwnNotice"
+import { AutoBookedNotice } from "../AutoBookedNotice"
 
 const api = {
-  listBookedOnItsOwn: vi.fn(),
-  markBookedOnItsOwnSeen: vi.fn(),
+  listAutoBooked: vi.fn(),
+  acknowledgeAutoBooked: vi.fn(),
   cancelAppointment: vi.fn(),
 }
 vi.mock("@/lib/api/outsideSessions", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api/outsideSessions")>()),
-  listBookedOnItsOwn: () => api.listBookedOnItsOwn(),
-  markBookedOnItsOwnSeen: (ids: string[]) => api.markBookedOnItsOwnSeen(ids),
+  listAutoBooked: () => api.listAutoBooked(),
+  acknowledgeAutoBooked: (ids: string[]) => api.acknowledgeAutoBooked(ids),
 }))
 vi.mock("@/lib/api/scheduling", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api/scheduling")>()),
@@ -36,30 +36,30 @@ const JANE = {
 }
 const ROBERT = { ...JANE, appointment_id: "a2", patient_id: "p2", client_name: "Robert Jones" }
 
-describe("BookedOnItsOwnNotice", () => {
+describe("AutoBookedNotice", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     api.cancelAppointment.mockResolvedValue({})
-    api.markBookedOnItsOwnSeen.mockResolvedValue({ seen: 2 })
+    api.acknowledgeAutoBooked.mockResolvedValue({ acknowledged: 2 })
   })
 
-  it("shows nothing when Pablo booked nothing on its own", async () => {
-    api.listBookedOnItsOwn.mockResolvedValue({ sessions: [] })
-    renderWithProviders(<BookedOnItsOwnNotice />)
+  it("shows nothing when nothing was booked automatically", async () => {
+    api.listAutoBooked.mockResolvedValue({ sessions: [] })
+    renderWithProviders(<AutoBookedNotice />)
 
-    await waitFor(() => expect(api.listBookedOnItsOwn).toHaveBeenCalled())
-    expect(screen.queryByTestId("booked-on-its-own")).not.toBeInTheDocument()
+    await waitFor(() => expect(api.listAutoBooked).toHaveBeenCalled())
+    expect(screen.queryByTestId("auto-booked")).not.toBeInTheDocument()
   })
 
   it("lists each session with its client and says why", async () => {
-    api.listBookedOnItsOwn.mockResolvedValue({ sessions: [JANE, ROBERT] })
-    renderWithProviders(<BookedOnItsOwnNotice />)
+    api.listAutoBooked.mockResolvedValue({ sessions: [JANE, ROBERT] })
+    renderWithProviders(<AutoBookedNotice />)
 
     expect(
       await screen.findByText("Pablo booked 2 sessions from your calendar"),
     ).toBeInTheDocument()
     expect(screen.getByText("Each title had a client’s full name.")).toBeInTheDocument()
-    const rows = screen.getAllByTestId("booked-on-its-own-row")
+    const rows = screen.getAllByTestId("auto-booked-row")
     expect(rows.map((row) => within(row).getByText(/Smith|Jones/).textContent)).toEqual([
       "Jane Smith",
       "Robert Jones",
@@ -67,12 +67,12 @@ describe("BookedOnItsOwnNotice", () => {
   })
 
   it("undoes one by cancelling its appointment", async () => {
-    api.listBookedOnItsOwn
+    api.listAutoBooked
       .mockResolvedValueOnce({ sessions: [JANE, ROBERT] })
       .mockResolvedValue({ sessions: [ROBERT] })
-    renderWithProviders(<BookedOnItsOwnNotice />)
+    renderWithProviders(<AutoBookedNotice />)
 
-    const [janeRow] = await screen.findAllByTestId("booked-on-its-own-row")
+    const [janeRow] = await screen.findAllByTestId("auto-booked-row")
     await userEvent.click(within(janeRow).getByRole("button", { name: /^Undo Jane Smith/ }))
 
     expect(api.cancelAppointment).toHaveBeenCalledWith("a1")
@@ -83,25 +83,25 @@ describe("BookedOnItsOwnNotice", () => {
   })
 
   it("clears the list with OK, leaving the sessions booked", async () => {
-    api.listBookedOnItsOwn
+    api.listAutoBooked
       .mockResolvedValueOnce({ sessions: [JANE, ROBERT] })
       .mockResolvedValue({ sessions: [] })
-    renderWithProviders(<BookedOnItsOwnNotice />)
+    renderWithProviders(<AutoBookedNotice />)
 
     await userEvent.click(await screen.findByRole("button", { name: "OK" }))
 
-    expect(api.markBookedOnItsOwnSeen).toHaveBeenCalledWith(["a1", "a2"])
+    expect(api.acknowledgeAutoBooked).toHaveBeenCalledWith(["a1", "a2"])
     expect(api.cancelAppointment).not.toHaveBeenCalled()
-    await waitFor(() => expect(screen.queryByTestId("booked-on-its-own")).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByTestId("auto-booked")).not.toBeInTheDocument())
   })
 
   it("hides and shows the list", async () => {
-    api.listBookedOnItsOwn.mockResolvedValue({ sessions: [JANE] })
-    renderWithProviders(<BookedOnItsOwnNotice />)
+    api.listAutoBooked.mockResolvedValue({ sessions: [JANE] })
+    renderWithProviders(<AutoBookedNotice />)
 
     await userEvent.click(await screen.findByRole("button", { name: "Hide" }))
-    expect(screen.queryByTestId("booked-on-its-own-row")).not.toBeInTheDocument()
+    expect(screen.queryByTestId("auto-booked-row")).not.toBeInTheDocument()
     await userEvent.click(screen.getByRole("button", { name: "Show" }))
-    expect(screen.getByTestId("booked-on-its-own-row")).toBeInTheDocument()
+    expect(screen.getByTestId("auto-booked-row")).toBeInTheDocument()
   })
 })

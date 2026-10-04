@@ -116,7 +116,7 @@ class OutsideAnswerResponse(BaseModel):
     not_added: list[NotAddedSession] = Field(default_factory=list)
 
 
-class BookedOnItsOwn(BaseModel):
+class AutoBookedSession(BaseModel):
     """A session Pablo booked without asking, because its title named the client."""
 
     appointment_id: str
@@ -127,20 +127,20 @@ class BookedOnItsOwn(BaseModel):
     source: str = Field(description="``google_calendar`` or ``ical:<feed>``")
 
 
-class BookedOnItsOwnResponse(BaseModel):
-    """Upcoming ones the clinician hasn't seen yet, soonest first."""
+class AutoBookedResponse(BaseModel):
+    """Upcoming ones the clinician hasn't acknowledged yet, soonest first."""
 
-    sessions: list[BookedOnItsOwn]
+    sessions: list[AutoBookedSession]
 
 
-class BookedOnItsOwnSeenRequest(BaseModel):
-    """The bookings the clinician has seen, which leave the list."""
+class AutoBookedAcknowledgeRequest(BaseModel):
+    """The automatic bookings the clinician acknowledged, which leave the list."""
 
     appointment_ids: list[str] = Field(min_length=1, max_length=500)
 
 
-class BookedOnItsOwnSeenResponse(BaseModel):
-    seen: int
+class AutoBookedAcknowledgeResponse(BaseModel):
+    acknowledged: int
 
 
 class FollowedCalendarRequest(BaseModel):

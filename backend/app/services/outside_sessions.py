@@ -531,7 +531,7 @@ class OutsideSessions:
                     )
                 incoming.answer = ANSWER_CLIENT
                 incoming.patient_id = patient_id
-                appointment = self._book(incoming, on_its_own=by_name)
+                appointment = self._book(incoming, auto_booked=by_name)
                 if appointment is not None:
                     result.booked.append(appointment)
                     if by_name:
@@ -682,10 +682,10 @@ class OutsideSessions:
         if row is not None:
             self._events.delete(user_id, row.id)
 
-    # --- What was booked on its own ------------------------------------------
+    # --- What was booked automatically ---------------------------------------
 
-    def booked_on_its_own(self, user_id: str) -> list[Appointment]:
-        """Upcoming sessions booked from a title's name that the clinician hasn't seen.
+    def auto_booked(self, user_id: str) -> list[Appointment]:
+        """Upcoming sessions booked from a title's name that the clinician hasn't acknowledged.
 
         Soonest first. A cancelled one is gone from the list: undoing a
         booking is cancelling it, and the event's row stays answered, so the
@@ -697,19 +697,25 @@ class OutsideSessions:
             for appointment in self._appointments.list_by_range(
                 user_id, start, start + timedelta(days=MAX_HORIZON_DAYS)
             )
-            if appointment.booked_on_its_own_at is not None
+            if appointment.auto_booked_at is not None
+            and appointment.auto_booked_acknowledged_at is None
             and appointment.status == AppointmentStatus.CONFIRMED
         ]
 
-    def seen(self, user_id: str, appointment_ids: set[str]) -> int:
-        """The clinician has seen these bookings; they leave the list. Returns how many."""
-        cleared = 0
-        for appointment in self.booked_on_its_own(user_id):
+    def acknowledge(self, user_id: str, appointment_ids: set[str]) -> int:
+        """The clinician acknowledged these automatic bookings; they leave the list.
+
+        ``auto_booked_at`` stays: how a session was booked is a fact, and the
+        acknowledgement is recorded beside it. Returns how many.
+        """
+        acknowledged = 0
+        now = utc_now()
+        for appointment in self.auto_booked(user_id):
             if appointment.id in appointment_ids:
-                appointment.booked_on_its_own_at = None
+                appointment.auto_booked_acknowledged_at = now
                 self._appointments.update(appointment)
-                cleared += 1
-        return cleared
+                acknowledged += 1
+        return acknowledged
 
     # --- Asking and answering ----------------------------------------------
 
@@ -960,7 +966,7 @@ class OutsideSessions:
             tuple(title_readings(row.title)),
         )
 
-    def _book(self, row: ExternalCalendarEvent, *, on_its_own: bool = False) -> Appointment | None:
+    def _book(self, row: ExternalCalendarEvent, *, auto_booked: bool = False) -> Appointment | None:
         """Make the appointment an answered row follows, or link to the one already made.
 
         One outside event is at most one live appointment in the practice.
@@ -973,8 +979,8 @@ class OutsideSessions:
         the same session booked in Pablo as well — so the practice isn't
         double booked. The row is still answered, and so never asked about again.
 
-        ``on_its_own`` marks a booking the event's title made, for the
-        clinician to see (``booked_on_its_own``).
+        ``auto_booked`` records that the event's title made the booking, for
+        the clinician to see (``auto_booked``).
         """
         if row.patient_id is None or row.appointment_id is not None:
             return None
@@ -1007,7 +1013,7 @@ class OutsideSessions:
                     ical_uid=row.source_event_id if feed else None,
                     ical_source=feed,
                     ical_sync_status="synced" if feed else None,
-                    booked_on_its_own_at=now if on_its_own else None,
+                    auto_booked_at=now if auto_booked else None,
                     created_at=now,
                     updated_at=now,
                 )

@@ -1897,9 +1897,12 @@ class AppointmentRow(Base):
     # The calendar that event is on, for a calendar Pablo follows; None for a
     # feed, and for sessions booked before the calendar was recorded.
     outside_calendar_id: Mapped[str | None] = mapped_column(Text)
-    # When Pablo booked this on its own because the event's title named the
-    # client, until the clinician has seen it. None for any other booking.
-    booked_on_its_own_at: Mapped[datetime | None] = mapped_column(
+    # When this was booked without asking because the event's title named the
+    # client (a followed calendar or a feed). Set once and never cleared.
+    auto_booked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # When the clinician acknowledged that automatic booking (OK on the
+    # calendar's list); None until then, and for every other booking.
+    auto_booked_acknowledged_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     # Clinical link

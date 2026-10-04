@@ -594,9 +594,7 @@ def test_an_answer_is_refused_while_the_calendar_is_not_known(
     assert len(wired.events.list_open(USER_ID)) == 1
 
 
-def _booked(
-    wired: _Wired, appointment_id: str, days: int, *, on_its_own: bool = True
-) -> Appointment:
+def _booked(wired: _Wired, appointment_id: str, days: int, *, auto: bool = True) -> Appointment:
     start = (utc_now() + timedelta(days=days)).replace(minute=0, second=0, microsecond=0)
     return wired.appointments.create(
         Appointment(
@@ -612,13 +610,13 @@ def _booked(
             outside_source=GOOGLE_CALENDAR_SOURCE,
             outside_event_id=f"evt-{appointment_id}",
             outside_calendar_id=MAIN,
-            booked_on_its_own_at=utc_now() if on_its_own else None,
+            auto_booked_at=utc_now() if auto else None,
             created_at=utc_now(),
         )
     )
 
 
-class TestBookedOnItsOwn:
+class TestAutoBooked:
     """The sessions a title's name booked, listed until the clinician has seen them."""
 
     def test_only_upcoming_live_bookings_a_title_made_are_listed(
@@ -626,12 +624,12 @@ class TestBookedOnItsOwn:
     ) -> None:
         wired.client_named("p1")
         _booked(wired, "named", 3)
-        _booked(wired, "answered", 4, on_its_own=False)
+        _booked(wired, "answered", 4, auto=False)
         undone = _booked(wired, "undone", 5)
         undone.status = AppointmentStatus.CANCELLED
         wired.appointments.update(undone)
 
-        response = client.get("/api/calendar/outside-sessions/booked")
+        response = client.get("/api/calendar/outside-sessions/auto-booked")
 
         assert response.status_code == 200, response.text
         [session] = response.json()["sessions"]
@@ -639,7 +637,7 @@ class TestBookedOnItsOwn:
         assert session["client_name"] == "Jane Smith"
         assert session["source"] == GOOGLE_CALENDAR_SOURCE
 
-    def test_seen_ones_leave_the_list_and_stay_booked(
+    def test_acknowledged_ones_leave_the_list_and_keep_their_record(
         self, client: TestClient, wired: _Wired
     ) -> None:
         wired.client_named("p1")
@@ -647,13 +645,16 @@ class TestBookedOnItsOwn:
         _booked(wired, "b", 4)
 
         response = client.post(
-            "/api/calendar/outside-sessions/booked/seen", json={"appointment_ids": ["a"]}
+            "/api/calendar/outside-sessions/auto-booked/acknowledge",
+            json={"appointment_ids": ["a"]},
         )
 
         assert response.status_code == 200, response.text
-        assert response.json() == {"seen": 1}
-        listed = client.get("/api/calendar/outside-sessions/booked").json()["sessions"]
+        assert response.json() == {"acknowledged": 1}
+        listed = client.get("/api/calendar/outside-sessions/auto-booked").json()["sessions"]
         assert [s["appointment_id"] for s in listed] == ["b"]
-        seen = wired.appointments.get("a", USER_ID)
-        assert seen is not None
-        assert seen.status == AppointmentStatus.CONFIRMED
+        acknowledged = wired.appointments.get("a", USER_ID)
+        assert acknowledged is not None
+        assert acknowledged.status == AppointmentStatus.CONFIRMED
+        assert acknowledged.auto_booked_at is not None
+        assert acknowledged.auto_booked_acknowledged_at is not None

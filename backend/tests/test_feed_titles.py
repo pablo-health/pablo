@@ -499,7 +499,7 @@ class TestFullNameFeed:
 # --- What a feed booked on its own -------------------------------------------
 
 
-class TestWhatAFeedBookedOnItsOwn:
+class TestWhatAFeedAutoBooked:
     def test_a_booking_from_a_name_is_marked_and_one_from_an_answer_is_not(
         self, feed: _Feed
     ) -> None:
@@ -510,7 +510,7 @@ class TestWhatAFeedBookedOnItsOwn:
         feed.sync(FULL_NAMES)
 
         marked = {
-            a.patient_id: a.booked_on_its_own_at is not None
+            a.patient_id: a.auto_booked_at is not None
             for a in feed.appointments.list_by_ical_source(USER, SP)
         }
         assert marked == {"john": True, "james": False}

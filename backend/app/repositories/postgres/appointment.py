@@ -521,7 +521,8 @@ def _row_to_appointment(row: AppointmentRow) -> Appointment:
         outside_source=row.outside_source,
         outside_event_id=row.outside_event_id,
         outside_calendar_id=row.outside_calendar_id,
-        booked_on_its_own_at=row.booked_on_its_own_at,
+        auto_booked_at=row.auto_booked_at,
+        auto_booked_acknowledged_at=row.auto_booked_acknowledged_at,
         session_id=row.session_id,
         service_code=row.service_code,
         modifiers=row.modifiers,
@@ -580,12 +581,14 @@ def _appointment_to_row(appt: Appointment, row: AppointmentRow) -> None:
         row.outside_source,
         row.outside_event_id,
         row.outside_calendar_id,
-        row.booked_on_its_own_at,
+        row.auto_booked_at,
+        row.auto_booked_acknowledged_at,
     ) = (
         appt.outside_source,
         appt.outside_event_id,
         appt.outside_calendar_id,
-        appt.booked_on_its_own_at,
+        appt.auto_booked_at,
+        appt.auto_booked_acknowledged_at,
     )
     row.session_id = appt.session_id
     row.service_code = appt.service_code

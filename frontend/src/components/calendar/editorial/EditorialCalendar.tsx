@@ -32,7 +32,7 @@ import { EditorialSidebar, type EditorialTheme } from "./EditorialSidebar"
 import { EditorialMiniMonth } from "./EditorialMiniMonth"
 import { EditorialEventPeek } from "./EditorialEventPeek"
 import { EditorialEventContextMenu } from "./EditorialEventContextMenu"
-import { BookedOnItsOwnNotice } from "./BookedOnItsOwnNotice"
+import { AutoBookedNotice } from "./AutoBookedNotice"
 import { GoogleChangesBanner } from "./GoogleChangesBanner"
 import { needsGoogleDecision } from "./GoogleChangeNotice"
 import { useOutsideReview } from "./useOutsideReview"
@@ -366,7 +366,7 @@ export function EditorialCalendar({
           pending={googleChangePending}
         />
 
-        <BookedOnItsOwnNotice />
+        <AutoBookedNotice />
 
         {pickerOpen && (
           <div

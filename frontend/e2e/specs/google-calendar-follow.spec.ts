@@ -651,9 +651,9 @@ test("what Pablo booked from titles is listed, and an undo stays undone", async 
 
   // The calendar lists each one with its client and time.
   await showTomorrow(page)
-  const notice = page.getByTestId("booked-on-its-own")
+  const notice = page.getByTestId("auto-booked")
   await expect(notice).toContainText("Pablo booked 3 sessions from your calendar")
-  const rows = notice.getByTestId("booked-on-its-own-row")
+  const rows = notice.getByTestId("auto-booked-row")
   await expect(rows).toHaveCount(3)
   await expect(rows.first()).toContainText("Jamie Ortiz")
 
