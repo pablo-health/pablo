@@ -12,6 +12,7 @@ import { disconnectGoogleCalendar, getGoogleCalendarStatus } from "@/lib/api/sch
 import { DisconnectCalendarDialog } from "@/components/calendar/connect/DisconnectCalendarDialog"
 import { CalendarReadProblem } from "@/components/calendar/CalendarReadProblem"
 import { formatLastRead } from "@/components/calendar/calendarReadTime"
+import { needsReconnect } from "@/hooks/useGoogleCalendarStatus"
 import { FollowCalendarSetting } from "./FollowCalendarSetting"
 import { useBooksSessionsNamedInTitle } from "./NameBookingSetting"
 
@@ -53,6 +54,11 @@ export function GoogleCalendarSettings() {
                   ? "Your main calendar"
                   : "A separate calendar for Pablo sessions"}
               </p>
+              {status.last_synced_at && (
+                <p data-testid="calendar-last-read" className="mt-0.5 text-xs text-muted-foreground">
+                  Last checked {formatLastRead(status.last_synced_at)}
+                </p>
+              )}
             </>
           ) : (
             <p className="text-muted-foreground">Not connected.</p>
@@ -76,19 +82,18 @@ export function GoogleCalendarSettings() {
           )}
         </div>
       </div>
-      {status?.connected && <CalendarReadProblem />}
-      {status?.connected && (
+      {/* A gone followed calendar is the follow setting's own line, with its
+          picker; only a connection that needs connecting again is said here. */}
+      {status?.connected && <CalendarReadProblem reconnectOnly />}
+      {/* Hidden while the connection needs connecting again: its calendar
+          list would fail for the same cause and say so a second time. */}
+      {status?.connected && !needsReconnect(status) && (
         <FollowCalendarSetting
           followedCalendarId={status.follow_calendar_id ?? null}
           importGranted={Boolean(status.import_granted)}
           booksNamedSessions={booksNamedSessions}
           onChanged={() => queryClient.invalidateQueries({ queryKey: STATUS_QUERY_KEY })}
         />
-      )}
-      {status?.connected && status.last_synced_at && (
-        <p data-testid="calendar-last-read" className="pl-6 text-xs text-muted-foreground">
-          Last read {formatLastRead(status.last_synced_at)}
-        </p>
       )}
       <DisconnectCalendarDialog
         open={confirmingDisconnect}

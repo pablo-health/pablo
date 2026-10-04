@@ -727,7 +727,7 @@ test("a calendar Pablo can't read says so, reconnects, and Check calendars bring
     await page.getByRole("button", { name: "Next", exact: true }).click()
   }
   await expect(page.getByRole("button", { name: /^Marlowe Adeyemi at 10:30 AM/ })).toBeVisible()
-  await expect(page.getByTestId("calendar-last-read")).toHaveText(/^Last read \d{1,2}:\d{2} [AP]M$/)
+  await expect(page.getByTestId("calendar-last-read")).toHaveText(/^Last checked \d{1,2}:\d{2} [AP]M$/)
   // Set on this page load only: a reload would take it away.
   await page.evaluate(() => {
     ;(window as unknown as { stillThisLoad?: boolean }).stillThisLoad = true
@@ -743,6 +743,9 @@ test("a calendar Pablo can't read says so, reconnects, and Check calendars bring
   await page.getByRole("button", { name: "Check calendars" }).click()
   await expect(page.getByRole("button", { name: /^Marlowe Adeyemi at 3:30 PM/ })).toBeVisible()
   await expect(page.getByRole("button", { name: /^Marlowe Adeyemi at 10:30 AM/ })).toHaveCount(0)
+  // Everything was read, so the time shows rather than the failure line.
+  await expect(page.getByTestId("calendar-last-read")).toHaveText(/^Last checked /)
+  await expect(page.getByText("Could not check your calendars. Try again in a moment.")).toHaveCount(0)
   expect(
     await page.evaluate(() => (window as unknown as { stillThisLoad?: boolean }).stillThisLoad),
   ).toBe(true)

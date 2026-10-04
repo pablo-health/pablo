@@ -27,7 +27,9 @@ vi.mock("@/lib/auth-context", () => ({
   useAuth: () => ({ user: { uid: "u1" }, loading: false, getIdToken: async () => "token" }),
 }))
 // Its own card, tested in FollowCalendarSetting.test.tsx.
-vi.mock("../FollowCalendarSetting", () => ({ FollowCalendarSetting: () => null }))
+vi.mock("../FollowCalendarSetting", () => ({
+  FollowCalendarSetting: () => <div data-testid="follow-calendar-setting" />,
+}))
 vi.mock("../NameBookingSetting", () => ({ useBooksSessionsNamedInTitle: () => false }))
 
 function renderCard() {
@@ -102,7 +104,7 @@ describe("GoogleCalendarSettings disconnect", () => {
 })
 
 describe("GoogleCalendarSettings reading the calendar", () => {
-  it("shows when the calendar was last read, in 12-hour time", async () => {
+  it("shows when the calendar was last checked, in 12-hour time, beside its name", async () => {
     getStatus.mockResolvedValue({
       connected: true,
       calendar_id: "me@example.test",
@@ -115,7 +117,11 @@ describe("GoogleCalendarSettings reading the calendar", () => {
     renderCard()
 
     expect(await screen.findByTestId("calendar-last-read")).toHaveTextContent(
-      /^Last read Jan 2, 3:42 PM$/,
+      /^Last checked Jan 2, 3:42 PM$/,
+    )
+    // In the calendar's own block, not under the follow setting.
+    expect(screen.getByTestId("calendar-last-read").previousElementSibling).toHaveTextContent(
+      "Your main calendar",
     )
     expect(screen.queryByText(/Last synced/)).not.toBeInTheDocument()
     expect(screen.queryByTestId("calendar-read-problem")).not.toBeInTheDocument()
@@ -140,6 +146,26 @@ describe("GoogleCalendarSettings reading the calendar", () => {
     expect(within(line).getByRole("button", { name: "Reconnect" })).toBeInTheDocument()
     // Still connected: the connection is there, it just can't be read.
     expect(screen.getByRole("button", { name: "Disconnect" })).toBeInTheDocument()
+    // The follow setting's calendar list would fail for the same cause.
+    expect(screen.queryByTestId("follow-calendar-setting")).not.toBeInTheDocument()
+  })
+
+  it("leaves a followed calendar that is gone to the follow setting", async () => {
+    getStatus.mockResolvedValue({
+      connected: true,
+      calendar_id: "me@example.test",
+      calendar_name: null,
+      last_synced_at: "2026-01-02T15:42:00",
+      write_target: "primary",
+      follow_calendar_id: "gone@group.calendar.google.test",
+      import_granted: true,
+      read_error: "calendar_not_found",
+      reads_paused: false,
+    })
+    renderCard()
+
+    expect(await screen.findByTestId("follow-calendar-setting")).toBeInTheDocument()
+    expect(screen.queryByTestId("calendar-read-problem")).not.toBeInTheDocument()
   })
 })
 

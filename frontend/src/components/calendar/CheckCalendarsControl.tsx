@@ -12,7 +12,7 @@ import { formatLastRead, oldestRead } from "./calendarReadTime"
  * "Check calendars": read every calendar Pablo follows now — the Google
  * calendar and any feeds — rather than at the next scheduled read, and
  * refresh what the calendar shows. The time beside it is when they were
- * last read.
+ * last checked.
  */
 export function CheckCalendarsControl({
   feeds,
@@ -30,18 +30,28 @@ export function CheckCalendarsControl({
   const googleConnected = Boolean(google?.connected)
   if (!googleConnected && feeds.length === 0) return null
 
+  // The oldest of the sources' last reads, not the newest: every calendar
+  // has been checked since then, and a newer time would claim a read the
+  // others never had.
   const lastRead = oldestRead([
     ...(googleConnected ? [google?.last_synced_at] : []),
     ...feeds.map((feed) => feed.last_synced_at),
   ])
+  // A check that read some calendars and not others still failed: said
+  // here, so an unchanged time never reads as the button doing nothing.
+  const failed =
+    check.isError ||
+    Boolean(check.data && (check.data.google_error || check.data.ical_errors > 0))
 
   return (
     <div className="flex items-center gap-3">
-      {check.isError ? (
-        <span className="text-sm text-red-600">Couldn&rsquo;t check. Try again in a moment.</span>
+      {failed && !check.isPending ? (
+        <span role="alert" className="text-sm text-red-600">
+          Could not check your calendars. Try again in a moment.
+        </span>
       ) : lastRead ? (
         <span data-testid="calendar-last-read" className="text-xs text-neutral-500">
-          Last read {formatLastRead(lastRead, new Date(), timeZone)}
+          Last checked {formatLastRead(lastRead, new Date(), timeZone)}
         </span>
       ) : null}
       <button

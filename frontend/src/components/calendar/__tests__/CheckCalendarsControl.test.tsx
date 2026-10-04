@@ -48,17 +48,17 @@ beforeEach(() => {
     last_synced_at: "2026-01-02T15:42:00",
     follow_calendar_id: "primary",
   })
-  api.syncNow.mockReset().mockResolvedValue({ google_synced: true, google_error: false })
+  api.syncNow.mockReset().mockResolvedValue({ google_synced: true, google_error: false, ical_errors: 0 })
 })
 
 describe("CheckCalendarsControl", () => {
-  it("says when every calendar was last read: the oldest of their reads", async () => {
+  it("says when every calendar was last checked: the oldest of their reads", async () => {
     renderControl()
 
     expect(await screen.findByRole("button", { name: "Check calendars" })).toBeInTheDocument()
     await waitFor(() =>
       expect(screen.getByTestId("calendar-last-read")).toHaveTextContent(
-        /^Last read Jan 2, 3:30 PM$/,
+        /^Last checked Jan 2, 3:30 PM$/,
       ),
     )
   })
@@ -83,7 +83,46 @@ describe("CheckCalendarsControl", () => {
 
     await user.click(await screen.findByRole("button", { name: "Check calendars" }))
 
-    expect(await screen.findByText("Couldn’t check. Try again in a moment.")).toBeInTheDocument()
+    expect(
+      await screen.findByText("Could not check your calendars. Try again in a moment."),
+    ).toBeInTheDocument()
+  })
+
+  it("says so when Google could not be read, though the check itself answered", async () => {
+    api.syncNow.mockResolvedValue({ google_synced: false, google_error: true, ical_errors: 0 })
+    const user = userEvent.setup()
+    renderControl()
+
+    await user.click(await screen.findByRole("button", { name: "Check calendars" }))
+
+    expect(
+      await screen.findByText("Could not check your calendars. Try again in a moment."),
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId("calendar-last-read")).not.toBeInTheDocument()
+  })
+
+  it("says so when a feed could not be read", async () => {
+    api.syncNow.mockResolvedValue({ google_synced: true, google_error: false, ical_errors: 1 })
+    const user = userEvent.setup()
+    renderControl()
+
+    await user.click(await screen.findByRole("button", { name: "Check calendars" }))
+
+    expect(
+      await screen.findByText("Could not check your calendars. Try again in a moment."),
+    ).toBeInTheDocument()
+  })
+
+  it("shows the time again after a check that read everything", async () => {
+    api.syncNow.mockResolvedValue({ google_synced: true, google_error: false, ical_errors: 0 })
+    const user = userEvent.setup()
+    renderControl()
+
+    await user.click(await screen.findByRole("button", { name: "Check calendars" }))
+
+    await waitFor(() => expect(api.syncNow).toHaveBeenCalled())
+    expect(await screen.findByTestId("calendar-last-read")).toHaveTextContent(/^Last checked /)
+    expect(screen.queryByText(/Could not check/)).not.toBeInTheDocument()
   })
 
   it("is there for a Google calendar with no feeds", async () => {

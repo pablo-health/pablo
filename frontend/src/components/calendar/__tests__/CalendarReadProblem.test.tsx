@@ -101,6 +101,27 @@ describe("CalendarReadProblem", () => {
     expect(screen.queryByTestId("calendar-read-problem")).not.toBeInTheDocument()
   })
 
+  it("points to choosing another calendar when the followed one is gone, not to Reconnect", async () => {
+    api.getStatus.mockResolvedValue({ ...CONNECTED, read_error: "calendar_not_found" })
+    render(<CalendarReadProblem />, { wrapper: wrapper() })
+
+    const line = await screen.findByTestId("calendar-read-problem")
+    expect(line).toHaveTextContent("Pablo can\u2019t read the calendar it was following any more.")
+    expect(screen.getByRole("link", { name: "Choose another" })).toHaveAttribute(
+      "href",
+      "/dashboard/settings/calendars",
+    )
+    expect(screen.queryByRole("button", { name: "Reconnect" })).not.toBeInTheDocument()
+  })
+
+  it("leaves a gone calendar to the follow setting where it sits beside it", async () => {
+    api.getStatus.mockResolvedValue({ ...CONNECTED, read_error: "calendar_not_found" })
+    render(<CalendarReadProblem reconnectOnly />, { wrapper: wrapper() })
+
+    await waitFor(() => expect(api.getStatus).toHaveBeenCalled())
+    expect(screen.queryByTestId("calendar-read-problem")).not.toBeInTheDocument()
+  })
+
   it("reconnects with what the connection held, back to the calendar", async () => {
     api.getStatus.mockResolvedValue({ ...CONNECTED, read_error: "access_revoked" })
     const user = userEvent.setup()
@@ -141,6 +162,55 @@ describe("useFinishReconnect", () => {
       expect.objectContaining({ read_events: true }),
     )
     expect(replace).toHaveBeenCalledWith(null, "", "/dashboard/calendar")
+    expect(result.current).toBeNull()
+    replace.mockRestore()
+  })
+
+  it("says so, with Reconnect, when the exchange fails", async () => {
+    api.getStatus.mockResolvedValue({ ...CONNECTED, read_error: "access_revoked" })
+    api.complete.mockRejectedValue(new Error("invalid_grant"))
+    window.sessionStorage.setItem(
+      "pablo.calendar-reconnect.selection",
+      JSON.stringify({ write_target: "primary", busy: true, event_titling: "initials", read_events: true }),
+    )
+    vi.stubGlobal("location", {
+      ...window.location,
+      origin: "http://localhost:3000",
+      search: "?code=abc&state=signed",
+    })
+    const replace = vi.spyOn(window.history, "replaceState").mockImplementation(() => {})
+
+    function Page() {
+      return <CalendarReadProblem error={useFinishReconnect()} />
+    }
+    render(<Page />, { wrapper: wrapper() })
+
+    const line = await screen.findByTestId("calendar-read-problem")
+    await waitFor(() =>
+      expect(line).toHaveTextContent("Could not finish reconnecting. Try again."),
+    )
+    expect(screen.getByRole("button", { name: "Reconnect" })).toBeInTheDocument()
+    expect(api.syncNow).not.toHaveBeenCalled()
+    replace.mockRestore()
+  })
+
+  it("says nothing when the read after a good exchange fails: the grant is saved", async () => {
+    api.syncNow.mockRejectedValue(new Error("google down"))
+    window.sessionStorage.setItem(
+      "pablo.calendar-reconnect.selection",
+      JSON.stringify({ write_target: "primary", busy: true, event_titling: "initials", read_events: true }),
+    )
+    vi.stubGlobal("location", {
+      ...window.location,
+      origin: "http://localhost:3000",
+      search: "?code=abc&state=signed",
+    })
+    const replace = vi.spyOn(window.history, "replaceState").mockImplementation(() => {})
+
+    const { result } = renderHook(() => useFinishReconnect(), { wrapper: wrapper() })
+
+    await waitFor(() => expect(api.syncNow).toHaveBeenCalled())
+    await new Promise((resolve) => setTimeout(resolve, 0))
     expect(result.current).toBeNull()
     replace.mockRestore()
   })

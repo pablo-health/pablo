@@ -2,13 +2,15 @@
 
 "use client"
 
+import Link from "next/link"
 import { useEffect, useRef, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { AlertCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
-  cannotReadCalendar,
+  followedCalendarGone,
   GOOGLE_CALENDAR_STATUS_KEY,
+  needsReconnect,
   useGoogleCalendarStatus,
 } from "@/hooks/useGoogleCalendarStatus"
 import { syncCalendarsNow } from "@/lib/api/outsideSessions"
@@ -24,6 +26,9 @@ import { useAuth } from "@/lib/auth-context"
 /** Where Google sends the browser back after a reconnect: the calendar,
  * which finishes it (`useFinishReconnect`) and shows the result. */
 export const RECONNECT_RETURN_PATH = "/dashboard/calendar"
+
+/** Where the followed calendar is chosen (FollowCalendarSetting, in Settings). */
+export const CHOOSE_CALENDAR_PATH = "/dashboard/settings/calendars"
 
 /** Google requires the redirect URI to match a registered one exactly, so
  * the selection waits here for the browser to come back, as the setup
@@ -74,6 +79,11 @@ function returnUri(): string {
  * Exchanges the code with the selection that started it, then reads the
  * calendars at once: the line clears because a read worked, not because a
  * new grant was stored. Returns an error to show, or null.
+ *
+ * Only a failed exchange is an error here: the grant was not saved, and
+ * Reconnect is the way to try again. A read that fails after a good
+ * exchange says nothing — the grant is saved, and the next scheduled read
+ * or Check calendars reads it, recording any failure on the status.
  */
 export function useFinishReconnect(enabled = true): string | null {
   const { loading: authLoading, user } = useAuth()
@@ -92,13 +102,21 @@ export function useFinishReconnect(enabled = true): string | null {
     spent.current = code
     // Drop the one-time code so a refresh doesn't try to spend it again.
     window.history.replaceState(null, "", RECONNECT_RETURN_PATH)
-    completeGoogleCalendarConnect(code, params.get("state") ?? "", returnUri(), selection)
-      .then(() => syncCalendarsNow())
-      .catch(() => setError("Google did not finish reconnecting. Try again."))
-      .finally(() => {
-        queryClient.invalidateQueries({ queryKey: GOOGLE_CALENDAR_STATUS_KEY })
-        queryClient.invalidateQueries({ queryKey: queryKeys.appointments.all })
-      })
+    const refresh = () => {
+      queryClient.invalidateQueries({ queryKey: GOOGLE_CALENDAR_STATUS_KEY })
+      queryClient.invalidateQueries({ queryKey: queryKeys.appointments.all })
+    }
+    completeGoogleCalendarConnect(code, params.get("state") ?? "", returnUri(), selection).then(
+      () => {
+        syncCalendarsNow()
+          .catch(() => undefined)
+          .finally(refresh)
+      },
+      () => {
+        setError("Could not finish reconnecting. Try again.")
+        refresh()
+      },
+    )
   }, [enabled, authLoading, user, queryClient])
 
   return error
@@ -107,14 +125,30 @@ export function useFinishReconnect(enabled = true): string | null {
 /**
  * One line when Pablo can no longer read the connected Google Calendar,
  * with the way back. Nothing at all otherwise.
+ *
+ * Two ways back. A grant that stopped working is connected again. A followed
+ * calendar that is gone cannot be: Reconnect would grant access to an
+ * account that no longer has it, and the line would come straight back. So
+ * that case points to choosing another calendar, as the follow setting in
+ * Settings already does — and Settings, which shows that setting, passes
+ * `reconnectOnly` so the same cause is not said twice.
  */
-export function CalendarReadProblem({ error = null }: { error?: string | null }) {
+export function CalendarReadProblem({
+  error = null,
+  reconnectOnly = false,
+}: {
+  error?: string | null
+  reconnectOnly?: boolean
+}) {
   const { data: status } = useGoogleCalendarStatus()
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<string | null>(null)
 
   const shown = error ?? startError
-  const broken = cannotReadCalendar(status)
+  const gone = !reconnectOnly && followedCalendarGone(status)
+  // A failed exchange leaves the grant as it was, so Reconnect stays offered.
+  const reconnectable = needsReconnect(status) || (error !== null && Boolean(status?.connected))
+  const broken = needsReconnect(status) || gone
   if (!broken && !shown) return null
 
   const reconnect = async () => {
@@ -140,10 +174,18 @@ export function CalendarReadProblem({ error = null }: { error?: string | null })
     >
       <AlertCircle className="h-4 w-4 shrink-0" aria-hidden />
       <span className="flex-1">
-        {broken ? "Pablo can’t read your Google Calendar." : shown}
+        {gone
+          ? "Pablo can’t read the calendar it was following any more."
+          : broken
+            ? "Pablo can’t read your Google Calendar."
+            : shown}
         {broken && shown ? <span className="ml-1 text-amber-800">{shown}</span> : null}
       </span>
-      {broken ? (
+      {gone ? (
+        <Button asChild size="sm" variant="outline">
+          <Link href={CHOOSE_CALENDAR_PATH}>Choose another</Link>
+        </Button>
+      ) : reconnectable ? (
         <Button size="sm" variant="outline" onClick={reconnect} disabled={starting}>
           {starting ? "Opening Google…" : "Reconnect"}
         </Button>
