@@ -154,13 +154,16 @@ async function connectThroughSetup(
   await page.getByRole("button", { name: "Continue", exact: true }).click()
 
   // The first scan only asks for the grant; the one after Google sends the
-  // browser back is the one that reads the week.
-  const scanned = page.waitForResponse(
-    async (response) =>
-      response.url().includes("/api/calendar/import/scan") &&
-      response.ok() &&
-      "left_alone" in ((await response.json()) as object),
-  )
+  // browser back is the one that reads the week. The first one's body is
+  // gone once the page leaves for Google, so an unreadable body is not it.
+  const scanned = page.waitForResponse(async (response) => {
+    if (!response.url().includes("/api/calendar/import/scan") || !response.ok()) return false
+    try {
+      return "left_alone" in ((await response.json()) as object)
+    } catch {
+      return false
+    }
+  })
   await page.getByRole("button", { name: "Scan calendar" }).click()
   // Reading events is a second grant, asked for only now, and added to
   // the first rather than replacing it. The legend's count of possible
