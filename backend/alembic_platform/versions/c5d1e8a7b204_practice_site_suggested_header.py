@@ -11,7 +11,7 @@ Existing rows start empty: a draft saved before this has no suggestion.
 No PHI: a practice's public website header.
 
 Revision ID: c5d1e8a7b204
-Revises: b7e2c4f9a031
+Revises: c3d9e1a74b52
 Create Date: 2026-10-03
 """
 
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 revision: str = "c5d1e8a7b204"
-down_revision: str | Sequence[str] | None = "b7e2c4f9a031"
+down_revision: str | Sequence[str] | None = "c3d9e1a74b52"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
