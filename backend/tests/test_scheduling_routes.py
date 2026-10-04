@@ -1872,6 +1872,33 @@ def test_connecting_never_asks_to_read_event_content(
     assert CalendarCapability.IMPORT not in capabilities
 
 
+def test_reconnecting_asks_again_to_read_events_when_the_connection_could(
+    client: TestClient,
+) -> None:
+    """A grant removed at Google takes every permission with it; a reconnect
+    that left reading out would stop the followed calendar being read."""
+    gcal_service = _capture_gcal_service()
+
+    client.get(
+        "/api/google-calendar/authorize",
+        params={"redirect_uri": _GCAL_REDIRECT, "write_target": "primary", "read_events": "true"},
+    )
+    client.get(
+        "/api/google-calendar/callback",
+        params={
+            "code": "auth-code",
+            "redirect_uri": _GCAL_REDIRECT,
+            "state": "signed-state",
+            "write_target": "primary",
+            "read_events": "true",
+        },
+    )
+
+    expected = {CalendarCapability.PUSH, CalendarCapability.BUSY, CalendarCapability.IMPORT}
+    assert gcal_service.get_auth_url.call_args.kwargs["capabilities"] == expected
+    assert gcal_service.handle_callback.call_args.kwargs["capabilities"] == expected
+
+
 def test_unknown_write_target_is_rejected(client: TestClient) -> None:
     _capture_gcal_service()
 

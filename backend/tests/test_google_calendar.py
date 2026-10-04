@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 import httpx
 import pytest
 from app.calendar_providers import pkce_store
-from app.calendar_providers.capabilities import CalendarWriteTarget
+from app.calendar_providers.capabilities import CalendarCapability, CalendarWriteTarget
 from app.calendar_providers.oauth_state import (
     OAuthStateError,
     mint_state,
@@ -33,8 +33,10 @@ from app.scheduling_engine.models.appointment import Appointment
 from app.services.google_calendar_service import (
     CalendarGoneError,
     GoogleCalendarService,
+    ReadErrorKind,
     _build_flow,
     google_consent_surface,
+    read_error_kind,
 )
 from app.services.reminder_service import ReminderService
 from app.services.token_encryption import (
@@ -45,6 +47,7 @@ from app.services.token_encryption import (
     generate_encryption_key,
 )
 from app.settings import get_settings
+from google.auth.exceptions import RefreshError
 
 from tests.calendar_oauth_fakes import TEST_VERIFIER, FakePkceRedis, authorized_state
 
@@ -1013,6 +1016,122 @@ class TestSyncStatus:
         token_repo.get.return_value = None
         assert calendar_service.get_sync_status("user-001")["busy"] is None
 
+    def test_a_working_connection_has_no_read_error(
+        self,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        token_repo.get.return_value = GoogleCalendarTokenDoc(
+            user_id="user-001", encrypted_tokens="encrypted-data", calendar_id="user@gmail.com"
+        )
+        status = calendar_service.get_sync_status("user-001")
+        assert status["read_error"] is None
+        assert status["reads_paused"] is False
+
+    def test_a_failing_read_shows_its_kind_before_reads_are_paused(
+        self,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        token_repo.get.return_value = GoogleCalendarTokenDoc(
+            user_id="user-001",
+            encrypted_tokens="encrypted-data",
+            calendar_id="user@gmail.com",
+            last_sync_error=ReadErrorKind.ACCESS_REVOKED.value,
+            consecutive_error_count=1,
+        )
+        status = calendar_service.get_sync_status("user-001")
+        assert status["read_error"] == "access_revoked"
+        assert status["reads_paused"] is False
+
+    def test_reads_are_paused_at_the_failure_limit(
+        self,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        limit = get_settings().calendar_sync_max_consecutive_failures
+        token_repo.get.return_value = GoogleCalendarTokenDoc(
+            user_id="user-001",
+            encrypted_tokens="encrypted-data",
+            calendar_id="user@gmail.com",
+            last_sync_error=ReadErrorKind.READ_FAILED.value,
+            consecutive_error_count=limit,
+        )
+        status = calendar_service.get_sync_status("user-001")
+        assert status["read_error"] == "read_failed"
+        assert status["reads_paused"] is True
+
+    def test_not_connected_has_no_read_error(
+        self,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        token_repo.get.return_value = None
+        status = calendar_service.get_sync_status("user-001")
+        assert status["read_error"] is None
+        assert status["reads_paused"] is False
+
+
+class TestReadErrorKind:
+    """A failed read is kept as a kind; the message never is."""
+
+    def test_a_refused_refresh_is_a_revoked_grant(self) -> None:
+        error = RefreshError("invalid_grant: Token has been expired or revoked.")
+        assert read_error_kind(error) is ReadErrorKind.ACCESS_REVOKED
+
+    def test_a_401_is_a_revoked_grant(self) -> None:
+        assert read_error_kind(_FakeHttpError(401)) is ReadErrorKind.ACCESS_REVOKED
+
+    def test_a_404_is_a_missing_calendar(self) -> None:
+        assert read_error_kind(_FakeHttpError(404)) is ReadErrorKind.CALENDAR_NOT_FOUND
+
+    def test_anything_else_is_a_failed_read(self) -> None:
+        for error in (_FakeHttpError(500), _FakeHttpError(429), TimeoutError()):
+            assert read_error_kind(error) is ReadErrorKind.READ_FAILED
+
+
+class TestReconnectClearsAFailedRead:
+    """Connecting again stores a new grant with no failure against it."""
+
+    def test_the_new_grant_is_saved_with_no_failure(
+        self,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        token_repo.get.return_value = GoogleCalendarTokenDoc(
+            user_id="user-001",
+            encrypted_tokens="encrypted-data",
+            calendar_id="user@gmail.com",
+            write_target=CalendarWriteTarget.PRIMARY.value,
+            last_sync_error=ReadErrorKind.ACCESS_REVOKED.value,
+            consecutive_error_count=7,
+        )
+        flow = MagicMock()
+        flow.credentials = _oauth_credentials()
+        with (
+            patch("app.services.google_calendar_service._build_flow", return_value=flow),
+            patch("app.services.google_calendar_service._exchange_code"),
+            patch("app.services.google_calendar_service.take_verifier", return_value="v"),
+            patch.object(calendar_service, "_resolve_calendar_id", return_value="user@gmail.com"),
+        ):
+            calendar_service.handle_callback(
+                "user-001",
+                "code",
+                "http://localhost:3000/dashboard/calendar",
+                state=_state_for("user-001"),
+                capabilities=[
+                    CalendarCapability.PUSH,
+                    CalendarCapability.BUSY,
+                    CalendarCapability.IMPORT,
+                ],
+                write_target=CalendarWriteTarget.PRIMARY,
+            )
+
+        saved = token_repo.save.call_args[0][0]
+        assert saved.last_sync_error is None
+        assert saved.consecutive_error_count == 0
+        assert set(saved.granted_capabilities.split(",")) == {"busy", "import", "push"}
+
 
 # Push Appointment Tests
 
@@ -1309,17 +1428,18 @@ class TestSyncFromGoogle:
         assert [c["google_event_id"] for c in changes] == ["e1"]
         token_repo.update_sync_token.assert_called_once_with("user-001", "sync-fresh")
 
-    def test_non_gone_error_does_not_fail_the_run(
+    def test_a_failed_read_is_raised_not_read_as_no_changes(
         self,
         calendar_service: GoogleCalendarService,
         token_repo: MagicMock,
         connected_token_doc: GoogleCalendarTokenDoc,
     ) -> None:
+        """The scheduled pass records it; "no changes" would leave it looking fine."""
         pages: list[dict | Exception] = [_FakeHttpError(500)]
 
-        changes, _ = self._run_sync(calendar_service, token_repo, connected_token_doc, pages)
+        with pytest.raises(_FakeHttpError):
+            self._run_sync(calendar_service, token_repo, connected_token_doc, pages)
 
-        assert changes == []
         token_repo.update_sync_token.assert_not_called()
         token_repo.save.assert_not_called()
 
@@ -1342,11 +1462,10 @@ class TestSyncFromGoogle:
     ) -> None:
         connected_token_doc.write_target = CalendarWriteTarget.PRIMARY.value
 
-        changes, _ = self._run_sync(
-            calendar_service, token_repo, connected_token_doc, [_FakeHttpError(404)]
-        )
+        with pytest.raises(_FakeHttpError) as raised:
+            self._run_sync(calendar_service, token_repo, connected_token_doc, [_FakeHttpError(404)])
 
-        assert changes == []
+        assert read_error_kind(raised.value) is ReadErrorKind.CALENDAR_NOT_FOUND
 
     def test_recreating_makes_a_new_calendar_and_forgets_the_old_sync_token(
         self,

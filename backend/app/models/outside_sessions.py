@@ -205,6 +205,7 @@ class CalendarSyncResponse(BaseModel):
     ical_errors: int
     google_synced: bool
     google_error: bool
+    google_paused: bool = False
     google_changes_processed: int
     outside_sessions_followed: int
     reminders_sent: int

@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 import os
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
@@ -264,3 +265,31 @@ def test_an_unrecorded_app_calendar_survives_a_disconnect(
     stored = repo.get(user_id)
     assert stored is not None
     assert stored.calendar_id == _FIRST
+
+
+def test_a_failed_read_is_kept_until_a_read_works_or_a_reconnect(
+    service: GoogleCalendarService,
+    repo: PostgresGoogleCalendarTokenRepository,
+    user_id: str,
+) -> None:
+    """The status reads what the real repository keeps, and a reconnect clears it."""
+    _connect(service, user_id, _google_that_creates(_FIRST))
+    limit = get_settings().calendar_sync_max_consecutive_failures
+
+    for _ in range(limit):
+        repo.record_read_failure(user_id, "access_revoked")
+    status = service.get_sync_status(user_id)
+    assert status["read_error"] == "access_revoked"
+    assert status["reads_paused"] is True
+
+    _connect(service, user_id, _google_that_creates(_SECOND))
+    status = service.get_sync_status(user_id)
+    assert status["read_error"] is None
+    assert status["reads_paused"] is False
+
+    repo.record_read_failure(user_id, "read_failed")
+    read_at = datetime(2026, 10, 5, 14, 0, tzinfo=UTC)
+    repo.record_read_success(user_id, read_at)
+    status = service.get_sync_status(user_id)
+    assert status["read_error"] is None
+    assert status["last_synced_at"] == read_at

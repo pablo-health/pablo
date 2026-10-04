@@ -5,7 +5,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
+from zoneinfo import ZoneInfo
 
 from app.models import User
 from app.models.user import UserPreferences
@@ -13,6 +15,7 @@ from app.repositories.audit import InMemoryAuditRepository
 from app.repositories.google_calendar_token import GoogleCalendarTokenDoc
 from app.repositories.ical_sync_config import ICalSyncConfig
 from app.scheduling_engine.models.appointment import Appointment, AppointmentStatus
+from app.scheduling_engine.models.availability import AvailabilityRule, RuleType
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.services.audit_service import AuditService
 from app.services.google_calendar_follow import GoogleChangeFollower
@@ -20,8 +23,14 @@ from app.services.google_calendar_service import CalendarGoneError, PushedEvent
 from app.services.sync_scheduler_service import (
     SyncSchedulerService,
     _is_within_working_hours,
+    _read_window,
 )
+from app.settings import get_settings
 from app.utcnow import utc_now
+from google.auth.exceptions import RefreshError
+
+if TYPE_CHECKING:
+    import pytest
 
 # Fixtures
 
@@ -54,6 +63,9 @@ def _make_service(
     appointment_repo = MagicMock()
     appointment_repo.get_by_google_event_id.return_value = None
 
+    availability_rule_repo = MagicMock()
+    availability_rule_repo.list_by_user.return_value = []
+
     return SyncSchedulerService(
         ical_config_repo=ical_config_repo,
         google_token_repo=google_token_repo,
@@ -62,6 +74,7 @@ def _make_service(
         google_calendar_service=google_calendar_service,
         reminder_service=reminder_service,
         appointment_repo=appointment_repo,
+        availability_rule_repo=availability_rule_repo,
     )
 
 
@@ -95,45 +108,70 @@ def _make_google_token(
 # _is_within_working_hours tests
 
 
+_EASTERN = ZoneInfo("America/New_York")
+
+
+def _at(hour: int, minute: int = 0) -> datetime:
+    return datetime(2026, 10, 5, hour, minute, tzinfo=_EASTERN)
+
+
+def _hours(day: int, start: str, end: str) -> AvailabilityRule:
+    return AvailabilityRule(
+        id=f"wh-{day}-{start}",
+        user_id="user1",
+        rule_type=RuleType.WORKING_HOURS.value,
+        enforcement="hard",
+        params={"day_of_week": day, "start": start, "end": end},
+    )
+
+
+def _within(now: datetime, rules: list[AvailabilityRule] | None = None) -> bool:
+    prefs = UserPreferences(timezone="America/New_York")
+    with patch("app.services.sync_scheduler_service.datetime") as mock_dt:
+        mock_dt.now.return_value = now
+        return _is_within_working_hours(prefs, rules or [])
+
+
 class TestIsWithinWorkingHours:
-    """Test timezone-aware working hours filter."""
+    """When in the day the scheduled pass reads a clinician's calendars."""
 
-    def test_within_working_hours(self) -> None:
-        """User at 10 AM in their timezone should be within the 8-18 window."""
-        prefs = UserPreferences(timezone="America/New_York")
-        # Mock 10:00 AM Eastern
-        with patch("app.services.sync_scheduler_service.datetime") as mock_dt:
-            mock_now = MagicMock()
-            mock_now.hour = 10
-            mock_dt.now.return_value = mock_now
-            assert _is_within_working_hours(prefs) is True
+    def test_no_rules_reads_seven_to_seven(self) -> None:
+        assert _read_window([]) == (7 * 60, 19 * 60)
+        assert _within(_at(7)) is True
+        assert _within(_at(18, 59)) is True
+        assert _within(_at(6, 59)) is False
+        assert _within(_at(19)) is False
 
-    def test_outside_working_hours(self) -> None:
-        """User at 11 PM should be outside 8-18 + 1hr buffer."""
-        prefs = UserPreferences(timezone="America/New_York")
-        with patch("app.services.sync_scheduler_service.datetime") as mock_dt:
-            mock_now = MagicMock()
-            mock_now.hour = 23
-            mock_dt.now.return_value = mock_now
-            assert _is_within_working_hours(prefs) is False
+    def test_reads_from_an_hour_before_the_earliest_to_two_after_the_latest(self) -> None:
+        rules = [_hours(0, "09:00", "17:00"), _hours(2, "10:00", "19:30")]
+        assert _read_window(rules) == (8 * 60, 21 * 60 + 30)
+        assert _within(_at(8), rules) is True
+        assert _within(_at(21, 29), rules) is True
+        assert _within(_at(7, 59), rules) is False
+        assert _within(_at(21, 30), rules) is False
 
-    def test_within_buffer_before(self) -> None:
-        """User at 7 AM should be within (8-1=7) to 19 window."""
-        prefs = UserPreferences(timezone="America/New_York")
-        with patch("app.services.sync_scheduler_service.datetime") as mock_dt:
-            mock_now = MagicMock()
-            mock_now.hour = 7
-            mock_dt.now.return_value = mock_now
-            assert _is_within_working_hours(prefs) is True
+    def test_a_late_evening_schedule_is_read_into_the_night(self) -> None:
+        rules = [_hours(1, "14:00", "21:00"), _hours(3, "16:00", "22:30")]
+        assert _read_window(rules) == (13 * 60, 24 * 60)
+        assert _within(_at(23, 45), rules) is True
+        # The default window would have stopped at seven.
+        assert _within(_at(20), []) is False
+        assert _within(_at(20), rules) is True
+        assert _within(_at(12, 30), rules) is False
 
-    def test_within_buffer_after(self) -> None:
-        """User at 6:30 PM (hour=18) should be within window (end+1=19)."""
-        prefs = UserPreferences(timezone="America/New_York")
-        with patch("app.services.sync_scheduler_service.datetime") as mock_dt:
-            mock_now = MagicMock()
-            mock_now.hour = 18
-            mock_dt.now.return_value = mock_now
-            assert _is_within_working_hours(prefs) is True
+    def test_an_early_start_does_not_wrap_past_midnight(self) -> None:
+        assert _read_window([_hours(0, "00:30", "08:00")]) == (0, 10 * 60)
+
+    def test_other_rules_and_malformed_hours_are_ignored(self) -> None:
+        block = AvailabilityRule(
+            id="b",
+            user_id="user1",
+            rule_type=RuleType.BLOCK_TIME_RANGE.value,
+            enforcement="hard",
+            params={"start": "03:00", "end": "04:00"},
+        )
+        broken = _hours(4, "late", "17:00")
+        assert _read_window([block, broken]) == (7 * 60, 19 * 60)
 
     def test_invalid_timezone_defaults_to_sync(self) -> None:
         """Invalid timezone should default to syncing (don't skip)."""
@@ -183,6 +221,45 @@ class TestDispatch:
         assert summary.enqueued == 0
         assert summary.skipped_circuit_breaker == 1
         mock_enqueue.assert_not_called()
+
+    @patch("app.services.sync_scheduler_service._enqueue_sync_task")
+    @patch("app.services.sync_scheduler_service._is_within_working_hours", return_value=True)
+    def test_a_broken_feed_does_not_stop_the_google_calendar(
+        self, mock_hours: MagicMock, mock_enqueue: MagicMock
+    ) -> None:
+        """Only a user with every source past the limit is skipped."""
+        service = _make_service(
+            ical_configs=[_make_ical_config("user1", consecutive_error_count=10)],
+            google_tokens=[_make_google_token("user1")],
+        )
+        summary = service.dispatch()
+        assert summary.enqueued == 1
+        assert summary.skipped_circuit_breaker == 0
+
+    @patch("app.services.sync_scheduler_service._enqueue_sync_task")
+    @patch("app.services.sync_scheduler_service._is_within_working_hours", return_value=True)
+    def test_a_paused_google_calendar_alone_is_skipped(
+        self, mock_hours: MagicMock, mock_enqueue: MagicMock
+    ) -> None:
+        service = _make_service(google_tokens=[_make_google_token("user1", 5)])
+        summary = service.dispatch()
+        assert summary.enqueued == 0
+        assert summary.skipped_circuit_breaker == 1
+
+    @patch("app.services.sync_scheduler_service._enqueue_sync_task")
+    def test_the_window_comes_from_the_users_working_hours(self, mock_enqueue: MagicMock) -> None:
+        service = _make_service(google_tokens=[_make_google_token("user1")])
+        service._user_repo.get_preferences_many.return_value = {  # type: ignore[attr-defined]
+            "user1": UserPreferences(timezone="America/New_York")
+        }
+        service._availability_rule_repo.list_by_user.return_value = [  # type: ignore[union-attr]
+            _hours(1, "13:00", "21:00")
+        ]
+        with patch("app.services.sync_scheduler_service.datetime") as mock_dt:
+            mock_dt.now.return_value = _at(22)
+            summary = service.dispatch()
+        assert summary.enqueued == 1
+        service._availability_rule_repo.list_by_user.assert_called_with("user1")  # type: ignore[union-attr]
 
     @patch("app.services.sync_scheduler_service._enqueue_sync_task")
     @patch("app.services.sync_scheduler_service._is_within_working_hours", return_value=True)
@@ -373,3 +450,112 @@ class TestFollowsGoogle:
 
         assert summary.google_error is True
         service._reminder_service.check_and_send_reminders.assert_called_once()  # type: ignore[attr-defined]
+
+
+# How a Google read went, kept on the connection
+
+
+def _connected(count: int = 0) -> SyncSchedulerService:
+    service = _make_service()
+    service._google_token_repo.get.return_value = _make_google_token(  # type: ignore[attr-defined]
+        consecutive_error_count=count
+    )
+    return service
+
+
+class TestRecordsGoogleReads:
+    def test_a_read_that_works_is_recorded(self) -> None:
+        service = _connected()
+
+        service.execute("user1")
+
+        tokens = service._google_token_repo
+        tokens.record_read_success.assert_called_once()  # type: ignore[attr-defined]
+        assert tokens.record_read_success.call_args[0][0] == "user1"  # type: ignore[attr-defined]
+        tokens.record_read_failure.assert_not_called()  # type: ignore[attr-defined]
+
+    def test_a_revoked_grant_is_recorded_by_kind(self) -> None:
+        service = _connected()
+        error = RefreshError("invalid_grant: Token has been expired or revoked.")
+        service._google_calendar_service.sync_from_google.side_effect = error  # type: ignore[attr-defined]
+
+        summary = service.execute("user1")
+
+        assert summary.google_error is True
+        service._google_token_repo.record_read_failure.assert_called_once_with(  # type: ignore[attr-defined]
+            "user1", "access_revoked"
+        )
+        service._google_token_repo.record_read_success.assert_not_called()  # type: ignore[attr-defined]
+
+    def test_a_failed_follow_read_is_recorded_too(self) -> None:
+        service = _connected()
+        token = _make_google_token()
+        token.follow_calendar_id = "primary"
+        service._google_token_repo.get.return_value = token  # type: ignore[attr-defined]
+        calendar = service._google_calendar_service
+        calendar.read_main_calendar_changes.side_effect = TimeoutError()  # type: ignore[attr-defined]
+
+        summary = service.execute("user1")
+
+        assert summary.google_error is True
+        service._google_token_repo.record_read_failure.assert_called_once_with(  # type: ignore[attr-defined]
+            "user1", "read_failed"
+        )
+
+    def test_the_failure_is_not_logged_with_its_message(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        service = _connected()
+        service._google_calendar_service.sync_from_google.side_effect = RuntimeError(  # type: ignore[attr-defined]
+            "Session with Jane Doe"
+        )
+
+        service.execute("user1")
+
+        assert "Jane Doe" not in caplog.text
+        assert "read_failed" in caplog.text
+
+    def test_a_scheduled_pass_leaves_a_paused_calendar_alone(self) -> None:
+        limit = get_settings().calendar_sync_max_consecutive_failures
+        service = _connected(count=limit)
+
+        summary = service.execute("user1")
+
+        assert summary.google_paused is True
+        service._google_calendar_service.sync_from_google.assert_not_called()  # type: ignore[attr-defined]
+        service._google_token_repo.record_read_success.assert_not_called()  # type: ignore[attr-defined]
+        service._reminder_service.check_and_send_reminders.assert_called_once()  # type: ignore[attr-defined]
+
+    def test_a_read_on_request_reads_a_paused_calendar_and_clears_it(self) -> None:
+        limit = get_settings().calendar_sync_max_consecutive_failures
+        service = _connected(count=limit)
+
+        summary = service.execute("user1", on_request=True)
+
+        assert summary.google_paused is False
+        assert summary.google_synced is True
+        service._google_calendar_service.sync_from_google.assert_called_once_with("user1")  # type: ignore[attr-defined]
+        service._google_token_repo.record_read_success.assert_called_once()  # type: ignore[attr-defined]
+
+    def test_a_scheduled_pass_leaves_out_a_broken_feed_and_reads_the_rest(self) -> None:
+        limit = get_settings().calendar_sync_max_consecutive_failures
+        service = _make_service()
+        service._ical_config_repo.list_by_user.return_value = [  # type: ignore[attr-defined]
+            _make_ical_config(ehr_system="simplepractice", consecutive_error_count=limit),
+            _make_ical_config(ehr_system="therapynotes"),
+        ]
+
+        service.execute("user1")
+
+        service._ical_sync_service.sync.assert_called_once_with("user1", "therapynotes")  # type: ignore[attr-defined]
+
+    def test_a_read_on_request_reads_every_feed(self) -> None:
+        limit = get_settings().calendar_sync_max_consecutive_failures
+        service = _make_service()
+        service._ical_config_repo.list_by_user.return_value = [  # type: ignore[attr-defined]
+            _make_ical_config(consecutive_error_count=limit),
+        ]
+
+        service.execute("user1", on_request=True)
+
+        service._ical_sync_service.sync.assert_called_once_with("user1")  # type: ignore[attr-defined]

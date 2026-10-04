@@ -21,16 +21,25 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..calendar_providers.source_identity import GOOGLE_CALENDAR_SOURCE
 from ..models.audit import ACTOR_TYPE_SYSTEM, AuditAction
+from ..scheduling_engine.models.availability import RuleType
 from ..settings import get_settings
+from ..utcnow import utc_now
 from .google_calendar_follow import SYNC_COMPONENT, GoogleChangeFollower
-from .google_calendar_service import CalendarGoneError
+from .google_calendar_service import CalendarGoneError, read_error_kind
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable, Sequence
+
     from ..models.user import UserPreferences
-    from ..repositories.google_calendar_token import GoogleCalendarTokenRepository
-    from ..repositories.ical_sync_config import ICalSyncConfigRepository
+    from ..repositories.google_calendar_token import (
+        GoogleCalendarTokenDoc,
+        GoogleCalendarTokenRepository,
+    )
+    from ..repositories.ical_sync_config import ICalSyncConfig, ICalSyncConfigRepository
     from ..repositories.user import UserRepository
+    from ..scheduling_engine.models.availability import AvailabilityRule
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
+    from ..scheduling_engine.repositories.availability_rule import AvailabilityRuleRepository
     from ..services.audit_service import AuditService
     from ..services.google_calendar_service import GoogleCalendarService
     from ..services.ical_sync_service import ICalSyncService
@@ -74,6 +83,7 @@ class ExecuteSummary:
     ical_errors: int = 0
     google_synced: bool = False
     google_error: bool = False
+    google_paused: bool = False
     google_changes_processed: int = 0
     outside_sessions_followed: int = 0
     reminders_sent: int = 0
@@ -85,6 +95,7 @@ class ExecuteSummary:
             "ical_errors": self.ical_errors,
             "google_synced": self.google_synced,
             "google_error": self.google_error,
+            "google_paused": self.google_paused,
             "google_changes_processed": self.google_changes_processed,
             "outside_sessions_followed": self.outside_sessions_followed,
             "reminders_sent": self.reminders_sent,
@@ -110,6 +121,7 @@ class SyncSchedulerService:
         appointment_repo: AppointmentRepository,
         audit_service: AuditService | None = None,
         outside_sessions: OutsideSessions | None = None,
+        availability_rule_repo: AvailabilityRuleRepository | None = None,
     ) -> None:
         self._ical_config_repo = ical_config_repo
         self._google_token_repo = google_token_repo
@@ -122,6 +134,7 @@ class SyncSchedulerService:
         # existed keeps working without passing one.
         self._audit_service = audit_service
         self._outside_sessions = outside_sessions
+        self._availability_rule_repo = availability_rule_repo
         self._follower = GoogleChangeFollower(appointment_repo, google_calendar_service)
 
     def dispatch(self) -> DispatchSummary:
@@ -129,39 +142,29 @@ class SyncSchedulerService:
 
         1. Collect all ical_sync_configs and google_calendar_tokens.
         2. Build set of unique user_ids.
-        3. For each user: check working hours + circuit breaker → enqueue.
+        3. For each user: check circuit breaker + working hours → enqueue.
         """
         settings = get_settings()
         summary = DispatchSummary()
 
-        ical_configs = self._ical_config_repo.list_all()
-        google_tokens = self._google_token_repo.list_all()
-
-        # Build per-user state: which sources they have + max error count
-        user_sources: dict[str, _UserSyncState] = {}
-        for cfg in ical_configs:
-            state = user_sources.setdefault(cfg.user_id, _UserSyncState())
-            state.has_ical = True
-            state.max_error_count = max(state.max_error_count, cfg.consecutive_error_count)
-        for tok in google_tokens:
-            state = user_sources.setdefault(tok.user_id, _UserSyncState())
-            state.has_google = True
-            state.max_error_count = max(state.max_error_count, tok.consecutive_error_count)
-
-        max_failures = settings.calendar_sync_max_consecutive_failures
+        user_sources = _user_sync_states(
+            self._ical_config_repo.list_all(),
+            self._google_token_repo.list_all(),
+            settings.calendar_sync_max_consecutive_failures,
+        )
         # One query for every dispatched user's preferences instead of one
         # per user inside the loop.
         prefs_by_user = self._user_repo.get_preferences_many(list(user_sources))
 
         for user_id, state in user_sources.items():
             # Circuit breaker: skip users whose sources all exceed max failures
-            if state.max_error_count >= max_failures:
+            if state.all_paused:
                 summary.skipped_circuit_breaker += 1
                 continue
 
             # Working hours filter
             prefs = prefs_by_user[user_id]
-            if not _is_within_working_hours(prefs):
+            if not _is_within_working_hours(prefs, self._working_rules(user_id)):
                 summary.skipped_outside_hours += 1
                 continue
 
@@ -181,18 +184,23 @@ class SyncSchedulerService:
         )
         return summary
 
-    def execute(self, user_id: str) -> ExecuteSummary:
+    def execute(self, user_id: str, *, on_request: bool = False) -> ExecuteSummary:
         """Sync one user's calendars and check reminders.
 
         Called by Cloud Tasks with a single user_id. Each source is synced
         independently — one failure doesn't block the others.
+
+        A scheduled pass leaves out any source that has failed
+        ``calendar_sync_max_consecutive_failures`` times in a row. One run
+        ``on_request`` reads them all: it is how a clinician who pressed for
+        a read gets one, and a read that works starts the schedule again.
         """
         summary = ExecuteSummary()
+        max_failures = get_settings().calendar_sync_max_consecutive_failures
 
         # 1. iCal feed sync
         try:
-            results = self._ical_sync_service.sync(user_id)
-            for result in results:
+            for result in self._sync_feeds(user_id, None if on_request else max_failures):
                 if result.errors:
                     summary.ical_errors += 1
                 else:
@@ -203,7 +211,10 @@ class SyncSchedulerService:
 
         # 2. Google Calendar sync
         google_token = self._google_token_repo.get(user_id)
-        if google_token:
+        if google_token and not on_request and google_token.consecutive_error_count >= max_failures:
+            summary.google_paused = True
+        elif google_token:
+            failure: Exception | None = None
             try:
                 changes = self._google_calendar_service.sync_from_google(user_id)
                 summary.google_synced = True
@@ -211,20 +222,25 @@ class SyncSchedulerService:
             except CalendarGoneError:
                 try:
                     summary.google_synced = self._rebuild_google_calendar(user_id)
-                except Exception:
-                    logger.exception("Recreating the Google calendar failed for scheduled run")
+                except Exception as exc:
+                    _log_google_failure("Recreating the Google calendar failed", exc)
                     summary.google_error = True
-            except Exception:
-                logger.exception("Google Calendar sync failed for scheduled run")
+                    failure = exc
+            except Exception as exc:
+                _log_google_failure("Google Calendar read failed", exc)
                 summary.google_error = True
+                failure = exc
 
             # 2b. Sessions another service puts on the followed calendar
             if google_token.follow_calendar_id:
                 try:
                     summary.outside_sessions_followed = self._follow_calendar(user_id)
-                except Exception:
-                    logger.exception("Following a calendar failed for scheduled run")
+                except Exception as exc:
+                    _log_google_failure("Following a calendar failed", exc)
                     summary.google_error = True
+                    failure = failure or exc
+
+            self._record_google_read(user_id, failure)
 
         # 3. Reminders
         try:
@@ -236,6 +252,44 @@ class SyncSchedulerService:
             logger.exception("Reminder check failed for scheduled run")
 
         return summary
+
+    def _sync_feeds(self, user_id: str, max_failures: int | None) -> list[Any]:
+        """Read the user's feeds, leaving out those past ``max_failures``.
+
+        None reads every feed. One feed that keeps failing stops only
+        itself: the rest, and the Google calendar, carry on.
+        """
+        if max_failures is None:
+            return list(self._ical_sync_service.sync(user_id))
+        configs: list[ICalSyncConfig] = list(self._ical_config_repo.list_by_user(user_id))
+        live = [c for c in configs if c.consecutive_error_count < max_failures]
+        if len(live) == len(configs):
+            return list(self._ical_sync_service.sync(user_id))
+        results: list[Any] = []
+        for config in live:
+            results.extend(self._ical_sync_service.sync(user_id, config.ehr_system))
+        return results
+
+    def _record_google_read(self, user_id: str, failure: Exception | None) -> None:
+        """Keep how the read went on the connection, for its status to show.
+
+        Only the kind of failure is kept (``read_error_kind``), never its
+        message. A failure to record leaves the read's own outcome alone.
+        """
+        try:
+            if failure is None:
+                self._google_token_repo.record_read_success(user_id, utc_now())
+            else:
+                self._google_token_repo.record_read_failure(user_id, read_error_kind(failure))
+        except Exception:
+            logger.exception("Recording how a Google Calendar read went failed")
+
+    def _working_rules(self, user_id: str) -> Sequence[AvailabilityRule]:
+        if self._availability_rule_repo is None:
+            from ..repositories import get_availability_rule_repository
+
+            self._availability_rule_repo = get_availability_rule_repository()
+        return working_rules(self._availability_rule_repo, user_id)
 
     def _follow_google_changes(self, user_id: str, changes: list[dict[str, Any]]) -> int:
         """Follow moves and deletions of the sessions Pablo pushed to Google.
@@ -351,18 +405,88 @@ class _UserSyncState:
 
     has_ical: bool = False
     has_google: bool = False
-    max_error_count: int = 0
+    live_sources: int = 0
+    """Sources still under the failure limit. A user is skipped only when
+    none is: one broken feed must not stop the Google calendar being read."""
+
+    @property
+    def all_paused(self) -> bool:
+        return self.live_sources == 0
 
 
-# A per-user working-hours window now lives in availability rules (one per
-# day, no single start/end), not in preferences — too granular for a dispatch
-# throttle that only needs an approximate daytime window per timezone.
+def _user_sync_states(
+    ical_configs: Iterable[ICalSyncConfig],
+    google_tokens: Iterable[GoogleCalendarTokenDoc],
+    max_failures: int,
+) -> dict[str, _UserSyncState]:
+    """Each user with a source, and how many of their sources are still read."""
+    states: dict[str, _UserSyncState] = {}
+    for cfg in ical_configs:
+        state = states.setdefault(cfg.user_id, _UserSyncState())
+        state.has_ical = True
+        state.live_sources += cfg.consecutive_error_count < max_failures
+    for tok in google_tokens:
+        state = states.setdefault(tok.user_id, _UserSyncState())
+        state.has_google = True
+        state.live_sources += tok.consecutive_error_count < max_failures
+    return states
+
+
+# The window used when a clinician has set no working hours: 08:00-18:00,
+# widened by the same margins as a window from their own hours.
 _DEFAULT_WINDOW_START_HOUR = 8
 _DEFAULT_WINDOW_END_HOUR = 18
+#: Read from an hour before the earliest working time...
+_WINDOW_LEAD_MINUTES = 60
+#: ...to two hours after the latest: a session moved in the evening, after the
+#: last client, is on the calendar the next morning.
+_WINDOW_TRAIL_MINUTES = 120
+_MINUTES_PER_DAY = 24 * 60
 
 
-def _is_within_working_hours(prefs: UserPreferences) -> bool:
-    """Check if the current time falls within a daytime window ±1 hour."""
+def _clock_minutes(value: object) -> int | None:
+    """``"HH:MM"`` as minutes after midnight, or None for anything else."""
+    hours, sep, minutes = str(value).partition(":")
+    if not sep or not hours.isdigit() or not minutes[:2].isdigit():
+        return None
+    total = int(hours) * 60 + int(minutes[:2])
+    return total if 0 <= total <= _MINUTES_PER_DAY else None
+
+
+def _read_window(rules: Iterable[AvailabilityRule]) -> tuple[int, int]:
+    """When in the day the scheduled pass reads a clinician's calendars.
+
+    From an hour before the earliest working time on any day to two hours
+    after the latest, in minutes after midnight. With no working hours set,
+    the default day. The same earliest and latest the calendar page scrolls
+    to (``deriveWorkingHoursWindow``), so the two agree on the working day.
+    """
+    starts: list[int] = []
+    ends: list[int] = []
+    for rule in rules:
+        if rule.rule_type != RuleType.WORKING_HOURS:
+            continue
+        start = _clock_minutes(rule.params.get("start"))
+        end = _clock_minutes(rule.params.get("end"))
+        if start is None or end is None or end <= start:
+            continue
+        starts.append(start)
+        ends.append(end)
+    if not starts:
+        earliest, latest = _DEFAULT_WINDOW_START_HOUR * 60, _DEFAULT_WINDOW_END_HOUR * 60
+    else:
+        earliest, latest = min(starts), max(ends)
+    trail = _WINDOW_TRAIL_MINUTES if starts else _WINDOW_LEAD_MINUTES
+    return (
+        max(earliest - _WINDOW_LEAD_MINUTES, 0),
+        min(latest + trail, _MINUTES_PER_DAY),
+    )
+
+
+def _is_within_working_hours(
+    prefs: UserPreferences, rules: Iterable[AvailabilityRule] = ()
+) -> bool:
+    """Whether now, in the user's zone, falls inside their read window."""
     try:
         tz = ZoneInfo(prefs.timezone)
     except (ZoneInfoNotFoundError, KeyError):
@@ -370,9 +494,31 @@ def _is_within_working_hours(prefs: UserPreferences) -> bool:
         return True
 
     user_now = datetime.now(tz)
-    window_start = max(_DEFAULT_WINDOW_START_HOUR - 1, 0)
-    window_end = min(_DEFAULT_WINDOW_END_HOUR + 1, 24)
-    return window_start <= user_now.hour < window_end
+    minute = user_now.hour * 60 + user_now.minute
+    start, end = _read_window(rules)
+    return start <= minute < end
+
+
+def working_rules(repo: AvailabilityRuleRepository, user_id: str) -> Sequence[AvailabilityRule]:
+    """The user's availability rules, or none when they cannot be read.
+
+    None falls back to the default window: a dispatch never stops because
+    one clinician's rules could not be loaded.
+    """
+    try:
+        return repo.list_by_user(user_id)
+    except Exception:
+        logger.exception("Reading availability rules for the sync window failed")
+        return ()
+
+
+def _log_google_failure(what: str, exc: Exception) -> None:
+    """Log a failed Google read by its kind and class, never its message.
+
+    The message of an error from Google can carry the request and parts of
+    the answer, and with them what is on the calendar.
+    """
+    logger.warning("%s: %s (%s)", what, read_error_kind(exc), type(exc).__name__)
 
 
 def dispatch_sync_tasks() -> DispatchSummary:
@@ -382,6 +528,7 @@ def dispatch_sync_tasks() -> DispatchSummary:
     service account role for Postgres deployments.
     """
     from ..repositories import (
+        get_availability_rule_repository,
         get_google_calendar_token_repository,
         get_ical_sync_config_repository,
         get_user_repository,
@@ -390,28 +537,20 @@ def dispatch_sync_tasks() -> DispatchSummary:
     settings = get_settings()
     summary = DispatchSummary()
 
-    ical_configs = get_ical_sync_config_repository().list_all()
-    google_tokens = get_google_calendar_token_repository().list_all()
     user_repo = get_user_repository()
-
-    user_sources: dict[str, _UserSyncState] = {}
-    for cfg in ical_configs:
-        state = user_sources.setdefault(cfg.user_id, _UserSyncState())
-        state.has_ical = True
-        state.max_error_count = max(state.max_error_count, cfg.consecutive_error_count)
-    for tok in google_tokens:
-        state = user_sources.setdefault(tok.user_id, _UserSyncState())
-        state.has_google = True
-        state.max_error_count = max(state.max_error_count, tok.consecutive_error_count)
-
-    max_failures = settings.calendar_sync_max_consecutive_failures
+    rules = get_availability_rule_repository()
+    user_sources = _user_sync_states(
+        get_ical_sync_config_repository().list_all(),
+        get_google_calendar_token_repository().list_all(),
+        settings.calendar_sync_max_consecutive_failures,
+    )
 
     for user_id, state in user_sources.items():
-        if state.max_error_count >= max_failures:
+        if state.all_paused:
             summary.skipped_circuit_breaker += 1
             continue
         prefs = user_repo.get_preferences(user_id)
-        if not _is_within_working_hours(prefs):
+        if not _is_within_working_hours(prefs, working_rules(rules, user_id)):
             summary.skipped_outside_hours += 1
             continue
         try:

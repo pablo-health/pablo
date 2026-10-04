@@ -66,7 +66,14 @@ class GoogleCalendarTokenDoc:
     last_synced_at: datetime | None = None
     connected_at: datetime | None = None
     last_sync_error: str | None = None
+    """What kind of failure the last read ended in, or None.
+
+    A kind (``ReadErrorKind``), never the error's text: an answer from Google
+    can quote what is on the calendar."""
     consecutive_error_count: int = 0
+    """Reads in a row that failed. The scheduled pass stops reading at
+    ``calendar_sync_max_consecutive_failures``; a read on request, or a new
+    connection, starts it again."""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -133,6 +140,25 @@ class GoogleCalendarTokenRepository(ABC):
     def update_main_calendar_sync_token(self, user_id: str, sync_token: str | None) -> None:
         """Record where the main-calendar read resumes; None starts it over."""
         raise NotImplementedError
+
+    def record_read_failure(self, user_id: str, kind: str) -> None:
+        """Record a failed read: its kind, and one more failure in a row."""
+        token_doc = self.get(user_id)
+        if token_doc is None:
+            return
+        token_doc.last_sync_error = kind
+        token_doc.consecutive_error_count += 1
+        self.save(token_doc)
+
+    def record_read_success(self, user_id: str, at: datetime) -> None:
+        """Record a read that worked: when, and no failure outstanding."""
+        token_doc = self.get(user_id)
+        if token_doc is None:
+            return
+        token_doc.last_sync_error = None
+        token_doc.consecutive_error_count = 0
+        token_doc.last_synced_at = at
+        self.save(token_doc)
 
     @abstractmethod
     def delete(self, user_id: str) -> bool:

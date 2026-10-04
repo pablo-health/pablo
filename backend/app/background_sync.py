@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from .repositories import (
     get_appointment_repository,
+    get_availability_rule_repository,
     get_external_calendar_event_repository,
     get_google_calendar_token_repository,
     get_ical_sync_config_repository,
@@ -30,7 +31,12 @@ from .services.google_calendar_service import (
 )
 from .services.ical_sync_service import ICalSyncService
 from .services.reminder_service import ReminderService
-from .services.sync_scheduler_service import SyncSchedulerService, _is_within_working_hours
+from .services.sync_scheduler_service import (
+    SyncSchedulerService,
+    _is_within_working_hours,
+    _user_sync_states,
+    working_rules,
+)
 from .settings import get_settings
 
 if TYPE_CHECKING:
@@ -91,6 +97,7 @@ def build_sync_scheduler(
         ),
         reminder_service=ReminderService(appointment_repo),
         appointment_repo=appointment_repo,
+        availability_rule_repo=get_availability_rule_repository(),
     )
 
 
@@ -107,28 +114,21 @@ def _run_sync_cycle() -> None:
         user_repo=user_repo,
     )
 
-    configs = ical_config_repo.list_all()
-    tokens = google_token_repo.list_all()
-    user_ids = {c.user_id for c in configs} | {t.user_id for t in tokens}
-    max_failures = settings.calendar_sync_max_consecutive_failures
+    rules = get_availability_rule_repository()
+    states = _user_sync_states(
+        ical_config_repo.list_all(),
+        google_token_repo.list_all(),
+        settings.calendar_sync_max_consecutive_failures,
+    )
 
     synced = 0
-    for user_id in user_ids:
-        prefs = user_repo.get_preferences(user_id)
-        if not _is_within_working_hours(prefs):
+    for user_id, state in states.items():
+        # Every source past the failure limit: nothing left to read. One
+        # that is still read is, and execute() leaves out the rest.
+        if state.all_paused:
             continue
-
-        user_configs = [c for c in configs if c.user_id == user_id]
-        user_tokens = [t for t in tokens if t.user_id == user_id]
-        max_err = max(
-            (c.consecutive_error_count for c in user_configs),
-            default=0,
-        )
-        max_err = max(
-            max_err,
-            max((t.consecutive_error_count for t in user_tokens), default=0),
-        )
-        if max_err >= max_failures:
+        prefs = user_repo.get_preferences(user_id)
+        if not _is_within_working_hours(prefs, working_rules(rules, user_id)):
             continue
 
         try:

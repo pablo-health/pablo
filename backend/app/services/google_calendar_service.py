@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 
@@ -55,6 +56,7 @@ from ..repositories.google_calendar_token import (
     GoogleCalendarTokenDoc,
     GoogleCalendarTokenRepository,
 )
+from ..settings import get_settings
 from ..utcnow import utc_now, utc_now_iso
 from .telehealth import GOOGLE_MEET
 from .token_encryption import decrypt_tokens, derive_subkey, encrypt_tokens
@@ -313,6 +315,45 @@ def _http_status(exc: Exception) -> int | None:
 def _is_expired_sync_token(exc: Exception) -> bool:
     """Report whether an API error is Google's expired-syncToken 410."""
     return _http_status(exc) == _HTTP_GONE
+
+
+_HTTP_UNAUTHORIZED = 401
+
+
+class ReadErrorKind(StrEnum):
+    """Why a read of the clinician's Google Calendar failed, without its text.
+
+    Stored on the connection and shown in its status. The kind is all that
+    is kept: the error's own message can quote an answer from Google, and
+    with it what is on the calendar.
+    """
+
+    ACCESS_REVOKED = "access_revoked"
+    """The grant no longer works: removed at Google, expired, or the account
+    changed its password. Only connecting again brings it back."""
+    CALENDAR_NOT_FOUND = "calendar_not_found"
+    READ_FAILED = "read_failed"
+    """Anything else: Google unreachable, a rate limit, a 5xx."""
+
+
+def read_error_kind(exc: BaseException) -> ReadErrorKind:
+    """Classify a failed read, from the exception alone.
+
+    A refresh Google refuses (``invalid_grant``) is how a revoked grant shows
+    up: the stored access token is answered 401, the client refreshes, and
+    the refresh is refused. A 401 that reaches here without a refresh says
+    the same thing.
+    """
+    from google.auth.exceptions import RefreshError
+
+    if isinstance(exc, RefreshError):
+        return ReadErrorKind.ACCESS_REVOKED
+    status = _http_status(exc) if isinstance(exc, Exception) else None
+    if status == _HTTP_UNAUTHORIZED:
+        return ReadErrorKind.ACCESS_REVOKED
+    if status == _HTTP_NOT_FOUND:
+        return ReadErrorKind.CALENDAR_NOT_FOUND
+    return ReadErrorKind.READ_FAILED
 
 
 def _event_to_change(event: dict[str, Any]) -> dict[str, Any]:
@@ -974,7 +1015,10 @@ class GoogleCalendarService:
         """Poll Google Calendar for incremental changes using syncToken.
 
         Returns a list of change dicts for the caller to process. Raises
-        :class:`CalendarGoneError` when the calendar Pablo made was deleted.
+        :class:`CalendarGoneError` when the calendar Pablo made was deleted,
+        and lets any other failure through: "no changes" and "could not
+        read" mean different things to a caller that records which it was
+        (see ``read_error_kind``).
         """
         credentials = self._get_credentials(user_id)
         if not credentials:
@@ -1017,9 +1061,7 @@ class GoogleCalendarService:
                 and token_doc.write_target == CalendarWriteTarget.APP_CALENDAR.value
             ):
                 raise CalendarGoneError from exc
-            # HIPAA: don't log response bodies that might contain PHI
-            logger.exception("Google Calendar sync failed")
-            return []
+            raise
 
         return page.changes
 
@@ -1352,7 +1394,10 @@ class GoogleCalendarService:
                 "titling_needs_attestation": False,
                 "follow_calendar_id": None,
                 "import_granted": False,
+                "read_error": None,
+                "reads_paused": False,
             }
+        failing = token_doc.consecutive_error_count > 0
         return {
             "connected": True,
             "calendar_id": token_doc.calendar_id,
@@ -1374,6 +1419,15 @@ class GoogleCalendarService:
             "follow_calendar_id": token_doc.follow_calendar_id,
             "import_granted": CalendarCapability.IMPORT.value
             in _split_capabilities(token_doc.granted_capabilities),
+            # The kind of the failure the last read ended in, while reads are
+            # still failing; a read that works clears it.
+            "read_error": (token_doc.last_sync_error or ReadErrorKind.READ_FAILED.value)
+            if failing
+            else None,
+            # The scheduled pass has stopped reading this calendar. A read on
+            # request, or connecting again, starts it.
+            "reads_paused": token_doc.consecutive_error_count
+            >= get_settings().calendar_sync_max_consecutive_failures,
         }
 
     def list_busy_windows(

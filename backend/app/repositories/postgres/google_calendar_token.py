@@ -13,6 +13,8 @@ from ...utcnow import utc_now
 from ..google_calendar_token import GoogleCalendarTokenDoc, GoogleCalendarTokenRepository
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from sqlalchemy.orm import Session
 
 #: How following the main calendar is stored until its real id is known.
@@ -56,6 +58,10 @@ class PostgresGoogleCalendarTokenRepository(GoogleCalendarTokenRepository):
         row.main_calendar_sync_token = token_doc.main_calendar_sync_token
         row.last_synced_at = token_doc.last_synced_at
         row.connected_at = token_doc.connected_at
+        # A new connection is saved with neither, which is what clears a
+        # failure recorded against the grant it replaces.
+        row.last_sync_error = token_doc.last_sync_error
+        row.consecutive_error_count = token_doc.consecutive_error_count
         self._session.flush()
 
     def update_sync_token(self, user_id: str, sync_token: str) -> None:
@@ -64,6 +70,21 @@ class PostgresGoogleCalendarTokenRepository(GoogleCalendarTokenRepository):
             now = utc_now()
             row.sync_token = sync_token
             row.last_synced_at = now
+            self._session.flush()
+
+    def record_read_failure(self, user_id: str, kind: str) -> None:
+        row = self._session.get(GoogleCalendarTokenRow, user_id)
+        if row:
+            row.last_sync_error = kind
+            row.consecutive_error_count = (row.consecutive_error_count or 0) + 1
+            self._session.flush()
+
+    def record_read_success(self, user_id: str, at: datetime) -> None:
+        row = self._session.get(GoogleCalendarTokenRow, user_id)
+        if row:
+            row.last_sync_error = None
+            row.consecutive_error_count = 0
+            row.last_synced_at = at
             self._session.flush()
 
     def update_main_calendar_sync_token(self, user_id: str, sync_token: str | None) -> None:
