@@ -218,11 +218,18 @@ async function answerAsNewClient(api: ApiClient, title: string): Promise<void> {
   })
 }
 
+/**
+ * Charts called `name` in full. The review fills in a new client's first and
+ * last name when the title is plainly one, so "Casey Morgan" is charted as
+ * Casey / Morgan; one answered through the API with the title alone keeps it
+ * as the first name. Either reads as the same name.
+ */
 async function patientsNamed(api: ApiClient, name: string): Promise<{ id: string }[]> {
-  const page = await api.get<{ data: { id: string; first_name: string }[] }>(
-    `/api/patients?search=${encodeURIComponent(name)}&page_size=100`,
+  const lastWord = name.split(" ").at(-1) ?? name
+  const page = await api.get<{ data: { id: string; first_name: string; last_name: string }[] }>(
+    `/api/patients?search=${encodeURIComponent(lastWord)}&page_size=100`,
   )
-  return page.data.filter((p) => p.first_name === name)
+  return page.data.filter((p) => `${p.first_name} ${p.last_name}`.trim() === name)
 }
 
 async function patientNamed(api: ApiClient, name: string): Promise<string> {
@@ -291,8 +298,41 @@ const CLIENTS = [
 ]
 
 let addedRules: string[] = []
+/** Charts made under a name typed in the review, found by id rather than by CLIENTS. */
+const madeHere: string[] = []
+
+interface NamedPatient {
+  id: string
+  first_name: string
+  last_name: string
+  needs_name?: boolean
+}
+
+async function patientsWithLastName(api: ApiClient, lastName: string): Promise<NamedPatient[]> {
+  const page = await api.get<{ data: NamedPatient[] }>(
+    `/api/patients?search=${encodeURIComponent(lastName)}&page_size=100`,
+  )
+  return page.data.filter((p) => p.last_name === lastName)
+}
+
+async function forgetByLastName(api: ApiClient, lastName: string): Promise<void> {
+  for (const patient of await patientsWithLastName(api, lastName)) madeHere.push(patient.id)
+  await forgetMadeHere(api)
+}
+
+async function forgetMadeHere(api: ApiClient): Promise<void> {
+  for (const id of madeHere.splice(0)) {
+    for (const appointment of await upcomingFor(api, id)) {
+      await api.delete(`/api/appointments/${appointment.id}`)
+    }
+    await api.request("DELETE", `/api/patients/${id}`, {
+      acknowledged_retention_obligation: true,
+    })
+  }
+}
 
 test.afterEach(async ({ api }) => {
+  await forgetMadeHere(api)
   // The worker's diary is shared with every later spec, which books into
   // whatever openings are left; the sessions and hours made here are not
   // theirs to find.
@@ -555,6 +595,48 @@ test("a session titled with a client's initials is offered that client", async (
   await expect(review.getByRole("combobox", { name: "Which client is T.Q.?" })).toHaveValue(
     taylor.id,
   )
+})
+
+test("a new client from an initials event is named as typed", async ({
+  signedInPage: page,
+  api,
+}) => {
+  await freshGoogle(api)
+  await forgetByLastName(api, "Vance")
+  await connectThroughSetup(page, { follow: true })
+  // One session, so the initials are one question rather than one per event.
+  await seedWeekly("primary", "Z.V.", localDateTime(1, "16:00"), 1)
+  await readCalendarsNow(api)
+
+  await showTomorrow(page)
+  await page.getByRole("button", { name: "Review", exact: true }).click()
+  const review = page.getByRole("dialog")
+  await expect(review.getByText("New client", { exact: true })).toBeVisible()
+  // Initials say nothing about the name: both fields start empty, with the
+  // calendar's wording beside them.
+  const [question] = (await questions(api)).filter((q) => q.title === "Z.V.")
+  const fields = review.getByTestId(`new-client-name-${question.key}`)
+  const first = fields.getByLabel("First name")
+  const last = fields.getByLabel("Last name")
+  await expect(first).toHaveValue("")
+  await expect(last).toHaveValue("")
+  await expect(fields.getByText("On the calendar: Z.V.")).toBeVisible()
+
+  await first.fill("Zara")
+  await last.fill("Vance")
+  await expect(review.getByRole("checkbox", { name: "Z.V." })).toBeChecked()
+  await review.screenshot({ path: test.info().outputPath("new-client-name-row.png") })
+  await review.getByRole("button", { name: "Save", exact: true }).click()
+  await expect(review).toBeHidden()
+
+  const [zara] = await patientsWithLastName(api, "Vance")
+  expect(zara).toMatchObject({ first_name: "Zara", last_name: "Vance", needs_name: false })
+  madeHere.push(zara.id)
+  expect(await upcomingFor(api, zara.id)).toHaveLength(1)
+
+  await page.goto(`/dashboard/patients/${zara.id}`)
+  await expect(page.getByRole("heading", { name: "Zara Vance" })).toBeVisible()
+  await expect(page.getByTestId("needs-name")).toHaveCount(0)
 })
 
 test("disconnecting takes Pablo off the account and forgets what it read, keeping the sessions", async ({

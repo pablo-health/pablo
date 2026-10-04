@@ -86,6 +86,18 @@ describe("PatientSummary", () => {
     expect(badge.textContent?.toLowerCase()).not.toContain("covered")
   })
 
+  it("says when the chart still needs a full name", () => {
+    mockUsePatientCoverage.mockReturnValue({ data: null })
+
+    const { rerender } = render(
+      <PatientSummary patient={{ ...PATIENT, first_name: "K.M.", last_name: "", needs_name: true }} />
+    )
+    expect(screen.getByTestId("needs-name")).toHaveTextContent("Needs full name")
+
+    rerender(<PatientSummary patient={{ ...PATIENT, needs_name: false }} />)
+    expect(screen.queryByTestId("needs-name")).not.toBeInTheDocument()
+  })
+
   it("shows a not-yet-checked badge for a plan with no answer", () => {
     mockUsePatientCoverage.mockReturnValue({ data: { eligibility: null } })
 

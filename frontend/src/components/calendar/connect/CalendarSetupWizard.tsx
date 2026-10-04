@@ -21,6 +21,7 @@ import { CalendarHoursStep } from "./CalendarHoursStep"
 import { CalendarSessionsStep } from "./CalendarSessionsStep"
 import { CalendarClientsStep } from "./CalendarClientsStep"
 import { CalendarReviewStep } from "./CalendarReviewStep"
+import { newClientName, newClientNameFields, type NewClientName } from "./NewClientNameFields"
 import { seenElsewhere } from "./WhichClientsList"
 import {
   recallAndClearFollowWanted,
@@ -211,6 +212,8 @@ export function CalendarSetupWizard({
   const [clientFor, setClientFor] = useState<Record<string, string | null>>({})
   // Series marked as not a client, remembered on confirm.
   const [notClient, setNotClient] = useState<Record<string, boolean>>({})
+  // Names typed for series that become new clients; none uses the suggestion.
+  const [names, setNames] = useState<Record<string, NewClientName>>({})
   const [expanded, setExpanded] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [confirmError, setConfirmError] = useState<string | null>(null)
@@ -281,6 +284,7 @@ export function CalendarSetupWizard({
       )
     )
     setNotClient({})
+    setNames({})
   }, [proposal])
 
   const following = Boolean(status?.follow_calendar_id)
@@ -496,6 +500,12 @@ export function CalendarSetupWizard({
     setChecked((current) => ({ ...current, [candidateKey]: false }))
   }, [])
 
+  const handleChangeName = useCallback((candidateKey: string, name: NewClientName) => {
+    setNames((current) => ({ ...current, [candidateKey]: name }))
+    // Typing a name is an answer: the series is checked to go with it.
+    setChecked((current) => ({ ...current, [candidateKey]: true }))
+  }, [])
+
   const handleConfirm = useCallback(async () => {
     if (!proposal) return
     setConfirming(true)
@@ -508,17 +518,24 @@ export function CalendarSetupWizard({
             !notClient[item.candidate_key] &&
             !seenElsewhere(item.match)
         )
-        .map((item) => ({
-          candidate_key: item.candidate_key,
-          display_name: item.summary,
-          patient_id: clientFor[item.candidate_key] ?? null,
-          source_identifier: item.source_identifier,
-          start_at: item.first_future_start ?? new Date().toISOString(),
-          duration_minutes: item.duration_minutes,
-          cadence: item.cadence,
-          occurrences: Math.max(item.occurrences_ahead, 1),
-          timezone: proposal.timezone,
-        }))
+        .map((item) => {
+          const patientId = clientFor[item.candidate_key] ?? null
+          return {
+            candidate_key: item.candidate_key,
+            display_name: item.summary,
+            patient_id: patientId,
+            // A new client goes with the name typed, or the one filled in.
+            ...(patientId
+              ? {}
+              : newClientNameFields(newClientName(names[item.candidate_key], item.suggested_name))),
+            source_identifier: item.source_identifier,
+            start_at: item.first_future_start ?? new Date().toISOString(),
+            duration_minutes: item.duration_minutes,
+            cadence: item.cadence,
+            occurrences: Math.max(item.occurrences_ahead, 1),
+            timezone: proposal.timezone,
+          }
+        })
       const notClients = proposal.series
         .filter((item) => notClient[item.candidate_key])
         .map((item) => item.source_identifier)
@@ -531,7 +548,7 @@ export function CalendarSetupWizard({
     } finally {
       setConfirming(false)
     }
-  }, [proposal, checked, clientFor, notClient, people.many])
+  }, [proposal, checked, clientFor, notClient, names, people.many])
 
   const titlingSettled = selection.event_titling !== "full" || attested
   const isLastStep = activeIndex === steps.length - 1
@@ -664,6 +681,8 @@ export function CalendarSetupWizard({
           onChooseClient={handleChooseClient}
           notClient={notClient}
           onToggleNotClient={handleToggleNotClient}
+          names={names}
+          onChangeName={handleChangeName}
           expanded={expanded}
           onToggleExpanded={() => setExpanded((value) => !value)}
           onBack={() => setActiveIndex(clientsIndex)}
