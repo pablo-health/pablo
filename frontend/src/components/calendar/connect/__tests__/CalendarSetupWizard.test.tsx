@@ -766,7 +766,7 @@ describe("CalendarSetupWizard event titling", () => {
 
     await user.click(screen.getByRole("radio", { name: /therapy session/i }))
     expect(screen.queryByRole("button", { name: "Continue with Google" })).toBeNull()
-    await user.click(screen.getByRole("button", { name: "Save event titles" }))
+    await user.click(screen.getByRole("button", { name: "Save how sessions appear" }))
 
     await waitFor(() => expect(setTitling).toHaveBeenCalledWith("generic", false))
     expect(getAuthUrl).not.toHaveBeenCalled()
@@ -800,7 +800,7 @@ describe("CalendarSetupWizard changing an existing connection", () => {
     await goToSessionsStep(user)
 
     expect(screen.queryByRole("button", { name: "Continue with Google" })).toBeNull()
-    expect(screen.queryByRole("button", { name: "Save event titles" })).toBeNull()
+    expect(screen.queryByRole("button", { name: "Save how sessions appear" })).toBeNull()
     expect(screen.queryByRole("button", { name: "Continue with Google" })).toBeNull()
   })
 
@@ -1235,7 +1235,7 @@ describe("CalendarSetupWizard choosing the calendar to follow", () => {
 
     await user.selectOptions(picker, ANOTHER)
     expect(screen.getByRole("alertdialog")).toHaveTextContent(
-      "Pablo made this calendar for another setup."
+      "Pablo made this calendar for another Pablo setup."
     )
     expect(setFollowed).not.toHaveBeenCalled()
 

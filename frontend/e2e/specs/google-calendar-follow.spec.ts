@@ -534,7 +534,7 @@ test("choosing another calendar reads its sessions and leaves the main calendar'
   expect((await google.calendars()).map((c) => c.summary)).toContain("Pablo Sessions")
   await expect(picker.locator("option")).toHaveText([account, "Practice"])
   await expect(page.getByTestId("followed-calendar-line")).toContainText(
-    `Pablo reads the events on ${account}`,
+    `Pablo reads ${account}`,
   )
   const chosen = page.waitForResponse(
     (response) =>
@@ -543,7 +543,7 @@ test("choosing another calendar reads its sessions and leaves the main calendar'
   await picker.selectOption("Practice")
   await chosen
   await expect(page.getByTestId("followed-calendar-line")).toContainText(
-    "Pablo reads the events on Practice",
+    "Pablo reads Practice",
   )
 
   await readCalendarsNow(api)
@@ -839,11 +839,11 @@ test("a session named for one client books by default, and is asked once that is
   // Turned off in Settings, where the followed calendar's line follows it.
   await page.goto("/dashboard/settings/calendars")
   const choice = page.getByRole("checkbox", {
-    name: "Book sessions whose title has a client\u2019s full name",
+    name: "Add sessions that show a client\u2019s full name",
   })
   await expect(choice).toBeChecked()
   await expect(page.getByTestId("followed-calendar-line")).toContainText(
-    "It books the ones titled with a client\u2019s full name",
+    "It adds sessions that show a client\u2019s full name",
   )
   const saved = page.waitForResponse(
     (response) =>
@@ -855,7 +855,7 @@ test("a session named for one client books by default, and is asked once that is
   await saved
   await expect(choice).not.toBeChecked()
   await expect(page.getByTestId("followed-calendar-line")).toContainText(
-    "and asks about the ones that look like sessions",
+    "and asks about anything that looks like a session",
   )
 
   // Off: a series named for Jamie is asked about, with Jamie filled in.
@@ -892,7 +892,7 @@ test("what Pablo booked from titles is listed, and an undo stays undone", async 
   // The calendar lists each one with its client and time.
   await showTomorrow(page)
   const notice = page.getByTestId("auto-booked")
-  await expect(notice).toContainText("Pablo booked 3 sessions from your calendar")
+  await expect(notice).toContainText("Pablo added 3 sessions from your Google Calendar")
   const rows = notice.getByTestId("auto-booked-row")
   await expect(rows).toHaveCount(3)
   await expect(rows.first()).toContainText("Jamie Ortiz")
@@ -908,7 +908,7 @@ test("what Pablo booked from titles is listed, and an undo stays undone", async 
   await rows.first().getByRole("button", { name: /^Undo Jamie Ortiz/ }).click()
   await cancelled
   await expect(rows).toHaveCount(2)
-  await expect(notice).toContainText("Pablo booked 2 sessions from your calendar")
+  await expect(notice).toContainText("Pablo added 2 sessions from your Google Calendar")
 
   // The other service extends the series, so every event is read again: the
   // undone one stays cancelled, and the new one follows the series.
@@ -921,7 +921,7 @@ test("what Pablo booked from titles is listed, and an undo stays undone", async 
 
   // OK clears the list; the sessions stay booked.
   await page.reload()
-  await expect(notice).toContainText("Pablo booked 2 sessions from your calendar")
+  await expect(notice).toContainText("Pablo added 2 sessions from your Google Calendar")
   await notice.getByRole("button", { name: "OK", exact: true }).click()
   await expect(notice).toHaveCount(0)
   expect(await upcomingFor(api, jamie.id)).toHaveLength(3)
@@ -1039,7 +1039,7 @@ test("the setup page follows the calendar picked there, and not the main one", a
   await page.goto("/dashboard/settings/calendars")
   await expect(page.getByRole("combobox", { name: "Import sessions from" })).toHaveValue(booked.id)
   await expect(page.getByTestId("followed-calendar-line")).toContainText(
-    "Pablo reads the events on Booked sessions",
+    "Pablo reads Booked sessions",
   )
 })
 
@@ -1112,7 +1112,7 @@ test("a calendar another Pablo setup writes to is flagged, confirmed, then impor
   await picker.selectOption(other.id)
   const warning = page.getByRole("alertdialog")
   await expect(warning).toHaveText(
-    /Pablo made this calendar for another setup\. Importing from it brings in its upcoming sessions, including any it books from now on\./,
+    /Pablo made this calendar for another Pablo setup\. Importing from it brings in its upcoming sessions, including any booked there from now on\./,
   )
   const chosen = page.waitForResponse(
     (response) =>
@@ -1121,7 +1121,7 @@ test("a calendar another Pablo setup writes to is flagged, confirmed, then impor
   await warning.getByRole("button", { name: "Import from it" }).click()
   await chosen
   await expect(page.getByTestId("followed-calendar-line")).toContainText(
-    "Pablo reads the events on Team sessions",
+    "Pablo reads Team sessions",
   )
 
   await readCalendarsNow(api)

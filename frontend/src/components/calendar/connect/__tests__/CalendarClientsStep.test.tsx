@@ -290,7 +290,7 @@ describe("CalendarClientsStep", () => {
     ).toBeInTheDocument()
     expect(
       screen.getByText(
-        "Pablo books sessions whose title has a client\u2019s full name and asks about the rest."
+        "Pablo adds sessions that show a client\u2019s full name and asks about the rest."
       )
     ).toBeInTheDocument()
   })
@@ -421,7 +421,7 @@ describe("CalendarClientsStep", () => {
         )
 
         expect(screen.getByRole("alertdialog")).toHaveTextContent(
-          "Pablo made this calendar for another setup. Importing from it brings in its upcoming sessions, including any it books from now on."
+          "Pablo made this calendar for another Pablo setup. Importing from it brings in its upcoming sessions, including any booked there from now on."
         )
         expect(onPick).not.toHaveBeenCalled()
 

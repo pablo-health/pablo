@@ -33,7 +33,7 @@ const PREFERENCES = {
   calendar_density: "balanced",
 }
 
-const LABEL = "Book sessions whose title has a client’s full name"
+const LABEL = "Add sessions that show a client’s full name"
 
 describe("Settings → booking sessions by full name", () => {
   beforeEach(() => {

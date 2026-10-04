@@ -56,9 +56,9 @@ describe("AutoBookedNotice", () => {
     renderWithProviders(<AutoBookedNotice />)
 
     expect(
-      await screen.findByText("Pablo booked 2 sessions from your calendar"),
+      await screen.findByText("Pablo added 2 sessions from your Google Calendar"),
     ).toBeInTheDocument()
-    expect(screen.getByText("Each title had a client’s full name.")).toBeInTheDocument()
+    expect(screen.getByText("Each one showed a client’s full name.")).toBeInTheDocument()
     const rows = screen.getAllByTestId("auto-booked-row")
     expect(rows.map((row) => within(row).getByText(/Smith|Jones/).textContent)).toEqual([
       "Jane Smith",
@@ -77,7 +77,7 @@ describe("AutoBookedNotice", () => {
 
     expect(api.cancelAppointment).toHaveBeenCalledWith("a1")
     await waitFor(() =>
-      expect(screen.getByText("Pablo booked 1 session from your calendar")).toBeInTheDocument(),
+      expect(screen.getByText("Pablo added a session from your Google Calendar")).toBeInTheDocument(),
     )
     expect(screen.queryByText("Jane Smith")).not.toBeInTheDocument()
   })

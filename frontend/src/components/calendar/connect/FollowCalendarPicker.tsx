@@ -81,8 +81,8 @@ export function FollowCalendarPicker({
           className="mt-1 max-w-md space-y-2 rounded-md border border-amber-300 bg-amber-50 p-2.5"
         >
           <p id={`${id}-confirm`} className="text-xs text-neutral-900">
-            Pablo made this calendar for another setup. Importing from it brings in its upcoming
-            sessions, including any it books from now on.
+            Pablo made this calendar for another Pablo setup. Importing from it brings in its
+            upcoming sessions, including any booked there from now on.
           </p>
           <div className="flex gap-2">
             <Button

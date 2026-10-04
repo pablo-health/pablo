@@ -106,7 +106,7 @@ describe("CalendarReadProblem", () => {
     render(<CalendarReadProblem />, { wrapper: wrapper() })
 
     const line = await screen.findByTestId("calendar-read-problem")
-    expect(line).toHaveTextContent("Pablo can\u2019t read the calendar it was following any more.")
+    expect(line).toHaveTextContent("Pablo can no longer read the calendar it was importing from.")
     expect(screen.getByRole("link", { name: "Choose another" })).toHaveAttribute(
       "href",
       "/dashboard/settings/calendars",

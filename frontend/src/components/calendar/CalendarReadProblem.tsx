@@ -175,7 +175,7 @@ export function CalendarReadProblem({
       <AlertCircle className="h-4 w-4 shrink-0" aria-hidden />
       <span className="flex-1">
         {gone
-          ? "Pablo can’t read the calendar it was following any more."
+          ? "Pablo can no longer read the calendar it was importing from."
           : broken
             ? "Pablo can’t read your Google Calendar."
             : shown}

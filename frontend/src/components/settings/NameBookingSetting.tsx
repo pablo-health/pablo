@@ -32,7 +32,7 @@ export function NameBookingSetting() {
   const { preferences, save, isSaving } = useSettingsPreferences()
   const books = useBooksSessionsNamedInTitle()
   if (!preferences || books === undefined) return null
-  const label = `Book sessions whose title has a ${people.one}’s full name`
+  const label = `Add sessions that show a ${people.one}’s full name`
 
   return (
     <label className="flex cursor-pointer items-start gap-3">
