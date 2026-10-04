@@ -590,6 +590,9 @@ def _new_client(
 NEEDS_READ_ACCESS = "Following a calendar needs access to read its events"
 #: Refusing a calendar the connection can't read.
 NOT_A_READABLE_CALENDAR = "That calendar isn't one this connection can read"
+#: Refusing the calendar Pablo writes this clinician's sessions to: following
+#: it would read Pablo's own bookings back as outside sessions.
+PABLOS_OWN_CALENDAR = "That is the calendar Pablo writes to."
 
 
 def _connected_with_read_access(service: GoogleCalendarService, user_id: str) -> None:
@@ -612,13 +615,19 @@ def list_followable_calendars(
     user: User = Depends(require_baa_acceptance),
     service: GoogleCalendarService = Depends(get_google_calendar_service),
 ) -> ReadableCalendarsResponse:
-    """The calendars that can be followed: those the connection can read."""
+    """The calendars that can be followed: those the connection can read,
+    except the one Pablo writes this clinician's sessions to. One Pablo made
+    for another setup is listed, and says so."""
     _connected_with_read_access(service, user.id)
-    calendars = service.list_readable_calendars(user.id)
+    own = service.pablos_own_calendar_ids(user.id)
+    calendars = [c for c in service.list_readable_calendars(user.id) if c.id not in own]
     followed = service.get_sync_status(user.id).get("follow_calendar_id")
     return ReadableCalendarsResponse(
         calendars=[
-            ReadableCalendarResponse(id=c.id, name=c.name, primary=c.primary) for c in calendars
+            ReadableCalendarResponse(
+                id=c.id, name=c.name, primary=c.primary, made_by_pablo=c.made_by_pablo
+            )
+            for c in calendars
         ],
         follow_calendar_id=_shown_as(followed, calendars),
     )
@@ -649,6 +658,8 @@ def set_followed_calendar(
         main = next((c for c in calendars if c.primary), None)
         if chosen == FOLLOW_MAIN_CALENDAR and main is not None:
             chosen = main.id
+        if chosen in service.pablos_own_calendar_ids(user.id):
+            raise BadRequestError(PABLOS_OWN_CALENDAR)
         if chosen != FOLLOW_MAIN_CALENDAR and chosen not in {c.id for c in calendars}:
             raise BadRequestError(NOT_A_READABLE_CALENDAR)
         if main is not None:

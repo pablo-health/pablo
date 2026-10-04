@@ -179,6 +179,20 @@ class GoogleCalendarTokenRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def record_created_calendar(self, user_id: str, calendar_id: str, *, marked: bool) -> None:
+        """Record a calendar Pablo created for this user, kept for good.
+
+        ``marked`` says Pablo's marker is now in its description on Google;
+        a calendar recorded as marked stays marked.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def created_calendars(self, user_id: str) -> dict[str, datetime | None]:
+        """Every calendar Pablo created for this user, with when each was marked."""
+        raise NotImplementedError
+
+    @abstractmethod
     def set_followed_calendar(
         self, user_id: str, calendar_id: str | None, *, main_calendar: bool = False
     ) -> None:

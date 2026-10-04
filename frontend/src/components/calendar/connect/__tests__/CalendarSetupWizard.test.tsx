@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -73,6 +73,14 @@ vi.mock("@/lib/api/scheduling", async () => {
     confirmCalendarImport: (...args: unknown[]) => confirmImport(...args),
   }
 })
+
+const setFollowed = vi.fn()
+const listFollowable = vi.fn()
+
+vi.mock("@/lib/api/outsideSessions", () => ({
+  setFollowedCalendar: (...args: unknown[]) => setFollowed(...args),
+  listFollowableCalendars: () => listFollowable(),
+}))
 
 // The hours step has its own tests; here it only needs to save or skip.
 vi.mock("../CalendarHoursStep", () => ({
@@ -1160,5 +1168,201 @@ describe("CalendarSetupWizard step numbers", () => {
         "You’ll choose which calendar Pablo can use and whether Pablo can check your busy times."
       )
     ).toBeInTheDocument()
+  })
+})
+
+describe("CalendarSetupWizard choosing the calendar to follow", () => {
+  const MAIN = "clinician@example.test"
+  const BOOKED = "booked@group.calendar.google.test"
+  const READABLE: GoogleCalendarStatus = { ...CONNECTED, import_granted: true }
+  const BOTH = [
+    { id: MAIN, name: MAIN, primary: true },
+    { id: BOOKED, name: "Booked sessions", primary: false },
+  ]
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    window.sessionStorage.clear()
+    searchParams.delete("code")
+    searchParams.delete("state")
+    getConsentOptions.mockResolvedValue(CONSENT_OPTIONS)
+    getBusyWindows.mockResolvedValue({ windows: [] })
+    setFollowed.mockResolvedValue({ follow_calendar_id: BOOKED })
+    listFollowable.mockResolvedValue({ calendars: BOTH, follow_calendar_id: null })
+    Object.defineProperty(window, "location", {
+      value: { origin: "https://app.example.test", assign: vi.fn() },
+      writable: true,
+    })
+  })
+
+  afterEach(() => {
+    searchParams.delete("code")
+    searchParams.delete("state")
+  })
+
+  it("starts on the main calendar and imports from the one picked instead", async () => {
+    getStatus.mockResolvedValue(READABLE)
+    const user = userEvent.setup()
+    renderWizard()
+    await goToClientsStep(user)
+
+    const box = await screen.findByRole("checkbox", { name: /^Keep importing new sessions/ })
+    expect(box).not.toBeChecked()
+    const picker = await screen.findByRole("combobox", { name: "From" })
+    expect(picker).toHaveValue(MAIN)
+    // Picking alone saves nothing while it is off.
+    await user.selectOptions(picker, BOOKED)
+    expect(setFollowed).not.toHaveBeenCalled()
+    expect(picker).toHaveValue(BOOKED)
+
+    await user.click(box)
+
+    await waitFor(() => expect(setFollowed).toHaveBeenCalledWith(BOOKED))
+  })
+
+  it("confirms a calendar another Pablo setup writes to before importing from it", async () => {
+    const ANOTHER = "another@group.calendar.google.test"
+    getStatus.mockResolvedValue({ ...READABLE, follow_calendar_id: MAIN })
+    listFollowable.mockResolvedValue({
+      calendars: [...BOTH, { id: ANOTHER, name: "Old", primary: false, made_by_pablo: true }],
+      follow_calendar_id: MAIN,
+    })
+    const user = userEvent.setup()
+    renderWizard()
+    await goToClientsStep(user)
+    const picker = await screen.findByRole("combobox", { name: "From" })
+    expect(within(picker).getByRole("option", { name: "Old (another Pablo setup)" })).toBeTruthy()
+
+    await user.selectOptions(picker, ANOTHER)
+    expect(screen.getByRole("alertdialog")).toHaveTextContent(
+      "Pablo made this calendar for another setup."
+    )
+    expect(setFollowed).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole("button", { name: "Import from it" }))
+
+    await waitFor(() => expect(setFollowed).toHaveBeenCalledWith(ANOTHER))
+  })
+
+  it("changes the followed calendar at once while following", async () => {
+    getStatus.mockResolvedValue({ ...READABLE, follow_calendar_id: MAIN })
+    listFollowable.mockResolvedValue({ calendars: BOTH, follow_calendar_id: MAIN })
+    const user = userEvent.setup()
+    renderWizard()
+    await goToClientsStep(user)
+
+    await user.selectOptions(await screen.findByRole("combobox", { name: "From" }), BOOKED)
+
+    await waitFor(() => expect(setFollowed).toHaveBeenCalledWith(BOOKED))
+  })
+
+  it("doesn't import from the main calendar while following it, and finishes instead", async () => {
+    getStatus.mockResolvedValue({ ...READABLE, follow_calendar_id: "primary" })
+    listFollowable.mockResolvedValue({ calendars: BOTH, follow_calendar_id: MAIN })
+    const user = userEvent.setup()
+    renderWizard()
+    await goToClientsStep(user)
+
+    expect(
+      await screen.findByText("Sessions on clinician@example.test already come in on their own.")
+    ).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Scan calendar" })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: "Finish" }))
+
+    expect(routerPush).toHaveBeenCalledWith("/dashboard/settings")
+    expect(scanForImport).not.toHaveBeenCalled()
+    expect(confirmImport).not.toHaveBeenCalled()
+  })
+
+  it("never shows the import review while following the main calendar", async () => {
+    getStatus.mockResolvedValue({ ...READABLE, follow_calendar_id: MAIN })
+    listFollowable.mockResolvedValue({ calendars: BOTH, follow_calendar_id: MAIN })
+    const user = userEvent.setup()
+    renderWizard()
+    await goToClientsStep(user)
+    await screen.findByText("Sessions on clinician@example.test already come in on their own.")
+
+    await user.click(screen.getByRole("button", { name: /review/i }))
+
+    expect(await screen.findByText("Nothing to import")).toBeInTheDocument()
+    expect(
+      screen.getByText("Sessions on clinician@example.test already come in on their own.")
+    ).toBeInTheDocument()
+    expect(screen.queryByText("Which of these are clients?")).not.toBeInTheDocument()
+  })
+
+  it("still imports from the main calendar while another one is followed", async () => {
+    getStatus.mockResolvedValue({ ...READABLE, follow_calendar_id: BOOKED })
+    listFollowable.mockResolvedValue({ calendars: BOTH, follow_calendar_id: BOOKED })
+    scanForImport.mockResolvedValue(proposalWith())
+    const user = userEvent.setup()
+    renderWizard()
+    await goToClientsStep(user)
+
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "From" })).toHaveValue(BOOKED)
+    )
+    expect(screen.queryByText(/already come in on their own/)).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Scan calendar" }))
+    await screen.findByTestId("qualifying-count")
+    await user.click(screen.getByRole("button", { name: /continue/i }))
+
+    expect(await screen.findByText("Which of these are clients?")).toBeInTheDocument()
+  })
+
+  it("'Allow access' from Settings returns there with following on, without scanning", async () => {
+    getStatus.mockResolvedValue(READABLE)
+    completeImportConsent.mockResolvedValue({ status: "connected" })
+    setFollowed.mockResolvedValue({ follow_calendar_id: MAIN })
+    searchParams.set("code", "auth-code")
+    searchParams.set("state", "state-from-google")
+    window.sessionStorage.setItem("pablo.calendar-import.pending", "1")
+    window.sessionStorage.setItem("pablo.calendar-follow.wanted", "1")
+
+    renderWizard()
+
+    await waitFor(() =>
+      expect(routerReplace).toHaveBeenCalledWith("/dashboard/settings/calendars")
+    )
+    expect(completeImportConsent.mock.calls[0][0]).toBe("auth-code")
+    expect(setFollowed).toHaveBeenCalledWith("primary")
+    expect(scanForImport).not.toHaveBeenCalled()
+    expect(completeConnect).not.toHaveBeenCalled()
+    expect(window.sessionStorage.getItem("pablo.calendar-follow.wanted")).toBeNull()
+  })
+
+  it("reports a failed grant from Settings on the clients step instead", async () => {
+    getStatus.mockResolvedValue(CONNECTED)
+    completeImportConsent.mockRejectedValue(new Error("Google did not finish granting access."))
+    searchParams.set("code", "auth-code")
+    searchParams.set("state", "state-from-google")
+    window.sessionStorage.setItem("pablo.calendar-import.pending", "1")
+    window.sessionStorage.setItem("pablo.calendar-follow.wanted", "1")
+
+    renderWizard()
+
+    await screen.findByText(/google did not finish granting access/i)
+    expect(screen.getByText("Import recurring sessions")).toBeInTheDocument()
+    expect(setFollowed).not.toHaveBeenCalled()
+    expect(routerReplace).not.toHaveBeenCalledWith("/dashboard/settings/calendars")
+  })
+
+  it("says the save failed, not Google, when the grant lands but turning it on doesn't", async () => {
+    getStatus.mockResolvedValue(READABLE)
+    completeImportConsent.mockResolvedValue({ status: "connected" })
+    setFollowed.mockRejectedValue("network")
+    searchParams.set("code", "auth-code")
+    searchParams.set("state", "state-from-google")
+    window.sessionStorage.setItem("pablo.calendar-import.pending", "1")
+    window.sessionStorage.setItem("pablo.calendar-follow.wanted", "1")
+
+    renderWizard()
+
+    await screen.findByText("Could not save that. Try again in a moment.")
+    expect(screen.queryByText(/google did not finish granting access/i)).not.toBeInTheDocument()
+    expect(screen.getByText("Import recurring sessions")).toBeInTheDocument()
+    expect(routerReplace).not.toHaveBeenCalledWith("/dashboard/settings/calendars")
+    expect(routerReplace).toHaveBeenCalledWith("/dashboard/settings/calendar")
   })
 })

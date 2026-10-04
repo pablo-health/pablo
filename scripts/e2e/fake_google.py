@@ -101,6 +101,8 @@ class Calendar:
     summary: str
     primary: bool = False
     app_created: bool = False
+    #: The calendar's own description, which Google lists with it.
+    description: str = ""
     events: dict[str, dict[str, Any]] = field(default_factory=dict)
     #: Bumped on every change; every event carries the value it last changed at.
     version: int = 0
@@ -117,15 +119,20 @@ class Calendar:
         }
         if self.primary:
             item["primary"] = True
+        if self.description:
+            item["description"] = self.description
         return item
 
     def resource(self) -> dict[str, Any]:
-        return {
+        item: dict[str, Any] = {
             "kind": "calendar#calendar",
             "id": self.id,
             "summary": self.summary,
             "timeZone": ACCOUNT_TIME_ZONE,
         }
+        if self.description:
+            item["description"] = self.description
+        return item
 
     def sync_token(self) -> str:
         return f"{self.id}|{self.epoch}|{self.version}"
@@ -671,8 +678,22 @@ async def insert_calendar(request: Request) -> Any:
         id=f"{secrets.token_hex(13)}@group.calendar.google.com",
         summary=str(body.get("summary") or ""),
         app_created=True,
+        description=str(body.get("description") or ""),
     )
     state.calendars[calendar.id] = calendar
+    return calendar.resource()
+
+
+@app.patch("/calendar/v3/calendars/{calendar_id}")
+async def patch_calendar(calendar_id: str, request: Request) -> Any:
+    scopes = _scopes_of(request)
+    calendar = _calendar_or_404(calendar_id)
+    _allow(scopes, WRITE_CALENDAR, calendar)
+    body = await request.json()
+    if "summary" in body:
+        calendar.summary = str(body["summary"] or "")
+    if "description" in body:
+        calendar.description = str(body["description"] or "")
     return calendar.resource()
 
 
@@ -744,11 +765,16 @@ async def fake_calendars() -> dict[str, Any]:
 
 @app.post("/_fake/calendars")
 async def fake_add_calendar(request: Request) -> Any:
-    """A second calendar on the account, as one shared with it or made by hand."""
+    """A second calendar on the account, as one shared with it or made by hand.
+
+    ``description`` sets the calendar's own description, as Pablo's marker on
+    a calendar another Pablo setup made would be.
+    """
     body = await request.json()
     calendar = Calendar(
         id=str(body.get("id") or f"{secrets.token_hex(8)}@group.calendar.google.com"),
         summary=str(body.get("summary") or "Calendar"),
+        description=str(body.get("description") or ""),
     )
     state.calendars[calendar.id] = calendar
     return calendar.entry()

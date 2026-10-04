@@ -2261,6 +2261,28 @@ class GoogleCalendarSettingsRow(Base):
     )
 
 
+class GoogleCreatedCalendarRow(Base):
+    """A calendar Pablo's own insert created on a clinician's Google account.
+
+    Every one, kept after Pablo moves on to another (the old one was deleted,
+    or a different account was connected): ``google_calendar_settings``
+    names the one in use, and this is the record of what Pablo made, so a
+    calendar is recognised as Pablo's from what Pablo did rather than from
+    what it is called. ``marked_at`` is when Pablo's marker went into the
+    calendar's description on Google (see ``google_calendar_service``), which
+    is what recognises it once this record is gone. Survives a disconnect.
+    """
+
+    __tablename__ = "google_created_calendars"
+
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    calendar_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    marked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class TelehealthConnectionRow(Base):
     """One clinician's connection to one video service.
 

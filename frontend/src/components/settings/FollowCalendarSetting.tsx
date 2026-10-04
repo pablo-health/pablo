@@ -6,6 +6,7 @@ import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { CALENDAR_SETUP_PATH } from "@/components/calendar/connect/CalendarSetupWizard"
+import { FollowCalendarPicker } from "@/components/calendar/connect/FollowCalendarPicker"
 import {
   rememberFollowWanted,
   rememberImportPending,
@@ -90,8 +91,9 @@ export function FollowCalendarSetting({
     }
   }
 
-  // The permission is asked for from the setup page, which finishes the
-  // round trip, turns following on and shows the week it read.
+  // Google returns to the setup page, the one redirect registered for it,
+  // which finishes the round trip, turns following on and sends the browser
+  // back here, where the calendar can be changed.
   const askForAccess = async () => {
     setSaving(true)
     setError(null)
@@ -137,29 +139,18 @@ export function FollowCalendarSetting({
       {following && calendars === null && !error ? (
         <p className="pl-6 text-xs text-muted-foreground">Loading your calendars…</p>
       ) : null}
+      {/* With one calendar there is nothing to choose; the line below names it. */}
       {following && (listed.length > 1 || unreadable) ? (
-        <div className="flex flex-col gap-1 pl-6">
-          <label htmlFor="settings-follow-calendar-choice" className="text-xs text-muted-foreground">
-            Import sessions from
-          </label>
-          <select
+        <div className="pl-6">
+          <FollowCalendarPicker
             id="settings-follow-calendar-choice"
-            value={selected ?? ""}
+            label="Import sessions from"
+            calendars={listed}
+            value={selected}
             disabled={saving}
-            onChange={(event) => follow(event.target.value)}
-            className="w-fit rounded-md border border-border bg-card px-1.5 py-0.5 text-xs text-neutral-900"
-          >
-            {unreadable ? (
-              <option value={selected ?? ""} disabled>
-                Choose a calendar
-              </option>
-            ) : null}
-            {listed.map((calendar) => (
-              <option key={calendar.id} value={calendar.id}>
-                {calendar.name}
-              </option>
-            ))}
-          </select>
+            onPick={(calendarId) => void follow(calendarId)}
+            placeholder={unreadable ? "Choose a calendar" : undefined}
+          />
         </div>
       ) : null}
       {unreadable ? (

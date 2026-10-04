@@ -19,6 +19,7 @@ HIPAA Compliance:
 from __future__ import annotations
 
 import logging
+import uuid
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -216,6 +217,14 @@ _CONNECT_CAPABILITIES = frozenset({CalendarCapability.PUSH, CalendarCapability.B
 # strands the one already on the account.
 _APP_CALENDAR_SUMMARY = "Pablo Sessions"
 
+# Written into the description of every calendar Pablo creates, so the
+# calendar is still recognised as Pablo's after the record of creating it is
+# gone (a practice that was removed, then joined again). A calendar's
+# description is what Google keeps on the calendar itself and shows to anyone
+# it is shared with, so this says nothing about the practice or its clients.
+# Never matched by the calendar's name: anyone can call a calendar anything.
+APP_CALENDAR_MARKER = "Pablo adds sessions booked in Pablo to this calendar."
+
 # Names the key that signs the OAuth state, keeping it distinct from the
 # key that encrypts stored tokens.
 _STATE_PURPOSE = "google-calendar-oauth-state"
@@ -367,11 +376,6 @@ def _event_to_change(event: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _is_pablos_own(event: Mapping[str, Any]) -> bool:
-    private = (event.get("extendedProperties") or {}).get("private") or {}
-    return bool(private.get(_PABLO_APPOINTMENT_KEY))
-
-
 def _declined(event: Mapping[str, Any]) -> bool:
     """Whether the calendar's owner said no to this event."""
     return any(
@@ -380,15 +384,30 @@ def _declined(event: Mapping[str, Any]) -> bool:
     )
 
 
-def _main_calendar_change(event: dict[str, Any]) -> dict[str, Any] | None:
+def _pablo_appointment_id(event: Mapping[str, Any]) -> str | None:
+    private = (event.get("extendedProperties") or {}).get("private") or {}
+    value = private.get(_PABLO_APPOINTMENT_KEY)
+    return str(value) if value else None
+
+
+def _main_calendar_change(
+    event: dict[str, Any], *, ours: Callable[[str], bool] | None = None
+) -> dict[str, Any] | None:
     """A change on the clinician's own calendar, for following outside sessions.
 
     None for an event Pablo wrote itself (followed as Pablo's own) and for an
     all-day event, which is never a session. A declined event reads as gone:
     the clinician is not going. A deletion carries no times or properties, so
     it passes as a deletion and whoever holds its id decides what it was.
+
+    ``ours`` decides whether an event Pablo wrote is this practice's. Given
+    when the calendar read is one another Pablo setup writes to: its events
+    carry Pablo's property too, but name appointments this practice doesn't
+    have, so they are outside sessions here. Without it, every event Pablo
+    wrote is left out.
     """
-    if _is_pablos_own(event):
+    written_for = _pablo_appointment_id(event)
+    if written_for is not None and (ours is None or ours(written_for)):
         return None
     change = _event_to_change(event)
     change["series_id"] = event.get("recurringEventId")
@@ -426,6 +445,13 @@ class ReadableCalendar(NamedTuple):
     id: str
     name: str
     primary: bool
+    made_by_pablo: bool = False
+    """Pablo created it, by Pablo's own record of what it created or by the
+    marker it writes into the calendar's description — never by its name."""
+
+
+def _carries_marker(description: object) -> bool:
+    return isinstance(description, str) and APP_CALENDAR_MARKER in description
 
 
 class CalendarScopeNotGrantedError(Exception):
@@ -1029,6 +1055,11 @@ class GoogleCalendarService:
             return []
 
         service = self._calendar(credentials)
+        if token_doc.write_target == CalendarWriteTarget.APP_CALENDAR.value:
+            # A calendar made before calendars carried Pablo's marker gets it
+            # on the next read; one already marked costs nothing here.
+            self._token_repo.record_created_calendar(user_id, token_doc.calendar_id, marked=False)
+            self._mark_app_calendar(service, user_id, token_doc.calendar_id)
 
         try:
             try:
@@ -1116,6 +1147,97 @@ class GoogleCalendarService:
             return None
         return start, end
 
+    def pablos_own_calendar_ids(self, user_id: str) -> set[str]:
+        """The calendars Pablo writes this clinician's sessions to, which are never followed.
+
+        The calendar Pablo made for them (``app_calendar_id``), whether or not
+        sessions go there now: one who moved to the main calendar still has
+        Pablo's events for their existing appointments on it, and following
+        it would ask about Pablo's own bookings. Plus the calendar the
+        connection writes to, when that is one Pablo made.
+        """
+        own: set[str] = set()
+        remembered = self._token_repo.get_app_calendar_id(user_id)
+        if remembered:
+            own.add(remembered)
+        token_doc = self._token_repo.get(user_id)
+        if (
+            token_doc is not None
+            and token_doc.calendar_id
+            and token_doc.write_target == CalendarWriteTarget.APP_CALENDAR.value
+        ):
+            own.add(token_doc.calendar_id)
+        return own
+
+    def _another_setups_calendar(
+        self,
+        service: Any,
+        user_id: str,
+        token_doc: GoogleCalendarTokenDoc,
+        calendar_id: str,
+    ) -> bool:
+        """Whether the calendar followed is one Pablo made for another setup.
+
+        Never the main calendar, which a connection writing there shares with
+        Pablo's own events. Asked of Google only when Pablo's own record
+        doesn't settle it, and an unreadable answer reads as no: the events
+        Pablo wrote are then left out, as they always were.
+        """
+        if calendar_id in {FOLLOW_MAIN_CALENDAR, token_doc.calendar_id}:
+            return False
+        if calendar_id in self.pablos_own_calendar_ids(user_id):
+            return False
+        if calendar_id in self._token_repo.created_calendars(user_id):
+            return True
+        try:
+            found = _with_calendar_retry(service.calendars().get(calendarId=calendar_id).execute)
+        except Exception:
+            logger.info("Could not read the followed calendar's description")
+            return False
+        return (
+            bool(found) and not found.get("primary") and _carries_marker(found.get("description"))
+        )
+
+    def _this_practices_appointment(self, user_id: str) -> Callable[[str], bool]:
+        def ours(appointment_id: str) -> bool:
+            try:
+                uuid.UUID(appointment_id)
+            except ValueError:
+                # Not an id this practice could have issued; never sent to
+                # the database, where it would fail the read's transaction.
+                return False
+            return self._appointment_repo.get(appointment_id, user_id) is not None
+
+        return ours
+
+    def _mark_app_calendar(self, service: Any, user_id: str, calendar_id: str) -> None:
+        """Put Pablo's marker on a calendar Pablo made, once, and record that it's there.
+
+        Best effort: a calendar that can't be read or changed now is marked
+        on a later connect or read, and nothing else waits on it.
+        """
+        marked = self._token_repo.created_calendars(user_id).get(calendar_id)
+        if marked is not None:
+            return
+        try:
+            current = _with_calendar_retry(service.calendars().get(calendarId=calendar_id).execute)
+            description = str((current or {}).get("description") or "")
+            if not _carries_marker(description):
+                body = {
+                    "description": (
+                        f"{description}\n\n{APP_CALENDAR_MARKER}"
+                        if description
+                        else APP_CALENDAR_MARKER
+                    )
+                }
+                _with_calendar_retry(
+                    service.calendars().patch(calendarId=calendar_id, body=body).execute
+                )
+        except Exception:
+            logger.info("Could not mark the Pablo-owned calendar; will try again")
+            return
+        self._token_repo.record_created_calendar(user_id, calendar_id, marked=True)
+
     def can_read_events(self, user_id: str) -> bool:
         """Whether the connection holds the grant to read event content."""
         token_doc = self._token_repo.get(user_id)
@@ -1134,6 +1256,7 @@ class GoogleCalendarService:
         if not credentials:
             return []
         service = self._calendar(credentials)
+        created = self._token_repo.created_calendars(user_id)
         found: list[ReadableCalendar] = []
         page_token: str | None = None
         while True:
@@ -1151,6 +1274,8 @@ class GoogleCalendarService:
                         id=calendar_id,
                         name=str(item.get("summaryOverride") or item.get("summary") or ""),
                         primary=bool(item.get("primary")),
+                        made_by_pablo=calendar_id in created
+                        or _carries_marker(item.get("description")),
                     )
                 )
             page_token = page.get("nextPageToken")
@@ -1277,9 +1402,14 @@ class GoogleCalendarService:
             full = True
         if page.next_sync_token:
             self._token_repo.update_main_calendar_sync_token(user_id, page.next_sync_token)
+        ours = (
+            self._this_practices_appointment(user_id)
+            if self._another_setups_calendar(service, user_id, token_doc, calendar_id)
+            else None
+        )
         changes = [
             change
-            for change in (_main_calendar_change(event) for event in page.events)
+            for change in (_main_calendar_change(event, ours=ours) for event in page.events)
             if change is not None
         ]
         # HIPAA: counts only.
@@ -1925,6 +2055,7 @@ class GoogleCalendarService:
             and not self._token_repo.get_app_calendar_id(user_id)
         ):
             self._token_repo.remember_app_calendar_id(user_id, stored.calendar_id)
+            self._token_repo.record_created_calendar(user_id, stored.calendar_id, marked=False)
 
     def _get_or_create_app_calendar_id(self, credentials: Credentials, user_id: str) -> str:
         """Get the calendar Pablo owns on this account, creating it once.
@@ -1967,13 +2098,21 @@ class GoogleCalendarService:
                 logger.info("Stored Pablo-owned calendar is unreachable; creating a new one")
             else:
                 logger.info("Reusing the existing Pablo-owned Google calendar")
+                # One made before calendars carried the marker gets it now.
+                self._token_repo.record_created_calendar(user_id, remembered, marked=False)
+                self._mark_app_calendar(service, user_id, remembered)
                 return remembered
 
-        created = service.calendars().insert(body={"summary": _APP_CALENDAR_SUMMARY}).execute()
+        created = (
+            service.calendars()
+            .insert(body={"summary": _APP_CALENDAR_SUMMARY, "description": APP_CALENDAR_MARKER})
+            .execute()
+        )
         calendar_id = created.get("id")
         if not calendar_id:
             raise GoogleCalendarError("Google did not return an id for the created calendar")
         self._token_repo.remember_app_calendar_id(user_id, str(calendar_id))
+        self._token_repo.record_created_calendar(user_id, str(calendar_id), marked=True)
         logger.info("Created a Pablo-owned Google calendar for session events")
         return str(calendar_id)
 

@@ -536,6 +536,15 @@ CREATE TABLE __TENANT_SCHEMA__.google_calendar_tokens (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.google_created_calendars (
+    user_id uuid NOT NULL,
+    calendar_id text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    marked_at timestamp with time zone
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.ical_sync_configs (
     doc_id character varying(300) NOT NULL,
     user_id uuid NOT NULL,
@@ -1548,6 +1557,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.google_calendar_settings
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.google_calendar_tokens
     ADD CONSTRAINT google_calendar_tokens_pkey PRIMARY KEY (user_id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.google_created_calendars
+    ADD CONSTRAINT google_created_calendars_pkey PRIMARY KEY (user_id, calendar_id);
 
 
 

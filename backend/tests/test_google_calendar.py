@@ -31,6 +31,7 @@ from app.calendar_providers.pkce_store import PkceStoreUnavailableError
 from app.repositories.google_calendar_token import GoogleCalendarTokenDoc
 from app.scheduling_engine.models.appointment import Appointment
 from app.services.google_calendar_service import (
+    APP_CALENDAR_MARKER,
     CalendarGoneError,
     GoogleCalendarService,
     ReadErrorKind,
@@ -483,6 +484,43 @@ class TestOAuthFlow:
         mock_service.calendarList.assert_not_called()
         token_repo.remember_app_calendar_id.assert_called_once_with(
             "user-001", "pablo-made@group.calendar.google.com"
+        )
+        # Marked on Google as Pablo's, and recorded as made and marked here.
+        body = mock_service.calendars().insert.call_args.kwargs["body"]
+        assert body["description"] == APP_CALENDAR_MARKER
+        token_repo.record_created_calendar.assert_called_once_with(
+            "user-001", "pablo-made@group.calendar.google.com", marked=True
+        )
+
+    @patch("app.services.google_calendar_service._build_calendar_service")
+    @patch("app.services.google_calendar_service._build_flow")
+    def test_reconnecting_marks_a_calendar_made_before_the_marker(
+        self,
+        mock_build_flow: Mock,
+        mock_build_svc: Mock,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        """The marker is added once, after anything already in the description."""
+        mock_build_flow.return_value.credentials = _oauth_credentials()
+        token_repo.get_app_calendar_id.return_value = "already-made@group.calendar.google.com"
+        token_repo.created_calendars.return_value = {}
+        mock_service = MagicMock()
+        mock_service.calendars().get().execute.return_value = {"description": "My note"}
+        mock_build_svc.return_value = mock_service
+
+        calendar_service.handle_callback(
+            "user-001",
+            "auth-code",
+            "http://localhost/callback",
+            state=_state_for("user-001"),
+        )
+
+        patched = mock_service.calendars().patch.call_args.kwargs
+        assert patched["calendarId"] == "already-made@group.calendar.google.com"
+        assert patched["body"] == {"description": f"My note\n\n{APP_CALENDAR_MARKER}"}
+        token_repo.record_created_calendar.assert_called_with(
+            "user-001", "already-made@group.calendar.google.com", marked=True
         )
 
     @patch("app.services.google_calendar_service._build_calendar_service")

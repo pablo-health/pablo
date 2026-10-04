@@ -186,6 +186,10 @@ class ReadableCalendarResponse(BaseModel):
     id: str
     name: str
     primary: bool
+    #: Pablo made it for another setup (by Pablo's record or its marker on the
+    #: calendar, never by name). The clinician's own Pablo calendar is never
+    #: listed at all.
+    made_by_pablo: bool = False
 
 
 class ReadableCalendarsResponse(BaseModel):

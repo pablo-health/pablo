@@ -8,7 +8,11 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import select, update
 
-from ...db.models import GoogleCalendarSettingsRow, GoogleCalendarTokenRow
+from ...db.models import (
+    GoogleCalendarSettingsRow,
+    GoogleCalendarTokenRow,
+    GoogleCreatedCalendarRow,
+)
 from ...utcnow import utc_now
 from ..google_calendar_token import GoogleCalendarTokenDoc, GoogleCalendarTokenRepository
 
@@ -119,6 +123,30 @@ class PostgresGoogleCalendarTokenRepository(GoogleCalendarTokenRepository):
             row.app_calendar_id = calendar_id
             row.updated_at = utc_now()
         self._session.flush()
+
+    def record_created_calendar(self, user_id: str, calendar_id: str, *, marked: bool) -> None:
+        row = self._session.get(GoogleCreatedCalendarRow, (user_id, calendar_id))
+        if row is None:
+            now = utc_now()
+            self._session.add(
+                GoogleCreatedCalendarRow(
+                    user_id=user_id,
+                    calendar_id=calendar_id,
+                    created_at=now,
+                    marked_at=now if marked else None,
+                )
+            )
+        elif marked and row.marked_at is None:
+            row.marked_at = utc_now()
+        else:
+            return
+        self._session.flush()
+
+    def created_calendars(self, user_id: str) -> dict[str, datetime | None]:
+        rows = self._session.execute(
+            select(GoogleCreatedCalendarRow).where(GoogleCreatedCalendarRow.user_id == user_id)
+        ).scalars()
+        return {row.calendar_id: row.marked_at for row in rows}
 
     def set_followed_calendar(
         self, user_id: str, calendar_id: str | None, *, main_calendar: bool = False

@@ -286,7 +286,7 @@ describe("CalendarClientsStep", () => {
     )
 
     expect(
-      screen.getByRole("checkbox", { name: /Keep importing new sessions from this calendar/ })
+      screen.getByRole("checkbox", { name: /^Keep importing new sessions/ })
     ).toBeInTheDocument()
     expect(
       screen.getByText(
@@ -313,6 +313,208 @@ describe("CalendarClientsStep", () => {
     expect(
       screen.getByText("Pablo asks who each new session is with and remembers your answer.")
     ).toBeInTheDocument()
+  })
+
+  describe("choosing the calendar to follow", () => {
+    const CALENDARS = [
+      { id: "me@example.test", name: "me@example.test", primary: true },
+      { id: "booked@group.calendar.google.test", name: "Booked sessions", primary: false },
+    ]
+
+    it("shows the calendar it would import from and lets another be picked", async () => {
+      const user = userEvent.setup()
+      const onPick = vi.fn()
+      render(
+        <CalendarClientsStep
+          step={4}
+          busyWindows={GRANTED}
+          proposal={proposal()}
+          scanning={false}
+          error={null}
+          onScan={vi.fn()}
+          onSkip={vi.fn()}
+          onFollowingChange={vi.fn()}
+          calendars={CALENDARS}
+          followCalendarId="me@example.test"
+          onFollowCalendarChange={onPick}
+        />
+      )
+
+      expect(screen.getByRole("checkbox", { name: /^Keep importing new sessions/ })).toBeInTheDocument()
+      const picker = screen.getByRole("combobox", { name: "From" })
+      expect(picker).toHaveValue("me@example.test")
+      expect(Array.from((picker as HTMLSelectElement).options).map((o) => o.text)).toEqual([
+        "me@example.test",
+        "Booked sessions",
+      ])
+
+      await user.selectOptions(picker, "booked@group.calendar.google.test")
+
+      expect(onPick).toHaveBeenCalledWith("booked@group.calendar.google.test")
+    })
+
+    it("offers no choice with only one calendar", () => {
+      render(
+        <CalendarClientsStep
+          step={4}
+          busyWindows={GRANTED}
+          proposal={proposal()}
+          scanning={false}
+          error={null}
+          onScan={vi.fn()}
+          onSkip={vi.fn()}
+          onFollowingChange={vi.fn()}
+          calendars={[CALENDARS[0]]}
+          followCalendarId="me@example.test"
+          onFollowCalendarChange={vi.fn()}
+        />
+      )
+
+      expect(screen.queryByRole("combobox")).not.toBeInTheDocument()
+    })
+
+    describe("a calendar Pablo made for another setup", () => {
+      const WITH_ANOTHER = [
+        ...CALENDARS,
+        {
+          id: "another@group.calendar.google.test",
+          name: "Pablo Sessions",
+          primary: false,
+          made_by_pablo: true,
+        },
+      ]
+      const renderStep = (onPick = vi.fn()) =>
+        render(
+          <CalendarClientsStep
+            step={4}
+            busyWindows={GRANTED}
+            proposal={proposal()}
+            scanning={false}
+            error={null}
+            onScan={vi.fn()}
+            onSkip={vi.fn()}
+            onFollowingChange={vi.fn()}
+            calendars={WITH_ANOTHER}
+            followCalendarId="me@example.test"
+            onFollowCalendarChange={onPick}
+          />
+        )
+
+      it("is listed with a flag", () => {
+        renderStep()
+
+        const options = Array.from(
+          (screen.getByRole("combobox", { name: "From" }) as HTMLSelectElement).options
+        ).map((o) => o.text)
+        expect(options).toContain("Pablo Sessions (another Pablo setup)")
+        expect(options).toContain("Booked sessions")
+      })
+
+      it("warns when picked, and is chosen only once confirmed", async () => {
+        const user = userEvent.setup()
+        const onPick = vi.fn()
+        renderStep(onPick)
+
+        await user.selectOptions(
+          screen.getByRole("combobox", { name: "From" }),
+          "another@group.calendar.google.test"
+        )
+
+        expect(screen.getByRole("alertdialog")).toHaveTextContent(
+          "Pablo made this calendar for another setup. Importing from it brings in its upcoming sessions, including any it books from now on."
+        )
+        expect(onPick).not.toHaveBeenCalled()
+
+        await user.click(screen.getByRole("button", { name: "Import from it" }))
+
+        expect(onPick).toHaveBeenCalledWith("another@group.calendar.google.test")
+        expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument()
+      })
+
+      it("is left unchosen when the warning is cancelled", async () => {
+        const user = userEvent.setup()
+        const onPick = vi.fn()
+        renderStep(onPick)
+        const picker = screen.getByRole("combobox", { name: "From" })
+
+        await user.selectOptions(picker, "another@group.calendar.google.test")
+        await user.click(screen.getByRole("button", { name: "Cancel" }))
+
+        expect(onPick).not.toHaveBeenCalled()
+        expect(picker).toHaveValue("me@example.test")
+      })
+    })
+
+    it("is offered before any scan once the calendar can be read", () => {
+      render(
+        <CalendarClientsStep
+          step={4}
+          busyWindows={GRANTED}
+          proposal={null}
+          scanning={false}
+          error={null}
+          onScan={vi.fn()}
+          onSkip={vi.fn()}
+          onFollowingChange={vi.fn()}
+          canFollow
+          calendars={CALENDARS}
+          followCalendarId="booked@group.calendar.google.test"
+          onFollowCalendarChange={vi.fn()}
+        />
+      )
+
+      expect(screen.getByRole("checkbox", { name: /^Keep importing new sessions/ })).toBeInTheDocument()
+      expect(screen.getByRole("combobox", { name: "From" })).toHaveValue(
+        "booked@group.calendar.google.test"
+      )
+      expect(screen.getByRole("button", { name: "Scan calendar" })).toBeInTheDocument()
+    })
+
+    it("isn't offered before a scan without read access", () => {
+      render(
+        <CalendarClientsStep
+          step={4}
+          busyWindows={GRANTED}
+          proposal={null}
+          scanning={false}
+          error={null}
+          onScan={vi.fn()}
+          onSkip={vi.fn()}
+          onFollowingChange={vi.fn()}
+        />
+      )
+
+      expect(screen.queryByRole("checkbox")).not.toBeInTheDocument()
+    })
+
+    it("offers no import from the main calendar while following it", () => {
+      render(
+        <CalendarClientsStep
+          step={4}
+          busyWindows={GRANTED}
+          proposal={null}
+          scanning={false}
+          error={null}
+          onScan={vi.fn()}
+          onSkip={vi.fn()}
+          onFollowingChange={vi.fn()}
+          canFollow
+          following
+          followingMain
+          calendars={CALENDARS}
+          followCalendarId="me@example.test"
+          onFollowCalendarChange={vi.fn()}
+        />
+      )
+
+      // Said once, in place of the step's own lede.
+      expect(
+        screen.getAllByText("Sessions on me@example.test already come in on their own.")
+      ).toHaveLength(1)
+      expect(screen.queryByText(/repeat weekly or every other week/)).not.toBeInTheDocument()
+      expect(screen.queryByRole("button", { name: "Scan calendar" })).not.toBeInTheDocument()
+      expect(screen.queryByRole("button", { name: "Skip import" })).not.toBeInTheDocument()
+    })
   })
 
   it("never asserts a category the heuristic can't verify", () => {

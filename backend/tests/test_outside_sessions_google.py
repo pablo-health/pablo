@@ -39,7 +39,7 @@ from app.scheduling_engine.models.appointment import AppointmentStatus
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.services.audit_service import AuditService
 from app.services.google_calendar_follow import GoogleSyncStatus
-from app.services.google_calendar_service import GoogleCalendarService
+from app.services.google_calendar_service import APP_CALENDAR_MARKER, GoogleCalendarService
 from app.services.outside_sessions import OutsideSessions
 from app.services.sync_scheduler_service import (
     BOOKED_FROM_MAIN_CALENDAR,
@@ -59,6 +59,8 @@ if TYPE_CHECKING:
 
 USER_ID = "test-user-123"
 PABLO_CALENDAR = "pablo-made-calendar"
+#: A calendar Pablo made for another setup: an earlier account, or another practice.
+OLD_PABLO = "made-by-another-setup@group.calendar.google.test"
 #: The main calendar's real id, which ``primary`` resolves to.
 MAIN = "clinician@example.test"
 _WRITES = ("insert", "patch", "update", "delete", "move", "quickAdd")
@@ -107,19 +109,39 @@ class _GoneError(Exception):
 
 
 class _FakeCalendarList:
-    """The calendar list: the main calendar and one other the account can read."""
+    """The calendar list: the main calendar, one other the account can read,
+    and the calendar Pablo made for its own sessions, as Google lists it."""
 
     ITEMS: ClassVar[list[dict[str, Any]]] = [
         {"id": MAIN, "summary": MAIN, "primary": True},
         {"id": "team@group.calendar.google.test", "summary": "Team"},
+        {"id": PABLO_CALENDAR, "summary": "Pablo Sessions"},
     ]
 
     def get(self, calendarId: str) -> _Request:  # noqa: N803 — Google's name
         wanted = MAIN if calendarId == "primary" else calendarId
         return _Request(next(item for item in self.ITEMS if item["id"] == wanted))
 
+    def __init__(self, extra: list[dict[str, Any]] | None = None) -> None:
+        self._extra = extra or []
+
     def list(self, **_kwargs: Any) -> _Request:
-        return _Request({"items": list(self.ITEMS)})
+        return _Request({"items": [*self.ITEMS, *self._extra]})
+
+
+class _FakeCalendars:
+    """``calendars()``: read one calendar, and change its description."""
+
+    def __init__(self, google: _FakeGoogle) -> None:
+        self._google = google
+
+    def get(self, calendarId: str) -> _Request:  # noqa: N803 — Google's name
+        return _Request({"id": calendarId, **self._google.calendar_meta.get(calendarId, {})})
+
+    def patch(self, calendarId: str, body: dict[str, Any]) -> _Request:  # noqa: N803
+        self._google.calls.append(("calendars.patch", {"calendarId": calendarId, **body}))
+        self._google.calendar_meta.setdefault(calendarId, {}).update(body)
+        return _Request({"id": calendarId, **self._google.calendar_meta[calendarId]})
 
 
 class _FakeGoogle:
@@ -133,6 +155,13 @@ class _FakeGoogle:
         self._tokens = 0
         #: Answer the next resumed read of the main calendar with 410 Gone.
         self.expire_main_token = False
+        #: What ``calendars().get`` answers beyond the id, by calendar.
+        self.calendar_meta: dict[str, dict[str, Any]] = {}
+        #: Calendars the list holds beyond the usual three.
+        self.extra_calendars: list[dict[str, Any]] = []
+
+    def calendars(self) -> _FakeCalendars:
+        return _FakeCalendars(self)
 
     def events(self) -> _FakeGoogle:
         return self
@@ -141,7 +170,7 @@ class _FakeGoogle:
         return _Request(self.stored[calendarId][eventId])
 
     def calendarList(self) -> _FakeCalendarList:  # noqa: N802 — Google's name
-        return _FakeCalendarList()
+        return _FakeCalendarList(self.extra_calendars)
 
     def list(self, **kwargs: Any) -> _Request:
         if self.expire_main_token and kwargs["calendarId"] == MAIN and kwargs.get("syncToken"):
@@ -169,6 +198,7 @@ class _FakeGoogle:
 class _Tokens(GoogleCalendarTokenRepository):
     def __init__(self, doc: GoogleCalendarTokenDoc) -> None:
         self.doc = doc
+        self.created = {}
 
     def get(self, user_id: str) -> GoogleCalendarTokenDoc | None:
         return self.doc if user_id == self.doc.user_id else None
@@ -191,11 +221,23 @@ class _Tokens(GoogleCalendarTokenRepository):
     def exists(self, user_id: str) -> bool:
         return True
 
+    #: What Pablo's record says it created, and when each was marked.
+    created: dict[str, datetime | None]
+
     def get_app_calendar_id(self, user_id: str) -> str | None:
         return PABLO_CALENDAR
 
     def remember_app_calendar_id(self, user_id: str, calendar_id: str) -> None:
         pass
+
+    def record_created_calendar(self, user_id: str, calendar_id: str, *, marked: bool) -> None:
+        if calendar_id not in self.created:
+            self.created[calendar_id] = utc_now() if marked else None
+        elif marked and self.created[calendar_id] is None:
+            self.created[calendar_id] = utc_now()
+
+    def created_calendars(self, user_id: str) -> dict[str, datetime | None]:
+        return dict(self.created)
 
     #: The kept flag an older image reads: "following the main calendar".
     follows_main: bool = False
@@ -373,13 +415,79 @@ def test_the_main_calendar_resumes_from_its_own_sync_token(stack: _Stack) -> Non
 
     # The fake numbers its tokens in call order: Pablo's calendar is read
     # first (token-1), then the main calendar (token-2), and so on.
-    resumed = [(kwargs["calendarId"], kwargs.get("syncToken")) for _, kwargs in stack.google.calls]
+    resumed = [
+        (kwargs["calendarId"], kwargs.get("syncToken"))
+        for name, kwargs in stack.google.calls
+        if name == "list"
+    ]
     assert resumed == [
         (PABLO_CALENDAR, None),
         (MAIN, None),
         (PABLO_CALENDAR, "token-1"),
         (MAIN, "token-2"),
     ]
+
+
+def test_a_read_marks_pablos_calendar_once(stack: _Stack) -> None:
+    """A calendar made before the marker gets it on the next read, and only then."""
+    stack.poll([])
+    stack.poll([])
+
+    patches = [kwargs for name, kwargs in stack.google.calls if name == "calendars.patch"]
+    assert patches == [{"calendarId": PABLO_CALENDAR, "description": APP_CALENDAR_MARKER}]
+    assert stack.tokens.created[PABLO_CALENDAR] is not None
+
+
+@pytest.mark.parametrize("known_by", ["record", "marker"])
+def test_another_setups_calendar_brings_in_its_sessions_but_not_this_practices(
+    stack: _Stack, known_by: str
+) -> None:
+    """Its events carry Pablo's property, for appointments this practice
+    doesn't have, so they are outside sessions here. One Pablo wrote for this
+    practice is still left out."""
+    stack.client("p1", "wk")
+    stack.poll([_google_event("o1", _in(3))])
+    ours = stack.appointments.get_by_outside_event(USER_ID, GOOGLE_CALENDAR_SOURCE, "o1")
+    assert ours is not None
+    if known_by == "record":
+        stack.tokens.created[OLD_PABLO] = None
+    else:
+        stack.google.calendar_meta[OLD_PABLO] = {"description": APP_CALENDAR_MARKER}
+    stack.calendar.set_followed_calendar(USER_ID, OLD_PABLO)
+    theirs = _google_event(
+        "theirs",
+        _in(4),
+        series="their-series",
+        extendedProperties={"private": {"pablo_appointment_id": "f" * 32}},
+    )
+    mine = _google_event(
+        "mine",
+        _in(5),
+        series="my-series",
+        extendedProperties={"private": {"pablo_appointment_id": ours.id}},
+    )
+
+    stack.poll([theirs, mine], calendar=OLD_PABLO)
+
+    from_there = [
+        row.source_event_id
+        for row in stack.events.list_by_source(USER_ID, GOOGLE_CALENDAR_SOURCE)
+        if row.calendar_id == OLD_PABLO
+    ]
+    assert from_there == ["theirs"]
+
+
+def test_a_calendar_without_record_or_marker_leaves_pablos_events_out(stack: _Stack) -> None:
+    """Named like Pablo's or not, an unrecognised calendar is read as before."""
+    stack.google.calendar_meta[OLD_PABLO] = {"summary": "Pablo Sessions"}
+    stack.calendar.set_followed_calendar(USER_ID, OLD_PABLO)
+    written = _google_event(
+        "written", _in(4), extendedProperties={"private": {"pablo_appointment_id": "f" * 32}}
+    )
+
+    stack.poll([written], calendar=OLD_PABLO)
+
+    assert stack.events.list_by_source(USER_ID, GOOGLE_CALENDAR_SOURCE) == []
 
 
 def test_pablos_own_all_day_and_declined_events_are_left_out(stack: _Stack) -> None:
@@ -531,7 +639,12 @@ class TestAChosenCalendar:
     def test_the_calendars_on_offer_are_the_readable_ones_main_first(self, stack: _Stack) -> None:
         calendars = stack.calendar.list_readable_calendars(USER_ID)
 
-        assert [(c.id, c.primary) for c in calendars] == [(MAIN, True), (TEAM, False)]
+        # Everything Google lists; the API leaves out the one Pablo writes to.
+        assert [(c.id, c.primary) for c in calendars] == [
+            (MAIN, True),
+            (PABLO_CALENDAR, False),
+            (TEAM, False),
+        ]
 
     def test_nothing_is_on_offer_without_the_grant_to_read_events(self, stack: _Stack) -> None:
         stack.tokens.doc.granted_capabilities = "busy,push"
@@ -735,6 +848,76 @@ class TestChoosingACalendarOverTheApi:
 
         assert [(c["id"], c["primary"]) for c in body["calendars"]] == [(MAIN, True), (TEAM, False)]
         assert body["follow_calendar_id"] == MAIN
+
+    def test_the_calendar_pablo_writes_to_is_not_offered(
+        self, client: TestClient, api: _Stack
+    ) -> None:
+        body = client.get("/api/google-calendar/calendars").json()
+
+        assert PABLO_CALENDAR not in [c["id"] for c in body["calendars"]]
+
+    def test_following_the_calendar_pablo_writes_to_is_refused(
+        self, client: TestClient, api: _Stack
+    ) -> None:
+        api.tokens.doc.follow_calendar_id = MAIN
+
+        response = _follow(client, PABLO_CALENDAR)
+
+        assert response.status_code == 400
+        assert response.json()["error"]["message"] == "That is the calendar Pablo writes to."
+        assert _followed(client) == MAIN
+
+    def test_pablos_calendar_stays_hidden_and_refused_after_moving_to_the_main_calendar(
+        self, client: TestClient, api: _Stack
+    ) -> None:
+        """Its events still stand for appointments Pablo has; the main
+        calendar, now written to as well, can still be followed."""
+        api.tokens.doc.write_target = "primary"
+        api.tokens.doc.calendar_id = MAIN
+        api.tokens.doc.follow_calendar_id = None
+
+        listed = [c["id"] for c in client.get("/api/google-calendar/calendars").json()["calendars"]]
+        assert PABLO_CALENDAR not in listed
+        assert _follow(client, PABLO_CALENDAR).status_code == 400
+        assert _follow(client, "primary").json() == {"follow_calendar_id": MAIN}
+
+    def test_another_setups_calendar_is_flagged_by_pablos_record(
+        self, client: TestClient, api: _Stack
+    ) -> None:
+        api.google.extra_calendars = [{"id": OLD_PABLO, "summary": "Sessions"}]
+        api.tokens.created[OLD_PABLO] = None
+
+        listed = client.get("/api/google-calendar/calendars").json()["calendars"]
+
+        assert {c["id"]: c["made_by_pablo"] for c in listed} == {
+            MAIN: False,
+            OLD_PABLO: True,
+            TEAM: False,
+        }
+        assert _follow(client, OLD_PABLO).json() == {"follow_calendar_id": OLD_PABLO}
+
+    def test_another_setups_calendar_is_flagged_by_its_marker(
+        self, client: TestClient, api: _Stack
+    ) -> None:
+        """No record of it here (another practice made it), but Google keeps
+        Pablo's marker on the calendar."""
+        api.google.extra_calendars = [
+            {"id": OLD_PABLO, "summary": "Renamed", "description": APP_CALENDAR_MARKER}
+        ]
+
+        listed = client.get("/api/google-calendar/calendars").json()["calendars"]
+
+        assert [c["id"] for c in listed if c["made_by_pablo"]] == [OLD_PABLO]
+
+    def test_a_calendar_merely_named_like_pablos_is_an_ordinary_calendar(
+        self, client: TestClient, api: _Stack
+    ) -> None:
+        api.google.extra_calendars = [{"id": OLD_PABLO, "summary": "Pablo Sessions"}]
+
+        listed = client.get("/api/google-calendar/calendars").json()["calendars"]
+
+        named_alike = next(c for c in listed if c["id"] == OLD_PABLO)
+        assert named_alike["made_by_pablo"] is False
 
     def test_nothing_is_offered_or_followed_without_the_grant_to_read_events(
         self, client: TestClient, api: _Stack
