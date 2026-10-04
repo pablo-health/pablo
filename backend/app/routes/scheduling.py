@@ -2178,6 +2178,14 @@ def google_calendar_status(
     ctx: TenantContext = Depends(get_tenant_context),
     service: GoogleCalendarService = Depends(get_google_calendar_service),
 ) -> GoogleCalendarStatusResponse:
-    """Check Google Calendar connection status."""
+    """Check Google Calendar connection status.
+
+    Carries the full-name confirmation's current wording whether or not a
+    calendar is connected, since the setup screen offers that choice before
+    connecting. It is the same text the attestation route records.
+    """
     status_info = service.get_sync_status(ctx.user_id)
-    return GoogleCalendarStatusResponse(**status_info)
+    return GoogleCalendarStatusResponse(
+        **status_info,
+        titling_attestation_statement=ATTESTATION_STATEMENTS[CURRENT_ATTESTATION_VERSION],
+    )

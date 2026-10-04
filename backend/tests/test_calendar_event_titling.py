@@ -446,6 +446,32 @@ class TestAttestationCoversOneAccount:
         assert fake.events_resource.patched[0]["body"]["summary"] == "Z.Q."
 
 
+# The attestation wording
+
+V1_STATEMENT = (
+    "I confirm this Google account is covered by a business associate "
+    "agreement (BAA) my practice holds. Pablo's BAA does not cover this "
+    "Google account, and a personal Gmail address never qualifies."
+)
+V2_STATEMENT = (
+    "I confirm this Google Workspace account is covered by my practice\u2019s "
+    "business associate agreement with Google."
+)
+"""Written out rather than imported: a test that reads the table it checks
+would pass after someone edited a past version in place."""
+
+
+class TestAttestationStatements:
+    def test_new_attestations_record_the_wording_on_the_setup_screen(self) -> None:
+        assert CURRENT_ATTESTATION_VERSION == "v2"
+        assert ATTESTATION_STATEMENTS["v2"] == V2_STATEMENT
+
+    def test_the_v1_wording_is_unchanged_so_past_records_still_resolve(self) -> None:
+        """Rows written under v1 carry the version; it must still mean
+        the words those therapists saw."""
+        assert ATTESTATION_STATEMENTS["v1"] == V1_STATEMENT
+
+
 # Routes
 
 
@@ -493,11 +519,41 @@ class TestTitlingRoute:
         assert changes["calendar_account"] == "jane@x.test"
         assert changes["event_titling"] == "full"
         # The row has to say what was agreed to, not just that something was.
-        assert changes["attestation_statement_version"] == CURRENT_ATTESTATION_VERSION
-        assert "business associate agreement (BAA)" in changes["attestation_statement"]
-        assert (
-            changes["attestation_statement"] == ATTESTATION_STATEMENTS[CURRENT_ATTESTATION_VERSION]
+        assert changes["attestation_statement_version"] == "v2"
+        assert changes["attestation_statement"] == V2_STATEMENT
+
+    def test_what_is_recorded_is_what_the_status_served_to_the_screen(
+        self,
+        client: TestClient,
+        audit_spy: MagicMock,
+    ) -> None:
+        """The screen shows the statement from the status endpoint; the
+        audit row must hold those same words, not a parallel copy."""
+        self._wire({"connected": True, "event_titling": "initials", "calendar_id": "jane@x.test"})
+
+        shown = client.get("/api/google-calendar/status").json()["titling_attestation_statement"]
+        client.put(
+            "/api/google-calendar/event-titling",
+            json={"style": "full", "attested": True},
         )
+
+        assert audit_spy.log.call_args.kwargs["changes"]["attestation_statement"] == shown
+
+    @pytest.mark.parametrize("connected", [True, False])
+    def test_the_status_serves_the_current_statement_connected_or_not(
+        self, client: TestClient, *, connected: bool
+    ) -> None:
+        """Full names can be chosen before connecting, so the wording has
+        to be there before a connection is."""
+        status: dict[str, Any] = {"connected": connected}
+        if connected:
+            status |= {"event_titling": "initials", "calendar_id": "jane@x.test"}
+        self._wire(status)
+
+        response = client.get("/api/google-calendar/status")
+
+        assert response.status_code == 200, response.text
+        assert response.json()["titling_attestation_statement"] == V2_STATEMENT
 
     def test_the_attested_account_is_stored_so_it_can_be_checked_later(
         self,

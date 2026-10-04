@@ -54,13 +54,16 @@ class EventTitleStyle(Enum):
     covering the calendar it lands on."""
 
 
-CURRENT_ATTESTATION_VERSION = "v1"
+CURRENT_ATTESTATION_VERSION = "v2"
 """Which wording a new attestation is recorded against.
 
-Versioned rather than read live from the interface: an audit row is
-evidence of what someone agreed to at the time, and a later copy change
-must not rewrite what past attestations appear to have said. Add a new
-version, never edit an existing one.
+Versioned so an audit row stays evidence of what someone agreed to at the
+time: a later copy change must not rewrite what past attestations appear
+to have said. Add a new version, never edit an existing one.
+
+The setup screen reads the current statement from the status endpoint
+rather than carrying its own copy, so the words beside the checkbox and
+the words in the audit row come from this one table.
 """
 
 ATTESTATION_STATEMENTS: dict[str, str] = {
@@ -68,6 +71,12 @@ ATTESTATION_STATEMENTS: dict[str, str] = {
         "I confirm this Google account is covered by a business associate "
         "agreement (BAA) my practice holds. Pablo's BAA does not cover this "
         "Google account, and a personal Gmail address never qualifies."
+    ),
+    # The screen showed this wording while v1 was still being recorded,
+    # which is why the screen now reads the statement from this table.
+    "v2": (
+        "I confirm this Google Workspace account is covered by my practice\u2019s "
+        "business associate agreement with Google."
     ),
 }
 """What each version of the attestation says, in full.
