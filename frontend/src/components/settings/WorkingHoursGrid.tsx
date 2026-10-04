@@ -2,6 +2,7 @@
 
 "use client"
 
+import { Fragment } from "react"
 import Link from "next/link"
 import {
   Select,
@@ -47,6 +48,14 @@ const TIME_OPTIONS = Array.from({ length: (AXIS_END_HOUR - AXIS_START_HOUR) * 2 
 
 const DEFAULT_START = "09:00"
 const DEFAULT_END = "17:00"
+
+/**
+ * Each time select sizes to its label instead of a fixed width, with a floor
+ * that fits the longest one ("12:30 PM") plus padding and the chevron, so
+ * start and end line up whatever time is chosen. A fixed width clipped
+ * "9:00 AM" to "9:00 AI" once the labels gained minutes.
+ */
+const TIME_TRIGGER_CLASS = "h-8 w-fit min-w-[calc(9ch+3rem)] text-xs"
 
 function barPercent(time: string): number {
   const [h, m] = time.split(":").map(Number)
@@ -139,7 +148,13 @@ export function WorkingHoursGrid() {
         </Button>
       )}
 
-      <div className="space-y-2">
+      {/* One grid for every row, so the time column is as wide as its widest
+          row and the bars stay aligned. Below sm the times drop to their own
+          line rather than squeezing the bar to nothing. */}
+      <div
+        data-testid="working-hours-grid"
+        className="grid grid-cols-[5rem_auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 sm:grid-cols-[5rem_auto_minmax(0,1fr)_auto]"
+      >
         {DAYS.map(({ dayOfWeek, label }) => {
           const rule = ruleByDay[dayOfWeek]
           const on = !!rule
@@ -147,10 +162,8 @@ export function WorkingHoursGrid() {
           const end = rule ? String(rule.params.end) : DEFAULT_END
 
           return (
-            <div key={dayOfWeek} className="flex items-center gap-3">
-              <span
-                className={cn("w-20 shrink-0 text-sm font-medium", !on && "text-muted-foreground")}
-              >
+            <Fragment key={dayOfWeek}>
+              <span className={cn("text-sm font-medium", !on && "text-muted-foreground")}>
                 {label}
               </span>
               <Toggle
@@ -161,7 +174,7 @@ export function WorkingHoursGrid() {
               />
               <div
                 aria-hidden="true"
-                className={cn("relative h-2 flex-1 rounded-full", on ? "bg-foreground/10" : "bg-foreground/5")}
+                className={cn("relative h-2 rounded-full", on ? "bg-foreground/10" : "bg-foreground/5")}
               >
                 {on && (
                   <span
@@ -171,13 +184,13 @@ export function WorkingHoursGrid() {
                 )}
               </div>
               {on ? (
-                <div className="flex shrink-0 items-center gap-1.5">
+                <div className="col-span-full flex flex-wrap items-center gap-1.5 sm:col-span-1">
                   <Select
                     value={start}
                     onValueChange={(v) => handleTimeChange(dayOfWeek, "start", v)}
                     disabled={isSaving}
                   >
-                    <SelectTrigger aria-label={`${label} start`} className="h-8 w-[92px] text-xs">
+                    <SelectTrigger aria-label={`${label} start`} className={TIME_TRIGGER_CLASS}>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -194,7 +207,7 @@ export function WorkingHoursGrid() {
                     onValueChange={(v) => handleTimeChange(dayOfWeek, "end", v)}
                     disabled={isSaving}
                   >
-                    <SelectTrigger aria-label={`${label} end`} className="h-8 w-[92px] text-xs">
+                    <SelectTrigger aria-label={`${label} end`} className={TIME_TRIGGER_CLASS}>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -207,19 +220,24 @@ export function WorkingHoursGrid() {
                   </Select>
                 </div>
               ) : (
-                <span className="w-[210px] shrink-0 text-xs text-muted-foreground">Not available</span>
+                <span className="col-span-full text-xs text-muted-foreground sm:col-span-1">
+                  Not available
+                </span>
               )}
-            </div>
+            </Fragment>
           )
         })}
-      </div>
 
-      <div aria-hidden="true" className="flex justify-between pl-[128px] text-[10px] text-muted-foreground">
-        <span>6 AM</span>
-        <span>10 AM</span>
-        <span>2 PM</span>
-        <span>6 PM</span>
-        <span>10 PM</span>
+        <div
+          aria-hidden="true"
+          className="col-start-3 flex justify-between text-[10px] text-muted-foreground"
+        >
+          <span>6 AM</span>
+          <span>10 AM</span>
+          <span>2 PM</span>
+          <span>6 PM</span>
+          <span>10 PM</span>
+        </div>
       </div>
 
       <p data-testid="working-hours-footer" className="text-[13px] text-muted-foreground">
