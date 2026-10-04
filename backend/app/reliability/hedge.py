@@ -19,6 +19,9 @@ The rules, in full:
 - Legs run in order. The first starts at once.
 - A leg that fails transiently (rate limit, 5xx, dropped connection) or
   outlives its timeout makes room for the next leg straight away.
+- A leg whose model refuses the request outright (no access, no such
+  model) makes room too, and that model's later legs are skipped:
+  asking it again would get the same answer.
 - With ``hedge_after`` set, a leg still running after that long gets
   company: the next leg starts beside it, up to ``max_in_flight``.
 - The first answer that passes the caller's ``validate`` wins, and every
@@ -39,6 +42,14 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
 
+#: How long an interactive call's leg runs alone before the next one starts
+#: beside it. A healthy parse answers in 1-3 s and its slowest real answers
+#: take 6-8 s; the simulator (``evals/llm_routing``) puts the p99 of a
+#: stalling primary near 8 s at this delay, for a second call on about one
+#: request in eight.
+INTERACTIVE_STALL_AFTER = 4.0
+
+
 class FailureKind(Enum):
     """What a failed leg says about the legs that might follow it."""
 
@@ -48,6 +59,11 @@ class FailureKind(Enum):
     INVALID = "invalid"
     """An answer came back but cannot be used: malformed, or rejected by
     ``validate``. Another provider may answer properly."""
+
+    PERMANENT = "permanent"
+    """This model will not answer this request however often it is asked
+    (no access, no such model, a request it rejects). Its later legs are
+    skipped; another model's may still answer."""
 
     FATAL = "fatal"
     """The request itself is at fault; every leg would fail the same way."""
@@ -108,6 +124,36 @@ class HedgePolicy:
             retry_invalid=len(models) > 1,
         )
 
+    @classmethod
+    def interactive(
+        cls,
+        primary: str,
+        fallbacks: Sequence[str] = (),
+        *,
+        attempt_timeout: float,
+        budget: float,
+        stall_after: float | None,
+        max_in_flight: int = 2,
+    ) -> HedgePolicy:
+        """For a call someone is waiting on: hand over early, retry once.
+
+        The primary, then each fallback once, then the primary once more.
+        With no fallbacks that is the primary and one retry on it, so the
+        retry is the fallback. A failure moves on at once, and a leg still
+        running after ``stall_after`` gets the next one beside it, so a
+        stalled or failing primary costs at most ``stall_after`` before
+        another leg is answering. The same model is never asked more than
+        twice, and never again after it refuses the request outright.
+        """
+        others = tuple(m for m in dict.fromkeys(fallbacks) if m != primary)
+        return cls(
+            legs=tuple(Leg(model, attempt_timeout) for model in (primary, *others, primary)),
+            budget=budget,
+            hedge_after=stall_after,
+            max_in_flight=max_in_flight,
+            retry_invalid=bool(others),
+        )
+
 
 class ProviderHealth(Protocol):
     """Reorders legs from what is known about providers right now.
@@ -127,6 +173,20 @@ class LegTimeoutError(TimeoutError):
 
 class InvalidResultError(ValueError):
     """A leg's answer was rejected by the caller's ``validate``."""
+
+
+def _root_name(error: BaseException) -> str:
+    """The class of the error at the bottom of ``error``'s cause chain.
+
+    A provider's gateway wraps what went wrong (a read timeout, a 503) in
+    errors of its own; the bottom one is the one worth logging. A class
+    name carries no request content, so it is safe to log.
+    """
+    seen: set[int] = set()
+    while error.__cause__ is not None and id(error) not in seen:
+        seen.add(id(error))
+        error = error.__cause__
+    return type(error).__name__
 
 
 # -- events (driver -> policy) ------------------------------------------------
@@ -209,6 +269,13 @@ class HedgeRun[T]:
         self._last_start = 0.0
         self._last_error: BaseException | None = None
         self._finished = False
+        self._refused: set[str] = set()
+        self._winner: int | None = None
+        self.trail: list[tuple[int, str, str]] = []
+        """``(leg index, model, what happened)`` for every leg that did not
+        win, in the order the run learned of it: an error's class name,
+        ``timeout``, ``invalid`` or ``abandoned``. Model names and error
+        classes only, so it is safe to log."""
 
     @property
     def legs(self) -> tuple[Leg, ...]:
@@ -221,6 +288,16 @@ class HedgeRun[T]:
     @property
     def finished(self) -> bool:
         return self._finished
+
+    @property
+    def started(self) -> int:
+        """Legs started so far, abandoned ones included."""
+        return len(self._started)
+
+    @property
+    def winner(self) -> int | None:
+        """The index of the leg whose answer was returned, once one was."""
+        return self._winner
 
     def begin(self, now: float) -> list[Action[T]]:
         if self._begun:
@@ -238,17 +315,24 @@ class HedgeRun[T]:
             case LegDone(index=index, value=value) if index in self._deadlines:
                 del self._deadlines[index]
                 if self._validate(value):
+                    self._winner = index
                     return self._finish(Return(index, value))
                 rejected = InvalidResultError(f"{self._legs[index].model} gave an unusable answer")
-                return self._failed(rejected, FailureKind.INVALID, now)
+                return self._failed(index, rejected, FailureKind.INVALID, now)
             case LegFailed(index=index, error=error, kind=kind) if index in self._deadlines:
                 del self._deadlines[index]
-                return self._failed(error, kind, now)
+                return self._failed(index, error, kind, now)
         # A leg that was already abandoned: its answer is no longer wanted.
         return []
 
-    def _failed(self, error: BaseException, kind: FailureKind, now: float) -> list[Action[T]]:
+    def _failed(
+        self, index: int, error: BaseException, kind: FailureKind, now: float
+    ) -> list[Action[T]]:
         self._last_error = error
+        what = "invalid" if isinstance(error, InvalidResultError) else _root_name(error)
+        self.trail.append((index, self._legs[index].model, what))
+        if kind is FailureKind.PERMANENT:
+            self._refused.add(self._legs[index].model)
         if kind is FailureKind.FATAL or (
             kind is FailureKind.INVALID and not self._policy.retry_invalid
         ):
@@ -258,6 +342,7 @@ class HedgeRun[T]:
     def _finish(self, outcome: Return[T] | Fail) -> list[Action[T]]:
         self._finished = True
         actions: list[Action[T]] = [Abandon(index) for index in self._deadlines]
+        self.trail.extend((i, self._legs[i].model, "abandoned") for i in self._deadlines)
         self._deadlines.clear()
         actions.append(outcome)
         return actions
@@ -269,6 +354,8 @@ class HedgeRun[T]:
                 del self._deadlines[index]
                 actions.append(Abandon(index))
                 self._last_error = LegTimeoutError(self._started[index])
+                self.trail.append((index, self._started[index].model, "timeout"))
+        self._skip_refused()
         while self._may_start(now):
             index = self._next
             self._next += 1
@@ -280,12 +367,18 @@ class HedgeRun[T]:
             self._deadlines[index] = now + leg.timeout
             self._last_start = now
             actions.append(StartLeg(index, leg))
+            self._skip_refused()
         if not self._deadlines:
             # Nothing running and nothing allowed to start: out of legs or budget.
             error = self._last_error or RuntimeError("no leg could start")
             return actions + self._finish(Fail(error))
         actions.append(SetTimer(self._next_wake()))
         return actions
+
+    def _skip_refused(self) -> None:
+        """Move past legs on a model that has refused this request."""
+        while self._next < len(self._legs) and self._legs[self._next].model in self._refused:
+            self._next += 1
 
     def _hedge_at(self) -> float | None:
         """When the next leg may join a running one, if it may at all."""
@@ -316,6 +409,7 @@ class HedgeRun[T]:
 
 
 __all__ = [
+    "INTERACTIVE_STALL_AFTER",
     "Abandon",
     "Fail",
     "FailureKind",

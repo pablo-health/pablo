@@ -2,20 +2,28 @@
 
 """The provider conditions the routing policy is proven against.
 
-Every scenario has a primary and a secondary provider. Each is run twice:
-under today's policy (the primary alone, one retry) and under a hedged
-one (primary, secondary, then each again). Both policies are built by
-:meth:`HedgePolicy.for_models` with the production bounds, so the
+Every scenario has a primary and a secondary provider. Each is run under
+the old sequential policy (the primary alone, one retry after it), the
+interactive policy the gateway now uses (the same retry, started beside a
+stalled primary), and a hedged one with the secondary as a fallback. All
+are built by :class:`HedgePolicy` with the production bounds, so the
 simulator and the gateway cannot drift apart.
+
+:data:`STORIES` pin single requests down call by call, for the cases a
+sampled scenario only shows in a tail.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
-from app.reliability.hedge import HedgePolicy
+from app.reliability.hedge import INTERACTIVE_STALL_AFTER, HedgePolicy
 
-from .providers import ProviderProfile
+from .providers import ProviderProfile, Script, error_504, ok, stall
+
+if TYPE_CHECKING:
+    from .providers import Call
 
 PRIMARY = "primary"
 SECONDARY = "secondary"
@@ -58,6 +66,84 @@ def hedged_policy(hedge_after: float | None = DEFAULT_HEDGE_AFTER) -> HedgePolic
         budget=BUDGET,
         hedge_after=hedge_after,
     )
+
+
+def interactive_policy(
+    fallbacks: tuple[str, ...] = (), stall_after: float | None = INTERACTIVE_STALL_AFTER
+) -> HedgePolicy:
+    """What the gateway serves an interactive call with now.
+
+    With no fallbacks, the primary and one retry on it, the retry starting
+    beside a stalled primary rather than after it.
+    """
+    return HedgePolicy.interactive(
+        PRIMARY,
+        fallbacks,
+        attempt_timeout=ATTEMPT_TIMEOUT,
+        budget=BUDGET,
+        stall_after=stall_after,
+    )
+
+
+@dataclass(frozen=True)
+class Story:
+    """One request's calls, written out, to pin a single case down."""
+
+    name: str
+    description: str
+    primary: tuple[Call, ...]
+    secondary: tuple[Call, ...] = ()
+
+    def script(self) -> Script:
+        return Script({PRIMARY: self.primary, SECONDARY: self.secondary})
+
+
+#: Single requests told call by call. The first is what was seen on a real
+#: parse: the primary stalled to its 15 s bound and its retry took 6.9 s.
+STORIES: tuple[Story, ...] = (
+    Story(
+        "stall_then_slow_retry",
+        "The primary stalls; its retry answers in 6.9 s.",
+        primary=(stall(), ok(6.9)),
+        secondary=(ok(1.6),),
+    ),
+    Story(
+        "errors_at_once",
+        "The primary fails in 0.3 s, then answers normally.",
+        primary=(error_504(0.3), ok(1.6)),
+        secondary=(ok(1.6),),
+    ),
+    Story(
+        "errors_twice",
+        "The primary fails in 0.3 s, twice.",
+        primary=(error_504(0.3), error_504(0.3)),
+        secondary=(ok(1.6),),
+    ),
+    Story(
+        "stalls",
+        "The primary stalls past every bound; a retry answers normally.",
+        primary=(stall(), ok(1.6)),
+        secondary=(ok(1.6),),
+    ),
+    Story(
+        "errors_after_10s",
+        "The primary fails after 10 s, then answers normally.",
+        primary=(error_504(10.0), ok(1.6)),
+        secondary=(ok(1.6),),
+    ),
+    Story(
+        "everything_fails",
+        "Every call fails in 0.3 s.",
+        primary=(error_504(0.3), error_504(0.3)),
+        secondary=(error_504(0.3),),
+    ),
+    Story(
+        "everything_stalls",
+        "Every call stalls.",
+        primary=(stall(), stall()),
+        secondary=(stall(),),
+    ),
+)
 
 
 _BURSTY = ProviderProfile(stall_calm=0.005, stall_storm=0.35)

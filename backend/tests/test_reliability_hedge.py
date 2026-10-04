@@ -254,3 +254,95 @@ class TestPolicy:
 
         run: HedgeRun[str] = HedgeRun(_policy(), health=BPreferred())
         assert run.begin(0.0)[0] == StartLeg(0, B)
+
+
+class TestRefusal:
+    """A model that refuses the request outright is not asked again."""
+
+    def test_a_refusal_skips_that_models_later_legs(self) -> None:
+        run = _run(_policy())
+        run.begin(0.0)
+        actions = run.on(LegFailed(0, PermissionError("403"), FailureKind.PERMANENT), 0.2)
+        assert actions[0] == StartLeg(1, B)
+        # B fails too. The third leg is model-a again, which already refused.
+        error = RuntimeError("503")
+        assert run.on(LegFailed(1, error, FailureKind.TRANSIENT), 0.4) == [Fail(error)]
+        assert run.started == 2
+
+    def test_a_refusal_on_the_only_model_ends_the_run(self) -> None:
+        run = _run(_policy(legs=(A, A)))
+        run.begin(0.0)
+        error = PermissionError("403")
+        assert run.on(LegFailed(0, error, FailureKind.PERMANENT), 0.2) == [Fail(error)]
+        assert run.started == 1
+
+    def test_a_refusal_while_hedged_does_not_start_the_same_model(self) -> None:
+        run = _run(_policy(legs=(A, B, A), hedge_after=4.0))
+        run.begin(0.0)
+        assert run.on(TimerFired(), 4.0)[0] == StartLeg(1, B)
+        actions = run.on(LegFailed(0, PermissionError("403"), FailureKind.PERMANENT), 5.0)
+        assert not any(isinstance(a, StartLeg) for a in actions)
+        assert run.in_flight == 1
+
+
+class TestTrail:
+    def test_the_trail_names_each_losing_leg_by_root_cause(self) -> None:
+        class ProviderTimeoutError(Exception):
+            pass
+
+        wrapped = RuntimeError("Structured LLM call failed")
+        wrapped.__cause__ = ProviderTimeoutError("read timed out")
+        run = _run(_policy(legs=(A, B, A), hedge_after=4.0))
+        run.begin(0.0)
+        run.on(LegFailed(0, wrapped, FailureKind.TRANSIENT), 1.0)
+        run.on(TimerFired(), 5.0)  # B has run 4 s: model-a joins it
+        run.on(LegDone(2, "answer"), 6.0)
+        assert run.trail == [(0, "model-a", "ProviderTimeoutError"), (1, "model-b", "abandoned")]
+        assert run.winner == 2
+        assert run.started == 3
+
+    def test_a_timeout_is_on_the_trail(self) -> None:
+        run = _run(_policy(legs=(A, B)))
+        run.begin(0.0)
+        run.on(TimerFired(), 15.0)
+        assert run.trail == [(0, "model-a", "timeout")]
+        assert run.winner is None
+
+
+def _interactive(*fallbacks: str) -> HedgePolicy:
+    return HedgePolicy.interactive(
+        "a", fallbacks, attempt_timeout=15.0, budget=25.0, stall_after=4.0
+    )
+
+
+class TestInteractivePolicy:
+    def test_one_model_is_one_attempt_and_one_retry_hedged_at_the_stall(self) -> None:
+        policy = _interactive()
+        assert [leg.model for leg in policy.legs] == ["a", "a"]
+        assert policy.hedge_after == 4.0
+        assert not policy.retry_invalid
+
+    def test_fallbacks_come_before_the_retry_and_each_is_asked_once(self) -> None:
+        policy = _interactive("b", "a", "c", "b")
+        assert [leg.model for leg in policy.legs] == ["a", "b", "c", "a"]
+        assert policy.retry_invalid
+
+    def test_a_failure_hands_over_at_once(self) -> None:
+        run = _run(_interactive("b"))
+        run.begin(0.0)
+        actions = run.on(LegFailed(0, RuntimeError("503"), FailureKind.TRANSIENT), 0.3)
+        assert actions[0] == StartLeg(1, Leg("b", 15.0))
+
+    def test_a_stalled_primary_gets_company_at_the_threshold(self) -> None:
+        run = _run(_interactive())
+        assert run.begin(0.0) == [StartLeg(0, Leg("a", 15.0)), SetTimer(4.0)]
+        assert run.on(TimerFired(), 4.0)[0] == StartLeg(1, Leg("a", 15.0))
+        assert run.in_flight == 2
+
+    def test_a_failure_after_the_hedge_leaves_the_hedge_running(self) -> None:
+        run = _run(_interactive())
+        run.begin(0.0)
+        run.on(TimerFired(), 4.0)
+        actions = run.on(LegFailed(0, RuntimeError("504"), FailureKind.TRANSIENT), 10.0)
+        assert actions == [SetTimer(19.0)]
+        assert run.on(LegDone(1, "answer"), 5.6 + 4.0) == [Return(1, "answer")]

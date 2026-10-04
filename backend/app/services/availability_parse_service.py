@@ -354,10 +354,10 @@ _RESPONSE_SCHEMA["properties"]["readings"] = {
 #: now and then stalls for 15-90 s with almost nothing to say, and the
 #: client's default would wait 180 s for it. The longest real answer, two
 #: readings of a whole week, takes 6-8 s and now and then 12, so this
-#: leaves it room. One retry follows a failed attempt, bounded by what is
-#: left of the 25 s budget, so the worst a therapist waits is 25 s: a 15 s
-#: stall and a 10 s retry. A fast failure (a 429, a 504) leaves the retry
-#: its full 15 s.
+#: leaves it room. It is not how long a stall is waited out: the routing
+#: policy starts the retry (or a configured fallback) beside an attempt
+#: still running at 4 s, and at once after a failure, and the first answer
+#: wins. Nothing outlasts the 25 s budget.
 _ATTEMPT_TIMEOUT_SECONDS = 15.0
 
 
@@ -624,9 +624,10 @@ class AvailabilityRuleParseService:
         llm_gateway: StructuredLLMGateway | None = None,
         model: str | None = None,
     ) -> None:
-        # A therapist is waiting on this call, so it goes through the hedge
-        # policy: with nothing configured, one attempt and one retry on the
-        # flash model, as before.
+        # A therapist is waiting on this call, so it goes through the
+        # interactive routing policy: with nothing configured, one attempt
+        # and one retry on the flash model, the retry starting at once after
+        # a failure or beside an attempt that has stalled.
         self._llm_gateway = llm_gateway or HedgedStructuredLLMGateway.from_settings()
         self._model = model
 

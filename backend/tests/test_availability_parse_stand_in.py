@@ -11,16 +11,20 @@ than as a grid fallback in a browser spec.
 
 from __future__ import annotations
 
+import time
+from collections import Counter
 from typing import TYPE_CHECKING, Any
 
 import pytest
 from app.routes.scheduling import get_availability_rule_parse_service
 from app.services import http_structured_llm_gateway
 from app.services.availability_parse_service import AvailabilityRuleParseService
+from app.services.hedged_structured_llm_gateway import HedgedStructuredLLMGateway
 from app.services.http_structured_llm_gateway import HttpStructuredLLMGateway
 from app.settings import Settings, get_settings
 from fastapi.testclient import TestClient
 
+from scripts import fake_llm
 from scripts.fake_llm import app as fake_llm_app
 
 if TYPE_CHECKING:
@@ -73,18 +77,69 @@ def test_an_unknown_sentence_is_a_question_back_not_an_error(
     assert result.could_not_parse
 
 
-def test_the_route_uses_the_stand_in_only_when_configured(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def _configure(monkeypatch: pytest.MonkeyPatch, **overrides: Any) -> None:
     configured = Settings(
         database_url="postgresql://x:x@localhost:5432/x",
         environment="development",
         availability_parse_base_url=BASE_URL,
+        **overrides,
     )
     monkeypatch.setattr("app.routes.scheduling.get_settings", lambda: configured)
-    service = get_availability_rule_parse_service()
-    assert isinstance(service._llm_gateway, HttpStructuredLLMGateway)
+    monkeypatch.setattr(
+        "app.services.hedged_structured_llm_gateway.get_settings", lambda: configured
+    )
+
+
+def test_the_route_uses_the_stand_in_only_when_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure(monkeypatch)
+    gateway = get_availability_rule_parse_service()._llm_gateway
+    # Through the same routing policy a model is served by.
+    assert isinstance(gateway, HedgedStructuredLLMGateway)
+    assert isinstance(gateway._resolve("any-model"), HttpStructuredLLMGateway)
 
     monkeypatch.setattr("app.routes.scheduling.get_settings", get_settings)
+    gateway = get_availability_rule_parse_service()._llm_gateway
+    assert isinstance(gateway, HedgedStructuredLLMGateway)
+    assert not isinstance(gateway._resolve("any-model"), HttpStructuredLLMGateway)
+
+
+@pytest.fixture
+def fresh_counts(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(fake_llm, "_calls", Counter())
+
+
+@pytest.mark.usefixtures("fresh_counts")
+def test_a_first_call_that_fails_is_handed_over_at_once(
+    stand_in: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _configure(monkeypatch)
     service = get_availability_rule_parse_service()
-    assert not isinstance(service._llm_gateway, HttpStructuredLLMGateway)
+
+    started = time.monotonic()
+    result = service.parse("10 to 6 Monday to Thursday")
+
+    assert time.monotonic() - started < 1.0
+    assert len(stand_in) == 2
+    assert [(p.params["start"], p.params["end"]) for p in result.proposals] == [
+        ("10:00", "18:00")
+    ] * 4
+
+
+@pytest.mark.usefixtures("fresh_counts")
+def test_a_first_call_that_stalls_gets_company_at_the_threshold(
+    stand_in: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(fake_llm, "STALL_SECONDS", 0.6)
+    _configure(monkeypatch, ai_hedge_after_seconds=0.1)
+    service = get_availability_rule_parse_service()
+
+    started = time.monotonic()
+    result = service.parse("8 to 4 Monday to Thursday")
+
+    assert time.monotonic() - started < 0.5
+    assert len(stand_in) == 2
+    assert [(p.params["start"], p.params["end"]) for p in result.proposals] == [
+        ("08:00", "16:00")
+    ] * 4

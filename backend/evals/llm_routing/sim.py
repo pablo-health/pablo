@@ -42,6 +42,7 @@ from .scenarios import PRIMARY, SECONDARY
 if TYPE_CHECKING:
     from app.reliability.hedge import HedgePolicy
 
+    from .providers import Calls, Script
     from .scenarios import Scenario
 
 
@@ -86,7 +87,7 @@ class RequestRecord:
 
 
 def simulate_request(
-    policy: HedgePolicy, fleet: Fleet, t0: float, rng: random.Random
+    policy: HedgePolicy, fleet: Calls, t0: float, rng: random.Random
 ) -> RequestRecord:
     run: HedgeRun[Answer] = HedgeRun(policy, validate)
     draws = RequestDraws()
@@ -212,3 +213,13 @@ def simulate(scenario: Scenario, policy: HedgePolicy, *, n: int, seed: int) -> R
     rng = random.Random(seed + 1)
     records = [simulate_request(policy, fleet, i * scenario.spacing, rng) for i in range(n)]
     return summarize(records, policy.budget)
+
+
+def simulate_script(policy: HedgePolicy, script: Script) -> RequestRecord:
+    """Run one request whose every call is written out in ``script``.
+
+    The same driver and invariants as :func:`simulate`, with nothing left
+    to chance: the place to pin a single story down, such as a primary
+    that fails at once and a fallback that answers.
+    """
+    return simulate_request(policy, script, 0.0, random.Random(0))
