@@ -34,11 +34,12 @@ const WRITE_TARGET_COPY: Record<CalendarWriteTarget, { label: string; does: stri
 
 /** What the busy grant does, and nothing more: busy time is left out of every
  * time Pablo offers (the slot picker, booking links, the client portal), and a
- * time the therapist picks by hand still books — the check before saving only
- * tells them. Your main calendar and the one Pablo follows both count. */
+ * time the therapist picks by hand still books. That warning shows in its own
+ * dialog when it applies, so it is not described here. Your main calendar and
+ * the one Pablo follows both count. */
 const BUSY_COPY = {
   label: "Check for scheduling conflicts",
-  does: "Pablo won't offer times your calendar shows as busy, and tells you before you book one yourself.",
+  does: "Pablo won't offer times your calendar shows as busy.",
 }
 
 /** The three rungs, each with what an event actually ends up saying.

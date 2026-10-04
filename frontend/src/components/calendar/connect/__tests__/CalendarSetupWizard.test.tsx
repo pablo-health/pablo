@@ -249,7 +249,7 @@ describe("CalendarSetupWizard", () => {
 
     expect(
       screen.getByText(
-        "Pablo won't offer times your calendar shows as busy, and tells you before you book one yourself.",
+        "Pablo won't offer times your calendar shows as busy.",
       ),
     ).toBeInTheDocument()
   })
