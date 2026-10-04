@@ -97,6 +97,29 @@ export async function answerOutsideSessions(
   return post<OutsideAnswerResult>("/api/calendar/outside-sessions/answer", { answers })
 }
 
+/** A session Pablo booked without asking, because its title named the client. */
+export interface BookedOnItsOwn {
+  appointment_id: string
+  patient_id: string
+  client_name: string
+  start_at: string
+  end_at: string
+  /** `google_calendar` or `ical:<feed>`. */
+  source: string
+}
+
+/** Upcoming ones the clinician hasn't seen yet, soonest first. */
+export async function listBookedOnItsOwn(): Promise<{ sessions: BookedOnItsOwn[] }> {
+  return get<{ sessions: BookedOnItsOwn[] }>("/api/calendar/outside-sessions/booked")
+}
+
+/** The clinician has seen these; they leave the list and stay booked. */
+export async function markBookedOnItsOwnSeen(appointmentIds: string[]): Promise<{ seen: number }> {
+  return post<{ seen: number }>("/api/calendar/outside-sessions/booked/seen", {
+    appointment_ids: appointmentIds,
+  })
+}
+
 /** A calendar the connection can read, offered to be followed. */
 export interface FollowableCalendar {
   id: string

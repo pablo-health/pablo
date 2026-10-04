@@ -30,6 +30,10 @@ from ..models import AuditAction, User
 from ..models.audit import ResourceType
 from ..models.outside_sessions import (
     AnsweredAppointment,
+    BookedOnItsOwn,
+    BookedOnItsOwnResponse,
+    BookedOnItsOwnSeenRequest,
+    BookedOnItsOwnSeenResponse,
     CalendarSyncResponse,
     FollowedCalendarRequest,
     FollowedCalendarResponse,
@@ -322,6 +326,68 @@ def _checked_client(
     if patient is None:
         raise NotFoundError("One of those clients could not be found")
     return patient
+
+
+@router.get("/api/calendar/outside-sessions/booked", response_model=BookedOnItsOwnResponse)
+def booked_on_its_own(
+    http_request: Request,
+    user: User = Depends(require_baa_acceptance),
+    outside: OutsideSessions = Depends(get_outside_sessions),
+    patient_repo: PatientRepository = Depends(get_patient_repository),
+    audit: AuditService = Depends(get_audit_service),
+) -> BookedOnItsOwnResponse:
+    """Upcoming sessions Pablo booked on its own from an event's title, not yet seen.
+
+    Each names its client, so the clinician can check them and cancel any
+    that are wrong (the ordinary cancel; the next read doesn't book it again).
+    """
+    sessions: list[BookedOnItsOwn] = []
+    for appointment in outside.booked_on_its_own(user.id):
+        patient = patient_repo.get(appointment.patient_id, user.id)
+        sessions.append(
+            BookedOnItsOwn(
+                appointment_id=appointment.id,
+                patient_id=appointment.patient_id,
+                client_name=(
+                    " ".join(f"{patient.first_name} {patient.last_name}".split()) if patient else ""
+                ),
+                start_at=appointment.start_at,
+                end_at=appointment.end_at,
+                source=appointment.outside_source or "",
+            )
+        )
+    audit.log(
+        AuditAction.APPOINTMENT_LISTED,
+        user,
+        http_request,
+        resource_type=ResourceType.APPOINTMENT,
+        resource_id="booked-on-its-own",
+        changes={"booked_on_its_own": len(sessions)},
+    )
+    return BookedOnItsOwnResponse(sessions=sessions)
+
+
+@router.post(
+    "/api/calendar/outside-sessions/booked/seen", response_model=BookedOnItsOwnSeenResponse
+)
+def booked_on_its_own_seen(
+    request: BookedOnItsOwnSeenRequest,
+    http_request: Request,
+    user: User = Depends(require_baa_acceptance),
+    outside: OutsideSessions = Depends(get_outside_sessions),
+    audit: AuditService = Depends(get_audit_service),
+) -> BookedOnItsOwnSeenResponse:
+    """The clinician has seen these bookings; they leave the list. Nothing else changes."""
+    seen = outside.seen(user.id, set(request.appointment_ids))
+    audit.log(
+        AuditAction.APPOINTMENT_UPDATED,
+        user,
+        http_request,
+        resource_type=ResourceType.APPOINTMENT,
+        resource_id="booked-on-its-own",
+        changes={"seen": seen},
+    )
+    return BookedOnItsOwnSeenResponse(seen=seen)
 
 
 @router.post("/api/calendar/outside-sessions/answer", response_model=OutsideAnswerResponse)

@@ -271,6 +271,7 @@ APPOINTMENT_COLUMN_DECISIONS: Final[Mapping[str, str | None]] = {
     "outside_source": "Which outside calendar the session follows.",
     "outside_event_id": "Calendar-sync identifier.",
     "outside_calendar_id": "Calendar-sync identifier.",
+    "booked_on_its_own_at": "Calendar-sync bookkeeping for the clinician's review.",
     "session_id": "An internal link to the therapy-session record.",
     "service_code": "Billing and clinical coding, staff-authored.",
     "modifiers": "Billing and clinical coding, staff-authored.",

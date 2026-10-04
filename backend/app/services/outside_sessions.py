@@ -174,7 +174,11 @@ class Ingested:
     """Appointments made without asking."""
     by_name: set[str] = field(default_factory=set)
     """Which of ``booked`` were booked because the event's title names the
-    chart, rather than from a remembered answer."""
+    chart, rather than from an answer the clinician gave."""
+    named_series: set[str] = field(default_factory=set)
+    """Series this read booked from a title. The series is remembered at its
+    first event, so the rest of it follows that answer, but in this read the
+    title booked them all and the clinician should see every one."""
 
 
 @dataclass(frozen=True)
@@ -321,6 +325,27 @@ class OutsideSessions:
         # Initials, or a code nobody answered: someone else's sooner or later.
         return None
 
+    def booked_by_name(self, row: ExternalCalendarEvent, ctx: MatchContext) -> bool:
+        """Whether booking this event without asking rests on its title's name.
+
+        For an event ``unattended`` books: True when no answer the clinician
+        gave settles it, so the clinician should see that it was booked.
+        """
+        identity = self._identity(row)
+        match = match_patient(identity.hint, ctx, name_alone_is_enough=False)
+        return self._by_name(row, identity, match, ctx)
+
+    def _by_name(
+        self,
+        row: ExternalCalendarEvent,
+        identity: _Identity,
+        match: MatchResult,
+        ctx: MatchContext,
+    ) -> bool:
+        if identity.kind == "name":
+            return _known(ctx, identity) is None
+        return not self._follows_answer(row, identity, match, ctx)
+
     def _books_on_a_name(self, user_id: str) -> bool:
         """Whether this clinician lets a title naming exactly one client book."""
         if self._users is None:
@@ -447,7 +472,7 @@ class OutsideSessions:
                 end_at=end,
                 title=str(change.get("summary") or ""),
             )
-            result.held += self._place(incoming, row, ctx, result.booked, result.by_name)
+            result.held += self._place(incoming, row, ctx, result)
         logger.info(
             "Followed %d outside sessions from a followed calendar, booked %d",
             result.held,
@@ -460,8 +485,7 @@ class OutsideSessions:
         incoming: ExternalCalendarEvent,
         row: ExternalCalendarEvent | None,
         ctx: MatchContext,
-        booked: list[Appointment],
-        named: set[str],
+        result: Ingested,
     ) -> int:
         identity = self._identity(incoming)
         match = match_patient(identity.hint, ctx, name_alone_is_enough=False)
@@ -488,8 +512,12 @@ class OutsideSessions:
         patient_id = self._unattended(incoming, identity, match, ctx)
         if patient_id is not None:
             if incoming.answer == ANSWER_OPEN:
-                by_name = not self._follows_answer(incoming, identity, match, ctx)
+                by_name = (
+                    self._by_name(incoming, identity, match, ctx)
+                    or identity.identifier in result.named_series
+                )
                 if by_name and identity.kind == "series" and identity.scope is not None:
+                    result.named_series.add(identity.identifier)
                     # Remembered as if answered under this title, so the rest
                     # of the series follows it, and a series retitled to
                     # someone else's name asks rather than moving over.
@@ -503,11 +531,11 @@ class OutsideSessions:
                     )
                 incoming.answer = ANSWER_CLIENT
                 incoming.patient_id = patient_id
-                appointment = self._book(incoming)
+                appointment = self._book(incoming, on_its_own=by_name)
                 if appointment is not None:
-                    booked.append(appointment)
+                    result.booked.append(appointment)
                     if by_name:
-                        named.add(appointment.id)
+                        result.by_name.add(appointment.id)
             self._events.save(incoming)
             return 1
         qualifies = bool(
@@ -653,6 +681,35 @@ class OutsideSessions:
         row = self._events.get(user_id, source, event_id)
         if row is not None:
             self._events.delete(user_id, row.id)
+
+    # --- What was booked on its own ------------------------------------------
+
+    def booked_on_its_own(self, user_id: str) -> list[Appointment]:
+        """Upcoming sessions booked from a title's name that the clinician hasn't seen.
+
+        Soonest first. A cancelled one is gone from the list: undoing a
+        booking is cancelling it, and the event's row stays answered, so the
+        next read doesn't book it again.
+        """
+        start = utc_now()
+        return [
+            appointment
+            for appointment in self._appointments.list_by_range(
+                user_id, start, start + timedelta(days=MAX_HORIZON_DAYS)
+            )
+            if appointment.booked_on_its_own_at is not None
+            and appointment.status == AppointmentStatus.CONFIRMED
+        ]
+
+    def seen(self, user_id: str, appointment_ids: set[str]) -> int:
+        """The clinician has seen these bookings; they leave the list. Returns how many."""
+        cleared = 0
+        for appointment in self.booked_on_its_own(user_id):
+            if appointment.id in appointment_ids:
+                appointment.booked_on_its_own_at = None
+                self._appointments.update(appointment)
+                cleared += 1
+        return cleared
 
     # --- Asking and answering ----------------------------------------------
 
@@ -903,7 +960,7 @@ class OutsideSessions:
             tuple(title_readings(row.title)),
         )
 
-    def _book(self, row: ExternalCalendarEvent) -> Appointment | None:
+    def _book(self, row: ExternalCalendarEvent, *, on_its_own: bool = False) -> Appointment | None:
         """Make the appointment an answered row follows, or link to the one already made.
 
         One outside event is at most one live appointment in the practice.
@@ -915,6 +972,9 @@ class OutsideSessions:
         Skipped when something else is already booked over it — most often
         the same session booked in Pablo as well — so the practice isn't
         double booked. The row is still answered, and so never asked about again.
+
+        ``on_its_own`` marks a booking the event's title made, for the
+        clinician to see (``booked_on_its_own``).
         """
         if row.patient_id is None or row.appointment_id is not None:
             return None
@@ -947,6 +1007,7 @@ class OutsideSessions:
                     ical_uid=row.source_event_id if feed else None,
                     ical_source=feed,
                     ical_sync_status="synced" if feed else None,
+                    booked_on_its_own_at=now if on_its_own else None,
                     created_at=now,
                     updated_at=now,
                 )

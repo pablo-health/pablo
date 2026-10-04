@@ -651,6 +651,78 @@ class TestWhichPartOfATitleBooks:
         assert question.match.patient_id == "p1"
 
 
+class TestWhatWasBookedOnItsOwn:
+    """Bookings a title's name made are listed for the clinician until seen."""
+
+    @pytest.fixture
+    def clients(self, h: _Harness) -> _Harness:
+        h.patient("p1", "Jane", "Smith")
+        h.patient("p2", "Robert", "Jones")
+        return h
+
+    def test_a_booking_from_a_name_is_listed_and_one_from_an_answer_is_not(
+        self, clients: _Harness, mock_user: User
+    ) -> None:
+        clients.poll(mock_user, [_event("w1", _in(2), title="Weekly 1:1")])
+        clients.answer("p2")
+        clients.poll(
+            mock_user,
+            [
+                _event("w2", _in(9), title="Weekly 1:1"),
+                _event("x", _in(3), title="Jane Smith", series=None),
+            ],
+        )
+
+        [listed] = clients.outside.booked_on_its_own(USER_ID)
+        assert (listed.patient_id, listed.outside_event_id) == ("p1", "x")
+
+    def test_every_event_of_a_series_a_title_booked_in_one_read_is_listed(
+        self, clients: _Harness, mock_user: User
+    ) -> None:
+        clients.poll(
+            mock_user,
+            [_event(f"s{i}", _in(2 + 7 * i), title="Jane Smith") for i in range(3)],
+        )
+        assert [a.outside_event_id for a in clients.outside.booked_on_its_own(USER_ID)] == [
+            "s0",
+            "s1",
+            "s2",
+        ]
+
+        # A later read's new event follows the series the title settled.
+        clients.poll(mock_user, [_event("s3", _in(23), title="Jane Smith")])
+
+        later = clients.followed("s3")
+        assert later is not None
+        assert later.booked_on_its_own_at is None
+
+    def test_seen_bookings_leave_the_list(self, clients: _Harness, mock_user: User) -> None:
+        clients.poll(mock_user, [_event("x", _in(3), title="Jane Smith", series=None)])
+        [listed] = clients.outside.booked_on_its_own(USER_ID)
+
+        assert clients.outside.seen(USER_ID, {listed.id}) == 1
+
+        assert clients.outside.booked_on_its_own(USER_ID) == []
+        still = clients.followed("x")
+        assert still is not None
+        assert still.status == AppointmentStatus.CONFIRMED
+
+    def test_undoing_one_cancels_it_and_the_next_read_leaves_it_cancelled(
+        self, clients: _Harness, mock_user: User
+    ) -> None:
+        clients.poll(mock_user, [_event("x", _in(3), title="Jane Smith", series=None)])
+        [listed] = clients.outside.booked_on_its_own(USER_ID)
+        listed.status = AppointmentStatus.CANCELLED
+        clients.appointments.update(listed)
+
+        clients.poll(mock_user, [_event("x", _in(3), title="Jane Smith", series=None)])
+
+        assert clients.outside.booked_on_its_own(USER_ID) == []
+        undone = clients.followed("x")
+        assert undone is not None
+        assert undone.status == AppointmentStatus.CANCELLED
+
+
 class TestWhenANameDoesNotBook:
     """The clinician's choice: a title naming one client is asked, pre-filled."""
 

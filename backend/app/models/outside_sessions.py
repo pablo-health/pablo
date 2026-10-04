@@ -116,6 +116,33 @@ class OutsideAnswerResponse(BaseModel):
     not_added: list[NotAddedSession] = Field(default_factory=list)
 
 
+class BookedOnItsOwn(BaseModel):
+    """A session Pablo booked without asking, because its title named the client."""
+
+    appointment_id: str
+    patient_id: str
+    client_name: str
+    start_at: datetime
+    end_at: datetime
+    source: str = Field(description="``google_calendar`` or ``ical:<feed>``")
+
+
+class BookedOnItsOwnResponse(BaseModel):
+    """Upcoming ones the clinician hasn't seen yet, soonest first."""
+
+    sessions: list[BookedOnItsOwn]
+
+
+class BookedOnItsOwnSeenRequest(BaseModel):
+    """The bookings the clinician has seen, which leave the list."""
+
+    appointment_ids: list[str] = Field(min_length=1, max_length=500)
+
+
+class BookedOnItsOwnSeenResponse(BaseModel):
+    seen: int
+
+
 class FollowedCalendarRequest(BaseModel):
     """Which calendar to follow: an id from the calendar list, ``primary`` for
     the main calendar, or None to stop following."""

@@ -192,7 +192,8 @@ CREATE TABLE __TENANT_SCHEMA__.appointments (
     note_inputs jsonb,
     outside_source character varying(64),
     outside_event_id text,
-    outside_calendar_id text
+    outside_calendar_id text,
+    booked_on_its_own_at timestamp with time zone
 );
 
 

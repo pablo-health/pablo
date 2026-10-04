@@ -223,8 +223,11 @@ async function answerAsNewClient(api: ApiClient, title: string): Promise<void> {
  * first name) or given a first and last name.
  */
 async function patientsNamed(api: ApiClient, name: string): Promise<{ id: string }[]> {
+  // Search matches one field at a time, so "Jamie Ortiz" would find a chart
+  // named in one field ("Jamie Ortiz" / "") but never "Jamie" / "Ortiz".
+  const lastWord = name.split(" ").at(-1) ?? name
   const page = await api.get<{ data: { id: string; first_name: string; last_name: string }[] }>(
-    `/api/patients?search=${encodeURIComponent(name)}&page_size=100`,
+    `/api/patients?search=${encodeURIComponent(lastWord)}&page_size=100`,
   )
   return page.data.filter(
     (p) => p.first_name === name || `${p.first_name} ${p.last_name}` === name,
@@ -635,12 +638,69 @@ test("a session titled with one client's full name is asked first, then books on
   expect(await upcomingFor(api, jamie.id)).toHaveLength(1)
 })
 
+test("what Pablo booked from titles is listed, and an undo stays undone", async ({
+  signedInPage: page,
+  api,
+}) => {
+  await freshGoogle(api)
+  await forgetClients(api, ["Jamie Ortiz"])
+  const jamie = await givePatient(api, { first_name: "Jamie", last_name: "Ortiz" })
+  await connectThroughSetup(page, { follow: true })
+
+  // As by default: a series titled with Jamie's name books on its own.
+  const seriesId = await seedWeekly("primary", "Jamie Ortiz", localDateTime(1, "16:00"), 3)
+  await readCalendarsNow(api)
+  const booked = await upcomingFor(api, jamie.id)
+  expect(booked).toHaveLength(3)
+  expect(await questions(api)).toHaveLength(0)
+
+  // The calendar lists each one with its client and time.
+  await showTomorrow(page)
+  const notice = page.getByTestId("booked-on-its-own")
+  await expect(notice).toContainText("Pablo booked 3 sessions from your calendar")
+  const rows = notice.getByTestId("booked-on-its-own-row")
+  await expect(rows).toHaveCount(3)
+  await expect(rows.first()).toContainText("Jamie Ortiz")
+
+  // Undo the first: the ordinary cancel.
+  const soonest = [...booked].sort((a, b) => a.start_at.localeCompare(b.start_at))[0]
+  const cancelled = page.waitForResponse(
+    (response) =>
+      response.url().includes(`/api/appointments/${soonest.id}`) &&
+      response.request().method() === "DELETE" &&
+      response.ok(),
+  )
+  await rows.first().getByRole("button", { name: /^Undo Jamie Ortiz/ }).click()
+  await cancelled
+  await expect(rows).toHaveCount(2)
+  await expect(notice).toContainText("Pablo booked 2 sessions from your calendar")
+
+  // The other service extends the series, so every event is read again: the
+  // undone one stays cancelled, and the new one follows the series.
+  await google.change("primary", seriesId, { recurrence: ["RRULE:FREQ=WEEKLY;COUNT=4"] })
+  await readCalendarsNow(api)
+  const after = await upcomingFor(api, jamie.id)
+  expect(after).toHaveLength(3)
+  expect(after.map((a) => a.id)).not.toContain(soonest.id)
+  expect(await questions(api)).toHaveLength(0)
+
+  // OK clears the list; the sessions stay booked.
+  await page.reload()
+  await expect(notice).toContainText("Pablo booked 2 sessions from your calendar")
+  await notice.getByRole("button", { name: "OK", exact: true }).click()
+  await expect(notice).toHaveCount(0)
+  expect(await upcomingFor(api, jamie.id)).toHaveLength(3)
+})
+
 test("disconnecting takes Pablo off the account and forgets what it read, keeping the sessions", async ({
   signedInPage: page,
   api,
 }) => {
   await freshGoogle(api)
   await forgetClients(api, ["Dana Brooks"])
+  // Asked first, so reconnecting shows the answer was forgotten; with names
+  // booking, the read would settle it from the title instead.
+  await letNamesBook(api, false)
   await connectThroughSetup(page, { follow: true })
   await seedWeekly("primary", "Dana Brooks", localDateTime(1, "13:00"), 3)
   await readCalendarsNow(api)

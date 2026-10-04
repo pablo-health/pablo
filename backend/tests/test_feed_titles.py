@@ -496,6 +496,26 @@ class TestFullNameFeed:
         )
 
 
+# --- What a feed booked on its own -------------------------------------------
+
+
+class TestWhatAFeedBookedOnItsOwn:
+    def test_a_booking_from_a_name_is_marked_and_one_from_an_answer_is_not(
+        self, feed: _Feed
+    ) -> None:
+        feed.chart("john", "John", "Adams")
+        feed.chart("james", "James", "Anderson")
+        remember_match(SP, "James Anderson", "james", feed.outside.context(USER), scope=SCOPE)
+
+        feed.sync(FULL_NAMES)
+
+        marked = {
+            a.patient_id: a.booked_on_its_own_at is not None
+            for a in feed.appointments.list_by_ical_source(USER, SP)
+        }
+        assert marked == {"john": True, "james": False}
+
+
 # --- A clinician who doesn't let a name book ---------------------------------
 
 

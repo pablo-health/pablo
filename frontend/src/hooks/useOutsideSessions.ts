@@ -2,10 +2,13 @@
 
 "use client"
 
+import { cancelAppointment } from "@/lib/api/scheduling"
 import {
   answerOutsideSessions,
   getOutsideQuestions,
+  listBookedOnItsOwn,
   listOutsideSessions,
+  markBookedOnItsOwnSeen,
   type OutsideAnswer,
   type OutsideAnswerResult,
 } from "@/lib/api/outsideSessions"
@@ -28,6 +31,31 @@ export function useOutsideQuestions() {
     queryKey: queryKeys.appointments.outsideQuestions(),
     queryFn: () => getOutsideQuestions(),
     staleTime: 60 * 1000,
+  })
+}
+
+/** Sessions Pablo booked on its own from a title, not yet seen. */
+export function useBookedOnItsOwn() {
+  return useAuthQuery({
+    queryKey: queryKeys.appointments.bookedOnItsOwn(),
+    queryFn: () => listBookedOnItsOwn(),
+    staleTime: 60 * 1000,
+  })
+}
+
+/** Undo one: the ordinary cancel, so the next read leaves it cancelled. */
+export function useUndoBookedOnItsOwn() {
+  return useAuthMutation<unknown, string>({
+    mutationFn: (appointmentId) => cancelAppointment(appointmentId),
+    invalidateKeys: [queryKeys.appointments.all],
+  })
+}
+
+/** The clinician has looked; the list clears and the sessions stay booked. */
+export function useSeenBookedOnItsOwn() {
+  return useAuthMutation<{ seen: number }, string[]>({
+    mutationFn: (appointmentIds) => markBookedOnItsOwnSeen(appointmentIds),
+    invalidateKeys: [queryKeys.appointments.bookedOnItsOwn()],
   })
 }
 
