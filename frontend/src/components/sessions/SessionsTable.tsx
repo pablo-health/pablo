@@ -15,6 +15,7 @@ import { AlertCircle } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { useSessionList } from "@/hooks/useSessions"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import type { SessionResponse } from "@/types/sessions"
 import { QualityRating } from "./QualityRating"
 import { SessionStatusBadge } from "./SessionStatusBadge"
@@ -58,6 +59,7 @@ export function SessionsTable({
 }: SessionsTableProps) {
   const router = useRouter()
   const { data, isLoading, isError, error, refetch } = useSessionList()
+  const people = usePeopleTerm()
 
   if (isLoading) {
     return <SessionsTableSkeleton />
@@ -106,7 +108,7 @@ export function SessionsTable({
           <thead>
             <tr className="border-b border-neutral-200 bg-neutral-50">
               <th className="px-4 py-3 text-left text-xs font-medium text-neutral-600 uppercase tracking-wider">
-                Patient
+                {people.One}
               </th>
               <th className="px-4 py-3 text-left text-xs font-medium text-neutral-600 uppercase tracking-wider">
                 Date

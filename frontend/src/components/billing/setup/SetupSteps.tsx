@@ -11,6 +11,7 @@ import { PracticeIdentityCard } from "@/components/settings/PracticeIdentityCard
 import { SetupStepHead } from "@/components/setup"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useBillingProfile } from "@/hooks/useBillingProfile"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 
 /**
  * The step bodies that are shared by every route.
@@ -52,12 +53,13 @@ export function BillingContactStep() {
 }
 
 export function RatesStep() {
+  const people = usePeopleTerm()
   return (
     <div className="space-y-5">
       <SetupStepHead
         eyebrow="Step 3"
         title="What you charge"
-        lede="Your session types and their fees. These set what a client owes and what appears on a superbill."
+        lede={`Your session types and their fees. These set what a ${people.one} owes and what appears on a superbill.`}
       />
       <AppointmentTypesCard purpose="billing" />
     </div>

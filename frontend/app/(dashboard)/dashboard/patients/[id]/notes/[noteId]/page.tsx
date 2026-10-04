@@ -25,6 +25,7 @@ import {
   type RatingFeedback,
 } from "@/components/sessions/QualityRatingWithFeedback"
 import { usePatient } from "@/hooks/usePatients"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { useNoteTypeLabel } from "@/hooks/useNoteTypes"
 import {
   useFinalizeNote,
@@ -50,6 +51,7 @@ export default function StandaloneNotePage({ params }: PageProps) {
   const updateEdits = useUpdateNoteEdits()
   const noteTypeLabel = useNoteTypeLabel()
   const finalize = useFinalizeNote()
+  const people = usePeopleTerm()
 
   const [feedback, setFeedback] = useState<RatingFeedback>({
     rating: null,
@@ -121,7 +123,7 @@ export default function StandaloneNotePage({ params }: PageProps) {
   const generationFailed = note.status === "failed"
   const patientName = patient
     ? `${patient.first_name} ${patient.last_name}`
-    : "Patient"
+    : people.One
 
   return (
     <div className="space-y-6">

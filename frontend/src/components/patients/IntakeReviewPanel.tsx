@@ -5,6 +5,7 @@
 import { useState } from "react"
 
 import { ApiError } from "@/lib/api/client"
+import type { PeopleWords } from "@/lib/peopleTerm"
 import { saveFile } from "@/lib/saveFile"
 import {
   downloadIntakeExport,
@@ -18,6 +19,7 @@ import type {
   IntakeReviewSignature,
 } from "@/lib/api/intakeReview"
 import { useIntakeAssignmentArtifacts } from "@/hooks/useIntakeArtifacts"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { useAcceptIntakeAssignment, useEnterIntakeAnswer, useIntakeReview, useRequestIntakeCorrection } from "@/hooks/useIntakeReview"
 import { IntakeReviewItemRow } from "./IntakeReviewItemRow"
 import { artifactsFor, readOnlySource, shownKeys } from "./intakeReadOnly"
@@ -30,14 +32,16 @@ import { artifactsFor, readOnlySource, shownKeys } from "./intakeReadOnly"
  * different ways. Every sentence is about the status the server sent; none
  * of them is computed here.
  */
-export const INTAKE_STATUS_TEXT = {
-  assigned: "Sent to the patient.",
-  in_progress: "The patient has started this.",
-  submitted: "Handed in.",
-  needs_correction: "Sent back for corrections.",
-  accepted: "Accepted.",
-  withdrawn: "Withdrawn.",
-} satisfies Record<IntakeAssignmentStatus, string>
+export function intakeStatusText(people: PeopleWords) {
+  return {
+    assigned: `Sent to the ${people.one}.`,
+    in_progress: `The ${people.one} has started this.`,
+    submitted: "Handed in.",
+    needs_correction: "Sent back for corrections.",
+    accepted: "Accepted.",
+    withdrawn: "Withdrawn.",
+  } satisfies Record<IntakeAssignmentStatus, string>
+}
 
 /**
  * Every sentence this panel shows, in one block. The status sentences describe
@@ -49,12 +53,11 @@ const COPY = {
   loading: "Loading this form…",
   loadError: "We couldn't load this form. Try again in a moment.",
   actionError: "That didn't go through. Try again.",
-  status: INTAKE_STATUS_TEXT,
   progressComplete: "Every question has an answer.",
   outstanding: (n: number) => (n === 1 ? "1 question has no answer." : `${n} questions have no answer.`),
   correctionsHeading: "Request corrections",
   correctionsSelect: "Choose the questions to send back.",
-  noteLabel: "What should the patient redo?",
+  noteLabel: (people: PeopleWords) => `What should the ${people.one} redo?`,
   send: "Send back",
   accept: "Accept",
   exportLabel: "Export",
@@ -62,12 +65,12 @@ const COPY = {
   submitted: (day: string) => `Submitted ${day}`,
   exporting: "Preparing…",
   eventsHeading: "History",
-  eventKind: {
+  eventKind: (people: PeopleWords): Record<string, string> => ({
     correction_requested: "Corrections requested",
-    corrected: "Patient sent corrections",
+    corrected: `${people.One} sent corrections`,
     accepted: "Accepted",
     clinician_entered: "Answer entered by practice",
-  },
+  }),
   signaturesHeading: "Signatures",
   signedAs: (role: string) => `signed as ${role}`,
 }
@@ -113,6 +116,7 @@ function SignatureSection({ signatures }: { signatures: IntakeReviewSignature[] 
 
 /** What has been asked for and done, newest first. */
 function EventSection({ events }: { events: IntakeReviewEvent[] }) {
+  const people = usePeopleTerm()
   if (events.length === 0) return null
   const newestFirst = [...events].sort((a, b) => b.created_at.localeCompare(a.created_at))
   return (
@@ -121,7 +125,7 @@ function EventSection({ events }: { events: IntakeReviewEvent[] }) {
       <ul className="mt-2 space-y-1">
         {newestFirst.map((e) => (
           <li key={e.id} className="text-sm text-neutral-700" data-testid={`intake-review-event-${e.id}`}>
-            {COPY.eventKind[e.kind] ?? e.kind} · {formatMoment(e.created_at)}
+            {COPY.eventKind(people)[e.kind] ?? e.kind} · {formatMoment(e.created_at)}
             {e.note_to_patient && (
               <span className="block whitespace-pre-wrap text-neutral-600">{e.note_to_patient}</span>
             )}
@@ -183,6 +187,7 @@ export function IntakeReviewPanel(props: { patientId: string; assignmentId: stri
   const [note, setNote] = useState("")
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
+  const people = usePeopleTerm()
 
   if (isLoading) return <p data-testid="intake-review-loading">{COPY.loading}</p>
   if (error || !data) return <p data-testid="intake-review-load-error">{COPY.loadError}</p>
@@ -228,7 +233,7 @@ export function IntakeReviewPanel(props: { patientId: string; assignmentId: stri
         <div className="flex flex-wrap items-baseline justify-between gap-3">
           <div>
             <p className="text-sm text-neutral-700" data-testid="intake-review-status">
-              {COPY.status[data.status] ?? data.status}
+              {intakeStatusText(people)[data.status] ?? data.status}
             </p>
             <p className="text-sm text-neutral-500" data-testid="intake-review-progress">
               {data.progress.complete ? COPY.progressComplete : COPY.outstanding(data.progress.missing.length)}
@@ -267,7 +272,7 @@ export function IntakeReviewPanel(props: { patientId: string; assignmentId: stri
           <h3 className={HEADING}>{COPY.correctionsHeading}</h3>
           <p className="mt-1 text-sm text-neutral-500">{COPY.correctionsSelect}</p>
           <label className="mt-2 block text-sm font-medium text-neutral-700" htmlFor="intake-review-note">
-            {COPY.noteLabel}
+            {COPY.noteLabel(people)}
           </label>
           <textarea id="intake-review-note" className="input mt-1 w-full" rows={3} value={note}
             maxLength={MAX_CORRECTION_NOTE_LENGTH} onChange={(e) => setNote(e.target.value)}

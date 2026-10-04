@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useEmailSender, useSaveEmailSender } from "@/hooks/useEmailSender"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { ApiError } from "@/lib/api/client"
 import type { EmailSender, EmailSenderFields } from "@/lib/api/emailSender"
 
@@ -40,17 +41,18 @@ interface Draft {
  */
 export function ClientEmailSenderCard() {
   const { data: sender } = useEmailSender()
+  const people = usePeopleTerm()
   if (!sender) return null
   return (
     <SettingsCard
-      title="Client email"
-      description="Who your emails to clients are from, and where their replies go."
+      title={`${people.One} email`}
+      description={`Who your emails to ${people.many} are from, and where their replies go.`}
     >
       {sender.applies ? (
         <ClientEmailSenderForm sender={sender} />
       ) : (
         <p className="text-sm text-muted-foreground" data-testid="client-email-not-applicable">
-          This deployment sends client email under its own name and address.
+          This deployment sends {people.one} email under its own name and address.
         </p>
       )}
     </SettingsCard>
@@ -73,6 +75,7 @@ function saveError(error: unknown): string | null {
 
 function ClientEmailSenderForm({ sender }: { sender: EmailSender }) {
   const save = useSaveEmailSender()
+  const people = usePeopleTerm()
   const saved = toDraft(sender.chosen)
   const [draft, setDraft] = useState<Draft>(saved)
   const [justSaved, setJustSaved] = useState(false)
@@ -172,7 +175,7 @@ function ClientEmailSenderForm({ sender }: { sender: EmailSender }) {
 
       <div className="space-y-1" data-testid="client-email-preview">
         <p className="text-sm">
-          <span className="text-muted-foreground">Clients see: </span>
+          <span className="text-muted-foreground">{people.Many} see: </span>
           <span className="font-medium">{fromName}</span>
           {fromAddress && <span> &lt;{fromAddress}&gt;</span>}
           {replyTo && <span className="text-muted-foreground"> · replies go to {replyTo}</span>}

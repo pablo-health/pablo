@@ -13,6 +13,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { ChatPanelWithHistory } from "@/components/chat/ChatPanelWithHistory"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import type { SourceSelection } from "@/lib/chat/types"
 
 interface PatientChatDialogProps {
@@ -29,6 +30,7 @@ const DEFAULT_SELECTION: SourceSelection = {
 }
 
 export function PatientChatDialog({ patientId }: PatientChatDialogProps) {
+  const people = usePeopleTerm()
   return (
     <Dialog>
       <DialogTrigger asChild>
@@ -43,7 +45,7 @@ export function PatientChatDialog({ patientId }: PatientChatDialogProps) {
             Chat
           </DialogTitle>
           <DialogDescription className="text-sm text-neutral-500">
-            Ask about this patient&apos;s chart. Responses draw only on the
+            Ask about this {people.one}&apos;s chart. Responses draw only on the
             sources you select.
           </DialogDescription>
         </DialogHeader>

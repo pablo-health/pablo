@@ -8,6 +8,7 @@
 
 import type { AcceptBAARequest, BAAStatusResponse } from "@/types/baa"
 import type { ThemeId } from "@/lib/theme"
+import type { PeopleTerm } from "@/lib/peopleTerm"
 import { get, patch, post, put } from "./client"
 import type {
   UpdateUserRequestExtensions,
@@ -108,6 +109,11 @@ export interface UserStatusBase {
   npi_number: string | null
   /** NUCC taxonomy code for the clinician, the specialty a claim's rendering-provider loop carries. */
   taxonomy_code: string | null
+  /**
+   * Whether this clinician's screens say "clients" or "patients", already
+   * resolved by the server. Read it through `usePeopleTerm()`.
+   */
+  people_term?: PeopleTerm
 }
 
 /**
@@ -347,6 +353,9 @@ export interface UserPreferences {
    * Optional because a response from before the field existed lacks it,
    * which reads as "ask". */
   inbox_reply_earlier_messages?: "ask" | "always" | "never"
+  /** The clinician's own "clients"/"patients" choice; null leaves it to the
+   * license and the practice default. Set it through `useSetPeopleTerm()`. */
+  people_term?: PeopleTerm | null
 }
 
 /** SUPERSEDED by {@link BillingSetupState}. It asked one question and got two

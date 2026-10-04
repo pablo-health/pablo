@@ -11,6 +11,7 @@ import { exportSOAPToPDF, type PDFExportMetadata } from "../pdfExport"
 import { parseNarrativeBlocks } from "../narrativeParser"
 import type { SOAPNoteModel } from "@/types/sessions"
 import { createMockSOAPNote } from "@/test/factories"
+import { peopleWords } from "@/lib/peopleTerm"
 
 // Mock jsPDF
 let mockOutput: ReturnType<typeof vi.fn>
@@ -122,18 +123,18 @@ describe("exportSOAPToPDF", () => {
   })
 
   it("generates PDF with correct filename", () => {
-    exportSOAPToPDF(mockSession, mockSOAPNote)
+    exportSOAPToPDF(mockSession, mockSOAPNote, peopleWords("patients"))
     expect(mockOutput).toHaveBeenCalledWith("blob")
     expect(clickSpy).toHaveBeenCalled()
   })
 
   it("includes title", () => {
-    exportSOAPToPDF(mockSession, mockSOAPNote)
+    exportSOAPToPDF(mockSession, mockSOAPNote, peopleWords("patients"))
     expect(mockText).toHaveBeenCalledWith("SOAP Note", 20, 20)
   })
 
   it("includes patient name", () => {
-    exportSOAPToPDF(mockSession, mockSOAPNote)
+    exportSOAPToPDF(mockSession, mockSOAPNote, peopleWords("patients"))
     expect(mockText).toHaveBeenCalledWith(
       "Patient: Doe, Jane",
       20,
@@ -142,7 +143,7 @@ describe("exportSOAPToPDF", () => {
   })
 
   it("includes session number", () => {
-    exportSOAPToPDF(mockSession, mockSOAPNote)
+    exportSOAPToPDF(mockSession, mockSOAPNote, peopleWords("patients"))
     expect(mockText).toHaveBeenCalledWith(
       "Session #1",
       20,
@@ -151,7 +152,7 @@ describe("exportSOAPToPDF", () => {
   })
 
   it("includes formatted date", () => {
-    exportSOAPToPDF(mockSession, mockSOAPNote)
+    exportSOAPToPDF(mockSession, mockSOAPNote, peopleWords("patients"))
     expect(mockText).toHaveBeenCalledWith(
       expect.stringContaining("January 15, 2024"),
       20,
@@ -163,13 +164,13 @@ describe("exportSOAPToPDF", () => {
 
   soapSections.forEach((title) => {
     it(`includes ${title} section header`, () => {
-      exportSOAPToPDF(mockSession, mockSOAPNote)
+      exportSOAPToPDF(mockSession, mockSOAPNote, peopleWords("patients"))
       expect(mockText).toHaveBeenCalledWith(title, 20, expect.any(Number))
     })
   })
 
   it("sets font sizes correctly", () => {
-    exportSOAPToPDF(mockSession, mockSOAPNote)
+    exportSOAPToPDF(mockSession, mockSOAPNote, peopleWords("patients"))
     expect(mockSetFontSize).toHaveBeenCalledWith(18) // Title
     expect(mockSetFontSize).toHaveBeenCalledWith(12) // Metadata
     expect(mockSetFontSize).toHaveBeenCalledWith(14) // Section titles
@@ -177,13 +178,13 @@ describe("exportSOAPToPDF", () => {
   })
 
   it("sets font styles correctly", () => {
-    exportSOAPToPDF(mockSession, mockSOAPNote)
+    exportSOAPToPDF(mockSession, mockSOAPNote, peopleWords("patients"))
     expect(mockSetFont).toHaveBeenCalledWith("helvetica", "bold")
     expect(mockSetFont).toHaveBeenCalledWith("helvetica", "normal")
   })
 
   it("splits long text into lines", () => {
-    exportSOAPToPDF(mockSession, mockSOAPNote)
+    exportSOAPToPDF(mockSession, mockSOAPNote, peopleWords("patients"))
     expect(mockSplitTextToSize).toHaveBeenCalled()
   })
 
@@ -195,7 +196,7 @@ describe("exportSOAPToPDF", () => {
       plan: "Plan",
     }
 
-    exportSOAPToPDF(mockSession, multilineSOAP)
+    exportSOAPToPDF(mockSession, multilineSOAP, peopleWords("patients"))
     expect(mockSplitTextToSize).toHaveBeenCalled()
   })
 
@@ -208,7 +209,7 @@ describe("exportSOAPToPDF", () => {
       plan: longContent,
     }
 
-    exportSOAPToPDF(mockSession, longSOAP)
+    exportSOAPToPDF(mockSession, longSOAP, peopleWords("patients"))
     expect(mockAddPage).toHaveBeenCalled()
   })
 
@@ -220,7 +221,7 @@ describe("exportSOAPToPDF", () => {
       plan: "",
     }
 
-    expect(() => exportSOAPToPDF(mockSession, emptySOAP)).not.toThrow()
+    expect(() => exportSOAPToPDF(mockSession, emptySOAP, peopleWords("patients"))).not.toThrow()
   })
 
   it("handles special characters in content", () => {
@@ -231,7 +232,7 @@ describe("exportSOAPToPDF", () => {
       plan: "Continue <current treatment>",
     }
 
-    expect(() => exportSOAPToPDF(mockSession, specialSOAP)).not.toThrow()
+    expect(() => exportSOAPToPDF(mockSession, specialSOAP, peopleWords("patients"))).not.toThrow()
   })
 
   it("generates filenames derived from patient name and date", () => {
@@ -245,8 +246,8 @@ describe("exportSOAPToPDF", () => {
       return el
     })
 
-    exportSOAPToPDF(meta1, mockSOAPNote)
-    exportSOAPToPDF(meta2, mockSOAPNote)
+    exportSOAPToPDF(meta1, mockSOAPNote, peopleWords("patients"))
+    exportSOAPToPDF(meta2, mockSOAPNote, peopleWords("patients"))
 
     const filenames = createdLinks.map((l) => l.download)
     expect(filenames.some((f) => f.includes("smith"))).toBe(true)
@@ -262,7 +263,7 @@ describe("exportSOAPToPDF", () => {
       plan: "**Next Session:** One week",
     }
 
-    exportSOAPToPDF(mockSession, structuredSOAP)
+    exportSOAPToPDF(mockSession, structuredSOAP, peopleWords("patients"))
 
     // Sub-field labels should be rendered bold
     expect(mockText).toHaveBeenCalledWith(
@@ -285,7 +286,7 @@ describe("exportSOAPToPDF", () => {
       plan: "Continue",
     }
 
-    exportSOAPToPDF(mockSession, bulletSOAP)
+    exportSOAPToPDF(mockSession, bulletSOAP, peopleWords("patients"))
 
     // Bullet items should be rendered at indented x-position (28)
     expect(mockText).toHaveBeenCalledWith(
@@ -304,7 +305,7 @@ describe("exportSOAPToPDF", () => {
       plan: "**Next Session:** One week",
     }
 
-    expect(() => exportSOAPToPDF(mockSession, withObservations)).not.toThrow()
+    expect(() => exportSOAPToPDF(mockSession, withObservations, peopleWords("patients"))).not.toThrow()
     expect(mockText).toHaveBeenCalledWith(
       "Clinician Observations:",
       20,

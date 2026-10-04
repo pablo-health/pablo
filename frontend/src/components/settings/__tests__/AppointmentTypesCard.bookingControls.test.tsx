@@ -22,6 +22,14 @@ import userEvent from "@testing-library/user-event"
 
 import { AppointmentTypesCard } from "../AppointmentTypesCard"
 import { renderWithProviders } from "@/test/renderWithProviders"
+import { peopleWords, type PeopleTerm } from "@/lib/peopleTerm"
+
+const peopleTerm = vi.hoisted(() => ({ current: "clients" as PeopleTerm }))
+
+vi.mock("@/hooks/usePeopleTerm", async (orig) => ({
+  ...(await orig<typeof import("@/hooks/usePeopleTerm")>()),
+  usePeopleTerm: () => peopleWords(peopleTerm.current),
+}))
 
 const mockTypes = vi.fn()
 const mockPolicy = vi.fn()
@@ -106,8 +114,8 @@ describe("AppointmentTypesCard — booking controls", () => {
     await userEvent.click(await screen.findByRole("button", { name: /Defaults for all types/ }))
 
     expect(await screen.findByText("How much warning before any new booking")).toBeInTheDocument()
-    expect(screen.queryByText("Patients may cancel until")).not.toBeInTheDocument()
-    expect(screen.queryByText("Patients may reschedule until")).not.toBeInTheDocument()
+    expect(screen.queryByText("Clients may cancel until")).not.toBeInTheDocument()
+    expect(screen.queryByText("Clients may reschedule until")).not.toBeInTheDocument()
   })
 
   it("shows the cutoffs once clients can book", async () => {
@@ -116,8 +124,23 @@ describe("AppointmentTypesCard — booking controls", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: /Defaults for all types/ }))
 
-    expect(await screen.findByText("Patients may cancel until")).toBeInTheDocument()
-    expect(screen.getByText("Patients may reschedule until")).toBeInTheDocument()
+    expect(await screen.findByText("Clients may cancel until")).toBeInTheDocument()
+    expect(screen.getByText("Clients may reschedule until")).toBeInTheDocument()
+  })
+
+  it("names the cutoffs with the clinician's own word", async () => {
+    peopleTerm.current = "patients"
+    try {
+      mockPolicy.mockResolvedValue(policy(true))
+      renderWithProviders(<AppointmentTypesCard />)
+
+      await userEvent.click(await screen.findByRole("button", { name: /Defaults for all types/ }))
+
+      expect(await screen.findByText("Patients may cancel until")).toBeInTheDocument()
+      expect(screen.getByText("Patients may reschedule until")).toBeInTheDocument()
+    } finally {
+      peopleTerm.current = "clients"
+    }
   })
 
   it("in the billing wizard, shows what billing needs and nothing about offering or booking", async () => {

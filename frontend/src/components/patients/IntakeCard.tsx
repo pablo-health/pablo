@@ -6,11 +6,12 @@ import { useState } from "react"
 import { AlertTriangle } from "lucide-react"
 
 import { IntakeArtifacts } from "@/components/patients/IntakeArtifacts"
-import { INTAKE_STATUS_TEXT, IntakeReviewPanel } from "@/components/patients/IntakeReviewPanel"
+import { IntakeReviewPanel, intakeStatusText } from "@/components/patients/IntakeReviewPanel"
 import { SendIntakeForm } from "@/components/patients/SendIntakeForm"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { useIntakeArtifacts, useIntakeAssignments } from "@/hooks/useIntakeArtifacts"
 import { usePatientIntakeSubmissions } from "@/hooks/usePatientIntakeSubmissions"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import type { IntakeAssignment } from "@/lib/api/intakeReview"
 import type { PatientIntakeSubmission } from "@/types/patientIntakeSubmissions"
 
@@ -116,6 +117,7 @@ function AssignmentRow({
   assignment: IntakeAssignment
 }) {
   const [open, setOpen] = useState(false)
+  const people = usePeopleTerm()
 
   return (
     <div data-testid={`intake-assignment-${assignment.id}`}>
@@ -130,7 +132,7 @@ function AssignmentRow({
           {assignment.packet_name} v{assignment.version}
         </span>
         <span className="text-sm text-neutral-500">
-          {INTAKE_STATUS_TEXT[assignment.status] ?? assignment.status}
+          {intakeStatusText(people)[assignment.status] ?? assignment.status}
         </span>
       </button>
 
@@ -172,6 +174,7 @@ export function IntakeCard({ patientId }: IntakeCardProps) {
   const { groups } = useIntakeArtifacts(patientId)
   const { data: assignmentRows } = useIntakeAssignments(patientId)
   const [showEarlier, setShowEarlier] = useState(false)
+  const people = usePeopleTerm()
 
   const submissions = error ? [] : (data ?? [])
   const assignments = assignmentRows ?? []
@@ -199,7 +202,7 @@ export function IntakeCard({ patientId }: IntakeCardProps) {
 
       {empty && (
         <p className="text-sm text-neutral-600" data-testid="intake-empty">
-          No forms have been sent to this client yet.
+          No forms have been sent to this {people.one} yet.
         </p>
       )}
 

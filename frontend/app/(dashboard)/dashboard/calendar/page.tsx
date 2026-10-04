@@ -89,10 +89,19 @@ export default function CalendarPage() {
   const showHoursStep = hoursAsked && !hoursAnswered
   const answerHours = useCallback(() => setHoursAnswered(true), [])
 
+  // The first look at the calendar after setup skips a week with nothing
+  // left in it, so hours set on a Friday evening open on the week they start.
+  const [justSetUp, setJustSetUp] = useState(false)
+  const answerHoursAlone = useCallback(() => {
+    setHoursAnswered(true)
+    setJustSetUp(true)
+  }, [])
+
   // Either way out of the wizard — finished or "later" — is an answer;
   // Settings keeps its own door back in.
   const markSetupComplete = useCallback(() => {
     if (!preferences) return
+    setJustSetUp(true)
     saveMutation.mutate({ ...preferences, calendar_setup_complete: true })
   }, [preferences, saveMutation])
   const lastSavedView = useRef<string | undefined>(undefined)
@@ -215,7 +224,7 @@ export default function CalendarPage() {
   if (showHoursStep && !showWizard) {
     return (
       <div className="max-w-3xl">
-        <CalendarHoursStep onSaved={answerHours} onSkip={answerHours} />
+        <CalendarHoursStep onSaved={answerHoursAlone} onSkip={answerHoursAlone} />
       </div>
     )
   }
@@ -230,7 +239,8 @@ export default function CalendarPage() {
             returnPath={CALENDAR_PATH}
             onFinishLater={markSetupComplete}
             onDone={markSetupComplete}
-            withHoursStep={showHoursStep}
+            withHoursStep
+            hoursSaved={!showHoursStep}
             onHoursAnswered={answerHours}
           />
         </Suspense>
@@ -277,6 +287,8 @@ export default function CalendarPage() {
           theme={editorialTheme}
           density={preferences?.calendar_density ?? "balanced"}
           workingHoursStart={workingHoursWindow?.scrollToHour}
+          timeZone={preferences?.timezone}
+          skipSpentWeek={justSetUp}
           defaultView={toEditorialView(preferences?.calendar_default_view) ?? "week"}
           onSelectSlot={handleSelectSlot}
           onSelectAppointment={handleSelectAppointment}

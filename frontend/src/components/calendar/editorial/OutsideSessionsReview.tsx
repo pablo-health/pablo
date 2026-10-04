@@ -18,6 +18,7 @@ import {
   WhichClientsList,
   type ClientQuestionRow,
 } from "@/components/calendar/connect/WhichClientsList"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import type {
   NotAddedSession,
   OutsideAnswer,
@@ -78,6 +79,7 @@ export function OutsideSessionsReview({
   single = false,
   onStartNote,
 }: OutsideSessionsReviewProps) {
+  const people = usePeopleTerm()
   // A certain match, or a name-only suggestion, starts on that chart and
   // checked: one confirm settles it. A name is shown as a preselected choice
   // beside "New client", never as settled.
@@ -153,12 +155,12 @@ export function OutsideSessionsReview({
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle className="font-display">
-            {single ? "Who is this?" : "Which of these are clients?"}
+            {single ? "Who is this?" : `Which of these are ${people.many}?`}
           </DialogTitle>
           <DialogDescription>
             {single
               ? "Pablo will remember the answer."
-              : "Check the ones that are clients. Anything unchecked stays here for later."}
+              : `Check the ones that are ${people.many}. Anything unchecked stays here for later.`}
           </DialogDescription>
         </DialogHeader>
 

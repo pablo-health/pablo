@@ -4,6 +4,7 @@
 
 import { useRef } from "react"
 import type { HostedAddresses as Hosted, PracticeDomain } from "@/lib/api/practiceDomains"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { SettingsBadge, SettingsCard } from "../ui"
 import { CopyButton } from "./CopyButton"
 
@@ -14,6 +15,7 @@ import { CopyButton } from "./CopyButton"
  * and where it sends visitors once the practice's own domain is its primary.
  */
 export function HostedAddresses({ hosted, domains }: { hosted: Hosted; domains: PracticeDomain[] }) {
+  const people = usePeopleTerm()
   const primary = (purpose: PracticeDomain["purpose"]) =>
     domains.find((d) => d.purpose === purpose && d.is_primary && d.status === "active")?.domain ?? null
 
@@ -25,9 +27,9 @@ export function HostedAddresses({ hosted, domains }: { hosted: Hosted; domains: 
       <ul aria-label="Your addresses">
         <HostedRow
           testId="hosted-address-portal"
-          label="Client portal"
+          label={`${people.One} portal`}
           host={hosted.portal_host}
-          waitingFor={hosted.portal_on ? null : "Works once your client portal is turned on."}
+          waitingFor={hosted.portal_on ? null : `Works once your ${people.one} portal is turned on.`}
           movedTo={primary("portal")}
         />
         <HostedRow

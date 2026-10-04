@@ -4,7 +4,8 @@
 
 import { SetupStepHead } from "@/components/setup"
 import { Button } from "@/components/ui/button"
-import { CURRENT_STATES, type CurrentStateId } from "./routes"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
+import { currentStates, type CurrentStateId } from "./routes"
 
 /**
  * The only question every therapist answers, and it is a checklist.
@@ -34,18 +35,19 @@ export function RouteStep({
   onContinue: () => void
   onNoClients: () => void
 }) {
+  const people = usePeopleTerm()
   const nothingPicked = selected.length === 0
 
   return (
     <div className="space-y-5">
       <SetupStepHead
         eyebrow="Step 1"
-        title="How do clients pay you today?"
+        title={`How do ${people.many} pay you today?`}
         lede="Choose all that apply. You can change this later."
       />
 
       <div className="space-y-2">
-        {CURRENT_STATES.map((option) => {
+        {currentStates(people).map((option) => {
           const isSelected = selected.includes(option.id)
           return (
             <label
@@ -82,7 +84,7 @@ export function RouteStep({
           className="h-auto p-0 text-[12.5px] underline underline-offset-4"
           onClick={onNoClients}
         >
-          I&rsquo;m not seeing clients yet
+          I&rsquo;m not seeing {people.many} yet
         </Button>
       </p>
 
@@ -96,7 +98,7 @@ export function RouteStep({
             actually noticed. */}
         {nothingPicked && (
           <span className="text-[12.5px] text-muted-foreground">
-            Choose at least one option, or tell us you&rsquo;re not seeing clients yet.
+            Choose at least one option, or tell us you&rsquo;re not seeing {people.many} yet.
           </span>
         )}
       </div>

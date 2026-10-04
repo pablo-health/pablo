@@ -18,6 +18,7 @@ import { getUserStatus } from "@/lib/api/users"
 import { authConfig } from "@/lib/auth-config"
 import { OnboardingStepShell } from "@/components/onboarding/OnboardingStepShell"
 import { ScheduleStep } from "@/components/onboarding/ScheduleStep"
+import { DEFAULT_PEOPLE_TERM, peopleWords } from "@/lib/peopleTerm"
 
 export const dynamic = "force-dynamic"
 
@@ -34,11 +35,15 @@ export default async function OnboardingSchedulePage() {
     redirect("/onboarding")
   }
 
+  // Onboarding sits outside the dashboard's word provider; the server already
+  // resolved this clinician's word on the status response.
+  const people = peopleWords(status.people_term ?? DEFAULT_PEOPLE_TERM)
+
   return (
     <OnboardingStepShell
       stepId="schedule"
       title="Set your working hours"
-      description="Pick the days you see clients and the hours you're available. You can always fine-tune this later in Settings — or skip it for now."
+      description={`Pick the days you see ${people.many} and the hours you're available. You can always fine-tune this later in Settings — or skip it for now.`}
     >
       <ScheduleStep />
     </OnboardingStepShell>

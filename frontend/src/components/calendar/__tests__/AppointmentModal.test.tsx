@@ -224,7 +224,7 @@ describe("AppointmentModal", () => {
 
   it("renders the fast-path field labels", () => {
     render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
-    expect(screen.getByText("Patient")).toBeInTheDocument()
+    expect(screen.getByText("Client")).toBeInTheDocument()
     expect(screen.getByText("When")).toBeInTheDocument()
     expect(screen.getByText("Length")).toBeInTheDocument()
     expect(screen.getByText("Session type")).toBeInTheDocument()
@@ -365,7 +365,7 @@ describe("AppointmentModal", () => {
       const user = userEvent.setup()
       render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
 
-      const patientTrigger = screen.getByRole("combobox", { name: /patient/i })
+      const patientTrigger = screen.getByRole("combobox", { name: /client/i })
       await user.click(patientTrigger)
       await user.click(screen.getByRole("option", { name: /Doe, Jane/i }))
 
@@ -376,7 +376,7 @@ describe("AppointmentModal", () => {
       const user = userEvent.setup()
       render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
 
-      const patientTrigger = screen.getByRole("combobox", { name: /patient/i })
+      const patientTrigger = screen.getByRole("combobox", { name: /client/i })
       await user.click(patientTrigger)
       await user.click(screen.getByRole("option", { name: /Doe, Jane/i }))
 
@@ -398,7 +398,7 @@ describe("AppointmentModal", () => {
       const user = userEvent.setup()
       render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
 
-      const patientTrigger = screen.getByRole("combobox", { name: /patient/i })
+      const patientTrigger = screen.getByRole("combobox", { name: /client/i })
       await user.click(patientTrigger)
       expect(screen.queryByRole("option", { name: /Nguyen, Priya/i })).not.toBeInTheDocument()
 
@@ -421,7 +421,7 @@ describe("AppointmentModal", () => {
       const user = userEvent.setup()
       render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
 
-      const patientTrigger = screen.getByRole("combobox", { name: /patient/i })
+      const patientTrigger = screen.getByRole("combobox", { name: /client/i })
       await user.click(patientTrigger)
 
       expect(screen.getByText("Showing first 2 of 3 — type to search")).toBeInTheDocument()
@@ -433,7 +433,7 @@ describe("AppointmentModal", () => {
       const user = userEvent.setup()
       render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
 
-      const patientTrigger = screen.getByRole("combobox", { name: /patient/i })
+      const patientTrigger = screen.getByRole("combobox", { name: /client/i })
       await user.click(patientTrigger)
       await user.type(patientTrigger, "priya")
 
@@ -450,7 +450,7 @@ describe("AppointmentModal", () => {
       const user = userEvent.setup()
       render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
 
-      const patientTrigger = screen.getByRole("combobox", { name: /patient/i })
+      const patientTrigger = screen.getByRole("combobox", { name: /client/i })
       await user.click(patientTrigger)
 
       expect(screen.queryByText(/Showing first/i)).not.toBeInTheDocument()
@@ -472,7 +472,7 @@ describe("AppointmentModal", () => {
     it("submits the selected note type when creating an appointment", async () => {
       const user = userEvent.setup()
       render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
-      const patientTrigger = screen.getByRole("combobox", { name: /patient/i })
+      const patientTrigger = screen.getByRole("combobox", { name: /client/i })
       await user.click(patientTrigger)
       await user.click(screen.getByRole("option", { name: /Doe, Jane/i }))
       await user.click(screen.getByRole("button", { name: /more options/i }))
@@ -514,7 +514,7 @@ describe("AppointmentModal", () => {
 
   describe("Note inputs", () => {
     async function pickPatientAndCoachType(user: ReturnType<typeof userEvent.setup>) {
-      await user.click(screen.getByRole("combobox", { name: /patient/i }))
+      await user.click(screen.getByRole("combobox", { name: /client/i }))
       await user.click(screen.getByRole("option", { name: /Doe, Jane/i }))
       await user.click(screen.getByRole("button", { name: /more options/i }))
       await user.click(screen.getByRole("combobox", { name: /note type/i }))
@@ -674,7 +674,7 @@ describe("AppointmentModal", () => {
       render(<AppointmentModal open onClose={vi.fn()} preferences={prefs} />, {
         wrapper: createWrapper(),
       })
-      const patientTrigger = screen.getByRole("combobox", { name: /patient/i })
+      const patientTrigger = screen.getByRole("combobox", { name: /client/i })
       await user.click(patientTrigger)
       await user.click(screen.getByRole("option", { name: /Doe, Jane/i }))
       await user.click(screen.getByRole("button", { name: "Schedule" }))
@@ -699,7 +699,7 @@ describe("AppointmentModal", () => {
 
   describe("Recurrence (create mode only)", () => {
     async function selectPatient(user: ReturnType<typeof userEvent.setup>) {
-      const patientTrigger = screen.getByRole("combobox", { name: /patient/i })
+      const patientTrigger = screen.getByRole("combobox", { name: /client/i })
       await user.click(patientTrigger)
       await user.click(screen.getByRole("option", { name: /Doe, Jane/i }))
     }
@@ -835,7 +835,7 @@ describe("AppointmentModal — booking past an availability rule", () => {
   })
 
   async function selectPatient(user: ReturnType<typeof userEvent.setup>) {
-    await user.click(screen.getByRole("combobox", { name: /patient/i }))
+    await user.click(screen.getByRole("combobox", { name: /client/i }))
     await user.click(screen.getByRole("option", { name: /Doe, Jane/i }))
   }
 

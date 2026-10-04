@@ -71,7 +71,7 @@ describe("PatientChatDialog", () => {
     await user.click(screen.getByRole("button", { name: /chat/i }))
 
     const dialog = await screen.findByRole("dialog")
-    expect(dialog).toHaveTextContent(/ask about this patient/i)
+    expect(dialog).toHaveTextContent(/ask about this client/i)
     await waitFor(() => {
       expect(
         dialog.querySelector('[data-slot="chat-panel-with-history"]'),

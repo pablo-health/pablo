@@ -31,7 +31,8 @@ export function ProfileSettings({ preferences, onSave, isSaving }: ProfileSettin
           id="display-name"
           value={displayName}
           onChange={(e) => setDisplayName(e.target.value)}
-          placeholder="Dr. Jane Smith"
+          placeholder="e.g. Dr. Sam Rivera"
+          className="placeholder:italic placeholder:text-neutral-400"
         />
       </div>
       {isDirty && (

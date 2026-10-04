@@ -29,6 +29,7 @@ export const SECTION_SUBFIELDS: Record<string, SubFieldDef[]> = {
     { key: "chief_complaint", label: "Chief Complaint", type: "text" },
     { key: "mood_affect", label: "Mood/Affect", type: "text" },
     { key: "symptoms", label: "Symptoms", type: "list" },
+    // people-term-ok: the built-in SOAP template's field name, stored with the note
     { key: "client_narrative", label: "Client Narrative", type: "text" },
   ],
   objective: [
@@ -161,6 +162,7 @@ export function structuredToNarrative(state: StructuredEditState) {
       formatField("Chief Complaint", s.chief_complaint),
       formatField("Mood/Affect", s.mood_affect),
       formatListField("Symptoms", s.symptoms),
+      // people-term-ok: matches the field name the backend writes and parseSubjective reads back
       formatField("Client Narrative", s.client_narrative),
     ]),
     objective: joinParts([

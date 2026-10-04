@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { SendFormsFlow } from "./intakeSend/SendFormsFlow"
 
 export { sendableForms } from "./intakeSend/sendable"
@@ -24,6 +25,7 @@ export { sendableForms } from "./intakeSend/sendable"
  */
 export function SendIntakeForm({ patientId }: { patientId: string }) {
   const [open, setOpen] = useState(false)
+  const people = usePeopleTerm()
 
   return (
     <div data-testid="send-intake-form">
@@ -39,7 +41,7 @@ export function SendIntakeForm({ patientId }: { patientId: string }) {
               header={
                 <DialogHeader>
                   <DialogTitle>Send forms</DialogTitle>
-                  <DialogDescription>Choose what this client should do, then review it.</DialogDescription>
+                  <DialogDescription>Choose what this {people.one} should do, then review it.</DialogDescription>
                 </DialogHeader>
               }
             />

@@ -12,7 +12,7 @@ import {
 } from "@/hooks/useGoogleCalendarChanges"
 import { usePatientList } from "@/hooks/usePatients"
 import { useOutsideSessions } from "@/hooks/useOutsideSessions"
-import { useAvailabilityRules, useFreeSlots } from "@/hooks/useAvailability"
+import { useAvailabilityRules } from "@/hooks/useAvailability"
 import { summarize } from "@/components/settings/AvailabilitySettings"
 import { useToast } from "@/components/ui/Toast"
 import { ApiError } from "@/lib/api/client"
@@ -36,10 +36,10 @@ import { GoogleChangesBanner } from "./GoogleChangesBanner"
 import { needsGoogleDecision } from "./GoogleChangeNotice"
 import { useOutsideReview } from "./useOutsideReview"
 import { matchWholeDayBlockRule } from "./unavailability"
+import { openingAnchor } from "./schedule"
 import {
   DENSITY_PRESETS,
   dynamicDayWindow,
-  format,
   shiftAnchor,
   visibleRange,
   type CalendarDensity,
@@ -68,6 +68,12 @@ interface EditorialCalendarProps {
   onSelectAppointment: (appointment: AppointmentResponse) => void
   onCreateNew: () => void
   onViewChange?: (view: EditorialView) => void
+  /** The practice's zone, which availability rules are kept in. Defaults to
+   * the browser's. */
+  timeZone?: string
+  /** Open on the week of the next working day when nothing is left in this
+   * one. For the first look after setup; see `openingAnchor`. */
+  skipSpentWeek?: boolean
 }
 
 interface PeekState {
@@ -90,6 +96,8 @@ export function EditorialCalendar({
   onSelectAppointment,
   onCreateNew,
   onViewChange,
+  timeZone,
+  skipSpentWeek = false,
 }: EditorialCalendarProps) {
   const preset = DENSITY_PRESETS[density]
   const [view, setView] = useState<EditorialView>(defaultView)
@@ -158,16 +166,22 @@ export function EditorialCalendar({
     [availabilityRulesData],
   )
   // Only day view needs this at the EditorialCalendar level — week view
-  // attributes each of its own 7 columns internally. Duration omitted so the
-  // engine picks its own default (session_defaults, else 50min), same as
-  // the sibling AvailabilitySlotPicker does.
-  const anchorDateStr = useMemo(() => format(anchor, "yyyy-MM-dd"), [anchor])
-  const { data: anchorFreeSlots } = useFreeSlots(anchorDateStr)
+  // attributes each of its own 7 columns internally.
   const dayBlockedLabel = useMemo(() => {
-    if (view !== "day" || anchorFreeSlots?.configured !== true) return undefined
+    if (view !== "day" || availabilityRules.length === 0) return undefined
     const rule = matchWholeDayBlockRule(availabilityRules, anchor)
     return rule ? summarize(rule) : undefined
-  }, [view, anchorFreeSlots, availabilityRules, anchor])
+  }, [view, availabilityRules, anchor])
+
+  // Decided once, as soon as the hours and this week's sessions are in, and
+  // never again: after that the anchor is the clinician's to move.
+  const [openingDecided, setOpeningDecided] = useState(!skipSpentWeek)
+  if (!openingDecided && availabilityRulesData && data) {
+    setOpeningDecided(true)
+    const now = new Date()
+    const next = openingAnchor(availabilityRulesData.data, data.data, now, timeZone)
+    if (next !== now) setAnchor(next)
+  }
 
   const patientMap = useMemo(() => {
     const map = new Map<string, string>()
@@ -370,6 +384,7 @@ export function EditorialCalendar({
             appointments={filteredAppointments}
             patientMap={patientMap}
             availabilityRules={availabilityRules}
+            timeZone={timeZone}
             onSelectSlot={onSelectSlot}
             onPeek={handlePeek}
             onEdit={handleEdit}
@@ -389,7 +404,7 @@ export function EditorialCalendar({
             appointments={filteredAppointments}
             patientMap={patientMap}
             availabilityRules={availabilityRules}
-            freeSlots={anchorFreeSlots}
+            timeZone={timeZone}
             onSelectSlot={onSelectSlot}
             onPeek={handlePeek}
             onEdit={handleEdit}

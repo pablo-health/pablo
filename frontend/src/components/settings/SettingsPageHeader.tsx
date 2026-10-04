@@ -3,6 +3,8 @@
 "use client"
 
 import { usePathname } from "next/navigation"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
+import { sayPeople } from "@/lib/peopleTerm"
 import { findSettingsItem } from "./registry"
 
 const BASE = "/dashboard/settings"
@@ -12,6 +14,7 @@ export function SettingsPageHeader() {
   const pathname = usePathname()
   const section = pathname?.startsWith(`${BASE}/`) ? pathname.slice(BASE.length + 1).split("/")[0] : ""
   const item = findSettingsItem(section)
+  const people = usePeopleTerm()
 
   if (!item) return <div />
 
@@ -19,9 +22,9 @@ export function SettingsPageHeader() {
     <div>
       <div className="mb-2 text-[11px] font-bold uppercase tracking-[0.14em] text-primary-600">{item.groupLabel}</div>
       <h1 className="mb-1.5 font-display text-[30px] font-bold leading-[1.05] tracking-[-0.015em] text-foreground">
-        {item.label}
+        {sayPeople(item.label, people)}
       </h1>
-      <p className="max-w-[540px] text-sm leading-relaxed text-muted-foreground">{item.desc}</p>
+      <p className="max-w-[540px] text-sm leading-relaxed text-muted-foreground">{sayPeople(item.desc, people)}</p>
     </div>
   )
 }

@@ -10,6 +10,7 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from ..people_term import PeopleTerm  # noqa: TC001 — Pydantic needs this at runtime
 from .inbox import EarlierMessagesOnReply  # noqa: TC001 — Pydantic needs this at runtime
 from .validators import validate_phone
 
@@ -181,6 +182,10 @@ class UserPreferences(BaseModel):
     # in the Inbox: ask each time, mark them handled too, or leave them open.
     # See ``app.inbox.replies``.
     inbox_reply_earlier_messages: EarlierMessagesOnReply = "ask"
+    # Whether the app says "clients" or "patients" to this clinician. None is
+    # "not chosen": the clinician's details, then the practice default, decide.
+    # See ``app.people_term``.
+    people_term: PeopleTerm | None = None
 
     @model_validator(mode="after")
     def _seed_state_from_superseded_route(self) -> UserPreferences:

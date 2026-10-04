@@ -3,6 +3,7 @@
 "use client"
 
 import { ExternalLink } from "lucide-react"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 
 /**
  * For the therapist who does not have an NPI at all.
@@ -24,6 +25,7 @@ import { ExternalLink } from "lucide-react"
  * future version of this screen that files for her goes past counsel first.
  */
 export function NoNpiYet() {
+  const people = usePeopleTerm()
   return (
     <div className="rounded-xl border border-stone-200 bg-white p-4">
       <p className="text-sm font-medium text-stone-900">You&rsquo;ll need an NPI</p>
@@ -56,7 +58,7 @@ export function NoNpiYet() {
 
       <p className="mt-3 text-xs text-stone-500">
         Come back when you have it and we&rsquo;ll pick up here. Nothing else in
-        your setup is blocked on it &mdash; you can keep going and see clients
+        your setup is blocked on it &mdash; you can keep going and see {people.many}
         who pay you directly.
       </p>
     </div>

@@ -9,6 +9,8 @@ import {
   useRemovePracticeDomain,
 } from "@/hooks/usePracticeDomains"
 import { useDomainConnect } from "@/hooks/useDomainConnect"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
+import { type PeopleWords } from "@/lib/peopleTerm"
 import { ApiError } from "@/lib/api/client"
 import type { DomainPurpose, PracticeDomain } from "@/lib/api/practiceDomains"
 import { AddDomainForm } from "../domains/AddDomainForm"
@@ -23,14 +25,21 @@ import { withLastCheck } from "../domains/records"
 import { SettingsCard } from "../ui"
 import { useSettingsUserStatus } from "../useSettingsPreferences"
 
-const SECTIONS: { purpose: DomainPurpose; title: string; description: string }[] = [
-  { purpose: "portal", title: "Client portal", description: "Addresses your clients can use to reach your portal." },
-  { purpose: "site", title: "Website", description: "Addresses for your practice's website." },
-]
+function sections(people: PeopleWords): { purpose: DomainPurpose; title: string; description: string }[] {
+  return [
+    {
+      purpose: "portal",
+      title: `${people.One} portal`,
+      description: `Addresses your ${people.many} can use to reach your portal.`,
+    },
+    { purpose: "site", title: "Website", description: "Addresses for your practice's website." },
+  ]
+}
 
 /** Practice > Domains. The practice's own addresses for its portal and website. */
 export function DomainsPage() {
   const { data: userStatus } = useSettingsUserStatus()
+  const people = usePeopleTerm()
   const run = usePracticeDomainCheckRun()
   const { check } = run
   const { data: listed, isLoading, isError } = usePracticeDomains(run.pollUntil)
@@ -86,7 +95,7 @@ export function DomainsPage() {
         />
       )}
       {data.hosted && <HostedAddresses hosted={data.hosted} domains={data.domains} />}
-      {SECTIONS.map(({ purpose, title, description }) => {
+      {sections(people).map(({ purpose, title, description }) => {
         const domains = byPurpose(purpose)
         return (
           <SettingsCard key={purpose} title={title} description={description}>

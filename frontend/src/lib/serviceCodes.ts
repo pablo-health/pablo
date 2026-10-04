@@ -25,7 +25,9 @@ export const COMMON_SERVICE_CODES: ServiceCodeSuggestion[] = [
   { code: "90832", description: "Therapy session — around 30 minutes" },
   { code: "90834", description: "Therapy session — around 45 minutes" },
   { code: "90837", description: "Therapy session — 60 minutes or more" },
+  // people-term-ok: these two codes are defined by whether the patient is present
   { code: "90846", description: "Family session — patient not present" },
+  // people-term-ok: these two codes are defined by whether the patient is present
   { code: "90847", description: "Family or couples session — patient present" },
   { code: "90853", description: "Group session" },
   { code: "90839", description: "Crisis session — first 60 minutes" },

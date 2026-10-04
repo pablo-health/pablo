@@ -41,6 +41,7 @@ import {
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { useRecordPayment } from "@/hooks/usePayments"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { centsToDollars, dollarsToCents } from "@/lib/money"
 import { ApiError } from "@/lib/api/client"
 import { RECORDABLE_PAYMENT_METHODS } from "@/types/payments"
@@ -85,6 +86,7 @@ export function RecordPaymentDialog({
   onOpenChange,
 }: RecordPaymentDialogProps) {
   const recordPayment = useRecordPayment()
+  const people = usePeopleTerm()
   // Defaults to the balance, but only when one is owed: a client in credit
   // would otherwise see a negative figure pre-filled as the amount to record.
   const [amount, setAmount] = useState(() => centsToDollars(Math.max(balanceCents, 0)))
@@ -202,7 +204,7 @@ export function RecordPaymentDialog({
               id="record-payment-note"
               value={note}
               onChange={(event) => setNote(event.target.value)}
-              placeholder="Optional — shown on this client's ledger, never sent to a payer."
+              placeholder={`Optional — shown on this ${people.one}'s ledger, never sent to a payer.`}
             />
           </div>
           {problem && (

@@ -22,28 +22,33 @@ import {
   Upload,
 } from "lucide-react"
 import { useAuth } from "@/lib/auth-context"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
+import { type PeopleWords } from "@/lib/peopleTerm"
 
 const EHR_OPTIONS = [
   { value: "simplepractice", label: "SimplePractice" },
   { value: "sessions_health", label: "Sessions Health" },
 ] as const
 
-const URL_HINTS: Record<string, string> = {
-  simplepractice:
-    "Find this in SimplePractice: Settings > Calendar > Apple Calendar section. Set the calendar display to show full names, so Pablo can tell clients apart.",
-  sessions_health:
-    "Find this in Sessions Health: Settings > Calendar Integration > iCal Feed URL.",
+function urlHints(people: PeopleWords): Record<string, string> {
+  return {
+    simplepractice: `Find this in SimplePractice: Settings > Calendar > Apple Calendar section. Set the calendar display to show full names, so Pablo can tell ${people.many} apart.`,
+    sessions_health:
+      "Find this in Sessions Health: Settings > Calendar Integration > iCal Feed URL.",
+  }
 }
 
 // Initials never identify one client, so every session on such a feed is a
 // question. The setting that fixes it is the clinician's, in their own
 // calendar sync; this only says what the feed shows and what changes if they
 // do. The reasoning is in outside_sessions.py.
-const INITIALS_NOTE =
-  "This feed shows clients by their initials, so Pablo asks about every session. Showing full names in the calendar sync means fewer questions."
+function initialsNote(people: PeopleWords): string {
+  return `This feed shows ${people.many} by their initials, so Pablo asks about every session. Showing full names in the calendar sync means fewer questions.`
+}
 
 export function IntegrationSettings() {
   const { loading: authLoading } = useAuth()
+  const people = usePeopleTerm()
   const [connections, setConnections] = useState<ICalConnectionStatus[]>([])
   const [loaded, setLoaded] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -187,7 +192,7 @@ export function IntegrationSettings() {
                   )}
                   {conn.title_style === "initials" && (
                     <p data-testid="feed-initials-note" className="text-xs text-neutral-600 mt-1">
-                      {INITIALS_NOTE}
+                      {initialsNote(people)}
                     </p>
                   )}
                 </div>
@@ -250,7 +255,7 @@ export function IntegrationSettings() {
                 type="url"
               />
               <p className="text-xs text-neutral-400">
-                {URL_HINTS[selectedEhr]}
+                {urlHints(people)[selectedEhr]}
               </p>
             </div>
 
@@ -289,11 +294,11 @@ export function IntegrationSettings() {
       {/* CSV/Zip Import */}
       <div className="space-y-3 border-t border-neutral-100 pt-4">
         <Label className="text-sm font-medium text-neutral-700">
-          Import Clients
+          Import {people.Many}
         </Label>
         <p className="text-xs text-neutral-400">
-          Upload a client export (CSV or zip) from your EHR to import patients
-          and auto-create client mappings.
+          Upload a {people.one} export (CSV or zip) from your EHR to import {people.many}
+          and auto-create {people.one} mappings.
         </p>
         <div className="flex items-center gap-3">
           <input
@@ -337,7 +342,7 @@ export function IntegrationSettings() {
                 {importResult.updated > 0 && `, ${importResult.updated} updated`}
                 , {importResult.skipped} unchanged
                 {importResult.mappings_created > 0 &&
-                  `, ${importResult.mappings_created} client mappings created`}
+                  `, ${importResult.mappings_created} ${people.one} mappings created`}
               </p>
             )}
           </div>

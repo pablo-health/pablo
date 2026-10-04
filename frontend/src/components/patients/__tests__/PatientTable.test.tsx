@@ -235,7 +235,7 @@ describe("PatientTable", () => {
 
       render(<PatientTable />, { wrapper: Wrapper })
 
-      expect(screen.getByText(/loading patients/i)).toBeInTheDocument()
+      expect(screen.getByText(/loading clients/i)).toBeInTheDocument()
     })
   })
 
@@ -248,7 +248,7 @@ describe("PatientTable", () => {
       render(<PatientTable />, { wrapper: Wrapper })
 
       await waitFor(() => {
-        expect(screen.getByText(/failed to load patients/i)).toBeInTheDocument()
+        expect(screen.getByText(/failed to load clients/i)).toBeInTheDocument()
       })
     })
   })
@@ -268,7 +268,7 @@ describe("PatientTable", () => {
 
       await waitFor(() => {
         expect(
-          screen.getByText(/no patients yet.*click.*add patient.*to get started/i)
+          screen.getByText(/no clients yet.*click.*add client.*to get started/i)
         ).toBeInTheDocument()
       })
     })
@@ -299,14 +299,14 @@ describe("PatientTable", () => {
         page_size: 50,
       })
 
-      const searchInput = screen.getByPlaceholderText(/search patients/i)
+      const searchInput = screen.getByPlaceholderText(/search clients/i)
       await user.type(searchInput, "NonexistentName")
 
       // Wait for debounce (500ms) + API call
       await waitFor(
         () => {
           expect(
-            screen.getByText(/no patients found matching your search/i)
+            screen.getByText(/no clients found matching your search/i)
           ).toBeInTheDocument()
         },
         { timeout: 1000 }
@@ -327,7 +327,7 @@ describe("PatientTable", () => {
 
       render(<PatientTable />, { wrapper: Wrapper })
 
-      expect(screen.getByPlaceholderText(/search patients/i)).toBeInTheDocument()
+      expect(screen.getByPlaceholderText(/search clients/i)).toBeInTheDocument()
     })
 
     it("requests page_size=100 so a roster over 20 is fully visible", async () => {
@@ -360,7 +360,7 @@ describe("PatientTable", () => {
 
       render(<PatientTable />, { wrapper: Wrapper })
 
-      expect(await screen.findByText("3 patients")).toBeInTheDocument()
+      expect(await screen.findByText("3 clients")).toBeInTheDocument()
     })
 
     it("surfaces the cap when the roster exceeds the page size", async () => {
@@ -375,7 +375,7 @@ describe("PatientTable", () => {
       render(<PatientTable />, { wrapper: Wrapper })
 
       expect(
-        await screen.findByText("Showing 3 of 137 patients"),
+        await screen.findByText("Showing 3 of 137 clients"),
       ).toBeInTheDocument()
     })
   })
@@ -394,7 +394,7 @@ describe("PatientTable", () => {
         expect(screen.getByText("Jane Doe")).toBeInTheDocument()
       })
       const deleteBtn = screen.getByRole("button", {
-        name: /delete patient jane doe/i,
+        name: /delete client jane doe/i,
       })
       await user.click(deleteBtn)
       const dialog = await screen.findByRole("dialog")
@@ -457,7 +457,7 @@ describe("PatientTable", () => {
 
       // Open, check the box, then cancel — the box should not persist.
       await user.click(
-        screen.getByRole("button", { name: /delete patient jane doe/i }),
+        screen.getByRole("button", { name: /delete client jane doe/i }),
       )
       const firstDialog = await screen.findByRole("dialog")
       await user.click(
@@ -478,7 +478,7 @@ describe("PatientTable", () => {
 
       // Reopen for a different patient — Delete must start disabled again.
       await user.click(
-        screen.getByRole("button", { name: /delete patient john smith/i }),
+        screen.getByRole("button", { name: /delete client john smith/i }),
       )
       const secondDialog = await screen.findByRole("dialog")
       expect(
@@ -514,14 +514,14 @@ describe("PatientTable", () => {
       })
 
       expect(
-        screen.queryByRole("button", { name: /^add patient$/i }),
+        screen.queryByRole("button", { name: /^add client$/i }),
       ).not.toBeInTheDocument()
       expect(screen.queryByText("Actions")).not.toBeInTheDocument()
       expect(
-        screen.queryByRole("button", { name: /edit patient jane doe/i }),
+        screen.queryByRole("button", { name: /edit client jane doe/i }),
       ).not.toBeInTheDocument()
       expect(
-        screen.queryByRole("button", { name: /delete patient jane doe/i }),
+        screen.queryByRole("button", { name: /delete client jane doe/i }),
       ).not.toBeInTheDocument()
     })
 
@@ -541,14 +541,14 @@ describe("PatientTable", () => {
       })
 
       expect(
-        screen.getByRole("button", { name: /^add patient$/i }),
+        screen.getByRole("button", { name: /^add client$/i }),
       ).toBeInTheDocument()
       expect(screen.getByText("Actions")).toBeInTheDocument()
       expect(
-        screen.getByRole("button", { name: /edit patient jane doe/i }),
+        screen.getByRole("button", { name: /edit client jane doe/i }),
       ).toBeInTheDocument()
       expect(
-        screen.getByRole("button", { name: /delete patient jane doe/i }),
+        screen.getByRole("button", { name: /delete client jane doe/i }),
       ).toBeInTheDocument()
     })
   })

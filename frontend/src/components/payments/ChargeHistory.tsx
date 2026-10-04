@@ -16,6 +16,7 @@ import { formatCents } from "@/lib/money"
 import { isPaymentsUnconfigured } from "@/lib/api/payments"
 import { chargeStatusBadge, declineReason, formatChargeDate } from "@/lib/paymentDisplay"
 import { usePatientCharges } from "@/hooks/usePayments"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 
 interface ChargeHistoryProps {
   patientId: string
@@ -23,6 +24,7 @@ interface ChargeHistoryProps {
 
 export function ChargeHistory({ patientId }: ChargeHistoryProps) {
   const { data: charges, isLoading, error } = usePatientCharges(patientId)
+  const people = usePeopleTerm()
 
   if (isLoading) {
     return (
@@ -74,7 +76,7 @@ export function ChargeHistory({ patientId }: ChargeHistoryProps) {
               </span>
             </div>
             {charge.status === "failed" && (
-              <p className="mt-1 text-xs text-red-600">{declineReason(charge)}</p>
+              <p className="mt-1 text-xs text-red-600">{declineReason(charge, people)}</p>
             )}
           </li>
         )

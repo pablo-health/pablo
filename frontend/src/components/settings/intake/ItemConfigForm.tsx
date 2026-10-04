@@ -12,7 +12,6 @@ import type { Instrument } from "@/types/instruments"
 import type { ChoiceOption, ItemConfig, ItemType } from "@/types/intakePackets"
 import {
   BLANK_FORM_PICKER_LABEL,
-  CARD_COLLECT_FIELDS_HELP,
   CARD_COLLECT_FIELDS_LABEL,
   CARD_SIDES_BOTH,
   CARD_SIDES_FRONT,
@@ -22,7 +21,9 @@ import {
   NO_BLANK_FORM_CHOICE,
   NO_BLANK_FORMS,
   NO_PUBLISHED_DOCUMENTS,
+  cardCollectFieldsHelp,
 } from "./intakeCopy"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 
 interface ItemConfigFormProps {
   itemType: ItemType
@@ -163,6 +164,7 @@ export function ItemConfigForm({
   instruments = [],
   blankForms = [],
 }: ItemConfigFormProps) {
+  const people = usePeopleTerm()
   const set = (key: string, value: unknown) => onChange({ ...config, [key]: value })
   const setNumber = (key: string, raw: string) =>
     set(key, raw === "" ? undefined : Number(raw))
@@ -449,7 +451,7 @@ export function ItemConfigForm({
             <span>
               {CARD_COLLECT_FIELDS_LABEL}
               <span className="block text-[12.5px] text-muted-foreground">
-                {CARD_COLLECT_FIELDS_HELP}
+                {cardCollectFieldsHelp(people)}
               </span>
             </span>
           </label>

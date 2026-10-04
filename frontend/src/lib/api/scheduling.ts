@@ -303,7 +303,7 @@ export interface GoogleCalendarStatus {
   /** The calendar new sessions are brought in from, or null. `"primary"`
    * is the main calendar before a read has resolved its id. */
   follow_calendar_id?: string | null
-  /** The connection can read events ("Look at my week"), which following
+  /** The connection can read events ("Scan calendar"), which following
    * needs. */
   import_granted?: boolean
 }

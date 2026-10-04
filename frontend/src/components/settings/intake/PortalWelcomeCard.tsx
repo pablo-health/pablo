@@ -16,6 +16,7 @@ import {
 } from "@/hooks/usePortalWelcome"
 import { ApiError } from "@/lib/api/client"
 import type { PortalWelcome, PortalWelcomeDraft } from "@/lib/api/portalWelcome"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 
 /** Mirrors `backend/app/portal/welcome.py`; the server checks them again. */
 const MAX_HEADING_LENGTH = 120
@@ -50,6 +51,7 @@ function saveProblems(error: unknown): string[] {
 
 function PortalWelcomeEditor({ welcome }: { welcome: PortalWelcome }) {
   const save = useSavePortalWelcome()
+  const people = usePeopleTerm()
   const resetToDefault = useResetPortalWelcome()
   const bodyRef = useRef<HTMLTextAreaElement>(null)
 
@@ -89,7 +91,7 @@ function PortalWelcomeEditor({ welcome }: { welcome: PortalWelcome }) {
   return (
     <SettingsCard
       title="Welcome screen"
-      description="The first thing a client reads when they open the portal."
+      description={`The first thing a ${people.one} reads when they open the portal.`}
     >
       <div className="grid gap-6 lg:grid-cols-2" data-testid="portal-welcome-card">
         <div className="space-y-4">

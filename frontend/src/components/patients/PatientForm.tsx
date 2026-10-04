@@ -27,6 +27,7 @@ import {
 import { useCreatePatient, useUpdatePatient } from "@/hooks/usePatients"
 import { usePortalSettings } from "@/hooks/usePortalSettings"
 import { useFeature } from "@/lib/featureGates"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { NewClientNextStep } from "./intakeSend/NewClientNextStep"
 import { PortalOfferPrompt, type PortalAnswer } from "./intakeSend/PortalOfferPrompt"
 import type { PatientResponse } from "@/types/patients"
@@ -56,6 +57,7 @@ interface PatientFormProps {
 }
 
 export function PatientForm({ mode, patient, open, onOpenChange }: PatientFormProps) {
+  const people = usePeopleTerm()
   const createPatient = useCreatePatient()
   const updatePatient = useUpdatePatient()
 
@@ -165,7 +167,7 @@ export function PatientForm({ mode, patient, open, onOpenChange }: PatientFormPr
       reset()
     } catch {
       // Error handling is done by the mutation hooks
-      console.error("Patient form submission failed")
+      console.error("PatientForm submission failed")
     }
   }
 
@@ -199,7 +201,7 @@ export function PatientForm({ mode, patient, open, onOpenChange }: PatientFormPr
               onDone={finish}
               portalNote={
                 portalAnswer === "not_now"
-                  ? "You can turn on the client portal any time in Settings."
+                  ? `You can turn on the ${people.one} portal any time in Settings.`
                   : undefined
               }
             />
@@ -214,12 +216,12 @@ export function PatientForm({ mode, patient, open, onOpenChange }: PatientFormPr
       <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
           <DialogTitle>
-            {mode === "create" ? "Add Patient" : "Edit Patient"}
+            {mode === "create" ? `Add ${people.One}` : `Edit ${people.One}`}
           </DialogTitle>
           <DialogDescription>
             {mode === "create"
-              ? "Enter patient information to create a new record."
-              : "Update patient information."}
+              ? `Enter ${people.one} information to create a new record.`
+              : `Update ${people.one} information.`}
           </DialogDescription>
         </DialogHeader>
 
@@ -374,8 +376,8 @@ export function PatientForm({ mode, patient, open, onOpenChange }: PatientFormPr
                   ? "Creating..."
                   : "Updating..."
                 : mode === "create"
-                  ? "Create Patient"
-                  : "Update Patient"}
+                  ? `Create ${people.One}`
+                  : `Update ${people.One}`}
             </Button>
           </DialogFooter>
         </form>

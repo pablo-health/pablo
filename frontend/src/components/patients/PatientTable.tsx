@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/table"
 import { usePatientList, useDeletePatient } from "@/hooks/usePatients"
 import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import type { PatientResponse } from "@/types/patients"
 import { PatientForm } from "./PatientForm"
 
@@ -43,6 +44,7 @@ function useDebounce<T>(value: T, delay: number): T {
 
 export function PatientTable() {
   const router = useRouter()
+  const people = usePeopleTerm()
   const { readOnly } = useReadOnlyMode()
   const [searchTerm, setSearchTerm] = useState("")
   const [formDialogOpen, setFormDialogOpen] = useState(false)
@@ -104,7 +106,7 @@ export function PatientTable() {
         setPatientToDelete(null)
         setRetentionAcknowledged(false)
       } catch (error) {
-        console.error("Patient delete failed")
+        console.error("PatientTable delete failed")
       }
     }
   }
@@ -142,7 +144,7 @@ export function PatientTable() {
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-neutral-400 w-4 h-4" />
             <Input
               type="text"
-              placeholder="Search patients..."
+              placeholder={`Search ${people.many}...`}
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="pl-10"
@@ -150,7 +152,7 @@ export function PatientTable() {
           </div>
           {!readOnly && (
             <Button onClick={handleAddPatient} className="btn-primary">
-              Add Patient
+              Add {people.One}
             </Button>
           )}
         </div>
@@ -159,28 +161,28 @@ export function PatientTable() {
         <div className="card">
           {error ? (
             <div className="text-center py-12">
-              <p className="text-red-500">Failed to load patients. Please try again.</p>
+              <p className="text-red-500">Failed to load {people.many}. Please try again.</p>
             </div>
           ) : isLoading ? (
             <div className="text-center py-12">
-              <p className="text-neutral-500">Loading patients...</p>
+              <p className="text-neutral-500">Loading {people.many}...</p>
             </div>
           ) : patients.length === 0 ? (
             <div className="text-center py-12">
               <p className="text-neutral-500">
                 {searchTerm
-                  ? "No patients found matching your search."
+                  ? `No ${people.many} found matching your search.`
                   : readOnly
-                    ? "No patients on file."
-                    : "No patients yet. Click \"Add Patient\" to get started."}
+                    ? `No ${people.many} on file.`
+                    : `No ${people.many} yet. Click "Add ${people.One}" to get started.`}
               </p>
             </div>
           ) : (
             <div className="overflow-x-auto">
               <p className="mb-3 text-sm text-neutral-500">
                 {patients.length < total
-                  ? `Showing ${patients.length} of ${total} patients`
-                  : `${total} ${total === 1 ? "patient" : "patients"}`}
+                  ? `Showing ${patients.length} of ${total} ${people.many}`
+                  : `${total} ${total === 1 ? people.one : people.many}`}
               </p>
               <Table>
                 <TableHeader>
@@ -217,7 +219,7 @@ export function PatientTable() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              aria-label={`Edit patient ${patient.first_name} ${patient.last_name}`}
+                              aria-label={`Edit ${people.one} ${patient.first_name} ${patient.last_name}`}
                               onClick={() => handleEditPatient(patient)}
                             >
                               <Pencil className="w-4 h-4" />
@@ -225,7 +227,7 @@ export function PatientTable() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              aria-label={`Delete patient ${patient.first_name} ${patient.last_name}`}
+                              aria-label={`Delete ${people.one} ${patient.first_name} ${patient.last_name}`}
                               onClick={() => handleDeleteClick(patient)}
                             >
                               <Trash2 className="w-4 h-4 text-red-500" />
@@ -254,7 +256,7 @@ export function PatientTable() {
       <Dialog open={deleteDialogOpen} onOpenChange={handleDeleteDialogChange}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete Patient</DialogTitle>
+            <DialogTitle>Delete {people.One}</DialogTitle>
             <DialogDescription>
               Are you sure you want to delete{" "}
               <strong>
@@ -278,7 +280,7 @@ export function PatientTable() {
               className="text-sm font-normal leading-relaxed cursor-pointer"
             >
               I confirm I have met my professional retention obligations for
-              this patient&apos;s record.
+              this {people.one}&apos;s record.
             </Label>
           </div>
           <DialogFooter>

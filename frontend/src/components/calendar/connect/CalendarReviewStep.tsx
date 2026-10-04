@@ -5,6 +5,7 @@
 import { ArrowLeft, Calendar, Check, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SetupStepHead } from "@/components/setup"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import type { ConfirmImportResult, ImportProposal, ProposedSeries } from "@/lib/api/scheduling"
 import { seenElsewhere, WhichClientsList } from "./WhichClientsList"
 
@@ -39,6 +40,9 @@ function whenLabel(series: ProposedSeries): string {
 }
 
 interface CalendarReviewStepProps {
+  /** Where this step sits in the wizard's stepper, so the card and the
+   * stepper always give the same number. */
+  step: number
   proposal: ImportProposal | null
   checked: Record<string, boolean>
   onToggle: (candidateKey: string) => void
@@ -57,11 +61,10 @@ interface CalendarReviewStepProps {
   error: string | null
   result: ConfirmImportResult | null
   onFinish: () => void
-  /** New sessions keep coming in from this calendar. */
-  following?: boolean
 }
 
 export function CalendarReviewStep({
+  step,
   proposal,
   checked,
   onToggle,
@@ -78,21 +81,17 @@ export function CalendarReviewStep({
   error,
   result,
   onFinish,
-  following = false,
 }: CalendarReviewStepProps) {
+  const people = usePeopleTerm()
   if (result) {
     return (
       <div className="space-y-4 text-center">
         <h2 className="font-display text-2xl font-semibold text-neutral-900">
-          {result.patients_created} client{result.patients_created === 1 ? "" : "s"} added
+          {result.patients_created} {result.patients_created === 1 ? people.one : people.many} added
         </h2>
         <p className="mx-auto max-w-md text-sm text-muted-foreground">
-          {result.appointments_created} appointment{result.appointments_created === 1 ? "" : "s"}{" "}
-          scheduled ahead.
-          {/* Following keeps reading the calendar, so this would be false. */}
-          {following
-            ? null
-            : " Read access ended when the import finished — Pablo asks again if you ever import a second time."}
+          {result.appointments_created} upcoming appointment
+          {result.appointments_created === 1 ? "" : "s"} added.
         </p>
         {result.already_scheduled.map((key) => (
           <p key={key} className="mx-auto max-w-md text-sm text-muted-foreground">
@@ -103,13 +102,12 @@ export function CalendarReviewStep({
         ))}
         {result.skipped.length > 0 ? (
           <p className="mx-auto max-w-md text-sm text-amber-700">
-            {result.skipped.length} couldn&rsquo;t be scheduled — the times collided with
-            something already booked. You can schedule them yourself from their chart.
+            {result.skipped.length} couldn&rsquo;t be added because those times are already booked.
           </p>
         ) : null}
         <Button onClick={onFinish} className="mt-2">
           <Calendar className="h-4 w-4" />
-          Go to my calendar
+          View calendar
         </Button>
       </div>
     )
@@ -119,13 +117,13 @@ export function CalendarReviewStep({
     return (
       <div className="space-y-4">
         <SetupStepHead
-          eyebrow="Step 4 · you decide"
-          title="Which of these are clients?"
-          lede="Look at your week first — this list fills in once Pablo has scanned it."
+          eyebrow={`Step ${step} · Review`}
+          title={`Which of these are ${people.many}?`}
+          lede="Scan your calendar before reviewing recurring events."
         />
         <Button variant="ghost" size="sm" onClick={onReviewAgain}>
           <ArrowLeft className="h-4 w-4" />
-          Back to your week
+          Scan calendar
         </Button>
       </div>
     )
@@ -149,14 +147,14 @@ export function CalendarReviewStep({
       : "Adding…"
     : savingOnly
       ? "Save"
-      : `Add ${checkedCount} client${checkedCount === 1 ? "" : "s"}`
+      : `Add ${checkedCount} ${checkedCount === 1 ? people.one : people.many}`
 
   return (
     <div className="space-y-4">
       <SetupStepHead
-        eyebrow="Step 4 · you decide"
-        title="Which of these are clients?"
-        lede={`These ${total} repeat on a weekly or biweekly rhythm. Check the ones that are clients. Uncheck standups, classes, and anything else that just happens to repeat.`}
+        eyebrow={`Step ${step} · Review`}
+        title={`Which of these are ${people.many}?`}
+        lede="Select the recurring events you want to add."
       />
 
       <WhichClientsList
@@ -181,17 +179,9 @@ export function CalendarReviewStep({
           onClick={onToggleExpanded}
           className="pt-1 text-left text-sm font-medium text-muted-foreground underline underline-offset-2 hover:text-neutral-700"
         >
-          {expanded
-            ? `Hide the other ${total - VISIBLE_ROWS}`
-            : `Show the other ${hiddenCount} — all look like weekly clients`}
+          {expanded ? "Show fewer" : `Show ${hiddenCount} more`}
         </button>
       ) : null}
-
-      <p className="border-t border-border pt-3 text-xs text-muted-foreground">
-        {
-          "If a client isn't in this list - someone you see monthly, or on a changing schedule - add them once you're in. It takes a minute."
-        }
-      </p>
 
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
 

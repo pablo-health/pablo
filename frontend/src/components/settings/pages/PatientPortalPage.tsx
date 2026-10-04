@@ -2,6 +2,7 @@
 
 "use client"
 
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { usePortalSettings } from "@/hooks/usePortalSettings"
 import { ClientEmailSenderCard } from "../intake/ClientEmailSenderCard"
 import { IntakeDocumentsCard } from "../intake/IntakeDocumentsCard"
@@ -30,6 +31,7 @@ import { SettingsCard } from "../ui"
  */
 export function PatientPortalPage() {
   const { data: settings } = usePortalSettings()
+  const people = usePeopleTerm()
   // Until the answer arrives, nothing is greyed: a slow read must not flash
   // a practice's own settings as unavailable.
   const off = settings?.enabled === false
@@ -40,7 +42,7 @@ export function PatientPortalPage() {
       <IntakeFormsCard />
       {off && (
         <p className="mb-3 text-sm text-muted-foreground" data-testid="portal-off-note">
-          Turn on the client portal to invite clients.
+          Turn on the {people.one} portal to invite {people.many}.
         </p>
       )}
       <div
@@ -55,7 +57,7 @@ export function PatientPortalPage() {
       </div>
       <IntakeDocumentsCard />
       <LicensedInstrumentsCard />
-      <SettingsCard title="Patient sign-in">
+      <SettingsCard title={`${people.One} sign-in`}>
         <p className="text-sm text-muted-foreground">
           How people get into the portal will be configured here.
         </p>

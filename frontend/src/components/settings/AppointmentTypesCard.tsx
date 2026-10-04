@@ -22,6 +22,7 @@ import {
   useDeleteAppointmentType,
   useUpdateAppointmentType,
 } from "@/hooks/useAppointmentTypes"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { useSchedulingPolicy, useUpdateSchedulingPolicy } from "@/hooks/useSchedulingPolicy"
 import type { AppointmentTypeResponse, UpdateAppointmentTypeRequest } from "@/types/scheduling"
 
@@ -73,6 +74,7 @@ export function AppointmentTypesCard({
 }: {
   purpose?: "scheduling" | "billing"
 } = {}) {
+  const people = usePeopleTerm()
   const { data: typesData } = useAppointmentTypes()
   const { data: policy } = useSchedulingPolicy()
   const createType = useCreateAppointmentType()
@@ -113,7 +115,7 @@ export function AppointmentTypesCard({
     <>
       <SettingsCard
         title="Appointment types"
-        description={typesData?.migrated ? "Consultation and Intake were added for new patients; your existing types are unchanged." : undefined}
+        description={typesData?.migrated ? `Consultation and Intake were added for new ${people.many}; your existing types are unchanged.` : undefined}
         flush
       >
         <div className="px-[22px] pt-1.5 pb-5">
@@ -176,7 +178,7 @@ export function AppointmentTypesCard({
             {/* Cutoffs for the patients' own changes: only once they can book. */}
             {selfBookOn && (
             <>
-            <SettingsRow nested label="Patients may cancel until" description="Later than this, they have to message you.">
+            <SettingsRow nested label={`${people.Many} may cancel until`} description="Later than this, they have to message you.">
               <Select
                 value={String(policy.cancel_cutoff_hours)}
                 onValueChange={(v) => updatePolicy.mutate({ cancel_cutoff_hours: Number(v) })}
@@ -193,7 +195,7 @@ export function AppointmentTypesCard({
                 </SelectContent>
               </Select>
             </SettingsRow>
-            <SettingsRow nested label="Patients may reschedule until">
+            <SettingsRow nested label={`${people.Many} may reschedule until`}>
               <Select
                 value={String(policy.reschedule_cutoff_hours)}
                 onValueChange={(v) => updatePolicy.mutate({ reschedule_cutoff_hours: Number(v) })}

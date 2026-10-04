@@ -146,7 +146,7 @@ describe("SessionsTable", () => {
         expect(screen.getByText("Doe, Jane")).toBeInTheDocument()
       })
 
-      expect(screen.getByText("Patient")).toBeInTheDocument()
+      expect(screen.getByText("Client")).toBeInTheDocument()
       expect(screen.getByText("Date")).toBeInTheDocument()
       expect(screen.getByText("Session #")).toBeInTheDocument()
       expect(screen.getByText("Status")).toBeInTheDocument()

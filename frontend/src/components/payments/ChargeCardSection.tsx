@@ -30,6 +30,7 @@ import { dollarsToCents, formatCents } from "@/lib/money"
 import { declineReason, formatCard } from "@/lib/paymentDisplay"
 import { useChargeAmount, useCreateCharge, usePatientCard } from "@/hooks/usePayments"
 import type { ChargeResponse } from "@/types/payments"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { AddCardDialog } from "./AddCardDialog"
 
 interface ChargeCardSectionProps {
@@ -39,6 +40,7 @@ interface ChargeCardSectionProps {
 export function ChargeCardSection({ patientId }: ChargeCardSectionProps) {
   const card = usePatientCard(patientId)
   const amount = useChargeAmount(patientId)
+  const people = usePeopleTerm()
   const charge = useCreateCharge()
   const { readOnly } = useReadOnlyMode()
 
@@ -79,7 +81,9 @@ export function ChargeCardSection({ patientId }: ChargeCardSectionProps) {
       // A decline comes back as a `failed` row, not an exception — reaching
       // here means the attempt itself did not complete, so it is not known
       // whether anything was charged and the ledger is where to look.
-      setFailure("The charge could not be completed. Check the client's charges before retrying.")
+      setFailure(
+        `The charge could not be completed. Check the ${people.one}'s charges before retrying.`,
+      )
     }
   }
 
@@ -88,7 +92,7 @@ export function ChargeCardSection({ patientId }: ChargeCardSectionProps) {
       <div className="space-y-3">
         <h3 className="text-lg font-semibold text-neutral-900">Payment</h3>
         <p className="text-sm text-neutral-600">
-          No card on file for this client.
+          No card on file for this {people.one}.
         </p>
         <Button variant="outline" onClick={() => setDialogOpen(true)}>
           <CreditCard className="mr-2 h-4 w-4" />
@@ -135,7 +139,7 @@ export function ChargeCardSection({ patientId }: ChargeCardSectionProps) {
             className="max-w-40"
           />
           <p className="text-xs text-neutral-500">
-            No rate is set for this client, so there is nothing to charge by
+            No rate is set for this {people.one}, so there is nothing to charge by
             default.
           </p>
         </div>
@@ -144,7 +148,7 @@ export function ChargeCardSection({ patientId }: ChargeCardSectionProps) {
       {declined && result && (
         <p role="alert" className="flex items-start gap-2 text-sm text-red-600">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-          {declineReason(result)}
+          {declineReason(result, people)}
         </p>
       )}
 

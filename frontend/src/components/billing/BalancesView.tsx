@@ -19,6 +19,7 @@
 import Link from "next/link"
 import { Wallet } from "lucide-react"
 import { useBalances } from "@/hooks/useBilling"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { formatCents } from "@/lib/money"
 import { formatChargeDate } from "@/lib/paymentDisplay"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -26,6 +27,7 @@ import type { ClientBalanceItem } from "@/types/payments"
 
 export function BalancesView() {
   const { data, isLoading, error } = useBalances()
+  const people = usePeopleTerm()
 
   if (isLoading) {
     return (
@@ -57,7 +59,7 @@ export function BalancesView() {
   const elsewhereLine =
     elsewhere === 0
       ? null
-      : `${elsewhere} ${elsewhere === 1 ? "client settles" : "clients settle"} through your ` +
+      : `${elsewhere} ${elsewhere === 1 ? `${people.one} settles` : `${people.many} settle`} through your ` +
         `billing service, so what they owe isn't tracked here.`
 
   if (items.length === 0) {
@@ -68,7 +70,7 @@ export function BalancesView() {
           {elsewhereLine ? "Nothing outstanding here" : "Nothing outstanding"}
         </p>
         <p className="mt-1 text-sm text-neutral-500">
-          {elsewhereLine ?? "Every client\u2019s ledger nets to zero."}
+          {elsewhereLine ?? `Every ${people.one}\u2019s ledger nets to zero.`}
         </p>
       </div>
     )
@@ -77,7 +79,7 @@ export function BalancesView() {
   return (
     <div className="card">
       <p className="mb-4 text-sm text-neutral-500">
-        Clients whose ledger does not net to zero, oldest first. A credit is a refund the
+        {people.Many} whose ledger does not net to zero, oldest first. A credit is a refund the
         practice owes and is listed alongside the debts rather than hidden.
       </p>
       {elsewhereLine && <p className="mb-4 text-sm text-amber-700">{elsewhereLine}</p>}

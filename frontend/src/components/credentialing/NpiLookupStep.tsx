@@ -14,6 +14,7 @@ import {
   useSaveChecklistAnswers,
 } from "@/hooks/useCredentialingChecklist"
 import { useUpdateProfessionalInfo } from "@/hooks/useProfessionalInfo"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { NoNpiYet } from "./NoNpiYet"
 import { NpiNameSearch } from "./NpiNameSearch"
 
@@ -59,6 +60,7 @@ import { NpiNameSearch } from "./NpiNameSearch"
 export function NpiLookupStep({ onConfirmed }: { onConfirmed?: (npi: string) => void }) {
   const { data: user, isLoading: userLoading } = useSettingsUserStatus()
   const knownNpi = user?.npi_number ?? null
+  const people = usePeopleTerm()
 
   const saveProfile = useUpdateProfessionalInfo()
   const saveAnswers = useSaveChecklistAnswers()
@@ -127,7 +129,7 @@ export function NpiLookupStep({ onConfirmed }: { onConfirmed?: (npi: string) => 
       <SetupStepHead
         eyebrow="Credentialing"
         title="Let's start with your NPI"
-        lede="It goes on every claim, and on any superbill a client files themselves. The public registry already holds most of what those need, so we'll look it up rather than ask you to type it."
+        lede={`It goes on every claim, and on any superbill a ${people.one} files themselves. The public registry already holds most of what those need, so we'll look it up rather than ask you to type it.`}
       />
 
       {userLoading && submitted === null ? (

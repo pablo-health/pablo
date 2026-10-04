@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     from ..models.coverage import PatientCoverage, Payer
     from ..models.payments import PatientCharge
     from ..payments.statement import PracticeBlock
+    from ..people_term import PeopleWords
     from ..repositories.claim_receipts import ClaimReceiptRepository
     from ..repositories.claims import ClaimRepository
     from ..repositories.clinician_profile import ClinicianProfile
@@ -102,6 +103,7 @@ class BillingRecordSource:
         tax_id: Callable[[], str | None],
         license_for: Callable[[str], ClinicianProfile | None],
         timezone: Callable[[str], tzinfo],
+        people: Callable[[str], PeopleWords],
     ) -> None:
         self._payments = payments
         self._coverage = coverage
@@ -113,6 +115,7 @@ class BillingRecordSource:
         self._tax_id = tax_id
         self._license_for = license_for
         self._timezone = timezone
+        self._people = people
 
     def read(self, patient: Patient, user_id: str, exported_at: datetime) -> BillingRecord:
         charges = sorted(
@@ -144,7 +147,13 @@ class BillingRecordSource:
             claims=[_claim(c, self._receipts.list_for_claim(c.id)) for c in claims],
             statement=render_statement_pdf(statement),
             superbill=self._superbill(
-                patient.id, claims, charges, appointments, timezone, exported_at
+                patient.id,
+                claims,
+                charges,
+                appointments,
+                timezone,
+                exported_at,
+                self._people(user_id),
             ),
             balance_cents=statement.balance_cents,
         )
@@ -157,6 +166,7 @@ class BillingRecordSource:
         appointments: Sequence[Appointment],
         timezone: tzinfo,
         exported_at: datetime,
+        people: PeopleWords,
     ) -> bytes | None:
         """The superbill over every date a claim covers, as the route would render it.
 
@@ -181,10 +191,11 @@ class BillingRecordSource:
                 tax_id=self._tax_id(),
                 license_for=self._license_for,
                 generated_at=exported_at,
+                people=people,
             )
         except SuperbillRefusedError:
             return None
-        return render_superbill_pdf(superbill)
+        return render_superbill_pdf(superbill, people)
 
 
 def _charge(row: PatientCharge) -> ExportCharge:

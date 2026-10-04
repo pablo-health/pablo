@@ -35,6 +35,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { useImportNotes, type ImportItem } from "@/hooks/useImportNotes"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { formatFileSize, getFileExtension } from "@/lib/utils/fileValidation"
 
 const ACCEPTED_EXTENSIONS = [".pdf", ".docx", ".txt"] as const
@@ -56,6 +57,7 @@ export function ImportNotesDialog({
   onOpenChange,
 }: ImportNotesDialogProps) {
   const router = useRouter()
+  const people = usePeopleTerm()
   const { items, isRunning, isComplete, doneCount, errorCount, start, reset } =
     useImportNotes(patientId)
 
@@ -132,7 +134,7 @@ export function ImportNotesDialog({
           <DialogTitle>Import existing notes</DialogTitle>
           <DialogDescription>
             Upload prior SOAP notes (PDF, Word, or TXT). Pablo reads each one, pulls out
-            the date and the S/O/A/P sections, and files it against this patient
+            the date and the S/O/A/P sections, and files it against this {people.one}
             for your review. Drop a whole chart&apos;s worth at once.
           </DialogDescription>
         </DialogHeader>

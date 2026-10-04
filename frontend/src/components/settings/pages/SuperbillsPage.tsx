@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { usePatientList } from "@/hooks/usePatients"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import {
   fetchSuperbill,
   superbillFilename,
@@ -28,6 +29,7 @@ import { SettingsCard, StatusBlock } from "../ui"
  * field each item lives in, so the person can go fix it.
  */
 export function SuperbillsPage() {
+  const people = usePeopleTerm()
   const { data: patientsData, isLoading: isLoadingPatients } = usePatientList({ page_size: 100 })
   const [patientId, setPatientId] = useState("")
   const [start, setStart] = useState("")
@@ -67,11 +69,11 @@ export function SuperbillsPage() {
     <>
       <SettingsCard
         title="Superbills"
-        description="An itemised receipt a client submits to their own insurer for out-of-network reimbursement. Rendered from the client's claims for the period; build a claim from each session first."
+        description={`An itemised receipt a ${people.one} submits to their own insurer for out-of-network reimbursement. Rendered from the ${people.one}'s claims for the period; build a claim from each session first.`}
       >
         <form onSubmit={handleSubmit} className="space-y-4" aria-label="Generate a superbill">
           <div className="space-y-2">
-            <Label htmlFor="superbill-patient">Client</Label>
+            <Label htmlFor="superbill-patient">{people.One}</Label>
             <select
               id="superbill-patient"
               value={patientId}
@@ -83,7 +85,7 @@ export function SuperbillsPage() {
                 "disabled:cursor-not-allowed disabled:opacity-50",
               )}
             >
-              <option value="">Select a client…</option>
+              <option value="">Select a {people.one}…</option>
               {patients.map((patient) => (
                 <option key={patient.id} value={patient.id}>
                   {patient.last_name}, {patient.first_name}

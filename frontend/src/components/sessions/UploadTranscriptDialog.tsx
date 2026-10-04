@@ -38,6 +38,8 @@ import {
 import { ApiError } from "@/lib/api/client"
 import { usePatientList } from "@/hooks/usePatients"
 import { useUploadSession } from "@/hooks/useSessions"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
+import type { PeopleWords } from "@/lib/peopleTerm"
 import { parseTranscriptFile } from "@/lib/utils/transcriptParser"
 import {
   validateTranscriptFile,
@@ -68,10 +70,10 @@ export interface UploadTranscriptDialogProps {
 // therapist who just clicked Upload. Set both the type-level message and
 // the min(1) message so the user sees the same friendly text whether the
 // field is missing entirely or just empty.
-const uploadSchema = z.object({
+const uploadSchema = (people: PeopleWords) => z.object({
   patient_id: z
-    .string({ error: "Patient is required" })
-    .min(1, "Patient is required"),
+    .string({ error: `${people.One} is required` })
+    .min(1, `${people.One} is required`),
   session_date: z
     .string({ error: "Session date is required" })
     .min(1, "Session date is required"),
@@ -81,7 +83,7 @@ const uploadSchema = z.object({
   ),
 })
 
-type UploadFormData = z.infer<typeof uploadSchema>
+type UploadFormData = z.infer<ReturnType<typeof uploadSchema>>
 
 export function UploadTranscriptDialog({
   trigger,
@@ -92,6 +94,7 @@ export function UploadTranscriptDialog({
   onOpenChange,
 }: UploadTranscriptDialogProps) {
   const router = useRouter()
+  const people = usePeopleTerm()
   const isControlled = controlledOpen !== undefined
   const [internalOpen, setInternalOpen] = useState(false)
   const open = controlledOpen ?? internalOpen
@@ -119,7 +122,7 @@ export function UploadTranscriptDialog({
     reset,
     formState: { errors },
   } = useForm<UploadFormData>({
-    resolver: zodResolver(uploadSchema),
+    resolver: zodResolver(uploadSchema(people)),
     defaultValues: { patient_id: patientId ?? "" },
   })
 
@@ -318,7 +321,7 @@ export function UploadTranscriptDialog({
           {!lockedPatient && (
             <div className="space-y-2">
               <Label htmlFor="patient_id">
-                Patient <span className="text-destructive">*</span>
+                {people.One} <span className="text-destructive">*</span>
               </Label>
               <Select
                 value={watchedPatientId || ""}
@@ -329,7 +332,7 @@ export function UploadTranscriptDialog({
                   id="patient_id"
                   className={cn(errors.patient_id && "border-destructive")}
                 >
-                  <SelectValue placeholder="Select a patient..." />
+                  <SelectValue placeholder={`Select a ${people.one}...`} />
                 </SelectTrigger>
                 <SelectContent>
                   {patientsData?.data.map((patient) => (

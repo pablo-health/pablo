@@ -15,6 +15,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { usePortalSettings, useSavePortalSettings } from "@/hooks/usePortalSettings"
 import { useSchedulingPolicy } from "@/hooks/useSchedulingPolicy"
 import { portalModuleLabel } from "@/lib/portalModules"
@@ -37,6 +38,7 @@ import { portalModuleLabel } from "@/lib/portalModules"
 export function PortalOfferingCard() {
   const { data: settings } = usePortalSettings()
   const save = useSavePortalSettings()
+  const people = usePeopleTerm()
   const [confirmingOff, setConfirmingOff] = useState(false)
 
   if (!settings) return null
@@ -59,11 +61,14 @@ export function PortalOfferingCard() {
   return (
     <>
       <SettingsCard flush>
-        <SettingsRow label="Client portal" description="Where your clients sign in between visits.">
+        <SettingsRow
+          label={`${people.One} portal`}
+          description={`Where your ${people.many} sign in between visits.`}
+        >
           <Toggle
             checked={settings.enabled}
             onChange={change}
-            label="Client portal"
+            label={`${people.One} portal`}
             disabled={save.isPending}
           />
         </SettingsRow>
@@ -93,9 +98,9 @@ export function PortalOfferingCard() {
       <Dialog open={confirmingOff} onOpenChange={(open) => !open && setConfirmingOff(false)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Turn off the client portal?</DialogTitle>
+            <DialogTitle>Turn off the {people.one} portal?</DialogTitle>
             <DialogDescription>
-              Clients won&apos;t be able to sign in until you turn it back on.
+              {people.Many} won&apos;t be able to sign in until you turn it back on.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -120,11 +125,12 @@ export function PortalOfferingCard() {
 /** What clients can do with appointments, from the scheduling policy. */
 function BookingLine() {
   const { data: policy } = useSchedulingPolicy()
+  const people = usePeopleTerm()
   const sentence = !policy?.self_book_existing
-    ? "Clients can see their appointments."
+    ? `${people.Many} can see their appointments.`
     : policy.self_book_mode === "auto"
-      ? "Clients can also book appointments."
-      : "Clients can also request appointments."
+      ? `${people.Many} can also book appointments.`
+      : `${people.Many} can also request appointments.`
   return (
     <span data-testid="portal-booking-line">
       {sentence}{" "}

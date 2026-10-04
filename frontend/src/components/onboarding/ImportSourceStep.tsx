@@ -25,29 +25,34 @@ import { Button } from "@/components/ui/button"
 import { OptionCards, type CardOption } from "@/components/settings/ui"
 import { updateUserProfile, type ImportSource } from "@/lib/api/users"
 import { trackOnboardingStepSkipped } from "@/lib/analytics/onboarding"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
+import { type PeopleWords } from "@/lib/peopleTerm"
 
 const GENERIC_ERROR = "Something went wrong. Please try again."
 
 type Choice = Exclude<ImportSource, "none">
 
-const OPTIONS: CardOption<Choice>[] = [
-  {
-    value: "simplepractice",
-    label: "SimplePractice",
-    hint: "Upload your SimplePractice export and bring your clients and notes across.",
-  },
-  {
-    value: "other",
-    label: "Another system",
-    hint: "Carry on with setup. You can add your clients yourself.",
-  },
-]
+function importOptions(people: PeopleWords): CardOption<Choice>[] {
+  return [
+    {
+      value: "simplepractice",
+      label: "SimplePractice",
+      hint: `Upload your SimplePractice export and bring your ${people.many} and notes across.`,
+    },
+    {
+      value: "other",
+      label: "Another system",
+      hint: `Carry on with setup. You can add your ${people.many} yourself.`,
+    },
+  ]
+}
 
 /** Where the import screen lives; onboarding hands a SimplePractice practice there. */
 export const IMPORT_SCREEN_PATH = "/dashboard/settings/import"
 
 export function ImportSourceStep() {
   const router = useRouter()
+  const people = usePeopleTerm()
   const [choice, setChoice] = useState<Choice>("simplepractice")
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -87,7 +92,7 @@ export function ImportSourceStep() {
       <OptionCards
         value={choice}
         onChange={setChoice}
-        options={OPTIONS}
+        options={importOptions(people)}
         label="Where your records are now"
         columns={2}
       />

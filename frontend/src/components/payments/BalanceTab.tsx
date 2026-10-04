@@ -39,6 +39,7 @@ import {
   usePatientCharges,
 } from "@/hooks/usePayments"
 import type { ChargeResponse, VisitBalanceResponse } from "@/types/payments"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { RecordPaymentDialog } from "./RecordPaymentDialog"
 import { WriteOffDialog } from "./WriteOffDialog"
 
@@ -55,6 +56,7 @@ export function BalanceTab({ patientId }: BalanceTabProps) {
   const card = usePatientCard(patientId)
   const chargeBalance = useChargeBalance()
   const { readOnly } = useReadOnlyMode()
+  const people = usePeopleTerm()
 
   const [result, setResult] = useState<ChargeResponse | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
@@ -77,7 +79,7 @@ export function BalanceTab({ patientId }: BalanceTabProps) {
       <p className="text-sm text-red-500">
         {balance.error instanceof Error
           ? balance.error.message
-          : "Failed to load this client's balance."}
+          : `Failed to load this ${people.one}'s balance.`}
       </p>
     )
   }
@@ -102,7 +104,7 @@ export function BalanceTab({ patientId }: BalanceTabProps) {
       // attempt did not complete at all, so it is not known whether anything
       // was charged and the ledger is where to look.
       setFailure(
-        "The charge could not be completed. Check this client's charges before retrying.",
+        `The charge could not be completed. Check this ${people.one}'s charges before retrying.`,
       )
     }
   }
@@ -174,7 +176,7 @@ export function BalanceTab({ patientId }: BalanceTabProps) {
 
       {!readOnly && !cardsUnavailable && owed > 0 && !card.data?.chargeable && (
         <p className="text-sm text-neutral-500">
-          No card on file for this client, so the balance cannot be charged here. If
+          No card on file for this {people.one}, so the balance cannot be charged here. If
           they have paid you another way, record it.
         </p>
       )}
@@ -188,7 +190,7 @@ export function BalanceTab({ patientId }: BalanceTabProps) {
       {result?.status === "failed" && (
         <p role="alert" className="flex items-start gap-2 text-sm text-red-600">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-          {declineReason(result)}
+          {declineReason(result, people)}
         </p>
       )}
       {failure && (
@@ -265,13 +267,14 @@ function Ledger({
 }
 
 function LedgerRow({ charge }: { charge: ChargeResponse }) {
+  const people = usePeopleTerm()
   const badge = chargeStatusBadge(charge.status)
   return (
     <li className="rounded-lg border border-neutral-100 px-3 py-2.5">
       <div className="flex items-center justify-between gap-3">
         <span className="flex min-w-0 items-center gap-2">
           <span className="text-sm font-medium text-neutral-900">
-            {chargeKindLabel(charge.kind)}
+            {chargeKindLabel(charge.kind, people)}
           </span>
           {/* Only when it is not a card — see `paymentMethodLabel`. The
               reference rides along because a cheque number is the thing a
@@ -306,7 +309,7 @@ function LedgerRow({ charge }: { charge: ChargeResponse }) {
         </span>
       </div>
       {charge.status === "failed" && (
-        <p className="mt-1 text-xs text-red-600">{declineReason(charge)}</p>
+        <p className="mt-1 text-xs text-red-600">{declineReason(charge, people)}</p>
       )}
     </li>
   )

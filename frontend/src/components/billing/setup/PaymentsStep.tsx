@@ -4,6 +4,7 @@
 
 import { SetupStepHead } from "@/components/setup"
 import { Button } from "@/components/ui/button"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { PaymentsSetup } from "./setupSlots.extensions"
 
 /**
@@ -32,12 +33,13 @@ export function PaymentsStep({
   onContinue: () => void
   onBack: () => void
 }) {
+  const people = usePeopleTerm()
   return (
     <div className="space-y-5">
       <SetupStepHead
         eyebrow="Card payments"
-        title="Let clients pay by card"
-        lede="Connect a payment processor and every invoice carries a payment link clients can pay from."
+        title={`Let ${people.many} pay by card`}
+        lede={`Connect a payment processor and every invoice carries a payment link ${people.many} can pay from.`}
       />
 
       <PaymentsSetup />
@@ -61,7 +63,7 @@ export function PaymentsStep({
             true if she walks past this, said once, without arguing with her
             about it. */}
         <p className="text-[12.5px] text-muted-foreground" data-testid="payments-skip-note">
-          You can set this up later in Settings. Until then, clients can&rsquo;t pay an invoice by
+          You can set this up later in Settings. Until then, {people.many} can&rsquo;t pay an invoice by
           card.
         </p>
       </div>

@@ -3,7 +3,7 @@
 "use client"
 
 import { Fragment } from "react"
-import { Check, Loader2 } from "lucide-react"
+import { Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { SetupStepHead } from "@/components/setup"
@@ -31,6 +31,9 @@ function hourLabel(hour: number): string {
 }
 
 interface CalendarClientsStepProps {
+  /** Where this step sits in the wizard's stepper, so the card and the
+   * stepper always give the same number. */
+  step: number
   busyWindows: BusyWindowsGranted | BusyWindowsNotGranted | undefined
   proposal: ImportProposal | null
   scanning: boolean
@@ -46,6 +49,7 @@ interface CalendarClientsStepProps {
 }
 
 export function CalendarClientsStep({
+  step,
   busyWindows,
   proposal,
   scanning,
@@ -80,15 +84,15 @@ export function CalendarClientsStep({
   return (
     <div className="space-y-4">
       <SetupStepHead
-        eyebrow="Step 3 · one-time look · optional"
-        title="Bring over your week"
-        lede="Pablo looks at the rhythm of your calendar - events that repeat weekly or every other week, the way sessions do. It can't tell a client from a standing meeting, so nothing is added until you say so."
+        eyebrow={`Step ${step} · Optional`}
+        title="Import recurring sessions"
+        lede="Pablo can find events that repeat weekly or every other week. You'll choose which ones to import."
       />
 
       <div className="rounded-xl border border-border bg-card p-3.5 pb-3">
         {shownKeys === null ? (
           <p className="py-6 text-center text-sm text-muted-foreground">
-            {scanning ? "Reading your calendar…" : "Your week will show here once you look."}
+            {scanning ? "Reading your calendar…" : "Your calendar preview will appear here."}
           </p>
         ) : (
           <div className="overflow-x-auto">
@@ -159,38 +163,23 @@ export function CalendarClientsStep({
                 <b className="font-bold text-neutral-900" data-testid="qualifying-count">
                   {qualifyingCount}
                 </b>
-                {qualifyingCount === 1 ? "repeating slot" : "repeating slots"} - these look like
-                sessions
+                {qualifyingCount === 1 ? "possible recurring session" : "possible recurring sessions"}
               </span>
               <span className="inline-flex items-center gap-2">
                 <span className="h-3.5 w-3.5 rounded border border-dashed border-border" />
                 <b className="font-bold text-neutral-900" data-testid="ghost-count">
                   {ghostCount}
                 </b>
-                {ghostCount === 1 ? "other" : "others"} - left as they are
+                {ghostCount === 1 ? "other busy time" : "other busy times"}
               </span>
             </>
           ) : shownKeys ? (
-            <span>A typical week from your calendar, as Pablo sees it before it sorts anything.</span>
+            // Free/busy carries start and end times only, so the blocks are
+            // untitled until a scan sorts them.
+            <span>Busy times from a typical week.</span>
           ) : null}
         </div>
       </div>
-
-      {scanned ? (
-        <div className="flex items-start gap-2 rounded-lg bg-card p-2.5 text-xs text-muted-foreground">
-          <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-secondary-600" />
-          <span>
-            Found <b className="font-bold text-neutral-900">{qualifyingCount}</b> slot
-            {qualifyingCount === 1 ? "" : "s"} that repeat like sessions, over the last{" "}
-            {proposal.lookback_days} days and the next {proposal.horizon_days}.{" "}
-            <b className="font-bold text-neutral-900" data-testid="left-alone-count">
-              {proposal.left_alone}
-            </b>{" "}
-            other calendar event{proposal.left_alone === 1 ? "" : "s"} didn&rsquo;t fit that
-            pattern. Next: you decide which ones are clients.
-          </span>
-        </div>
-      ) : null}
 
       {scanned && onFollowingChange ? (
         <div className="flex items-start gap-2.5 rounded-lg border border-border p-3">
@@ -201,11 +190,12 @@ export function CalendarClientsStep({
             onCheckedChange={(value) => onFollowingChange(value === true)}
           />
           <label htmlFor="follow-main-calendar" className="cursor-pointer text-sm">
+            {/* Not "recurring": following brings in one-off sessions too. */}
             <span className="block font-medium text-neutral-900">
-              Keep bringing in new sessions from this calendar
+              Keep importing new sessions from this calendar
             </span>
             <span className="block text-xs text-muted-foreground">
-              Pablo asks who each new client is, once.
+              You&rsquo;ll review each new match before it&rsquo;s added.
             </span>
           </label>
         </div>
@@ -215,12 +205,12 @@ export function CalendarClientsStep({
       {scanned ? null : (
         <div className="flex items-center gap-2 border-t border-border pt-4">
           <Button variant="ghost" size="sm" onClick={onSkip} disabled={scanning}>
-            Skip, I&rsquo;ll add them myself
+            Skip import
           </Button>
           <span className="flex-1" />
           <Button onClick={onScan} disabled={scanning}>
             {scanning ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            {scanning ? "Reading your calendar…" : "Look at my week"}
+            {scanning ? "Reading your calendar…" : "Scan calendar"}
           </Button>
         </div>
       )}

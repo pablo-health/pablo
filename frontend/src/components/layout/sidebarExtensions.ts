@@ -24,6 +24,7 @@ import { navExtensions } from "./sidebarExtensions.extensions"
  * `Sidebar.tsx` itself is never forked.
  */
 export interface NavItem {
+  /** May hold `{People}`-style placeholders; `Sidebar` renders it through `sayPeople`. */
   name: string
   href: string
   icon: LucideIcon
@@ -70,7 +71,7 @@ const baseClinicianNavigation: NavItem[] = [
   // to sign and calendar changes to settle.
   { name: "Inbox", href: "/dashboard/inbox", icon: Inbox, badge: "inbox" },
   { name: "Calendar", href: "/dashboard/calendar", icon: Calendar },
-  { name: "Patients", href: "/dashboard/patients", icon: Users },
+  { name: "{People}", href: "/dashboard/patients", icon: Users },
   { name: "Review", href: "/dashboard/sessions", icon: ClipboardCheck },
   // Only a deployment that serves the portal's refills module has requests
   // to answer, so the item is dark until FEATURES_ENABLED names it.

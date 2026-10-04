@@ -112,7 +112,7 @@ describe("RecentlyDeletedPatients", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(/no recently deleted patients/i),
+        screen.getByText(/no recently deleted clients/i),
       ).toBeInTheDocument()
     })
     // Per UX note from THERAPY-nyb the empty state explains the 30-day
@@ -148,7 +148,7 @@ describe("RecentlyDeletedPatients", () => {
     })
 
     const restoreButton = screen.getByRole("button", {
-      name: /restore patient jane doe/i,
+      name: /restore client jane doe/i,
     })
     await user.click(restoreButton)
 
@@ -179,11 +179,11 @@ describe("RecentlyDeletedPatients", () => {
     })
 
     await user.click(
-      screen.getByRole("button", { name: /restore patient jane doe/i }),
+      screen.getByRole("button", { name: /restore client jane doe/i }),
     )
 
     await waitFor(() => {
-      expect(screen.getByText(/could not restore patient/i)).toBeInTheDocument()
+      expect(screen.getByText(/could not restore client/i)).toBeInTheDocument()
     })
   })
 
@@ -216,7 +216,7 @@ describe("RecentlyDeletedPatients", () => {
       expect(screen.getByText(/2[45] days remaining/)).toBeInTheDocument()
       expect(screen.queryByText("Actions")).not.toBeInTheDocument()
       expect(
-        screen.queryByRole("button", { name: /restore patient jane doe/i }),
+        screen.queryByRole("button", { name: /restore client jane doe/i }),
       ).not.toBeInTheDocument()
     })
 
@@ -241,7 +241,7 @@ describe("RecentlyDeletedPatients", () => {
         expect(screen.getByText("Jane Doe")).toBeInTheDocument()
       })
       expect(
-        screen.getByRole("button", { name: /restore patient jane doe/i }),
+        screen.getByRole("button", { name: /restore client jane doe/i }),
       ).toBeInTheDocument()
     })
   })

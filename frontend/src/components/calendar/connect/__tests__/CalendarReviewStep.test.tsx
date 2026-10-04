@@ -42,6 +42,7 @@ function proposal(series_: ProposedSeries[]): ImportProposal {
 
 function baseProps() {
   return {
+    step: 5,
     checked: {},
     onToggle: vi.fn(),
     clientFor: {} as Record<string, string | null>,
@@ -61,16 +62,13 @@ function baseProps() {
 }
 
 describe("CalendarReviewStep", () => {
-  it("renders the exact fought-over title and lede, with the real total interpolated", () => {
+  it("renders the exact title and lede", () => {
     const list = [series({ candidate_key: "a" }), series({ candidate_key: "b" })]
     render(<CalendarReviewStep {...baseProps()} proposal={proposal(list)} />)
 
+    expect(screen.getByText("Step 5 · Review")).toBeInTheDocument()
     expect(screen.getByText("Which of these are clients?")).toBeInTheDocument()
-    expect(
-      screen.getByText(
-        "These 2 repeat on a weekly or biweekly rhythm. Check the ones that are clients. Uncheck standups, classes, and anything else that just happens to repeat."
-      )
-    ).toBeInTheDocument()
+    expect(screen.getByText("Select the recurring events you want to add.")).toBeInTheDocument()
   })
 
   it("lists every proposed series, in the order the API returned them", () => {
@@ -136,9 +134,18 @@ describe("CalendarReviewStep", () => {
     )
 
     expect(screen.getAllByRole("checkbox")).toHaveLength(5)
-    const disclosure = screen.getByRole("button", { name: /show the other 3/i })
+    const disclosure = screen.getByRole("button", { name: "Show 3 more" })
     await user.click(disclosure)
     expect(onToggleExpanded).toHaveBeenCalledOnce()
+  })
+
+  it("offers to show fewer once expanded", () => {
+    const list = Array.from({ length: 8 }, (_, i) =>
+      series({ candidate_key: `k${i}`, summary: `Client ${i}` })
+    )
+    render(<CalendarReviewStep {...baseProps()} proposal={proposal(list)} expanded />)
+
+    expect(screen.getByRole("button", { name: "Show fewer" })).toBeInTheDocument()
   })
 
   it("does not filter any candidate out of what could be confirmed, even hidden behind the disclosure", () => {
@@ -192,15 +199,9 @@ describe("CalendarReviewStep", () => {
     expect(onConfirm).toHaveBeenCalledOnce()
   })
 
-  it("shows the exact footer copy naming the miss case, and claims nothing about what is kept", () => {
+  it("claims nothing about what is kept", () => {
     const list = [series({ candidate_key: "a" })]
     const { container } = render(<CalendarReviewStep {...baseProps()} proposal={proposal(list)} />)
-
-    expect(
-      screen.getByText(
-        "If a client isn't in this list - someone you see monthly, or on a changing schedule - add them once you're in. It takes a minute."
-      )
-    ).toBeInTheDocument()
 
     // Pablo keeps the therapist's answers now, so "kept nothing" would be untrue.
     expect(container.textContent ?? "").not.toMatch(/kept nothing/i)
@@ -313,7 +314,7 @@ describe("CalendarReviewStep", () => {
         />
       )
 
-      expect(screen.getByText(/Not a client\. Pablo will remember\./)).toBeInTheDocument()
+      expect(screen.getByText(/Marked as not a client\./)).toBeInTheDocument()
       const box = screen.getByRole("checkbox", { name: "Standup" })
       expect(box).not.toBeChecked()
       expect(box).toBeDisabled()
@@ -325,7 +326,7 @@ describe("CalendarReviewStep", () => {
     })
   })
 
-  it("after confirming, names what was imported and that read access ended", () => {
+  it("after confirming, names what was imported and nothing about access", () => {
     const result: ConfirmImportResult = {
       confirmed: [{ candidate_key: "a", patient_id: "p-1", appointments_created: 4 }],
       patients_created: 1,
@@ -336,8 +337,21 @@ describe("CalendarReviewStep", () => {
     render(<CalendarReviewStep {...baseProps()} proposal={proposal([series()])} result={result} />)
 
     expect(screen.getByText(/1 client added/i)).toBeInTheDocument()
-    expect(screen.getByText(/4 appointments scheduled ahead/i)).toBeInTheDocument()
-    expect(screen.getByText(/read access ended/i)).toBeInTheDocument()
+    expect(screen.getByText("4 upcoming appointments added.")).toBeInTheDocument()
+    expect(screen.queryByText(/read access/i)).not.toBeInTheDocument()
+  })
+
+  it("names a single appointment in the singular", () => {
+    const result: ConfirmImportResult = {
+      confirmed: [{ candidate_key: "a", patient_id: "p-1", appointments_created: 1 }],
+      patients_created: 1,
+      appointments_created: 1,
+      skipped: [],
+      already_scheduled: [],
+    }
+    render(<CalendarReviewStep {...baseProps()} proposal={proposal([series()])} result={result} />)
+
+    expect(screen.getByText("1 upcoming appointment added.")).toBeInTheDocument()
   })
 
   it("reports a skipped series honestly rather than staying silent", () => {
@@ -350,7 +364,9 @@ describe("CalendarReviewStep", () => {
     }
     render(<CalendarReviewStep {...baseProps()} proposal={proposal([series()])} result={result} />)
 
-    expect(screen.getByText(/collided with something already booked/i)).toBeInTheDocument()
+    expect(
+      screen.getByText("1 couldn’t be added because those times are already booked.")
+    ).toBeInTheDocument()
   })
 
   it("says, one line each, which series were already on the calendar", () => {
@@ -395,7 +411,7 @@ describe("CalendarReviewStep", () => {
       />
     )
 
-    await user.click(screen.getByRole("button", { name: /go to my calendar/i }))
+    await user.click(screen.getByRole("button", { name: "View calendar" }))
     expect(onFinish).toHaveBeenCalledOnce()
   })
 
@@ -420,7 +436,7 @@ describe("CalendarReviewStep", () => {
     )
 
     expect(
-      screen.getByText("Already a client of the practice, seen by Dr. Rivera and Dr. Okafor.")
+      screen.getByText("Already in your practice, seen by Dr. Rivera and Dr. Okafor.")
     ).toBeInTheDocument()
     expect(
       screen.getByText("Ask Dr. Rivera, Dr. Okafor, or your practice owner for access.")
@@ -433,10 +449,13 @@ describe("CalendarReviewStep", () => {
     expect(screen.getByRole("button", { name: "Add 0 clients" })).toBeDisabled()
   })
 
-  it("offers a way back to the week when jumped to before a scan", () => {
+  it("offers a way back to the scan when jumped to before one", () => {
     render(<CalendarReviewStep {...baseProps()} proposal={null} />)
 
-    expect(screen.getByRole("button", { name: /back to your week/i })).toBeInTheDocument()
+    expect(
+      screen.getByText("Scan your calendar before reviewing recurring events.")
+    ).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Scan calendar" })).toBeInTheDocument()
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument()
   })
 })

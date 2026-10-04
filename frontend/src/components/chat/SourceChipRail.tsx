@@ -15,13 +15,14 @@ import { useState } from "react"
 import { Plus } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { Button } from "@/components/ui/button"
 import {
   ContextManifest,
   SourceKey,
   SourceSelection,
 } from "@/lib/chat/types"
-import { SOURCE_META, SUPPORTED_SOURCE_KEYS } from "@/lib/chat/sourceMeta"
+import { SOURCE_META, SUPPORTED_SOURCE_KEYS, sourceDescription } from "@/lib/chat/sourceMeta"
 
 import { SourceChip } from "./SourceChip"
 
@@ -102,6 +103,7 @@ function AddSourceButton({
   onAdd: (key: SourceKey) => void
 }) {
   const [open, setOpen] = useState(false)
+  const people = usePeopleTerm()
 
   return (
     <div className="relative">
@@ -158,7 +160,7 @@ function AddSourceButton({
                   <span className="flex-1 min-w-0">
                     <span className="block font-medium">{meta.label}</span>
                     <span className="block text-[11px] text-neutral-500 truncate">
-                      {meta.description}
+                      {sourceDescription(key, people)}
                     </span>
                   </span>
                 </button>

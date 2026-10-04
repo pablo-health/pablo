@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { useCreateWriteOff } from "@/hooks/usePayments"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { centsToDollars, dollarsToCents } from "@/lib/money"
 import { ApiError } from "@/lib/api/client"
 import type { WriteOffReason } from "@/types/payments"
@@ -59,6 +60,7 @@ interface WriteOffDialogProps {
 
 export function WriteOffDialog({ patientId, balanceCents, open, onOpenChange }: WriteOffDialogProps) {
   const createWriteOff = useCreateWriteOff()
+  const people = usePeopleTerm()
   const [amount, setAmount] = useState(() => centsToDollars(balanceCents))
   const [reason, setReason] = useState<WriteOffReason | "">("")
   const [note, setNote] = useState("")
@@ -108,7 +110,7 @@ export function WriteOffDialog({ patientId, balanceCents, open, onOpenChange }: 
         <DialogHeader>
           <DialogTitle>Write off balance</DialogTitle>
           <DialogDescription>
-            Reduces what this client owes without collecting it. Every write-off is recorded
+            Reduces what this {people.one} owes without collecting it. Every write-off is recorded
             with its reason.
           </DialogDescription>
         </DialogHeader>
@@ -146,7 +148,7 @@ export function WriteOffDialog({ patientId, balanceCents, open, onOpenChange }: 
               id="write-off-note"
               value={note}
               onChange={(event) => setNote(event.target.value)}
-              placeholder="Optional — shown on this client's ledger, never sent to a payer."
+              placeholder={`Optional — shown on this ${people.one}'s ledger, never sent to a payer.`}
             />
           </div>
           {problem && (

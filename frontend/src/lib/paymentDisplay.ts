@@ -9,6 +9,7 @@
  */
 
 import { formatCents } from "@/lib/money"
+import type { PeopleWords } from "@/lib/peopleTerm"
 import type {
   CardOnFileResponse,
   ChargeKind,
@@ -58,25 +59,29 @@ export function chargeStatusBadge(status: string): ChargeStatusBadge {
  * fallback also covers the case where the processor gave no code at all and
  * the backend recorded the intent's own status instead.
  */
-const DECLINE_REASONS: Record<string, string> = {
-  insufficient_funds: "The card has insufficient funds.",
-  card_declined: "The card was declined.",
-  generic_decline: "The card was declined.",
-  expired_card: "The card has expired.",
-  incorrect_cvc: "The card's security code was rejected.",
-  processing_error: "The processor had an error. Trying again may work.",
-  lost_card: "The card was reported lost.",
-  stolen_card: "The card was reported stolen.",
-  do_not_honor: "The bank declined the charge without giving a reason.",
-  authentication_required:
-    "The bank wants the client to confirm this charge, which a saved card cannot do. Ask them to pay another way.",
-  requires_action:
-    "The bank wants the client to confirm this charge, which a saved card cannot do. Ask them to pay another way.",
+function declineReasons(people: PeopleWords): Record<string, string> {
+  const confirm = `The bank wants the ${people.one} to confirm this charge, which a saved card cannot do. Ask them to pay another way.`
+  return {
+    insufficient_funds: "The card has insufficient funds.",
+    card_declined: "The card was declined.",
+    generic_decline: "The card was declined.",
+    expired_card: "The card has expired.",
+    incorrect_cvc: "The card's security code was rejected.",
+    processing_error: "The processor had an error. Trying again may work.",
+    lost_card: "The card was reported lost.",
+    stolen_card: "The card was reported stolen.",
+    do_not_honor: "The bank declined the charge without giving a reason.",
+    authentication_required: confirm,
+    requires_action: confirm,
+  }
 }
 
-export function declineReason(charge: ChargeResponse): string {
+export function declineReason(charge: ChargeResponse, people: PeopleWords): string {
   if (!charge.status_detail) return "The card was declined."
-  return DECLINE_REASONS[charge.status_detail] ?? `The card was declined (${charge.status_detail}).`
+  return (
+    declineReasons(people)[charge.status_detail] ??
+    `The card was declined (${charge.status_detail}).`
+  )
 }
 
 export function formatChargeDate(value: string): string {
@@ -95,18 +100,20 @@ export function formatChargeDate(value: string): string {
  * so a kind added on the server shows up as itself instead of silently
  * reading as something it is not.
  */
-const CHARGE_KIND_LABELS: Record<ChargeKind, string> = {
-  session: "Session charge",
-  copay: "Copay",
-  payment: "Payment",
-  patient_resp: "Client responsibility",
-  contractual_adjustment: "Insurance adjustment",
-  write_off: "Write-off",
-  credit: "Credit",
+function chargeKindLabels(people: PeopleWords): Record<ChargeKind, string> {
+  return {
+    session: "Session charge",
+    copay: "Copay",
+    payment: "Payment",
+    patient_resp: `${people.One} responsibility`,
+    contractual_adjustment: "Insurance adjustment",
+    write_off: "Write-off",
+    credit: "Credit",
+  }
 }
 
-export function chargeKindLabel(kind: string): string {
-  return CHARGE_KIND_LABELS[kind as ChargeKind] ?? kind
+export function chargeKindLabel(kind: string, people: PeopleWords): string {
+  return chargeKindLabels(people)[kind as ChargeKind] ?? kind
 }
 
 /**

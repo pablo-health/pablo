@@ -29,9 +29,9 @@ function browserTimeZone(): string {
 }
 
 /**
- * "Keep bringing in new sessions", from a calendar the clinician chooses —
+ * "Keep importing new sessions", from a calendar the clinician chooses —
  * the main one unless they pick another. Following reads the calendar's
- * events, which is the "Look at my week" permission, so without it the
+ * events, which is the "Scan calendar" permission, so without it the
  * setting can't be turned on and offers that permission instead.
  */
 export function FollowCalendarSetting({
@@ -125,20 +125,23 @@ export function FollowCalendarSetting({
           onCheckedChange={(value) => follow(value === true ? MAIN_CALENDAR : null)}
         />
         <label htmlFor="settings-follow-calendar" className="text-sm text-neutral-900">
-          Keep bringing in new sessions
+          Keep importing new sessions
         </label>
       </div>
       {following && calendars === null && !error ? (
         <p className="pl-6 text-xs text-muted-foreground">Loading your calendars…</p>
       ) : null}
       {following && (listed.length > 1 || unreadable) ? (
-        <div className="pl-6">
+        <div className="flex flex-col gap-1 pl-6">
+          <label htmlFor="settings-follow-calendar-choice" className="text-xs text-muted-foreground">
+            Import sessions from
+          </label>
           <select
-            aria-label="Calendar to bring sessions in from"
+            id="settings-follow-calendar-choice"
             value={selected ?? ""}
             disabled={saving}
             onChange={(event) => follow(event.target.value)}
-            className="rounded-md border border-border bg-card px-1.5 py-0.5 text-xs text-neutral-900"
+            className="w-fit rounded-md border border-border bg-card px-1.5 py-0.5 text-xs text-neutral-900"
           >
             {unreadable ? (
               <option value={selected ?? ""} disabled>
@@ -166,7 +169,7 @@ export function FollowCalendarSetting({
       ) : null}
       {!importGranted && (
         <div className="flex flex-wrap items-center gap-2 pl-6 text-xs text-muted-foreground">
-          <span>This needs &ldquo;Look at my week&rdquo; access.</span>
+          <span>This needs &ldquo;Scan calendar&rdquo; access.</span>
           <Button variant="outline" size="sm" onClick={askForAccess} disabled={saving}>
             Allow access
           </Button>

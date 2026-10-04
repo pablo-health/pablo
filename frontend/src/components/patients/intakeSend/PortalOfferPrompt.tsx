@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { useSavePortalSettings } from "@/hooks/usePortalSettings"
 import { portalModuleLabel } from "@/lib/portalModules"
 
@@ -32,6 +33,7 @@ interface PortalOfferPromptProps {
  */
 export function PortalOfferPrompt({ modules, onAnswered }: PortalOfferPromptProps) {
   const save = useSavePortalSettings()
+  const people = usePeopleTerm()
   const [choosing, setChoosing] = useState(false)
   const [chosen, setChosen] = useState<string[]>(modules)
 
@@ -57,9 +59,9 @@ export function PortalOfferPrompt({ modules, onAnswered }: PortalOfferPromptProp
     return (
       <div className="space-y-4" data-testid="portal-offer-prompt">
         <DialogHeader>
-          <DialogTitle>Offer your clients a portal?</DialogTitle>
+          <DialogTitle>Offer your {people.many} a portal?</DialogTitle>
           <DialogDescription>
-            Clients sign in between visits to do what you ask of them.
+            {people.Many} sign in between visits to do what you ask of them.
           </DialogDescription>
         </DialogHeader>
         {failed}
@@ -78,7 +80,7 @@ export function PortalOfferPrompt({ modules, onAnswered }: PortalOfferPromptProp
   return (
     <div className="space-y-4" data-testid="portal-offer-choose">
       <DialogHeader>
-        <DialogTitle>What can clients do in it?</DialogTitle>
+        <DialogTitle>What can {people.many} do in it?</DialogTitle>
         <DialogDescription>You can change this any time in Settings.</DialogDescription>
       </DialogHeader>
       <ul className="space-y-2">
