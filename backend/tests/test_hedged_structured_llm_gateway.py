@@ -10,6 +10,7 @@ configured the gateway behaves as the single-model retry it replaces.
 from __future__ import annotations
 
 import contextvars
+import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -18,8 +19,9 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import pytest
 from app.reliability import SINGLE_ATTEMPT, RetryExhaustedError
-from app.reliability.hedge import FailureKind, HedgePolicy, HedgeRun, Leg
+from app.reliability.hedge import INTERACTIVE_STALL_AFTER, FailureKind, HedgePolicy, HedgeRun, Leg
 from app.reliability.hedge_sync import run_hedged_sync
+from app.services import structured_llm_gateway
 from app.services.availability_parse_service import AvailabilityRuleParseService
 from app.services.hedged_structured_llm_gateway import (
     HedgedStructuredLLMGateway,
@@ -29,6 +31,8 @@ from app.services.structured_llm_gateway import (
     FakeStructuredLLMGateway,
     StructuredCompletion,
     StructuredOutputTruncatedError,
+    register_structured_llm_provider,
+    resolve_structured_llm_gateway,
 )
 
 if TYPE_CHECKING:
@@ -44,8 +48,12 @@ def executor() -> Iterator[ThreadPoolExecutor]:
 
 def _transient(message: str = "504") -> RuntimeError:
     """What a gateway raises when its single attempt hits a transient error."""
+    timeout = httpx.ReadTimeout(message)
+    exhausted = RetryExhaustedError(attempts=1, last_exc=timeout)
+    # As ``raise RetryExhaustedError(...) from exc`` chains it.
+    exhausted.__cause__ = timeout
     error = RuntimeError(f"Structured LLM call failed: {message}")
-    error.__cause__ = RetryExhaustedError(attempts=1, last_exc=httpx.ReadTimeout(message))
+    error.__cause__ = exhausted
     return error
 
 
@@ -127,7 +135,7 @@ class TestClassify:
             (StructuredOutputTruncatedError("cut off"), FailureKind.FATAL),
             (ValueError("LLM returned invalid JSON"), FailureKind.INVALID),
             (_transient(), FailureKind.TRANSIENT),
-            (RuntimeError("Structured LLM call failed: 403"), FailureKind.FATAL),
+            (RuntimeError("Structured LLM call failed: 403"), FailureKind.PERMANENT),
             (TimeoutError("timed out"), FailureKind.TRANSIENT),
         ],
     )
@@ -226,11 +234,118 @@ class TestFallbacks:
         assert [c["model"] for c in gateways["anthropic:haiku"].calls] == ["anthropic:haiku"]
 
     def test_policy_carries_the_configured_fallbacks_and_hedge(self) -> None:
-        hedged = HedgedStructuredLLMGateway(fallbacks=["b"], hedge_after=6.0)
+        hedged = HedgedStructuredLLMGateway(fallbacks=["b"], stall_after=6.0)
         policy = hedged.policy_for("a", 15.0)
-        assert [leg.model for leg in policy.legs] == ["a", "b", "a", "b"]
+        assert [leg.model for leg in policy.legs] == ["a", "b", "a"]
         assert policy.hedge_after == 6.0
         assert policy.budget == 25.0
+
+    def test_a_refusing_primary_hands_over_and_is_not_asked_again(
+        self, executor: ThreadPoolExecutor
+    ) -> None:
+        gateways = {
+            "flash": FakeStructuredLLMGateway(
+                responses=[RuntimeError("Structured LLM call failed: 403")]
+            ),
+            "other:model": FakeStructuredLLMGateway(responses=[_transient()]),
+        }
+        hedged = HedgedStructuredLLMGateway(
+            fallbacks=["other:model"], resolve=gateways.__getitem__, executor=executor
+        )
+        with pytest.raises(RuntimeError, match="504"):
+            _complete(hedged)
+        assert len(gateways["flash"].calls) == 1
+        assert len(gateways["other:model"].calls) == 1
+
+    def test_a_registered_provider_serves_its_prefix(self) -> None:
+        fake = FakeStructuredLLMGateway(default_response=_OK)
+        register_structured_llm_provider("other", lambda: fake)
+        try:
+            assert resolve_structured_llm_gateway("other:model") is fake
+            assert resolve_structured_llm_gateway("flash") is not fake
+        finally:
+            structured_llm_gateway._registered_providers.pop("other")
+
+    def test_a_prefix_must_be_a_prefix(self) -> None:
+        with pytest.raises(ValueError, match="not a provider prefix"):
+            register_structured_llm_provider("a:b", FakeStructuredLLMGateway)
+
+
+class TestInteractiveHandover:
+    """A failing or stalling primary is handed over, not waited out."""
+
+    def test_a_failing_primary_is_answered_by_the_fallback_at_once(
+        self, executor: ThreadPoolExecutor
+    ) -> None:
+        gateways = {
+            "flash": FakeStructuredLLMGateway(responses=[_transient()]),
+            "other:model": FakeStructuredLLMGateway(default_response=_OK),
+        }
+        hedged = HedgedStructuredLLMGateway(
+            fallbacks=["other:model"], resolve=gateways.__getitem__, executor=executor
+        )
+        started = time.monotonic()
+        assert _complete(hedged, timeout_seconds=15.0) == _OK
+        assert time.monotonic() - started < 1.0
+
+    def test_a_stalled_primary_gets_its_retry_at_the_threshold(
+        self, executor: ThreadPoolExecutor
+    ) -> None:
+        release = threading.Event()
+        calls: list[float] = []
+
+        class StallsFirst(FakeStructuredLLMGateway):
+            def complete_structured(self, **kwargs: Any) -> StructuredCompletion:
+                calls.append(time.monotonic())
+                if len(calls) == 1:
+                    release.wait(5)
+                return _OK
+
+        hedged = HedgedStructuredLLMGateway(
+            stall_after=0.2, resolve=lambda _model: StallsFirst(), executor=executor
+        )
+        started = time.monotonic()
+        try:
+            assert _complete(hedged, timeout_seconds=15.0) == _OK
+        finally:
+            release.set()
+        assert len(calls) == 2
+        assert 0.15 <= calls[1] - started < 1.0
+
+    def test_the_route_and_failures_are_logged_without_prompt_text(
+        self, executor: ThreadPoolExecutor, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        fake = FakeStructuredLLMGateway(responses=[_transient(), _OK])
+        hedged = HedgedStructuredLLMGateway(resolve=lambda _model: fake, executor=executor)
+        with caplog.at_level(logging.INFO, logger="app.services.hedged_structured_llm_gateway"):
+            hedged.complete_structured(
+                model="flash",
+                system_prompt="SYSTEM-SECRET",
+                user_prompt="Jane Doe on Tuesdays",
+                response_schema={"type": "object"},
+                max_output_tokens=64,
+            )
+        (line,) = [r.getMessage() for r in caplog.records]
+        assert "route=retry" in line
+        assert "attempts=2" in line
+        assert "failures=flash:ReadTimeout" in line
+        assert "latency_ms=" in line
+        assert "Jane" not in line
+        assert "SYSTEM-SECRET" not in line
+
+    def test_when_every_leg_fails_the_failure_is_logged_and_raised(
+        self, executor: ThreadPoolExecutor, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        fake = FakeStructuredLLMGateway(responses=[_transient(), _transient("again")])
+        hedged = HedgedStructuredLLMGateway(resolve=lambda _model: fake, executor=executor)
+        with (
+            caplog.at_level(logging.WARNING, logger="app.services.hedged_structured_llm_gateway"),
+            pytest.raises(RuntimeError, match="again"),
+        ):
+            _complete(hedged)
+        (line,) = [r.getMessage() for r in caplog.records]
+        assert line.startswith("Structured call failed: attempts=2")
+        assert "flash:ReadTimeout,flash:ReadTimeout" in line
 
 
 class TestAvailabilityParser:
@@ -239,28 +354,59 @@ class TestAvailabilityParser:
         assert isinstance(gateway, HedgedStructuredLLMGateway)
         assert [leg.model for leg in gateway.policy_for("flash", 15.0).legs] == ["flash", "flash"]
 
-    def test_a_stalled_parse_is_retried_through_the_policy(
+    def test_a_failed_parse_is_retried_through_the_policy_within_the_budget(
         self, executor: ThreadPoolExecutor
     ) -> None:
-        answer = StructuredCompletion(
-            data={
-                "proposals": [
-                    {
-                        "rule_type": "block_day_of_week",
-                        "enforcement": "hard",
-                        "day_of_week": 4,
-                        "human_summary": "No Fridays.",
-                        "confidence": 0.95,
-                    }
-                ]
-            }
-        )
-        fake = FakeStructuredLLMGateway(responses=[_transient("stalled"), answer])
+        fake = FakeStructuredLLMGateway(responses=[_transient("503"), _NO_FRIDAYS])
         hedged = HedgedStructuredLLMGateway(resolve=lambda _model: fake, executor=executor)
-
         service = AvailabilityRuleParseService(llm_gateway=hedged)
 
+        started = time.monotonic()
         result = service.parse("No appointments on Fridays")
 
+        assert time.monotonic() - started < 1.0
         assert [p.rule_type for p in result.proposals] == ["block_day_of_week"]
         assert [c["timeout_seconds"] for c in fake.calls] == [15.0, 15.0]
+
+    def test_a_stalled_parse_holds_the_budget_at_the_default_threshold(
+        self, executor: ThreadPoolExecutor
+    ) -> None:
+        """Real time, real threshold: the retry starts at 4 s, not at 15."""
+        release = threading.Event()
+        calls: list[float] = []
+
+        class StallsFirst(FakeStructuredLLMGateway):
+            def complete_structured(self, **kwargs: Any) -> StructuredCompletion:
+                calls.append(time.monotonic())
+                if len(calls) == 1:
+                    release.wait(10)
+                return _NO_FRIDAYS
+
+        hedged = HedgedStructuredLLMGateway(resolve=lambda _model: StallsFirst(), executor=executor)
+        service = AvailabilityRuleParseService(llm_gateway=hedged)
+
+        started = time.monotonic()
+        try:
+            result = service.parse("No appointments on Fridays")
+        finally:
+            release.set()
+        elapsed = time.monotonic() - started
+
+        assert [p.rule_type for p in result.proposals] == ["block_day_of_week"]
+        assert INTERACTIVE_STALL_AFTER <= elapsed < 8.0
+        assert len(calls) == 2
+
+
+_NO_FRIDAYS = StructuredCompletion(
+    data={
+        "proposals": [
+            {
+                "rule_type": "block_day_of_week",
+                "enforcement": "hard",
+                "day_of_week": 4,
+                "human_summary": "No Fridays.",
+                "confidence": 0.95,
+            }
+        ]
+    }
+)

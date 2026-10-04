@@ -22,11 +22,11 @@ import bisect
 import math
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     import random
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
 _Z95 = 1.6449
 
@@ -176,3 +176,49 @@ class RequestDraws:
     """What one request's calls share."""
 
     reference_u: float | None = None
+
+
+class Calls(Protocol):
+    """Whatever decides a call's fate when it starts: a fleet or a script."""
+
+    def call(self, model: str, t: float, request: RequestDraws, rng: random.Random) -> Call: ...
+
+
+@dataclass
+class Script:
+    """Each model's calls written out in advance, answered in order.
+
+    For pinning one request's story down exactly ("the primary fails at
+    once, then the secondary answers in 1.6 s") rather than sampling it.
+    A model asked more often than its script allows is a test error.
+    """
+
+    calls: Mapping[str, Sequence[Call]]
+    _asked: dict[str, int] = field(default_factory=dict)
+
+    def call(self, model: str, t: float, request: RequestDraws, rng: random.Random) -> Call:
+        del t, request, rng
+        n = self._asked.get(model, 0)
+        self._asked[model] = n + 1
+        script = self.calls.get(model, ())
+        if n >= len(script):
+            raise AssertionError(f"{model} was asked {n + 1} times; its script has {len(script)}")
+        return script[n]
+
+    @property
+    def asked(self) -> Mapping[str, int]:
+        return dict(self._asked)
+
+
+def ok(seconds: float) -> Call:
+    return Call(seconds, Outcome.OK, 1.0)
+
+
+def error_504(seconds: float) -> Call:
+    """A provider error after ``seconds``. Not billed."""
+    return Call(seconds, Outcome.ERROR_504, 0.0)
+
+
+def stall(seconds: float = 40.0) -> Call:
+    """A call that would answer, eventually, long after anyone is waiting."""
+    return Call(seconds, Outcome.OK, 1.0)

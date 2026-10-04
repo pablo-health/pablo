@@ -24,9 +24,11 @@ stack builds it from ``scripts/e2e/fake-llm.Dockerfile``.
 
 from __future__ import annotations
 
+import asyncio
+from collections import Counter
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 app = FastAPI(title="fake-llm")
@@ -61,6 +63,30 @@ UNKNOWN = {
     "refusal_reason": "ambiguous",
 }
 
+#: Sentences whose odd-numbered calls go wrong before the reading comes
+#: back, so a spec can show that a failed or stalled call is handed over
+#: rather than waited out. A parse makes two calls here, the bad one and
+#: the one that answers, so the next parse of the same sentence starts on
+#: a bad one again.
+FAILS_FIRST = "10 to 6 monday to thursday"
+STALLS_FIRST = "8 to 4 monday to thursday"
+
+#: Longer than the backend waits for any one call.
+STALL_SECONDS = 30.0
+
+READINGS[FAILS_FIRST] = {
+    "proposals": [_working_hours(day, "10:00", "18:00") for day in range(4)],
+    "could_not_parse": None,
+    "exclusive": True,
+}
+READINGS[STALLS_FIRST] = {
+    "proposals": [_working_hours(day, "08:00", "16:00") for day in range(4)],
+    "could_not_parse": None,
+    "exclusive": True,
+}
+
+_calls: Counter[str] = Counter()
+
 
 class StructuredCall(BaseModel):
     """What the backend sends; only the sentence decides the reply."""
@@ -75,8 +101,15 @@ def _key(sentence: str) -> str:
 
 
 @app.post("/v1/structured")
-def structured(call: StructuredCall) -> dict[str, Any]:
-    return {"data": READINGS.get(_key(call.user_prompt), UNKNOWN), "finish_reason": "stop"}
+async def structured(call: StructuredCall) -> dict[str, Any]:
+    key = _key(call.user_prompt)
+    if key in (FAILS_FIRST, STALLS_FIRST):
+        _calls[key] += 1
+        if _calls[key] % 2 == 1:
+            if key == FAILS_FIRST:
+                raise HTTPException(status_code=503, detail="model unavailable")
+            await asyncio.sleep(STALL_SECONDS)
+    return {"data": READINGS.get(key, UNKNOWN), "finish_reason": "stop"}
 
 
 @app.get("/_fake/health")

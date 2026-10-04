@@ -724,16 +724,40 @@ def _get_mistral_structured_llm_gateway() -> StructuredLLMGateway:
     return _mistral_gateway_holder[0]
 
 
+_registered_providers: dict[str, Callable[[], StructuredLLMGateway]] = {}
+
+
+def register_structured_llm_provider(
+    prefix: str, gateway: Callable[[], StructuredLLMGateway]
+) -> None:
+    """Serve ``<prefix>:<model>`` ids with the gateway ``gateway`` returns.
+
+    How a provider this module does not ship joins: once registered at
+    startup, its models can be named anywhere a model string is configured,
+    including as a fallback for interactive calls, with no change to the
+    routing policy. ``gateway`` is called on every resolve, so it should
+    hand back one shared instance. A registered prefix takes precedence
+    over the built-in ones.
+    """
+    if not prefix or ":" in prefix:
+        raise ValueError(f"not a provider prefix: {prefix!r}")
+    _registered_providers[prefix] = gateway
+
+
 def resolve_structured_llm_gateway(model: str) -> StructuredLLMGateway:
     """Pick the structured gateway for a (possibly provider-prefixed) model id.
 
-    ``anthropic:claude-...`` → Claude on Vertex, ``mistralai:mistral-...`` →
-    Mistral on Vertex; a bare id or any other prefix (e.g. ``google:``) → the
-    default Gemini gateway. Lets a single caller target any provider by model
-    string alone, the same way :func:`strip_provider_prefix` already lets the
-    prefix ride through config.
+    A prefix registered with :func:`register_structured_llm_provider` →
+    its gateway; ``anthropic:claude-...`` → Claude on Vertex,
+    ``mistralai:mistral-...`` → Mistral on Vertex; a bare id or any other
+    prefix (e.g. ``google:``) → the default Gemini gateway. Lets a single
+    caller target any provider by model string alone, the same way
+    :func:`strip_provider_prefix` already lets the prefix ride through
+    config.
     """
     provider, sep, _rest = model.partition(":")
+    if sep and provider in _registered_providers:
+        return _registered_providers[provider]()
     if sep and provider == LLMProvider.ANTHROPIC:
         return _get_anthropic_structured_llm_gateway()
     if sep and provider == LLMProvider.MISTRALAI:
@@ -749,5 +773,6 @@ __all__ = [
     "StructuredCompletion",
     "StructuredLLMGateway",
     "get_default_structured_llm_gateway",
+    "register_structured_llm_provider",
     "resolve_structured_llm_gateway",
 ]

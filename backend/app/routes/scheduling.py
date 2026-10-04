@@ -158,6 +158,7 @@ from ..services.google_calendar_service import (
     RetitleOutcome,
     google_consent_surface,
 )
+from ..services.hedged_structured_llm_gateway import HedgedStructuredLLMGateway
 from ..services.http_structured_llm_gateway import HttpStructuredLLMGateway
 from ..services.telehealth import (
     GOOGLE_MEET,
@@ -1474,8 +1475,13 @@ def get_availability_rule_parse_service() -> AvailabilityRuleParseService:
     base_url = get_settings().availability_parse_base_url
     if base_url:
         # The end-to-end stack's stand-in; the setting refuses to load
-        # outside development.
-        return AvailabilityRuleParseService(llm_gateway=HttpStructuredLLMGateway(base_url))
+        # outside development. It answers through the same routing policy
+        # a model would, so a spec can watch a failed or stalled call
+        # handed over.
+        stand_in = HttpStructuredLLMGateway(base_url)
+        return AvailabilityRuleParseService(
+            llm_gateway=HedgedStructuredLLMGateway.from_settings(resolve=lambda _model: stand_in)
+        )
     return AvailabilityRuleParseService()
 
 

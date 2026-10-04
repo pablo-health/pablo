@@ -1569,17 +1569,19 @@ class Settings(BaseSettings):
             "availability) moves on to, in order, when ai_model_flash fails "
             "or stalls. A provider prefix selects the provider, e.g. "
             "``anthropic:claude-haiku-4-5``. Empty (default) keeps one model: "
-            "one attempt and one retry on it."
+            "one attempt and one retry on it, the retry serving as the "
+            "fallback."
         ),
     )
     ai_hedge_after_seconds: float | None = Field(
         default=None,
         gt=0,
         description=(
-            "Start the next model in line while the current one is still "
-            "running once it has taken this long; the first usable answer "
-            "wins and the other is abandoned (and still billed). Unset "
-            "(default) tries models strictly one after another."
+            "The stall threshold for interactive structured calls: start the "
+            "next leg (a fallback, or the one retry) beside one that has run "
+            "this long; the first usable answer wins and the other is "
+            "abandoned (and still billed). A failure hands over at once "
+            "regardless. Unset (default) uses 4 seconds."
         ),
     )
 

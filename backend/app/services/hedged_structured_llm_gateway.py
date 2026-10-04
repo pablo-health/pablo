@@ -3,26 +3,32 @@
 """A structured gateway that serves each call through a hedge policy.
 
 An interactive caller asks for one model and gets an answer from whichever
-leg of :class:`~app.reliability.hedge.HedgePolicy` produces a usable one
-first: the requested model, then any configured fallbacks, then each of
-them once more. Each leg goes to the gateway for its own model's
-provider, with no retry of its own, since a retry here is simply the
-next leg.
+leg of :meth:`~app.reliability.hedge.HedgePolicy.interactive` produces a
+usable one first: the requested model, then each configured fallback, then
+the requested model once more. Each leg goes to the gateway for its own
+model's provider with a single attempt, so the provider's own retry never
+runs: a failure hands over to the next leg at once, and a leg still running
+at the stall threshold (4 s unless configured) gets the next leg beside it.
+The same model is asked at most twice, and not again once it has refused
+the request outright.
+
+A fallback is named by model string alone. ``resolve`` (by default
+:func:`resolve_structured_llm_gateway`) maps it to its provider's gateway,
+so a new provider joins by registering a gateway for its prefix, with no
+change to the policy.
 
 Every call ends within 25 s, the deadline of the ``LLM_REQUEST`` retry
 this replaces: a leg that starts late is given what is left of it.
 
-With no fallbacks and no hedge delay configured, which is the default,
-this is one attempt and one retry on one model, bounded as the gateway's
-own retry bounds it: each attempt by the caller's timeout, the retry cut
-to what is left of 25 s, and the same failures retried. The one
-difference is that the retry starts at once, where ``LLM_REQUEST`` slept
-up to half a second of jittered backoff (or a 429's ``Retry-After``,
-capped at 4 s) first.
+Each call logs one line: the route that answered (primary, retry or
+fallback), the legs started, the latency and the class of each failure.
+Model names and error classes only, never prompt or answer text.
 """
 
 from __future__ import annotations
 
+import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 
@@ -32,7 +38,14 @@ from ..reliability import (
     RetryExhaustedError,
     is_transient,
 )
-from ..reliability.hedge import FailureKind, HedgePolicy, HedgeRun, Leg, LegTimeoutError
+from ..reliability.hedge import (
+    INTERACTIVE_STALL_AFTER,
+    FailureKind,
+    HedgePolicy,
+    HedgeRun,
+    Leg,
+    LegTimeoutError,
+)
 from ..reliability.hedge_sync import run_hedged_sync
 from ..settings import get_settings
 from .structured_llm_gateway import (
@@ -48,6 +61,8 @@ if TYPE_CHECKING:
     from concurrent.futures import Executor
 
     from ..reliability import RetryPolicy
+
+logger = logging.getLogger(__name__)
 
 #: Every call, retries included, ends within this long: the deadline of the
 #: one-retry ``LLM_REQUEST`` preset these legs replace.
@@ -70,11 +85,15 @@ def _leg_executor() -> ThreadPoolExecutor:
 
 
 def classify_structured_failure(exc: BaseException) -> FailureKind:
-    """Sort a leg's failure the way the gateway's own retry would have.
+    """Sort a leg's failure by what it says about the legs after it.
 
     A transient failure is one the single-attempt retry engine gave up on
     (``RetryExhaustedError``) or a transient error further down the chain.
     A truncated answer is fatal: every leg shares the same output cap.
+    Anything else (no access, no such model, a request the provider
+    rejects) is that model's answer however often it is asked, but not
+    necessarily another's, so it is permanent: the model is not asked
+    again and the next one is.
     """
     if isinstance(exc, StructuredOutputTruncatedError):
         return FailureKind.FATAL
@@ -87,7 +106,18 @@ def classify_structured_failure(exc: BaseException) -> FailureKind:
         ):
             return FailureKind.TRANSIENT
         cause = cause.__cause__
-    return FailureKind.FATAL
+    return FailureKind.PERMANENT
+
+
+def _route(run: HedgeRun[Any], winner: int) -> str:
+    legs = run.legs
+    if winner == 0:
+        return "primary"
+    return "retry" if legs[winner].model == legs[0].model else "fallback"
+
+
+def _failures(run: HedgeRun[Any]) -> str:
+    return ",".join(f"{model}:{what}" for _index, model, what in run.trail) or "-"
 
 
 class HedgedStructuredLLMGateway(StructuredLLMGateway):
@@ -97,30 +127,33 @@ class HedgedStructuredLLMGateway(StructuredLLMGateway):
         self,
         *,
         fallbacks: Sequence[str] = (),
-        hedge_after: float | None = None,
+        stall_after: float | None = INTERACTIVE_STALL_AFTER,
         resolve: Callable[[str], StructuredLLMGateway] = resolve_structured_llm_gateway,
         executor: Executor | None = None,
     ) -> None:
         self._fallbacks = tuple(fallbacks)
-        self._hedge_after = hedge_after
+        self._stall_after = stall_after
         self._resolve = resolve
         self._executor = executor
 
     @classmethod
-    def from_settings(cls) -> HedgedStructuredLLMGateway:
+    def from_settings(
+        cls, resolve: Callable[[str], StructuredLLMGateway] = resolve_structured_llm_gateway
+    ) -> HedgedStructuredLLMGateway:
         settings = get_settings()
         return cls(
             fallbacks=settings.flash_fallback_models,
-            hedge_after=settings.ai_hedge_after_seconds,
+            stall_after=settings.ai_hedge_after_seconds or INTERACTIVE_STALL_AFTER,
+            resolve=resolve,
         )
 
     def policy_for(self, model: str, timeout_seconds: float | None) -> HedgePolicy:
-        return HedgePolicy.for_models(
+        return HedgePolicy.interactive(
             model,
             self._fallbacks,
             attempt_timeout=timeout_seconds or _STRUCTURED_LLM_TIMEOUT_SECONDS,
             budget=_BUDGET_SECONDS,
-            hedge_after=self._hedge_after,
+            stall_after=self._stall_after,
         )
 
     def complete_structured(
@@ -154,16 +187,36 @@ class HedgedStructuredLLMGateway(StructuredLLMGateway):
             )
 
         run: HedgeRun[StructuredCompletion] = HedgeRun(self.policy_for(model, timeout_seconds))
+        started = time.monotonic()
         try:
-            return run_hedged_sync(
+            completion = run_hedged_sync(
                 run,
                 call,
                 classify=classify_structured_failure,
                 executor=self._executor or _leg_executor(),
             )
-        except LegTimeoutError as exc:
-            # Callers already handle a failed call as a RuntimeError.
-            raise RuntimeError(f"Structured LLM call failed: {exc}") from exc
+        except Exception as exc:
+            logger.warning(
+                "Structured call failed: attempts=%d latency_ms=%d failures=%s error=%s",
+                run.started,
+                int((time.monotonic() - started) * 1000),
+                _failures(run),
+                type(exc).__name__,
+            )
+            if isinstance(exc, LegTimeoutError):
+                # Callers already handle a failed call as a RuntimeError.
+                raise RuntimeError(f"Structured LLM call failed: {exc}") from exc
+            raise
+        winner = run.winner if run.winner is not None else 0
+        logger.info(
+            "Structured call answered: route=%s model=%s attempts=%d latency_ms=%d failures=%s",
+            _route(run, winner),
+            run.legs[winner].model,
+            run.started,
+            int((time.monotonic() - started) * 1000),
+            _failures(run),
+        )
+        return completion
 
 
 __all__ = ["HedgedStructuredLLMGateway", "classify_structured_failure"]
