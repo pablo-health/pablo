@@ -15,6 +15,9 @@ vi.mock("../../GoogleCalendarSettings", () => ({
 vi.mock("../../IntegrationSettings", () => ({
   IntegrationSettings: () => <div data-testid="integration-settings" />,
 }))
+vi.mock("../../NameBookingSetting", () => ({
+  NameBookingSetting: () => <div data-testid="name-booking-setting" />,
+}))
 
 import { CalendarsPage } from "../CalendarsPage"
 
@@ -45,5 +48,11 @@ describe("CalendarsPage", () => {
     render(<CalendarsPage />)
 
     expect(screen.getByTestId("integration-settings")).toBeInTheDocument()
+  })
+
+  it("offers booking by full name for feeds and Google Calendar alike", () => {
+    render(<CalendarsPage />)
+
+    expect(screen.getByTestId("name-booking-setting")).toBeInTheDocument()
   })
 })

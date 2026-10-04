@@ -14,7 +14,7 @@
 import type { Page } from "@playwright/test"
 import { test, expect } from "../fixtures/auth"
 import { ApiClient, ApiError } from "../fixtures/api"
-import { givePatient, markCalendarSetupComplete } from "../fixtures/scenarios"
+import { givePatient, letNamesBook, markCalendarSetupComplete } from "../fixtures/scenarios"
 import {
   SCOPE_APP_CALENDAR,
   SCOPE_FREEBUSY,
@@ -218,11 +218,20 @@ async function answerAsNewClient(api: ApiClient, title: string): Promise<void> {
   })
 }
 
+/**
+ * Charts under this name: made from a calendar title (the whole title is the
+ * first name) or given a first and last name.
+ */
 async function patientsNamed(api: ApiClient, name: string): Promise<{ id: string }[]> {
-  const page = await api.get<{ data: { id: string; first_name: string }[] }>(
-    `/api/patients?search=${encodeURIComponent(name)}&page_size=100`,
+  // Search matches one field at a time, so "Jamie Ortiz" would find a chart
+  // named in one field ("Jamie Ortiz" / "") but never "Jamie" / "Ortiz".
+  const lastWord = name.split(" ").at(-1) ?? name
+  const page = await api.get<{ data: { id: string; first_name: string; last_name: string }[] }>(
+    `/api/patients?search=${encodeURIComponent(lastWord)}&page_size=100`,
   )
-  return page.data.filter((p) => p.first_name === name)
+  return page.data.filter(
+    (p) => p.first_name === name || `${p.first_name} ${p.last_name}` === name,
+  )
 }
 
 async function patientNamed(api: ApiClient, name: string): Promise<string> {
@@ -288,6 +297,7 @@ const CLIENTS = [
   "Sam Patel",
   "Dana Brooks",
   "Taylor Quinn",
+  "Jamie Ortiz",
 ]
 
 let addedRules: string[] = []
@@ -304,6 +314,8 @@ test.afterEach(async ({ api }) => {
     }
   }
   await forgetClients(api, CLIENTS)
+  // Back to the deployment default, which the other specs expect.
+  await letNamesBook(api, null)
   for (const ruleId of addedRules) {
     await api.delete(`/api/availability/rules/${ruleId}`)
   }
@@ -557,12 +569,133 @@ test("a session titled with a client's initials is offered that client", async (
   )
 })
 
+test("a session named for one client books by default, and is asked once that is off", async ({
+  signedInPage: page,
+  api,
+}) => {
+  await freshGoogle(api)
+  await forgetClients(api, ["Jamie Ortiz"])
+  const jamie = await givePatient(api, { first_name: "Jamie", last_name: "Ortiz" })
+  await connectThroughSetup(page, { follow: true })
+
+  // By default a session named for Jamie books on its own, and a series of
+  // lunches that only mentions Jamie is asked about, with Jamie filled in.
+  await google.seed("primary", {
+    summary: "Session with Jamie Ortiz",
+    start: localDateTime(2, "09:00"),
+    end: plusMinutes(localDateTime(2, "09:00"), SESSION_MINUTES),
+  })
+  await seedWeekly("primary", "Lunch with Jamie Ortiz", localDateTime(1, "12:00"), 2)
+  await readCalendarsNow(api)
+  const booked = await upcomingFor(api, jamie.id)
+  expect(booked).toHaveLength(1)
+  expect(new Date(booked[0].start_at).getTime()).toBe(
+    toUtc(localDateTime(2, "09:00")).getTime(),
+  )
+  const [lunch] = await questions(api)
+  expect(lunch.title).toBe("Lunch with Jamie Ortiz")
+  expect(lunch.match.possible.map((c) => c.patient_id)).toEqual([jamie.id])
+
+  // Turned off in Settings, where the followed calendar's line follows it.
+  await page.goto("/dashboard/settings/calendars")
+  const choice = page.getByRole("checkbox", {
+    name: "Book sessions whose title has a client\u2019s full name",
+  })
+  await expect(choice).toBeChecked()
+  await expect(page.getByTestId("followed-calendar-line")).toContainText(
+    "It books the ones titled with a client\u2019s full name",
+  )
+  const saved = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/users/me/preferences") &&
+      response.request().method() === "PUT" &&
+      response.ok(),
+  )
+  await choice.click()
+  await saved
+  await expect(choice).not.toBeChecked()
+  await expect(page.getByTestId("followed-calendar-line")).toContainText(
+    "and asks about the ones that look like sessions",
+  )
+
+  // Off: a series named for Jamie is asked about, with Jamie filled in.
+  await seedWeekly("primary", "Jamie Ortiz", localDateTime(1, "16:00"), 3)
+  await readCalendarsNow(api)
+  expect(await upcomingFor(api, jamie.id)).toHaveLength(1)
+  const [asked] = (await questions(api)).filter((q) => q.title === "Jamie Ortiz")
+  expect(asked.sessions).toBe(3)
+  await showTomorrow(page)
+  await page.getByRole("button", { name: "Review", exact: true }).click()
+  const review = page.getByRole("dialog")
+  await expect(review.getByRole("checkbox", { name: "Jamie Ortiz", exact: true })).toBeChecked()
+  await expect(
+    review.getByRole("combobox", { name: "Which client is Jamie Ortiz?" }),
+  ).toHaveValue(jamie.id)
+})
+
+test("what Pablo booked from titles is listed, and an undo stays undone", async ({
+  signedInPage: page,
+  api,
+}) => {
+  await freshGoogle(api)
+  await forgetClients(api, ["Jamie Ortiz"])
+  const jamie = await givePatient(api, { first_name: "Jamie", last_name: "Ortiz" })
+  await connectThroughSetup(page, { follow: true })
+
+  // As by default: a series titled with Jamie's name books on its own.
+  const seriesId = await seedWeekly("primary", "Jamie Ortiz", localDateTime(1, "16:00"), 3)
+  await readCalendarsNow(api)
+  const booked = await upcomingFor(api, jamie.id)
+  expect(booked).toHaveLength(3)
+  expect(await questions(api)).toHaveLength(0)
+
+  // The calendar lists each one with its client and time.
+  await showTomorrow(page)
+  const notice = page.getByTestId("auto-booked")
+  await expect(notice).toContainText("Pablo booked 3 sessions from your calendar")
+  const rows = notice.getByTestId("auto-booked-row")
+  await expect(rows).toHaveCount(3)
+  await expect(rows.first()).toContainText("Jamie Ortiz")
+
+  // Undo the first: the ordinary cancel.
+  const soonest = [...booked].sort((a, b) => a.start_at.localeCompare(b.start_at))[0]
+  const cancelled = page.waitForResponse(
+    (response) =>
+      response.url().includes(`/api/appointments/${soonest.id}`) &&
+      response.request().method() === "DELETE" &&
+      response.ok(),
+  )
+  await rows.first().getByRole("button", { name: /^Undo Jamie Ortiz/ }).click()
+  await cancelled
+  await expect(rows).toHaveCount(2)
+  await expect(notice).toContainText("Pablo booked 2 sessions from your calendar")
+
+  // The other service extends the series, so every event is read again: the
+  // undone one stays cancelled, and the new one follows the series.
+  await google.change("primary", seriesId, { recurrence: ["RRULE:FREQ=WEEKLY;COUNT=4"] })
+  await readCalendarsNow(api)
+  const after = await upcomingFor(api, jamie.id)
+  expect(after).toHaveLength(3)
+  expect(after.map((a) => a.id)).not.toContain(soonest.id)
+  expect(await questions(api)).toHaveLength(0)
+
+  // OK clears the list; the sessions stay booked.
+  await page.reload()
+  await expect(notice).toContainText("Pablo booked 2 sessions from your calendar")
+  await notice.getByRole("button", { name: "OK", exact: true }).click()
+  await expect(notice).toHaveCount(0)
+  expect(await upcomingFor(api, jamie.id)).toHaveLength(3)
+})
+
 test("disconnecting takes Pablo off the account and forgets what it read, keeping the sessions", async ({
   signedInPage: page,
   api,
 }) => {
   await freshGoogle(api)
   await forgetClients(api, ["Dana Brooks"])
+  // Asked first, so reconnecting shows the answer was forgotten; with names
+  // booking, the read would settle it from the title instead.
+  await letNamesBook(api, false)
   await connectThroughSetup(page, { follow: true })
   await seedWeekly("primary", "Dana Brooks", localDateTime(1, "13:00"), 3)
   await readCalendarsNow(api)
