@@ -569,7 +569,7 @@ test("a session titled with a client's initials is offered that client", async (
   )
 })
 
-test("a session titled with one client's full name is asked first, then books once allowed", async ({
+test("a session named for one client books by default, and is asked once that is off", async ({
   signedInPage: page,
   api,
 }) => {
@@ -578,28 +578,33 @@ test("a session titled with one client's full name is asked first, then books on
   const jamie = await givePatient(api, { first_name: "Jamie", last_name: "Ortiz" })
   await connectThroughSetup(page, { follow: true })
 
-  // Off, as by default: the series is asked about, with Jamie filled in.
-  await letNamesBook(api, false)
-  await seedWeekly("primary", "Jamie Ortiz", localDateTime(1, "16:00"), 3)
+  // By default a session named for Jamie books on its own, and a series of
+  // lunches that only mentions Jamie is asked about, with Jamie filled in.
+  await google.seed("primary", {
+    summary: "Session with Jamie Ortiz",
+    start: localDateTime(2, "09:00"),
+    end: plusMinutes(localDateTime(2, "09:00"), SESSION_MINUTES),
+  })
+  await seedWeekly("primary", "Lunch with Jamie Ortiz", localDateTime(1, "12:00"), 2)
   await readCalendarsNow(api)
-  expect(await upcomingFor(api, jamie.id)).toHaveLength(0)
-  const [asked] = (await questions(api)).filter((q) => q.title === "Jamie Ortiz")
-  expect(asked.sessions).toBe(3)
-  await showTomorrow(page)
-  await page.getByRole("button", { name: "Review", exact: true }).click()
-  const review = page.getByRole("dialog")
-  await expect(review.getByRole("checkbox", { name: "Jamie Ortiz" })).toBeChecked()
-  await expect(
-    review.getByRole("combobox", { name: "Which client is Jamie Ortiz?" }),
-  ).toHaveValue(jamie.id)
-  await page.keyboard.press("Escape")
+  const booked = await upcomingFor(api, jamie.id)
+  expect(booked).toHaveLength(1)
+  expect(new Date(booked[0].start_at).getTime()).toBe(
+    toUtc(localDateTime(2, "09:00")).getTime(),
+  )
+  const [lunch] = await questions(api)
+  expect(lunch.title).toBe("Lunch with Jamie Ortiz")
+  expect(lunch.match.possible.map((c) => c.patient_id)).toEqual([jamie.id])
 
-  // Turned on in Settings, where the followed calendar's line now says so.
+  // Turned off in Settings, where the followed calendar's line follows it.
   await page.goto("/dashboard/settings/calendars")
   const choice = page.getByRole("checkbox", {
     name: "Book sessions whose title has a client\u2019s full name",
   })
-  await expect(choice).not.toBeChecked()
+  await expect(choice).toBeChecked()
+  await expect(page.getByTestId("followed-calendar-line")).toContainText(
+    "It books the ones titled with a client\u2019s full name",
+  )
   const saved = page.waitForResponse(
     (response) =>
       response.url().includes("/api/users/me/preferences") &&
@@ -608,34 +613,24 @@ test("a session titled with one client's full name is asked first, then books on
   )
   await choice.click()
   await saved
-  await expect(choice).toBeChecked()
+  await expect(choice).not.toBeChecked()
   await expect(page.getByTestId("followed-calendar-line")).toContainText(
-    "It books the ones titled with a client\u2019s full name",
+    "and asks about the ones that look like sessions",
   )
 
-  // A session named for Jamie books on its own; a lunch that mentions Jamie
-  // stays busy time; nothing new is asked.
-  await google.seed("primary", {
-    summary: "Session with Jamie Ortiz",
-    start: localDateTime(2, "09:00"),
-    end: plusMinutes(localDateTime(2, "09:00"), SESSION_MINUTES),
-  })
-  await google.seed("primary", {
-    summary: "Lunch with Jamie Ortiz",
-    start: localDateTime(2, "12:00"),
-    end: plusMinutes(localDateTime(2, "12:00"), 30),
-  })
-  await readCalendarsNow(api)
-  const booked = await upcomingFor(api, jamie.id)
-  expect(booked).toHaveLength(1)
-  expect(new Date(booked[0].start_at).getTime()).toBe(
-    toUtc(localDateTime(2, "09:00")).getTime(),
-  )
-  expect((await questions(api)).map((q) => q.title)).toEqual(["Jamie Ortiz"])
-
-  // The next read leaves it as it is.
+  // Off: a series named for Jamie is asked about, with Jamie filled in.
+  await seedWeekly("primary", "Jamie Ortiz", localDateTime(1, "16:00"), 3)
   await readCalendarsNow(api)
   expect(await upcomingFor(api, jamie.id)).toHaveLength(1)
+  const [asked] = (await questions(api)).filter((q) => q.title === "Jamie Ortiz")
+  expect(asked.sessions).toBe(3)
+  await showTomorrow(page)
+  await page.getByRole("button", { name: "Review", exact: true }).click()
+  const review = page.getByRole("dialog")
+  await expect(review.getByRole("checkbox", { name: "Jamie Ortiz", exact: true })).toBeChecked()
+  await expect(
+    review.getByRole("combobox", { name: "Which client is Jamie Ortiz?" }),
+  ).toHaveValue(jamie.id)
 })
 
 test("what Pablo booked from titles is listed, and an undo stays undone", async ({
