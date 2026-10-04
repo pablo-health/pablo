@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 /**
- * Pure helpers behind the "Bring over your week" grid: which weekday+hour
+ * Pure helpers behind the "Import recurring sessions" grid: which weekday+hour
  * cells the calendar shows as busy, and which of those cells a scan's
  * proposed series structurally matches. No event content ever passes
  * through here — a busy window is start/end only, and a series is already

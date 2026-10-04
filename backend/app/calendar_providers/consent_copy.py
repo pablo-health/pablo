@@ -24,13 +24,11 @@ if TYPE_CHECKING:
     from .capabilities import CalendarCapability, ProviderCapability
 
 _PROMISE_TEMPLATES: Mapping[NarrowingEnforcement, str] = {
-    NarrowingEnforcement.PROVIDER_ENFORCED: (
-        "{provider} limits this to {reach}. Pablo cannot reach further, "
-        "because the permission itself does not."
-    ),
+    NarrowingEnforcement.PROVIDER_ENFORCED: "{provider} limits access to {reach}.",
+    # "Broader access" is the honest part: the grant reaches further than
+    # the feature, and only Pablo's code keeps it to the reach.
     NarrowingEnforcement.PABLO_ENFORCED: (
-        "Pablo uses this only for {reach}. The permission {provider} grants "
-        "covers more than that, so the limit is Pablo's own."
+        "{provider} grants broader access. Pablo uses it only for {reach}."
     ),
 }
 

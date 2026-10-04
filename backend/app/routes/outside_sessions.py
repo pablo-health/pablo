@@ -555,7 +555,7 @@ def set_followed_calendar(
 ) -> FollowedCalendarResponse:
     """Choose the calendar whose sessions are brought in, or stop following.
 
-    Following reads events, so it needs the grant the "Look at my week" step
+    Following reads events, so it needs the grant the "Scan calendar" step
     asks for; choosing a calendar without that grant, or one the connection
     can't read, is refused rather than stored as a choice that does nothing.
     Stopping, or choosing another calendar, drops the open questions from the

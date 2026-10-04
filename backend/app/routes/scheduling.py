@@ -2024,7 +2024,7 @@ def google_calendar_callback(
     Two shapes land here. A connect (no ``capability``) carries the whole
     selection, which decides both the grant and which calendar the
     connection is bound to. An incremental grant (``capability`` set, e.g.
-    from the import wizard's "Look at my week") carries only the one
+    from the import wizard's "Scan calendar") carries only the one
     capability being added — the write target is read back from the
     existing connection rather than defaulted, so an incremental grant can
     never silently rebind PUSH to a different calendar mid-flow.

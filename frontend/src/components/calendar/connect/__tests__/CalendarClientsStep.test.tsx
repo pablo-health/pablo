@@ -189,7 +189,7 @@ describe("CalendarClientsStep", () => {
     expect(new Set(delays).size).toBe(2)
   })
 
-  it("fires onScan from the Look at my week button", async () => {
+  it("fires onScan from the Scan calendar button", async () => {
     const user = userEvent.setup()
     const onScan = vi.fn()
     render(
@@ -204,7 +204,7 @@ describe("CalendarClientsStep", () => {
       />
     )
 
-    await user.click(screen.getByRole("button", { name: /look at my week/i }))
+    await user.click(screen.getByRole("button", { name: "Scan calendar" }))
     expect(onScan).toHaveBeenCalledOnce()
   })
 
@@ -223,7 +223,7 @@ describe("CalendarClientsStep", () => {
       />
     )
 
-    await user.click(screen.getByRole("button", { name: /skip, i.ll add them myself/i }))
+    await user.click(screen.getByRole("button", { name: "Skip import" }))
     expect(onSkip).toHaveBeenCalledOnce()
   })
 
@@ -240,21 +240,24 @@ describe("CalendarClientsStep", () => {
       />
     )
 
-    expect(screen.getByText("Bring over your week")).toBeInTheDocument()
+    expect(screen.getByText("Step 4 · Optional")).toBeInTheDocument()
+    expect(screen.getByText("Import recurring sessions")).toBeInTheDocument()
     expect(
       screen.getByText(
-        "Pablo looks at the rhythm of your calendar - events that repeat weekly or every other week, the way sessions do. It can't tell a client from a standing meeting, so nothing is added until you say so."
+        "Pablo can find events that repeat weekly or every other week. You'll choose which ones to import."
       )
     ).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Look at my week" })).toBeInTheDocument()
+    // Free/busy has no titles, so the preview calls them busy times.
+    expect(screen.getByText("Busy times from a typical week.")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Scan calendar" })).toBeInTheDocument()
   })
 
-  it("renders left_alone matching the scan response", () => {
+  it("sorts the scanned week into possible sessions and other busy times", () => {
     render(
       <CalendarClientsStep
         step={4}
         busyWindows={GRANTED}
-        proposal={proposal({ left_alone: 9 })}
+        proposal={proposal()}
         scanning={false}
         error={null}
         onScan={vi.fn()}
@@ -262,7 +265,30 @@ describe("CalendarClientsStep", () => {
       />
     )
 
-    expect(screen.getByTestId("left-alone-count")).toHaveTextContent("9")
+    expect(screen.getByTestId("qualifying-count").parentElement).toHaveTextContent(
+      "1possible recurring session"
+    )
+    expect(screen.getByTestId("ghost-count").parentElement).toHaveTextContent(/other busy times?$/)
+  })
+
+  it("names the follow toggle for what it does, which includes one-off sessions", () => {
+    render(
+      <CalendarClientsStep
+        step={4}
+        busyWindows={GRANTED}
+        proposal={proposal()}
+        scanning={false}
+        error={null}
+        onScan={vi.fn()}
+        onSkip={vi.fn()}
+        onFollowingChange={vi.fn()}
+      />
+    )
+
+    expect(
+      screen.getByRole("checkbox", { name: /Keep importing new sessions from this calendar/ })
+    ).toBeInTheDocument()
+    expect(screen.getByText("You’ll review each new match before it’s added.")).toBeInTheDocument()
   })
 
   it("never asserts a category the heuristic can't verify", () => {

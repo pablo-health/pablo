@@ -46,7 +46,7 @@ export function GoogleCalendarSettings() {
               <p className="mt-0.5 text-xs text-muted-foreground">
                 {status.write_target === "primary"
                   ? "Your main calendar"
-                  : "A calendar Pablo made for your sessions"}
+                  : "A separate calendar for Pablo sessions"}
               </p>
               {status.last_synced_at && (
                 <p className="mt-0.5 text-xs text-muted-foreground">

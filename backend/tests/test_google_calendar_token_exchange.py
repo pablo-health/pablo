@@ -5,7 +5,7 @@
 These run the real ``google_auth_oauthlib`` flow and the real ``oauthlib`` token
 parsing; only the HTTP call to Google's token endpoint is replaced. The other
 connect tests replace the whole flow, which is how an exchange that raised on
-every "Look at my week" reached production: asked for read access alone with
+every "Scan calendar" reached production: asked for read access alone with
 ``include_granted_scopes``, Google answers with every permission the account
 has granted the app, and oauthlib refused the difference as "Scope has
 changed".

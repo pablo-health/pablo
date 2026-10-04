@@ -166,8 +166,10 @@ class TestConsentCopy:
             reach="the sessions you book",
         )
         promise = capability_promise("Some Calendar", declaration)
-        assert "cannot reach further" not in promise
-        assert "the limit is Pablo's own" in promise
+        assert "limits access" not in promise
+        assert promise == (
+            "Some Calendar grants broader access. Pablo uses it only for the sessions you book."
+        )
 
     def test_provider_enforced_copy_says_the_grant_itself_is_narrow(self) -> None:
         declaration = ProviderCapability(
@@ -178,7 +180,7 @@ class TestConsentCopy:
             reach="your busy times",
         )
         promise = capability_promise("Some Calendar", declaration)
-        assert "cannot reach further" in promise
+        assert promise == "Some Calendar limits access to your busy times."
 
     def test_push_copy_follows_the_grant_each_write_target_needs(self) -> None:
         """The calendar Pablo makes is unreachable-by-grant and may say so.
@@ -192,16 +194,20 @@ class TestConsentCopy:
             GoogleCalendarService.display_name,
             google_capabilities(CalendarWriteTarget.PRIMARY)[CalendarCapability.PUSH],
         )
-        assert "cannot reach further" in app_calendar
-        assert "cannot reach further" not in primary
-        assert "the limit is Pablo's own" in primary
+        assert app_calendar == "Google Calendar limits access to the calendar Pablo creates."
+        assert primary == (
+            "Google Calendar grants broader access. "
+            "Pablo uses it only for adding and updating sessions booked in Pablo."
+        )
 
     def test_google_busy_copy_may_claim_the_narrower_guarantee(self) -> None:
         promise = capability_promise(
             GoogleCalendarService.display_name,
             GOOGLE_CAPABILITIES[CalendarCapability.BUSY],
         )
-        assert "cannot reach further" in promise
+        assert promise == (
+            "Google Calendar limits access to busy times; event titles and guests are not shared."
+        )
 
     def test_promises_cover_exactly_the_requested_capabilities(self) -> None:
         promises = consent_promises(

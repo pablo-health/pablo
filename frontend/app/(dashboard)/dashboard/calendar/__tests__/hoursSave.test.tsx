@@ -96,16 +96,16 @@ describe("CalendarPage saving first-run hours", () => {
     const user = userEvent.setup()
     renderPage()
 
-    await user.click(await screen.findByRole("button", { name: "Pick from a grid instead" }))
+    await user.click(await screen.findByRole("button", { name: "Use the hours grid" }))
     // The grid starts on Monday to Friday, 9 to 5: five rules.
-    await user.click(screen.getByRole("button", { name: "Save these hours" }))
+    await user.click(screen.getByRole("button", { name: "Save hours" }))
     await waitFor(() => expect(server.creates.size).toBe(5))
 
     // Monday lands first, and the rule list refetches with it in.
     await act(async () => server.creates.get(0)!.resolve())
     await waitFor(() => expect(server.listed.at(-1)).toBe(1))
 
-    expect(screen.getByText("When do you see clients?")).toBeInTheDocument()
+    expect(screen.getByText("What are your usual hours?")).toBeInTheDocument()
     expect(screen.queryByTestId("editorial-calendar")).not.toBeInTheDocument()
 
     // Wednesday — the third rule — fails; the rest land.
@@ -123,7 +123,7 @@ describe("CalendarPage saving first-run hours", () => {
 
     // The retry sends Wednesday alone, and only then does the calendar open.
     server.creates.clear()
-    await user.click(screen.getByRole("button", { name: "Save these hours" }))
+    await user.click(screen.getByRole("button", { name: "Save hours" }))
     await waitFor(() => expect([...server.creates.keys()]).toEqual([2]))
     await act(async () => server.creates.get(2)!.resolve())
 
