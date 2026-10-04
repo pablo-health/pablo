@@ -7,6 +7,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
+from ..exceptions import AppointmentTypeNameTakenError
+
 if TYPE_CHECKING:
     from ..models.appointment_type import AppointmentType
 
@@ -24,11 +26,21 @@ class AppointmentTypeRepository(ABC):
 
     @abstractmethod
     def create(self, appointment_type: AppointmentType) -> AppointmentType:
-        """Create a new appointment type."""
+        """Create a new appointment type.
+
+        Raises:
+            AppointmentTypeNameTakenError: the user already has a type with
+                this name.
+        """
 
     @abstractmethod
     def update(self, appointment_type: AppointmentType) -> AppointmentType:
-        """Update an existing appointment type."""
+        """Update an existing appointment type.
+
+        Raises:
+            AppointmentTypeNameTakenError: the type was renamed to a name
+                another of the user's types already has.
+        """
 
     @abstractmethod
     def delete(self, appointment_type_id: str, user_id: str) -> bool:
@@ -51,12 +63,24 @@ class InMemoryAppointmentTypeRepository(AppointmentTypeRepository):
         return [t for t in self._types.values() if t.user_id == user_id]
 
     def create(self, appointment_type: AppointmentType) -> AppointmentType:
+        self._reject_taken_name(appointment_type)
         self._types[appointment_type.id] = appointment_type
         return appointment_type
 
     def update(self, appointment_type: AppointmentType) -> AppointmentType:
+        self._reject_taken_name(appointment_type)
         self._types[appointment_type.id] = appointment_type
         return appointment_type
+
+    def _reject_taken_name(self, appointment_type: AppointmentType) -> None:
+        """Mirror ``uq_appointment_types_user_name`` so tests see the same refusal."""
+        for other in self._types.values():
+            if (
+                other.id != appointment_type.id
+                and other.user_id == appointment_type.user_id
+                and other.name == appointment_type.name
+            ):
+                raise AppointmentTypeNameTakenError(appointment_type.name)
 
     def delete(self, appointment_type_id: str, user_id: str) -> bool:
         appointment_type = self.get(appointment_type_id, user_id)

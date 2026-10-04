@@ -28,8 +28,8 @@ let typesData: AppointmentTypeResponse[] = []
 
 vi.mock("@/hooks/useBookingLinks", () => ({
   useBookingLinks: () => ({
-    data: { data: linksData, total: linksData.length },
-    isLoading: listLoading,
+    data: listLoading ? undefined : { data: linksData, total: linksData.length },
+    isPending: listLoading,
     error: listErrored ? new Error("boom") : null,
   }),
   useCreateBookingLink: () => ({

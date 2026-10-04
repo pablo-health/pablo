@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import uuid
 from collections.abc import Collection, Sequence
@@ -125,6 +126,7 @@ from ..repositories import (
 from ..scheduling_engine.exceptions import (
     AppointmentConflictError,
     AppointmentNotFoundError,
+    AppointmentTypeNameTakenError,
     InvalidAppointmentError,
     InvalidRecurrenceError,
     RuleViolationError,
@@ -1531,6 +1533,10 @@ def parse_availability_rules(
 
 # --- Appointment type endpoints ---
 
+#: Shown on the settings page when a create or rename collides with a name
+#: the clinician already uses.
+APPOINTMENT_TYPE_NAME_TAKEN = "An appointment type with that name already exists."
+
 #: Names of the two seeded types every practice is supposed to have alongside
 #: whatever it already had, per the scheduling settings brief. Kept separate
 #: from ``_SEED_APPOINTMENT_TYPES`` below so a migrated practice can be
@@ -1609,21 +1615,16 @@ def _ensure_default_appointment_types(
     settings page's card description names.
 
     Reading is not usually where writes happen, but the seed values are fixed
-    and idempotent (checked by name), so a concurrent double-read produces at
-    worst a duplicate seed row rather than corrupt state.
+    and idempotent (checked by name). Names are unique per clinician, so when
+    two first reads race, the slower one's seed insert is refused; it skips
+    that seed and reads back the row the faster one wrote.
     """
     existing = type_repo.list_by_user(user_id)
     if not existing:
         now = utc_now()
-        created = [
-            type_repo.create(
-                AppointmentType(
-                    id=str(uuid.uuid4()), user_id=user_id, created_at=now, updated_at=now, **seed
-                )
-            )
-            for seed in _SEED_APPOINTMENT_TYPES
-        ]
-        return created, False
+        for seed in _SEED_APPOINTMENT_TYPES:
+            _create_seed(type_repo, user_id, now, seed)
+        return type_repo.list_by_user(user_id), False
 
     existing_names = {t.name for t in existing}
     missing = [
@@ -1637,12 +1638,23 @@ def _ensure_default_appointment_types(
 
     now = utc_now()
     for seed in missing:
+        _create_seed(type_repo, user_id, now, seed)
+    return type_repo.list_by_user(user_id), True
+
+
+def _create_seed(
+    type_repo: AppointmentTypeRepository,
+    user_id: str,
+    now: datetime,
+    seed: _SeedAppointmentType,
+) -> None:
+    """Write one seed type, leaving it be if a concurrent read already did."""
+    with contextlib.suppress(AppointmentTypeNameTakenError):
         type_repo.create(
             AppointmentType(
                 id=str(uuid.uuid4()), user_id=user_id, created_at=now, updated_at=now, **seed
             )
         )
-    return type_repo.list_by_user(user_id), True
 
 
 def _appointment_type_to_response(appointment_type: AppointmentType) -> AppointmentTypeResponse:
@@ -1752,7 +1764,10 @@ def create_appointment_type(
         created_at=now,
         updated_at=now,
     )
-    created = type_repo.create(appointment_type)
+    try:
+        created = type_repo.create(appointment_type)
+    except AppointmentTypeNameTakenError as e:
+        raise ConflictError(APPOINTMENT_TYPE_NAME_TAKEN) from e
     return _appointment_type_to_response(created)
 
 
@@ -1782,7 +1797,10 @@ def update_appointment_type(
         setattr(appointment_type, name, value)
 
     appointment_type.updated_at = utc_now()
-    updated = type_repo.update(appointment_type)
+    try:
+        updated = type_repo.update(appointment_type)
+    except AppointmentTypeNameTakenError as e:
+        raise ConflictError(APPOINTMENT_TYPE_NAME_TAKEN) from e
     return _appointment_type_to_response(updated)
 
 
