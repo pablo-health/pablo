@@ -114,6 +114,13 @@ _SYSTEM_PROMPT = (
     "- block_day_of_week: day_of_week -- no appointments on this day.\n"
     "- block_time_range: start (HH:MM), end (HH:MM) -- no appointments in "
     "this time range on any day.\n"
+    "  It needs no day named. A one-sided cutoff runs to the edge of the "
+    'day: "nothing before 8" is 00:00 to 08:00, and "nothing after 7pm" or '
+    '"finished by 7" is 19:00 to 23:59. Read a bare hour as it falls in an '
+    'ordinary working day ("after 6" is 18:00, "before 9" is 09:00); noon '
+    'is 12:00 and midnight is 00:00. A latest START ("my last client starts '
+    'at 5") is not a cutoff: when that appointment ends depends on its '
+    'length, so refuse it as "ambiguous".\n'
     "- max_per_day: max (integer, at least 1) -- at most this many "
     "appointments per day.\n"
     "- max_per_week: max (integer, at least 1) -- at most this many "
@@ -143,10 +150,47 @@ _SYSTEM_PROMPT = (
     'false and list one item per individual date ("the 1st and the 15th", '
     '"next Friday and next Saturday"). If a date reference can\'t be '
     "expressed this way (a named holiday, something too vague to pin down), "
-    "leave proposals empty and explain why in could_not_parse instead.\n\n"
+    "leave proposals empty and explain why in could_not_parse instead.\n"
+    "A month with a day number is always explicit, even when that day is "
+    'also a holiday ("Nov 11th" is "11-11"). A holiday named without a '
+    "month and day number (Christmas, New Year's, Thanksgiving) is never "
+    "turned into a date by you, even when you know it: refuse. You never "
+    "need the year or the "
+    "weekday a date falls on: copy what was said and it is resolved for you, "
+    "rolling a date that has passed into the next year.\n"
+    "Being out, off, away or closed on a date means no appointments for the "
+    "whole of it. Never ask which hours: a date rule always blocks whole "
+    "days.\n\n"
     'A sentence naming several days ("9 to 5 on weekdays") becomes one '
-    'proposal per day. Default enforcement to "hard"; use "soft" only '
-    'for explicit preference language ("I\'d prefer not to...").\n\n'
+    'proposal per day. "Weekdays" are Monday to Friday (0-4) and '
+    '"weekends" are Saturday and Sunday (5 and 6). Never add a day the '
+    "sentence does not name or cover. Default enforcement to "
+    '"hard"; use "soft" only for explicit preference language ("I\'d '
+    'prefer not to...").\n\n'
+    'A weekday given over to work that is not seeing clients ("Tuesdays '
+    'are for supervision", "Thursday is my admin day") takes no '
+    "appointments: a block_day_of_week. A pattern that skips weeks (every "
+    "other Tuesday, the last Friday of the month) has no rule that can "
+    'store it: refuse it as "out_of_scope".\n\n'
+    'A weekday means every week by default: "no meetings on Thursday", '
+    '"no clients Thursdays", "I don\'t work Thursday" and "every Thursday" '
+    'are all a weekly block_day_of_week. A weekday after "this" or "next" '
+    '("I\'m out next Thursday") is always one date: block_specific_dates, '
+    "never a question. Only a bare command to block or clear a weekday, "
+    'with no "no", no plural, and no "every", "this" or "next" ("clear '
+    'Tuesday", "take Thursday off"), can mean either the coming one or '
+    'every one: refuse that as "ambiguous" and offer two readings, "This '
+    '<day> only" (block_specific_dates with that weekday and no modifier) '
+    'and "Every <day>" (block_day_of_week).\n\n'
+    "working_hours needs a start and an end that the sentence gives. An end "
+    'with no start for a particular day ("I see clients until 2 on '
+    'Thursdays") cannot be stored: refuse as "ambiguous". Never fill in a '
+    "start such as 00:00 or 08:00 -- that opens hours nobody offered. The "
+    'start may come from elsewhere in the same sentence ("8 to 6, but '
+    'Thursdays I finish at 2" gives Thursday 08:00 to 14:00).\n\n'
+    'A one-sided cutoff with no day ("nothing before 10", "I\'m done by '
+    '4") is a block_time_range on every day, as above -- not hours with no '
+    "day.\n\n"
     'Hours given with no day at all ("9 to 5", "my hours are 10-4") do '
     "not say which days they cover, and a single guessed day leaves the "
     "other six closed. Never pick days for the therapist: refuse as "
@@ -154,9 +198,11 @@ _SYSTEM_PROMPT = (
     'proposal for each of Monday to Friday) and "Every day" (one for each '
     'of the seven days). When the sentence names a day to leave out ("9-5, '
     'no Fridays"), the hours are a working week: one working_hours proposal '
-    "for each weekday that is left, and no block_day_of_week for the day "
-    "left out, because a day without working hours already takes no "
-    "appointments.\n\n"
+    "for each of Monday to Friday except the day left out, and none for "
+    'Saturday or Sunday unless the sentence names them ("8-4, no '
+    'Tuesdays" is four proposals: Monday, Wednesday, Thursday, Friday). '
+    "Add no block_day_of_week for the day left out, because a day without "
+    "working hours already takes no appointments.\n\n"
     "max_per_day and max_per_week apply to every day of the week; neither "
     'can be limited to particular days. A cap tied to a day ("max 2 on '
     'Saturdays", "up to 2 patients anytime on Saturday") has no rule that '
@@ -171,7 +217,10 @@ _SYSTEM_PROMPT = (
     "Give every proposal a confidence: your own calibrated probability "
     "(0.0-1.0) that this exact rule is what the therapist meant. Use low "
     "values honestly -- a low-confidence proposal is dropped rather than "
-    "shown, which is the outcome you want when you are unsure.\n\n"
+    "shown, which is the outcome you want when you are unsure. Do not mark "
+    "a rule down for being short or plainly worded: when the sentence "
+    "states every value the rule needs (the day, both times, the minutes "
+    'once "half an hour" is 30), that rule is near-certain, 0.9 or more.\n\n'
     "REFUSING\n\n"
     "Some sentences must not be parsed at all. Return an empty proposals "
     "list, a short could_not_parse reason a therapist would understand, "
@@ -184,13 +233,22 @@ _SYSTEM_PROMPT = (
     "slots exist. Rules about WHO may book or WHICH clients are booking "
     'and intake policy, not availability: "no new patients on Fridays" '
     'limits who books, not when the therapist works, and "I only take '
-    'insurance clients on Mondays" is the same. Judge by intent, not by '
+    'insurance clients on Mondays" is the same. So is anything about HOW '
+    "a visit happens or which kind of client it is for: telehealth, video, "
+    "phone or in person; cash or insurance; new clients "
+    "or new intakes (taking on new people is caseload, not hours, even "
+    "when Intake is an appointment type); one particular client; how long "
+    'a session runs. "No video sessions on Tuesdays" closes one format, '
+    'not the day. Plain "clients", "sessions" or "appointments" mean any '
+    'booking, so "no clients on Tuesdays" is a day block, not this. '
+    "Judge by intent, not by "
     'surface form: a day name sitting next to the word "no" is not '
     "enough to make a sentence an availability rule, and these sentences "
     "deliberately look like one.\n"
     '- "multi_intent": the sentence bundles a real availability rule with '
-    "an unrelated request or an immediate action -- sending an invoice, "
-    "cancelling a specific appointment, anything else to be done. Refuse "
+    "an unrelated request, a question, or an immediate action -- sending "
+    "an invoice, asking about a policy or an address, cancelling or moving "
+    "a specific appointment, anything else to be done or answered. Refuse "
     "the whole sentence. Parsing the availability half and dropping the "
     "rest is still a guess about what was wanted, and the dropped half "
     "leaves no trace for the therapist to notice.\n\n"
@@ -205,8 +263,10 @@ _SYSTEM_PROMPT = (
     "entries, each with a short label the therapist would recognise as "
     "their meaning and the complete proposals for that reading, at the "
     "confidence you have in each rule given that reading. The therapist "
-    "picks one; you do not. Leave readings empty on every other response, "
-    "including a refusal with no boundary to write down.\n\n"
+    "picks one; you do not. Each reading carries at least one proposal; if "
+    "one side has nothing to store, offer no readings. Leave readings empty "
+    "on every other response, including a refusal with no boundary to "
+    "write down.\n\n"
     "When genuinely unsure whether something is encodable, refuse rather "
     "than guess. A confident wrong rule silently blocks or opens a "
     "therapist's calendar, which is worse than falling through to the "
@@ -234,21 +294,31 @@ _NO_APPOINTMENT_TYPES_PROMPT = (
 
 _APPOINTMENT_TYPES_PROMPT = (
     "APPOINTMENT TYPES\n\n"
+    "Every rule applies to every appointment type unless the sentence "
+    "singles one out. appointment_type is null on almost every proposal.\n\n"
     "This practice has these appointment types, and only these:\n"
     "{names}\n"
-    "A sentence naming one of them scopes the rule to it: set "
+    "A sentence singling out one of them scopes the rule to it: set "
     "appointment_type to that name copied exactly as spelled above. A "
     "sentence naming no kind of appointment leaves appointment_type null, "
     "which applies the rule to every kind -- the ordinary case.\n\n"
     "The everyday words for a visit -- session, appointment, meeting, "
-    "visit -- name no kind on their own, even when one of "
-    'the types above shares the word. "No sessions on Fridays" and "at '
-    'most six appointments a day" apply to every kind, so '
-    "appointment_type stays null. Scope a rule to a type only when "
+    "visit, client -- name no kind on their own, even when one of "
+    'the types above shares the word. "No sessions on Fridays", "a '
+    'break after every session" and "at most six appointments a day" '
+    "apply to every kind, so appointment_type stays null -- a type called "
+    '"Session" does not change that. Scope a rule to a type only when '
     'the sentence singles that kind out from the others ("intakes", '
     '"consultations", "regular sessions but not intakes"). Leaving a rule '
     "unscoped by mistake is safe; scoping one by mistake leaves every other "
-    "kind of appointment unblocked.\n\n"
+    "kind of appointment unblocked. Check before you set it: if the only "
+    "word in the sentence that could name a type is session, appointment, "
+    "meeting, visit or client, singular or plural, appointment_type is "
+    "null.\n\n"
+    "Never pick the nearest type on the list to stand in for a word that "
+    "is not one of them: a format such as telehealth, or a group of "
+    "clients such as new ones, is not an appointment type (see "
+    '"out_of_scope" above).\n\n'
     "Never write an appointment_type that is not on the list. If the "
     "sentence names a kind of appointment this practice does not have, "
     'leave proposals empty and refuse with refusal_reason "unknown_'
@@ -289,9 +359,21 @@ _RESPONSE_SCHEMA: dict[str, Any] = {
                 "properties": {
                     "rule_type": {"type": "string"},
                     "enforcement": {"type": "string"},
-                    "day_of_week": {"type": "integer", "nullable": True},
-                    "start": {"type": "string", "nullable": True},
-                    "end": {"type": "string", "nullable": True},
+                    "day_of_week": {
+                        "type": "integer",
+                        "nullable": True,
+                        "description": "0=Monday ... 6=Sunday. Only a day the sentence names.",
+                    },
+                    "start": {
+                        "type": "string",
+                        "nullable": True,
+                        "description": "HH:MM, 24-hour. 00:00 is the start of the day.",
+                    },
+                    "end": {
+                        "type": "string",
+                        "nullable": True,
+                        "description": "HH:MM, 24-hour. 23:59 is the end of the day.",
+                    },
                     "max": {"type": "integer", "nullable": True},
                     "minutes": {"type": "integer", "nullable": True},
                     "date_intent": {
@@ -312,19 +394,40 @@ _RESPONSE_SCHEMA: dict[str, Any] = {
                             "range": {"type": "boolean"},
                         },
                     },
-                    "appointment_type": {"type": "string", "nullable": True},
+                    "appointment_type": {
+                        "type": "string",
+                        "nullable": True,
+                        "description": (
+                            "Null, the ordinary case: the rule applies to every "
+                            "appointment type. Set only when the sentence singles "
+                            "out one listed type. Session(s), appointment(s), "
+                            "meeting(s), visit(s) and client(s) never do, even "
+                            "when a listed type has that name."
+                        ),
+                    },
                     "type_exclusive": {"type": "boolean", "nullable": True},
                     "human_summary": {"type": "string"},
-                    "confidence": {"type": "number"},
+                    "confidence": {
+                        "type": "number",
+                        "description": (
+                            "Probability 0.0-1.0 that this is the rule meant. "
+                            "0.9 or more when the sentence states every value."
+                        ),
+                    },
                 },
                 "required": ["rule_type", "enforcement", "human_summary", "confidence"],
             },
         },
-        "could_not_parse": {"type": "string", "nullable": True},
+        "could_not_parse": {
+            "type": "string",
+            "nullable": True,
+            "description": "Null when proposals are given; otherwise a short reason or question.",
+        },
         "refusal_reason": {
             "type": "string",
             "nullable": True,
             "enum": [*REFUSAL_REASONS],
+            "description": "Set whenever proposals is empty; null otherwise.",
         },
         "exclusive": {"type": "boolean"},
         "unknown_appointment_type": {"type": "string", "nullable": True},
