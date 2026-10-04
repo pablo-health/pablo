@@ -23,6 +23,10 @@ vi.mock("@/hooks/useOutsideSessions", () => ({
   useOutsideSessions: () => ({ data: { events: OUTSIDE } }),
   useOutsideQuestions: () => ({ data: { count: QUESTIONS.length, questions: QUESTIONS } }),
   useAnswerOutsideSessions: () => ({ mutateAsync: answerMutateAsync }),
+  // Its own notice, tested in AutoBookedNotice.test.tsx.
+  useAutoBooked: () => ({ data: { sessions: [] } }),
+  useUndoAutoBooked: () => ({ mutate: vi.fn(), isPending: false }),
+  useAcknowledgeAutoBooked: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 vi.mock("@/hooks/usePatients", () => ({

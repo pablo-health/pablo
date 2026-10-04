@@ -114,6 +114,12 @@ export interface UserStatusBase {
    * resolved by the server. Read it through `usePeopleTerm()`.
    */
   people_term?: PeopleTerm
+  /**
+   * Whether a session another calendar puts on the diary books on its own
+   * when its title is one client's full name: the clinician's choice, or the
+   * server's default when there is none.
+   */
+  books_sessions_named_in_title?: boolean
 }
 
 /**
@@ -356,6 +362,10 @@ export interface UserPreferences {
   /** The clinician's own "clients"/"patients" choice; null leaves it to the
    * license and the practice default. Set it through `useSetPeopleTerm()`. */
   people_term?: PeopleTerm | null
+  /** Whether a followed session whose title is one client's full name books
+   * on its own; null leaves it to the server's default, which user status
+   * reports as `books_sessions_named_in_title`. */
+  book_sessions_named_in_title?: boolean | null
 }
 
 /** SUPERSEDED by {@link BillingSetupState}. It asked one question and got two

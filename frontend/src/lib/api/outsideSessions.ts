@@ -103,6 +103,29 @@ export async function answerOutsideSessions(
   return post<OutsideAnswerResult>("/api/calendar/outside-sessions/answer", { answers })
 }
 
+/** A session Pablo booked without asking, because its title named the client. */
+export interface AutoBookedSession {
+  appointment_id: string
+  patient_id: string
+  client_name: string
+  start_at: string
+  end_at: string
+  /** `google_calendar` or `ical:<feed>`. */
+  source: string
+}
+
+/** Upcoming ones the clinician hasn't acknowledged yet, soonest first. */
+export async function listAutoBooked(): Promise<{ sessions: AutoBookedSession[] }> {
+  return get<{ sessions: AutoBookedSession[] }>("/api/calendar/outside-sessions/auto-booked")
+}
+
+/** The clinician acknowledged these; they leave the list and stay booked. */
+export async function acknowledgeAutoBooked(appointmentIds: string[]): Promise<{ acknowledged: number }> {
+  return post<{ acknowledged: number }>("/api/calendar/outside-sessions/auto-booked/acknowledge", {
+    appointment_ids: appointmentIds,
+  })
+}
+
 /** A calendar the connection can read, offered to be followed. */
 export interface FollowableCalendar {
   id: string

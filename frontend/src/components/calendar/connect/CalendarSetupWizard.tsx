@@ -9,6 +9,7 @@ import { CheckCircle2 } from "lucide-react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
+import { useBooksSessionsNamedInTitle } from "@/components/settings/NameBookingSetting"
 import { sayPeople } from "@/lib/peopleTerm"
 import {
   SetupNav,
@@ -177,6 +178,7 @@ export function CalendarSetupWizard({
   // The one source of step numbers: the stepper reads this list, and every
   // card's "Step N" is its position in it.
   const people = usePeopleTerm()
+  const booksNamedSessions = useBooksSessionsNamedInTitle()
   const steps = (withHoursStep ? [HOURS_STEP, ...GOOGLE_STEPS] : GOOGLE_STEPS).map((s) => ({
     ...s,
     label: sayPeople(s.label, people),
@@ -670,6 +672,7 @@ export function CalendarSetupWizard({
           onFollowingChange={changeFollowing}
           followSaving={followSaving}
           followError={followError}
+          booksNamedSessions={booksNamedSessions}
         />
       ) : (
         <CalendarReviewStep
