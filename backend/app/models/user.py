@@ -122,7 +122,7 @@ class UpdateUserRequest(BaseModel):
 #: For a clinician who hasn't chosen: whether a session whose title is the full
 #: name of exactly one of their clients books on its own (True), or is asked
 #: about with that client already filled in (False).
-BOOK_SESSIONS_NAMED_IN_TITLE_BY_DEFAULT = False
+BOOK_SESSIONS_NAMED_IN_TITLE_BY_DEFAULT = True
 
 
 class UserPreferences(BaseModel):
