@@ -118,6 +118,7 @@ export function CalendarSessionsStep({
     (selection.write_target !== status?.write_target ||
       (typeof status?.busy === "boolean" && selection.busy !== status.busy))
   const titlingChanged = connected && selection.event_titling !== status?.event_titling
+  const attestationStatement = status?.titling_attestation_statement
 
   return (
     <div className="space-y-5">
@@ -229,24 +230,24 @@ export function CalendarSessionsStep({
           </p>
         ) : null}
 
-        {selection.event_titling === "full" ? (
-          // The Gmail limit stays on the page: it is a condition of this
-          // choice, not background detail.
-          <div className="space-y-2 rounded-lg border border-amber-300 bg-amber-50/60 p-4">
+        {selection.event_titling === "full" && attestationStatement ? (
+          // The wording comes from the API, which records this exact text
+          // with the confirmation; writing it here as well is how the two
+          // drifted apart once. Without it (an older backend) there is
+          // nothing to confirm, so the confirmation is not offered.
+          //
+          // No line about personal Gmail accounts: the connection does not
+          // reliably know the account's address (a separate Pablo calendar
+          // is identified by an opaque id), so nothing could enforce it.
+          <div className="rounded-lg border border-amber-300 bg-amber-50/60 p-4">
             <label className="flex cursor-pointer gap-3">
               <Checkbox
                 className="mt-1"
                 checked={attested}
                 onCheckedChange={(checked) => onAttestedChange(checked === true)}
               />
-              <span className="text-sm text-neutral-900">
-                I confirm this Google Workspace account is covered by my practice&rsquo;s business
-                associate agreement with Google.
-              </span>
+              <span className="text-sm text-neutral-900">{attestationStatement}</span>
             </label>
-            <p className="pl-7 text-sm text-neutral-900">
-              Personal Gmail accounts cannot be used for full names.
-            </p>
           </div>
         ) : null}
       </fieldset>

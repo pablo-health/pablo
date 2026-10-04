@@ -300,6 +300,10 @@ export interface GoogleCalendarStatus {
    * Google account, so names are not being written until it is confirmed
    * again for this one. */
   titling_needs_attestation: boolean
+  /** The exact wording confirmed to choose full names — the same text the
+   * backend records with the confirmation. Optional: an older backend omits
+   * it, and the confirmation is then not offered. */
+  titling_attestation_statement?: string | null
   /** The calendar new sessions are brought in from, or null. `"primary"`
    * is the main calendar before a read has resolved its id. */
   follow_calendar_id?: string | null
