@@ -143,7 +143,7 @@ _PUSH_TO_PRIMARY = ProviderCapability(
     scopes=("https://www.googleapis.com/auth/calendar.events",),
     incremental=False,
     enforcement=NarrowingEnforcement.PABLO_ENFORCED,
-    reach="adding and updating sessions booked in Pablo",
+    reach="adding, updating and removing sessions booked in Pablo",
 )
 
 _PUSH_BY_TARGET: Mapping[CalendarWriteTarget, ProviderCapability] = MappingProxyType(
@@ -166,7 +166,7 @@ _IMPORT = ProviderCapability(
     scopes=("https://www.googleapis.com/auth/calendar.readonly",),
     incremental=True,
     enforcement=NarrowingEnforcement.PABLO_ENFORCED,
-    reach="the calendar import you request",
+    reach="reading the calendar you choose to import from or follow",
 )
 
 DEFAULT_WRITE_TARGET = CalendarWriteTarget.APP_CALENDAR

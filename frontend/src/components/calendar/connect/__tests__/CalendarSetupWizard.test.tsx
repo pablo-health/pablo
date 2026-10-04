@@ -100,7 +100,7 @@ const CONSENT_OPTIONS: GoogleCalendarConsentOptions = {
     {
       id: "primary",
       promise:
-        "Google Calendar grants broader access. Pablo uses it only for adding and updating sessions booked in Pablo.",
+        "Google Calendar grants broader access. Pablo uses it only for adding, updating and removing sessions booked in Pablo.",
     },
   ],
   busy: {
@@ -275,7 +275,7 @@ describe("CalendarSetupWizard", () => {
     await user.click(primary)
     expect(
       screen.getByText(
-        "Google Calendar grants broader access. Pablo uses it only for adding and updating sessions booked in Pablo."
+        "Google Calendar grants broader access. Pablo uses it only for adding, updating and removing sessions booked in Pablo."
       )
     ).toBeInTheDocument()
     await user.keyboard("{Escape}")

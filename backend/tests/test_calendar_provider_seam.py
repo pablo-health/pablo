@@ -197,7 +197,7 @@ class TestConsentCopy:
         assert app_calendar == "Google Calendar limits access to the calendar Pablo creates."
         assert primary == (
             "Google Calendar grants broader access. "
-            "Pablo uses it only for adding and updating sessions booked in Pablo."
+            "Pablo uses it only for adding, updating and removing sessions booked in Pablo."
         )
 
     def test_google_busy_copy_may_claim_the_narrower_guarantee(self) -> None:
