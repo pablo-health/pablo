@@ -20,7 +20,7 @@ import {
 import { CalendarConnectStep } from "./CalendarConnectStep"
 import { CalendarHoursStep } from "./CalendarHoursStep"
 import { CalendarSessionsStep } from "./CalendarSessionsStep"
-import { CalendarClientsStep } from "./CalendarClientsStep"
+import { CalendarClientsStep, alreadyComingIn } from "./CalendarClientsStep"
 import { CalendarReviewStep } from "./CalendarReviewStep"
 import { newClientName, newClientNameFields, type NewClientName } from "./NewClientNameFields"
 import { seenElsewhere } from "./WhichClientsList"
@@ -418,22 +418,33 @@ export function CalendarSetupWizard({
     const followWanted = recallAndClearFollowWanted()
     if (importPending && followWanted) {
       setConnecting(true)
+      // Either failure is reported here, where the code is scrubbed, rather
+      // than lost on a page that never saw the round trip — and each says
+      // which side failed: Google's grant, or Pablo saving the choice after it.
+      const stayHere = (report: () => void) => {
+        if (cancelled) return
+        setConnecting(false)
+        setActiveIndex(clientsIndex)
+        report()
+        router.replace(returnPath)
+      }
       completeGoogleCalendarImportConsent(code, state, redirectUri)
         .then(async () => {
           if (cancelled) return
-          await setFollowedCalendar(MAIN_CALENDAR)
+          try {
+            await setFollowedCalendar(MAIN_CALENDAR)
+          } catch (err) {
+            stayHere(() =>
+              setFollowError(message(err, "Could not save that. Try again in a moment."))
+            )
+            return
+          }
           await queryClient.invalidateQueries({ queryKey: ["google-calendar"] })
           if (!cancelled) router.replace(CALENDAR_SETTINGS_PATH)
         })
-        .catch((err: unknown) => {
-          if (cancelled) return
-          // Reported here, where the code is scrubbed, rather than lost on a
-          // page that never saw the round trip.
-          setConnecting(false)
-          setActiveIndex(clientsIndex)
-          setScanError(message(err, "Google did not finish granting access."))
-          router.replace(returnPath)
-        })
+        .catch((err: unknown) =>
+          stayHere(() => setScanError(message(err, "Google did not finish granting access.")))
+        )
       return () => {
         cancelled = true
       }
@@ -753,9 +764,7 @@ export function CalendarSetupWizard({
         <SetupStepHead
           eyebrow={`Step ${stepNumber(reviewIndex)}`}
           title="Nothing to import"
-          lede={`Pablo is following ${
-            calendars?.find((c) => c.id === followCalendarId)?.name ?? "your main calendar"
-          }, so there’s nothing to import from it.`}
+          lede={alreadyComingIn(calendars?.find((c) => c.id === followCalendarId)?.name)}
         />
       ) : (
         <CalendarReviewStep

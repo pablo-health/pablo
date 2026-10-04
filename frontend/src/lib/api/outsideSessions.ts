@@ -131,6 +131,8 @@ export interface FollowableCalendar {
   id: string
   name: string
   primary: boolean
+  /** Pablo made it for another setup (Pablo's record or its marker). */
+  made_by_pablo?: boolean
 }
 
 export interface FollowableCalendars {

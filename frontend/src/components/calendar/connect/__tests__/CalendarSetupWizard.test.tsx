@@ -1190,26 +1190,48 @@ describe("CalendarSetupWizard choosing the calendar to follow", () => {
     searchParams.delete("state")
   })
 
-  it("names the main calendar by default and follows the one picked instead", async () => {
+  it("starts on the main calendar and imports from the one picked instead", async () => {
     getStatus.mockResolvedValue(READABLE)
     const user = userEvent.setup()
     renderWizard()
     await goToClientsStep(user)
 
-    const box = await screen.findByRole("checkbox", {
-      name: /Keep importing new sessions from clinician@example\.test/,
-    })
+    const box = await screen.findByRole("checkbox", { name: /^Keep importing new sessions/ })
     expect(box).not.toBeChecked()
-    // Picking alone saves nothing while following is off.
-    await user.selectOptions(screen.getByRole("combobox", { name: "Calendar" }), BOOKED)
+    const picker = await screen.findByRole("combobox", { name: "From" })
+    expect(picker).toHaveValue(MAIN)
+    // Picking alone saves nothing while it is off.
+    await user.selectOptions(picker, BOOKED)
     expect(setFollowed).not.toHaveBeenCalled()
-    await screen.findByRole("checkbox", {
-      name: /Keep importing new sessions from Booked sessions/,
-    })
+    expect(picker).toHaveValue(BOOKED)
 
-    await user.click(screen.getByRole("checkbox", { name: /Keep importing new sessions/ }))
+    await user.click(box)
 
     await waitFor(() => expect(setFollowed).toHaveBeenCalledWith(BOOKED))
+  })
+
+  it("confirms a calendar another Pablo setup writes to before importing from it", async () => {
+    const ANOTHER = "another@group.calendar.google.test"
+    getStatus.mockResolvedValue({ ...READABLE, follow_calendar_id: MAIN })
+    listFollowable.mockResolvedValue({
+      calendars: [...BOTH, { id: ANOTHER, name: "Old", primary: false, made_by_pablo: true }],
+      follow_calendar_id: MAIN,
+    })
+    const user = userEvent.setup()
+    renderWizard()
+    await goToClientsStep(user)
+    const picker = await screen.findByRole("combobox", { name: "From" })
+    expect(within(picker).getByRole("option", { name: "Old (another Pablo setup)" })).toBeTruthy()
+
+    await user.selectOptions(picker, ANOTHER)
+    expect(screen.getByRole("alertdialog")).toHaveTextContent(
+      "Pablo made this calendar for another setup."
+    )
+    expect(setFollowed).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole("button", { name: "Import from it" }))
+
+    await waitFor(() => expect(setFollowed).toHaveBeenCalledWith(ANOTHER))
   })
 
   it("changes the followed calendar at once while following", async () => {
@@ -1219,7 +1241,7 @@ describe("CalendarSetupWizard choosing the calendar to follow", () => {
     renderWizard()
     await goToClientsStep(user)
 
-    await user.selectOptions(await screen.findByRole("combobox", { name: "Calendar" }), BOOKED)
+    await user.selectOptions(await screen.findByRole("combobox", { name: "From" }), BOOKED)
 
     await waitFor(() => expect(setFollowed).toHaveBeenCalledWith(BOOKED))
   })
@@ -1231,9 +1253,9 @@ describe("CalendarSetupWizard choosing the calendar to follow", () => {
     renderWizard()
     await goToClientsStep(user)
 
-    expect(await screen.findByTestId("import-not-needed")).toHaveTextContent(
-      "Pablo is following clinician@example.test, so there’s nothing to import from it."
-    )
+    expect(
+      await screen.findByText("Sessions on clinician@example.test already come in on their own.")
+    ).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Scan calendar" })).not.toBeInTheDocument()
 
     await user.click(screen.getByRole("button", { name: "Finish" }))
@@ -1249,11 +1271,14 @@ describe("CalendarSetupWizard choosing the calendar to follow", () => {
     const user = userEvent.setup()
     renderWizard()
     await goToClientsStep(user)
-    await screen.findByTestId("import-not-needed")
+    await screen.findByText("Sessions on clinician@example.test already come in on their own.")
 
     await user.click(screen.getByRole("button", { name: /review/i }))
 
     expect(await screen.findByText("Nothing to import")).toBeInTheDocument()
+    expect(
+      screen.getByText("Sessions on clinician@example.test already come in on their own.")
+    ).toBeInTheDocument()
     expect(screen.queryByText("Which of these are clients?")).not.toBeInTheDocument()
   })
 
@@ -1265,10 +1290,10 @@ describe("CalendarSetupWizard choosing the calendar to follow", () => {
     renderWizard()
     await goToClientsStep(user)
 
-    await screen.findByRole("checkbox", {
-      name: /Keep importing new sessions from Booked sessions/,
-    })
-    expect(screen.queryByTestId("import-not-needed")).not.toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "From" })).toHaveValue(BOOKED)
+    )
+    expect(screen.queryByText(/already come in on their own/)).not.toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: "Scan calendar" }))
     await screen.findByTestId("qualifying-count")
     await user.click(screen.getByRole("button", { name: /continue/i }))
@@ -1311,5 +1336,23 @@ describe("CalendarSetupWizard choosing the calendar to follow", () => {
     expect(screen.getByText("Import recurring sessions")).toBeInTheDocument()
     expect(setFollowed).not.toHaveBeenCalled()
     expect(routerReplace).not.toHaveBeenCalledWith("/dashboard/settings/calendars")
+  })
+
+  it("says the save failed, not Google, when the grant lands but turning it on doesn't", async () => {
+    getStatus.mockResolvedValue(READABLE)
+    completeImportConsent.mockResolvedValue({ status: "connected" })
+    setFollowed.mockRejectedValue("network")
+    searchParams.set("code", "auth-code")
+    searchParams.set("state", "state-from-google")
+    window.sessionStorage.setItem("pablo.calendar-import.pending", "1")
+    window.sessionStorage.setItem("pablo.calendar-follow.wanted", "1")
+
+    renderWizard()
+
+    await screen.findByText("Could not save that. Try again in a moment.")
+    expect(screen.queryByText(/google did not finish granting access/i)).not.toBeInTheDocument()
+    expect(screen.getByText("Import recurring sessions")).toBeInTheDocument()
+    expect(routerReplace).not.toHaveBeenCalledWith("/dashboard/settings/calendars")
+    expect(routerReplace).toHaveBeenCalledWith("/dashboard/settings/calendar")
   })
 })

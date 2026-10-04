@@ -95,18 +95,46 @@ describe("FollowCalendarSetting", () => {
     )
   })
 
-  it("shows which calendar it reads even when there is only one", async () => {
+  it("names the one calendar without offering a choice of one", async () => {
     listCalendars.mockResolvedValue({
       calendars: [{ id: MAIN, name: MAIN, primary: true }],
       follow_calendar_id: MAIN,
     })
     render(<FollowCalendarSetting followedCalendarId="primary" importGranted onChanged={vi.fn()} />)
 
-    const picker = await screen.findByRole("combobox", { name: "Import sessions from" })
-    expect(picker).toHaveValue(MAIN)
-    expect(screen.getByTestId("followed-calendar-line")).toHaveTextContent(
+    expect(await screen.findByTestId("followed-calendar-line")).toHaveTextContent(
       `Pablo reads the events on ${MAIN}`
     )
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument()
+  })
+
+  it("flags a calendar another Pablo setup writes to, and confirms before importing from it", async () => {
+    const user = userEvent.setup()
+    const ANOTHER = "another@group.calendar.google.test"
+    listCalendars.mockResolvedValue({
+      calendars: [
+        { id: MAIN, name: MAIN, primary: true },
+        { id: ANOTHER, name: "Old sessions", primary: false, made_by_pablo: true },
+      ],
+      follow_calendar_id: MAIN,
+    })
+    render(<FollowCalendarSetting followedCalendarId={MAIN} importGranted onChanged={vi.fn()} />)
+    const picker = await screen.findByRole("combobox", { name: "Import sessions from" })
+    expect(Array.from((picker as HTMLSelectElement).options).map((o) => o.text)).toEqual([
+      MAIN,
+      "Old sessions (another Pablo setup)",
+    ])
+
+    await user.selectOptions(picker, ANOTHER)
+
+    expect(screen.getByRole("alertdialog")).toHaveTextContent(
+      "Pablo made this calendar for another setup. Importing from it brings in its upcoming sessions, including any it books from now on."
+    )
+    expect(setFollowed).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole("button", { name: "Import from it" }))
+
+    expect(setFollowed).toHaveBeenCalledWith(ANOTHER)
   })
 
   it("shows no picker while nothing is followed", () => {

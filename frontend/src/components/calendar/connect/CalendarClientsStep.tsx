@@ -11,6 +11,7 @@ import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion"
 import type { BusyWindowsGranted, BusyWindowsNotGranted, ImportProposal } from "@/lib/api/scheduling"
 import type { FollowableCalendar } from "@/lib/api/outsideSessions"
+import { FollowCalendarPicker } from "./FollowCalendarPicker"
 import { busyWindowsGranted } from "@/lib/api/scheduling"
 import { GRID_HOURS, GRID_WEEKDAYS, busyCellKeys, cellKey, seriesCellKeys } from "./weekGrid"
 
@@ -25,6 +26,11 @@ const DAY_LABELS: Record<(typeof GRID_WEEKDAYS)[number], string> = {
   2: "W",
   3: "Th",
   4: "F",
+}
+
+/** Said instead of offering an import from a calendar already followed. */
+export function alreadyComingIn(calendarName: string | undefined): string {
+  return `Sessions on ${calendarName ?? "your main calendar"} already come in on their own.`
 }
 
 function hourLabel(hour: number): string {
@@ -112,7 +118,15 @@ export function CalendarClientsStep({
       <SetupStepHead
         eyebrow={`Step ${step} · Optional`}
         title="Import recurring sessions"
-        lede="Pablo can find events that repeat weekly or every other week. You'll choose which ones to import."
+        lede={
+          followingMain
+            ? // The import reads the main calendar. Following it already brings
+              // its series in, and importing them as well left each session
+              // booked as Pablo's own series and then asked about (and refused
+              // as an overlap) when the followed event arrived.
+              alreadyComingIn(followName)
+            : "Pablo can find events that repeat weekly or every other week. You'll choose which ones to import."
+        }
       />
 
       <div className="rounded-xl border border-border bg-card p-3.5 pb-3">
@@ -219,7 +233,7 @@ export function CalendarClientsStep({
             <label htmlFor="follow-calendar" className="cursor-pointer text-sm">
               {/* Not "recurring": following brings in one-off sessions too. */}
               <span className="block font-medium text-neutral-900">
-                Keep importing new sessions from {followName ?? "your main calendar"}
+                Keep importing new sessions
               </span>
               <span className="block text-xs text-muted-foreground">
                 {booksNamedSessions
@@ -228,40 +242,25 @@ export function CalendarClientsStep({
               </span>
             </label>
           </div>
-          {calendars && calendars.length > 0 && onFollowCalendarChange ? (
-            <div className="flex flex-col gap-1 pl-6">
-              <label htmlFor="follow-calendar-choice" className="text-xs text-muted-foreground">
-                Calendar
-              </label>
-              <select
+          {/* With one calendar there is nothing to choose, and a one-option
+              list would only look like a choice. */}
+          {calendars && calendars.length > 1 && onFollowCalendarChange ? (
+            <div className="pl-6">
+              <FollowCalendarPicker
                 id="follow-calendar-choice"
-                value={followCalendarId ?? ""}
+                label="From"
+                calendars={calendars}
+                value={followCalendarId}
                 disabled={followSaving}
-                onChange={(event) => onFollowCalendarChange(event.target.value)}
-                className="w-fit rounded-md border border-border bg-card px-1.5 py-0.5 text-xs text-neutral-900"
-              >
-                {calendars.map((calendar) => (
-                  <option key={calendar.id} value={calendar.id}>
-                    {calendar.name}
-                  </option>
-                ))}
-              </select>
+                onPick={onFollowCalendarChange}
+              />
             </div>
           ) : null}
         </div>
       ) : null}
       {followError ? <p className="text-sm text-red-600">{followError}</p> : null}
 
-      {followingMain ? (
-        // The import reads the main calendar. Following it already brings
-        // its series in, and importing them as well left each session booked
-        // as Pablo's own series and then asked about (and refused as an
-        // overlap) when the followed event arrived.
-        <p data-testid="import-not-needed" className="text-sm text-muted-foreground">
-          Pablo is following {followName ?? "your main calendar"}, so there&rsquo;s nothing to
-          import from it.
-        </p>
-      ) : scanned ? null : (
+      {followingMain || scanned ? null : (
         <div className="flex items-center gap-2 border-t border-border pt-4">
           <Button variant="ghost" size="sm" onClick={onSkip} disabled={scanning}>
             Skip import

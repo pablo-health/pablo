@@ -194,9 +194,9 @@ async function connectThroughSetup(
   if (follow) {
     // Nothing is followed yet (freshGoogle turned it off), and the page
     // knows it: the checkbox is rendered from a status read that waited
-    // for sign-in, so this click turns following ON. It names the calendar
-    // it follows: the main one, unless another is picked.
-    const box = page.getByLabel(/Keep importing new sessions from/)
+    // for sign-in, so this click turns following ON, for the main calendar
+    // unless another is picked.
+    const box = page.getByRole("checkbox", { name: /^Keep importing new sessions/ })
     await expect(box).not.toBeChecked()
     const followed = page.waitForResponse(
       (response) =>
@@ -498,12 +498,11 @@ test("choosing another calendar reads its sessions and leaves the main calendar'
   await page.goto("/dashboard/settings/calendars")
   await expect(page.getByLabel("Keep importing new sessions")).toBeChecked()
   const picker = page.getByRole("combobox", { name: "Import sessions from" })
-  // Main first, and the second calendar offered. (Today the list also
-  // carries the calendar Pablo made for its own sessions, as Google's
-  // calendar list does; whether to offer that one is the product's call,
-  // so it is not pinned here.)
-  await expect(picker.locator("option").first()).toHaveText(account)
-  await expect(picker.locator("option", { hasText: "Practice" })).toHaveCount(1)
+  // Main first, and the second calendar offered. The calendar Pablo made for
+  // its own sessions is on Google's list too, and is not offered: importing
+  // from it would read Pablo's own bookings back.
+  expect((await google.calendars()).map((c) => c.summary)).toContain("Pablo Sessions")
+  await expect(picker.locator("option")).toHaveText([account, "Practice"])
   await expect(page.getByTestId("followed-calendar-line")).toContainText(
     `Pablo reads the events on ${account}`,
   )
@@ -859,13 +858,13 @@ test("the setup page follows the calendar picked there, and not the main one", a
   const booked = await google.addCalendar("Booked sessions")
   await connectThroughSetup(page, { follow: false })
 
-  const box = page.getByLabel(/Keep importing new sessions from/)
-  await expect(box).toHaveAccessibleName(new RegExp(`from ${account.replace(/[.]/g, "\\.")}`))
+  const box = page.getByRole("checkbox", { name: /^Keep importing new sessions/ })
   await expect(box).not.toBeChecked()
-  const picker = page.getByRole("combobox", { name: "Calendar" })
-  await expect(picker.locator("option").first()).toHaveText(account)
+  const picker = page.getByRole("combobox", { name: "From" })
+  // The main calendar first and chosen; Pablo's own calendar not offered.
+  await expect(picker.locator("option")).toHaveText([account, "Booked sessions"])
+  await expect(picker).toHaveValue(account)
   await picker.selectOption("Booked sessions")
-  await expect(box).toHaveAccessibleName(/from Booked sessions/)
   const followed = page.waitForResponse(
     (response) =>
       response.url().includes("/api/google-calendar/followed-calendar") && response.ok(),
@@ -874,7 +873,8 @@ test("the setup page follows the calendar picked there, and not the main one", a
   await followed
   await expect(box).toBeChecked()
   // Following another calendar leaves the main one's import on offer.
-  await expect(page.getByTestId("import-not-needed")).toHaveCount(0)
+  await expect(page.getByText(/already come in on their own/)).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Scan calendar" })).toHaveCount(0)
 
   await seedWeekly(booked.id, "Sam Patel", localDateTime(1, "14:00"), 3)
   await seedWeekly("primary", "Morgan Lee", localDateTime(1, "15:00"), 3)
@@ -901,11 +901,82 @@ test("following the main calendar on the setup page offers no import of it", asy
   const account = await freshGoogle(api)
   await connectThroughSetup(page, { follow: true })
 
-  await expect(page.getByTestId("import-not-needed")).toHaveText(
-    `Pablo is following ${account}, so there’s nothing to import from it.`,
-  )
+  await expect(
+    page.getByText(`Sessions on ${account} already come in on their own.`),
+  ).toBeVisible()
   await page.getByRole("button", { name: "Finish", exact: true }).click()
   await page.waitForURL(/\/dashboard\/settings$/)
+})
+
+test("the calendar Pablo writes to carries its marker and can't be imported from", async ({
+  signedInPage: page,
+  api,
+}) => {
+  await freshGoogle(api)
+  await connectThroughSetup(page, { follow: false })
+
+  const pablos = (await google.calendars()).find((c) => c.summary === "Pablo Sessions")
+  if (!pablos) throw new Error("no calendar made by Pablo")
+  expect(pablos.description).toBe("Pablo adds sessions booked in Pablo to this calendar.")
+
+  const offered = await api.get<{ calendars: { id: string }[] }>("/api/google-calendar/calendars")
+  expect(offered.calendars.map((c) => c.id)).not.toContain(pablos.id)
+  let refused: unknown = null
+  try {
+    await api.put("/api/google-calendar/followed-calendar", { calendar_id: pablos.id })
+  } catch (error) {
+    refused = error
+  }
+  expect(refused).toBeInstanceOf(ApiError)
+  expect((refused as ApiError).status).toBe(400)
+  expect(String((refused as ApiError).message)).toContain("That is the calendar Pablo writes to.")
+})
+
+test("a calendar another Pablo setup writes to is flagged, confirmed, then imported from", async ({
+  signedInPage: page,
+  api,
+}) => {
+  await freshGoogle(api)
+  await forgetClients(api, ["Jamie Ortiz"])
+  // Made by Pablo for another practice: Pablo's marker is on it, and the
+  // events it wrote carry Pablo's own property, for appointments this
+  // practice doesn't have. Named so the name proves nothing.
+  const other = await google.addCalendar(
+    "Team sessions",
+    "Pablo adds sessions booked in Pablo to this calendar.",
+  )
+  const start = localDateTime(1, "16:00")
+  await google.seed(other.id, {
+    summary: "Jamie Ortiz",
+    start,
+    end: plusMinutes(start, SESSION_MINUTES),
+    recurrence: ["RRULE:FREQ=WEEKLY;COUNT=3"],
+    extendedProperties: {
+      private: { pablo_appointment_id: "6f1c2a9e-4b7d-4e2a-9c31-5d8e7f0a1b2c" },
+    },
+  })
+  await connectThroughSetup(page, { follow: true })
+
+  await page.goto("/dashboard/settings/calendars")
+  const picker = page.getByRole("combobox", { name: "Import sessions from" })
+  await expect(picker.locator("option", { hasText: "Team sessions (another Pablo setup)" })).toHaveCount(1)
+  await picker.selectOption(other.id)
+  const warning = page.getByRole("alertdialog")
+  await expect(warning).toHaveText(
+    /Pablo made this calendar for another setup\. Importing from it brings in its upcoming sessions, including any it books from now on\./,
+  )
+  const chosen = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/google-calendar/followed-calendar") && response.ok(),
+  )
+  await warning.getByRole("button", { name: "Import from it" }).click()
+  await chosen
+  await expect(page.getByTestId("followed-calendar-line")).toContainText(
+    "Pablo reads the events on Team sessions",
+  )
+
+  await readCalendarsNow(api)
+  expect((await questions(api)).map((q) => q.title)).toEqual(["Jamie Ortiz"])
 })
 
 for (const writeToMain of [false, true]) {
