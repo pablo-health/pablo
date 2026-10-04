@@ -20,10 +20,14 @@ been reused by someone else, and only onto an active chart:
 * a feed's own client code (Sessions Health's ``SH00001``);
 * a feed title that is a full name, when exactly one of the clinician's own
   charts bears it (middle names aside). A name two charts share, or a new
-  client with an identical name, can't be told apart by the title.
+  client with an identical name, can't be told apart by the title;
+* a calendar event's title that carries such a full name, by the same rule,
+  for an event that hasn't started, when nothing else the title could be read
+  as points at anyone else. A series booked this way is remembered under the
+  title it was booked from, so a series retitled to someone else asks again.
 
-Never: a slot (``shape:``, Monday 10:00 "Session" may be someone else a year
-on), initials ("J.A." fits four clients on one real feed), or any chart that
+Never: a remembered slot (``shape:``, Monday 10:00 "Session" may be someone
+else a year on), initials ("J.A." fits four clients on one real feed), or any chart that
 is inactive or on hold — a session for an inactive client is the cue to make
 them active again, which the question offers. Whatever is remembered is the
 question's pre-fill: one tap to confirm or change. Initials and shared names
@@ -32,10 +36,10 @@ client; everything else is asked once per identifier.
 
 What becomes a row is deliberately narrow, because a dentist appointment must
 never ask "is this a client?". An event is held when it repeats, when the
-matcher finds a patient it could be (a name alone is a question here, not an
-answer), or when its identifier is already remembered as a client. Anything
-else stays a busy block. An identifier remembered as not a client never
-becomes a row.
+matcher finds a patient it could be (initials, a shortened name or a shared
+name are a question here, not an answer), or when its identifier is already
+remembered as a client. Anything else stays a busy block. An identifier
+remembered as not a client never becomes a row.
 
 **Whose answer it is.** A feed's client code or name is the clinician's own:
 a Sessions Health code is numbered from their export, and two clinicians'
@@ -159,7 +163,10 @@ class Ingested:
     held: int = 0
     """Rows held open, refreshed, or answered from a remembered client."""
     booked: list[Appointment] = field(default_factory=list)
-    """Appointments made for remembered clients, without asking."""
+    """Appointments made without asking."""
+    by_name: set[str] = field(default_factory=set)
+    """Which of ``booked`` were booked because the event's title names the
+    chart, rather than from a remembered answer."""
 
 
 @dataclass(frozen=True)
@@ -284,27 +291,66 @@ class OutsideSessions:
     ) -> str | None:
         """The one chart this identifier can only mean, if there is one."""
         if identity.kind == "name":
-            # Exactly one of the clinician's own charts bears the name,
-            # middle names aside, and any remembered answer agrees. A new
-            # client with the same name taking over the slot before having
-            # a chart is the residual case.
-            # A remembered answer is read from the record, not the match:
-            # one whose chart is gone yields no match at all, and must not
-            # hand the name to whoever else bears it.
             assert identity.hint.full_name is not None  # noqa: S101 — a name kind has one
-            bearing = [c.id for c in same_name_charts(identity.hint.full_name, ctx)]
-            known = _known(ctx, identity)
-            if len(bearing) != 1 or (known is not None and known.patient_id != bearing[0]):
-                return None
-            return bearing[0]
-        if match.patient_id is None or match.evidence != "remembered":
-            return None
-        if identity.kind == "code":
+            return _one_bearer(identity.hint.full_name, _known(ctx, identity), ctx)
+        if self._follows_answer(row, identity, match, ctx):
             return match.patient_id
-        if identity.kind == "series" and self._answered_under_this_title(row, identity, ctx):
-            return match.patient_id
-        # A retitled series, a slot, or initials: someone else's sooner or later.
+        if identity.readings:
+            # A calendar event no remembered answer settles: its title may
+            # still name the client, as a feed's does.
+            return self._named_in_title(row, identity, ctx)
+        # Initials, or a code nobody answered: someone else's sooner or later.
         return None
+
+    def _follows_answer(
+        self,
+        row: ExternalCalendarEvent,
+        identity: _Identity,
+        match: MatchResult,
+        ctx: MatchContext,
+    ) -> bool:
+        """Whether a remembered answer books this event on its own.
+
+        A feed's code, or a series still carrying the title it was answered
+        under. A retitled series or a slot is someone else's sooner or later.
+        """
+        if match.patient_id is None or match.evidence != "remembered":
+            return False
+        if identity.kind == "code":
+            return True
+        return identity.kind == "series" and self._answered_under_this_title(row, identity, ctx)
+
+    def _named_in_title(
+        self, row: ExternalCalendarEvent, identity: _Identity, ctx: MatchContext
+    ) -> str | None:
+        """The one chart a calendar event's title names by full name, if it does.
+
+        The feed's rule (``_one_bearer``) for each full name the title can be
+        read as ("Jane Smith", "Session with Jane Smith", "Smith, Jane"). The
+        readings have to agree: a title that names two charts, or could also
+        be another client's initials or shortened name, is asked about.
+
+        Never for an event that has started, which is a record, not a
+        booking. A series needs its calendar known, because what it books is
+        remembered for the series (see ``_place``).
+        """
+        if row.start_at <= utc_now():
+            return None
+        if identity.kind == "series" and identity.scope is None:
+            return None
+        known = _known(ctx, identity)
+        bearers = {
+            bearer
+            for reading in identity.readings
+            if reading.full_name
+            and (bearer := _one_bearer(reading.full_name, known, ctx)) is not None
+        }
+        if len(bearers) != 1:
+            return None
+        [patient_id] = bearers
+        by_title = _by_title(identity, ctx)
+        found = {by_title.patient_id} if by_title.patient_id else set(by_title.possible_ids)
+        return patient_id if found == {patient_id} else None
 
     def _answered_under_this_title(
         self, row: ExternalCalendarEvent, identity: _Identity, ctx: MatchContext
@@ -372,7 +418,7 @@ class OutsideSessions:
                 end_at=end,
                 title=str(change.get("summary") or ""),
             )
-            result.held += self._place(incoming, row, ctx, result.booked)
+            result.held += self._place(incoming, row, ctx, result.booked, result.by_name)
         logger.info(
             "Followed %d outside sessions from a followed calendar, booked %d",
             result.held,
@@ -386,6 +432,7 @@ class OutsideSessions:
         row: ExternalCalendarEvent | None,
         ctx: MatchContext,
         booked: list[Appointment],
+        named: set[str],
     ) -> int:
         identity = self._identity(incoming)
         match = match_patient(identity.hint, ctx, name_alone_is_enough=False)
@@ -412,11 +459,26 @@ class OutsideSessions:
         patient_id = self._unattended(incoming, identity, match, ctx)
         if patient_id is not None:
             if incoming.answer == ANSWER_OPEN:
+                by_name = not self._follows_answer(incoming, identity, match, ctx)
+                if by_name and identity.kind == "series" and identity.scope is not None:
+                    # Remembered as if answered under this title, so the rest
+                    # of the series follows it, and a series retitled to
+                    # someone else's name asks rather than moving over.
+                    remember_match(
+                        identity.mapping_source,
+                        identity.identifier,
+                        patient_id,
+                        ctx,
+                        scope=identity.scope,
+                        answered_title=answered_title_digest(incoming.title),
+                    )
                 incoming.answer = ANSWER_CLIENT
                 incoming.patient_id = patient_id
                 appointment = self._book(incoming)
                 if appointment is not None:
                     booked.append(appointment)
+                    if by_name:
+                        named.add(appointment.id)
             self._events.save(incoming)
             return 1
         qualifies = bool(
@@ -871,6 +933,25 @@ class OutsideSessions:
         return self._appointments.outside_appointment_id(
             row.source, row.calendar_id, row.source_event_id, row.user_id
         )
+
+
+def _one_bearer(
+    full_name: str, known: PatientSourceMapping | None, ctx: MatchContext
+) -> str | None:
+    """The one chart a full name can only mean, in a feed's title or a calendar's.
+
+    Exactly one of the clinician's own charts bears the name, middle names
+    aside, and any remembered answer agrees. A new client with the same name
+    taking over the slot before having a chart is the residual case.
+
+    A remembered answer is read from the record, not the match: one whose
+    chart is gone yields no match at all, and must not hand the name to
+    whoever else bears it.
+    """
+    bearing = [c.id for c in same_name_charts(full_name, ctx)]
+    if len(bearing) != 1 or (known is not None and known.patient_id != bearing[0]):
+        return None
+    return bearing[0]
 
 
 def _remembered(ctx: MatchContext, identity: _Identity) -> bool:

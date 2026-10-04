@@ -16,6 +16,7 @@ import {
   type FollowableCalendar,
 } from "@/lib/api/outsideSessions"
 import { importNeedsConsent, scanCalendarForImport } from "@/lib/api/scheduling"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 
 /** What following "the main calendar" is stored as until a read resolves it. */
 const MAIN_CALENDAR = "primary"
@@ -44,6 +45,7 @@ export function FollowCalendarSetting({
   importGranted: boolean
   onChanged: () => void
 }) {
+  const people = usePeopleTerm()
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [calendars, setCalendars] = useState<FollowableCalendar[] | null>(null)
@@ -163,8 +165,12 @@ export function FollowCalendarSetting({
       ) : null}
       {following && followedName ? (
         <p data-testid="followed-calendar-line" className="pl-6 text-xs text-muted-foreground">
-          Pablo reads the events on <strong className="font-medium">{followedName}</strong> and
-          asks about the ones that look like sessions.
+          {/* "A full name" stands for the backend's rule: one active chart
+              bears it. Shared names, initials and inactive charts are asked
+              about, which "asks about others" covers. */}
+          Pablo reads the events on <strong className="font-medium">{followedName}</strong>. It
+          books the ones titled with a {people.one}&rsquo;s full name, and asks about others that
+          look like sessions.
         </p>
       ) : null}
       {!importGranted && (

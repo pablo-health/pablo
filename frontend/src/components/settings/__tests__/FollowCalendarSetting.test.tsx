@@ -72,7 +72,7 @@ describe("FollowCalendarSetting", () => {
     ])
     expect(picker).toHaveValue(MAIN)
     expect(screen.getByTestId("followed-calendar-line")).toHaveTextContent(
-      `Pablo reads the events on ${MAIN} and asks about the ones that look like sessions.`
+      `Pablo reads the events on ${MAIN}. It books the ones titled with a client’s full name, and asks about others that look like sessions.`
     )
   })
 

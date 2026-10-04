@@ -202,11 +202,17 @@ async function answerAsNewClient(api: ApiClient, title: string): Promise<void> {
   })
 }
 
+/**
+ * Charts under this name: made from a calendar title (the whole title is the
+ * first name) or given a first and last name.
+ */
 async function patientsNamed(api: ApiClient, name: string): Promise<{ id: string }[]> {
-  const page = await api.get<{ data: { id: string; first_name: string }[] }>(
+  const page = await api.get<{ data: { id: string; first_name: string; last_name: string }[] }>(
     `/api/patients?search=${encodeURIComponent(name)}&page_size=100`,
   )
-  return page.data.filter((p) => p.first_name === name)
+  return page.data.filter(
+    (p) => p.first_name === name || `${p.first_name} ${p.last_name}` === name,
+  )
 }
 
 async function patientNamed(api: ApiClient, name: string): Promise<string> {
@@ -272,6 +278,7 @@ const CLIENTS = [
   "Sam Patel",
   "Dana Brooks",
   "Taylor Quinn",
+  "Jamie Ortiz",
 ]
 
 let addedRules: string[] = []
@@ -541,6 +548,41 @@ test("a session titled with a client's initials is offered that client", async (
   )
 })
 
+test("a session titled with one client's full name is booked on its own", async ({
+  signedInPage: page,
+  api,
+}) => {
+  await freshGoogle(api)
+  await forgetClients(api, ["Jamie Ortiz"])
+  const jamie = await givePatient(api, { first_name: "Jamie", last_name: "Ortiz" })
+  await connectThroughSetup(page, { follow: true })
+  // A series another service titles with the client's name, a one-off that
+  // carries it inside other words, and a name no chart bears.
+  await seedWeekly("primary", "Jamie Ortiz", localDateTime(1, "16:00"), 3)
+  await google.seed("primary", {
+    summary: "Session with Jamie Ortiz",
+    start: localDateTime(2, "09:00"),
+    end: plusMinutes(localDateTime(2, "09:00"), SESSION_MINUTES),
+  })
+  await google.seed("primary", {
+    summary: "Lunch with Pat Doyle",
+    start: localDateTime(2, "12:00"),
+    end: plusMinutes(localDateTime(2, "12:00"), 30),
+  })
+  await readCalendarsNow(api)
+
+  // Booked without a question; the name no one bears stays busy time.
+  expect(await upcomingFor(api, jamie.id)).toHaveLength(4)
+  expect(await questions(api)).toHaveLength(0)
+  await showTomorrow(page)
+  await expect(page.getByText("Jamie Ortiz", { exact: true }).first()).toBeVisible()
+  await expect(page.getByText("needs a client")).toHaveCount(0)
+
+  // The next read leaves them as they are.
+  await readCalendarsNow(api)
+  expect(await upcomingFor(api, jamie.id)).toHaveLength(4)
+})
+
 test("disconnecting takes Pablo off the account and forgets what it read, keeping the sessions", async ({
   signedInPage: page,
   api,
@@ -583,25 +625,11 @@ test("disconnecting takes Pablo off the account and forgets what it read, keepin
   // Connecting again starts from the grant it asks for, not the old one,
   // with following off until it is turned on again (the helper checks the
   // box starts unchecked). The answer about who the series is was forgotten
-  // with the rest of what was read: the series is asked about again.
+  // with the rest of what was read, but the title names the chart, so the
+  // read settles it without asking. It books nothing new: the sessions kept
+  // their link to the events, so the same appointments are picked back up.
   await connectThroughSetup(page, { follow: true })
   await readCalendarsNow(api)
-  const [asked] = (await questions(api)).filter((q) => q.title === "Dana Brooks")
-  expect(asked).toBeDefined()
-
-  // Answering it again books nothing new: the sessions kept their link to
-  // the events, so the same appointments are picked back up.
-  await api.post("/api/calendar/outside-sessions/answer", {
-    answers: [
-      {
-        source: asked.source,
-        source_identifier: asked.source_identifier,
-        patient_id: danaId,
-        new_client_name: null,
-        not_a_client: false,
-      },
-    ],
-  })
   expect(await questions(api)).toHaveLength(0)
   expect((await upcomingFor(api, danaId)).map((a) => a.id).sort()).toEqual(
     booked.map((a) => a.id).sort(),

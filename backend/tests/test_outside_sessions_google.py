@@ -21,6 +21,7 @@ from app.calendar_providers.source_identity import (
     calendar_source_identifier,
 )
 from app.main import app
+from app.models.audit import AuditAction
 from app.models.patient import Patient
 from app.patients.identifiers import calendar_scope
 from app.patients.matching import remember_match
@@ -40,7 +41,11 @@ from app.services.audit_service import AuditService
 from app.services.google_calendar_follow import GoogleSyncStatus
 from app.services.google_calendar_service import GoogleCalendarService
 from app.services.outside_sessions import OutsideSessions
-from app.services.sync_scheduler_service import SyncSchedulerService
+from app.services.sync_scheduler_service import (
+    BOOKED_FROM_MAIN_CALENDAR,
+    MATCHED_ON_FULL_NAME,
+    SyncSchedulerService,
+)
 from app.settings import get_settings
 from app.utcnow import utc_now
 
@@ -236,6 +241,7 @@ class _Stack:
         reminders.check_and_send_reminders.return_value = {}
         ical = MagicMock()
         ical.sync.return_value = []
+        self.audit = InMemoryAuditRepository()
         self.scheduler = SyncSchedulerService(
             ical_config_repo=MagicMock(),
             google_token_repo=self.tokens,
@@ -244,7 +250,7 @@ class _Stack:
             google_calendar_service=self.calendar,
             reminder_service=reminders,
             appointment_repo=self.appointments,
-            audit_service=AuditService(InMemoryAuditRepository()),
+            audit_service=AuditService(self.audit),
             outside_sessions=self.outside,
         )
 
@@ -299,6 +305,33 @@ def test_following_a_client_series_writes_nothing_to_google(stack: _Stack) -> No
     assert gone is not None
     assert gone.status == AppointmentStatus.CANCELLED
     assert stack.google.writes() == []
+
+
+def test_the_audit_trail_says_which_bookings_a_title_made(stack: _Stack) -> None:
+    stack.client("p1", "wk")
+    now = utc_now()
+    stack.patients.create(
+        Patient(id="p2", first_name="Robert", last_name="Jones", created_at=now, updated_at=now),
+        USER_ID,
+    )
+    stack.appointments.grant_access("p2", USER_ID)
+
+    stack.poll(
+        [
+            _google_event("o1", _in(3)),
+            _google_event("o2", _in(4), series=None, summary="Robert Jones"),
+        ]
+    )
+
+    reasons = {
+        entry.patient_id: entry.changes
+        for entry in stack.audit.list_for_user(USER_ID)
+        if entry.action == AuditAction.APPOINTMENT_CREATED.value
+    }
+    assert reasons == {
+        "p1": {"reason": BOOKED_FROM_MAIN_CALENDAR},
+        "p2": {"reason": BOOKED_FROM_MAIN_CALENDAR, "matched_on": MATCHED_ON_FULL_NAME},
+    }
 
 
 def test_open_questions_write_nothing_to_google(stack: _Stack) -> None:

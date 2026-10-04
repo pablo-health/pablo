@@ -41,6 +41,9 @@ logger = logging.getLogger(__name__)
 
 #: Why the audit trail shows an appointment the system made on its own.
 BOOKED_FROM_MAIN_CALENDAR = "booked_from_main_calendar"
+#: Beside that reason when the event's title named the chart, rather than a
+#: remembered answer: the matcher's word for a match on a full name.
+MATCHED_ON_FULL_NAME = "full_name"
 
 
 @dataclass
@@ -285,7 +288,11 @@ class SyncSchedulerService:
                 None,
                 appointment.id,
                 patient_id=appointment.patient_id,
-                changes={"reason": BOOKED_FROM_MAIN_CALENDAR},
+                changes=(
+                    {"reason": BOOKED_FROM_MAIN_CALENDAR, "matched_on": MATCHED_ON_FULL_NAME}
+                    if appointment.id in ingested.by_name
+                    else {"reason": BOOKED_FROM_MAIN_CALENDAR}
+                ),
                 actor_type=ACTOR_TYPE_SYSTEM,
                 actor_component=SYNC_COMPONENT,
             )
