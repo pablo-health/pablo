@@ -59,6 +59,8 @@ from app.services.token_encryption import encrypt_tokens
 from app.settings import get_settings
 from app.utcnow import utc_now
 
+from ._name_booking import choosing
+
 if TYPE_CHECKING:
     from collections.abc import Generator
 
@@ -307,8 +309,14 @@ class _Practice:
         self.appointments = InMemoryAppointmentRepository()
         self.mappings = InMemoryPatientSourceMappingRepository()
         self.events = InMemoryExternalCalendarEventRepository()
+        self.users = choosing(books=True, user_ids=(A, B))
         self.outside = OutsideSessions(
-            self.events, self.appointments, self.patients, self.mappings, main_calendar_id=MAIN
+            self.events,
+            self.appointments,
+            self.patients,
+            self.mappings,
+            main_calendar_id=MAIN,
+            users=self.users,
         )
 
     def shared_client(self, patient_id: str, first: str, last: str) -> None:
@@ -339,6 +347,7 @@ class _Practice:
             patient_repo=self.patients,
             mapping_repo=self.mappings,
             external_events=self.events,
+            users=self.users,
         )
 
     def sync(self, user_id: str) -> Any:
@@ -492,6 +501,7 @@ class TestTwoFollowersOfOneCalendar:
             practice.patients,
             practice.mappings,
             main_calendar_id=MAIN,
+            users=practice.users,
         )
         practice.shared_client("p1", "Jane", "Smith")
         start = utc_now() + timedelta(days=3)

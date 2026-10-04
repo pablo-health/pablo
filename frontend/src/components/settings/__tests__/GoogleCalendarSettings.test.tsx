@@ -28,6 +28,7 @@ vi.mock("@/lib/auth-context", () => ({
 }))
 // Its own card, tested in FollowCalendarSetting.test.tsx.
 vi.mock("../FollowCalendarSetting", () => ({ FollowCalendarSetting: () => null }))
+vi.mock("../NameBookingSetting", () => ({ useBooksSessionsNamedInTitle: () => false }))
 
 function renderCard() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })

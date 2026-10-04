@@ -22,6 +22,7 @@ from app.calendar_providers.source_identity import (
     ical_source,
 )
 from app.models.patient import Patient
+from app.models.user import BOOK_SESSIONS_NAMED_IN_TITLE_BY_DEFAULT, UserPreferences
 from app.patients.identifiers import calendar_scope
 from app.patients.matching import remember_match, remember_not_a_client
 from app.repositories.audit import InMemoryAuditRepository
@@ -44,6 +45,8 @@ from app.services.google_calendar_follow import (
 from app.services.outside_sessions import OutsideSessions, Question
 from app.settings import get_settings
 from app.utcnow import utc_now
+
+from ._name_booking import choosing
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -101,8 +104,16 @@ class _Harness:
         self.appointments = InMemoryAppointmentRepository()
         self.patients = InMemoryPatientRepository()
         self.mappings = InMemoryPatientSourceMappingRepository()
+        # The clinician lets a title naming one client book; tests of the
+        # other choice turn it off.
+        self.users = choosing(books=True, user_ids=(USER_ID,))
         self.outside = OutsideSessions(
-            self.events, self.appointments, self.patients, self.mappings, main_calendar_id=MAIN
+            self.events,
+            self.appointments,
+            self.patients,
+            self.mappings,
+            main_calendar_id=MAIN,
+            users=self.users,
         )
         self.calendar = MagicMock()
         self.follower = GoogleChangeFollower(self.appointments, self.calendar)
@@ -594,6 +605,101 @@ class TestATitleThatNamesOneClient:
         restored = clients.follower.resolve(USER_ID, gone.id, Resolution.KEEP_PABLO)
 
         assert restored.status == AppointmentStatus.CONFIRMED
+
+
+class TestWhichPartOfATitleBooks:
+    """Only the session's own name books: the whole title, a whole piece of it,
+    or the name after a session word and "with"."""
+
+    @pytest.fixture
+    def clients(self, h: _Harness) -> _Harness:
+        h.patient("p1", "Jane", "Smith")
+        return h
+
+    @pytest.mark.parametrize(
+        "title",
+        [
+            "Jane Smith",
+            "Smith, Jane",
+            "Jane Smith - Therapy",
+            "Session with Jane Smith",
+            "Therapy session with Jane Smith",
+            "Med management with Jane Smith",
+            "INTAKE with Jane Smith",
+            "Follow-up with Jane Smith",
+        ],
+    )
+    def test_the_sessions_own_name_books(
+        self, clients: _Harness, mock_user: User, title: str
+    ) -> None:
+        clients.poll(mock_user, [_event("e1", _in(2), title=title, series=None)])
+
+        booked = clients.followed("e1")
+        assert booked is not None
+        assert booked.patient_id == "p1"
+
+    @pytest.mark.parametrize(
+        "title", ["Lunch with Jane Smith", "Call with Jane Smith", "Coffee with Jane Smith"]
+    )
+    def test_a_name_the_title_only_mentions_is_asked_with_the_client_filled_in(
+        self, clients: _Harness, mock_user: User, title: str
+    ) -> None:
+        clients.poll(mock_user, [_event("e1", _in(2), title=title)])
+
+        assert clients.followed("e1") is None
+        [question] = clients.outside.questions(USER_ID)
+        assert question.match.patient_id == "p1"
+
+
+class TestWhenANameDoesNotBook:
+    """The clinician's choice: a title naming one client is asked, pre-filled."""
+
+    @pytest.fixture
+    def asking(self, h: _Harness) -> _Harness:
+        h.users.save_preferences(USER_ID, UserPreferences(book_sessions_named_in_title=False))
+        h.patient("p1", "Jane", "Smith")
+        return h
+
+    @pytest.mark.parametrize("series", [SERIES, None])
+    def test_a_title_naming_one_client_is_asked_with_them_filled_in(
+        self, asking: _Harness, mock_user: User, series: str | None
+    ) -> None:
+        asking.poll(mock_user, [_event("e1", _in(2), title="Jane Smith", series=series)])
+
+        assert asking.followed("e1") is None
+        [question] = asking.outside.questions(USER_ID)
+        assert question.match.patient_id == "p1"
+
+    def test_a_series_already_answered_still_books(self, asking: _Harness, mock_user: User) -> None:
+        asking.poll(mock_user, [_event("e1", _in(2), title="Jane Smith")])
+        asking.answer("p1")
+
+        asking.poll(mock_user, [_event("e2", _in(9), title="Jane Smith")])
+
+        booked = asking.followed("e2")
+        assert booked is not None
+        assert booked.patient_id == "p1"
+
+    def test_a_clinician_who_has_not_chosen_gets_the_default(
+        self, h: _Harness, mock_user: User
+    ) -> None:
+        h.users.save_preferences(USER_ID, UserPreferences())
+        h.patient("p1", "Jane", "Smith")
+
+        h.poll(mock_user, [_event("e1", _in(2), title="Jane Smith", series=None)])
+
+        assert (h.followed("e1") is not None) is BOOK_SESSIONS_NAMED_IN_TITLE_BY_DEFAULT
+
+    def test_turning_it_on_books_the_next_read(self, asking: _Harness, mock_user: User) -> None:
+        asking.poll(mock_user, [_event("e1", _in(2), title="Jane Smith", series=None)])
+        assert asking.followed("e1") is None
+
+        asking.users.save_preferences(USER_ID, UserPreferences(book_sessions_named_in_title=True))
+        asking.poll(mock_user, [_event("e1", _in(2), title="Jane Smith", series=None)])
+
+        booked = asking.followed("e1")
+        assert booked is not None
+        assert booked.patient_id == "p1"
 
 
 class TestSharedIdentifier:

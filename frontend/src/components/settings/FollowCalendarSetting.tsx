@@ -38,11 +38,15 @@ function browserTimeZone(): string {
 export function FollowCalendarSetting({
   followedCalendarId,
   importGranted,
+  booksNamedSessions = false,
   onChanged,
 }: {
   /** The calendar followed now, or null. */
   followedCalendarId: string | null
   importGranted: boolean
+  /** Whether a session whose title is one client's full name books on its
+   * own (the setting beside this one), so the line says what happens. */
+  booksNamedSessions?: boolean
   onChanged: () => void
 }) {
   const people = usePeopleTerm()
@@ -168,9 +172,15 @@ export function FollowCalendarSetting({
           {/* "A full name" stands for the backend's rule: one active chart
               bears it. Shared names, initials and inactive charts are asked
               about, which "asks about others" covers. */}
-          Pablo reads the events on <strong className="font-medium">{followedName}</strong>. It
-          books the ones titled with a {people.one}&rsquo;s full name, and asks about others that
-          look like sessions.
+          Pablo reads the events on <strong className="font-medium">{followedName}</strong>
+          {booksNamedSessions ? (
+            <>
+              . It books the ones titled with a {people.one}&rsquo;s full name, and asks about
+              others that look like sessions.
+            </>
+          ) : (
+            <> and asks about the ones that look like sessions.</>
+          )}
         </p>
       ) : null}
       {!importGranted && (

@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button"
 import { disconnectGoogleCalendar, getGoogleCalendarStatus } from "@/lib/api/scheduling"
 import { DisconnectCalendarDialog } from "@/components/calendar/connect/DisconnectCalendarDialog"
 import { FollowCalendarSetting } from "./FollowCalendarSetting"
+import { useBooksSessionsNamedInTitle } from "./NameBookingSetting"
 
 const STATUS_QUERY_KEY = ["google-calendar", "status"]
 
@@ -25,6 +26,8 @@ export function GoogleCalendarSettings() {
     queryKey: STATUS_QUERY_KEY,
     queryFn: getGoogleCalendarStatus,
   })
+
+  const booksNamedSessions = useBooksSessionsNamedInTitle()
 
   const disconnect = useMutation({
     mutationFn: disconnectGoogleCalendar,
@@ -80,6 +83,7 @@ export function GoogleCalendarSettings() {
         <FollowCalendarSetting
           followedCalendarId={status.follow_calendar_id ?? null}
           importGranted={Boolean(status.import_granted)}
+          booksNamedSessions={booksNamedSessions}
           onChanged={() => queryClient.invalidateQueries({ queryKey: STATUS_QUERY_KEY })}
         />
       )}

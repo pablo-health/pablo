@@ -49,6 +49,8 @@ from app.services.sync_scheduler_service import (
 from app.settings import get_settings
 from app.utcnow import utc_now
 
+from ._name_booking import choosing
+
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
 
@@ -228,7 +230,13 @@ class _Stack:
         self.patients = InMemoryPatientRepository()
         self.mappings = InMemoryPatientSourceMappingRepository()
         self.events = InMemoryExternalCalendarEventRepository()
-        self.outside = OutsideSessions(self.events, self.appointments, self.patients, self.mappings)
+        self.outside = OutsideSessions(
+            self.events,
+            self.appointments,
+            self.patients,
+            self.mappings,
+            users=choosing(books=True, user_ids=(USER_ID,)),
+        )
         self.calendar = GoogleCalendarService(
             self.tokens,
             self.appointments,

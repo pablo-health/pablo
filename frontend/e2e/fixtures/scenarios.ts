@@ -118,6 +118,18 @@ export async function markCalendarSetupComplete(api: ApiClient): Promise<void> {
   }
 }
 
+/**
+ * Whether a session from a followed calendar or feed books on its own when its
+ * title is one client's full name. `null` goes back to the deployment default.
+ */
+export async function letNamesBook(api: ApiClient, books: boolean | null): Promise<void> {
+  const preferences = await api.get<Record<string, unknown>>("/api/users/me/preferences")
+  await api.put("/api/users/me/preferences", {
+    ...preferences,
+    book_sessions_named_in_title: books,
+  })
+}
+
 export interface Appointment {
   id: string
   patient_id: string

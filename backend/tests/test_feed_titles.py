@@ -29,6 +29,7 @@ from app.calendar_providers.source_identity import (
 )
 from app.main import app
 from app.models.patient import Patient
+from app.models.user import BOOK_SESSIONS_NAMED_IN_TITLE_BY_DEFAULT, UserPreferences
 from app.patients.identifiers import calendar_scope, clinician_scope
 from app.patients.matching import remember_match, remember_not_a_client
 from app.repositories.external_calendar_event import (
@@ -55,6 +56,8 @@ from app.settings import get_settings
 from app.utcnow import utc_now
 
 from tests.test_ical_sync import SH_ICAL_DATA, InMemoryICalSyncConfigRepo
+
+from ._name_booking import choosing
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -113,12 +116,16 @@ class _Feed:
                 connected_at=utc_now(),
             )
         )
+        # The clinician lets a title naming one client book; tests of the other
+        # choice turn it off.
+        self.users = choosing(books=True, user_ids=(USER,))
         self.service = ICalSyncService(
             config_repo=self.configs,  # type: ignore[arg-type]
             appointment_repo=self.appointments,
             patient_repo=self.patients,
             mapping_repo=self.mappings,
             external_events=self.events,
+            users=self.users,
         )
         self.outside = self.service._outside
 
@@ -487,6 +494,48 @@ class TestFullNameFeed:
             [],
             [],
         )
+
+
+# --- A clinician who doesn't let a name book ---------------------------------
+
+
+class TestWhenANameDoesNotBook:
+    """The clinician's choice: a name exactly one chart bears is asked, pre-filled."""
+
+    @pytest.fixture
+    def asking(self, feed: _Feed) -> _Feed:
+        feed.users.save_preferences(USER, UserPreferences(book_sessions_named_in_title=False))
+        return feed
+
+    def test_a_name_one_chart_bears_is_asked_with_that_chart_filled_in(self, asking: _Feed) -> None:
+        asking.chart("john", "John", "Adams")
+
+        result = asking.sync(FULL_NAMES)
+
+        assert "john" not in asking.booked().values()
+        assert result.created == 0
+        [john] = asking.questions_titled("John Adams Appointment")
+        assert john.match.patient_id == "john"
+
+    def test_a_name_already_answered_still_books(self, asking: _Feed) -> None:
+        asking.chart("john", "John", "Adams")
+        remember_match(SP, "John Adams", "john", asking.outside.context(USER), scope=SCOPE)
+
+        asking.sync(FULL_NAMES)
+
+        assert set(asking.booked().values()) == {"john"}
+        assert asking.questions_titled("John Adams Appointment") == []
+
+    def test_a_clinician_who_has_not_chosen_gets_the_default(self) -> None:
+        feed = _Feed()
+        feed.users.save_preferences(USER, UserPreferences())
+        feed.chart("john", "John", "Adams")
+
+        feed.sync(FULL_NAMES)
+
+        booked = "john" in feed.booked().values()
+        assert booked is BOOK_SESSIONS_NAMED_IN_TITLE_BY_DEFAULT
+        assert (feed.questions_titled("John Adams Appointment") == []) is booked
 
 
 # --- What still books on its own ---------------------------------------------

@@ -321,6 +321,7 @@ class SyncSchedulerService:
                 self._appointment_repo,
                 get_patient_repository(),
                 get_patient_source_mapping_repository(),
+                users=self._user_repo,
             )
         return self._outside_sessions
 

@@ -21,10 +21,16 @@ been reused by someone else, and only onto an active chart:
 * a feed title that is a full name, when exactly one of the clinician's own
   charts bears it (middle names aside). A name two charts share, or a new
   client with an identical name, can't be told apart by the title;
-* a calendar event's title that carries such a full name, by the same rule,
-  for an event that hasn't started, when nothing else the title could be read
-  as points at anyone else. A series booked this way is remembered under the
+* a calendar event's title that is such a full name, by the same rule: the
+  whole title, a whole piece of it ("Jane Smith - Therapy"), or the name after
+  a session word ("Session with Jane Smith", not "Lunch with Jane Smith"), for
+  an event that hasn't started, when nothing else the title could be read as
+  points at anyone else. A series booked this way is remembered under the
   title it was booked from, so a series retitled to someone else asks again.
+
+The two name rules apply only for a clinician who lets a name book
+(``UserPreferences.books_sessions_named_in_title``); otherwise such a session
+is asked about with the client filled in. Remembered answers book either way.
 
 Never: a remembered slot (``shape:``, Monday 10:00 "Session" may be someone
 else a year on), initials ("J.A." fits four clients on one real feed), or any chart that
@@ -81,6 +87,7 @@ from ..calendar_providers.source_identity import (
     event_source_identifier,
     ical_feed,
 )
+from ..models.user import BOOK_SESSIONS_NAMED_IN_TITLE_BY_DEFAULT
 from ..patients.matching import (
     NAME_ONLY,
     MatchContext,
@@ -112,6 +119,7 @@ if TYPE_CHECKING:
         PatientSourceMapping,
         PatientSourceMappingRepository,
     )
+    from ..repositories.user import UserRepository
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
 
 logger = logging.getLogger(__name__)
@@ -194,11 +202,15 @@ class OutsideSessions:
         *,
         zone: tzinfo = UTC,
         main_calendar_id: str | None = None,
+        users: UserRepository | None = None,
     ) -> None:
         self._events = events
         self._appointments = appointments
         self._patients = patients
         self._mappings = mappings
+        # Where each clinician's choice to let a title's name book is kept.
+        # Without it, the default applies to everyone.
+        self._users = users
         # The clinician's own zone: an event without a series is remembered
         # by the weekday and time it falls on there, as the import does.
         self._zone = zone
@@ -220,6 +232,7 @@ class OutsideSessions:
             self._mappings,
             zone=zone,
             main_calendar_id=self._main_calendar_id,
+            users=self._users,
         )
 
     def with_main_calendar(self, calendar_id: str | None) -> OutsideSessions:
@@ -231,6 +244,7 @@ class OutsideSessions:
             self._mappings,
             zone=self._zone,
             main_calendar_id=calendar_id,
+            users=self._users,
         )
 
     def context(self, user_id: str) -> MatchContext:
@@ -292,15 +306,26 @@ class OutsideSessions:
         """The one chart this identifier can only mean, if there is one."""
         if identity.kind == "name":
             assert identity.hint.full_name is not None  # noqa: S101 — a name kind has one
-            return _one_bearer(identity.hint.full_name, _known(ctx, identity), ctx)
+            # A name already answered books either way; a name on its own
+            # only for a clinician who lets it.
+            known = _known(ctx, identity)
+            if known is None and not self._books_on_a_name(row.user_id):
+                return None
+            return _one_bearer(identity.hint.full_name, known, ctx)
         if self._follows_answer(row, identity, match, ctx):
             return match.patient_id
-        if identity.readings:
+        if identity.readings and self._books_on_a_name(row.user_id):
             # A calendar event no remembered answer settles: its title may
             # still name the client, as a feed's does.
             return self._named_in_title(row, identity, ctx)
         # Initials, or a code nobody answered: someone else's sooner or later.
         return None
+
+    def _books_on_a_name(self, user_id: str) -> bool:
+        """Whether this clinician lets a title naming exactly one client book."""
+        if self._users is None:
+            return BOOK_SESSIONS_NAMED_IN_TITLE_BY_DEFAULT
+        return self._users.get_preferences(user_id).books_sessions_named_in_title()
 
     def _follows_answer(
         self,
@@ -325,10 +350,13 @@ class OutsideSessions:
     ) -> str | None:
         """The one chart a calendar event's title names by full name, if it does.
 
-        The feed's rule (``_one_bearer``) for each full name the title can be
-        read as ("Jane Smith", "Session with Jane Smith", "Smith, Jane"). The
-        readings have to agree: a title that names two charts, or could also
-        be another client's initials or shortened name, is asked about.
+        The feed's rule (``_one_bearer``) for each full name that is the
+        session's name: the whole title ("Jane Smith", "Smith, Jane"), a whole
+        piece of it ("Jane Smith - Therapy"), or the name after a session word
+        ("Session with Jane Smith"). A name the title only mentions ("Lunch
+        with Jane Smith") is asked about, pre-filled. Every reading has to
+        agree: a title that names two charts, or could also be another
+        client's initials or shortened name, is asked about.
 
         Never for an event that has started, which is a record, not a
         booking. A series needs its calendar known, because what it books is
@@ -343,6 +371,7 @@ class OutsideSessions:
             bearer
             for reading in identity.readings
             if reading.full_name
+            and reading.names_the_session
             and (bearer := _one_bearer(reading.full_name, known, ctx)) is not None
         }
         if len(bearers) != 1:

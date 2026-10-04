@@ -14,7 +14,7 @@
 import type { Page } from "@playwright/test"
 import { test, expect } from "../fixtures/auth"
 import { ApiClient, ApiError } from "../fixtures/api"
-import { givePatient, markCalendarSetupComplete } from "../fixtures/scenarios"
+import { givePatient, letNamesBook, markCalendarSetupComplete } from "../fixtures/scenarios"
 import {
   SCOPE_APP_CALENDAR,
   SCOPE_FREEBUSY,
@@ -295,6 +295,8 @@ test.afterEach(async ({ api }) => {
     }
   }
   await forgetClients(api, CLIENTS)
+  // Back to the deployment default, which the other specs expect.
+  await letNamesBook(api, null)
   for (const ruleId of addedRules) {
     await api.delete(`/api/availability/rules/${ruleId}`)
   }
@@ -548,7 +550,7 @@ test("a session titled with a client's initials is offered that client", async (
   )
 })
 
-test("a session titled with one client's full name is booked on its own", async ({
+test("a session titled with one client's full name is asked first, then books once allowed", async ({
   signedInPage: page,
   api,
 }) => {
@@ -556,31 +558,65 @@ test("a session titled with one client's full name is booked on its own", async 
   await forgetClients(api, ["Jamie Ortiz"])
   const jamie = await givePatient(api, { first_name: "Jamie", last_name: "Ortiz" })
   await connectThroughSetup(page, { follow: true })
-  // A series another service titles with the client's name, a one-off that
-  // carries it inside other words, and a name no chart bears.
+
+  // Off, as by default: the series is asked about, with Jamie filled in.
+  await letNamesBook(api, false)
   await seedWeekly("primary", "Jamie Ortiz", localDateTime(1, "16:00"), 3)
+  await readCalendarsNow(api)
+  expect(await upcomingFor(api, jamie.id)).toHaveLength(0)
+  const [asked] = (await questions(api)).filter((q) => q.title === "Jamie Ortiz")
+  expect(asked.sessions).toBe(3)
+  await showTomorrow(page)
+  await page.getByRole("button", { name: "Review", exact: true }).click()
+  const review = page.getByRole("dialog")
+  await expect(review.getByRole("checkbox", { name: "Jamie Ortiz" })).toBeChecked()
+  await expect(
+    review.getByRole("combobox", { name: "Which client is Jamie Ortiz?" }),
+  ).toHaveValue(jamie.id)
+  await page.keyboard.press("Escape")
+
+  // Turned on in Settings, where the followed calendar's line now says so.
+  await page.goto("/dashboard/settings/calendars")
+  const choice = page.getByRole("checkbox", {
+    name: "Book sessions whose title has a client\u2019s full name",
+  })
+  await expect(choice).not.toBeChecked()
+  const saved = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/users/me/preferences") &&
+      response.request().method() === "PUT" &&
+      response.ok(),
+  )
+  await choice.click()
+  await saved
+  await expect(choice).toBeChecked()
+  await expect(page.getByTestId("followed-calendar-line")).toContainText(
+    "It books the ones titled with a client\u2019s full name",
+  )
+
+  // A session named for Jamie books on its own; a lunch that mentions Jamie
+  // stays busy time; nothing new is asked.
   await google.seed("primary", {
     summary: "Session with Jamie Ortiz",
     start: localDateTime(2, "09:00"),
     end: plusMinutes(localDateTime(2, "09:00"), SESSION_MINUTES),
   })
   await google.seed("primary", {
-    summary: "Lunch with Pat Doyle",
+    summary: "Lunch with Jamie Ortiz",
     start: localDateTime(2, "12:00"),
     end: plusMinutes(localDateTime(2, "12:00"), 30),
   })
   await readCalendarsNow(api)
+  const booked = await upcomingFor(api, jamie.id)
+  expect(booked).toHaveLength(1)
+  expect(new Date(booked[0].start_at).getTime()).toBe(
+    toUtc(localDateTime(2, "09:00")).getTime(),
+  )
+  expect((await questions(api)).map((q) => q.title)).toEqual(["Jamie Ortiz"])
 
-  // Booked without a question; the name no one bears stays busy time.
-  expect(await upcomingFor(api, jamie.id)).toHaveLength(4)
-  expect(await questions(api)).toHaveLength(0)
-  await showTomorrow(page)
-  await expect(page.getByText("Jamie Ortiz", { exact: true }).first()).toBeVisible()
-  await expect(page.getByText("needs a client")).toHaveCount(0)
-
-  // The next read leaves them as they are.
+  // The next read leaves it as it is.
   await readCalendarsNow(api)
-  expect(await upcomingFor(api, jamie.id)).toHaveLength(4)
+  expect(await upcomingFor(api, jamie.id)).toHaveLength(1)
 })
 
 test("disconnecting takes Pablo off the account and forgets what it read, keeping the sessions", async ({
@@ -602,7 +638,7 @@ test("disconnecting takes Pablo off the account and forgets what it read, keepin
   await page.getByRole("button", { name: "Disconnect", exact: true }).click()
   const confirm = page.getByRole("dialog", { name: "Disconnect Google Calendar?" })
   await expect(
-    confirm.getByText("Pablo will stop using your Google Calendar and remove what it read from it.", {
+    confirm.getByText("Pablo stops using your Google Calendar and deletes what it read from it.", {
       exact: false,
     }),
   ).toBeVisible()
@@ -625,11 +661,25 @@ test("disconnecting takes Pablo off the account and forgets what it read, keepin
   // Connecting again starts from the grant it asks for, not the old one,
   // with following off until it is turned on again (the helper checks the
   // box starts unchecked). The answer about who the series is was forgotten
-  // with the rest of what was read, but the title names the chart, so the
-  // read settles it without asking. It books nothing new: the sessions kept
-  // their link to the events, so the same appointments are picked back up.
+  // with the rest of what was read: the series is asked about again.
   await connectThroughSetup(page, { follow: true })
   await readCalendarsNow(api)
+  const [asked] = (await questions(api)).filter((q) => q.title === "Dana Brooks")
+  expect(asked).toBeDefined()
+
+  // Answering it again books nothing new: the sessions kept their link to
+  // the events, so the same appointments are picked back up.
+  await api.post("/api/calendar/outside-sessions/answer", {
+    answers: [
+      {
+        source: asked.source,
+        source_identifier: asked.source_identifier,
+        patient_id: danaId,
+        new_client_name: null,
+        not_a_client: false,
+      },
+    ],
+  })
   expect(await questions(api)).toHaveLength(0)
   expect((await upcomingFor(api, danaId)).map((a) => a.id).sort()).toEqual(
     booked.map((a) => a.id).sort(),
