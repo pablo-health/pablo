@@ -11,7 +11,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import type { ConflictResponse, RuleType } from "@/types/availability"
+import {
+  CALENDAR_BUSY,
+  type ConflictKind,
+  type ConflictResponse,
+  type RuleType,
+} from "@/types/availability"
 
 /**
  * How a crossed rule is described back to the therapist, in the vocabulary
@@ -47,9 +52,14 @@ const SOFT_REASONS: Record<RuleType, string> = {
   session_defaults: "it doesn't match your session defaults",
 }
 
+// Busy time is no rule of the therapist's, so it is said plainly rather
+// than framed as a boundary or a habit. It is only ever soft.
+const BUSY_REASON = "your calendar shows you as busy then"
+
 // Most specific reason first, so the sentence leads with the rule that
 // explains the most: a blocked date says more than a daily cap does.
-const SPECIFICITY: RuleType[] = [
+const SPECIFICITY: ConflictKind[] = [
+  CALENDAR_BUSY,
   "block_specific_dates",
   "block_date_range",
   "block_day_of_week",
@@ -66,6 +76,7 @@ const SPECIFICITY: RuleType[] = [
 const MAX_REASONS_IN_SENTENCE = 3
 
 function reasonFor(conflict: ConflictResponse): string {
+  if (conflict.rule_type === CALENDAR_BUSY) return BUSY_REASON
   const table = conflict.enforcement === "hard" ? HARD_REASONS : SOFT_REASONS
   const reason: string | undefined = table[conflict.rule_type]
   if (reason) return reason
@@ -133,6 +144,15 @@ export function RuleOverrideDialog({
   onCancel,
 }: RuleOverrideDialogProps) {
   const subject = recurring ? "series" : "event"
+  // Busy time on the calendar is not a rule, so the copy that talks about
+  // rules is kept for when one is actually crossed.
+  const rules = conflicts.filter((conflict) => conflict.rule_type !== CALENDAR_BUSY)
+  const detailsLabel =
+    rules.length < conflicts.length
+      ? "Details"
+      : conflicts.length === 1
+        ? "The rule in full"
+        : "All the rules in full"
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onCancel()}>
@@ -143,7 +163,7 @@ export function RuleOverrideDialog({
         <DialogHeader className="items-center">
           <DialogTitle className="font-display">Book this {subject} anyway?</DialogTitle>
           <DialogDescription className="text-center">
-            {recurring
+            {recurring && rules.length > 0
               ? `This series runs into your availability rules. ${summarizeConflicts(conflicts)}`
               : summarizeConflicts(conflicts)}
           </DialogDescription>
@@ -155,7 +175,7 @@ export function RuleOverrideDialog({
         {conflicts.length > 0 && (
           <details className="text-left text-xs text-neutral-500">
             <summary className="cursor-pointer select-none">
-              {conflicts.length === 1 ? "The rule in full" : "All the rules in full"}
+              {detailsLabel}
             </summary>
             <ul className="mt-2 flex flex-col gap-1 pl-4">
               {conflicts.map((conflict, index) => (

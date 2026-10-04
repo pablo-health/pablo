@@ -5,16 +5,19 @@
 from __future__ import annotations
 
 import calendar
+import math
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from ..models.availability import EnforcementLevel, RuleType
+from ..models.busy import BusyKind
 from ..models.conflict import Conflict, ConflictCheckResult, FreeSlotsResult, TimeSlot
 
 if TYPE_CHECKING:
     from ..models.appointment import Appointment
     from ..models.availability import AvailabilityRule
+    from ..models.busy import BusyInterval, BusyTimeSource
     from ..repositories.appointment import AppointmentRepository
     from ..repositories.availability_rule import AvailabilityRuleRepository
 
@@ -53,6 +56,35 @@ def _time_to_minutes(t: str) -> int:
 
 def _ranges_overlap(start_a: int, end_a: int, start_b: int, end_b: int) -> bool:
     return start_a < end_b and start_b < end_a
+
+
+def _subtract_spans(
+    span: tuple[datetime, datetime], cuts: list[tuple[datetime, datetime]]
+) -> list[tuple[datetime, datetime]]:
+    """What is left of ``span`` once every span in ``cuts`` is taken out."""
+    remaining = [span]
+    for cut_start, cut_end in cuts:
+        pieces: list[tuple[datetime, datetime]] = []
+        for start, end in remaining:
+            if cut_end <= start or end <= cut_start:
+                pieces.append((start, end))
+                continue
+            if start < cut_start:
+                pieces.append((start, cut_start))
+            if cut_end < end:
+                pieces.append((cut_end, end))
+        remaining = pieces
+    return remaining
+
+
+#: What the clinician is told when a proposed time overlaps busy time. The
+#: kind is the only detail given: a free/busy answer has nothing else in it.
+_BUSY_MESSAGES = {
+    BusyKind.CALENDAR: "Your calendar shows you as busy at this time",
+    BusyKind.OUTSIDE_SESSION: (
+        "Overlaps a session on your calendar you haven't told Pablo about yet"
+    ),
+}
 
 
 DEFAULT_DURATION_MINUTES = 50
@@ -122,9 +154,18 @@ class AvailabilityEngine:
         self,
         rule_repo: AvailabilityRuleRepository,
         appointment_repo: AppointmentRepository,
+        busy_source: BusyTimeSource | None = None,
     ) -> None:
+        """``busy_source`` is optional so a caller that has none keeps working.
+
+        Without one the engine answers from rules and appointments alone, as
+        it always has. With one, :meth:`get_free_slots` leaves out every slot
+        that overlaps a busy window, and :meth:`check_conflicts` can report
+        the overlap when asked to.
+        """
         self._rule_repo = rule_repo
         self._appt_repo = appointment_repo
+        self._busy_source = busy_source
 
     def check_conflicts(
         self,
@@ -133,12 +174,19 @@ class AvailabilityEngine:
         end_at: str | datetime,
         *,
         tz: tzinfo = UTC,
+        include_busy: bool = False,
     ) -> ConflictCheckResult:
         """Check all availability rules for conflicts with a proposed time.
 
         ``tz`` is the zone rules are evaluated in — weekday, hour, and date
         boundaries all read off the proposed time as seen in ``tz``, not UTC.
         Defaults to UTC so existing callers are unaffected.
+
+        ``include_busy`` also reports an overlap with the busy source's
+        windows, as a SOFT conflict with no rule. It is off by default
+        because the booking write path calls this too, and busy time never
+        stops a clinician booking a time by hand — it is shown to them before
+        they save, which is the one caller that asks for it.
 
         A user with zero rules is NOT CONFIGURED — ``configured`` is False,
         and ``conflicts`` is (necessarily) empty because there is nothing to
@@ -165,7 +213,46 @@ class AvailabilityEngine:
             if conflict:
                 conflicts.append(conflict)
 
+        if include_busy:
+            conflicts.extend(self._busy_conflicts(user_id, proposed_start, proposed_end, tz))
+
         return ConflictCheckResult(configured=bool(rules), conflicts=conflicts)
+
+    def _busy_conflicts(
+        self,
+        user_id: str,
+        proposed_start: datetime,
+        proposed_end: datetime,
+        tz: tzinfo,
+    ) -> list[Conflict]:
+        """One SOFT conflict per kind of busy time the proposed window overlaps.
+
+        Time Pablo's own appointments already fill is taken out first. Those
+        appointments are on the connected calendar too, so without this an
+        appointment being edited would report its own event as busy.
+        """
+        if self._busy_source is None or proposed_end <= proposed_start:
+            return []
+        windows = self._busy_source.busy_between(user_id, proposed_start, proposed_end)
+        if not windows:
+            return []
+        booked = [
+            (_local(a.start_at, tz), _local(a.end_at, tz))
+            for a in self._appt_repo.list_by_range(user_id, proposed_start, proposed_end)
+            if a.status != "cancelled"
+        ]
+        kinds: list[BusyKind] = []
+        for window in windows:
+            start = max(_local(window.start, tz), proposed_start)
+            end = min(_local(window.end, tz), proposed_end)
+            if start >= end or window.kind in kinds:
+                continue
+            if _subtract_spans((start, end), booked):
+                kinds.append(window.kind)
+        return [
+            Conflict(rule=None, enforcement=EnforcementLevel.SOFT, message=_BUSY_MESSAGES[kind])
+            for kind in sorted(kinds)
+        ]
 
     def get_free_slots(
         self,
@@ -279,6 +366,12 @@ class AvailabilityEngine:
         if capped is _DayCap.CLOSED:
             return FreeSlotsResult(configured=True, slots=[], duration_minutes=resolved_duration)
         over_cap = capped is _DayCap.OVER
+
+        if self._busy_source is not None:
+            # Asked for only once the day has hours left to offer, so a
+            # closed or full day never costs a calendar read.
+            busy = self._busy_source.busy_between(user_id, day_start, day_end)
+            blocked_minutes = blocked_minutes | _busy_to_blocked_minutes(busy, day_start, tz)
 
         alignment_step = self._get_alignment_step(rules)
 
@@ -793,3 +886,27 @@ class AvailabilityEngine:
             end_min = min(end_min, 24 * 60)
             blocked.update(range(start_min, end_min))
         return blocked
+
+
+def _busy_to_blocked_minutes(
+    windows: list[BusyInterval], day_start: datetime, tz: tzinfo
+) -> set[int]:
+    """The minutes of the day starting at ``day_start`` that busy windows cover.
+
+    Read in ``tz``, the same frame appointments are read in, so a busy window
+    and an appointment at the same instant block the same minutes. Partial
+    minutes round outward: a window ending at 10:00:30 still holds 10:00.
+    No buffer is added — a buffer is the gap a clinician keeps around their
+    own sessions, and a busy window says nothing about what it holds.
+    """
+    blocked: set[int] = set()
+    for window in windows:
+        start = _local(window.start, tz)
+        end = _local(window.end, tz)
+        # Same tzinfo on both sides, so the difference is wall-clock minutes,
+        # which is what the day's minute grid counts.
+        start_min = max(math.floor((start - day_start).total_seconds() / 60), 0)
+        end_min = min(math.ceil((end - day_start).total_seconds() / 60), 24 * 60)
+        if start_min < end_min:
+            blocked.update(range(start_min, end_min))
+    return blocked

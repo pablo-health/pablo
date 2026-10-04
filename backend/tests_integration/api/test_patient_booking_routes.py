@@ -1727,3 +1727,123 @@ def test_a_single_factor_principal_may_read_the_options(
 
     assert response.status_code == 200, response.text
     assert response.json()["self_booking"] is True
+
+
+# ---------------------------------------------------------------------------
+# Busy time on the clinician's calendar
+# ---------------------------------------------------------------------------
+
+
+def _seed_outside_session(engine: Engine, start: datetime, *, answer: str = "open") -> None:
+    """A session on a calendar the clinician follows, through the repository."""
+    from app.db import (  # noqa: PLC0415
+        arm_current_user_id,
+        set_tenant_schema,
+    )
+    from app.repositories.external_calendar_event import (  # noqa: PLC0415
+        ExternalCalendarEvent,
+    )
+    from app.repositories.postgres.external_calendar_event import (  # noqa: PLC0415
+        PostgresExternalCalendarEventRepository,
+    )
+    from sqlalchemy.orm import (  # noqa: PLC0415
+        Session as OrmSession,
+    )
+
+    event_id = str(uuid.uuid4())
+    with OrmSession(bind=engine) as s:
+        set_tenant_schema(s, _SCHEMA)
+        arm_current_user_id(s, _CLINICIAN)
+        PostgresExternalCalendarEventRepository(s).save(
+            ExternalCalendarEvent(
+                id=event_id,
+                user_id=_CLINICIAN,
+                source="ical",
+                source_event_id=event_id,
+                start_at=start,
+                end_at=start + timedelta(minutes=50),
+                answer=answer,
+            )
+        )
+        s.commit()
+
+
+def _clear_outside_sessions(engine: Engine) -> None:
+    with engine.begin() as conn:
+        conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
+        conn.execute(text("SELECT set_config('app.current_user_id', :u, true)"), {"u": _CLINICIAN})
+        conn.execute(text("DELETE FROM external_calendar_events"))
+
+
+def test_an_open_outside_session_is_neither_offered_nor_bookable(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """Nobody has said who it is, but the clinician is not free then."""
+    _open_policy(engine)
+    _clear_appointments(engine)
+    _clear_outside_sessions(engine)
+    busy, answered = _at(15), _at(16)
+    _seed_outside_session(engine, busy)
+    _seed_outside_session(engine, answered, answer="not_a_client")
+    try:
+        offered = _starts(
+            patient_a_client.get("/api/patient/booking/slots", params={"date": _date_param()})
+        )
+        assert busy not in offered
+        # Control: an answered one is no longer the engine's to keep free.
+        assert answered in offered
+
+        response = patient_a_client.post(
+            "/api/patient/booking",
+            json={"start_at": busy.isoformat(), "session_type": _SESSION_TYPE},
+        )
+        assert response.status_code == 409, response.text
+        assert response.json()["detail"]["error"]["code"] == "SLOT_TAKEN"
+    finally:
+        _clear_outside_sessions(engine)
+
+
+def test_google_busy_time_is_not_offered(
+    engine: Engine,
+    practice: dict[str, Any],
+    patient_a_client: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Google stands in at the service boundary; the route builds the rest."""
+    from app.calendar_providers.provider import BusyWindow  # noqa: PLC0415
+    from app.services.busy_time import FREE_BUSY_CACHE  # noqa: PLC0415
+    from app.services.google_calendar_service import (  # noqa: PLC0415
+        BusyCalendars,
+        GoogleCalendarService,
+    )
+
+    _open_policy(engine)
+    _clear_appointments(engine)
+    _clear_outside_sessions(engine)
+    FREE_BUSY_CACHE.clear()
+    busy = _at(11)
+    asked: list[str] = []
+
+    def _calendars(_self: GoogleCalendarService, user_id: str) -> BusyCalendars:
+        asked.append(user_id)
+        return BusyCalendars(account="clinician@example.test", calendar_ids=("primary",))
+
+    def _windows(
+        _self: GoogleCalendarService, _user_id: str, _ids: Any, _start: Any, _end: Any
+    ) -> list[BusyWindow]:
+        return [BusyWindow(start=busy + timedelta(minutes=10), end=busy + timedelta(minutes=20))]
+
+    monkeypatch.setattr(GoogleCalendarService, "busy_calendars", _calendars)
+    monkeypatch.setattr(GoogleCalendarService, "query_busy_windows", _windows)
+    try:
+        offered = _starts(
+            patient_a_client.get("/api/patient/booking/slots", params={"date": _date_param()})
+        )
+    finally:
+        FREE_BUSY_CACHE.clear()
+
+    # The clinician's calendar is the one asked about, never the patient's.
+    assert asked == [_CLINICIAN]
+    assert busy not in offered
+    assert _at(10) in offered
+    assert _at(12) in offered
