@@ -7,8 +7,8 @@ One interface, three backends:
 * :class:`GcsFileStorage` — Google Cloud Storage (managed deployments).
   Delegates to the V4 signed-URL recipe in ``signed_upload.py``.
 * :class:`S3FileStorage` — AWS S3 (or any S3-compatible endpoint such as
-  MinIO / LocalStack via ``aws_s3_endpoint_url``). Requires the optional
-  ``aws`` dependency group: ``poetry install --with aws``.
+  MinIO / LocalStack via ``aws_s3_endpoint_url``). boto3 is imported on
+  first use.
 * :class:`LocalFileStorage` — local filesystem (self-hosted deployments;
   e.g. an EFS/NFS mount). Server-side byte ops only — it cannot mint
   browser-direct upload/download URLs, so it serves proxied surfaces
@@ -384,14 +384,9 @@ class S3FileStorage(FileStorageProvider):
     def _client(self) -> Any:
         if self._client_factory is not None:
             return self._client_factory()
-        try:
-            import boto3
-            from botocore.config import Config
-        except ImportError as exc:
-            raise RuntimeError(
-                "FILE_STORAGE_PROVIDER=s3 requires boto3 — install the "
-                "optional aws dependency group: poetry install --with aws"
-            ) from exc
+        import boto3
+        from botocore.config import Config
+
         return boto3.client(
             "s3",
             region_name=self._region,

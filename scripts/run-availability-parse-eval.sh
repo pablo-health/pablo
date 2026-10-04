@@ -11,6 +11,10 @@
 #   scripts/run-availability-parse-eval.sh --list       # show the cases
 #   scripts/run-availability-parse-eval.sh --case friday
 #   scripts/run-availability-parse-eval.sh --json
+#   scripts/run-availability-parse-eval.sh --model bedrock:us.anthropic.claude-haiku-4-5-20251001-v1:0
+#
+# A bedrock: model is called on Amazon Bedrock instead, with AWS credentials
+# (AWS_PROFILE, or AWS_BEDROCK_ROLE_ARN) and no Vertex project needed.
 
 set -euo pipefail
 

@@ -28,6 +28,12 @@ setup problem (an unknown filter, or no Vertex project configured).
     scripts/run-availability-parse-eval.sh --list
     scripts/run-availability-parse-eval.sh --case friday
     scripts/run-availability-parse-eval.sh --json
+    scripts/run-availability-parse-eval.sh --model bedrock:<model or inference profile id>
+
+``--model`` grades one model alone, with no fallback behind it, so two
+providers can be compared on the same corpus. A ``bedrock:`` model needs AWS
+credentials (``AWS_PROFILE``, or ``AWS_BEDROCK_ROLE_ARN``) with access to it
+in ``AWS_BEDROCK_REGION``, and no Vertex project.
 """
 
 from __future__ import annotations
@@ -84,13 +90,25 @@ def _canonical_key(rule: ExpectedRule) -> tuple[str, tuple[tuple[str, Any], ...]
     )
 
 
-def _parse_one(phrasing: str) -> AvailabilityParseResult:
-    """One real parse. Imported lazily so ``--list`` needs no model access."""
+def _parse_one(phrasing: str, model: str | None = None) -> AvailabilityParseResult:
+    """One real parse. Imported lazily so ``--list`` needs no model access.
+
+    With ``model`` (a provider prefix picks the provider), that model alone
+    answers; unset, the parser runs as production configures it.
+    """
     from app.services.availability_parse_service import (  # noqa: PLC0415
         AvailabilityRuleParseService,
     )
+    from app.services.structured_llm_gateway import (  # noqa: PLC0415
+        resolve_structured_llm_gateway,
+    )
 
-    return AvailabilityRuleParseService().parse(
+    service = (
+        AvailabilityRuleParseService(llm_gateway=resolve_structured_llm_gateway(model), model=model)
+        if model
+        else AvailabilityRuleParseService()
+    )
+    return service.parse(
         phrasing,
         reference_date=date.fromisoformat(REFERENCE_DATE),
         appointment_types=_appointment_types(),
@@ -135,7 +153,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {kind}  {case.category:<15} {case.name:<32} {case.phrasing!r}")
         return 0
 
-    if not (os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GCP_PROJECT_ID")):
+    on_bedrock = (args.model or "").startswith("bedrock:")
+    if not on_bedrock and not (
+        os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GCP_PROJECT_ID")
+    ):
         print(
             "setup error: GOOGLE_CLOUD_PROJECT must name a project with Vertex "
             "access, and application default credentials must be available "
@@ -145,6 +166,13 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     # Gemini 3.x serves from the global location rather than a single region.
     os.environ.setdefault("GOOGLE_CLOUD_LOCATION", "global")
+    setup_hint = (
+        "Check that AWS credentials are available (AWS_PROFILE or "
+        "AWS_BEDROCK_ROLE_ARN) and have access to the model in AWS_BEDROCK_REGION."
+        if on_bedrock
+        else "Check application default credentials and that "
+        "GOOGLE_CLOUD_PROJECT has Vertex access."
+    )
 
     cases = [c for c in all_cases() if args.case in c.name] if args.case else all_cases()
     if not cases:
@@ -157,15 +185,11 @@ def main(argv: list[str] | None = None) -> int:
     for case in cases:
         started = time.monotonic()
         try:
-            result = _parse_one(case.phrasing)
+            result = _parse_one(case.phrasing, args.model)
         except Exception as exc:  # a model/auth failure is not a verdict on the parser
             if not latencies:
                 print(f"\nparse failed on {case.name!r}: {exc}", file=sys.stderr)
-                print(
-                    "Check application default credentials and that "
-                    "GOOGLE_CLOUD_PROJECT has Vertex access.",
-                    file=sys.stderr,
-                )
+                print(setup_hint, file=sys.stderr)
                 return 2
             # Once calls have succeeded, one that still fails after its retry
             # is what a therapist would have seen as an error: counted with
@@ -374,6 +398,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--case", default="", help="substring filter on case name")
     p.add_argument("--json", action="store_true", help="emit raw JSON")
     p.add_argument("--list", action="store_true", help="list the corpus and exit")
+    p.add_argument(
+        "--model",
+        default=None,
+        help="grade this model alone, provider prefix allowed "
+        "(e.g. bedrock:<model id>); default is the configured parser",
+    )
     return p.parse_args(argv)
 
 
