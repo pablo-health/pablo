@@ -521,6 +521,8 @@ def _row_to_appointment(row: AppointmentRow) -> Appointment:
         outside_source=row.outside_source,
         outside_event_id=row.outside_event_id,
         outside_calendar_id=row.outside_calendar_id,
+        auto_booked_at=row.auto_booked_at,
+        auto_booked_acknowledged_at=row.auto_booked_acknowledged_at,
         session_id=row.session_id,
         service_code=row.service_code,
         modifiers=row.modifiers,
@@ -574,10 +576,19 @@ def _appointment_to_row(appt: Appointment, row: AppointmentRow) -> None:
     row.ical_source = appt.ical_source
     row.ical_sync_status = appt.ical_sync_status
     row.ehr_appointment_url = appt.ehr_appointment_url
-    row.outside_source, row.outside_event_id, row.outside_calendar_id = (
+    # Everything about the outside event the session follows, together.
+    (
+        row.outside_source,
+        row.outside_event_id,
+        row.outside_calendar_id,
+        row.auto_booked_at,
+        row.auto_booked_acknowledged_at,
+    ) = (
         appt.outside_source,
         appt.outside_event_id,
         appt.outside_calendar_id,
+        appt.auto_booked_at,
+        appt.auto_booked_acknowledged_at,
     )
     row.session_id = appt.session_id
     row.service_code = appt.service_code

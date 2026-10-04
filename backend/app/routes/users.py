@@ -239,6 +239,11 @@ def get_user_status(
     from .people_term import load_people_term
 
     result["people_term"] = load_people_term(user, user_repo, profile_repo).people_term
+    # Whether a followed session whose title names exactly one client books
+    # on its own: the clinician's choice, or the default when there is none.
+    result["books_sessions_named_in_title"] = user_repo.get_preferences(
+        user.id
+    ).books_sessions_named_in_title()
 
     # Include subscription/trial info when subscription enforcement is enabled.
     settings = get_settings()

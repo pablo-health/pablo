@@ -36,6 +36,8 @@ from app.services.token_encryption import decrypt_tokens, encrypt_tokens
 from app.settings import get_settings
 from app.utcnow import utc_now
 
+from ._name_booking import choosing
+
 if TYPE_CHECKING:
     from collections.abc import Generator
 
@@ -215,6 +217,7 @@ def service(_encryption_key: Any):
         patient_repo=InMemoryPatientRepository(),
         mapping_repo=InMemoryPatientSourceMappingRepository(),
         external_events=InMemoryExternalCalendarEventRepository(),
+        users=choosing(books=True, user_ids=("user1",)),
     )
 
 
@@ -409,6 +412,7 @@ class TestSyncDiff:
             patient_repo=patient_repo,
             mapping_repo=mapping_repo,
             external_events=InMemoryExternalCalendarEventRepository(),
+            users=choosing(books=True, user_ids=("user1",)),
         )
         # The feed's two clients are on the caseload, so its events are
         # sessions; TestUnmatchedFeedEvents covers a feed nobody matches.
@@ -637,6 +641,7 @@ class TestUnmatchedFeedEvents:
             patient_repo=InMemoryPatientRepository(),
             mapping_repo=InMemoryPatientSourceMappingRepository(),
             external_events=InMemoryExternalCalendarEventRepository(),
+            users=choosing(books=True, user_ids=("user1",)),
         )
 
     @staticmethod
@@ -982,6 +987,7 @@ class TestFeedUrlReviewFollowUps:
             patient_repo=InMemoryPatientRepository(),
             mapping_repo=InMemoryPatientSourceMappingRepository(),
             external_events=InMemoryExternalCalendarEventRepository(),
+            users=choosing(books=True, user_ids=("user1",)),
         )
 
         [result] = feed.sync("user1")

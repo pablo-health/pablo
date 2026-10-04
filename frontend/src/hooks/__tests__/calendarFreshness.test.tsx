@@ -17,10 +17,13 @@ import type { ReactNode } from "react"
 import { useAppointmentList } from "../useAppointments"
 import { useHeldGoogleRemovals } from "../useGoogleCalendarChanges"
 import {
+  useAcknowledgeAutoBooked,
   useAnswerOutsideSessions,
+  useAutoBooked,
   useOutsideQuestions,
   useOutsideSessions,
   useSyncCalendarsNow,
+  useUndoAutoBooked,
 } from "../useOutsideSessions"
 import { CALENDAR_REFETCH_INTERVAL_MS } from "../calendarFreshness"
 import * as schedulingApi from "@/lib/api/scheduling"
@@ -65,6 +68,7 @@ describe("calendar query freshness", () => {
     vi.mocked(outsideApi.getOutsideQuestions).mockResolvedValue(
       {} as Awaited<ReturnType<typeof outsideApi.getOutsideQuestions>>
     )
+    vi.mocked(outsideApi.listAutoBooked).mockResolvedValue({ sessions: [] })
   })
 
   afterEach(() => {
@@ -86,13 +90,14 @@ describe("calendar query freshness", () => {
       await waitFor(() => expect(schedulingApi.listAppointments).toHaveBeenCalledTimes(2))
     })
 
-    it("refetches the calendar's open events, questions and held removals on focus too", async () => {
+    it("refetches the calendar's open events, questions, held removals and auto-booked notice on focus too", async () => {
       const queryClient = newQueryClient()
       const { result } = renderHook(
         () => ({
           outside: useOutsideSessions(RANGE.start, RANGE.end),
           questions: useOutsideQuestions(),
           held: useHeldGoogleRemovals(),
+          autoBooked: useAutoBooked(),
         }),
         { wrapper: createWrapper(queryClient) }
       )
@@ -100,6 +105,7 @@ describe("calendar query freshness", () => {
         expect(result.current.outside.isSuccess).toBe(true)
         expect(result.current.questions.isSuccess).toBe(true)
         expect(result.current.held.isSuccess).toBe(true)
+        expect(result.current.autoBooked.isSuccess).toBe(true)
       })
 
       refocusTab()
@@ -108,6 +114,7 @@ describe("calendar query freshness", () => {
         expect(outsideApi.listOutsideSessions).toHaveBeenCalledTimes(2)
         expect(outsideApi.getOutsideQuestions).toHaveBeenCalledTimes(2)
         expect(schedulingApi.getHeldGoogleRemovals).toHaveBeenCalledTimes(2)
+        expect(outsideApi.listAutoBooked).toHaveBeenCalledTimes(2)
       })
     })
   })
@@ -207,6 +214,66 @@ describe("calendar query freshness", () => {
       })
 
       await waitFor(() => expect(schedulingApi.listAppointments).toHaveBeenCalledTimes(2))
+    })
+  })
+
+  describe("the auto-booked notice", () => {
+    it("refetches after a read the clinician asked for succeeds", async () => {
+      vi.mocked(outsideApi.syncCalendarsNow).mockResolvedValue({
+        ical_sources_synced: 0,
+        ical_errors: 0,
+        google_synced: true,
+        google_error: false,
+        google_changes_processed: 0,
+        outside_sessions_followed: 1,
+        reminders_sent: 0,
+      })
+      const queryClient = newQueryClient()
+      const { result } = renderHook(
+        () => ({ autoBooked: useAutoBooked(), sync: useSyncCalendarsNow() }),
+        { wrapper: createWrapper(queryClient) }
+      )
+      await waitFor(() => expect(result.current.autoBooked.isSuccess).toBe(true))
+
+      await act(async () => {
+        await result.current.sync.mutateAsync()
+      })
+
+      await waitFor(() => expect(outsideApi.listAutoBooked).toHaveBeenCalledTimes(2))
+    })
+
+    it("refetches after an undo", async () => {
+      vi.mocked(schedulingApi.cancelAppointment).mockResolvedValue(
+        {} as Awaited<ReturnType<typeof schedulingApi.cancelAppointment>>
+      )
+      const queryClient = newQueryClient()
+      const { result } = renderHook(
+        () => ({ autoBooked: useAutoBooked(), undo: useUndoAutoBooked() }),
+        { wrapper: createWrapper(queryClient) }
+      )
+      await waitFor(() => expect(result.current.autoBooked.isSuccess).toBe(true))
+
+      await act(async () => {
+        await result.current.undo.mutateAsync("appt-1")
+      })
+
+      await waitFor(() => expect(outsideApi.listAutoBooked).toHaveBeenCalledTimes(2))
+    })
+
+    it("refetches after OK", async () => {
+      vi.mocked(outsideApi.acknowledgeAutoBooked).mockResolvedValue({ acknowledged: 1 })
+      const queryClient = newQueryClient()
+      const { result } = renderHook(
+        () => ({ autoBooked: useAutoBooked(), acknowledge: useAcknowledgeAutoBooked() }),
+        { wrapper: createWrapper(queryClient) }
+      )
+      await waitFor(() => expect(result.current.autoBooked.isSuccess).toBe(true))
+
+      await act(async () => {
+        await result.current.acknowledge.mutateAsync(["appt-1"])
+      })
+
+      await waitFor(() => expect(outsideApi.listAutoBooked).toHaveBeenCalledTimes(2))
     })
   })
 })

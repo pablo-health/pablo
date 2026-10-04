@@ -2,10 +2,13 @@
 
 "use client"
 
+import { cancelAppointment } from "@/lib/api/scheduling"
 import {
   answerOutsideSessions,
   getOutsideQuestions,
+  listAutoBooked,
   listOutsideSessions,
+  acknowledgeAutoBooked,
   syncCalendarsNow,
   type CalendarSyncResult,
   type OutsideAnswer,
@@ -33,6 +36,32 @@ export function useOutsideQuestions() {
     queryFn: () => getOutsideQuestions(),
     staleTime: 60 * 1000,
     ...calendarFreshness,
+  })
+}
+
+/** Sessions booked automatically from a title, not yet acknowledged. */
+export function useAutoBooked() {
+  return useAuthQuery({
+    queryKey: queryKeys.appointments.autoBooked(),
+    queryFn: () => listAutoBooked(),
+    staleTime: 60 * 1000,
+    ...calendarFreshness,
+  })
+}
+
+/** Undo one: the ordinary cancel, so the next read leaves it cancelled. */
+export function useUndoAutoBooked() {
+  return useAuthMutation<unknown, string>({
+    mutationFn: (appointmentId) => cancelAppointment(appointmentId),
+    invalidateKeys: [queryKeys.appointments.all],
+  })
+}
+
+/** The clinician has looked; the list clears and the sessions stay booked. */
+export function useAcknowledgeAutoBooked() {
+  return useAuthMutation<{ acknowledged: number }, string[]>({
+    mutationFn: (appointmentIds) => acknowledgeAutoBooked(appointmentIds),
+    invalidateKeys: [queryKeys.appointments.autoBooked()],
   })
 }
 

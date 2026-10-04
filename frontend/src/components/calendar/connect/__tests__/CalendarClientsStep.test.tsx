@@ -288,7 +288,31 @@ describe("CalendarClientsStep", () => {
     expect(
       screen.getByRole("checkbox", { name: /Keep importing new sessions from this calendar/ })
     ).toBeInTheDocument()
-    expect(screen.getByText("You’ll review each new match before it’s added.")).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        "Pablo books sessions whose title has a client\u2019s full name and asks about the rest."
+      )
+    ).toBeInTheDocument()
+  })
+
+  it("says it asks about each new session when names don't book", () => {
+    render(
+      <CalendarClientsStep
+        step={4}
+        busyWindows={GRANTED}
+        proposal={proposal()}
+        scanning={false}
+        error={null}
+        onScan={vi.fn()}
+        onSkip={vi.fn()}
+        onFollowingChange={vi.fn()}
+        booksNamedSessions={false}
+      />
+    )
+
+    expect(
+      screen.getByText("Pablo asks who each new session is with and remembers your answer.")
+    ).toBeInTheDocument()
   })
 
   it("never asserts a category the heuristic can't verify", () => {
