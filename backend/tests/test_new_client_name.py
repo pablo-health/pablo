@@ -7,6 +7,7 @@ from __future__ import annotations
 import pytest
 from app.models.patient import Patient, PatientResponse
 from app.patients.new_client_name import SuggestedName, chart_name, name_part, suggested_name
+from app.patients.titles import NOT_NAME_WORDS, SESSION_WORDS
 from app.utcnow import utc_now
 
 
@@ -20,10 +21,16 @@ class TestSuggestedName:
             "Morgan, Casey",
             "Casey Morgan - Therapy",
             "Intake: Casey Morgan",
+            "Call with Casey Morgan",
+            "Video call - Casey Morgan",
         ],
     )
     def test_a_clear_full_name_fills_in_both(self, title: str) -> None:
         assert suggested_name(title) == SuggestedName("Casey", "Morgan")
+
+    def test_every_word_that_books_is_also_kept_out_of_a_name(self) -> None:
+        booking_words = {word for phrase in SESSION_WORDS for word in phrase.split()}
+        assert booking_words <= NOT_NAME_WORDS
 
     @pytest.mark.parametrize(
         ("title", "expected"),

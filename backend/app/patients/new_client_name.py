@@ -24,41 +24,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from .titles import TitleReading, title_readings
-
-#: Words that describe a session rather than name a person. A reading that
-#: contains one is never offered as a name, and they are taken out of the
-#: name part. Compared lowercased, one word at a time.
-SESSION_WORDING: frozenset[str] = frozenset(
-    {
-        "appointment",
-        "appt",
-        "call",
-        "check-in",
-        "consult",
-        "consultation",
-        "couples",
-        "eval",
-        "evaluation",
-        "family",
-        "follow-up",
-        "followup",
-        "group",
-        "initial",
-        "intake",
-        "med",
-        "meds",
-        "meeting",
-        "session",
-        "telehealth",
-        "therapy",
-        "video",
-        "virtual",
-        "visit",
-        "with",
-        "zoom",
-    }
-)
+from .titles import NOT_NAME_WORDS, TitleReading, title_readings
 
 #: A word that reads as part of a person's name: letters, with an inner
 #: hyphen or apostrophe allowed ("Mary-Kate", "O'Neil").
@@ -84,16 +50,20 @@ def _text(reading: TitleReading) -> str:
 
 
 def _is_session_word(word: str) -> bool:
-    return word.lower().strip(_EDGES) in SESSION_WORDING
+    return word.lower().strip(_EDGES) in NOT_NAME_WORDS
 
 
 def _specific_readings(title: str) -> list[TitleReading]:
-    """The readings that aren't just a longer reading wrapped around a shorter one.
+    """The readings that could say who the client is.
 
-    "Session with Casey Morgan" reads as itself and as "Casey Morgan"; only
-    the second says who the client is.
+    Not one that is just a longer reading wrapped around a shorter one:
+    "Session with Casey Morgan" reads as itself and as "Casey Morgan", and
+    only the second names the client. Nor one made only of session wording:
+    "Video call - Casey Morgan" has a piece that reads "Video call".
     """
-    readings = title_readings(title)
+    readings = [
+        r for r in title_readings(title) if not all(_is_session_word(w) for w in _text(r).split())
+    ]
     texts = [_text(r).lower() for r in readings]
     return [
         reading
@@ -176,4 +146,4 @@ def chart_name(
     return name_part(wording or "") or unnamed, ""
 
 
-__all__ = ["SESSION_WORDING", "SuggestedName", "chart_name", "name_part", "suggested_name"]
+__all__ = ["SuggestedName", "chart_name", "name_part", "suggested_name"]
