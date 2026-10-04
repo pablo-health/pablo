@@ -326,12 +326,45 @@ const CLIENTS = [
   "Dana Brooks",
   "Taylor Quinn",
   "Jamie Ortiz",
-  "Robin Alvarez",
+  "Quinlan Okafor",
 ]
 
 let addedRules: string[] = []
+/** Charts made under a name typed in the review, found by id rather than by CLIENTS. */
+const madeHere: string[] = []
+
+interface NamedPatient {
+  id: string
+  first_name: string
+  last_name: string
+  needs_name?: boolean
+}
+
+async function patientsWithLastName(api: ApiClient, lastName: string): Promise<NamedPatient[]> {
+  const page = await api.get<{ data: NamedPatient[] }>(
+    `/api/patients?search=${encodeURIComponent(lastName)}&page_size=100`,
+  )
+  return page.data.filter((p) => p.last_name === lastName)
+}
+
+async function forgetByLastName(api: ApiClient, lastName: string): Promise<void> {
+  for (const patient of await patientsWithLastName(api, lastName)) madeHere.push(patient.id)
+  await forgetMadeHere(api)
+}
+
+async function forgetMadeHere(api: ApiClient): Promise<void> {
+  for (const id of madeHere.splice(0)) {
+    for (const appointment of await upcomingFor(api, id)) {
+      await api.delete(`/api/appointments/${appointment.id}`)
+    }
+    await api.request("DELETE", `/api/patients/${id}`, {
+      acknowledged_retention_obligation: true,
+    })
+  }
+}
 
 test.afterEach(async ({ api }) => {
+  await forgetMadeHere(api)
   // The worker's diary is shared with every later spec, which books into
   // whatever openings are left; the sessions and hours made here are not
   // theirs to find.
@@ -603,17 +636,17 @@ test("a session moved in the calendar shows its new time on the open week withou
   api,
 }) => {
   await freshGoogle(api)
-  await forgetClients(api, ["Robin Alvarez"])
+  await forgetClients(api, ["Quinlan Okafor"])
   await connectThroughSetup(page, { follow: true })
   const before = localDateTime(1, "09:30")
-  const seriesId = await seedWeekly("primary", "Robin Alvarez", before, 2)
+  const seriesId = await seedWeekly("primary", "Quinlan Okafor", before, 2)
   await readCalendarsNow(api)
-  await answerAsNewClient(api, "Robin Alvarez")
-  const robinId = await patientNamed(api, "Robin Alvarez")
-  expect(await upcomingFor(api, robinId)).toHaveLength(2)
+  await answerAsNewClient(api, "Quinlan Okafor")
+  const quinlanId = await patientNamed(api, "Quinlan Okafor")
+  expect(await upcomingFor(api, quinlanId)).toHaveLength(2)
 
   await showTomorrow(page)
-  await expect(page.getByRole("button", { name: /^Robin Alvarez at 9:30 AM/ })).toBeVisible()
+  await expect(page.getByRole("button", { name: /^Quinlan Okafor at 9:30 AM/ })).toBeVisible()
   // Set on this page load only: a reload would take it away.
   await page.evaluate(() => {
     ;(window as unknown as { stillThisLoad?: boolean }).stillThisLoad = true
@@ -627,17 +660,59 @@ test("a session moved in the calendar shows its new time on the open week withou
     end: plusMinutes(after, SESSION_MINUTES),
   })
   await readCalendarsNow(api)
-  const moved = (await upcomingFor(api, robinId)).map((a) => a.start_at)
+  const moved = (await upcomingFor(api, quinlanId)).map((a) => a.start_at)
   expect(moved).toContainEqual(expect.stringMatching(toUtc(after).toISOString().slice(0, 16)))
 
   // Switching back to the tab is enough: the open week refetches, well
   // before the once-a-minute refresh would.
   await returnToTab(page)
-  await expect(page.getByRole("button", { name: /^Robin Alvarez at 4:30 PM/ })).toBeVisible()
-  await expect(page.getByRole("button", { name: /^Robin Alvarez at 9:30 AM/ })).toHaveCount(0)
+  await expect(page.getByRole("button", { name: /^Quinlan Okafor at 4:30 PM/ })).toBeVisible()
+  await expect(page.getByRole("button", { name: /^Quinlan Okafor at 9:30 AM/ })).toHaveCount(0)
   expect(
     await page.evaluate(() => (window as unknown as { stillThisLoad?: boolean }).stillThisLoad),
   ).toBe(true)
+})
+
+test("a new client from an initials event is named as typed", async ({
+  signedInPage: page,
+  api,
+}) => {
+  await freshGoogle(api)
+  await forgetByLastName(api, "Vance")
+  await connectThroughSetup(page, { follow: true })
+  // One session, so the initials are one question rather than one per event.
+  await seedWeekly("primary", "Z.V.", localDateTime(1, "16:00"), 1)
+  await readCalendarsNow(api)
+
+  await showTomorrow(page)
+  await page.getByRole("button", { name: "Review", exact: true }).click()
+  const review = page.getByRole("dialog")
+  await expect(review.getByText("New client", { exact: true })).toBeVisible()
+  // Initials say nothing about the name: both fields start empty, with the
+  // calendar's wording beside them.
+  const [question] = (await questions(api)).filter((q) => q.title === "Z.V.")
+  const fields = review.getByTestId(`new-client-name-${question.key}`)
+  const first = fields.getByLabel("First name")
+  const last = fields.getByLabel("Last name")
+  await expect(first).toHaveValue("")
+  await expect(last).toHaveValue("")
+  await expect(fields.getByText("On the calendar: Z.V.")).toBeVisible()
+
+  await first.fill("Zara")
+  await last.fill("Vance")
+  await expect(review.getByRole("checkbox", { name: "Z.V." })).toBeChecked()
+  await review.screenshot({ path: test.info().outputPath("new-client-name-row.png") })
+  await review.getByRole("button", { name: "Save", exact: true }).click()
+  await expect(review).toBeHidden()
+
+  const [zara] = await patientsWithLastName(api, "Vance")
+  expect(zara).toMatchObject({ first_name: "Zara", last_name: "Vance", needs_name: false })
+  madeHere.push(zara.id)
+  expect(await upcomingFor(api, zara.id)).toHaveLength(1)
+
+  await page.goto(`/dashboard/patients/${zara.id}`)
+  await expect(page.getByRole("heading", { name: "Zara Vance" })).toBeVisible()
+  await expect(page.getByTestId("needs-name")).toHaveCount(0)
 })
 
 test("a session named for one client books by default, and is asked once that is off", async ({

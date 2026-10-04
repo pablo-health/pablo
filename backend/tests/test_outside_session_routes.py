@@ -90,7 +90,9 @@ class _Wired:
         ]
         self.calendar.set_followed_calendar.return_value = True
 
-    def hold(self, event_id: str, days: int, *, series: str | None = "wk") -> None:
+    def hold(
+        self, event_id: str, days: int, *, series: str | None = "wk", title: str = "Jane Smith"
+    ) -> None:
         start = (utc_now() + timedelta(days=days)).replace(minute=0, second=0, microsecond=0)
         self.events.save(
             ExternalCalendarEvent(
@@ -101,7 +103,7 @@ class _Wired:
                 source_series_id=series,
                 start_at=start,
                 end_at=start + timedelta(minutes=50),
-                title="Jane Smith",
+                title=title,
             )
         )
 
@@ -219,6 +221,126 @@ def test_a_new_client_gets_a_chart_named_as_the_calendar_names_them(
     patient = wired.patients.get(appointment.patient_id, USER_ID)
     assert patient is not None
     assert (patient.first_name, patient.origin) == ("Jane Smith", "calendar_follow")
+
+
+def _answer_new_client(client: TestClient, **names: Any) -> None:
+    """Answer the one open question as a new client."""
+    [question] = client.get("/api/calendar/outside-sessions/questions").json()["questions"]
+    answer = {
+        "source": question["source"],
+        "source_identifier": question["source_identifier"],
+        **names,
+    }
+    if question["outside_session_id"]:
+        answer["outside_session_id"] = question["outside_session_id"]
+    response = client.post("/api/calendar/outside-sessions/answer", json={"answers": [answer]})
+    assert response.status_code == 200, response.text
+
+
+@pytest.mark.parametrize(
+    ("title", "suggested"),
+    [
+        ("Session with Casey Morgan", {"first_name": "Casey", "last_name": "Morgan"}),
+        ("Jane S.", {"first_name": "Jane", "last_name": ""}),
+        ("J. Smith", {"first_name": "", "last_name": "Smith"}),
+        ("Jane", None),
+        ("K.M.", None),
+    ],
+    ids=["full-name", "last-cut", "first-cut", "one-word", "initials"],
+)
+def test_a_question_suggests_only_the_name_its_title_plainly_gives(
+    client: TestClient, wired: _Wired, title: str, suggested: dict[str, str] | None
+) -> None:
+    wired.hold("e1", 2, title=title)
+
+    [question] = client.get("/api/calendar/outside-sessions/questions").json()["questions"]
+
+    assert question["suggested_name"] == suggested
+
+
+def _only_new_chart(wired: _Wired) -> Patient:
+    [appointment] = wired.appointments._appointments.values()
+    patient = wired.patients.get(appointment.patient_id, USER_ID)
+    assert patient is not None
+    return patient
+
+
+def test_a_new_client_is_named_as_typed(client: TestClient, wired: _Wired) -> None:
+    wired.hold("e1", 2, title="K.M.")
+
+    _answer_new_client(
+        client,
+        new_client_name="K.M.",
+        new_client_first_name=" Kim ",
+        new_client_last_name="Moreau",
+    )
+
+    patient = _only_new_chart(wired)
+    assert (patient.first_name, patient.last_name) == ("Kim", "Moreau")
+    assert client.get(f"/api/patients/{patient.id}").json()["needs_name"] is False
+
+
+def test_a_new_client_with_no_name_typed_gets_the_name_part_and_needs_a_name(
+    client: TestClient, wired: _Wired
+) -> None:
+    wired.hold("e1", 2, title="Session with K.M.")
+
+    _answer_new_client(
+        client,
+        new_client_name="Session with K.M.",
+        new_client_first_name="",
+        new_client_last_name="",
+    )
+
+    patient = _only_new_chart(wired)
+    assert (patient.first_name, patient.last_name) == ("K.M.", "")
+    assert client.get(f"/api/patients/{patient.id}").json()["needs_name"] is True
+
+
+def test_a_new_client_with_only_a_first_name_typed_still_needs_a_name(
+    client: TestClient, wired: _Wired
+) -> None:
+    wired.hold("e1", 2, title="Jane S.")
+
+    _answer_new_client(client, new_client_name="Jane S.", new_client_first_name="Jane")
+
+    patient = _only_new_chart(wired)
+    assert (patient.first_name, patient.last_name) == ("Jane", "")
+    assert patient.needs_name
+
+
+def test_names_typed_without_the_title_still_add_a_new_client(
+    client: TestClient, wired: _Wired
+) -> None:
+    wired.hold("e1", 2, title="J. Smith")
+
+    _answer_new_client(client, new_client_first_name="Jo", new_client_last_name="Smith")
+
+    patient = _only_new_chart(wired)
+    assert (patient.first_name, patient.last_name) == ("Jo", "Smith")
+
+
+@pytest.mark.parametrize("field", ["new_client_first_name", "new_client_last_name"])
+def test_a_typed_name_longer_than_a_chart_holds_is_refused(
+    client: TestClient, wired: _Wired, field: str
+) -> None:
+    wired.hold("e1", 2, title="Jane Smith")
+
+    response = client.post(
+        "/api/calendar/outside-sessions/answer",
+        json={
+            "answers": [
+                {
+                    "source": GOOGLE_CALENDAR_SOURCE,
+                    "source_identifier": SERIES_KEY,
+                    field: "x" * 256,
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 422
+    assert not wired.appointments._appointments
 
 
 @pytest.mark.parametrize(

@@ -37,6 +37,19 @@ function StatusBadge({ status }: { status: string }) {
   )
 }
 
+/** A chart with no first or no last name yet, such as one added from a
+ * calendar event before the name was known. Editing the name clears it. */
+export function NeedsNameBadge({ className = "" }: { className?: string }) {
+  return (
+    <span
+      data-testid="needs-name"
+      className={`inline-flex px-3 py-1 text-sm font-medium rounded-full border border-dashed border-neutral-300 text-neutral-600 ${className}`}
+    >
+      Needs full name
+    </span>
+  )
+}
+
 function BalanceBadge({ line }: { line: string }) {
   const owed = line.startsWith("Owes")
   return (
@@ -79,6 +92,7 @@ export function PatientSummary({ patient }: PatientSummaryProps) {
               {patient.first_name} {patient.last_name}
             </h1>
             <StatusBadge status={patient.status} />
+            {patient.needs_name ? <NeedsNameBadge /> : null}
             {coverage && <EligibilityBadge summary={coverage.eligibility} />}
             {balanceLine && <BalanceBadge line={balanceLine} />}
           </div>
