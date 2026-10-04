@@ -43,6 +43,7 @@ export interface GoogleCalendarEntry {
   id: string
   summary: string
   primary?: boolean
+  description?: string
 }
 
 export interface SeenRequest {
@@ -89,9 +90,9 @@ export const google = {
     return (await call<{ calendars: GoogleCalendarEntry[] }>("GET", "/_fake/calendars")).calendars
   },
 
-  /** A second calendar on the account. */
-  async addCalendar(summary: string): Promise<GoogleCalendarEntry> {
-    return call("POST", "/_fake/calendars", { summary })
+  /** A second calendar on the account, with its own description if given. */
+  async addCalendar(summary: string, description?: string): Promise<GoogleCalendarEntry> {
+    return call("POST", "/_fake/calendars", { summary, description })
   },
 
   /** What is on a calendar as stored: a series is one event with a rule. */

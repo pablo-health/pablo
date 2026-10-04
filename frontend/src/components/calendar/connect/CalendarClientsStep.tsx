@@ -10,6 +10,8 @@ import { SetupStepHead } from "@/components/setup"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion"
 import type { BusyWindowsGranted, BusyWindowsNotGranted, ImportProposal } from "@/lib/api/scheduling"
+import type { FollowableCalendar } from "@/lib/api/outsideSessions"
+import { FollowCalendarPicker } from "./FollowCalendarPicker"
 import { busyWindowsGranted } from "@/lib/api/scheduling"
 import { GRID_HOURS, GRID_WEEKDAYS, busyCellKeys, cellKey, seriesCellKeys } from "./weekGrid"
 
@@ -24,6 +26,11 @@ const DAY_LABELS: Record<(typeof GRID_WEEKDAYS)[number], string> = {
   2: "W",
   3: "Th",
   4: "F",
+}
+
+/** Said instead of offering an import from a calendar already followed. */
+export function alreadyComingIn(calendarName: string | undefined): string {
+  return `Sessions on ${calendarName ?? "your main calendar"} already come in on their own.`
 }
 
 function hourLabel(hour: number): string {
@@ -41,9 +48,19 @@ interface CalendarClientsStepProps {
   error: string | null
   onScan: () => void
   onSkip: () => void
-  /** New sessions keep coming in from this calendar. Offered once the week
-   * has been read, since it needs the same access. */
+  /** New sessions keep coming in from a calendar. Offered once the week
+   * has been read, or read access is otherwise held, since it needs it. */
   following?: boolean
+  /** Read access is held, so following can be offered before any scan. */
+  canFollow?: boolean
+  /** The calendars that can be followed, main first; null while loading. */
+  calendars?: FollowableCalendar[] | null
+  /** The calendar followed, or the one that would be if following were on. */
+  followCalendarId?: string | null
+  onFollowCalendarChange?: (calendarId: string) => void
+  /** Following the main calendar, which is the one the import reads: its
+   * series come in by following, so there is nothing to import. */
+  followingMain?: boolean
   onFollowingChange?: (enabled: boolean) => void
   followSaving?: boolean
   followError?: string | null
@@ -62,6 +79,11 @@ export function CalendarClientsStep({
   onScan,
   onSkip,
   following = false,
+  canFollow = false,
+  calendars = null,
+  followCalendarId = null,
+  onFollowCalendarChange,
+  followingMain = false,
   onFollowingChange,
   followSaving = false,
   followError = null,
@@ -88,12 +110,23 @@ export function CalendarClientsStep({
 
   let sageIndex = 0
 
+  const followName = calendars?.find((c) => c.id === followCalendarId)?.name
+  const showFollow = Boolean(onFollowingChange) && (scanned || canFollow)
+
   return (
     <div className="space-y-4">
       <SetupStepHead
         eyebrow={`Step ${step} · Optional`}
         title="Import recurring sessions"
-        lede="Pablo can find events that repeat weekly or every other week. You'll choose which ones to import."
+        lede={
+          followingMain
+            ? // The import reads the main calendar. Following it already brings
+              // its series in, and importing them as well left each session
+              // booked as Pablo's own series and then asked about (and refused
+              // as an overlap) when the followed event arrived.
+              alreadyComingIn(followName)
+            : "Pablo can find events that repeat weekly or every other week. You'll choose which ones to import."
+        }
       />
 
       <div className="rounded-xl border border-border bg-card p-3.5 pb-3">
@@ -188,30 +221,46 @@ export function CalendarClientsStep({
         </div>
       </div>
 
-      {scanned && onFollowingChange ? (
-        <div className="flex items-start gap-2.5 rounded-lg border border-border p-3">
-          <Checkbox
-            id="follow-main-calendar"
-            checked={following}
-            disabled={followSaving}
-            onCheckedChange={(value) => onFollowingChange(value === true)}
-          />
-          <label htmlFor="follow-main-calendar" className="cursor-pointer text-sm">
-            {/* Not "recurring": following brings in one-off sessions too. */}
-            <span className="block font-medium text-neutral-900">
-              Keep importing new sessions from this calendar
-            </span>
-            <span className="block text-xs text-muted-foreground">
-              {booksNamedSessions
-                ? `Pablo books sessions whose title has a ${people.one}\u2019s full name and asks about the rest.`
-                : "Pablo asks who each new session is with and remembers your answer."}
-            </span>
-          </label>
+      {showFollow && onFollowingChange ? (
+        <div className="space-y-2 rounded-lg border border-border p-3">
+          <div className="flex items-start gap-2.5">
+            <Checkbox
+              id="follow-calendar"
+              checked={following}
+              disabled={followSaving}
+              onCheckedChange={(value) => onFollowingChange(value === true)}
+            />
+            <label htmlFor="follow-calendar" className="cursor-pointer text-sm">
+              {/* Not "recurring": following brings in one-off sessions too. */}
+              <span className="block font-medium text-neutral-900">
+                Keep importing new sessions
+              </span>
+              <span className="block text-xs text-muted-foreground">
+                {booksNamedSessions
+                  ? `Pablo books sessions whose title has a ${people.one}\u2019s full name and asks about the rest.`
+                  : "Pablo asks who each new session is with and remembers your answer."}
+              </span>
+            </label>
+          </div>
+          {/* With one calendar there is nothing to choose, and a one-option
+              list would only look like a choice. */}
+          {calendars && calendars.length > 1 && onFollowCalendarChange ? (
+            <div className="pl-6">
+              <FollowCalendarPicker
+                id="follow-calendar-choice"
+                label="From"
+                calendars={calendars}
+                value={followCalendarId}
+                disabled={followSaving}
+                onPick={onFollowCalendarChange}
+              />
+            </div>
+          ) : null}
         </div>
       ) : null}
       {followError ? <p className="text-sm text-red-600">{followError}</p> : null}
 
-      {scanned ? null : (
+      {followingMain || scanned ? null : (
         <div className="flex items-center gap-2 border-t border-border pt-4">
           <Button variant="ghost" size="sm" onClick={onSkip} disabled={scanning}>
             Skip import
