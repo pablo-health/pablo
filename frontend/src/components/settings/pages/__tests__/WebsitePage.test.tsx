@@ -16,7 +16,7 @@ import userEvent from "@testing-library/user-event"
 import { WebsitePage } from "../WebsitePage"
 import { renderWithProviders } from "@/test/renderWithProviders"
 import { ApiError } from "@/lib/api/client"
-import type { PracticeSite, SiteThemeReport } from "@/lib/api/practiceSite"
+import type { PracticeSite, SiteHeader, SiteThemeReport } from "@/lib/api/practiceSite"
 
 const mockGet = vi.fn()
 const mockUpload = vi.fn()
@@ -24,6 +24,7 @@ const mockDiscard = vi.fn()
 const mockPreview = vi.fn()
 const mockPublish = vi.fn()
 const mockRollBack = vi.fn()
+const mockSetHeader = vi.fn()
 const mockStatus = vi.fn()
 
 vi.mock("@/lib/api/practiceSite", async (importOriginal) => ({
@@ -34,6 +35,7 @@ vi.mock("@/lib/api/practiceSite", async (importOriginal) => ({
   previewPracticeSiteDraft: (...a: unknown[]) => mockPreview(...a),
   publishPracticeSite: (...a: unknown[]) => mockPublish(...a),
   rollBackPracticeSite: (...a: unknown[]) => mockRollBack(...a),
+  setPracticeSiteDraftHeader: (...a: unknown[]) => mockSetHeader(...a),
 }))
 
 vi.mock("@/lib/api/users", async (importOriginal) => ({
@@ -70,13 +72,35 @@ const PUBLISHED = site({
   ],
 })
 
-const WITH_DRAFT = site({ draft: { file_count: 3, total_bytes: 2048, uploaded_at: WHEN, theme: null } })
+const WITH_DRAFT = site({
+  draft: { file_count: 3, total_bytes: 2048, uploaded_at: WHEN, theme: null, suggested_header: null },
+})
 
 const NO_COLORS = { accent: null, accentText: null, background: null, surface: null, text: null, mutedText: null }
 
 function withTheme(theme: SiteThemeReport): PracticeSite {
-  return site({ draft: { file_count: 4, total_bytes: 2048, uploaded_at: WHEN, theme } })
+  return site({ draft: { file_count: 4, total_bytes: 2048, uploaded_at: WHEN, theme, suggested_header: null } })
 }
+
+const SUGGESTED: SiteHeader = {
+  wordmark: "Riverside Counseling",
+  subtitle: "Individual and couples therapy",
+  links: [
+    { label: "Services", href: "/#services" },
+    { label: "About", href: "/#about" },
+  ],
+  cta: { label: "Schedule a visit", href: "/#schedule" },
+}
+
+const WITH_SUGGESTION = site({
+  draft: {
+    file_count: 3,
+    total_bytes: 2048,
+    uploaded_at: WHEN,
+    theme: null,
+    suggested_header: { header: SUGGESTED, skipped: [] },
+  },
+})
 
 describe("WebsitePage", () => {
   beforeEach(() => {
@@ -267,6 +291,64 @@ describe("WebsitePage", () => {
       "header.links[1].href: Must be a page on your website, like /about.",
       "header.cta.label: Mixes alphabets in a way browsers warn about.",
     ])
+  })
+
+  it("shows the header suggested from index.html, and accepting writes it to the draft", async () => {
+    mockGet.mockResolvedValue(WITH_SUGGESTION)
+    mockSetHeader.mockResolvedValue(WITH_DRAFT)
+    renderWithProviders(<WebsitePage />)
+
+    const suggestion = await screen.findByTestId("website-suggested-header")
+    expect(suggestion).toHaveTextContent("Portal header from your index.html")
+    expect(suggestion).toHaveTextContent("Riverside Counseling")
+    expect(suggestion).toHaveTextContent("Individual and couples therapy")
+    expect(suggestion).toHaveTextContent("Services · About")
+    expect(suggestion).toHaveTextContent("Schedule a visit")
+    expect(within(suggestion).getByRole("button", { name: "Edit" })).toBeVisible()
+    await userEvent.click(within(suggestion).getByRole("button", { name: "Accept" }))
+
+    await vi.waitFor(() => expect(mockSetHeader).toHaveBeenCalledWith(SUGGESTED))
+    expect(await screen.findByTestId("website-draft")).toBeVisible()
+    expect(screen.queryByTestId("website-suggested-header")).not.toBeInTheDocument()
+  })
+
+  it("edits the suggestion before writing it", async () => {
+    mockGet.mockResolvedValue(WITH_SUGGESTION)
+    mockSetHeader.mockResolvedValue(WITH_DRAFT)
+    renderWithProviders(<WebsitePage />)
+
+    const suggestion = await screen.findByTestId("website-suggested-header")
+    await userEvent.click(within(suggestion).getByRole("button", { name: "Edit" }))
+    const name = within(suggestion).getByLabelText("Name")
+    expect(name).toHaveValue("Riverside Counseling")
+    await userEvent.clear(name)
+    await userEvent.type(name, "Riverside Therapy")
+    await userEvent.clear(within(suggestion).getByLabelText("Link 2 text"))
+    await userEvent.clear(within(suggestion).getByLabelText("Link 2 address"))
+    await userEvent.type(within(suggestion).getByLabelText("Link 3 text"), "Fees")
+    await userEvent.type(within(suggestion).getByLabelText("Link 3 address"), "/fees")
+    await userEvent.click(within(suggestion).getByRole("button", { name: "Save" }))
+
+    await vi.waitFor(() =>
+      expect(mockSetHeader).toHaveBeenCalledWith({
+        ...SUGGESTED,
+        wordmark: "Riverside Therapy",
+        links: [
+          { label: "Services", href: "/#services" },
+          { label: "Fees", href: "/fees" },
+        ],
+      }),
+    )
+  })
+
+  it("shows the suggestion without Accept or Edit to someone who can't change the website", async () => {
+    mockStatus.mockResolvedValue({ is_practice_owner: false })
+    mockGet.mockResolvedValue(WITH_SUGGESTION)
+    renderWithProviders(<WebsitePage />)
+
+    const suggestion = await screen.findByTestId("website-suggested-header")
+    expect(suggestion).toHaveTextContent("Riverside Counseling")
+    expect(within(suggestion).queryByRole("button")).not.toBeInTheDocument()
   })
 
   it("says only why when nothing in theme.json could be used", async () => {

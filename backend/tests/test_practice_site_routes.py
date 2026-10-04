@@ -78,6 +78,9 @@ class _StubService:
     def save_draft(self, practice_id: str, site: Any, *_: Any) -> None:
         self._call("save_draft", practice_id, sorted(site.files))
 
+    def set_draft_header(self, practice_id: str, header: dict[str, Any], *_: Any) -> None:
+        self._call("set_draft_header", practice_id, header)
+
     def discard_draft(self, practice_id: str) -> None:
         self._call("discard_draft", practice_id)
 
@@ -202,6 +205,30 @@ class TestTheOwner:
         preview = client.post(f"{URL}/draft/preview").json()
         assert preview["path"] == "/api/practice/website/preview/tok/"
 
+    def test_writes_a_header_into_the_draft_as_given(
+        self, client: TestClient, service: _StubService
+    ) -> None:
+        header = {
+            "wordmark": "Riverside Counseling",
+            "links": [{"label": "About", "href": "/about"}],
+            "cta": {"label": "Book", "href": "javascript:x"},
+        }
+        response = client.put(f"{URL}/draft/header", json=header)
+        assert response.status_code == 200
+        # Written as given; the header's rules report what fails, as after an upload.
+        assert service.calls == [("set_draft_header", (PRACTICE_ID, header))]
+        client.tidy.assert_called_once_with(PRACTICE_ID)  # type: ignore[attr-defined]
+
+    def test_an_empty_header_writes_no_links_key(
+        self, client: TestClient, service: _StubService
+    ) -> None:
+        assert client.put(f"{URL}/draft/header", json={"subtitle": "Therapy"}).status_code == 200
+        assert service.calls == [("set_draft_header", (PRACTICE_ID, {"subtitle": "Therapy"}))]
+
+    def test_a_header_far_past_any_limit_is_refused(self, client: TestClient) -> None:
+        response = client.put(f"{URL}/draft/header", json={"wordmark": "x" * 501})
+        assert response.status_code == 422
+
 
 class TestSomeoneElse:
     @pytest.fixture
@@ -215,6 +242,11 @@ class TestSomeoneElse:
         response = _upload(client, _zip({"index.html": b"hi"}))
         assert response.status_code == 403
         assert _code(response) == "NOT_PRACTICE_OWNER"
+        assert service.calls == []
+
+    def test_cannot_write_a_header(self, client: TestClient, service: _StubService) -> None:
+        response = client.put(f"{URL}/draft/header", json={"wordmark": "Riverside"})
+        assert response.status_code == 403
         assert service.calls == []
 
     @pytest.mark.parametrize(("method", "url"), CHANGES)
