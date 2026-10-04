@@ -264,3 +264,41 @@ def test_an_unrecorded_app_calendar_survives_a_disconnect(
     stored = repo.get(user_id)
     assert stored is not None
     assert stored.calendar_id == _FIRST
+
+
+def test_every_calendar_pablo_makes_is_recorded_and_kept(
+    service: GoogleCalendarService,
+    repo: PostgresGoogleCalendarTokenRepository,
+    session: Session,
+    user_id: str,
+) -> None:
+    """A calendar made for a later connection doesn't erase the record of the first."""
+    _connect(service, user_id, _google_that_creates(_FIRST))
+    assert service.disconnect(user_id) is True
+    # The first calendar is gone from Google, so the next connect makes another.
+    gone = _google_that_creates(_SECOND)
+    gone.calendars().get().execute.side_effect = RuntimeError("404")
+    _connect(service, user_id, gone)
+
+    recorded = repo.created_calendars(user_id)
+    assert set(recorded) == {_FIRST, _SECOND}
+    # Both were made with Pablo's marker already on them.
+    assert all(marked is not None for marked in recorded.values())
+    count = session.execute(
+        text("SELECT count(*) FROM google_created_calendars WHERE user_id = :u"), {"u": user_id}
+    ).scalar_one()
+    assert count == 2
+
+
+def test_recording_is_idempotent_and_marking_sticks(
+    repo: PostgresGoogleCalendarTokenRepository, user_id: str
+) -> None:
+    repo.record_created_calendar(user_id, _FIRST, marked=False)
+    assert repo.created_calendars(user_id) == {_FIRST: None}
+
+    repo.record_created_calendar(user_id, _FIRST, marked=True)
+    marked = repo.created_calendars(user_id)[_FIRST]
+    assert marked is not None
+
+    repo.record_created_calendar(user_id, _FIRST, marked=False)
+    assert repo.created_calendars(user_id) == {_FIRST: marked}
