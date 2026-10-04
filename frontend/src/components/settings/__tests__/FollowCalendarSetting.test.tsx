@@ -47,7 +47,7 @@ describe("FollowCalendarSetting", () => {
       <FollowCalendarSetting followedCalendarId={null} importGranted onChanged={onChanged} />
     )
 
-    await user.click(screen.getByRole("checkbox", { name: "Keep bringing in new sessions" }))
+    await user.click(screen.getByRole("checkbox", { name: "Keep importing new sessions" }))
 
     expect(setFollowed).toHaveBeenCalledWith("primary")
     await waitFor(() => expect(onChanged).toHaveBeenCalled())
@@ -64,7 +64,7 @@ describe("FollowCalendarSetting", () => {
     render(<FollowCalendarSetting followedCalendarId="primary" importGranted onChanged={vi.fn()} />)
 
     const picker = await screen.findByRole("combobox", {
-      name: "Bring sessions in from",
+      name: "Import sessions from",
     })
     expect(Array.from((picker as HTMLSelectElement).options).map((o) => o.value)).toEqual([
       MAIN,
@@ -88,7 +88,7 @@ describe("FollowCalendarSetting", () => {
     render(<FollowCalendarSetting followedCalendarId={MAIN} importGranted onChanged={vi.fn()} />)
 
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Bring sessions in from" }),
+      await screen.findByRole("combobox", { name: "Import sessions from" }),
       TEAM
     )
 
@@ -99,7 +99,7 @@ describe("FollowCalendarSetting", () => {
     const user = userEvent.setup()
     render(<FollowCalendarSetting followedCalendarId={MAIN} importGranted onChanged={vi.fn()} />)
 
-    await user.click(screen.getByRole("checkbox", { name: "Keep bringing in new sessions" }))
+    await user.click(screen.getByRole("checkbox", { name: "Keep importing new sessions" }))
 
     expect(setFollowed).toHaveBeenCalledWith(null)
   })
@@ -113,8 +113,8 @@ describe("FollowCalendarSetting", () => {
       <FollowCalendarSetting followedCalendarId={null} importGranted={false} onChanged={vi.fn()} />
     )
 
-    expect(screen.getByRole("checkbox", { name: "Keep bringing in new sessions" })).toBeDisabled()
-    expect(screen.getByText("This needs “Look at my week” access.")).toBeInTheDocument()
+    expect(screen.getByRole("checkbox", { name: "Keep importing new sessions" })).toBeDisabled()
+    expect(screen.getByText("This needs “Scan calendar” access.")).toBeInTheDocument()
     expect(listCalendars).not.toHaveBeenCalled()
 
     await user.click(screen.getByRole("button", { name: "Allow access" }))
@@ -148,7 +148,7 @@ describe("FollowCalendarSetting", () => {
     )
     expect(screen.queryByTestId("followed-calendar-line")).not.toBeInTheDocument()
     expect(
-      screen.getByRole("combobox", { name: "Bring sessions in from" })
+      screen.getByRole("combobox", { name: "Import sessions from" })
     ).not.toHaveValue(MAIN)
   })
 
@@ -164,7 +164,7 @@ describe("FollowCalendarSetting", () => {
     setFollowed.mockResolvedValue({ follow_calendar_id: TEAM })
     render(<FollowCalendarSetting followedCalendarId={MAIN} importGranted onChanged={vi.fn()} />)
     const picker = await screen.findByRole("combobox", {
-      name: "Bring sessions in from",
+      name: "Import sessions from",
     })
 
     await user.selectOptions(picker, TEAM)

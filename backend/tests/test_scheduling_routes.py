@@ -1781,7 +1781,7 @@ def test_callback_binds_the_connection_to_the_chosen_calendar(client: TestClient
 def test_an_incremental_capability_grant_asks_for_only_that_capability(
     client: TestClient,
 ) -> None:
-    """The import wizard's "Look at my week" round trip lands here — it
+    """The import wizard's "Scan calendar" round trip lands here — it
     must ask for import alone, never the connect-time set."""
     gcal_service = _capture_gcal_service()
     gcal_service.get_sync_status.return_value = {"write_target": "primary"}
@@ -1893,9 +1893,10 @@ def test_consent_options_carry_each_choices_promise(client: TestClient) -> None:
     assert set(promises) == {"app_calendar", "primary"}
     # The calendar Pablo makes is unreachable by grant; the therapist's own
     # calendar is not, and its copy must not claim otherwise.
-    assert "cannot reach further" in promises["app_calendar"]
-    assert "cannot reach further" not in promises["primary"]
-    assert "cannot reach further" in body["busy"]["promise"]
+    assert "limits access" in promises["app_calendar"]
+    assert "limits access" not in promises["primary"]
+    assert "grants broader access" in promises["primary"]
+    assert "limits access" in body["busy"]["promise"]
 
     assert "googleapis.com" not in response.text
     assert "calendar.readonly" not in response.text

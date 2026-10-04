@@ -132,7 +132,7 @@ _PUSH_TO_APP_CALENDAR = ProviderCapability(
     scopes=("https://www.googleapis.com/auth/calendar.app.created",),
     incremental=False,
     enforcement=NarrowingEnforcement.PROVIDER_ENFORCED,
-    reach="the calendar Pablo creates for your sessions",
+    reach="the calendar Pablo creates",
 )
 
 # Writing to the therapist's own calendar has no such grant: the narrowest
@@ -143,7 +143,7 @@ _PUSH_TO_PRIMARY = ProviderCapability(
     scopes=("https://www.googleapis.com/auth/calendar.events",),
     incremental=False,
     enforcement=NarrowingEnforcement.PABLO_ENFORCED,
-    reach="the sessions you book in Pablo",
+    reach="adding, updating and removing sessions booked in Pablo",
 )
 
 _PUSH_BY_TARGET: Mapping[CalendarWriteTarget, ProviderCapability] = MappingProxyType(
@@ -158,7 +158,7 @@ _BUSY = ProviderCapability(
     scopes=("https://www.googleapis.com/auth/calendar.freebusy",),
     incremental=False,
     enforcement=NarrowingEnforcement.PROVIDER_ENFORCED,
-    reach="when you are busy — start and end times, never titles or guests",
+    reach="busy times; event titles and guests are not shared",
 )
 
 _IMPORT = ProviderCapability(
@@ -166,7 +166,7 @@ _IMPORT = ProviderCapability(
     scopes=("https://www.googleapis.com/auth/calendar.readonly",),
     incremental=True,
     enforcement=NarrowingEnforcement.PABLO_ENFORCED,
-    reach="reading the window you pick, once, to propose your existing practice",
+    reach="reading the calendar you choose to import from or follow",
 )
 
 DEFAULT_WRITE_TARGET = CalendarWriteTarget.APP_CALENDAR
@@ -562,8 +562,8 @@ class CalendarImportNotAuthorizedError(Exception):
 class CalendarBusyNotAuthorizedError(Exception):
     """Free/busy was never granted for this connection.
 
-    Not a failure: BUSY is an opt-in choice at connect ("Also check when
-    I'm busy"), never asked for incrementally, so a connection that
+    Not a failure: BUSY is an opt-in choice at connect ("Check for
+    scheduling conflicts"), never asked for incrementally, so a connection that
     declined it — or predates the choice — is expected to land here. The
     caller falls back to whatever it can build without this endpoint.
     """

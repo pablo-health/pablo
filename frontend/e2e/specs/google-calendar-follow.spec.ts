@@ -138,24 +138,39 @@ async function seedWeeklyUntil(
  * Connect through the setup page, then grant reading events by looking at
  * the week — the two round trips to Google a clinician makes. Ends on the
  * clients step with the week read, and following the main calendar when
- * asked to.
+ * asked to. Returns how many events the scan left alone.
  */
-async function connectThroughSetup(page: Page, { follow }: { follow: boolean }): Promise<void> {
+async function connectThroughSetup(
+  page: Page,
+  { follow }: { follow: boolean },
+): Promise<{ leftAlone: number }> {
   await page.goto(SETUP_PATH)
-  await page.getByRole("button", { name: "Connect Google Calendar" }).click()
+  await page.getByRole("button", { name: "Continue with Google" }).click()
   // Google (the stand-in) sends the browser back with a code; the page
   // exchanges it and lands on Sessions, where the choices can still change.
   await expect(page.getByText("Google Calendar is connected.")).toBeVisible()
-  await expect(page.getByRole("heading", { name: "Where your sessions go" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Choose a calendar" })).toBeVisible()
   expect(await google.grant()).toEqual([SCOPE_APP_CALENDAR, SCOPE_FREEBUSY].sort())
   await page.getByRole("button", { name: "Continue", exact: true }).click()
 
-  await page.getByRole("button", { name: "Look at my week" }).click()
+  // The first scan only asks for the grant; the one after Google sends the
+  // browser back is the one that reads the week. The first one's body is
+  // gone once the page leaves for Google, so an unreadable body is not it.
+  const scanned = page.waitForResponse(async (response) => {
+    if (!response.url().includes("/api/calendar/import/scan") || !response.ok()) return false
+    try {
+      return "left_alone" in ((await response.json()) as object)
+    } catch {
+      return false
+    }
+  })
+  await page.getByRole("button", { name: "Scan calendar" }).click()
   // Reading events is a second grant, asked for only now, and added to
-  // the first rather than replacing it. The scan's own summary line is
-  // what says the week was read: the grid itself shows busy time from the
-  // moment the connection can answer for it, before any scan.
-  await expect(page.getByTestId("left-alone-count")).toBeVisible()
+  // the first rather than replacing it. The legend's count of possible
+  // sessions is what says the week was read: the grid itself shows busy
+  // time from the moment the connection can answer for it, before any scan.
+  const proposal = (await (await scanned).json()) as { left_alone: number }
+  await expect(page.getByTestId("qualifying-count")).toBeVisible()
   expect(await google.grant()).toEqual(
     [SCOPE_APP_CALENDAR, SCOPE_FREEBUSY, SCOPE_READ_EVENTS].sort(),
   )
@@ -164,7 +179,7 @@ async function connectThroughSetup(page: Page, { follow }: { follow: boolean }):
     // Nothing is followed yet (freshGoogle turned it off), and the page
     // knows it: the checkbox is rendered from a status read that waited
     // for sign-in, so this click turns following ON.
-    const box = page.getByLabel("Keep bringing in new sessions from this calendar")
+    const box = page.getByLabel("Keep importing new sessions from this calendar")
     await expect(box).not.toBeChecked()
     const followed = page.waitForResponse(
       (response) =>
@@ -174,6 +189,7 @@ async function connectThroughSetup(page: Page, { follow }: { follow: boolean }):
     await followed
     await expect(box).toBeChecked()
   }
+  return { leftAlone: proposal.left_alone }
 }
 
 async function readCalendarsNow(api: ApiClient): Promise<void> {
@@ -298,7 +314,7 @@ test.beforeEach(async ({ api }) => {
   addedRules = await ensureWorkingHours(api)
   // The calendar page shows the setup wizard until this preference is set,
   // and only its own copy of the wizard sets it. The one on the Settings
-  // page, which these specs walk, does not — so "Go to my calendar" after
+  // page, which these specs walk, does not — so "View calendar" after
   // an import there lands on the wizard's first step, with the sessions
   // just imported out of sight. A product bug, reported apart from this
   // spec; the suite's convention is to settle the preference up front.
@@ -321,19 +337,19 @@ test("a practice is brought over from the calendar through the setup page", asyn
     end: plusMinutes(localDateTime(2, "15:00"), 30),
   })
 
-  await connectThroughSetup(page, { follow: false })
+  const { leftAlone } = await connectThroughSetup(page, { follow: false })
   // The one-off didn't fit the pattern. (The grid's own count is of weekday
   // cells, so it says nothing on a weekend.)
-  await expect(page.getByTestId("left-alone-count")).toHaveText("1")
+  expect(leftAlone).toBe(1)
 
   await page.getByRole("button", { name: "Continue", exact: true }).click()
   await expect(page.getByRole("heading", { name: "Which of these are clients?" })).toBeVisible()
   await expect(page.getByRole("checkbox", { name: "Jordan Rivera" })).toBeChecked()
   await page.getByRole("button", { name: "Add 1 client", exact: true }).click()
   await expect(page.getByRole("heading", { name: "1 client added" })).toBeVisible()
-  await expect(page.getByText("8 appointments scheduled ahead.")).toBeVisible()
+  await expect(page.getByText("8 upcoming appointments added.")).toBeVisible()
 
-  await page.getByRole("button", { name: "Go to my calendar" }).click()
+  await page.getByRole("button", { name: "View calendar" }).click()
   await page.waitForURL(/\/dashboard\/calendar/)
   if (localWeekday(1) === 0) {
     await page.getByRole("button", { name: "Next", exact: true }).click()
@@ -418,8 +434,8 @@ test("choosing another calendar reads its sessions and leaves the main calendar'
   await seedWeekly(practice.id, "Morgan Lee", localDateTime(1, "13:00"), 3)
 
   await page.goto("/dashboard/settings/calendars")
-  await expect(page.getByLabel("Keep bringing in new sessions")).toBeChecked()
-  const picker = page.getByRole("combobox", { name: "Bring sessions in from" })
+  await expect(page.getByLabel("Keep importing new sessions")).toBeChecked()
+  const picker = page.getByRole("combobox", { name: "Import sessions from" })
   // Main first, and the second calendar offered. (Today the list also
   // carries the calendar Pablo made for its own sessions, as Google's
   // calendar list does; whether to offer that one is the product's call,
@@ -560,7 +576,7 @@ test("disconnecting takes Pablo off the account and forgets what it read, keepin
   await page.getByRole("button", { name: "Disconnect", exact: true }).click()
   const confirm = page.getByRole("dialog", { name: "Disconnect Google Calendar?" })
   await expect(
-    confirm.getByText("Pablo will stop using your Google Calendar and remove what it read from it.", {
+    confirm.getByText("Pablo stops using your Google Calendar and deletes what it read from it.", {
       exact: false,
     }),
   ).toBeVisible()

@@ -69,16 +69,13 @@ const EXAMPLES = [
  * rephrase and hand them the grid. */
 const UNSURE_LIMIT = 2
 
-const PARSER_DOWN =
-  "Pablo could not read that just now, so here is the grid instead — it saves the same hours."
+const PARSER_DOWN = "Pablo couldn't read that. You can add your hours using the grid."
 
-const PARSER_UNSURE =
-  "Pablo is not sure it understood, so here is the grid instead — it saves the same hours."
+const PARSER_UNSURE = "Pablo couldn't confirm those hours. You can add them using the grid."
 
-const GENERIC_UNSURE =
-  "Pablo could not turn that into hours. Try naming the days and the times, or use the grid."
+const GENERIC_UNSURE = "Include the days and times, or use the hours grid."
 
-const SAVE_ERROR = "Those hours could not be saved. Try again."
+const SAVE_ERROR = "Pablo couldn't save your hours. Try again."
 
 const PARTIAL_SAVE_ERROR = "Some of those hours could not be saved. Try again to save the rest."
 
@@ -255,7 +252,7 @@ export function CalendarHoursStep({ step, onSaved, onSkip }: CalendarHoursStepPr
 
   const timezoneField = (
     <div className="grid gap-2">
-      <Label htmlFor="hours-timezone">Times are in</Label>
+      <Label htmlFor="hours-timezone">Time zone</Label>
       <Select value={chosenTimezone} onValueChange={setTimezone} disabled={locked}>
         <SelectTrigger id="hours-timezone" className="w-72">
           <SelectValue />
@@ -269,8 +266,7 @@ export function CalendarHoursStep({ step, onSaved, onSkip }: CalendarHoursStepPr
         </SelectContent>
       </Select>
       <p className="text-xs text-muted-foreground">
-        {fromSettings ? "From your settings." : "Detected from this browser."} Change it if that is
-        not where you practice.
+        {fromSettings ? "From your settings." : "Detected from your browser."}
       </p>
     </div>
   )
@@ -289,8 +285,8 @@ export function CalendarHoursStep({ step, onSaved, onSkip }: CalendarHoursStepPr
   return (
     <div className="space-y-6">
       <SetupStepHead
-        eyebrow={step ? `Step ${step}` : "Your hours"}
-        title={`When do you see ${people.many}?`}
+        eyebrow={step ? `Step ${step}` : "Hours"}
+        title="What are your usual hours?"
         lede="Your general working hours. You can change them later in Settings."
       />
 
@@ -317,7 +313,7 @@ export function CalendarHoursStep({ step, onSaved, onSkip }: CalendarHoursStepPr
               onClick={() => save(unsaved ?? workingHoursRules(selection))}
               disabled={!isCompleteSelection(selection) || saving}
             >
-              Save these hours
+              Save hours
             </Button>
             {fallbackReason ? null : (
               <button
@@ -326,7 +322,7 @@ export function CalendarHoursStep({ step, onSaved, onSkip }: CalendarHoursStepPr
                 disabled={locked}
                 className="text-sm font-medium text-muted-foreground underline underline-offset-2"
               >
-                Describe them instead
+                Describe my hours
               </button>
             )}
             {skipLink}
@@ -335,7 +331,7 @@ export function CalendarHoursStep({ step, onSaved, onSkip }: CalendarHoursStepPr
       ) : proposals ? (
         <div className="space-y-6">
           <div className="rounded-xl border border-border bg-muted/30 p-4">
-            <p className="text-sm font-medium text-neutral-900">Got it:</p>
+            <p className="text-sm font-medium text-neutral-900">Check these hours</p>
             <ul className="mt-2 space-y-2">
               {lines.map((line) => {
                 const on = line.indexes.every((index) => kept[index])
@@ -360,9 +356,6 @@ export function CalendarHoursStep({ step, onSaved, onSkip }: CalendarHoursStepPr
                 )
               })}
             </ul>
-            <p className="mt-3 text-xs text-muted-foreground">
-              Nothing is saved until you say this is right.
-            </p>
           </div>
 
           {timezoneField}
@@ -379,7 +372,7 @@ export function CalendarHoursStep({ step, onSaved, onSkip }: CalendarHoursStepPr
               onClick={() => save(unsaved ?? keptRules)}
               disabled={keptRules.length === 0 || saving}
             >
-              Yes, save this
+              Save hours
             </Button>
             <button
               type="button"
@@ -387,7 +380,7 @@ export function CalendarHoursStep({ step, onSaved, onSkip }: CalendarHoursStepPr
               disabled={locked}
               className="text-sm font-medium text-muted-foreground underline underline-offset-2"
             >
-              Say it differently
+              Edit description
             </button>
             <button
               type="button"
@@ -398,14 +391,14 @@ export function CalendarHoursStep({ step, onSaved, onSkip }: CalendarHoursStepPr
               disabled={locked}
               className="text-sm font-medium text-muted-foreground underline underline-offset-2"
             >
-              Pick from a grid instead
+              Use the hours grid
             </button>
           </div>
         </div>
       ) : (
         <div className="space-y-4">
           <div className="grid gap-2">
-            <Label htmlFor="hours-sentence">Tell Pablo in your own words</Label>
+            <Label htmlFor="hours-sentence">Describe your usual hours</Label>
             <Textarea
               id="hours-sentence"
               ref={boxRef}
@@ -462,14 +455,14 @@ export function CalendarHoursStep({ step, onSaved, onSkip }: CalendarHoursStepPr
 
           <div className="flex items-center gap-4">
             <Button type="button" onClick={check} disabled={!text.trim()}>
-              Check this
+              Review hours
             </Button>
             <button
               type="button"
               onClick={() => setOnGrid(true)}
               className="text-sm font-medium text-muted-foreground underline underline-offset-2"
             >
-              Pick from a grid instead
+              Use the hours grid
             </button>
             {skipLink}
           </div>

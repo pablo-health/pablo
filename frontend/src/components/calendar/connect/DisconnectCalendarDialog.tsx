@@ -37,8 +37,8 @@ export function DisconnectCalendarDialog({
         <DialogHeader>
           <DialogTitle>Disconnect Google Calendar?</DialogTitle>
           <DialogDescription>
-            Pablo will stop using your Google Calendar and remove what it read from it. Your
-            sessions in Pablo stay, but changes made in Google won&rsquo;t reach them.
+            Sessions already in Pablo stay, but changes in Google won&rsquo;t reach them. Pablo
+            stops using your Google Calendar and deletes what it read from it.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
