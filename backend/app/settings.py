@@ -826,7 +826,7 @@ class Settings(BaseSettings):
             "Object-storage backend for file uploads/downloads. "
             "'gcs' = Google Cloud Storage (default, managed deployments). "
             "'s3' = AWS S3 or S3-compatible (MinIO/LocalStack); requires "
-            "`poetry install --with aws` and boto3-discoverable credentials."
+            "boto3-discoverable credentials."
         ),
     )
     aws_region: str | None = Field(
@@ -1568,7 +1568,9 @@ class Settings(BaseSettings):
             "Comma-separated models an interactive structured call (parsing "
             "availability) moves on to, in order, when ai_model_flash fails "
             "or stalls. A provider prefix selects the provider, e.g. "
-            "``anthropic:claude-haiku-4-5``. Empty (default) keeps one model: "
+            "``anthropic:claude-haiku-4-5`` or, on Amazon Bedrock, "
+            "``bedrock:us.anthropic.claude-haiku-4-5-20251001-v1:0`` (see "
+            "the aws_bedrock_* settings). Empty (default) keeps one model: "
             "one attempt and one retry on it, the retry serving as the "
             "fallback."
         ),
@@ -1582,6 +1584,36 @@ class Settings(BaseSettings):
             "this long; the first usable answer wins and the other is "
             "abandoned (and still billed). A failure hands over at once "
             "regardless. Unset (default) uses 4 seconds."
+        ),
+    )
+
+    # Amazon Bedrock, for ``bedrock:``-prefixed models (most usefully as an
+    # entry in ai_model_flash_fallbacks, a second provider on a second cloud).
+    aws_bedrock_region: str = Field(
+        default="us-east-1",
+        description=(
+            "AWS region Bedrock calls (and the STS role exchange) go to. A "
+            "cross-region inference profile id such as "
+            "``us.anthropic.claude-haiku-4-5-20251001-v1:0`` is called in "
+            "its home region."
+        ),
+    )
+    aws_bedrock_role_arn: str | None = Field(
+        default=None,
+        description=(
+            "IAM role the backend assumes to call Bedrock, by web identity "
+            "federation: it presents a Google-signed ID token for its own "
+            "service account to AssumeRoleWithWebIdentity, so no AWS keys "
+            "are stored. Unset (default) uses the standard AWS credential "
+            "chain (environment, AWS_PROFILE, AWS_WEB_IDENTITY_TOKEN_FILE, "
+            "an instance or task role)."
+        ),
+    )
+    aws_bedrock_web_identity_audience: str = Field(
+        default="sts.amazonaws.com",
+        description=(
+            "Audience requested for the Google ID token presented to AWS "
+            "when aws_bedrock_role_arn is set."
         ),
     )
 

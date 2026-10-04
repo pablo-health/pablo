@@ -708,6 +708,7 @@ def get_default_structured_llm_gateway() -> StructuredLLMGateway:
 
 _anthropic_gateway_holder: list[StructuredLLMGateway] = []
 _mistral_gateway_holder: list[StructuredLLMGateway] = []
+_bedrock_gateway_holder: list[StructuredLLMGateway] = []
 
 
 def _get_anthropic_structured_llm_gateway() -> StructuredLLMGateway:
@@ -722,6 +723,15 @@ def _get_mistral_structured_llm_gateway() -> StructuredLLMGateway:
     if not _mistral_gateway_holder:
         _mistral_gateway_holder.append(MistralStructuredLLMGateway())
     return _mistral_gateway_holder[0]
+
+
+def _get_bedrock_structured_llm_gateway() -> StructuredLLMGateway:
+    """Return the process-wide Bedrock gateway (its own module, imported on use)."""
+    if not _bedrock_gateway_holder:
+        from .bedrock_structured_llm_gateway import BedrockStructuredLLMGateway
+
+        _bedrock_gateway_holder.append(BedrockStructuredLLMGateway())
+    return _bedrock_gateway_holder[0]
 
 
 _registered_providers: dict[str, Callable[[], StructuredLLMGateway]] = {}
@@ -763,6 +773,11 @@ def resolve_structured_llm_gateway(model: str) -> StructuredLLMGateway:
     if sep and provider == LLMProvider.MISTRALAI:
         return _get_mistral_structured_llm_gateway()
     return get_default_structured_llm_gateway()
+
+
+# Amazon Bedrock joins through the registry: ``bedrock:<model or inference
+# profile id>``, e.g. ``bedrock:us.anthropic.claude-haiku-4-5-20251001-v1:0``.
+register_structured_llm_provider(LLMProvider.BEDROCK, _get_bedrock_structured_llm_gateway)
 
 
 __all__ = [
