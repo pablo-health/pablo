@@ -616,6 +616,21 @@ class GoogleCalendarStatusResponse(BaseModel):
             "screen and the audit record cannot disagree"
         ),
     )
+    read_error: str | None = Field(
+        default=None,
+        description=(
+            "What kind of failure the last read of the calendar ended in "
+            "(access_revoked, calendar_not_found, read_failed), while reads "
+            "keep failing; none once a read works. A kind, never the message"
+        ),
+    )
+    reads_paused: bool = Field(
+        default=False,
+        description=(
+            "Scheduled reads have stopped after repeated failures. A read on "
+            "request, or connecting again, starts them"
+        ),
+    )
 
 
 class SetEventTitlingRequest(BaseModel):

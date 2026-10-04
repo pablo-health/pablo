@@ -181,13 +181,15 @@ def sync_calendars_now(
     Per-user limited (``calendar_sync_rate_per_min``): a pass reaches Google
     several times and follows what comes back, and the schedule already
     runs one every fifteen minutes. Being on demand, it skips the loop's
-    working-hours and consecutive-failure guards on purpose. A Google
+    working-hours and consecutive-failure guards on purpose, so a calendar
+    whose scheduled reads stopped is read again, and starts them again
+    when the read works. A Google
     rate-limit answer is retried once after at most three seconds
     (``reliability.HTTP_REQUEST``), so a pass never sleeps for long inside
     the request.
     """
     get_calendar_sync_limiter().check(user.id)
-    summary = scheduler.execute(user.id)
+    summary = scheduler.execute(user.id, on_request=True)
     audit.log(
         AuditAction.CALENDAR_SYNCED,
         user,

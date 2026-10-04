@@ -16,6 +16,7 @@ import {
 } from "@/lib/api/outsideSessions"
 import { queryKeys } from "@/lib/api/queryKeys"
 import { calendarFreshness } from "./calendarFreshness"
+import { GOOGLE_CALENDAR_STATUS_KEY } from "./useGoogleCalendarStatus"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
 
 /** Open events from the clinician's own calendar over a range. */
@@ -76,11 +77,12 @@ export function useAnswerOutsideSessions() {
 /**
  * Read the clinician's calendars now rather than at the next scheduled pass.
  * A read can move, add or cancel sessions and raise new questions, so every
- * calendar query refetches once it succeeds.
+ * calendar query refetches once it succeeds — and so does the connection's
+ * status, which carries when it was last read and whether that worked.
  */
 export function useSyncCalendarsNow() {
   return useAuthMutation<CalendarSyncResult, void>({
     mutationFn: () => syncCalendarsNow(),
-    invalidateKeys: [queryKeys.appointments.all],
+    invalidateKeys: [queryKeys.appointments.all, GOOGLE_CALENDAR_STATUS_KEY],
   })
 }

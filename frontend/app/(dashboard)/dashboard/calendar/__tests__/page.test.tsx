@@ -38,9 +38,16 @@ vi.mock("@/components/theme/ThemeProvider", () => ({
 vi.mock("@/lib/access/readOnlyMode", () => ({
   useReadOnlyMode: () => ({ readOnly: false }),
 }))
+// The read controls have their own tests, and their own queries.
+vi.mock("@/components/calendar/CalendarReadProblem", () => ({
+  CalendarReadProblem: () => null,
+  useFinishReconnect: () => null,
+}))
+vi.mock("@/components/calendar/CheckCalendarsControl", () => ({
+  CheckCalendarsControl: () => null,
+}))
 vi.mock("@/lib/api/scheduling", () => ({
   getICalSyncStatus: vi.fn().mockResolvedValue({ connections: [] }),
-  triggerICalSync: vi.fn(),
 }))
 
 // The calendar and the sheet are their own components with their own

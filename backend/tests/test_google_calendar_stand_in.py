@@ -138,9 +138,11 @@ def _unused_credentials() -> Credentials:
 @dataclass
 class _Scheduler:
     ran_for: list[str] = field(default_factory=list)
+    on_request: list[bool] = field(default_factory=list)
 
-    def execute(self, user_id: str) -> ExecuteSummary:
+    def execute(self, user_id: str, *, on_request: bool = False) -> ExecuteSummary:
         self.ran_for.append(user_id)
+        self.on_request.append(on_request)
         return ExecuteSummary(google_synced=True, outside_sessions_followed=2, reminders_sent=1)
 
 
@@ -157,6 +159,9 @@ class TestReadingTheCalendarsNow:
 
         assert response.status_code == 200, response.text
         assert scheduler.ran_for == [mock_user_id]
+        # Past the schedule's failure guard: a calendar whose scheduled reads
+        # stopped is read again, and a read that works starts them again.
+        assert scheduler.on_request == [True]
         body = response.json()
         assert body["google_synced"] is True
         assert body["outside_sessions_followed"] == 2

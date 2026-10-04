@@ -1859,15 +1859,21 @@ def _parse_write_target(value: str) -> CalendarWriteTarget:
         raise BadRequestError("Invalid write_target") from exc
 
 
-def _connect_capabilities(*, busy: bool) -> set[CalendarCapability]:
+def _connect_capabilities(*, busy: bool, read_events: bool = False) -> set[CalendarCapability]:
     """What connecting asks Google for.
 
-    Reading event content is not here and must not be: it is asked for when
-    an import is run, so a therapist who never imports never grants it.
+    Reading event content is not asked for on a first connect: it is asked
+    for when an import is run, so a therapist who never imports never grants
+    it. ``read_events`` is for reconnecting a connection that already held
+    it: a grant removed at Google takes every permission with it, and a
+    reconnect that left this one out would stop the calendar being followed
+    until it was asked for a second time.
     """
     capabilities = {CalendarCapability.PUSH}
     if busy:
         capabilities.add(CalendarCapability.BUSY)
+    if read_events:
+        capabilities.add(CalendarCapability.IMPORT)
     return capabilities
 
 
@@ -2013,6 +2019,9 @@ def google_calendar_authorize(
         description="Which calendar Pablo writes sessions to",
     ),
     busy: bool = Query(True, description="Also ask when the therapist is booked"),
+    read_events: bool = Query(
+        False, description="Also ask to read events, when reconnecting a connection that could"
+    ),
     ctx: TenantContext = Depends(get_tenant_context),
     service: GoogleCalendarService = Depends(get_google_calendar_service),
 ) -> GoogleCalendarAuthResponse:
@@ -2022,7 +2031,7 @@ def google_calendar_authorize(
     auth_url = service.get_auth_url(
         ctx.user_id,
         redirect_uri,
-        capabilities=_connect_capabilities(busy=busy),
+        capabilities=_connect_capabilities(busy=busy, read_events=read_events),
         write_target=_parse_write_target(write_target),
     )
     return GoogleCalendarAuthResponse(auth_url=auth_url)
@@ -2046,6 +2055,7 @@ def google_calendar_callback(
         description="The write target the authorization URL was built with",
     ),
     busy: bool = Query(True, description="Whether free/busy was part of that request"),
+    read_events: bool = Query(False, description="Whether reading events was part of it"),
     event_titling: str = Query(
         DEFAULT_EVENT_TITLING.value,
         description="How sessions should read on the calendar, for a connect",
@@ -2090,7 +2100,7 @@ def google_calendar_callback(
         # events say about their clients.
         titling = _parse_titling(existing.get("event_titling") or DEFAULT_EVENT_TITLING.value)
     else:
-        capabilities = _connect_capabilities(busy=busy)
+        capabilities = _connect_capabilities(busy=busy, read_events=read_events)
         target = _parse_write_target(write_target)
         titling = _parse_titling(event_titling)
 
