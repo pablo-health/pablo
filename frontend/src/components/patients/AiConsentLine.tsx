@@ -79,7 +79,8 @@ interface AiConsentDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
-function AiConsentDialog({ patientId, history, open, onOpenChange }: AiConsentDialogProps) {
+/** Record a new answer and read the history. Also opened from a session note. */
+export function AiConsentDialog({ patientId, history, open, onOpenChange }: AiConsentDialogProps) {
   const [decision, setDecision] = useState<AiConsentDecision | null>(null)
   const [effectiveOn, setEffectiveOn] = useState(localToday)
   const [error, setError] = useState<string | null>(null)

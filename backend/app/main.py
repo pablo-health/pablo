@@ -103,6 +103,7 @@ from .routes import (
     patients,
     payment_webhooks,
     people_term,
+    practice_ai_notes_consent,
     practice_balances,
     practice_billing,
     practice_domains,
@@ -274,6 +275,7 @@ app.include_router(admin.router)
 app.include_router(admin_pentest.router)
 app.include_router(users.router)
 app.include_router(people_term.router)
+app.include_router(practice_ai_notes_consent.router)
 app.include_router(patients.router)
 app.include_router(practice_billing.router)
 app.include_router(practice_domains.router)

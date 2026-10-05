@@ -2,6 +2,7 @@
 
 "use client"
 
+import { AiNotesConsentCard } from "../AiNotesConsentCard"
 import { AudioRetentionSettings } from "../AudioRetentionSettings"
 import { SessionDefaults } from "../SessionDefaults"
 import { TelehealthSettings } from "../TelehealthSettings"
@@ -58,6 +59,10 @@ export function SessionsPage() {
           </>
         }
       />
+
+      {/* Outside the recording slot and the retention flag: whether to ask
+          clients is a practice decision in every build. */}
+      <AiNotesConsentCard />
     </>
   )
 }
