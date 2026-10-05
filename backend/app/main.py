@@ -451,6 +451,8 @@ app.include_router(instrument_licenses.router)
 # clinician half is ordinary practice paperwork behind the ordinary door,
 # and the patient half answers 401 with no resolver registered.
 app.include_router(intake_documents.router)
+# The documents a practice can start from, behind the same door.
+app.include_router(intake_documents.starter_router)
 # The patient half is part of intake, so a practice that turns intake off
 # turns it off too; the same for the two patient routers below.
 app.include_router(

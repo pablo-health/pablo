@@ -8,7 +8,11 @@ import { SettingsBadge, SettingsCard } from "@/components/settings/ui"
 import { Button } from "@/components/ui/button"
 import { useInstruments } from "@/hooks/useInstruments"
 import { useIntakeBlankForms } from "@/hooks/useIntakeBlankForms"
-import { usePublishedIntakeDocuments } from "@/hooks/useIntakeDocuments"
+import {
+  useAdoptIntakeStarter,
+  useIntakeStarters,
+  usePublishedIntakeDocuments,
+} from "@/hooks/useIntakeDocuments"
 import {
   useCreateIntakeTemplate,
   useCreateIntakeVersion,
@@ -53,6 +57,8 @@ export function IntakeFormsCard() {
   const { data: documents } = usePublishedIntakeDocuments()
   const { data: instruments } = useInstruments()
   const { data: blankForms } = useIntakeBlankForms()
+  const { data: starters } = useIntakeStarters()
+  const adoptStarter = useAdoptIntakeStarter()
   const createTemplate = useCreateIntakeTemplate()
   const createVersion = useCreateIntakeVersion()
   const saveItems = useSaveIntakeItems()
@@ -167,6 +173,9 @@ export function IntakeFormsCard() {
                     documents={publishedDocuments}
                     instruments={instruments ?? []}
                     blankForms={offerableBlankForms}
+                    starters={starters ?? []}
+                    onAdoptStarter={async (key) => (await adoptStarter.mutateAsync(key)).items}
+                    adopting={adoptStarter.isPending}
                   />
                 </div>
               )}

@@ -42,7 +42,9 @@ from app.repositories import InMemoryIntakeDocumentRepository
 from app.repositories.audit import InMemoryAuditRepository
 from app.routes import intake_documents
 from app.routes.intake_documents import (
+    get_document_values,
     get_intake_document_service,
+    get_patient_document_values,
     get_patient_intake_document_service,
 )
 from app.services.audit_service import AuditService, get_audit_service
@@ -108,19 +110,32 @@ def service(documents: InMemoryIntakeDocumentRepository) -> IntakeDocumentServic
 
 
 @pytest.fixture
+def practice_values() -> dict[str, str]:
+    """The practice's settings as a document reads them. Mutable, so a test
+    can change a setting between two reads."""
+    return {"audio_retention_days": "90"}
+
+
+@pytest.fixture
 def practice(
     client: TestClient,
     service: IntakeDocumentService,
     audit_repo: InMemoryAuditRepository,
+    practice_values: dict[str, str],
 ) -> TestClient:
     """The shared clinician client, with the document store in memory."""
     real_app.dependency_overrides[get_intake_document_service] = lambda: service
     real_app.dependency_overrides[get_audit_service] = lambda: AuditService(audit_repo)
+    real_app.dependency_overrides[get_document_values] = lambda: practice_values
     return client
 
 
 @pytest.fixture
-def portal(service: IntakeDocumentService, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+def portal(
+    service: IntakeDocumentService,
+    practice_values: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[TestClient]:
     """The portal router alone, with a patient front door and no database."""
     app = FastAPI()
     register_exception_handlers(app)
@@ -130,6 +145,7 @@ def portal(service: IntakeDocumentService, monkeypatch: pytest.MonkeyPatch) -> I
     registry.register(_OnePatientResolver())
     app.dependency_overrides[get_patient_resolver_registry] = lambda: registry
     app.dependency_overrides[get_patient_intake_document_service] = lambda: service
+    app.dependency_overrides[get_patient_document_values] = lambda: practice_values
 
     monkeypatch.setattr(patient_context_module, "get_db_session", object)
     monkeypatch.setattr(patient_context_module, "set_tenant_schema", lambda _s, _schema: None)
@@ -350,3 +366,111 @@ class TestReadingOneToSign:
         ]
         assert "<script>" not in html
         assert "<a " not in html
+
+
+# ---------------------------------------------------------------------------
+# The practice's settings, named in a document
+# ---------------------------------------------------------------------------
+
+_RETENTION_BODY = "Audio is kept for {{audio_retention_days}} days."
+
+
+class TestPracticeValues:
+    def test_the_portal_reads_the_practices_number(
+        self, portal: TestClient, practice: TestClient
+    ) -> None:
+        published = _publish(practice, _create(practice, body=_RETENTION_BODY)["id"])
+        html = portal.get(f"{PORTAL}/{published['id']}", headers=_auth(_TOKEN)).json()[
+            "rendered_html"
+        ]
+        assert "Audio is kept for 90 days." in html
+        assert "{{" not in html
+
+    def test_a_changed_setting_reads_in_the_next_document_opened(
+        self, portal: TestClient, practice: TestClient, practice_values: dict[str, str]
+    ) -> None:
+        published = _publish(practice, _create(practice, body=_RETENTION_BODY)["id"])
+        practice_values["audio_retention_days"] = "30"
+        html = portal.get(f"{PORTAL}/{published['id']}", headers=_auth(_TOKEN)).json()[
+            "rendered_html"
+        ]
+        assert "Audio is kept for 30 days." in html
+
+    def test_the_digest_is_of_the_words_the_practice_wrote(
+        self, portal: TestClient, practice: TestClient, practice_values: dict[str, str]
+    ) -> None:
+        """A setting changing does not make the document a different one."""
+        published = _publish(practice, _create(practice, body=_RETENTION_BODY)["id"])
+        practice_values["audio_retention_days"] = "30"
+        body = portal.get(f"{PORTAL}/{published['id']}", headers=_auth(_TOKEN)).json()
+        assert body["digest"] == published["digest"]
+
+    def test_the_editor_keeps_the_name_and_previews_the_number(self, practice: TestClient) -> None:
+        created = _create(practice, body=_RETENTION_BODY)
+        assert created["body_markdown"] == _RETENTION_BODY
+        assert "Audio is kept for 90 days." in created["rendered_html"]
+
+
+# ---------------------------------------------------------------------------
+# Starting from a starter
+# ---------------------------------------------------------------------------
+
+STARTERS = "/api/intake/starters"
+
+
+class TestStarters:
+    def test_the_list_names_the_ai_tools_consent(self, practice: TestClient) -> None:
+        response = practice.get(STARTERS)
+        assert response.status_code == 200
+        assert {"key": "ai_tools_consent", "title": "Consent for the use of AI tools"} in (
+            response.json()
+        )
+
+    def test_adopting_one_publishes_the_practices_copy(self, practice: TestClient) -> None:
+        response = practice.post(f"{STARTERS}/ai_tools_consent")
+        assert response.status_code == 200, response.text
+        document = response.json()["document"]
+        assert document["title"] == "Consent for the use of AI tools"
+        assert document["published_at"] is not None
+        assert "{{audio_retention_days}}" in document["body_markdown"]
+        assert "keeps session audio for 90 days" in document["rendered_html"]
+        listed = [d["id"] for d in practice.get(BASE).json()]
+        assert document["id"] in listed
+
+    def test_it_hands_back_the_items_for_the_form(self, practice: TestClient) -> None:
+        body = practice.post(f"{STARTERS}/ai_tools_consent").json()
+        items = body["items"]
+        assert [(i["key"], i["item_type"]) for i in items] == [
+            ("ai_tools_consent", "consent_document"),
+            ("ai_transcription", "single_choice"),
+        ]
+        assert items[0]["config"] == {"document_key": body["document"]["document_key"]}
+        assert items[1]["required"] is True
+        assert [o["label"] for o in items[1]["config"]["options"]] == [
+            "I consent",
+            "I do not consent",
+        ]
+
+    def test_adopting_it_twice_reuses_the_copy(
+        self, practice: TestClient, audit_repo: InMemoryAuditRepository, mock_user_id: str
+    ) -> None:
+        first = practice.post(f"{STARTERS}/ai_tools_consent").json()["document"]
+        second = practice.post(f"{STARTERS}/ai_tools_consent").json()["document"]
+        assert second["id"] == first["id"]
+        entries = _entries(audit_repo, mock_user_id)
+        assert [e.action for e in entries] == [AuditAction.INTAKE_DOCUMENT_PUBLISHED]
+        assert entries[0].changes == {
+            "document_key": first["document_key"],
+            "version": 1,
+            "digest": first["digest"],
+        }
+
+    def test_the_copy_is_edited_like_any_other(self, practice: TestClient) -> None:
+        copy = practice.post(f"{STARTERS}/ai_tools_consent").json()["document"]
+        draft = practice.post(f"{BASE}/{copy['id']}/new-version").json()
+        edited = practice.put(f"{BASE}/{draft['id']}", json={"body_markdown": "Our words."})
+        assert edited.status_code == 200
+        assert edited.json()["document_key"] == copy["document_key"]
+
+    def test_an_unknown_starter_is_404(self, practice: TestClient) -> None:
+        assert practice.post(f"{STARTERS}/nothing_like_it").status_code == 404

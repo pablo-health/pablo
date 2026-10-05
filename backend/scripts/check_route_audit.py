@@ -270,6 +270,7 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("get", "/api/intake/documents/{document_id}"),  # one version and its rendering
         ("put", "/api/intake/documents/{document_id}"),  # edits an unpublished draft
         ("post", "/api/intake/documents/{document_id}/new-version"),  # starts the next draft
+        ("get", "/api/intake/starters"),  # the built-in documents a practice can start from
         # intake_blank_forms.py — the practice's own empty paperwork, offered
         # for download by a question that asks for a form back on paper. The
         # same reasoning as the two blocks above: it is the practice's
