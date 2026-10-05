@@ -12,14 +12,18 @@ not here.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Self
 
-from fastapi import APIRouter, Depends, Path, Query
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
+from pydantic import BaseModel, Field, model_validator
 
-from ..api_errors import NotFoundError
+from ..api_errors import BadRequestError, NotFoundError, UnprocessableEntityError
 from ..auth.route_access import subscription_exempt
 from ..auth.service import get_current_user, require_baa_acceptance
+from ..db import release_db_connection
+from ..models import Patient, Transcript
+from ..models.audit import AuditAction, ResourceType
+from ..models.transcript import TranscriptModel  # noqa: TC001 — runtime Pydantic field
 from ..notes import (
     NoteFieldDef,
     NoteInputDef,
@@ -35,9 +39,17 @@ from ..notes.practice_types import (
     PracticeNoteTypeSpec,
     practice_key,
     stored_to_definition,
+    to_definition,
+    validate_note_inputs,
 )
 from ..repositories import PracticeNoteTypeRepository, get_practice_note_type_repository
+from ..services.audit_service import AuditService, get_audit_service
+from ..services.note_generation_service import (
+    NoteGenerationService,
+    TransientNoteGenerationError,
+)
 from ..utcnow import utc_now
+from .notes import get_note_generation_service
 
 if TYPE_CHECKING:
     from ..models import User
@@ -280,3 +292,149 @@ def retire_practice_note_type(
         raise NotFoundError(f"Note type {practice_key(slug)!r} not found")
     logger.info("Retired practice note type %s", stored.key)
     return NoteTypeSchema.from_def(stored_to_definition(stored))
+
+
+PREVIEW_KEY = practice_key("preview")
+"""Key an unsaved definition drafts under; never stored."""
+
+PREVIEW_TRANSCRIPT_MAX_CHARS = 200_000
+"""A long visit is well under this; it bounds what one preview can send."""
+
+
+class NoteDraftPreviewRequest(BaseModel):
+    """A note type to try, and the transcript to draft from.
+
+    Name a type that exists (``key``, with ``version`` for an older practice
+    version) or send one that has not been saved (``spec``) — exactly one.
+    """
+
+    key: str | None = None
+    version: int | None = Field(default=None, ge=1)
+    spec: PracticeNoteTypeSpec | None = None
+    transcript: TranscriptModel
+    inputs: dict[str, str] | None = None
+
+    @model_validator(mode="after")
+    def _one_source(self) -> Self:
+        if (self.key is None) == (self.spec is None):
+            raise ValueError("send exactly one of key or spec")
+        if self.spec is not None and self.version is not None:
+            raise ValueError("version applies only to a saved key")
+        content = self.transcript.content.strip()
+        if not content:
+            raise ValueError("transcript is empty")
+        if len(content) > PREVIEW_TRANSCRIPT_MAX_CHARS:
+            raise ValueError(f"transcript is longer than {PREVIEW_TRANSCRIPT_MAX_CHARS} characters")
+        return self
+
+
+class NoteDraftPreviewResponse(BaseModel):
+    """The draft, shaped like a generated note's content. Nothing is saved."""
+
+    key: str
+    version: int | None
+    sections: dict[str, dict[str, Any]]
+
+
+def _preview_patient() -> Patient:
+    """Stand-in for the client a preview has none of.
+
+    Practice types never read the patient, and the built-in prompts read
+    only ``diagnosis``, which stays unset so nothing is suggested.
+    """
+    now = utc_now()
+    return Patient(id="preview", first_name="", last_name="", created_at=now, updated_at=now)
+
+
+@router.post("/preview", response_model=NoteDraftPreviewResponse)
+def preview_note_draft(
+    body: NoteDraftPreviewRequest,
+    request: Request,
+    user: User = Depends(require_baa_acceptance),
+    registry: NoteTypeRegistry = Depends(get_registry),
+    authorizer: NoteTypeAuthorizer = Depends(get_note_type_authorizer),
+    generator: NoteGenerationService = Depends(get_note_generation_service),
+    audit: AuditService = Depends(get_audit_service),
+) -> NoteDraftPreviewResponse:
+    """Draft a note of one type from a transcript and return it unsaved.
+
+    For trying a type before relying on it: no note, session or patient is
+    written. The transcript may be a real visit, so the call is audited — by
+    the type's key, never the transcript or the draft.
+    """
+    definition = _resolve_preview_definition(body, registry, authorizer, user)
+    if definition.restricted:
+        raise BadRequestError(
+            f"Note type {definition.key!r} is written by hand, not generated",
+            {"note_type": definition.key},
+        )
+    try:
+        inputs = validate_note_inputs(definition, body.inputs)
+    except ValueError as exc:
+        raise BadRequestError(
+            str(exc), {"note_type": definition.key}, code="INVALID_NOTE_INPUTS"
+        ) from exc
+
+    audit.log(
+        AuditAction.NOTE_TYPE_DRAFT_PREVIEWED,
+        user,
+        request,
+        resource_type=ResourceType.NOTE_TYPE,
+        resource_id=definition.key,
+        changes={
+            "source": "unsaved" if body.spec is not None else "saved",
+            "version": definition.version,
+        },
+    )
+
+    transcript = Transcript(format=body.transcript.format.value, content=body.transcript.content)
+    # Release the pooled connection before the multi-second model call, the
+    # same seam the standalone-note worker and SOAP import use.
+    release_db_connection()
+    try:
+        generated = generator.generate_note(
+            definition.key,
+            transcript,
+            _preview_patient(),
+            utc_now(),
+            inputs=inputs,
+            definition=definition,
+        )
+    except TransientNoteGenerationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Drafting is temporarily unavailable. Try again in a moment.",
+        ) from exc
+    except (ValueError, KeyError) as exc:
+        logger.warning("Note draft preview failed for %s", definition.key)
+        raise UnprocessableEntityError(
+            "This note type could not produce a draft from that transcript.",
+            {"note_type": definition.key},
+        ) from exc
+
+    return NoteDraftPreviewResponse(
+        key=definition.key,
+        version=None if body.spec is not None else definition.version,
+        sections=generated.content,
+    )
+
+
+def _resolve_preview_definition(
+    body: NoteDraftPreviewRequest,
+    registry: NoteTypeRegistry,
+    authorizer: NoteTypeAuthorizer,
+    user: User,
+) -> NoteTypeDefinition:
+    if body.spec is not None:
+        return to_definition(PREVIEW_KEY, 0, body.spec)
+    key = body.key or ""
+    try:
+        definition = registry.get(key, body.version)
+    except KeyError as exc:
+        raise NotFoundError(f"Note type {key!r} not found") from exc
+    if not authorizer.is_allowed(user, key):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Note type {key!r} not allowed for this subscription",
+        )
+    return definition

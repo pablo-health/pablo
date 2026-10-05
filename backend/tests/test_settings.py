@@ -152,6 +152,19 @@ def test_availability_parse_override_allowed_in_development() -> None:
 
 
 @pytest.mark.parametrize("environment", ["staging", "production"])
+def test_note_generation_override_rejected_outside_development(environment: str) -> None:
+    with pytest.raises(ValueError, match="NOTE_GENERATION_BASE_URL must not be set"):
+        _make(environment=environment, note_generation_base_url="http://fake-llm:8083/notes")
+
+
+def test_note_generation_override_allowed_in_development() -> None:
+    settings = _make(
+        environment="development", note_generation_base_url="http://fake-llm:8083/notes"
+    )
+    assert settings.note_generation_base_url == "http://fake-llm:8083/notes"
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
 def test_google_origin_override_rejected_outside_development(environment: str) -> None:
     with pytest.raises(ValueError, match="GOOGLE_CALENDAR_BASE_URL must not be set"):
         _make(environment=environment, google_calendar_base_url="http://localhost:8090")

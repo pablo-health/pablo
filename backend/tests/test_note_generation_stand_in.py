@@ -1,0 +1,110 @@
+# Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+
+"""The end-to-end stack's stand-in for note drafting.
+
+``note_generation_base_url`` sends standalone-note and preview drafts to an
+HTTP service (``scripts/fake_llm.py``) instead of a model. These run the real
+generation service against that service's app, so a draft comes back exactly
+as the backend would validate a model's.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
+
+import pytest
+from app.models import Patient, Transcript
+from app.notes import NoteTypeRegistry, register_builtin_note_types
+from app.notes.practice_types import PracticeNoteTypeSpec, to_definition
+from app.routes.notes import get_note_generation_service
+from app.services import http_structured_llm_gateway
+from app.services.http_structured_llm_gateway import HttpStructuredLLMGateway
+from app.services.note_generation_service import RegistryNoteGenerationService
+from app.settings import Settings
+from fastapi.testclient import TestClient
+
+from scripts.fake_llm import app as fake_llm_app
+
+from .test_practice_note_types import COACH_SPEC
+
+if TYPE_CHECKING:
+    import httpx
+
+BASE_URL = "http://fake-llm:8083/notes"
+NOW = datetime(2026, 10, 5, tzinfo=UTC)
+PATIENT = Patient(id="p", first_name="", last_name="", created_at=NOW, updated_at=NOW)
+TRANSCRIPT = Transcript(format="txt", content="[00:01] Therapist: Hello\n[00:03] Client: Hi")
+
+
+@pytest.fixture
+def stand_in(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Route the gateway's POSTs to the stand-in's app; return the URLs hit."""
+    client = TestClient(fake_llm_app)
+    urls: list[str] = []
+
+    def post(url: str, *, json: dict[str, Any], timeout: float) -> httpx.Response:
+        urls.append(url)
+        response: httpx.Response = client.post(url.removeprefix("http://fake-llm:8083"), json=json)
+        return response
+
+    monkeypatch.setattr(http_structured_llm_gateway.httpx, "post", post)
+    return urls
+
+
+def _service() -> RegistryNoteGenerationService:
+    registry = NoteTypeRegistry()
+    register_builtin_note_types(registry)
+    return RegistryNoteGenerationService(
+        registry=registry, llm_gateway=HttpStructuredLLMGateway(BASE_URL)
+    )
+
+
+def test_a_practice_type_gets_a_draft_in_its_own_shape(stand_in: list[str]) -> None:
+    definition = to_definition("custom.coach", 1, PracticeNoteTypeSpec.model_validate(COACH_SPEC))
+
+    generated = _service().generate_note(
+        definition.key,
+        TRANSCRIPT,
+        PATIENT,
+        NOW,
+        inputs={"segment": "Network"},
+        definition=definition,
+    )
+
+    assert generated.content == {
+        "fix": {"one_thing": "Stand-in draft for fix.one_thing."},
+        "log_row": {"channels": ["Stand-in draft for log_row.channels."]},
+    }
+    assert stand_in == [f"{BASE_URL}/v1/structured"]
+
+
+def test_a_soap_draft_survives_its_second_call(stand_in: list[str]) -> None:
+    """SOAP asks again for sentence-to-transcript links; the stand-in answers none."""
+    generated = _service().generate_note("soap", TRANSCRIPT, PATIENT, NOW)
+
+    assert generated.soap_note is not None
+    assert generated.soap_note.subjective.chief_complaint.text.startswith("Stand-in draft")
+    assert len(stand_in) == 2
+
+
+def test_the_route_dependency_uses_the_stand_in_only_when_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configured = Settings(
+        database_url="postgresql://x:x@localhost:5432/x",
+        environment="development",
+        note_generation_base_url=BASE_URL,
+    )
+    monkeypatch.setattr("app.routes.notes.get_settings", lambda: configured)
+    service = get_note_generation_service()
+    assert isinstance(service, RegistryNoteGenerationService)
+    assert isinstance(service._llm_gateway, HttpStructuredLLMGateway)
+
+    unconfigured = Settings(
+        database_url="postgresql://x:x@localhost:5432/x", environment="development"
+    )
+    monkeypatch.setattr("app.routes.notes.get_settings", lambda: unconfigured)
+    service = get_note_generation_service()
+    assert isinstance(service, RegistryNoteGenerationService)
+    assert not isinstance(service._llm_gateway, HttpStructuredLLMGateway)

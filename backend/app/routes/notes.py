@@ -70,6 +70,7 @@ from ..services import (
     RegistryNoteGenerationService,
     get_audit_service,
 )
+from ..services.http_structured_llm_gateway import HttpStructuredLLMGateway
 from ..services.note_generation_service import TransientNoteGenerationError
 from ..services.session_generation_worker import resolve_tenant_schema_for_user
 from ..settings import get_settings
@@ -108,7 +109,15 @@ def get_note_service(
 
 
 def get_note_generation_service() -> NoteGenerationService:
-    """Get note generation service for standalone-note dictation flows."""
+    """Get note generation service for standalone-note dictation flows.
+
+    Also drafts note-type previews. Under the end-to-end stack the drafts
+    come from its stand-in (the setting refuses to load outside
+    development), so a spec sees the same draft every run.
+    """
+    base_url = get_settings().note_generation_base_url
+    if base_url:
+        return RegistryNoteGenerationService(llm_gateway=HttpStructuredLLMGateway(base_url))
     return RegistryNoteGenerationService()
 
 
