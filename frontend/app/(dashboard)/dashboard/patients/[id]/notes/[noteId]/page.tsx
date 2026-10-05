@@ -19,6 +19,7 @@ import { AlertCircle, ArrowLeft, Check } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { NoteViewer } from "@/components/sessions/NoteViewer"
+import { NoteConsentLine } from "@/components/sessions/NoteConsentLine"
 import { OnlyYouBadge } from "@/components/notes/OnlyYouBadge"
 import {
   QualityRatingWithFeedback,
@@ -155,6 +156,10 @@ export default function StandaloneNotePage({ params }: PageProps) {
           )}
         </p>
       </div>
+
+      {/* A note drafted from a recorded session carries the client's answer
+          about AI-assisted notes; a note written by hand has no recording. */}
+      {!isManual && <NoteConsentLine patientId={patientId} />}
 
       {isGenerating ? (
         <div className="card p-12 text-center">

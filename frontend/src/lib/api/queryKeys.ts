@@ -329,6 +329,8 @@ const baseQueryKeys = {
     all: ["aiConsent"] as const,
     byPatient: (patientId: string) =>
       [...baseQueryKeys.aiConsent.all, patientId] as const,
+    // Whether the practice asks clients about AI-assisted notes at all
+    practiceSetting: () => [...baseQueryKeys.aiConsent.all, "practice-setting"] as const,
   },
 
   // Medication list query keys

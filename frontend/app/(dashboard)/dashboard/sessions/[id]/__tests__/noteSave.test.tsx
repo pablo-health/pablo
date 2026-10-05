@@ -36,6 +36,9 @@ vi.mock("@/hooks/useNoteTypes", () => ({
     ({ soap: "SOAP", dap: "DAP" } as Record<string, string>)[key] ?? key,
 }))
 
+// Reads the practice setting and the client's consent record; not under test here.
+vi.mock("@/components/sessions/NoteConsentLine", () => ({ NoteConsentLine: () => null }))
+
 const DAP_EDIT: NoteContent = {
   note_type: "schema",
   key: "dap",

@@ -28,6 +28,18 @@ export interface AiConsentRecord {
   history: AiConsentEntry[]
 }
 
+/**
+ * Whether the practice asks clients to agree to AI-assisted notes. Mirrors
+ * backend `app.routes.practice_ai_notes_consent.AiNotesConsentSetting`.
+ */
+export interface AiNotesConsentSetting {
+  ask_clients_about_ai_notes: boolean
+  /** How long the practice keeps session audio. Read aloud in the script. */
+  audio_retention_days: number
+  /** Whether the caller may change the setting (the practice owner). */
+  can_change: boolean
+}
+
 export interface RecordAiConsentRequest {
   decision: AiConsentDecision
   /** Defaults to today on the server when omitted. */
