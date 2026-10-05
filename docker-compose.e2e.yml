@@ -132,6 +132,10 @@ services:
       # rather than by a model this stack has no credentials for. Honoured
       # by the backend only under ENVIRONMENT=development.
       - AVAILABILITY_PARSE_BASE_URL=http://fake-llm:8083
+      # Standalone notes and note-type previews are drafted by the same
+      # stand-in, which answers each with a fixed draft shaped by the note
+      # type, so a spec sees the same draft every run.
+      - NOTE_GENERATION_BASE_URL=http://fake-llm:8083/notes
       - CLEARINGHOUSE_WEBHOOK_SECRET=e2e-clearinghouse-webhook-shared-secret
       # The practice's tax id is stored encrypted under this key, and filing a
       # claim needs a billing profile, so without it saving one is a 500. The

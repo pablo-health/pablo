@@ -112,6 +112,41 @@ async def structured(call: StructuredCall) -> dict[str, Any]:
     return {"data": READINGS.get(key, UNKNOWN), "finish_reason": "stop"}
 
 
+class NoteCall(BaseModel):
+    """A note draft request; the response schema decides the reply's shape."""
+
+    response_schema: dict[str, Any]
+
+
+def _stand_in(schema: dict[str, Any], path: str) -> Any:
+    """A value of the schema's shape, the same for the same schema every run.
+
+    Text says which field it fills, so a spec can find it; a list of text
+    holds one such entry; a list of objects (the sentence-to-transcript
+    links a SOAP draft asks for next) is empty, which a model may also say.
+    """
+    kind = schema.get("type")
+    if kind == "object":
+        return {
+            name: _stand_in(sub, f"{path}.{name}" if path else name)
+            for name, sub in schema.get("properties", {}).items()
+        }
+    if kind == "array":
+        items = schema.get("items", {})
+        return [] if items.get("type") == "object" else [_stand_in(items, path)]
+    if kind in ("integer", "number"):
+        return 0
+    if kind == "boolean":
+        return False
+    return f"Stand-in draft for {path}."
+
+
+@app.post("/notes/v1/structured")
+async def draft_note(call: NoteCall) -> dict[str, Any]:
+    """Note drafts: NOTE_GENERATION_BASE_URL points at ``/notes``."""
+    return {"data": _stand_in(call.response_schema, ""), "finish_reason": "stop"}
+
+
 @app.get("/_fake/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
