@@ -48,7 +48,7 @@ concurrency:
 jobs:
   e2e:
     name: End-to-end (compose + Playwright)
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' && github.event_name != 'pull_request_target' && vars.SELF_HOSTED_RUNNER) || 'ubuntu-latest' }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7

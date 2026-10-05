@@ -20,7 +20,7 @@ concurrency:
 jobs:
   trivy-deps:
     name: Trivy (dependencies)
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' && github.event_name != 'pull_request_target' && vars.SELF_HOSTED_RUNNER) || 'ubuntu-latest' }}
     permissions:
       security-events: write
       contents: read
@@ -47,7 +47,7 @@ jobs:
 
   trivy-base-images:
     name: Trivy (base images)
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' && github.event_name != 'pull_request_target' && vars.SELF_HOSTED_RUNNER) || 'ubuntu-latest' }}
     permissions:
       security-events: write
       contents: read
@@ -80,7 +80,7 @@ jobs:
 
   trivy-config:
     name: Trivy (Dockerfile config)
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' && github.event_name != 'pull_request_target' && vars.SELF_HOSTED_RUNNER) || 'ubuntu-latest' }}
     permissions:
       security-events: write
       contents: read
@@ -110,7 +110,7 @@ jobs:
     name: Notify on scheduled failure
     needs: [trivy-deps, trivy-base-images, trivy-config]
     if: ${{ failure() && github.event_name == 'schedule' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' && github.event_name != 'pull_request_target' && vars.SELF_HOSTED_RUNNER) || 'ubuntu-latest' }}
     permissions:
       issues: write
       contents: read

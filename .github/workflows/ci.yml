@@ -31,7 +31,7 @@ concurrency:
 jobs:
   version-check:
     name: Version consistency
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' && github.event_name != 'pull_request_target' && vars.SELF_HOSTED_RUNNER) || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -44,7 +44,7 @@ jobs:
   migration-lint:
     name: Models ship with migrations
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' && github.event_name != 'pull_request_target' && vars.SELF_HOSTED_RUNNER) || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -64,7 +64,7 @@ jobs:
     # remembered. Deliberately narrow: only patterns the tree is already clean
     # of, because a check that fires against normal work gets muted.
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' && github.event_name != 'pull_request_target' && vars.SELF_HOSTED_RUNNER) || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -80,7 +80,7 @@ jobs:
 
   backend:
     name: Backend checks
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' && github.event_name != 'pull_request_target' && vars.SELF_HOSTED_RUNNER) || 'ubuntu-latest' }}
     steps:
       - name: Free disk space
         run: |
@@ -168,7 +168,7 @@ jobs:
 
   backend-integration:
     name: Backend integration (Postgres)
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' && github.event_name != 'pull_request_target' && vars.SELF_HOSTED_RUNNER) || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -262,7 +262,7 @@ jobs:
     # changing it there leaves the required check permanently pending. Renaming
     # both together is a deliberate two-step for a human.
     name: Tenant template matches alembic head
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' && github.event_name != 'pull_request_target' && vars.SELF_HOSTED_RUNNER) || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -356,7 +356,7 @@ jobs:
 
   frontend:
     name: Frontend checks
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' && github.event_name != 'pull_request_target' && vars.SELF_HOSTED_RUNNER) || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: frontend

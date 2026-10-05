@@ -40,7 +40,7 @@ jobs:
   build-backend:
     name: Build Backend
     needs: [ci, e2e]
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' && github.event_name != 'pull_request_target' && vars.SELF_HOSTED_RUNNER) || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -80,7 +80,7 @@ jobs:
   build-frontend:
     name: Build Frontend
     needs: [ci, e2e]
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' && github.event_name != 'pull_request_target' && vars.SELF_HOSTED_RUNNER) || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -117,7 +117,7 @@ jobs:
   build-pentest:
     name: Build Pentest Image
     needs: [ci, e2e]
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' && github.event_name != 'pull_request_target' && vars.SELF_HOSTED_RUNNER) || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -156,7 +156,7 @@ jobs:
     name: Run DB Migrations
     needs: [build-backend]
     if: github.event_name == 'push' || inputs.run_migrations == true
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' && github.event_name != 'pull_request_target' && vars.SELF_HOSTED_RUNNER) || 'ubuntu-latest' }}
     outputs:
       db_parked: ${{ steps.db.outputs.parked }}
     steps:
@@ -231,7 +231,7 @@ jobs:
       always() && !failure() && !cancelled()
       && needs.build-backend.result == 'success'
       && needs.migrate.outputs.db_parked != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' && github.event_name != 'pull_request_target' && vars.SELF_HOSTED_RUNNER) || 'ubuntu-latest' }}
     steps:
       - id: auth
         uses: google-github-actions/auth@v3
@@ -255,7 +255,7 @@ jobs:
   deploy-frontend:
     name: Deploy Frontend
     needs: [build-frontend]
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' && github.event_name != 'pull_request_target' && vars.SELF_HOSTED_RUNNER) || 'ubuntu-latest' }}
     steps:
       - id: auth
         uses: google-github-actions/auth@v3
@@ -279,7 +279,7 @@ jobs:
   update-pentest-job:
     name: Update Pentest Job
     needs: [build-pentest]
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' && github.event_name != 'pull_request_target' && vars.SELF_HOSTED_RUNNER) || 'ubuntu-latest' }}
     steps:
       - id: auth
         uses: google-github-actions/auth@v3
@@ -311,7 +311,7 @@ jobs:
     # there is nothing to probe — the sha check would fail against the old
     # revision by design, not by regression.
     if: always() && !failure() && !cancelled() && needs.deploy-backend.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' && github.event_name != 'pull_request_target' && vars.SELF_HOSTED_RUNNER) || 'ubuntu-latest' }}
     steps:
       - id: auth
         uses: google-github-actions/auth@v3

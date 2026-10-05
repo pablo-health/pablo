@@ -35,7 +35,7 @@ jobs:
   backend:
     needs: [e2e]
     name: Build & Push Backend
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' && github.event_name != 'pull_request_target' && vars.SELF_HOSTED_RUNNER) || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -74,7 +74,7 @@ jobs:
   frontend:
     needs: [e2e]
     name: Build & Push Frontend
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' && github.event_name != 'pull_request_target' && vars.SELF_HOSTED_RUNNER) || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -113,7 +113,7 @@ jobs:
   pentest:
     needs: [e2e]
     name: Build & Push Pentest Image
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' && github.event_name != 'pull_request_target' && vars.SELF_HOSTED_RUNNER) || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
 
