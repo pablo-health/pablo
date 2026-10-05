@@ -160,6 +160,7 @@ from ..services.google_calendar_service import (
 )
 from ..services.hedged_structured_llm_gateway import HedgedStructuredLLMGateway
 from ..services.http_structured_llm_gateway import HttpStructuredLLMGateway
+from ..services.recording_consent import RecordingConsentGate, get_recording_consent_gate
 from ..services.telehealth import (
     GOOGLE_MEET,
     Attendee,
@@ -1066,6 +1067,7 @@ def start_session_from_appointment(
     session_service: SessionService = Depends(_get_session_service),
     audit: AuditService = Depends(get_audit_service),
     authorizer: NoteTypeAuthorizer = Depends(get_note_type_authorizer),
+    consent_gate: RecordingConsentGate = Depends(get_recording_consent_gate),
 ) -> SessionResponse:
     """Create a therapy session linked to a calendar appointment.
 
@@ -1077,6 +1079,10 @@ def start_session_from_appointment(
     key for the session, overriding the appointment's own note type.
     When omitted, the session uses the note type chosen when the
     appointment was booked (SOAP if none was set).
+
+    A recorded session (the default) for a client who declined AI-assisted
+    notes is refused with ``CLIENT_DECLINED_AI_NOTES``. ``recording: false``
+    starts one whose note is written by hand, which a decline does not stop.
     """
     # 1. Fetch appointment
     try:
@@ -1094,6 +1100,14 @@ def start_session_from_appointment(
     # 3. Unmatched patient? → 400
     if not appt.patient_id:
         raise BadRequestError("Appointment has no linked patient. Resolve the client match first.")
+
+    # 3b. A recording needs the client's consent — read only once the client
+    #     is known to be visible to this clinician.
+    if body is None or body.recording:
+        patient = session_service.patient_repo.get(appt.patient_id, user.id)
+        if patient is None:
+            raise NotFoundError("Patient not found for this appointment.")
+        consent_gate.refuse_if_declined(patient, user, http_request, audit)
 
     # 4. Authorize the effective note type — an explicit override, or else
     #    the one seeded on the appointment at booking time.

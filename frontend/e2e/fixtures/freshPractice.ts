@@ -34,6 +34,7 @@ export type FreshPracticeName =
   | "hosted"
   | "reserved"
   | "hours"
+  | "consent"
 
 const PASSWORD = "E2e-fresh-practice-password-long-enough"
 
@@ -56,7 +57,7 @@ export interface FreshPractice {
 export async function signInToFreshPractice(
   browser: Browser,
   name: FreshPracticeName,
-  options: Pick<BrowserContextOptions, "timezoneId"> = {},
+  options: Pick<BrowserContextOptions, "timezoneId" | "userAgent"> = {},
 ): Promise<FreshPractice> {
   const email = addressOf(name)
   await ensureEmulatorUser(email, PASSWORD)

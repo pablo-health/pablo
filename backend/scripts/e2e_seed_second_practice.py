@@ -171,6 +171,16 @@ FRESH_HOURS = SeededPractice(
     name="Fresh Practice Hours",
     emptied=("availability_rules",),
 )
+# Its own practice for the spec about starting a recording against a client's
+# answer about AI-assisted notes. That answer only counts while the practice
+# asks its clients, and the spec about the setting turns it off in the shared
+# practice for a while.
+FRESH_CONSENT = SeededPractice(
+    id="e2e-fresh-consent",
+    schema="practice_e2e_fresh_consent",
+    email="e2e-fresh-consent@example.com",
+    name="Fresh Practice Consent",
+)
 SEEDED = (
     SECOND_PRACTICE,
     FRESH_YES,
@@ -181,6 +191,7 @@ SEEDED = (
     FRESH_HOSTED,
     FRESH_RESERVED,
     FRESH_HOURS,
+    FRESH_CONSENT,
 )
 
 # Kept for anything that still reads the second practice by its old names.

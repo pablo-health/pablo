@@ -67,6 +67,10 @@ class StartSessionFromAppointmentRequest(BaseModel):
     """
 
     note_type: str | None = None
+    #: Whether the session will be recorded. A session started only to write
+    #: its note by hand says ``False``, and so is not refused for a client who
+    #: declined AI-assisted notes.
+    recording: bool = True
 
 
 class CreateAppointmentRequest(BaseModel):
