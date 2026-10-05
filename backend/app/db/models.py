@@ -1485,6 +1485,70 @@ class PortalSessionRow(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class ClientAiConsentEventRow(Base):
+    """One answer a client gave about AI-assisted notes, as it was recorded.
+
+    AI-assisted notes means the session is recorded, transcribed and drafted
+    by a model. The answer applies to every session until the client gives a
+    different one, so it lives on the client rather than on a session.
+
+    Append-only: changing an answer adds a row, and nothing here is updated
+    or deleted, so the chart can say "agreed Oct 6, declined Nov 2" rather
+    than only what is true today. The current answer is the latest row by
+    ``recorded_at``; a client with no rows has not been asked yet.
+    ``effective_on`` is the day the client gave the answer, which a clinician
+    may record after the fact.
+
+    ``recorded_by`` is the staff member who recorded it, and is required for
+    a clinician's entry. An answer the client gave on an intake form names
+    the submission it came from instead, and may have no staff member behind
+    it at all.
+
+    Patient-scoped through ``has_patient_access`` like ``notes``: the row
+    carries ``patient_id`` and no ``user_id``, so ``enable_rls_on_schema``
+    gives it the patient-access policy with no bespoke branch.
+    """
+
+    __tablename__ = "client_ai_consent_events"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("patients.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    effective_on: Mapped[date] = mapped_column(Date, nullable=False)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    recorded_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    intake_submission_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+
+    __table_args__ = (
+        CheckConstraint(
+            "decision IN ('consented', 'declined')",
+            name="ck_client_ai_consent_events_decision",
+        ),
+        CheckConstraint(
+            "source IN ('clinician', 'intake_form')",
+            name="ck_client_ai_consent_events_source",
+        ),
+        CheckConstraint(
+            "(source = 'intake_form') = (intake_submission_id IS NOT NULL)",
+            name="ck_client_ai_consent_events_submission",
+        ),
+        CheckConstraint(
+            "source <> 'clinician' OR recorded_by IS NOT NULL",
+            name="ck_client_ai_consent_events_recorded_by",
+        ),
+        Index(
+            "ix_client_ai_consent_events_patient_recorded",
+            "patient_id",
+            "recorded_at",
+        ),
+    )
+
+
 class PatientMedicationRow(Base):
     """Per-patient medication record.
 

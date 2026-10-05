@@ -366,6 +366,23 @@ CREATE TABLE __TENANT_SCHEMA__.claims (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.client_ai_consent_events (
+    id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    decision character varying(16) NOT NULL,
+    effective_on date NOT NULL,
+    source character varying(16) NOT NULL,
+    recorded_by uuid,
+    recorded_at timestamp with time zone NOT NULL,
+    intake_submission_id uuid,
+    CONSTRAINT ck_client_ai_consent_events_decision CHECK (((decision)::text = ANY ((ARRAY['consented'::character varying, 'declined'::character varying])::text[]))),
+    CONSTRAINT ck_client_ai_consent_events_recorded_by CHECK ((((source)::text <> 'clinician'::text) OR (recorded_by IS NOT NULL))),
+    CONSTRAINT ck_client_ai_consent_events_source CHECK (((source)::text = ANY ((ARRAY['clinician'::character varying, 'intake_form'::character varying])::text[]))),
+    CONSTRAINT ck_client_ai_consent_events_submission CHECK ((((source)::text = 'intake_form'::text) = (intake_submission_id IS NOT NULL)))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.clinician_profiles (
     user_id uuid NOT NULL,
     practice_id character varying(128) NOT NULL,
@@ -1505,6 +1522,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.claims
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.client_ai_consent_events
+    ADD CONSTRAINT client_ai_consent_events_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.clinician_profiles
     ADD CONSTRAINT clinician_profiles_pkey PRIMARY KEY (user_id);
 
@@ -2030,6 +2052,10 @@ CREATE INDEX ix_claims_state ON __TENANT_SCHEMA__.claims USING btree (state);
 
 
 
+CREATE INDEX ix_client_ai_consent_events_patient_recorded ON __TENANT_SCHEMA__.client_ai_consent_events USING btree (patient_id, recorded_at);
+
+
+
 CREATE INDEX ix_companion_auth_challenges_patient ON __TENANT_SCHEMA__.companion_auth_challenges USING btree (patient_id);
 
 
@@ -2475,6 +2501,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.claim_reminders
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.claim_reminders
     ADD CONSTRAINT claim_reminders_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.client_ai_consent_events
+    ADD CONSTRAINT client_ai_consent_events_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
 
 
 

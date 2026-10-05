@@ -324,6 +324,13 @@ const baseQueryKeys = {
     tenants: () => [...baseQueryKeys.admin.all, "tenants"] as const,
   },
 
+  // A client's answer about AI-assisted notes
+  aiConsent: {
+    all: ["aiConsent"] as const,
+    byPatient: (patientId: string) =>
+      [...baseQueryKeys.aiConsent.all, patientId] as const,
+  },
+
   // Medication list query keys
   medications: {
     all: ["medications"] as const,

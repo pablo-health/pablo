@@ -1,0 +1,65 @@
+// Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+
+/**
+ * A client's answer about AI-assisted notes, recorded from the chart header.
+ *
+ * The answer is a history, not a field: recording "agreed" and then
+ * "declined" leaves both on the record, with the later one shown in the
+ * header. Both survive a reload, so this proves the answer is stored rather
+ * than held in the page.
+ */
+
+import { test, expect } from "../fixtures/auth"
+import { givePatient } from "../fixtures/scenarios"
+
+/** A civil date some days back, as the date input takes it and as the chart
+ * shows it. Computed from today so the answer is never dated in the future. */
+function daysAgo(days: number): { iso: string; shown: string } {
+  const day = new Date()
+  day.setDate(day.getDate() - days)
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return {
+    iso: `${day.getFullYear()}-${pad(day.getMonth() + 1)}-${pad(day.getDate())}`,
+    shown: day.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+  }
+}
+
+test("a clinician records a client's AI-notes answer and changes it", async ({
+  signedInPage: page,
+  api,
+}) => {
+  const patient = await givePatient(api)
+  const agreedOn = daysAgo(5)
+  const declinedOn = daysAgo(2)
+
+  await page.goto(`/dashboard/patients/${patient.id}`)
+  const line = page.getByTestId("ai-consent-line")
+  await expect(line).toHaveText("AI notes: not asked yet")
+
+  await line.click()
+  const dialog = page.getByRole("dialog", { name: "AI notes" })
+  await dialog.getByLabel("Client agreed").check()
+  await dialog.getByLabel("Date").fill(agreedOn.iso)
+  await dialog.getByRole("button", { name: "Save" }).click()
+  await expect(dialog).toBeHidden()
+
+  await page.reload()
+  await expect(line).toHaveText(`AI notes: agreed ${agreedOn.shown}`)
+  await line.click()
+  const history = dialog.getByTestId("ai-consent-history").getByRole("listitem")
+  await expect(history).toHaveCount(1)
+  await expect(history.first()).toContainText(`Agreed ${agreedOn.shown}`)
+
+  await dialog.getByLabel("Client declined").check()
+  await dialog.getByLabel("Date").fill(declinedOn.iso)
+  await dialog.getByRole("button", { name: "Save" }).click()
+  await expect(dialog).toBeHidden()
+  await expect(line).toHaveText(`AI notes: declined ${declinedOn.shown}`)
+
+  await page.reload()
+  await expect(line).toHaveText(`AI notes: declined ${declinedOn.shown}`)
+  await line.click()
+  await expect(history).toHaveCount(2)
+  await expect(history.nth(0)).toContainText(`Declined ${declinedOn.shown}`)
+  await expect(history.nth(1)).toContainText(`Agreed ${agreedOn.shown}`)
+})
