@@ -262,6 +262,11 @@ class AuditAction(StrEnum):
     # address rendered into the practice's wording — shown to the clinician
     # before sending. A read of contact details, so it goes on the record.
     PATIENT_PORTAL_INVITE_PREVIEWED = "patient_portal_invite_previewed"
+    # A note drafted from a pasted transcript to show what a note type
+    # produces, and returned without being saved. The transcript may be a
+    # real visit, so the processing goes on the record; the row names the
+    # note type, never the transcript or the draft.
+    NOTE_TYPE_DRAFT_PREVIEWED = "note_type_draft_previewed"
     PATIENT_PORTAL_SESSION_REDEEMED = "patient_portal_session_redeemed"
 
     # A clinician's messages badge asked how many conversations have
@@ -735,6 +740,7 @@ class ResourceType(StrEnum):
     INVITATION = "invitation"
     PRACTICE_PORTAL = "practice_portal"
     PRACTICE = "practice"
+    NOTE_TYPE = "note_type"
     CLAIM = "claim"
     CLAIM_EXPORT = "claim_export"
     BILLING_PERIOD_EXPORT = "billing_period_export"
