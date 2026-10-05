@@ -225,8 +225,7 @@ export async function giveVisitReadyToBill(
 
 /**
  * A session that carries a transcript, uploaded the way a recording's text
- * arrives. Note generation is queued and, with no task runner in the stack,
- * never runs, so the session holds the transcript and no note.
+ * arrives. The stack's drafting stand-in writes its note straight after.
  */
 export async function giveTranscribedSession(
   api: ApiClient,

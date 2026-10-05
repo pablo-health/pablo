@@ -112,10 +112,16 @@ async def structured(call: StructuredCall) -> dict[str, Any]:
     return {"data": READINGS.get(key, UNKNOWN), "finish_reason": "stop"}
 
 
+#: A transcript carrying this line is refused, so a spec can watch a draft fail.
+#: The refusal is not one the backend retries: the session is marked failed at once.
+REFUSES_DRAFT = "The stand-in will not draft this session."
+
+
 class NoteCall(BaseModel):
     """A note draft request; the response schema decides the reply's shape."""
 
     response_schema: dict[str, Any]
+    user_prompt: str = ""
 
 
 def _stand_in(schema: dict[str, Any], path: str) -> Any:
@@ -144,6 +150,8 @@ def _stand_in(schema: dict[str, Any], path: str) -> Any:
 @app.post("/notes/v1/structured")
 async def draft_note(call: NoteCall) -> dict[str, Any]:
     """Note drafts: NOTE_GENERATION_BASE_URL points at ``/notes``."""
+    if REFUSES_DRAFT in call.user_prompt:
+        raise HTTPException(status_code=422, detail="draft refused")
     return {"data": _stand_in(call.response_schema, ""), "finish_reason": "stop"}
 
 

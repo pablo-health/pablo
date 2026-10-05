@@ -6,12 +6,14 @@ Session API routes.
 Thin HTTP handlers that delegate business logic to SessionService.
 """
 
+import contextvars
 import logging
 from datetime import datetime
 from typing import Any
 
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Depends,
     Form,
     HTTPException,
@@ -39,6 +41,7 @@ from ..auth.service import (
     require_cloud_tasks_invoker,
 )
 from ..db import release_db_connection
+from ..db.tenant_session import tenant_db_session
 from ..jobs.task_queue import enqueue
 from ..models import (
     AuditAction,
@@ -85,7 +88,6 @@ from ..services import (
     NoteGenerationService,
     NoteService,
     PatientNotFoundError,
-    RegistryNoteGenerationService,
     SessionAlreadyInStatusError,
     SessionInTerminalStatusError,
     SessionNotFoundError,
@@ -103,6 +105,7 @@ from ..services.note_import_service import (
 )
 from ..services.session_generation_worker import (
     UnknownTenantError,
+    resolve_tenant_schema_for_user,
     run_soap_generation_job,
 )
 from ..services.transcription_queue_service import (
@@ -111,6 +114,7 @@ from ..services.transcription_queue_service import (
 )
 from ..settings import get_settings
 from ..utcnow import utc_now
+from .notes import get_note_generation_service
 
 # Optional subscription extension point. When a billing overlay is
 # installed it registers ``app.routes.subscription``; otherwise the
@@ -223,11 +227,6 @@ def get_notes_repository(
     return _notes_repo_factory()
 
 
-def get_note_generation_service() -> NoteGenerationService:
-    """Get note generation service instance."""
-    return RegistryNoteGenerationService()
-
-
 def get_note_import_service() -> NoteImportService:
     """Get the imported-note parse service instance."""
     return NoteImportService()
@@ -286,8 +285,10 @@ def upload_session(
     patient_id: str,
     http_request: Request,
     request: UploadSessionRequest,
+    background: BackgroundTasks,
     user: User = Depends(require_baa_acceptance),
     session_service: SessionService = Depends(get_session_service),
+    note_generation_service: NoteGenerationService = Depends(get_note_generation_service),
     audit: AuditService = Depends(get_audit_service),
 ) -> SessionResponse:
     """
@@ -319,6 +320,16 @@ def upload_session(
         {"session_id": session.id, "user_id": user.id},
         dedup_key=session.id,
     )
+    # The end-to-end stack has no task queue (``enqueue`` only logs in
+    # development), so where its drafting stand-in is configured the job runs
+    # here, after the response, the way the worker would run it.
+    if settings.note_generation_base_url:
+        background.add_task(
+            _draft_in_process,
+            GenerateSoapJob(session_id=session.id, user_id=user.id),
+            http_request,
+            note_generation_service,
+        )
 
     audit.log_session_action(AuditAction.SESSION_CREATED, user, http_request, session, patient)
 
@@ -434,6 +445,40 @@ def generate_soap_job(
             session.id,
         )
     return {"status": "ok"}
+
+
+def _draft_in_process(
+    payload: GenerateSoapJob,
+    http_request: Request,
+    note_generation_service: NoteGenerationService,
+) -> None:
+    """Run the generate-soap job in this process, where no queue delivers it.
+
+    Runs in an empty context: the upload's request-scoped database session is
+    still being torn down by the middleware on another thread, and the job must
+    open a session of its own rather than commit or release that one.
+    """
+    contextvars.Context().run(_run_draft_job, payload, http_request, note_generation_service)
+
+
+def _run_draft_job(
+    payload: GenerateSoapJob,
+    http_request: Request,
+    note_generation_service: NoteGenerationService,
+) -> None:
+    schema = resolve_tenant_schema_for_user(payload.user_id)
+    if schema is None:
+        logger.warning("in-process draft: no active tenant for session %s", payload.session_id)
+        return
+    with tenant_db_session(schema, payload.user_id):
+        generate_soap_job(
+            payload,
+            http_request,
+            None,
+            get_worker_session_service(note_generation_service),
+            get_user_repository(),
+            get_audit_service(),
+        )
 
 
 # Generous guardrail for an uploaded note document. A single SOAP note is
