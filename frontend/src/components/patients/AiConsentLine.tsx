@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useAiConsent, useRecordAiConsent } from "@/hooks/useAiConsent"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import type { AiConsentDecision, AiConsentEntry } from "@/types/aiConsent"
 
 /** A civil date (YYYY-MM-DD) as "Oct 6, 2026". Parsed as a local date so a
@@ -83,6 +84,7 @@ function AiConsentDialog({ patientId, history, open, onOpenChange }: AiConsentDi
   const [effectiveOn, setEffectiveOn] = useState(localToday)
   const [error, setError] = useState<string | null>(null)
   const record = useRecordAiConsent()
+  const people = usePeopleTerm()
 
   function handleOpenChange(next: boolean) {
     if (!next) {
@@ -114,13 +116,13 @@ function AiConsentDialog({ patientId, history, open, onOpenChange }: AiConsentDi
         <DialogHeader>
           <DialogTitle>AI notes</DialogTitle>
           <DialogDescription>
-            Whether the client agreed to sessions being recorded and drafted into notes. The
+            Whether the {people.one} agreed to sessions being recorded and drafted into notes. The
             answer applies to every session until you change it.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <fieldset className="space-y-2">
-            <legend className="sr-only">Client&apos;s answer</legend>
+            <legend className="sr-only">{people.One}&apos;s answer</legend>
             {(["consented", "declined"] as const).map((value) => (
               <label key={value} className="flex items-center gap-2 text-sm text-neutral-800">
                 <input
@@ -130,7 +132,7 @@ function AiConsentDialog({ patientId, history, open, onOpenChange }: AiConsentDi
                   checked={decision === value}
                   onChange={() => setDecision(value)}
                 />
-                {value === "consented" ? "Client agreed" : "Client declined"}
+                {people.One} {value === "consented" ? "agreed" : "declined"}
               </label>
             ))}
           </fieldset>
