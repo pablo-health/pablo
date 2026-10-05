@@ -32,8 +32,11 @@ import {
   NO_QUESTIONS,
   PUBLISHED_NOTICE,
   PUBLISH_BUTTON,
+  TEMPLATE_ALREADY_ON_FORM,
   labelPlaceholder,
 } from "./intakeCopy"
+import { StarterPicker } from "./StarterPicker"
+import type { IntakeStarter } from "@/types/intakeDocuments"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import {
   ItemConfigForm,
@@ -60,6 +63,11 @@ interface IntakeItemEditorProps {
   instruments?: Instrument[]
   /** The practice's blank forms, for a document question to offer. */
   blankForms?: OfferableBlankForm[]
+  /** Built-in documents the practice can add, with the questions they bring. */
+  starters?: IntakeStarter[]
+  /** Adopt one: the practice's copy is published and its items come back. */
+  onAdoptStarter?: (key: string) => Promise<IntakeItemInput[]>
+  adopting?: boolean
 }
 
 function nextKey(label: string, taken: string[]): string {
@@ -191,10 +199,14 @@ export function IntakeItemEditor({
   documents,
   instruments,
   blankForms,
+  starters,
+  onAdoptStarter,
+  adopting,
 }: IntakeItemEditorProps) {
   const [items, setItems] = useState<IntakeItemInput[]>(() => toInput(version.items))
   const [openIndex, setOpenIndex] = useState<number | null>(null)
   const [addType, setAddType] = useState<ItemType>("free_text")
+  const [starterNote, setStarterNote] = useState<string | null>(null)
   const [shownVersionId, setShownVersionId] = useState(version.id)
   const editorId = useId()
   const published = version.published_at !== null
@@ -247,6 +259,35 @@ export function IntakeItemEditor({
       },
     ])
     setOpenIndex(items.length)
+  }
+
+  /**
+   * Add a template's items to the end of the form and save it.
+   *
+   * Saved straight away because adopting the template already published the
+   * practice's copy of its document: the form should say so too, without a
+   * second step. An item whose name is already on the form is left out, so
+   * adding a template twice adds nothing the second time.
+   */
+  async function addStarter(key: string) {
+    if (!onAdoptStarter) return
+    setStarterNote(null)
+    let adopted: IntakeItemInput[]
+    try {
+      adopted = await onAdoptStarter(key)
+    } catch (error) {
+      setStarterNote(error instanceof Error && error.message ? error.message : "That could not be added.")
+      return
+    }
+    const taken = new Set(items.map((item) => item.key))
+    const fresh = adopted.filter((item) => !taken.has(item.key))
+    if (fresh.length === 0) {
+      setStarterNote(TEMPLATE_ALREADY_ON_FORM)
+      return
+    }
+    const next = [...items, ...fresh]
+    setItems(next)
+    onSave(next)
   }
 
   if (published) {
@@ -397,6 +438,13 @@ export function IntakeItemEditor({
           {ADD_QUESTION}
         </Button>
       </div>
+
+      <StarterPicker
+        starters={starters ?? []}
+        onPick={(key) => void addStarter(key)}
+        busy={adopting}
+      />
+      {starterNote && <p className="text-[13px] text-muted-foreground">{starterNote}</p>}
 
       {/* Whatever the refusal was not about one question: an empty form, a
           document nobody published. Shown here rather than nowhere. */}

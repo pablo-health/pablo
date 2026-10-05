@@ -3,16 +3,20 @@
 "use client"
 
 import {
+  adoptIntakeStarter,
   createIntakeDocument,
   createIntakeDocumentVersion,
   listIntakeDocuments,
+  listIntakeStarters,
   publishIntakeDocument,
   updateIntakeDocument,
 } from "@/lib/api/intakeDocuments"
 import { queryKeys } from "@/lib/api/queryKeys"
 import type {
+  AdoptedStarter,
   CreateDocumentInput,
   IntakeDocument,
+  IntakeStarter,
   UpdateDocumentInput,
 } from "@/types/intakeDocuments"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
@@ -60,6 +64,26 @@ export function usePublishIntakeDocument(token?: string) {
   return useAuthMutation({
     mutationFn: (id: string) => publishIntakeDocument(id, token),
     invalidateKeys: [queryKeys.intakeDocuments.all],
+  })
+}
+
+/** The built-in documents a practice can start from. They never change. */
+export function useIntakeStarters(token?: string) {
+  return useAuthQuery({
+    queryKey: queryKeys.intakeDocuments.starters(),
+    queryFn: (): Promise<IntakeStarter[]> => listIntakeStarters(token),
+    staleTime: Infinity,
+  })
+}
+
+/**
+ * Adopt a starter: the practice gets a published copy of the document, so
+ * the document lists refresh, and the caller gets the items to add.
+ */
+export function useAdoptIntakeStarter(token?: string) {
+  return useAuthMutation({
+    mutationFn: (key: string): Promise<AdoptedStarter> => adoptIntakeStarter(key, token),
+    invalidateKeys: [queryKeys.intakeDocuments.list(), queryKeys.intakeDocuments.published()],
   })
 }
 

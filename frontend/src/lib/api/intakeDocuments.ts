@@ -9,8 +9,10 @@
  */
 
 import type {
+  AdoptedStarter,
   CreateDocumentInput,
   IntakeDocument,
+  IntakeStarter,
   UpdateDocumentInput,
 } from "@/types/intakeDocuments"
 import { get, post, put } from "./client"
@@ -79,4 +81,19 @@ export async function createIntakeDocumentVersion(
   token?: string
 ): Promise<IntakeDocument> {
   return post<IntakeDocument>(`${ENDPOINT}/${documentId}/new-version`, {}, token)
+}
+
+const STARTERS = "/api/intake/starters"
+
+/** The built-in documents a practice can start from. */
+export async function listIntakeStarters(token?: string): Promise<IntakeStarter[]> {
+  return get<IntakeStarter[]>(STARTERS, token)
+}
+
+/**
+ * The practice's published copy of a starter, made now if it has none, and
+ * the items that put it on a form.
+ */
+export async function adoptIntakeStarter(key: string, token?: string): Promise<AdoptedStarter> {
+  return post<AdoptedStarter>(`${STARTERS}/${key}`, {}, token)
 }

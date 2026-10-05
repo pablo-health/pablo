@@ -1182,6 +1182,11 @@ PATIENT_READABLE_TABLES: dict[str, str] = {
     # back — the signing screen shows who has signed and when — and the
     # clinician side reaches the same rows through ``has_patient_access``.
     "patient_intake_signatures": "patient_id",
+    # A client's answers about AI-assisted notes. Registered because handing
+    # in a form that asks the question writes the answer, as the client (see
+    # the write arm below); the read arm is what any patient write needs
+    # under it, and no patient route reads the table.
+    "client_ai_consent_events": "patient_id",
     # What a patient attached to a question that asked for a file. Their own
     # record about them, carrying its own ``patient_id`` for the same reason
     # the responses beside it do. They read it back between sittings — a
@@ -1311,6 +1316,12 @@ PATIENT_WRITABLE_TABLES: dict[str, str] = {
     # is superseded by a later row rather than edited, which is the whole
     # reason the table carries ``superseded_at`` instead of a mutable flag.
     "patient_intake_signatures": "patient_id",
+    # Handing in a form that asks about session transcription appends the
+    # client's answer. Narrowed to answers that came from a form (see
+    # ``PATIENT_WRITE_NARROWING``): an entry recorded by a clinician is the
+    # practice's act, and a patient principal must not be able to mint one.
+    # No route updates a row; the record is append-only.
+    "client_ai_consent_events": "patient_id",
     # Attaching a file is a patient INSERT and removing one before the form
     # is handed in is a patient DELETE, which is why this table is also in
     # ``PATIENT_DELETABLE_TABLES``. The grant is wider than the routes, as
@@ -1391,17 +1402,18 @@ PATIENT_DELETABLE_TABLES: frozenset[str] = frozenset(
 #
 # Row-level security has no column granularity, so a write grant is
 # ordinarily as wide as the row — which is why every other narrowing in
-# this feature is the route layer's. This registry exists for the one case
-# the route layer cannot make safe on its own: a table whose rows are
-# mostly the practice's acts, carrying one kind the patient causes. A
-# patient may write that kind and no other, and saying so in the policy
-# means a route that forgot cannot mint an acceptance under a patient
-# principal.
+# this feature is the route layer's. This registry exists for the case the
+# route layer cannot make safe on its own: a table whose rows are mostly
+# the practice's acts, carrying one kind the patient causes. A patient may
+# write that kind and no other, and saying so in the policy means a route
+# that forgot cannot mint an acceptance — or a clinician's entry on the
+# AI-notes record — under a patient principal.
 #
 # Read stays wide on purpose: the patient is shown the correction the
 # practice asked for, which is a row they may not write.
 PATIENT_WRITE_NARROWING: dict[str, str] = {
     "patient_intake_review_events": "kind = 'corrected'",
+    "client_ai_consent_events": "source = 'intake_form'",
 }
 
 

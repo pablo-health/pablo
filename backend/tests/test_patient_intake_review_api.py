@@ -49,6 +49,7 @@ from app.repositories import (
     get_patient_repository,
 )
 from app.repositories.audit import InMemoryAuditRepository
+from app.repositories.client_ai_consent import InMemoryClientAiConsentRepository
 from app.repositories.coverage import (
     InMemoryPatientCoverageRepository,
     InMemoryPayerRepository,
@@ -59,6 +60,7 @@ from app.routes.patient_intake import get_intake_outcome_measure_service
 from app.routes.patient_intake_assignments import (
     get_clinician_intake_assignment_service,
     get_clinician_patient_repository,
+    get_form_ai_consent_recorder,
     get_patient_intake_artifact_service,
     get_patient_intake_assignment_service,
 )
@@ -68,6 +70,7 @@ from app.routes.patient_intake_review import (
     get_practice_name,
 )
 from app.services.audit_service import AuditService, get_audit_service
+from app.services.intake_form_ai_consent import FormAiConsentRecorder
 from app.services.intake_packet_service import IntakePacketService
 from app.services.patient_intake_artifact_service import IntakeArtifactService
 from app.services.patient_intake_assignment_service import IntakeAssignmentService
@@ -259,6 +262,11 @@ def patient_app(
     app.dependency_overrides[get_patient_intake_artifact_service] = lambda: artifact_service
     app.dependency_overrides[get_intake_outcome_measure_service] = lambda: measures
     app.dependency_overrides[get_audit_service] = lambda: AuditService(audit_repo)
+    # Handing a form in reads it for a transcription answer; none of these
+    # forms ask one, so this only has to not be a database.
+    app.dependency_overrides[get_form_ai_consent_recorder] = lambda: FormAiConsentRecorder(
+        InMemoryPatientIntakeSignatureRepository(), InMemoryClientAiConsentRepository()
+    )
 
     monkeypatch.setattr(patient_context_module, "get_db_session", object)
     monkeypatch.setattr(patient_context_module, "set_tenant_schema", lambda _s, _schema: None)

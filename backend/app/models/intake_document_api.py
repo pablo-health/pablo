@@ -23,6 +23,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..intake.items import ItemDraft  # noqa: TC001 — Pydantic needs this at runtime
+
 
 class CreateDocumentRequest(BaseModel):
     """``POST /api/intake/documents``."""
@@ -90,9 +92,32 @@ class PatientDocumentResponse(BaseModel):
     consent_statement_version: str
 
 
+class StarterSummary(BaseModel):
+    """``GET /api/intake/starters``: one document a practice can start from."""
+
+    key: str
+    title: str
+
+
+class StarterAdoptedResponse(BaseModel):
+    """``POST /api/intake/starters/{key}``.
+
+    The practice's published copy of the document, and the items to put on a
+    form for it: a consent item pointing at the copy, then the starter's own
+    questions. The items are handed back rather than written onto a form, so
+    the editor adds them to the draft the practice has open, beside whatever
+    else it has not saved yet.
+    """
+
+    document: IntakeDocumentResponse
+    items: list[ItemDraft]
+
+
 __all__ = [
     "CreateDocumentRequest",
     "IntakeDocumentResponse",
     "PatientDocumentResponse",
+    "StarterAdoptedResponse",
+    "StarterSummary",
     "UpdateDocumentRequest",
 ]

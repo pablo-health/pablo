@@ -112,6 +112,7 @@ from ..outcome_measures.service import (  # noqa: TC001 — fastapi resolves the
 from ..repositories import (
     ArtifactSlotTakenError,
     DocumentAlreadyAttachedError,
+    get_client_ai_consent_repository,
     get_intake_document_repository,
     get_intake_packet_repository,
     get_patient_coverage_repository,
@@ -124,6 +125,7 @@ from ..repositories import (
 )
 from ..request_context import extract_request_context
 from ..services.audit_service import AuditService, get_audit_service
+from ..services.intake_form_ai_consent import FormAiConsentRecorder
 from ..services.patient_intake_artifact_service import (
     DocumentNotUsableError,
     IntakeArtifactService,
@@ -262,6 +264,18 @@ def get_patient_intake_signature_service() -> IntakeSignatureService:
         get_intake_packet_repository(),
         get_intake_document_repository(),
         get_patient_intake_assignment_repository(),
+    )
+
+
+def get_form_ai_consent_recorder() -> FormAiConsentRecorder:
+    """What puts a submitted form's transcription answer on the chart.
+
+    On the patient-armed session, like the services above: the answer is
+    the patient's own, written by them handing the form in.
+    """
+    return FormAiConsentRecorder(
+        get_patient_intake_signature_repository(),
+        get_client_ai_consent_repository(),
     )
 
 
@@ -651,6 +665,7 @@ def submit_my_assignment(
     patient: CurrentPatient,
     service: PatientAssignments,
     measures: OutcomeMeasureService = Depends(get_intake_outcome_measure_service),
+    ai_consent: FormAiConsentRecorder = Depends(get_form_ai_consent_recorder),
     audit: AuditService = Depends(get_audit_service),
     _: None = Depends(subscription_exempt),
 ) -> IntakeSubmissionResponse:
@@ -668,7 +683,9 @@ def submit_my_assignment(
     time, which is how it came to be reviewed at all.
 
     On success the answers stop being drafts, every measure on the form is
-    scored onto the chart, and the response carries the receipt.
+    scored onto the chart, a transcription answer from the AI-tools consent
+    goes on the client's AI-notes record, and the response carries the
+    receipt.
     """
     _require_stepped_up(patient)
     assignment = _own_assignment(service, assignment_id, patient.patient_id)
@@ -689,6 +706,35 @@ def submit_my_assignment(
         raise ConflictError(
             "This form has already been handed in.", {"assignment_id": assignment_id}
         ) from exc
+
+    submitted = submission.assignment
+    # On the same transaction as the submission, so a form that was handed in
+    # and an answer that reached the chart cannot disagree. Read after the
+    # submit, so an answer to a question the client was no longer shown has
+    # already been retired and does not count.
+    consent_event = ai_consent.record(
+        assignment_id=assignment_id,
+        patient_id=patient.patient_id,
+        items=service.items(str(assignment["version_id"])),
+        answers=service.answers(assignment_id, patient.patient_id),
+        submitted_at=submitted["submitted_at"],  # type: ignore[arg-type]
+    )
+    if consent_event is not None:
+        # The same action the chart writes when a clinician records the
+        # answer, with the patient as the actor and the form as the resource.
+        audit.log_patient_principal_action(
+            action=AuditAction.PATIENT_AI_CONSENT_RECORDED,
+            request=request,
+            patient_id=patient.patient_id,
+            resource_type=ResourceType.PATIENT_INTAKE_ASSIGNMENT,
+            resource_id=assignment_id,
+            changes={
+                "event_id": consent_event.id,
+                "decision": consent_event.decision,
+                "effective_on": consent_event.effective_on.isoformat(),
+                "source": consent_event.source,
+            },
+        )
 
     # Which measures were on the form, and not a word of what was answered.
     # The same action the fixed intake form writes, because it is the same
@@ -713,7 +759,6 @@ def submit_my_assignment(
             resource_id=assignment_id,
         )
 
-    submitted = submission.assignment
     return IntakeSubmissionResponse(
         assignment_id=assignment_id,
         version_id=str(submitted["version_id"]),
