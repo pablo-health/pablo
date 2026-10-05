@@ -115,14 +115,16 @@ export async function clearStaleSession(auth: Auth): Promise<void> {
   try {
     await firebaseSdkSignOut(auth)
   } catch {
-    // SDK may already be wedged; we wipe its storage next regardless.
+    // SDK may already be wedged; we wipe its storage below regardless.
   }
-  await clearFirebaseAuthStorage()
+  // Cookie first: the wipe below can stall indefinitely in Safari while
+  // another tab holds the database open, and must not hold the cookie with it.
   try {
     await fetch("/api/logout")
   } catch {
     // Best-effort cookie clear.
   }
+  await clearFirebaseAuthStorage()
 }
 
 /**
@@ -271,31 +273,48 @@ export async function getFirebaseIdToken(forceRefresh = false): Promise<string |
 }
 
 /**
+ * Upper bound on the fallback database wipe in {@link firebaseSignOut}. A
+ * delete waits for every open connection to `firebaseLocalStorageDb` to close,
+ * and the SDK in any other tab on this site keeps one open for that page's
+ * lifetime. Chrome reports `blocked`; Safari has been seen never to settle at
+ * all, which once left an expired session stuck on its dialog.
+ */
+const PERSISTED_WIPE_TIMEOUT_MS = 1500
+
+/**
  * Full sign-out: clear the Firebase SDK session and the server session
  * cookie. Best-effort on both — a caller still redirects afterward.
  *
- * With `wipePersisted`, also delete the IndexedDB record the SDK restores
- * from on the next load. `firebaseSdkSignOut` clears the in-memory user but
- * a tab restored from bfcache (notably iOS Safari) can re-hydrate the old
- * session — and with it the original `auth_time` — straight back in. The
- * idle-timeout path needs the persisted record gone so re-login mints a
- * fresh `auth_time` instead of looping on the server idle check.
+ * The SDK's own sign-out removes the persisted user record, so a tab restored
+ * from bfcache (notably iOS Safari) has no old session — and no old
+ * `auth_time` — to re-hydrate. `wipePersisted` adds a bounded database wipe
+ * for the one case that leaves the record behind: an SDK sign-out that
+ * throws. The cookie is cleared first so a stalled wipe can never hold it.
  */
 export async function firebaseSignOut(opts?: {
   wipePersisted?: boolean
 }): Promise<void> {
+  let sdkSignedOut = true
   try {
     await firebaseSdkSignOut(getFirebaseAuth())
   } catch {
-    // Firebase not initialized (dev mode) — still clear the server cookie.
-  }
-  if (opts?.wipePersisted) {
-    await clearFirebaseAuthStorage()
+    // Firebase not initialized (dev mode) or wedged — still clear the cookie.
+    sdkSignedOut = false
   }
   try {
     await fetch("/api/logout")
   } catch {
     // Best-effort: a redirect still follows even if the cookie clear fails.
+  }
+  if (opts?.wipePersisted && !sdkSignedOut) {
+    await withTimeout(
+      clearFirebaseAuthStorage(),
+      PERSISTED_WIPE_TIMEOUT_MS,
+      "Persisted auth wipe",
+    ).catch(() => {
+      // The next page load's SDK init starts from whatever survived; the
+      // server tombstone still rejects the old session.
+    })
   }
 }
 

@@ -93,6 +93,12 @@ describe("clearStaleSession", () => {
     await expect(clearStaleSession(auth)).resolves.toBeUndefined()
     expect(clearFirebaseAuthStorage).toHaveBeenCalledOnce()
   })
+
+  it("clears the cookie before the wipe, so a stalled wipe can't hold it", async () => {
+    clearFirebaseAuthStorage.mockReturnValue(new Promise<void>(() => {}))
+    void clearStaleSession(auth)
+    await vi.waitFor(() => expect(global.fetch).toHaveBeenCalledWith("/api/logout"))
+  })
 })
 
 describe("firebaseSignOut", () => {
@@ -115,17 +121,39 @@ describe("firebaseSignOut", () => {
     expect(clearFirebaseAuthStorage).not.toHaveBeenCalled()
   })
 
-  it("wipes the persisted SDK session when wipePersisted is set", async () => {
+  it("skips the database wipe when the SDK sign-out already removed the record", async () => {
+    // The SDK's sign-out deletes the persisted user itself; a database delete
+    // from this page can't complete anyway while the SDK holds it open.
     await firebaseSignOut({ wipePersisted: true })
     expect(signOut).toHaveBeenCalledOnce()
-    expect(clearFirebaseAuthStorage).toHaveBeenCalledOnce()
     expect(global.fetch).toHaveBeenCalledWith("/api/logout")
+    expect(clearFirebaseAuthStorage).not.toHaveBeenCalled()
   })
 
-  it("still wipes persisted storage when the SDK sign-out throws", async () => {
+  it("falls back to wiping persisted storage when the SDK sign-out throws", async () => {
     signOut.mockRejectedValue(new Error("wedged"))
     await expect(firebaseSignOut({ wipePersisted: true })).resolves.toBeUndefined()
+    expect(global.fetch).toHaveBeenCalledWith("/api/logout")
     expect(clearFirebaseAuthStorage).toHaveBeenCalledOnce()
+  })
+
+  it("clears the cookie and returns even when the wipe never settles (Safari)", async () => {
+    vi.useFakeTimers()
+    try {
+      signOut.mockRejectedValue(new Error("wedged"))
+      clearFirebaseAuthStorage.mockReturnValue(new Promise<void>(() => {}))
+      let done = false
+      void firebaseSignOut({ wipePersisted: true }).then(() => {
+        done = true
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(global.fetch).toHaveBeenCalledWith("/api/logout")
+      expect(done).toBe(false)
+      await vi.advanceTimersByTimeAsync(1500)
+      expect(done).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

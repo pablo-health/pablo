@@ -86,6 +86,19 @@ export function IdleTimeout() {
   }, [router, queryClient])
 
   /**
+   * The expired dialog's "Sign In". A sign-out already under way owns the
+   * cleanup, but the button must never be inert while one is stalled — so
+   * once signing out has started, it goes straight to /login.
+   */
+  const signInAgain = useCallback(() => {
+    if (signingOutRef.current) {
+      window.location.assign(`/login?reason=idle_timeout${returnToParam()}`)
+      return
+    }
+    void performLocalSignOut()
+  }, [performLocalSignOut])
+
+  /**
    * Ask the backend whether this session is still alive. Read-only — the
    * peek never extends the session. Boots on a dead session; transient
    * failures keep the current mode and retry on the next poll (a terminal
@@ -245,7 +258,7 @@ export function IdleTimeout() {
       open
       onOpenChange={(open) => {
         if (open) return
-        if (isExpired) void performLocalSignOut()
+        if (isExpired) signInAgain()
         else handleStaySignedIn()
       }}
     >
@@ -272,7 +285,7 @@ export function IdleTimeout() {
         </DialogHeader>
         <DialogFooter>
           <button
-            onClick={isExpired ? () => void performLocalSignOut() : handleStaySignedIn}
+            onClick={isExpired ? signInAgain : handleStaySignedIn}
             className="w-full bg-primary-600 text-white px-6 py-2.5 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200"
           >
             {isExpired ? "Sign In" : "Stay Signed In"}
