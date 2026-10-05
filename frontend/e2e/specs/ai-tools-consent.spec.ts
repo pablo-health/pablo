@@ -7,7 +7,8 @@
  * from the template list — two clicks — and publishes it. Two clients then
  * meet it in the portal: each reads the document, signs it, picks one of the
  * two transcription answers, reloads to see the answer is still theirs, and
- * hands the form in. The chart header for each then says what they chose.
+ * hands the form in. Once the practice accepts each form, the chart header
+ * says what that client chose.
  *
  * What only a browser can show is the choice itself: a consent form whose
  * options cannot be ticked is the regression this guards, so both options
@@ -174,9 +175,10 @@ test.describe("AI-tools consent", () => {
       const email = `ai-consent-${index}-${suffix}@example.com`
       const phone = `+1555${`${Date.now()}`.slice(-7)}`
       const patient = await givePatient(api, { email, phone, date_of_birth: "1987-05-21" })
-      await api.post(`/api/patients/${patient.id}/intake-assignments`, {
-        version_id: published.id,
-      })
+      const assignment = await api.post<{ id: string }>(
+        `/api/patients/${patient.id}/intake-assignments`,
+        { version_id: published.id },
+      )
 
       // A browser of the client's own, beside the clinician's.
       const context = await browser.newContext({
@@ -191,8 +193,14 @@ test.describe("AI-tools consent", () => {
         await context.close()
       }
 
+      // Handed in is not yet on the chart: the practice accepts the form
+      // first, as it does every other answer on it.
+      const consentPath = `/api/patients/${patient.id}/ai-consent`
+      expect((await api.get<AiConsentRecord>(consentPath)).current).toBeNull()
+      await api.post(`/api/patients/${patient.id}/intake-assignments/${assignment.id}/accept`)
+
       // The answer is on the client's AI-notes record, from the form...
-      const record = await api.get<AiConsentRecord>(`/api/patients/${patient.id}/ai-consent`)
+      const record = await api.get<AiConsentRecord>(consentPath)
       expect(record.current?.decision).toBe(client.decision)
       expect(record.current?.source).toBe("intake_form")
 

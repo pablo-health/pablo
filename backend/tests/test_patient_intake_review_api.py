@@ -21,6 +21,7 @@ assertion about a mock's call list.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -33,6 +34,7 @@ from app.auth.patient_context import (
     PatientResolverRegistry,
     get_patient_resolver_registry,
 )
+from app.intake.starters import AI_TOOLS_CONSENT, AI_TRANSCRIPTION_ITEM_KEY
 from app.main import app as real_app
 from app.models import Patient
 from app.models.audit import AuditAction
@@ -60,12 +62,12 @@ from app.routes.patient_intake import get_intake_outcome_measure_service
 from app.routes.patient_intake_assignments import (
     get_clinician_intake_assignment_service,
     get_clinician_patient_repository,
-    get_form_ai_consent_recorder,
     get_patient_intake_artifact_service,
     get_patient_intake_assignment_service,
 )
 from app.routes.patient_intake_review import (
     get_clinician_signature_repository,
+    get_form_ai_consent_recorder,
     get_intake_review_service,
     get_practice_name,
 )
@@ -262,11 +264,6 @@ def patient_app(
     app.dependency_overrides[get_patient_intake_artifact_service] = lambda: artifact_service
     app.dependency_overrides[get_intake_outcome_measure_service] = lambda: measures
     app.dependency_overrides[get_audit_service] = lambda: AuditService(audit_repo)
-    # Handing a form in reads it for a transcription answer; none of these
-    # forms ask one, so this only has to not be a database.
-    app.dependency_overrides[get_form_ai_consent_recorder] = lambda: FormAiConsentRecorder(
-        InMemoryPatientIntakeSignatureRepository(), InMemoryClientAiConsentRepository()
-    )
 
     monkeypatch.setattr(patient_context_module, "get_db_session", object)
     monkeypatch.setattr(patient_context_module, "set_tenant_schema", lambda _s, _schema: None)
@@ -281,15 +278,25 @@ def portal(patient_app: FastAPI) -> Iterator[TestClient]:
 
 
 @pytest.fixture
+def consent_repo() -> InMemoryClientAiConsentRepository:
+    """The client's AI-notes record, where an accepted form's answer lands."""
+    return InMemoryClientAiConsentRepository()
+
+
+@pytest.fixture
 def chart(
     client: TestClient,
     service: IntakeAssignmentService,
     reviews: IntakeReviewService,
     patients: InMemoryPatientRepository,
     signatures_repo: InMemoryPatientIntakeSignatureRepository,
+    consent_repo: InMemoryClientAiConsentRepository,
     notices: CapturingNoticeDelivery,
 ) -> TestClient:
     """The shared clinician client, with every intake store in memory."""
+    real_app.dependency_overrides[get_form_ai_consent_recorder] = lambda: FormAiConsentRecorder(
+        signatures_repo, consent_repo
+    )
     real_app.dependency_overrides[get_clinician_intake_assignment_service] = lambda: service
     real_app.dependency_overrides[get_clinician_patient_repository] = lambda: patients
     real_app.dependency_overrides[get_patient_repository] = lambda: patients
@@ -425,6 +432,98 @@ class TestCorrectionStateMachine:
             chart, str(assignment["id"]), [_item_id(service, published_version, "reason")], note=""
         )
         assert response.status_code == 422
+
+
+@pytest.fixture
+def transcription_version(packets: InMemoryIntakePacketRepository) -> str:
+    """A published form asking only the AI-tools transcription question."""
+    service = IntakePacketService(packets)
+    template = service.create_template("AI tools", _CLINICIAN)
+    version_id = str(service.list_versions(str(template["id"]))[0]["id"])
+    service.replace_items(version_id, list(AI_TOOLS_CONSENT.questions))
+    service.publish(version_id, _CLINICIAN)
+    return version_id
+
+
+def _answered_transcription(
+    portal: TestClient, service: IntakeAssignmentService, version_id: str, option: str
+) -> dict[str, Any]:
+    """The transcription question answered with *option* and handed in."""
+    assignment, _ = service.assign(_PATIENT_A, version_id, _CLINICIAN)
+    item_id = _item_id(service, version_id, AI_TRANSCRIPTION_ITEM_KEY)
+    saved = portal.put(
+        f"{ASSIGNMENTS}/{assignment['id']}/items/{item_id}",
+        json={"value": {"key": option}},
+        headers=_auth(),
+    )
+    assert saved.status_code == 200, saved.text
+    handed_in = portal.post(f"{ASSIGNMENTS}/{assignment['id']}/submit", headers=_auth())
+    assert handed_in.status_code == 200, handed_in.text
+    return dict(assignment)
+
+
+class TestTheTranscriptionAnswer:
+    """Accepting a form puts its transcription answer on the AI-notes record."""
+
+    @pytest.mark.parametrize(
+        ("option", "decision"), [("consent", "consented"), ("decline", "declined")]
+    )
+    def test_accepting_records_the_answer(
+        self,
+        chart: TestClient,
+        portal: TestClient,
+        service: IntakeAssignmentService,
+        consent_repo: InMemoryClientAiConsentRepository,
+        transcription_version: str,
+        mock_user_id: str,
+        option: str,
+        decision: str,
+    ) -> None:
+        assignment = _answered_transcription(portal, service, transcription_version, option)
+        assert consent_repo.list_for_patient(_PATIENT_A) == [], "not before acceptance"
+
+        response = chart.post(f"{_base(_PATIENT_A, str(assignment['id']))}/accept")
+        assert response.status_code == 200, response.text
+
+        [event] = consent_repo.list_for_patient(_PATIENT_A)
+        assert event.decision == decision
+        assert event.source == "intake_form"
+        assert event.intake_submission_id == str(assignment["id"])
+        assert event.recorded_by == mock_user_id
+        # Nothing signed on this form, so the day it was handed in.
+        handed_in = service.get_for_clinician(str(assignment["id"]), mock_user_id)
+        assert handed_in is not None
+        submitted_at = handed_in["submitted_at"]
+        assert isinstance(submitted_at, datetime)
+        assert event.effective_on == submitted_at.date()
+
+    def test_it_is_audited(
+        self,
+        chart: TestClient,
+        portal: TestClient,
+        service: IntakeAssignmentService,
+        transcription_version: str,
+        mock_audit_service: AuditService,
+    ) -> None:
+        assignment = _answered_transcription(portal, service, transcription_version, "decline")
+        chart.post(f"{_base(_PATIENT_A, str(assignment['id']))}/accept")
+        entry = _logged(mock_audit_service)[-1]
+        assert entry.action == AuditAction.PATIENT_AI_CONSENT_RECORDED.value
+        assert entry.changes is not None
+        assert entry.changes["decision"] == "declined"
+        assert entry.changes["intake_submission_id"] == str(assignment["id"])
+
+    def test_a_form_without_the_question_records_nothing(
+        self,
+        chart: TestClient,
+        portal: TestClient,
+        service: IntakeAssignmentService,
+        consent_repo: InMemoryClientAiConsentRepository,
+        published_version: str,
+    ) -> None:
+        assignment = _submitted(portal, service, published_version)
+        assert chart.post(f"{_base(_PATIENT_A, str(assignment['id']))}/accept").status_code == 200
+        assert consent_repo.list_for_patient(_PATIENT_A) == []
 
 
 class TestAccept:

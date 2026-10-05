@@ -36,7 +36,6 @@ from app.auth.patient_context import (
     PatientResolverRegistry,
     get_patient_resolver_registry,
 )
-from app.intake.starters import AI_TRANSCRIPTION_ITEM_KEY
 from app.main import app as real_app
 from app.models import Patient
 from app.models.audit import ACTOR_TYPE_PATIENT, AuditAction, ResourceType
@@ -46,12 +45,10 @@ from app.repositories import (
     InMemoryPatientDocumentRepository,
     InMemoryPatientIntakeArtifactRepository,
     InMemoryPatientIntakeAssignmentRepository,
-    InMemoryPatientIntakeSignatureRepository,
     InMemoryPatientRepository,
     get_patient_repository,
 )
 from app.repositories.audit import InMemoryAuditRepository
-from app.repositories.client_ai_consent import InMemoryClientAiConsentRepository
 from app.repositories.coverage import (
     InMemoryPatientCoverageRepository,
     InMemoryPayerRepository,
@@ -63,12 +60,10 @@ from app.routes.patient_intake_assignments import (
     get_clinician_intake_artifact_service,
     get_clinician_intake_assignment_service,
     get_clinician_patient_repository,
-    get_form_ai_consent_recorder,
     get_patient_intake_artifact_service,
     get_patient_intake_assignment_service,
 )
 from app.services.audit_service import AuditService, get_audit_service
-from app.services.intake_form_ai_consent import FormAiConsentRecorder
 from app.services.intake_packet_service import IntakePacketService
 from app.services.patient_intake_artifact_service import IntakeArtifactService
 from app.services.patient_intake_assignment_service import (
@@ -189,12 +184,7 @@ def _publish(service: IntakePacketService, name: str, items: list[dict[str, Any]
     service.replace_items(
         version_id,
         [
-            ItemDraft(
-                key=str(i["key"]),
-                item_type=str(i["item_type"]),
-                label=i.get("label"),
-                config=dict(i["config"]),
-            )
+            ItemDraft(key=str(i["key"]), item_type=str(i["item_type"]), config=dict(i["config"]))
             for i in items
         ],
     )
@@ -260,23 +250,9 @@ def measures(measure_repo: InMemoryOutcomeMeasureRepository) -> OutcomeMeasureSe
 
 
 @pytest.fixture
-def consent_repo() -> InMemoryClientAiConsentRepository:
-    """Where a submitted form's transcription answer lands."""
-    return InMemoryClientAiConsentRepository()
-
-
-@pytest.fixture
-def consent_recorder(
-    consent_repo: InMemoryClientAiConsentRepository,
-) -> FormAiConsentRecorder:
-    return FormAiConsentRecorder(InMemoryPatientIntakeSignatureRepository(), consent_repo)
-
-
-@pytest.fixture
 def patient_app(
     service: IntakeAssignmentService,
     artifact_service: IntakeArtifactService,
-    consent_recorder: FormAiConsentRecorder,
     audit_repo: InMemoryAuditRepository,
     measures: OutcomeMeasureService,
     monkeypatch: pytest.MonkeyPatch,
@@ -301,7 +277,6 @@ def patient_app(
     app.dependency_overrides[get_patient_intake_artifact_service] = lambda: artifact_service
     app.dependency_overrides[get_intake_outcome_measure_service] = lambda: measures
     app.dependency_overrides[get_audit_service] = lambda: AuditService(audit_repo)
-    app.dependency_overrides[get_form_ai_consent_recorder] = lambda: consent_recorder
 
     monkeypatch.setattr(patient_context_module, "get_db_session", object)
     monkeypatch.setattr(patient_context_module, "set_tenant_schema", lambda _s, _schema: None)
@@ -962,98 +937,6 @@ class TestSubmitting:
         assert entry.resource_id == str(assignment["id"])
         assert entry.changes == {"instruments": ["phq9", "gad7"]}
         assert "Panic" not in str(entry.changes)
-
-
-_TRANSCRIPTION_ITEMS = [
-    {
-        "key": AI_TRANSCRIPTION_ITEM_KEY,
-        "item_type": "single_choice",
-        "label": "Session transcription",
-        "config": {
-            "options": [
-                {"key": "consent", "label": "I consent"},
-                {"key": "decline", "label": "I do not consent"},
-            ]
-        },
-    },
-]
-
-
-class TestTheTranscriptionAnswer:
-    """The AI-tools question's answer reaches the client's AI-notes record."""
-
-    @pytest.mark.parametrize(
-        ("option", "decision"), [("consent", "consented"), ("decline", "declined")]
-    )
-    def test_handing_it_in_records_the_answer(
-        self,
-        portal: TestClient,
-        service: IntakeAssignmentService,
-        packet_service: IntakePacketService,
-        consent_repo: InMemoryClientAiConsentRepository,
-        option: str,
-        decision: str,
-    ) -> None:
-        version_id = _publish(packet_service, "AI tools", _TRANSCRIPTION_ITEMS)
-        assignment = _seed_assignment(service, _PATIENT_A, version_id)
-        item_id = _item_id(service, version_id, AI_TRANSCRIPTION_ITEM_KEY)
-        portal.put(
-            f"{ASSIGNMENTS}/{assignment['id']}/items/{item_id}",
-            json={"value": {"key": option}},
-            headers=_auth(_TOKEN_A),
-        )
-
-        response = _submit(portal, str(assignment["id"]))
-        assert response.status_code == 200, response.text
-
-        [event] = consent_repo.list_for_patient(_PATIENT_A)
-        assert event.decision == decision
-        assert event.source == "intake_form"
-        assert event.intake_submission_id == str(assignment["id"])
-        assert event.recorded_by is None
-        # Nothing signed on this form, so the day it was handed in.
-        submitted_at = datetime.fromisoformat(response.json()["submitted_at"])
-        assert event.effective_on == submitted_at.date()
-
-    def test_it_is_audited_as_the_client_recording_it(
-        self,
-        portal: TestClient,
-        service: IntakeAssignmentService,
-        packet_service: IntakePacketService,
-        audit_repo: InMemoryAuditRepository,
-    ) -> None:
-        version_id = _publish(packet_service, "AI tools", _TRANSCRIPTION_ITEMS)
-        assignment = _seed_assignment(service, _PATIENT_A, version_id)
-        item_id = _item_id(service, version_id, AI_TRANSCRIPTION_ITEM_KEY)
-        portal.put(
-            f"{ASSIGNMENTS}/{assignment['id']}/items/{item_id}",
-            json={"value": {"key": "decline"}},
-            headers=_auth(_TOKEN_A),
-        )
-        _submit(portal, str(assignment["id"]))
-
-        [entry] = [
-            r
-            for r in _entries(audit_repo, _PATIENT_A)
-            if r.action == AuditAction.PATIENT_AI_CONSENT_RECORDED.value
-        ]
-        assert entry.actor_type == ACTOR_TYPE_PATIENT
-        assert entry.resource_id == str(assignment["id"])
-        assert entry.changes is not None
-        assert entry.changes["decision"] == "declined"
-        assert entry.changes["source"] == "intake_form"
-
-    def test_a_form_without_the_question_records_nothing(
-        self,
-        portal: TestClient,
-        service: IntakeAssignmentService,
-        consent_repo: InMemoryClientAiConsentRepository,
-        published_version: str,
-    ) -> None:
-        assignment = _seed_assignment(service, _PATIENT_A, published_version)
-        _answer_everything(portal, service, assignment, published_version)
-        assert _submit(portal, str(assignment["id"])).status_code == 200
-        assert consent_repo.list_for_patient(_PATIENT_A) == []
 
 
 class TestTheClinicianReadsWhatWasAnswered:

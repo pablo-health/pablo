@@ -14,9 +14,6 @@ practice schema, under a NOSUPERUSER NOBYPASSRLS role (see conftest.py):
 3. B's raw INSERT is rejected by the policy's WITH CHECK.
 4. The CHECK constraints refuse an unknown decision and an intake-form row
    with no submission.
-5. A client, armed as a patient principal, records their own answer from a
-   form; cannot record one as a clinician would; and cannot record one for
-   another client.
 
 Run: ``make test-integration``.
 """
@@ -247,80 +244,3 @@ def test_check_constraints_refuse_malformed_rows(
         with pytest.raises(IntegrityError):
             _insert(conn, patient_id, _CLINICIAN_A, **overrides)
         conn.rollback()
-
-
-# --- the client, answering on a form ----------------------------------------
-
-
-@pytest.fixture(scope="module")
-def other_patient_id(engine: Engine, tenant_schema: str) -> str:
-    """A second client of clinician A's, for the cross-client refusal."""
-    pid = str(uuid.uuid4())
-    with engine.begin() as conn:
-        _arm(conn, tenant_schema, _CLINICIAN_A)
-        conn.execute(
-            text(
-                "INSERT INTO patients (id, first_name, last_name, "
-                "first_name_lower, last_name_lower, status, "
-                "session_count, created_at, updated_at) "
-                "VALUES (CAST(:pid AS uuid), 'Other', 'Client', "
-                "'other', 'client', 'active', 0, now(), now())"
-            ),
-            {"pid": pid},
-        )
-    return pid
-
-
-def _as_patient(conn: Connection, schema: str, patient_id: str) -> None:
-    """Only the patient GUC armed, as a portal request arms it."""
-    conn.execute(text(f"SET search_path = {schema}, platform, public"))
-    conn.execute(text("RESET app.current_user_id"))
-    conn.execute(text("SELECT set_config('app.current_patient_id', :p, false)"), {"p": patient_id})
-    conn.commit()
-
-
-_FORM_INSERT = text(
-    "INSERT INTO client_ai_consent_events "
-    "(id, patient_id, decision, effective_on, source, recorded_by, recorded_at, "
-    " intake_submission_id) "
-    "VALUES (gen_random_uuid(), CAST(:pid AS uuid), 'declined', current_date, "
-    "        'intake_form', NULL, now(), gen_random_uuid())"
-)
-
-
-def test_a_client_records_their_own_answer_from_a_form(
-    engine: Engine, tenant_schema: str, patient_id: str
-) -> None:
-    with engine.connect() as conn:
-        _as_patient(conn, tenant_schema, patient_id)
-        conn.execute(_FORM_INSERT, {"pid": patient_id})
-        conn.commit()
-
-    repo, session, s_tok, u_tok = _repo_as(engine, tenant_schema, _CLINICIAN_A)
-    try:
-        sources = [e.source for e in repo.list_for_patient(patient_id)]
-    finally:
-        _release(session, s_tok, u_tok)
-    assert "intake_form" in sources
-
-
-def test_a_client_cannot_record_an_answer_as_a_clinician(
-    engine: Engine, tenant_schema: str, patient_id: str
-) -> None:
-    with engine.connect() as conn:
-        _as_patient(conn, tenant_schema, patient_id)
-        with pytest.raises(ProgrammingError) as exc:
-            _insert(conn, patient_id, _CLINICIAN_A)
-        conn.rollback()
-    assert "row-level security" in str(exc.value).lower()
-
-
-def test_a_client_cannot_record_an_answer_for_another_client(
-    engine: Engine, tenant_schema: str, patient_id: str, other_patient_id: str
-) -> None:
-    with engine.connect() as conn:
-        _as_patient(conn, tenant_schema, patient_id)
-        with pytest.raises(ProgrammingError) as exc:
-            conn.execute(_FORM_INSERT, {"pid": other_patient_id})
-        conn.rollback()
-    assert "row-level security" in str(exc.value).lower()
