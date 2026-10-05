@@ -429,6 +429,15 @@ class AuditAction(StrEnum):
     # person's name in a second place for no question it helps answer.
     PATIENT_CONSENT_SIGNED = "patient_consent_signed"
 
+    # A client's answer about AI-assisted notes (recording, transcription and
+    # drafting), recorded on the chart and read back. Separate from
+    # PATIENT_CONSENT_SIGNED: there the patient signs a document themselves;
+    # here somebody puts an answer on the record. The `changes` payload
+    # carries the event id, the decision, the day it took effect and where it
+    # came from — never free text.
+    PATIENT_AI_CONSENT_RECORDED = "patient_ai_consent_recorded"
+    PATIENT_AI_CONSENT_VIEWED = "patient_ai_consent_viewed"
+
     # A patient attached a file to a question that asked for one — a photo
     # of an insurance card, a form the practice asked them to send back.
     # The actor is the patient, so this is a write by the subject rather

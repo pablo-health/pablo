@@ -4,6 +4,7 @@
 
 import { Users, Calendar, Phone, Mail } from "lucide-react"
 import { EligibilityBadge } from "@/components/insurance/EligibilityBadge"
+import { AiConsentLine } from "@/components/patients/AiConsentLine"
 import { usePatientCoverage } from "@/hooks/useCoverage"
 import { usePatientBalance } from "@/hooks/usePayments"
 import { formatBalanceLine } from "@/lib/paymentDisplay"
@@ -95,6 +96,7 @@ export function PatientSummary({ patient }: PatientSummaryProps) {
             {patient.needs_name ? <NeedsNameBadge /> : null}
             {coverage && <EligibilityBadge summary={coverage.eligibility} />}
             {balanceLine && <BalanceBadge line={balanceLine} />}
+            <AiConsentLine patientId={patient.id} />
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-neutral-600">

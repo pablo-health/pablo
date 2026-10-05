@@ -32,6 +32,13 @@ vi.mock("@/hooks/usePayments", () => ({
   usePatientBalance: (...args: unknown[]) => mockUsePatientBalance(...args),
 }))
 
+// The AI-notes line has tests of its own (AiConsentLine.test.tsx); here it
+// only has to be in the header.
+vi.mock("@/hooks/useAiConsent", () => ({
+  useAiConsent: () => ({ data: { current: null, history: [] } }),
+  useRecordAiConsent: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}))
+
 function balanceOf(balanceCents: number, outcomeKnown = true) {
   return {
     data: {
@@ -96,6 +103,14 @@ describe("PatientSummary", () => {
 
     rerender(<PatientSummary patient={{ ...PATIENT, needs_name: false }} />)
     expect(screen.queryByTestId("needs-name")).not.toBeInTheDocument()
+  })
+
+  it("shows the client's answer about AI notes beside the name", () => {
+    mockUsePatientCoverage.mockReturnValue({ data: null })
+
+    render(<PatientSummary patient={PATIENT} />)
+
+    expect(screen.getByTestId("ai-consent-line")).toHaveTextContent("AI notes: not asked yet")
   })
 
   it("shows a not-yet-checked badge for a plan with no answer", () => {

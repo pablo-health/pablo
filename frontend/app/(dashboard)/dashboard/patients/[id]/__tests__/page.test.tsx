@@ -27,6 +27,11 @@ vi.mock("@/hooks/usePayments", () => ({
   usePatientBalance: vi.fn(),
 }))
 
+vi.mock("@/hooks/useAiConsent", () => ({
+  useAiConsent: () => ({ data: undefined }),
+  useRecordAiConsent: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}))
+
 function TestPatientChartPage({ patientId }: { patientId: string }) {
   const { data: patient, isLoading, error } = usePatients.usePatient(patientId)
 

@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from ..scheduling_engine.repositories.availability_rule import AvailabilityRuleRepository
     from .claim_receipts import ClaimReceiptRepository
     from .claims import ClaimRepository
+    from .client_ai_consent import ClientAiConsentRepository
     from .coverage import PatientCoverageRepository, PayerRepository
     from .diagnostic_assessment import DiagnosticAssessmentRepository
     from .external_calendar_event import ExternalCalendarEventRepository
@@ -466,6 +467,13 @@ def get_diagnostic_definition_provider() -> DbDefinitionProvider:
     return DbDefinitionProvider(_get_pg_session())
 
 
+def get_client_ai_consent_repository() -> ClientAiConsentRepository:
+    """Get the client AI-notes consent repository instance."""
+    from .postgres.client_ai_consent import PostgresClientAiConsentRepository
+
+    return PostgresClientAiConsentRepository(_get_pg_session())
+
+
 def get_medication_repository() -> MedicationRepository:
     from .postgres.medication import PostgresMedicationRepository
 
@@ -552,6 +560,7 @@ __all__ = [
     "get_chat_repository",
     "get_claim_receipt_repository",
     "get_claim_repository",
+    "get_client_ai_consent_repository",
     "get_clinician_profile_repository",
     "get_compliance_document_repository",
     "get_compliance_item_repository",

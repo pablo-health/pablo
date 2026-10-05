@@ -66,6 +66,7 @@ from .routes import (
     claim_webhooks,
     claims,
     claims_export,
+    client_ai_consent,
     compliance,
     coverage,
     credentialing,
@@ -399,6 +400,7 @@ register_builtin_sources()
 app.include_router(inbox.router)
 app.include_router(patient_payments.router)
 app.include_router(patient_write_offs.router)
+app.include_router(client_ai_consent.router)
 app.include_router(payment_webhooks.router)
 app.include_router(telehealth.router)
 app.include_router(telehealth_webhooks.router)
