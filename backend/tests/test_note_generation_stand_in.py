@@ -24,6 +24,7 @@ from app.services.note_generation_service import RegistryNoteGenerationService
 from app.settings import Settings
 from fastapi.testclient import TestClient
 
+from scripts.fake_llm import REFUSES_DRAFT
 from scripts.fake_llm import app as fake_llm_app
 
 from .test_practice_note_types import COACH_SPEC
@@ -86,6 +87,16 @@ def test_a_soap_draft_survives_its_second_call(stand_in: list[str]) -> None:
     assert generated.soap_note is not None
     assert generated.soap_note.subjective.chief_complaint.text.startswith("Stand-in draft")
     assert len(stand_in) == 2
+
+
+def test_a_refused_transcript_fails_its_draft_without_a_retry(stand_in: list[str]) -> None:
+    """The stand-in's refusal is a failure the worker records at once, not one it retries."""
+    transcript = Transcript(format="txt", content=f"[00:01] Therapist: {REFUSES_DRAFT}")
+
+    with pytest.raises(ValueError, match="Note generation failed"):
+        _service().generate_note("soap", transcript, PATIENT, NOW)
+
+    assert len(stand_in) == 1
 
 
 def test_the_route_dependency_uses_the_stand_in_only_when_configured(
