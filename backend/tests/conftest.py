@@ -147,6 +147,10 @@ from app.routes.sessions import (  # noqa: E402
     get_session_repository,
 )
 from app.services import AuditService, MockEhrNavigationService, get_audit_service  # noqa: E402
+from app.services.recording_consent import (  # noqa: E402
+    RecordingConsentGate,
+    get_recording_consent_gate,
+)
 from fastapi.testclient import TestClient  # noqa: E402
 
 from tests.calendar_oauth_fakes import FakePkceRedis  # noqa: E402
@@ -454,6 +458,11 @@ def client(
     app.dependency_overrides[get_google_calendar_service] = lambda: mock_gcal_service
     app.dependency_overrides[get_outside_session_repository] = (
         InMemoryExternalCalendarEventRepository
+    )
+    # The practice setting lives on the platform practice row, which these
+    # tests have no database for. Off unless a test turns it on.
+    app.dependency_overrides[get_recording_consent_gate] = lambda: RecordingConsentGate(
+        asks_clients=False
     )
 
     # Create client

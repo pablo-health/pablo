@@ -103,6 +103,7 @@ from ..services.note_import_service import (
     UnsupportedDocumentTypeError,
     extract_document_text,
 )
+from ..services.recording_consent import RecordingConsentGate, get_recording_consent_gate
 from ..services.session_generation_worker import (
     UnknownTenantError,
     resolve_tenant_schema_for_user,
@@ -825,8 +826,18 @@ def schedule_session(
     session_service: SessionService = Depends(get_session_service),
     audit: AuditService = Depends(get_audit_service),
     authorizer: NoteTypeAuthorizer = Depends(get_note_type_authorizer),
+    consent_gate: RecordingConsentGate = Depends(get_recording_consent_gate),
 ) -> SessionResponse:
-    """Create a scheduled session (pre-recording)."""
+    """Create a scheduled session (pre-recording).
+
+    Refused with ``CLIENT_DECLINED_AI_NOTES`` when the client declined
+    AI-assisted notes, before the trial counter is spent on a session that
+    cannot be recorded.
+    """
+    patient = session_service.patient_repo.get(request.patient_id, user.id)
+    if patient is None:
+        raise NotFoundError("Patient not found", code="PATIENT_NOT_FOUND")
+    consent_gate.refuse_if_declined(patient, user, http_request, audit)
     _gate_trial_session(user.email)
     # Authorize an explicitly requested note type — same gate as
     # /api/appointments/{id}/start-session; falling back to the default

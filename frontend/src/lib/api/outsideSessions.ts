@@ -174,9 +174,15 @@ export async function syncCalendarsNow(): Promise<CalendarSyncResult> {
   return post<CalendarSyncResult>("/api/calendar/sync", {})
 }
 
-/** Start the session (and its note) for an appointment. */
+/**
+ * Start the session (and its note) for an appointment, to write the note by
+ * hand: it is not recorded, so a client's answer about AI-assisted notes does
+ * not stop it.
+ */
 export async function startSessionFromAppointment(
   appointmentId: string
 ): Promise<SessionResponse> {
-  return post<SessionResponse>(`/api/appointments/${appointmentId}/start-session`, {})
+  return post<SessionResponse>(`/api/appointments/${appointmentId}/start-session`, {
+    recording: false,
+  })
 }

@@ -169,7 +169,7 @@ function AppointmentRow({
           </Link>
         </Button>
       ) : launchable && companionEnrolled ? (
-        <StartSessionButton appointmentId={appointment.id} />
+        <StartSessionButton appointmentId={appointment.id} patientId={appointment.patient_id} />
       ) : launchable && platformSupported ? (
         <Button size="sm" variant="outline" onClick={onGetApp}>
           Download Pablo Companion
