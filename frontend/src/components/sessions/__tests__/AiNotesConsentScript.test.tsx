@@ -41,7 +41,7 @@ describe("consentScript", () => {
     expect(text).toContain("record our session")
     expect(text).toContain("AI tool uses it to draft my notes")
     expect(text).toContain("I read and correct every note myself")
-    expect(text).toContain("kept for 90 days")
+    expect(text).toContain("kept for up to 90 days")
     expect(text).toContain("You can say no, now or at any time")
   })
 })
@@ -56,7 +56,7 @@ describe("AiNotesConsentScriptButton", () => {
     await userEvent.click(screen.getByRole("button", { name: "Consent script" }))
 
     const script = screen.getByTestId("ai-notes-consent-script")
-    expect(script).toHaveTextContent("The audio is kept for 90 days, then deleted.")
+    expect(script).toHaveTextContent("The audio is kept for up to 90 days.")
   })
 
   it("is absent when the practice does not ask", () => {

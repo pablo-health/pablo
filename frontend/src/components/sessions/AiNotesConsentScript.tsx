@@ -35,7 +35,9 @@ export function consentScript(retentionDays: number): string[] {
   return [
     "I'd like to record our session today.",
     "The recording is turned into a written transcript, and an AI tool uses it to draft my notes. I read and correct every note myself.",
-    `The audio is kept for ${formatRetention(retentionDays)}, then deleted.`,
+    // The practice's chosen window, and no more: whether deletion runs at the
+    // end of it is the deployment's, so the script does not promise it.
+    `The audio is kept for up to ${formatRetention(retentionDays)}.`,
     "You can say no, now or at any time.",
     "Is that all right with you?",
   ]

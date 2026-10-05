@@ -56,7 +56,7 @@ test("the practice asks clients about AI-assisted notes, and can stop asking", a
     await page.getByRole("button", { name: "Consent script" }).click()
     const scriptDialog = page.getByRole("dialog", { name: "Asking about AI-assisted notes" })
     await expect(scriptDialog.getByTestId("ai-notes-consent-script")).toContainText(
-      `The audio is kept for ${retentionSaid(setting.audio_retention_days)}, then deleted.`,
+      `The audio is kept for up to ${retentionSaid(setting.audio_retention_days)}.`,
     )
     await page.keyboard.press("Escape")
 
