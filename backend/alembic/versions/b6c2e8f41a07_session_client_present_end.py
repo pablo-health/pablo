@@ -11,7 +11,7 @@ which every session recorded before this column existed is.
 Additive only, no backfill. Idempotent: fanned out once per practice schema.
 
 Revision ID: b6c2e8f41a07
-Revises: d5b8e2a71c94
+Revises: e3c7a1f95b28
 Create Date: 2026-10-06
 """
 
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 revision: str = "b6c2e8f41a07"
-down_revision: str | Sequence[str] | None = "d5b8e2a71c94"
+down_revision: str | Sequence[str] | None = "e3c7a1f95b28"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

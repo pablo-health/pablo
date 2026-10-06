@@ -34,7 +34,7 @@ from ..models import (
     Transcript,
 )
 from ..notes import NoteTypeDefinition, NoteTypeRegistry, get_default_registry
-from ..notes.client_present import segments_from_transcript, split_at_boundary
+from ..notes.client_present import segments_from_transcript, split_at_boundary, split_dictated
 from ..notes.diagnoses import DIAGNOSES_KIND_LABEL, DIAGNOSES_SCHEMA, coerce_diagnoses
 from ..notes.practice_types import render_user_prompt
 from ..notes.prompts.soap import SOAP_SYSTEM_PROMPT
@@ -270,13 +270,17 @@ class RegistryNoteGenerationService(NoteGenerationService):
         full_definition = definition
         addendum = ""
         if client_present_end_seconds is not None:
-            segments = segments_from_transcript(transcript)
+            recording, dictated = split_dictated(transcript.content)
+            segments = segments_from_transcript(
+                Transcript(format=transcript.format, content=recording)
+            )
             if segments:
                 split = split_at_boundary(segments, client_present_end_seconds)
                 transcript = Transcript(
                     format="txt", content=split.session_lines or _NO_CLIENT_PRESENT
                 )
-                addendum = split.addendum_lines
+                # Dictated later, after the recording: addendum too.
+                addendum = "\n\n".join(p for p in (split.addendum_lines, dictated) if p)
                 if client_present_end_seconds == 0:
                     definition = _without_psychotherapy(definition)
 
