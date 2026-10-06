@@ -19,6 +19,7 @@ import { test, expect } from "../fixtures/auth"
 import { givePatient } from "../fixtures/scenarios"
 
 type Session = { id: string; status: string }
+type Dictations = { data: Array<{ status: string }> }
 type NoteOnSession = {
   note: { content_edited: { psychotherapy?: { psychotherapy_time?: string } } | null }
 }
@@ -147,10 +148,28 @@ test.describe("visit minutes", () => {
       const session = await recordedVisit(api, key)
       await page.goto(`/dashboard/sessions/${session.id}`)
 
-      await expect(page.getByTestId("documentation-total")).toHaveText(
-        /^Total time on this date, including documentation: \d+ min$/,
-      )
+      const total = page.getByTestId("documentation-total")
+      await expect(total).toHaveText(/^Total time on this date, including documentation: \d+ min$/)
       await expect(page.getByTestId("psychotherapy-window")).toHaveCount(0)
+      const before = Number((await total.innerText()).match(/(\d+) min$/)?.[1])
+
+      // Three minutes dictated for the note afterwards count toward the total.
+      const form = new FormData()
+      form.append("audio", new Blob([new Uint8Array(3200)], { type: "application/octet-stream" }), "clip.pcm")
+      form.append("duration_seconds", "180")
+      await api.postForm(`/api/sessions/${session.id}/dictations`, form)
+      await expect
+        .poll(
+          async () =>
+            (await api.get<Dictations>(`/api/sessions/${session.id}/dictations`)).data[0]?.status,
+          { timeout: 30_000 },
+        )
+        .toBe("transcribed")
+
+      await page.reload()
+      await expect(total).toHaveText(
+        `Total time on this date, including documentation: ${before + 3} min`,
+      )
     })
   })
 })

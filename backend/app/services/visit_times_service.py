@@ -34,10 +34,12 @@ from ..notes.visit_times import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from datetime import datetime
 
     from ..models.note import Note
     from ..models.session import TherapySession
+    from ..models.session_dictation import SessionDictation
     from ..models.visit_times import ConfirmPsychotherapyWindowRequest
     from ..scheduling_engine.models.appointment import Appointment
     from .note_service import NoteService
@@ -94,14 +96,25 @@ def _psychotherapy(session: TherapySession, note: Note) -> PsychotherapyWindowRe
     )
 
 
+def _dictated_seconds(dictations: Sequence[SessionDictation]) -> int:
+    """Time spent dictating for the note after the recording stopped.
+
+    Only clips that were transcribed count; a failed clip was never used. A
+    clip the recorder sent no duration for counts as nothing.
+    """
+    return sum(d.duration_seconds or 0 for d in dictations if d.status == "transcribed")
+
+
 def build_visit_times(
-    session: TherapySession, note: Note | None, appointment: Appointment | None
+    session: TherapySession,
+    note: Note | None,
+    appointment: Appointment | None,
+    dictations: Sequence[SessionDictation] = (),
 ) -> VisitTimesResponse:
     started_at, ended_at = _visit_bounds(session, appointment)
+    visit_seconds = (ended_at - started_at).total_seconds() if started_at and ended_at else None
     total_minutes = (
-        math.floor((ended_at - started_at).total_seconds() / _SECONDS_PER_MINUTE)
-        if started_at and ended_at
-        else None
+        math.floor(visit_seconds / _SECONDS_PER_MINUTE) if visit_seconds is not None else None
     )
     boundary = session.client_present_end_seconds
     addendum = (
@@ -112,7 +125,17 @@ def build_visit_times(
     # Total time with documentation counts only for a visit chosen by time,
     # which a visit with a psychotherapy add-on never is. Built-in types are
     # not visit notes, so they never show it either.
-    by_time = note is not None and is_practice_key(note.note_type) and not _has_psychotherapy(note)
+    by_time = (
+        visit_seconds is not None
+        and note is not None
+        and is_practice_key(note.note_type)
+        and not _has_psychotherapy(note)
+    )
+    with_documentation = (
+        math.floor((visit_seconds + _dictated_seconds(dictations)) / _SECONDS_PER_MINUTE)
+        if by_time and visit_seconds is not None
+        else None
+    )
     return VisitTimesResponse(
         started_at=started_at,
         ended_at=ended_at,
@@ -121,7 +144,7 @@ def build_visit_times(
         client_present_end_seconds=boundary,
         clinician_addendum_seconds=addendum,
         psychotherapy=_psychotherapy(session, note) if note and _has_psychotherapy(note) else None,
-        total_with_documentation_minutes=total_minutes if by_time else None,
+        total_with_documentation_minutes=with_documentation,
     )
 
 

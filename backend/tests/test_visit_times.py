@@ -15,6 +15,7 @@ from app.api_errors import BadRequestError, UnprocessableEntityError
 from app.main import app
 from app.models import Note, Patient, Transcript
 from app.models.session import TherapySession
+from app.models.session_dictation import SessionDictation
 from app.models.visit_times import ConfirmPsychotherapyWindowRequest
 from app.notes import NoteTypeRegistry, register_builtin_note_types
 from app.notes.client_present import TimedSegment
@@ -32,7 +33,9 @@ from app.notes.visit_times import (
     window_text,
 )
 from app.repositories.note import InMemoryNotesRepository
+from app.repositories.session_dictation import InMemorySessionDictationRepository
 from app.routes.notes import get_appointment_repository
+from app.routes.session_dictations import get_dictation_repository
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.services.note_generation_service import RegistryNoteGenerationService
 from app.services.note_service import NoteService
@@ -43,6 +46,7 @@ from app.services.visit_times_service import build_visit_times, confirm_psychoth
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from app.models.session_dictation import DictationStatus
     from app.repositories import InMemoryTherapySessionRepository
     from app.scheduling_engine.models.appointment import Appointment
     from fastapi.testclient import TestClient
@@ -170,6 +174,21 @@ class TestWindow:
         assert apply_confirmed_window(dictated, window) is dictated
 
 
+def _dictation(session: TherapySession, status: str, seconds: int | None) -> SessionDictation:
+    return SessionDictation(
+        id=str(uuid.uuid4()),
+        session_id=session.id,
+        note_id="n1",
+        patient_id=session.patient_id,
+        author_user_id="u1",
+        audio_path="dictations/clip.webm",
+        content_type="audio/webm",
+        status=cast("DictationStatus", status),
+        created_at=_STARTED,
+        duration_seconds=seconds,
+    )
+
+
 def _appointment(started: datetime, ended: datetime) -> Appointment:
     return cast(
         "Appointment", SimpleNamespace(telehealth_started_at=started, telehealth_ended_at=ended)
@@ -213,6 +232,30 @@ class TestVisitTimes:
 
         assert times.psychotherapy is None
         assert times.total_with_documentation_minutes == 67
+
+    def test_time_with_documentation_adds_transcribed_dictations(self) -> None:
+        session = _session()
+        note = _note(session)
+        note.content = {"plan": {"follow_up": "Four weeks."}}
+        dictations = [
+            _dictation(session, "transcribed", 150),
+            _dictation(session, "transcribed", None),
+            _dictation(session, "failed", 600),
+        ]
+
+        times = build_visit_times(session, note, None, dictations)
+
+        # 67 minutes recorded plus 2.5 dictated: 69 whole minutes.
+        assert times.total_minutes == 67
+        assert times.total_with_documentation_minutes == 69
+
+    def test_dictations_never_add_time_beside_psychotherapy(self) -> None:
+        session = _session()
+        times = build_visit_times(
+            session, _note(session), None, [_dictation(session, "transcribed", 600)]
+        )
+
+        assert times.total_with_documentation_minutes is None
 
     def test_a_dictation_offers_no_psychotherapy(self) -> None:
         session = _session(boundary=0.0)
@@ -455,8 +498,10 @@ class TestDraftProposesAStart:
 def appointments() -> Iterator[InMemoryAppointmentRepository]:
     repo = InMemoryAppointmentRepository()
     app.dependency_overrides[get_appointment_repository] = lambda: repo
+    app.dependency_overrides[get_dictation_repository] = InMemorySessionDictationRepository
     yield repo
     app.dependency_overrides.pop(get_appointment_repository, None)
+    app.dependency_overrides.pop(get_dictation_repository, None)
 
 
 class TestRoutes:
