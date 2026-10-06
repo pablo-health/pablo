@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
     from pathlib import Path
 
+    from app.notes.chart_context import ChartContext
     from app.repositories import (
         InMemoryNotesRepository,
         InMemoryPatientRepository,
@@ -92,6 +93,8 @@ class Generator(NoteGenerationService):
         inputs: Mapping[str, str] | None = None,
         definition: NoteTypeDefinition | None = None,
         client_present_end_seconds: float | None = None,
+        chart: ChartContext | None = None,
+        current_note: Mapping[str, Any] | None = None,
     ) -> GeneratedNote:
         self.transcripts.append(transcript.content)
         return GeneratedNote(note_type=note_type, content=self.next_content)

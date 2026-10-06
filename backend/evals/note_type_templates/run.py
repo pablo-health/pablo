@@ -16,7 +16,9 @@ the run:
     stated code is missing; a rule-out was not marked as one;
   - any value contains a forbidden string (a code or level never stated);
   - once the case's therapy start is confirmed, the psychotherapy time field
-    does not read the confirmed window.
+    does not read the confirmed window;
+  - drafted again with a line dictated afterwards, the note lost a fact the
+    first draft had, or the dictated line is missing.
 
 Exit code: 0 when there are no hard failures, 1 when there are, 2 on a
 setup problem.
@@ -37,7 +39,11 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.models import Patient, Transcript
-from app.notes.client_present import client_present_end, segments_from_transcript
+from app.notes.client_present import (
+    DICTATED_HEADING,
+    client_present_end,
+    segments_from_transcript,
+)
 from app.notes.diagnoses import diagnosis_text
 from app.notes.practice_types import PracticeNoteTypeSpec, to_definition
 from app.notes.visit_times import (
@@ -48,6 +54,7 @@ from app.notes.visit_times import (
     window_text,
 )
 from app.services.note_generation_service import GeneratedNote, RegistryNoteGenerationService
+from app.services.note_redraft import as_shown
 from app.services.structured_llm_gateway import (
     StructuredLLMGateway,
     get_default_structured_llm_gateway,
@@ -212,17 +219,55 @@ def _grade_diagnoses(case: TemplateCase, content: dict[str, Any]) -> list[str]:
     return failures
 
 
+def _mentions(content: dict[str, Any], spellings: tuple[str, ...]) -> bool:
+    text = json.dumps(content, ensure_ascii=False).lower()
+    return any(spelling.lower() in text for spelling in spellings)
+
+
+def grade_redraft(
+    case: TemplateCase, first: dict[str, Any], redrafted: dict[str, Any]
+) -> list[str]:
+    """Facts the redraft lost, and dictated facts it left out."""
+    failures = [
+        f"the first draft lacks {spellings[0]!r}, so keeping it proves nothing"
+        for spellings in case.kept_facts
+        if not _mentions(first, spellings)
+    ]
+    failures += [
+        f"the redraft dropped {spellings[0]!r}"
+        for spellings in case.kept_facts
+        if _mentions(first, spellings) and not _mentions(redrafted, spellings)
+    ]
+    failures += [
+        f"the redraft lacks the dictated {spellings[0]!r}"
+        for spellings in case.added_facts
+        if not _mentions(redrafted, spellings)
+    ]
+    return failures
+
+
 def draft(
-    gateway: StructuredLLMGateway, case: TemplateCase, model: str | None = None
+    gateway: StructuredLLMGateway,
+    case: TemplateCase,
+    model: str | None = None,
+    *,
+    redraft_of: dict[str, Any] | None = None,
 ) -> GeneratedNote:
+    """The case's sample drafted; with ``redraft_of``, drafted again from that note.
+
+    A redraft is drafted as "Dictate more" drafts one: the case's dictation
+    follows the transcript under the dictated heading, and the model is given
+    the note the clinician already has.
+    """
     spec = PracticeNoteTypeSpec.model_validate(load_template(case.template)["spec"])
     definition = to_definition("custom.preview", 0, spec)
     now = datetime.now(UTC)
     # The preview's stand-in client: practice types never read the patient.
     patient = Patient(id="preview", first_name="", last_name="", created_at=now, updated_at=now)
-    transcript = Transcript(
-        format="txt", content=case.transcript or sample_transcript(case.template, case.sample)
-    )
+    content = case.transcript or sample_transcript(case.template, case.sample)
+    if redraft_of is not None and case.redraft_dictation:
+        content = "\n\n".join([content, DICTATED_HEADING, case.redraft_dictation])
+    transcript = Transcript(format="txt", content=content)
     # The model is named here too: without it the generator asks the gateway
     # for the configured default, which a Bedrock gateway cannot serve.
     generated = RegistryNoteGenerationService(llm_gateway=gateway, model=model).generate_note(
@@ -233,6 +278,7 @@ def draft(
         inputs=case.inputs,
         definition=definition,
         client_present_end_seconds=boundary(case),
+        current_note=as_shown(definition.key, redraft_of, None) if redraft_of else None,
     )
     return generated
 
@@ -262,7 +308,18 @@ def main(argv: list[str] | None = None) -> int:
             out.mkdir(parents=True, exist_ok=True)
             kept = {**generated.content, "psychotherapy_start": generated.psychotherapy_start}
             (out / f"{case.name}.json").write_text(json.dumps(kept, indent=2) + "\n")
-        results.append(grade(case, generated.content, generated.psychotherapy_start))
+        result = grade(case, generated.content, generated.psychotherapy_start)
+        if case.redraft_dictation:
+            redrafted = draft(gateway, case, args.model, redraft_of=generated.content)
+            if args.out:
+                (Path(args.out) / f"{case.name}.redraft.json").write_text(
+                    json.dumps(redrafted.content, indent=2) + "\n"
+                )
+            again = grade(case, redrafted.content, redrafted.psychotherapy_start)
+            result["failures"] += [f"redraft: {f}" for f in again["failures"]]
+            result["failures"] += grade_redraft(case, generated.content, redrafted.content)
+            result["passed"] = not result["failures"]
+        results.append(result)
 
     if args.json:
         print(json.dumps(results, indent=2))

@@ -51,6 +51,12 @@ class TemplateCase:
     ``confirmed_start_seconds`` is the therapy start the clinician confirms:
     once confirmed, the psychotherapy time field must read the window from
     there to where the client left, as the visit-times panel writes it.
+
+    A case with a ``redraft_dictation`` is then drafted again with that
+    line dictated afterwards, from the first draft, as "Dictate more" does.
+    Each ``kept_facts`` entry (alternative spellings of one fact) must be in
+    the first draft and still in the redraft; each ``added_facts`` entry
+    must be in the redraft. The redraft is graded like the first draft too.
     """
 
     name: str
@@ -70,6 +76,9 @@ class TemplateCase:
     fill_unnamed: bool = True
     therapy_starts_between: tuple[float, float] | None = None
     confirmed_start_seconds: float | None = None
+    redraft_dictation: str | None = None
+    kept_facts: tuple[tuple[str, ...], ...] = ()
+    added_facts: tuple[tuple[str, ...], ...] = ()
 
 
 def load_template(template: str) -> dict[str, Any]:
@@ -207,5 +216,56 @@ FOLLOW_UP_THERAPY_START = TemplateCase(
 )
 
 
+# A medication check with a home blood pressure and a refill, then therapy.
+# The clinician's plan restates both; afterwards they dictate one more line
+# for the plan, about the same blood pressure.
+_MED_CHECK_THEN_REDRAFT = "\n".join(
+    [
+        "[00:00:04] Therapist: Hi, good to see you. Are you at home today?",
+        "[00:00:08] Client: Yes, at home.",
+        "[00:00:15] Therapist: How has the methylphenidate been at 36 milligrams?",
+        "[00:00:24] Client: Good. It wears off around four, but mornings are much better.",
+        "[00:02:10] Therapist: Did you check your blood pressure at home like we talked about?",
+        "[00:02:18] Client: I did. It was 124 over 78, and about the same the other times.",
+        "[00:03:30] Therapist: That's right where I'd want it. I'll send the next 30 day supply "
+        "to your usual pharmacy.",
+        "[00:04:05] Client: Great. Can we spend the rest of the time on work? My new manager "
+        "has been hard.",
+        "[00:04:20] Therapist: Of course, let's get into that. What happened this week?",
+        "[00:05:00] Client: Every document I hand in comes back covered in comments, and I freeze.",
+        "[00:12:30] Therapist: When the comments come in, what goes through your mind?",
+        "[00:12:45] Client: That I'm not good enough, and that they'll find out.",
+        "[00:18:10] Therapist: Let's try replying within two hours, and write down what you "
+        "predict will happen first.",
+        "[00:21:40] Client: Okay, I'll try that this week. Thank you, see you in four weeks.",
+        "[00:22:30] Therapist: Addendum for the note. Client denies suicidal ideation. Mood "
+        "stressed, affect anxious but reactive.",
+        "[00:22:50] Therapist: Plan. Continue methylphenidate 36 milligrams every morning. "
+        "30 day supply sent to the usual pharmacy. Home blood pressure 124 over 78. Recheck "
+        "at the next visit.",
+        "[00:23:10] Therapist: Psychotherapy was about 17 minutes. Cognitive behavioral "
+        "therapy for work-related anxiety.",
+    ]
+)
+
+FOLLOW_UP_REDRAFT = TemplateCase(
+    name="psychiatric-follow-up-redraft-keeps-facts",
+    template="psychiatric_follow_up",
+    sample="",
+    transcript=_MED_CHECK_THEN_REDRAFT,
+    recorded_call=True,
+    inputs={"place_of_service": "Telehealth", "client_location": "Home"},
+    # From "let's get into that" (4:20) to the client leaving: 17 minutes.
+    confirmed_start_seconds=4 * 60 + 20,
+    # As speech recognition transcribed it, sentence break and all.
+    redraft_dictation=(
+        "Add to the plan. The client will send me a home. Blood pressure reading in two weeks."
+    ),
+    kept_facts=(("124/78", "124 over 78"), ("30 day", "30-day"), ("pharmacy",)),
+    added_facts=(("two weeks",),),
+    fill_unnamed=False,
+)
+
+
 def all_cases() -> tuple[TemplateCase, ...]:
-    return (INTAKE_NEW_CLIENT, FOLLOW_UP_ADDENDUM, FOLLOW_UP_THERAPY_START)
+    return (INTAKE_NEW_CLIENT, FOLLOW_UP_ADDENDUM, FOLLOW_UP_THERAPY_START, FOLLOW_UP_REDRAFT)
