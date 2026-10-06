@@ -268,6 +268,44 @@ class NoteService:
         note.updated_at = utc_now()
         return self._notes.update(note, user_id)
 
+    # --- Redrafting a session's note (see app.services.note_redraft) ---
+
+    def begin_redraft(self, note: Note, user_id: str) -> Note:
+        """Mark ``note`` as being drafted again, with any changes made to it."""
+        note.status = "processing"
+        note.updated_at = utc_now()
+        return self._notes.update(note, user_id)
+
+    def complete_redraft(
+        self,
+        note: Note,
+        *,
+        content: dict[str, Any],
+        content_edited: dict[str, Any] | None,
+        note_type_version: int | None,
+        user_id: str,
+        psychotherapy_start: dict[str, Any] | None = None,
+    ) -> Note:
+        """Write the new draft, with whatever edits the redraft kept.
+
+        As with any new draft, the proposed psychotherapy start is replaced
+        and a confirmed window is kept and written back into it.
+        """
+        window = {**(note.psychotherapy_window or {}), "proposal": psychotherapy_start}
+        note.psychotherapy_window = window
+        note.content = apply_confirmed_window(content, window)
+        note.content_edited = apply_confirmed_window(content_edited, window)
+        note.note_type_version = note_type_version
+        note.status = "complete"
+        note.updated_at = utc_now()
+        return self._notes.update(note, user_id)
+
+    def end_redraft(self, note: Note, user_id: str) -> Note:
+        """Close a redraft that writes nothing, leaving the note as it is."""
+        note.status = "complete"
+        note.updated_at = utc_now()
+        return self._notes.update(note, user_id)
+
     # --- Edits ---
 
     def update_note_edits(self, note_id: str, content_edited: dict[str, Any], user_id: str) -> Note:

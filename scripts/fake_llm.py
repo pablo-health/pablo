@@ -245,10 +245,42 @@ async def draft_note(call: NoteCall) -> dict[str, Any]:
     note = _source_note(call.user_prompt)
     if note is not None:
         return {"data": _extracted(call.response_schema, note), "finish_reason": "stop"}
-    data = _stand_in(call.response_schema, "")
+    draft = _stand_in(call.response_schema, "")
+    _fill_named(draft, _supplied_inputs(call.user_prompt))
     if "psychotherapy_start" in call.response_schema.get("properties", {}):
-        data["psychotherapy_start"] = _therapy_start(call.user_prompt)
-    return {"data": data, "finish_reason": "stop"}
+        draft["psychotherapy_start"] = _therapy_start(call.user_prompt)
+    return {"data": draft, "finish_reason": "stop"}
+
+
+def _supplied_inputs(user_prompt: str) -> dict[str, str]:
+    """The note type's inputs as the default prompt lists them, by label slug.
+
+    ``Inputs:`` then one ``- Label: value`` line each, up to a blank line;
+    ``not provided`` is the prompt's word for none.
+    """
+    values: dict[str, str] = {}
+    _, found, rest = user_prompt.partition("\nInputs:\n")
+    if not found:
+        return values
+    for line in rest.split("\n\n", 1)[0].splitlines():
+        label, sep, value = line.removeprefix("- ").partition(":")
+        if sep and value.strip() and value.strip() != "not provided":
+            values[_slug(label)] = value.strip()
+    return values
+
+
+def _fill_named(draft: dict[str, Any], values: dict[str, str]) -> None:
+    """Write each value into the text field whose key it is named after.
+
+    So a spec can see what reached the prompt: a type with an input and a
+    field of the same name drafts that field as the input's value.
+    """
+    for section in draft.values():
+        if not isinstance(section, dict):
+            continue
+        for key, current in section.items():
+            if key in values and isinstance(current, str):
+                section[key] = values[key]
 
 
 #: The clinician's spoken cue the stand-in recognizes as the therapy portion starting.

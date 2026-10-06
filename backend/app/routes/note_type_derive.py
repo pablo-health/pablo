@@ -71,6 +71,14 @@ class CoverageSchema(BaseModel):
     checked: bool = Field(
         description="False when the sample could not be checked; unplaced is then empty."
     )
+    excluded: int = Field(
+        default=0,
+        description=(
+            "Lines set aside as not note content: blocks the sample marks as not part "
+            "of the note (such as how codes were chosen), signature lines, and facts "
+            "that only identify the client or clinician. Never counted as unplaced."
+        ),
+    )
 
 
 class GuardFindingSchema(BaseModel):
@@ -244,7 +252,11 @@ async def derive_note_type(
         spec=derived.spec,
         coverage=[
             CoverageSchema(
-                sample=c.sample, passages=c.passages, unplaced=c.unplaced, checked=c.checked
+                sample=c.sample,
+                passages=c.passages,
+                unplaced=c.unplaced,
+                checked=c.checked,
+                excluded=c.excluded,
             )
             for c in derived.coverage
         ],

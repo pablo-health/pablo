@@ -341,6 +341,28 @@ class TestConfirm:
         assert redrafted.content is not None
         assert redrafted.content["psychotherapy"]["psychotherapy_time"].endswith("52 minutes")
 
+    def test_a_confirmed_window_survives_redrafting_the_note(
+        self, notes: InMemoryNotesRepository
+    ) -> None:
+        session = _session()
+        service = NoteService(notes)
+        confirmed = _confirm(session, notes.add(_note(session)), notes, minutes=40)
+
+        redrafted = service.complete_redraft(
+            confirmed,
+            content={"psychotherapy": {"psychotherapy_time": "", "interventions": "CBT."}},
+            content_edited=None,
+            note_type_version=None,
+            user_id="u1",
+            psychotherapy_start={"candidates": [{"seconds": 750.0, "source": "marked"}]},
+        )
+
+        assert redrafted.psychotherapy_window is not None
+        assert redrafted.psychotherapy_window["confirmed"]["minutes"] == 40
+        assert redrafted.psychotherapy_window["proposal"]["candidates"][0]["seconds"] == 750.0
+        assert redrafted.content is not None
+        assert redrafted.content["psychotherapy"]["psychotherapy_time"] == "40 minutes"
+
 
 _FOLLOW_UP = PracticeNoteTypeSpec.model_validate(
     {

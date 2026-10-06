@@ -131,7 +131,9 @@ export default function StandaloneNotePage({ params }: PageProps) {
 
   const isFinalized = !!note.finalized_at
   const isGenerating = note.status === "processing"
-  const generationFailed = note.status === "failed"
+  // A session note whose redraft failed is marked failed too, but keeps its
+  // content; only a note that never got any has nothing to show.
+  const generationFailed = note.status === "failed" && !note.content
   const patientName = patient
     ? `${patient.first_name} ${patient.last_name}`
     : people.One

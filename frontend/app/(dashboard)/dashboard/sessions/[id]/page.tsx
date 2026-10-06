@@ -14,6 +14,7 @@
 
 import { use, useState, useRef, useCallback, useEffect } from "react"
 import {
+  useRedraftSessionNote,
   useSession,
   useUpdateSessionMetadata,
   useUpdateSessionRating,
@@ -26,6 +27,8 @@ import {
 import { NoteViewer } from "@/components/sessions/NoteViewer"
 import { NoteConsentLine } from "@/components/sessions/NoteConsentLine"
 import { VisitTimesPanel } from "@/components/sessions/VisitTimesPanel"
+import { NoteInputsPanel } from "@/components/sessions/NoteInputsPanel"
+import { RedraftStatus } from "@/components/sessions/RedraftStatus"
 import { QualityRating } from "@/components/sessions/QualityRating"
 import {
   QualityRatingWithFeedback,
@@ -41,6 +44,7 @@ import { useNoteSigning } from "@/hooks/useNoteSigning"
 import { useNoteTypeLabel } from "@/hooks/useNoteTypes"
 import { useUserTimeZone } from "@/hooks/usePreferences"
 import { pdfSignatureBlock } from "@/lib/utils/signatureBlock"
+import type { RedraftNoteRequest } from "@/types/notes"
 import type { NoteContent, SOAPNoteModel } from "@/types/sessions"
 import { noteContentToJson } from "@/types/sessions"
 
@@ -53,11 +57,12 @@ interface PageProps {
 export default function SessionDetailPage({ params }: PageProps) {
   const { id } = use(params)
   const { data: session, isLoading, error } = useSession(id, undefined, {
-    // Poll while the note is being generated so the page updates itself
-    // without a manual refresh.
+    // Poll while the note is being generated (or drafted again) so the page
+    // updates itself without a manual refresh.
     refetchInterval: (query) => {
       const s = query.state.data?.status
-      return s === "queued" || s === "processing" ? 3000 : false
+      const drafting = s === "queued" || s === "processing"
+      return drafting || query.state.data?.note?.status === "processing" ? 3000 : false
     },
   })
   const updateRatingMutation = useUpdateSessionRating()
@@ -75,6 +80,7 @@ export default function SessionDetailPage({ params }: PageProps) {
   // Last saved edit of a non-SOAP note, shown until the session refetches.
   const [localNoteEdited, setLocalNoteEdited] = useState<NoteContent | null>(null)
   const updateNoteEdits = useUpdateNoteEdits()
+  const redraftNote = useRedraftSessionNote()
   const noteTypeLabel = useNoteTypeLabel()
   const { data: signing } = useNoteSigning(session?.note?.id)
   const timeZone = useUserTimeZone()
@@ -153,6 +159,22 @@ export default function SessionDetailPage({ params }: PageProps) {
     )
   }
 
+  const handleRedraft = async (data: RedraftNoteRequest) => {
+    const noteId = session?.note?.id
+    if (!noteId) return
+    // SOAP edits under review are held on this page until finalize; a
+    // redraft that keeps edits has to see them, so they are saved first.
+    if (localSoapNoteEdited) {
+      await updateNoteEdits.mutateAsync({
+        noteId,
+        data: { content_edited: { ...localSoapNoteEdited } },
+      })
+    }
+    setLocalSoapNoteEdited(null)
+    setLocalNoteEdited(null)
+    redraftNote.mutate({ sessionId: id, data })
+  }
+
   // Loading state
   if (isLoading) {
     return (
@@ -221,6 +243,9 @@ export default function SessionDetailPage({ params }: PageProps) {
     !!note &&
     !note.finalized_at &&
     (session.status === "pending_review" || session.status === "finalized")
+  const redrafting = note?.status === "processing"
+  const noteHasEdits =
+    !!pendingEdited || Object.keys(note?.content_edited ?? {}).length > 0
 
   return (
     <div className="space-y-6">
@@ -289,25 +314,29 @@ export default function SessionDetailPage({ params }: PageProps) {
             {note && <NoteConsentLine patientId={session.patient_id} />}
             {note && <VisitTimesPanel sessionId={session.id} readonly={!noteEditable} />}
 
+            {note && <RedraftStatus status={note.status} requestFailed={redraftNote.isError} />}
+
             {note ? (
-              <NoteViewer
-                note={note}
-                pendingEdited={pendingEdited}
-                pdfMetadata={{
-                  patient_name: session.patient_name,
-                  session_number: session.session_number,
-                  session_date: session.session_date,
-                  signature: pdfSignatureBlock(signing, timeZone),
-                }}
-                groundingSource={
-                  session.source === "imported"
-                    ? session.transcript.content
-                    : undefined
-                }
-                readonly={!noteEditable}
-                onSave={noteEditable ? handleNoteSave : undefined}
-                onClaimClick={handleClaimClick}
-              />
+              <div data-testid="session-note">
+                <NoteViewer
+                  note={note}
+                  pendingEdited={pendingEdited}
+                  pdfMetadata={{
+                    patient_name: session.patient_name,
+                    session_number: session.session_number,
+                    session_date: session.session_date,
+                    signature: pdfSignatureBlock(signing, timeZone),
+                  }}
+                  groundingSource={
+                    session.source === "imported"
+                      ? session.transcript.content
+                      : undefined
+                  }
+                  readonly={!noteEditable || redrafting}
+                  onSave={noteEditable && !redrafting ? handleNoteSave : undefined}
+                  onClaimClick={handleClaimClick}
+                />
+              </div>
             ) : (
               <div className="card p-12 text-center">
                 <p className="text-neutral-500">
@@ -325,6 +354,17 @@ export default function SessionDetailPage({ params }: PageProps) {
               </p>
             )}
           </div>
+
+          {note && session.source !== "imported" && (
+            <NoteInputsPanel
+              key={note.id}
+              note={note}
+              editable={noteEditable}
+              hasEdits={noteHasEdits}
+              onRedraft={handleRedraft}
+              pending={redraftNote.isPending || updateNoteEdits.isPending}
+            />
+          )}
 
           {/* Quality Rating & Finalize Section */}
           {canReview && (
