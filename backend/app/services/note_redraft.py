@@ -9,14 +9,18 @@ on the request; the model call runs off it (:meth:`NoteRedraftService.run`),
 on the same queue and in the same way as the first draft.
 
 A redraft never touches a signed note: a signed note changes only by an
-addendum. Clinician edits survive by default — :func:`merge_kept_edits` keeps
-every field the clinician changed and fills the rest from the new draft —
-and are discarded only when the clinician asks for that.
+addendum. The model drafts again from the note as the clinician has it, told
+to keep its facts and change only what something newer changes, so a
+dictated line adds to the note rather than replacing it. Clinician edits
+survive by default — :func:`merge_kept_edits` keeps every field the clinician
+changed and fills the rest from the new draft — and are discarded only when
+the clinician asks for that.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 from ..api_errors import BadRequestError, ConflictError
@@ -95,14 +99,28 @@ def merge_kept_edits(
 
     Edits are stored in the shape the clinician edits in, which for SOAP is
     one narrative block per section, so SOAP drafts are compared in that
-    shape too.
+    shape too: field by field within a section, by each field's label, so an
+    edit to one field doesn't hold back the redraft of the others.
     """
     if not edited:
         return None
     before = _editable_view(note_type, previous)
     after = _editable_view(note_type, redrafted)
-    merged = _merge(before, edited, after)
+    if note_type == SOAP_KEY:
+        merged = {
+            key: _merge_narrative(before.get(key), edited.get(key), after.get(key))
+            for key in [*after, *(k for k in edited if k not in after)]
+        }
+    else:
+        merged = _merge(before, edited, after)
     return None if merged == after else merged
+
+
+def as_shown(
+    note_type: str, previous: dict[str, Any] | None, edited: dict[str, Any] | None
+) -> dict[str, Any]:
+    """The note as the clinician sees it: the draft, with their edits over it."""
+    return _overlay(_editable_view(note_type, previous), edited)
 
 
 def _editable_view(note_type: str, content: dict[str, Any] | None) -> dict[str, Any]:
@@ -111,6 +129,63 @@ def _editable_view(note_type: str, content: dict[str, Any] | None) -> dict[str, 
     if note_type == SOAP_KEY:
         return SOAPNote.from_dict(content).to_narrative()
     return content
+
+
+def _overlay(base: dict[str, Any], edited: dict[str, Any] | None) -> dict[str, Any]:
+    shown = dict(base)
+    for key, value in (edited or {}).items():
+        under = shown.get(key)
+        shown[key] = (
+            _overlay(under, value) if isinstance(value, dict) and isinstance(under, dict) else value
+        )
+    return shown
+
+
+_NARRATIVE_LABEL = re.compile(r"\*\*([^*\n]+):\*\*")
+
+
+def _narrative_fields(text: str) -> dict[str, str] | None:
+    """A SOAP section's narrative split into its fields, by label, each as written.
+
+    ``None`` when the text can't be split that way: words outside any
+    labelled field, or a label twice.
+    """
+    labels = list(_NARRATIVE_LABEL.finditer(text))
+    if text[: labels[0].start() if labels else len(text)].strip():
+        return None
+    fields: dict[str, str] = {}
+    for label, following in zip(labels, [*labels[1:], None], strict=True):
+        name = label.group(1).strip()
+        if name in fields:
+            return None
+        fields[name] = text[label.start() : following.start() if following else len(text)].strip()
+    return fields
+
+
+def _same_text(a: str | None, b: str | None) -> bool:
+    return " ".join((a or "").split()) == " ".join((b or "").split())
+
+
+def _merge_narrative(before: Any, edited: Any, after: Any) -> Any:
+    """A SOAP section: the clinician's text for each field they changed, the redraft's elsewhere.
+
+    A section that can't be split into its fields keeps the clinician's text
+    whole, as it was written.
+    """
+    if not isinstance(edited, str) or not _filled(edited) or _same_text(edited, before):
+        return _merge(before, edited, after)
+    mine = _narrative_fields(edited)
+    drafted = _narrative_fields(after) if isinstance(after, str) else None
+    if mine is None or drafted is None:
+        return edited
+    shown = (_narrative_fields(before) if isinstance(before, str) else None) or {}
+    fields = [
+        text if not _same_text(text, shown.get(label)) else drafted.get(label)
+        for label, text in mine.items()
+    ]
+    # A field the redraft newly fills; one the clinician removed stays removed.
+    fields += [text for label, text in drafted.items() if label not in mine and label not in shown]
+    return "\n\n".join(text for text in fields if text)
 
 
 def _merge(before: Any, edited: Any, after: Any) -> Any:
@@ -263,6 +338,7 @@ class NoteRedraftService:
             definition = None
         transcript = self._source_transcript(session)
         previous = note.content
+        shown = as_shown(note.note_type, previous, note.content_edited if keep_edits else None)
         # Nothing is held open across the model call (see generate_session_note).
         release_db_connection()
 
@@ -275,6 +351,7 @@ class NoteRedraftService:
                 inputs=note.note_inputs,
                 definition=definition,
                 client_present_end_seconds=session.client_present_end_seconds,
+                current_note=shown,
             )
         except TransientNoteGenerationError as exc:
             if not transient_is_terminal:

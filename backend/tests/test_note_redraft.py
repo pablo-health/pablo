@@ -10,8 +10,10 @@ fails leaves the note as it was.
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
@@ -28,6 +30,7 @@ from app.models.enums import SessionSource
 from app.models.notes import RedraftEdits
 from app.models.soap_note import SOAPNote
 from app.notes import NoteTypeDefinition, NoteTypeRegistry, register_builtin_note_types
+from app.notes.client_present import DICTATED_HEADING
 from app.notes.registry import NoteFieldDef, NoteInputDef, NoteSectionDef
 from app.repositories import (
     InMemoryNotesRepository,
@@ -41,6 +44,7 @@ from app.services import note_redraft
 from app.services.note_generation_service import (
     GeneratedNote,
     NoteGenerationService,
+    RegistryNoteGenerationService,
     TransientNoteGenerationError,
 )
 from app.services.note_redraft import (
@@ -49,6 +53,7 @@ from app.services.note_redraft import (
     NoteRedraftInProgressError,
     NoteRedraftService,
     RedraftNotPendingError,
+    as_shown,
     merge_kept_edits,
 )
 from app.services.note_service import NoteService
@@ -57,11 +62,13 @@ from app.services.session_service import (
     SOAPGenerationFailedError,
     TransientSOAPGenerationError,
 )
+from app.services.structured_llm_gateway import FakeStructuredLLMGateway, StructuredCompletion
 from fastapi import HTTPException
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
 
+    from app.notes.chart_context import ChartContext
     from fastapi.testclient import TestClient
 
 # The client fixture's user, so service and route tests share one owner.
@@ -98,6 +105,7 @@ class RecordingGenerator(NoteGenerationService):
 
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
+        self.current_notes: list[Mapping[str, Any] | None] = []
         self.next_content: dict[str, Any] = {}
         self.error: Exception | None = None
 
@@ -110,7 +118,10 @@ class RecordingGenerator(NoteGenerationService):
         inputs: Mapping[str, str] | None = None,
         definition: NoteTypeDefinition | None = None,
         client_present_end_seconds: float | None = None,
+        chart: ChartContext | None = None,
+        current_note: Mapping[str, Any] | None = None,
     ) -> GeneratedNote:
+        self.current_notes.append(current_note)
         self.calls.append(
             {
                 "note_type": note_type,
@@ -277,6 +288,129 @@ class TestMergeKeptEdits:
         assert kept["subjective"] == "**Chief Complaint:** Low mood, worse on Mondays."
         assert kept["plan"] == SOAPNote.from_dict(redrafted).to_narrative()["plan"]
 
+    def test_an_edit_to_one_soap_field_keeps_the_redraft_of_the_others(self) -> None:
+        def soap(next_steps: str, next_session: str = "") -> dict[str, Any]:
+            return SOAPNote.from_dict(
+                {"plan": {"next_steps": [next_steps], "next_session": next_session}}
+            ).to_dict()
+
+        previous = soap("Practice breathing.")
+        # The clinician dictated the next session; the redraft put it in its field.
+        redrafted = soap("Practice breathing daily.", "Two weeks from today.")
+        edited = SOAPNote.from_dict(previous).to_narrative()
+        edited["plan"] = "**Next Steps:**\n- Walk every morning."
+
+        kept = merge_kept_edits("soap", previous, edited, redrafted)
+
+        assert kept is not None
+        assert kept["plan"] == (
+            "**Next Steps:**\n- Walk every morning.\n\n**Next Session:** Two weeks from today."
+        )
+
+    def test_a_soap_field_the_clinician_left_alone_takes_the_redraft(self) -> None:
+        def soap(complaint: str, mood: str) -> dict[str, Any]:
+            return SOAPNote.from_dict(
+                {"subjective": {"chief_complaint": complaint, "mood_affect": mood}}
+            ).to_dict()
+
+        previous = soap("Low mood.", "Flat.")
+        redrafted = soap("Low mood since the move.", "Flat, tearful.")
+        edited = SOAPNote.from_dict(previous).to_narrative()
+        edited["subjective"] = edited["subjective"].replace("Flat.", "Flat, brightened at the end.")
+
+        kept = merge_kept_edits("soap", previous, edited, redrafted)
+
+        assert kept is not None
+        assert kept["subjective"] == (
+            "**Chief Complaint:** Low mood since the move.\n\n"
+            "**Mood/Affect:** Flat, brightened at the end."
+        )
+
+    def test_a_soap_field_the_clinician_removed_stays_removed(self) -> None:
+        def soap(complaint: str, mood: str) -> dict[str, Any]:
+            return SOAPNote.from_dict(
+                {"subjective": {"chief_complaint": complaint, "mood_affect": mood}}
+            ).to_dict()
+
+        previous = soap("Low mood.", "Flat.")
+        edited = SOAPNote.from_dict(previous).to_narrative()
+        edited["subjective"] = "**Chief Complaint:** Low mood, worse on Mondays."
+
+        kept = merge_kept_edits("soap", previous, edited, soap("Low mood.", "Tearful."))
+
+        assert kept is not None
+        assert kept["subjective"] == "**Chief Complaint:** Low mood, worse on Mondays."
+
+    def test_a_soap_section_rewritten_as_free_text_is_kept_whole(self) -> None:
+        previous = SOAPNote.from_dict({"plan": {"next_session": "One week."}}).to_dict()
+        redrafted = SOAPNote.from_dict({"plan": {"next_session": "Two weeks."}}).to_dict()
+        edited = SOAPNote.from_dict(previous).to_narrative()
+        edited["plan"] = "See again in a week; call if worse."
+
+        kept = merge_kept_edits("soap", previous, edited, redrafted)
+
+        assert kept is not None
+        assert kept["plan"] == "See again in a week; call if worse."
+
+
+class TestAsShown:
+    def test_the_draft_with_the_clinicians_edits_over_it(self) -> None:
+        shown = as_shown(VISIT.key, _visit("Drafted.", "Drafted plan."), _visit("Mine."))
+        assert shown == _visit("Mine.")
+
+    def test_a_partial_edit_leaves_the_rest_of_the_draft(self) -> None:
+        drafted = _visit("Drafted.", "Drafted plan.")
+        shown = as_shown(VISIT.key, drafted, {"body": {"plan": "My plan."}})
+        assert shown == _visit("Drafted.", "My plan.")
+
+    def test_soap_is_shown_as_the_narrative_the_clinician_edits(self) -> None:
+        drafted = SOAPNote.from_dict({"plan": {"next_session": "One week."}}).to_dict()
+        shown = as_shown("soap", drafted, {"plan": "**Next Session:** Two weeks."})
+        assert shown["plan"] == "**Next Session:** Two weeks."
+        assert set(shown) == {"subjective", "objective", "assessment", "plan"}
+
+
+# A psychiatric follow-up as the model drafted it, and the line dictated
+# afterwards (synthetic visit, captured from the drafting pipeline).
+_CAPTURED = json.loads(
+    (Path(__file__).parent / "fixtures" / "notes" / "psychiatric_follow_up_drafts.json").read_text()
+)
+
+
+class TestRedraftPrompt:
+    def _prompt(self, current_note: dict[str, Any] | None) -> str:
+        gateway = FakeStructuredLLMGateway(
+            default_response=StructuredCompletion(data=_CAPTURED["redrafted"])
+        )
+        now = datetime.now(UTC)
+        patient = Patient(id="p1", first_name="A", last_name="B", created_at=now, updated_at=now)
+        dictated = "\n\n".join(
+            ["Therapist: Plan, continue.", DICTATED_HEADING, *_CAPTURED["dictated"]]
+        )
+        RegistryNoteGenerationService(llm_gateway=gateway, model="test").generate_note(
+            VISIT.key,
+            Transcript(format="txt", content=dictated),
+            patient,
+            now,
+            inputs={"visit_code": "99213"},
+            definition=VISIT,
+            current_note=current_note,
+        )
+        prompt: str = gateway.calls[0]["user_prompt"]
+        return prompt
+
+    def test_the_note_the_clinician_has_goes_to_the_model_after_the_dictation(self) -> None:
+        prompt = self._prompt(_CAPTURED["drafted"])
+
+        dictation, current = prompt.split("Current note:", 1)
+        assert "send me a home. Blood pressure reading in two weeks" in dictation
+        assert "Never leave out a fact it states." in current
+        assert "Home blood pressure 124/78." in current
+        assert "30 day supply sent to the usual pharmacy." in current
+
+    def test_a_first_draft_has_no_current_note(self) -> None:
+        assert "Current note:" not in self._prompt(None)
+
 
 # --- Starting a redraft ---
 
@@ -381,6 +515,8 @@ class TestRun:
         ]
         assert note.content == _visit("Redrafted.", code_note="Billed as 99214.")
         assert note.status == "complete"
+        # Drafted again from the note the clinician already has.
+        assert generator.current_notes == [_visit("First draft.")]
 
     def test_a_redraft_keeps_the_dictated_tail_out_of_session_time(
         self,
@@ -414,6 +550,7 @@ class TestRun:
 
         assert note.content == _visit("Redrafted.", "New plan.")
         assert note.content_edited == _visit("Mine.", "New plan.")
+        assert generator.current_notes == [_visit("Mine.")]
 
     def test_redraft_everything_drops_the_edits(
         self,
@@ -430,6 +567,8 @@ class TestRun:
         _, _, note = service.run(session.id, USER, keep_edits=False)
 
         assert note.content_edited is None
+        # Edits the clinician discarded don't reach the model either.
+        assert generator.current_notes == [_visit("First draft.")]
 
     def test_a_failed_redraft_leaves_the_note_as_it_was(
         self,

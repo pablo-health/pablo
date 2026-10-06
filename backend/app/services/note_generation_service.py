@@ -201,6 +201,7 @@ class NoteGenerationService(ABC):
         definition: NoteTypeDefinition | None = None,
         client_present_end_seconds: float | None = None,
         chart: ChartContext | None = None,
+        current_note: Mapping[str, Any] | None = None,
     ) -> GeneratedNote:
         """Generate a note of ``note_type`` from ``transcript``.
 
@@ -214,6 +215,8 @@ class NoteGenerationService(ABC):
         and hold it across the model call. ``chart`` is the client's problem
         list and allergy record, read by the caller for the same reason;
         ``None`` drafts without them (a preview has no client).
+        ``current_note`` is the note as the clinician has it, when this is a
+        redraft: its facts are kept unless something newer changes them.
 
         Raises:
             KeyError: If ``note_type`` is not registered.
@@ -265,6 +268,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
         definition: NoteTypeDefinition | None = None,
         client_present_end_seconds: float | None = None,
         chart: ChartContext | None = None,
+        current_note: Mapping[str, Any] | None = None,
     ) -> GeneratedNote:
         definition = definition or self.registry.get(note_type)
         _refuse_restricted(definition)
@@ -285,6 +289,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
             dictated=dictated,
             asks_start=asks_start,
             chart=chart,
+            current_note=current_note,
         )
         if note_type == SOAP_KEY:
             soap_note = _coerce_content_to_soap_note(content)
@@ -319,6 +324,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
         dictated: str = "",
         asks_start: bool = False,
         chart: ChartContext | None = None,
+        current_note: Mapping[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any] | None]:
         """The drafted content, and the model's mark of where therapy began."""
         full_definition = definition
@@ -365,6 +371,8 @@ class RegistryNoteGenerationService(NoteGenerationService):
             )
         if addendum:
             user_prompt = f"{user_prompt}\n\n{_addendum_block(addendum)}"
+        if current_note:
+            user_prompt = f"{user_prompt}\n\n{_current_note_block(current_note)}"
 
         schema = _build_registry_response_schema(definition)
         if asks_start:
@@ -585,6 +593,7 @@ class MockNoteGenerationService(NoteGenerationService):
         definition: NoteTypeDefinition | None = None,
         client_present_end_seconds: float | None = None,  # noqa: ARG002  # mock ignores it
         chart: ChartContext | None = None,  # noqa: ARG002  # mock ignores the chart
+        current_note: Mapping[str, Any] | None = None,  # noqa: ARG002  # mock ignores it
     ) -> GeneratedNote:
         definition = definition or self.registry.get(note_type)
         _refuse_restricted(definition)
@@ -715,6 +724,26 @@ _ADDENDUM_INSTRUCTIONS = (
 
 def _addendum_block(addendum_lines: str) -> str:
     return f"{_ADDENDUM_INSTRUCTIONS}\n\n{addendum_lines}"
+
+
+# A redraft starts from the note the clinician already has. Regenerating it
+# from the transcript alone rewrites every field and loses whatever the model
+# happens not to repeat; a field-by-field merge can't tell a dictated line
+# that adds to a field from one that corrects it. So the model gets the note
+# and is told what may change.
+_CURRENT_NOTE_INSTRUCTIONS = (
+    "Current note: the clinician already has this note, below, and this is a "
+    "redraft of it. Keep every fact it states, in its wording, unless the "
+    "transcript, the clinician's dictation or the entered values now say "
+    "otherwise. Add anything newly dictated to the field it belongs in, next "
+    "to what that field already says; change or remove a statement only where "
+    "the dictation corrects it. Never leave out a fact it states."
+)
+
+
+def _current_note_block(current_note: Mapping[str, Any]) -> str:
+    note = json.dumps(current_note, indent=2, ensure_ascii=False)
+    return f"{_CURRENT_NOTE_INSTRUCTIONS}\n\n{note}"
 
 
 def _without_psychotherapy(definition: NoteTypeDefinition) -> NoteTypeDefinition:
