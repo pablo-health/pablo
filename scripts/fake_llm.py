@@ -128,7 +128,8 @@ def _stand_in(schema: dict[str, Any], path: str) -> Any:
     """A value of the schema's shape, the same for the same schema every run.
 
     Text says which field it fills, so a spec can find it; a list of text
-    holds one such entry; a list of objects (the sentence-to-transcript
+    holds one such entry; a list of stated diagnoses holds one diagnosis
+    with a code; any other list of objects (the sentence-to-transcript
     links a SOAP draft asks for next) is empty, which a model may also say.
     """
     kind = schema.get("type")
@@ -139,6 +140,8 @@ def _stand_in(schema: dict[str, Any], path: str) -> Any:
         }
     if kind == "array":
         items = schema.get("items", {})
+        if items.get("title") == "StatedDiagnosis":
+            return [{"label": f"Stand-in diagnosis for {path}", "code": "F00.0", "status": ""}]
         return [] if items.get("type") == "object" else [_stand_in(items, path)]
     if kind in ("integer", "number"):
         return 0

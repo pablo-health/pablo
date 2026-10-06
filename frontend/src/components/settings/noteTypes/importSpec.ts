@@ -42,7 +42,7 @@ export function importSpec(raw: string): ImportResult {
         fields: list(s.fields).filter(isObject).map((f) => ({
           key: text(f.key),
           label: text(f.label),
-          kind: f.kind === "list" ? "list" : "text",
+          kind: f.kind === "list" || f.kind === "diagnoses" ? f.kind : "text",
           ai_hint: text(f.ai_hint),
         })),
       })),

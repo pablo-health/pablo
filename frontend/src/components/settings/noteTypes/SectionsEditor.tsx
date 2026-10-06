@@ -6,6 +6,7 @@ import { Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
+import type { PracticeFieldKind } from "@/types/noteTypes"
 import { FieldMessages, Labelled, RowActions, SELECT_CLASS } from "./EditorParts"
 import {
   blankField,
@@ -115,11 +116,12 @@ function FieldsEditor({
                   <select
                     {...props}
                     value={field.kind}
-                    onChange={(e) => update(fi, { kind: e.target.value === "list" ? "list" : "text" })}
+                    onChange={(e) => update(fi, { kind: e.target.value as PracticeFieldKind })}
                     className={SELECT_CLASS}
                   >
                     <option value="text">Paragraph</option>
                     <option value="list">List</option>
+                    <option value="diagnoses">Diagnoses</option>
                   </select>
                 )}
               </Labelled>
