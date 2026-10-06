@@ -33,6 +33,7 @@ from ..models import (
 )
 from ..notes import NoteTypeDefinition, get_default_registry
 from ..notes.chart_context import ChartContext, chart_context_for
+from ..notes.client_present import client_present_end, is_call, segments_from_transcript
 from ..notes.practice_types import validate_note_inputs
 from ..repositories import PatientProblemRepository, PatientRepository, TherapySessionRepository
 from ..utcnow import utc_now
@@ -168,6 +169,18 @@ def _now() -> datetime:
     return utc_now()
 
 
+def _client_present_end(session: TherapySession) -> float | None:
+    """The client-present boundary read from the session's transcript.
+
+    A call gives the client a channel of their own, so a call with no client
+    turn is a dictation; without a call there is no such channel to expect.
+    """
+    return client_present_end(
+        segments_from_transcript(session.transcript),
+        client_channel_expected=is_call(session.video_platform),
+    )
+
+
 def _commit_intermediate(user_id: str) -> None:
     """Commit the request-scoped DB transaction mid-flight.
 
@@ -255,6 +268,7 @@ class SessionService:
             inputs=note_inputs,
             definition=definition,
             chart=chart,
+            client_present_end_seconds=session.client_present_end_seconds,
         )
         return self.note_service.create_or_update_for_session(
             session_id=session.id,
@@ -263,6 +277,7 @@ class SessionService:
             content=result.content,
             user_id=user_id,
             note_type_version=result.note_type_version,
+            psychotherapy_start=result.psychotherapy_start,
         )
 
     def create_session_for_generation(
@@ -311,6 +326,7 @@ class SessionService:
             created_at=now,
             processing_started_at=now,
         )
+        session.client_present_end_seconds = _client_present_end(session)
         session = self.session_repo.create(session)
 
         patient.session_count += 1
@@ -819,6 +835,8 @@ class SessionService:
         session_id: str,
         user_id: str,
         request: UploadTranscriptToSessionRequest,
+        *,
+        client_present_end_seconds: float | None = None,
     ) -> TherapySession:
         """Attach a transcript to an existing session and mark it ``PROCESSING``.
 
@@ -828,6 +846,10 @@ class SessionService:
         handed to the worker (``generate_session_note``), which reads the
         transcript and note type off the persisted session. The session is not
         re-counted here — it was counted when it was first created.
+
+        ``client_present_end_seconds`` is the boundary when the caller measured
+        it from the provider's own timings; otherwise it is read from the
+        transcript (see :func:`_client_present_end`).
 
         Returns the updated ``session``.
 
@@ -843,6 +865,11 @@ class SessionService:
             raise InvalidSessionStatusError(session.status, "recording_complete or failed")
 
         session.transcript = Transcript(format=request.format, content=request.content)
+        session.client_present_end_seconds = (
+            client_present_end_seconds
+            if client_present_end_seconds is not None
+            else _client_present_end(session)
+        )
         session.status = SessionStatus.PROCESSING
         session.processing_started_at = _now()
         session.updated_at = _now()

@@ -10,7 +10,8 @@
  * does not reshape notes already written with it.
  *
  * Content is ``{section_key: {field_key: value}}``. Each field gets one box:
- * `text` is a paragraph, `list` a bulleted list edited one item per line, and
+ * `text` is a paragraph, `list` a bulleted list edited one item per line,
+ * `diagnoses` a list of stated diagnoses edited one row each, and
  * `structured` is shown read-only (its shape is type-specific and has no
  * generic editor yet). Saving keeps every value the definition does not
  * describe, so an edit never drops data the layout can't show.
@@ -19,7 +20,7 @@
 "use client"
 
 import { useState } from "react"
-import { Edit, Save, X } from "lucide-react"
+import { Download, Edit, Save, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import {
@@ -31,12 +32,18 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { useNoteType } from "@/hooks/useNoteTypes"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
+import { schemaNotePdf } from "@/lib/notePdf"
+import { isEmptyValue, listItems, textValue } from "@/lib/schemaNoteValues"
+import { statedDiagnoses, type StatedDiagnosis } from "@/lib/statedDiagnoses"
+import { exportNoteToPDF, type PDFExportMetadata } from "@/lib/utils/pdfExport"
 import type { NoteFieldSchema, NoteTypeSchema } from "@/types/noteTypes"
 import type {
   NoteContent,
   SchemaNoteContent,
   SchemaSectionValues,
 } from "@/types/sessions"
+import { DiagnosesEditor, DiagnosesList, type DiagnosisAction } from "./DiagnosesField"
 
 export interface SchemaNoteViewProps {
   noteTypeKey: string
@@ -46,6 +53,10 @@ export interface SchemaNoteViewProps {
   noteEdited: SchemaNoteContent | null
   readonly?: boolean
   onSave?: (editedNote: NoteContent) => void
+  /** Offered beside each stated diagnosis while the note is not being edited. */
+  diagnosisAction?: DiagnosisAction
+  /** Header of the note's PDF. Export PDF is offered only when given. */
+  pdfMetadata?: PDFExportMetadata
   className?: string
 }
 
@@ -88,21 +99,6 @@ type Drafts = Record<string, string>
 
 const draftKey = (sectionKey: string, fieldKey: string) => `${sectionKey}.${fieldKey}`
 
-/** A stored value as display lines for a `list` field. */
-function listItems(value: unknown): string[] {
-  if (Array.isArray(value)) return value.map((v) => String(v)).filter((v) => v.trim())
-  if (typeof value === "string") return value.split("\n").filter((v) => v.trim())
-  return []
-}
-
-/** A stored value as display text for a `text` field. */
-function textValue(value: unknown): string {
-  if (typeof value === "string") return value
-  if (Array.isArray(value)) return value.map((v) => String(v)).join("\n")
-  if (value == null) return ""
-  return JSON.stringify(value, null, 2)
-}
-
 function draftsFrom(
   definition: NoteTypeSchema,
   sections: Record<string, SchemaSectionValues>,
@@ -113,7 +109,11 @@ function draftsFrom(
       if (field.kind === "structured") continue
       const value = sections[section.key]?.[field.key]
       drafts[draftKey(section.key, field.key)] =
-        field.kind === "list" ? listItems(value).join("\n") : textValue(value)
+        field.kind === "list"
+          ? listItems(value).join("\n")
+          : field.kind === "diagnoses"
+            ? JSON.stringify(statedDiagnoses(value))
+            : textValue(value)
     }
   }
   return drafts
@@ -134,19 +134,19 @@ function sectionsFrom(
       values[field.key] =
         field.kind === "list"
           ? draft.split("\n").map((line) => line.trim()).filter(Boolean)
-          : draft
+          : field.kind === "diagnoses"
+            ? keptDiagnoses(draft)
+            : draft
     }
     out[section.key] = values
   }
   return out
 }
 
-function isEmptyValue(value: unknown): boolean {
-  if (value == null) return true
-  if (typeof value === "string") return !value.trim()
-  if (Array.isArray(value)) return listItems(value).length === 0
-  if (typeof value === "object") return Object.keys(value).length === 0
-  return false
+/** A diagnoses draft as saved: parts trimmed, rows with no diagnosis dropped. */
+function keptDiagnoses(draft: string): StatedDiagnosis[] {
+  const parsed: unknown = draft ? JSON.parse(draft) : []
+  return statedDiagnoses(parsed)
 }
 
 export interface SchemaNoteBodyProps extends Omit<SchemaNoteViewProps, "noteTypeKey" | "version"> {
@@ -159,8 +159,11 @@ export function SchemaNoteBody({
   noteEdited,
   readonly = false,
   onSave,
+  diagnosisAction,
+  pdfMetadata,
   className,
 }: SchemaNoteBodyProps) {
+  const people = usePeopleTerm()
   // Same blank-note behaviour as the SOAP and Narrative views: a manually
   // created, empty note opens straight in the editor.
   const isBlank = !noteEdited && !note
@@ -210,6 +213,11 @@ export function SchemaNoteBody({
     setShowConfirmDialog(false)
   }
 
+  // What the screen shows is what the PDF prints: the edit over the draft.
+  const handlePDFExport = () => {
+    if (pdfMetadata) exportNoteToPDF(pdfMetadata, schemaNotePdf(definition, displaySections), people)
+  }
+
   if (!hasDisplay) {
     return (
       <div className={cn("card text-center py-12", className)}>
@@ -235,6 +243,12 @@ export function SchemaNoteBody({
         </div>
 
         <div className="flex gap-2">
+          {pdfMetadata && !isBlank && (
+            <Button variant="outline" size="sm" onClick={handlePDFExport}>
+              <Download className="w-4 h-4 mr-2" />
+              Export PDF
+            </Button>
+          )}
           {canEdit && !editMode && (
             <Button size="sm" onClick={enterEditMode}>
               <Edit className="w-4 h-4 mr-2" />
@@ -265,6 +279,7 @@ export function SchemaNoteBody({
                       field={field}
                       value={values[field.key]}
                       editing={editMode}
+                      diagnosisAction={diagnosisAction}
                       draft={drafts[draftKey(section.key, field.key)] ?? ""}
                       onDraftChange={(next) =>
                         setDrafts((prev) => ({
@@ -325,12 +340,14 @@ function FieldBlock({
   field,
   value,
   editing,
+  diagnosisAction,
   draft,
   onDraftChange,
 }: {
   field: NoteFieldSchema
   value: unknown
   editing: boolean
+  diagnosisAction?: DiagnosisAction
   draft: string
   onDraftChange: (next: string) => void
 }) {
@@ -348,6 +365,23 @@ function FieldBlock({
           <pre className="text-xs text-neutral-900 whitespace-pre-wrap rounded-lg bg-neutral-50 p-3">
             {JSON.stringify(value, null, 2)}
           </pre>
+        )}
+      </div>
+    )
+  }
+
+  if (field.kind === "diagnoses") {
+    return (
+      <div>
+        {label}
+        {editing ? (
+          <DiagnosesEditor
+            label={field.label}
+            items={draft ? (JSON.parse(draft) as StatedDiagnosis[]) : []}
+            onChange={(next) => onDraftChange(JSON.stringify(next))}
+          />
+        ) : (
+          <DiagnosesList items={statedDiagnoses(value)} action={diagnosisAction} />
         )}
       </div>
     )

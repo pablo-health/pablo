@@ -83,6 +83,7 @@ from .routes import (
     internal_transcription,
     launch,
     migration,
+    note_redraft,
     note_type_derive,
     note_types,
     notes,
@@ -113,12 +114,14 @@ from .routes import (
     public_booking,
     refill_requests,
     scheduling,
+    session_dictations,
     sessions,
     superbills,
     supervision,
     telehealth,
     telehealth_webhooks,
     users,
+    visit_times,
 )
 from .settings import get_settings, log_startup_posture
 from .sites import public_routes as site_public_routes
@@ -380,11 +383,14 @@ app.include_router(
     patient_booking.router, dependencies=[Depends(require_portal_module("appointments"))]
 )
 app.include_router(sessions.router)
+app.include_router(visit_times.router)
 app.include_router(internal_transcription.router)
 app.include_router(dashboard.router)
 app.include_router(notes.router)
 app.include_router(notes.patient_notes_router)
 app.include_router(notes.internal_jobs_router)
+app.include_router(note_redraft.router)
+app.include_router(session_dictations.router)
 app.include_router(patient_documents.patient_documents_router)
 app.include_router(patient_documents.documents_router)
 app.include_router(patient_documents.internal_jobs_router)

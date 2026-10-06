@@ -31,6 +31,16 @@ from .validators import (
 # an unknown value is rejected here rather than reaching storage.
 PlaceOfServiceCode = Literal["11", "02", "10"]
 
+#: Place-of-service codes for a visit held by video or phone.
+TELEHEALTH_PLACES: frozenset[str] = frozenset({"02", "10"})
+
+
+def is_telehealth(
+    *, provider: str | None, video_link: str | None, place_of_service: str | None
+) -> bool:
+    """Whether a visit is telehealth: a video service, a video link, or a telehealth place."""
+    return bool(provider or video_link or place_of_service in TELEHEALTH_PLACES)
+
 
 class VisitCodingFields(BaseModel):
     """Billing codes a clinician records on a visit.
@@ -71,6 +81,10 @@ class StartSessionFromAppointmentRequest(BaseModel):
     #: its note by hand says ``False``, and so is not refused for a client who
     #: declined AI-assisted notes.
     recording: bool = True
+    #: The clinician will ask the client about AI-assisted notes once
+    #: recording starts, so the answer is on the recording. The only way to
+    #: record a video session for a client with no answer on file.
+    asking_consent_on_recording: bool = False
 
 
 class CreateAppointmentRequest(BaseModel):

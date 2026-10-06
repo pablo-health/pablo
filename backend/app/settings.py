@@ -562,6 +562,12 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "NOTE_GENERATION_BASE_URL must not be set outside ENVIRONMENT=development"
                 )
+            if self.dictation_transcription_base_url:
+                # And here it is the clinician's recorded voice.
+                raise ValueError(
+                    "DICTATION_TRANSCRIPTION_BASE_URL must not be set outside "
+                    "ENVIRONMENT=development"
+                )
         return self
 
     # Firebase Blocking Function OIDC Verification
@@ -1581,6 +1587,46 @@ class Settings(BaseSettings):
             "fallback."
         ),
     )
+    ai_models: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "The primary model per AI feature, as a JSON object from feature "
+            "key (the keys listed on ai_fallbacks) to one model id, provider "
+            "prefix allowed. A feature named here uses that model in place "
+            "of its tier's default (ai_model, or ai_model_flash for the "
+            "interactive features); one not named keeps the default. With "
+            "ai_fallbacks, a feature can run on any provider and fall back to "
+            "any other, the tier default included. Empty by default."
+        ),
+    )
+    ai_fallbacks: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Fallback models per AI feature, as a JSON object from feature "
+            "key to comma-separated model ids (provider prefix allowed), e.g. "
+            '``{"note_generation": "<provider>:<model>"}``. A feature moves '
+            "on to its fallbacks, in order, only when its own model fails "
+            "transiently, gives an unusable answer or runs out of time. A "
+            "feature not named here has no fallback: there is deliberately "
+            "no default list, so a feature is never answered by a model "
+            "nobody chose for it. Which models suit which feature is "
+            "configurable per deployment; nothing is set by default.\n\n"
+            "Keys read by this codebase (others may be read by extensions):\n"
+            "- ``note_generation``: drafting a note of any type, and the "
+            "source-attribution calls that follow it.\n"
+            "- ``note_import``: reading an imported note into a note type.\n"
+            "- ``note_type_derive``: proposing a note type from samples.\n"
+            "- ``availability_parse``: reading hours a clinician describes. "
+            "Falls back to ai_model_flash_fallbacks when not named here.\n"
+            "- ``chat``: the clinician's assistant chat.\n"
+            "- ``patient_chat``: chat with a client. Client-facing: name a "
+            "fallback here only once that model has passed the same crisis "
+            "evaluation as the primary.\n\n"
+            "Long calls (the note keys) run one model at a time, never side "
+            "by side; chat changes model only before the first word of an "
+            "answer is streamed, never part-way through one."
+        ),
+    )
     ai_hedge_after_seconds: float | None = Field(
         default=None,
         gt=0,
@@ -1594,7 +1640,8 @@ class Settings(BaseSettings):
     )
 
     # Amazon Bedrock, for ``bedrock:``-prefixed models (most usefully as an
-    # entry in ai_model_flash_fallbacks, a second provider on a second cloud).
+    # entry in ai_model_flash_fallbacks or ai_fallbacks, a second provider
+    # on a second cloud).
     aws_bedrock_region: str = Field(
         default="us-east-1",
         description=(
@@ -1627,6 +1674,23 @@ class Settings(BaseSettings):
     def flash_fallback_models(self) -> tuple[str, ...]:
         """``ai_model_flash_fallbacks`` split into model ids, in order."""
         return tuple(m.strip() for m in self.ai_model_flash_fallbacks.split(",") if m.strip())
+
+    def model_for(self, feature: str, default: str) -> str:
+        """``feature``'s primary model: its ``ai_models`` entry, else ``default``."""
+        return (self.ai_models.get(feature) or "").strip() or default
+
+    def fallbacks_for(self, feature: str) -> tuple[str, ...]:
+        """The fallback models ``ai_fallbacks`` names for ``feature``, in order.
+
+        Empty for a feature it does not name. ``availability_parse`` alone
+        also reads ai_model_flash_fallbacks, the setting it had before
+        features were keyed; no other feature reads that list.
+        """
+        if feature in self.ai_fallbacks:
+            return tuple(m.strip() for m in self.ai_fallbacks[feature].split(",") if m.strip())
+        if feature == "availability_parse":
+            return self.flash_fallback_models
+        return ()
 
     note_max_output_tokens: int = Field(
         default=16384,
@@ -1809,6 +1873,16 @@ class Settings(BaseSettings):
             "stand-in, which returns a fixed draft shaped by the note type. "
             "The draft is validated as a model's would be. Unset (the "
             "ordinary case) means the model."
+        ),
+    )
+
+    dictation_transcription_base_url: str | None = Field(
+        default=None,
+        description=(
+            "Origin that transcribes a clinician's dictated clip instead of "
+            "the transcription provider — the end-to-end harness's stand-in, "
+            "which answers every clip with the same words. Unset (the "
+            "ordinary case) means the configured provider."
         ),
     )
 

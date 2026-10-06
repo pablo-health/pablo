@@ -218,8 +218,8 @@
           {
             "key": "diagnoses",
             "label": "Diagnoses",
-            "kind": "list",
-            "ai_hint": "The chart's active problems with their codes, one per item, exactly as listed. Add a diagnosis the clinician named in the visit that is not on the list, followed by \"(stated this visit)\", without inventing a code. If the list is empty and none was named, \"None recorded.\""
+            "kind": "diagnoses",
+            "ai_hint": "The chart's active problems, each with its code exactly as listed. Add a diagnosis the clinician named in the visit that is not on the list, with the status \"stated this visit\" and a code only when the clinician gave one. If the list is empty and none was named, leave this empty."
           },
           {
             "key": "formulation",

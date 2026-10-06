@@ -65,6 +65,8 @@ from ..repositories import (
     PatientProblemRepository,
     PatientRepository,
     UserRepository,
+    get_session_dictation_repository,
+    get_session_repository,
     get_user_repository,
 )
 from ..repositories import (
@@ -90,9 +92,14 @@ from ..services import (
     RegistryNoteGenerationService,
     get_audit_service,
 )
+from ..services.ai_features import AIFeature
+from ..services.audio_retention import AudioOnSigning
+from ..services.file_storage import file_storage_from_settings
+from ..services.hedged_structured_llm_gateway import generation_gateway
 from ..services.http_structured_llm_gateway import HttpStructuredLLMGateway
 from ..services.note_generation_service import TransientNoteGenerationError
 from ..services.note_signing import current_signature
+from ..services.session_dictation_service import awaiting_addendum
 from ..services.session_generation_worker import resolve_tenant_schema_for_user
 from ..settings import get_settings
 from ..utcnow import utc_now
@@ -135,11 +142,14 @@ def get_note_generation_service() -> NoteGenerationService:
 
     Also drafts note-type previews. Under the end-to-end stack the drafts
     come from its stand-in (the setting refuses to load outside
-    development), so a spec sees the same draft every run.
+    development), so a spec sees the same draft every run. The stand-in
+    answers every model, fallbacks included, so the fallback order runs
+    there as it does against real providers.
     """
     base_url = get_settings().note_generation_base_url
     if base_url:
-        return RegistryNoteGenerationService(llm_gateway=HttpStructuredLLMGateway(base_url))
+        stand_in = generation_gateway(AIFeature.NOTE_GENERATION, HttpStructuredLLMGateway(base_url))
+        return RegistryNoteGenerationService(llm_gateway=stand_in)
     return RegistryNoteGenerationService()
 
 
@@ -159,6 +169,21 @@ def get_scheduling_service(
     the same appointment record the standalone visit-edit surface writes to.
     """
     return SchedulingService(repo)
+
+
+def get_audio_on_signing(ctx: TenantContext = Depends(get_tenant_context)) -> AudioOnSigning:
+    """What signing does with the session's audio, by the practice's retention setting."""
+    from ..db.platform_models import PracticeRow
+
+    settings = get_settings()
+    practice = get_db_session().get(PracticeRow, ctx.practice_id) if ctx.practice_id else None
+    return AudioOnSigning(
+        retention_days=practice.audio_retention_days if practice else None,
+        session_repo=get_session_repository(),
+        dictation_repo=get_session_dictation_repository(),
+        storage=file_storage_from_settings(settings),
+        bucket=settings.transcription_audio_bucket,
+    )
 
 
 def get_registry() -> NoteTypeRegistry:
@@ -260,6 +285,7 @@ def finalize_note(
     user: User = Depends(require_baa_acceptance),
     note_service: NoteService = Depends(get_note_service),
     audit: AuditService = Depends(get_audit_service),
+    audio_on_signing: AudioOnSigning = Depends(get_audio_on_signing),
 ) -> NoteResponse:
     """Finalize a note — record quality rating + finalized_at."""
     try:
@@ -292,6 +318,7 @@ def finalize_note(
         session_id=note.session_id,
         changes={"quality_rating": request.quality_rating},
     )
+    audio_on_signing.after_signing(note, user, http_request, audit)
     return NoteResponse.from_note(note)
 
 
@@ -338,6 +365,7 @@ def sign_note(
     user: User = Depends(require_baa_acceptance),
     note_service: NoteService = Depends(get_note_service),
     audit: AuditService = Depends(get_audit_service),
+    audio_on_signing: AudioOnSigning = Depends(get_audio_on_signing),
 ) -> NoteResponse:
     """Sign and lock a note with the name and credentials entered."""
     note, signature = note_service.sign_note(
@@ -366,6 +394,7 @@ def sign_note(
             **_restricted_change(note),
         },
     )
+    audio_on_signing.after_signing(note, user, http_request, audit)
     return NoteResponse.from_note(note)
 
 
@@ -408,8 +437,16 @@ def add_note_addendum(
     user: User = Depends(require_baa_acceptance),
     note_service: NoteService = Depends(get_note_service),
     audit: AuditService = Depends(get_audit_service),
+    audio_on_signing: AudioOnSigning = Depends(get_audio_on_signing),
 ) -> NoteAddendumResponse:
-    """Add a signed addendum to a locked note."""
+    """Add a signed addendum to a locked note.
+
+    ``dictation_id`` names the dictation the addendum was drafted from; the
+    dictation then stops offering its draft.
+    """
+    dictation_repo = get_session_dictation_repository() if request.dictation_id else None
+    if dictation_repo is not None and request.dictation_id is not None:
+        awaiting_addendum(dictation_repo, request.dictation_id, note_id)
     note, addendum = note_service.add_addendum(
         note_id,
         text=request.text,
@@ -417,6 +454,8 @@ def add_note_addendum(
         signer_credentials=request.signer_credentials,
         user_id=user.id,
     )
+    if dictation_repo is not None and request.dictation_id is not None:
+        dictation_repo.link_addendum(request.dictation_id, addendum.id)
     audit.log_note_action(
         action=AuditAction.NOTE_ADDENDUM_ADDED,
         user=user,
@@ -424,8 +463,14 @@ def add_note_addendum(
         note_id=note.id,
         patient_id=note.patient_id,
         session_id=note.session_id,
-        changes={"addendum_id": addendum.id, **_restricted_change(note)},
+        changes={
+            "addendum_id": addendum.id,
+            **({"dictation_id": request.dictation_id} if request.dictation_id else {}),
+            **_restricted_change(note),
+        },
     )
+    # A clip dictated after signing became this addendum; it goes now too.
+    audio_on_signing.after_signing(note, user, http_request, audit)
     return NoteAddendumResponse.from_addendum(addendum)
 
 

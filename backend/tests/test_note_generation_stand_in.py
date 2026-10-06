@@ -10,6 +10,7 @@ as the backend would validate a model's.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -19,13 +20,17 @@ from app.notes import NoteTypeRegistry, register_builtin_note_types
 from app.notes.chart_context import ChartContext, ChartProblem
 from app.notes.practice_types import PracticeNoteTypeSpec, to_definition
 from app.routes.notes import get_note_generation_service
-from app.services import http_structured_llm_gateway
+from app.services import dictation_transcription, http_structured_llm_gateway
+from app.services.ai_features import AIFeature
+from app.services.dictation_transcription import HttpDictationTranscriber
+from app.services.hedged_structured_llm_gateway import generation_gateway
 from app.services.http_structured_llm_gateway import HttpStructuredLLMGateway
 from app.services.note_generation_service import RegistryNoteGenerationService
-from app.settings import Settings
+from app.services.note_redraft import DICTATED_HEADING
+from app.settings import Settings, get_settings
 from fastapi.testclient import TestClient
 
-from scripts.fake_llm import REFUSES_DRAFT
+from scripts.fake_llm import DICTATION_TEXT, FALLBACK_MODEL, PRIMARY_DOWN, REFUSES_DRAFT
 from scripts.fake_llm import app as fake_llm_app
 
 from .test_practice_note_types import COACH_SPEC
@@ -81,48 +86,102 @@ def test_a_practice_type_gets_a_draft_in_its_own_shape(stand_in: list[str]) -> N
     assert stand_in == [f"{BASE_URL}/v1/structured"]
 
 
-def test_a_draft_echoes_the_chart_it_was_written_against(stand_in: list[str]) -> None:
-    """The stand-in reads the chart block the backend really renders, not a copy of it."""
+def test_a_field_named_after_an_input_is_drafted_as_its_value(stand_in: list[str]) -> None:
+    """So a spec can see which value reached the prompt."""
     spec = PracticeNoteTypeSpec.model_validate(
         {
-            "label": "Follow-up",
+            "label": "Visit",
+            "sections": [
+                {
+                    "key": "billing",
+                    "label": "Billing",
+                    "fields": [
+                        {"key": "visit_code", "label": "Visit code"},
+                        {"key": "summary", "label": "Summary"},
+                    ],
+                }
+            ],
+            "inputs": [
+                {"key": "visit_code", "label": "Visit code"},
+                {"key": "program", "label": "Program"},
+            ],
+        }
+    )
+    definition = to_definition("custom.visit", 1, spec)
+
+    generated = _service().generate_note(
+        definition.key,
+        TRANSCRIPT,
+        PATIENT,
+        NOW,
+        inputs={"visit_code": "99214"},
+        definition=definition,
+    )
+
+    assert generated.content == {
+        "billing": {"visit_code": "99214", "summary": "Stand-in draft for billing.summary."}
+    }
+    assert len(stand_in) == 1
+
+
+def test_a_diagnoses_field_gets_one_coded_diagnosis(stand_in: list[str]) -> None:
+    spec = PracticeNoteTypeSpec.model_validate(
+        {
+            "label": "Evaluation",
             "sections": [
                 {
                     "key": "assessment",
                     "label": "Assessment",
-                    "fields": [
-                        {"key": "diagnoses", "label": "Diagnoses"},
-                        {"key": "allergies", "label": "Allergies"},
-                    ],
+                    "fields": [{"key": "diagnoses", "label": "Diagnoses", "kind": "diagnoses"}],
                 }
             ],
         }
     )
-    definition = to_definition("custom.follow_up", 1, spec)
-    chart = ChartContext(
-        problems=(
-            ChartProblem("Generalized anxiety disorder", "F41.1", "active"),
-            ChartProblem("Insomnia", None, "active"),
-        ),
-        allergy_status="nkda",
-    )
+    definition = to_definition("custom.eval", 1, spec)
 
     generated = _service().generate_note(
-        definition.key, TRANSCRIPT, PATIENT, NOW, definition=definition, chart=chart
+        definition.key, TRANSCRIPT, PATIENT, NOW, definition=definition
     )
 
     assert generated.content == {
         "assessment": {
-            "diagnoses": (
-                "Stand-in draft for assessment.diagnoses. Problem list: "
-                "F41.1 Generalized anxiety disorder; Insomnia (no code recorded)."
-            ),
-            "allergies": (
-                "Stand-in draft for assessment.allergies. "
-                "Allergies: No known drug allergies (NKDA)."
-            ),
+            "diagnoses": [
+                {
+                    "label": "Stand-in diagnosis for assessment.diagnoses",
+                    "code": "F00.0",
+                    "status": None,
+                }
+            ]
         }
     }
+
+
+def test_what_was_dictated_lands_in_the_field_it_names(stand_in: list[str]) -> None:
+    """A redraft with a dictation visibly gains it."""
+    transcript = Transcript(
+        format="txt",
+        content=f"{TRANSCRIPT.content}\n\n{DICTATED_HEADING}\n\n{DICTATION_TEXT}",
+    )
+
+    generated = _service().generate_note("soap", transcript, PATIENT, NOW)
+
+    assert generated.soap_note is not None
+    assert generated.soap_note.plan.next_session.text == "Two weeks from today, same time."
+    assert generated.soap_note.subjective.chief_complaint.text.startswith("Stand-in draft")
+
+
+def test_every_dictated_clip_is_heard_as_the_same_words(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(fake_llm_app)
+
+    def post(url: str, *, content: bytes, headers: dict[str, str], timeout: float) -> Any:
+        return client.post(
+            url.removeprefix("http://fake-llm:8083"), content=content, headers=headers
+        )
+
+    monkeypatch.setattr(dictation_transcription.httpx, "post", post)
+    transcriber = HttpDictationTranscriber("http://fake-llm:8083/transcription")
+
+    assert transcriber.transcribe(b"\x1a\x45\xdf\xa3", "audio/webm") == DICTATION_TEXT
 
 
 def test_a_soap_draft_survives_its_second_call(stand_in: list[str]) -> None:
@@ -164,3 +223,71 @@ def test_the_route_dependency_uses_the_stand_in_only_when_configured(
     service = get_note_generation_service()
     assert isinstance(service, RegistryNoteGenerationService)
     assert not isinstance(service._llm_gateway, HttpStructuredLLMGateway)
+
+
+def test_with_the_first_model_down_the_fallback_drafts(
+    stand_in: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """As the stack runs it: the stand-in answers only the named fallback."""
+    monkeypatch.setenv("AI_FALLBACKS", json.dumps({"note_generation": FALLBACK_MODEL}))
+    get_settings.cache_clear()
+    try:
+        service = RegistryNoteGenerationService(
+            registry=_service().registry,
+            llm_gateway=generation_gateway(
+                AIFeature.NOTE_GENERATION, HttpStructuredLLMGateway(BASE_URL)
+            ),
+        )
+        transcript = Transcript(format="txt", content=f"[00:01] Client: {PRIMARY_DOWN}")
+        generated = service.generate_note("soap", transcript, PATIENT, NOW)
+    finally:
+        get_settings.cache_clear()
+
+    assert generated.soap_note is not None
+    assert generated.soap_note.subjective.chief_complaint.text.startswith("Stand-in draft")
+    # The draft and its sentence links: each the first model's 503, then the fallback.
+    assert len(stand_in) == 4
+
+
+def test_a_draft_echoes_the_chart_it_was_written_against(stand_in: list[str]) -> None:
+    """The stand-in reads the chart block the backend really renders, not a copy of it."""
+    spec = PracticeNoteTypeSpec.model_validate(
+        {
+            "label": "Follow-up",
+            "sections": [
+                {
+                    "key": "assessment",
+                    "label": "Assessment",
+                    "fields": [
+                        {"key": "diagnosis_summary", "label": "Diagnosis summary"},
+                        {"key": "allergies", "label": "Allergies"},
+                    ],
+                }
+            ],
+        }
+    )
+    definition = to_definition("custom.follow_up", 1, spec)
+    chart = ChartContext(
+        problems=(
+            ChartProblem("Generalized anxiety disorder", "F41.1", "active"),
+            ChartProblem("Insomnia", None, "active"),
+        ),
+        allergy_status="nkda",
+    )
+
+    generated = _service().generate_note(
+        definition.key, TRANSCRIPT, PATIENT, NOW, definition=definition, chart=chart
+    )
+
+    assert generated.content == {
+        "assessment": {
+            "diagnosis_summary": (
+                "Stand-in draft for assessment.diagnosis_summary. Problem list: "
+                "F41.1 Generalized anxiety disorder; Insomnia (no code recorded)."
+            ),
+            "allergies": (
+                "Stand-in draft for assessment.allergies. "
+                "Allergies: No known drug allergies (NKDA)."
+            ),
+        }
+    }

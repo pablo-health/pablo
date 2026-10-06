@@ -63,6 +63,20 @@ export interface UpdateNoteEditsRequest {
   content_edited: Record<string, unknown>
 }
 
+/**
+ * What a redraft does with the clinician's edits: keep every field they
+ * changed and redraft the rest, or replace the note with the new draft.
+ */
+export type RedraftEdits = "keep" | "replace"
+
+/** Mirrors `RedraftNoteRequest` (`POST /api/sessions/{id}/note/redraft`). */
+export interface RedraftNoteRequest {
+  /** Replaces the note's inputs before drafting. */
+  note_inputs?: Record<string, string>
+  /** Required once the note has edits; the API answers 409 NOTE_HAS_EDITS without it. */
+  edits?: RedraftEdits
+}
+
 export interface FinalizeNoteRequest {
   /**
    * Optional — required for AI-generated session notes (clinician rates
@@ -98,6 +112,8 @@ export interface UnlockNoteRequest {
 
 export interface CreateNoteAddendumRequest extends NoteSignerFields {
   text: string
+  /** The dictation the addendum was drafted from, when it was. */
+  dictation_id?: string
 }
 
 /** One signed version of a note. Mirrors `NoteSignatureResponse`. */

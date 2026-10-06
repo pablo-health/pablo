@@ -33,7 +33,9 @@ from ..notes.references import (
     reference_from_definition,
     registered_note_type_references,
 )
+from ..services.ai_features import AIFeature
 from ..services.audit_service import AuditService, get_audit_service
+from ..services.hedged_structured_llm_gateway import generation_gateway
 from ..services.http_structured_llm_gateway import HttpStructuredLLMGateway
 from ..services.note_import_service import (
     MAX_IMPORT_DOC_BYTES,
@@ -70,6 +72,14 @@ class CoverageSchema(BaseModel):
     )
     checked: bool = Field(
         description="False when the sample could not be checked; unplaced is then empty."
+    )
+    excluded: int = Field(
+        default=0,
+        description=(
+            "Lines set aside as not note content: blocks the sample marks as not part "
+            "of the note (such as how codes were chosen), signature lines, and facts "
+            "that only identify the client or clinician. Never counted as unplaced."
+        ),
     )
 
 
@@ -121,8 +131,11 @@ def get_note_type_derive_service() -> NoteTypeDeriveService:
     """
     base_url = get_settings().note_generation_base_url
     if base_url:
-        gateway = HttpStructuredLLMGateway(base_url)
-        return NoteTypeDeriveService(NoteImportService(llm_gateway=gateway), llm_gateway=gateway)
+        stand_in = HttpStructuredLLMGateway(base_url)
+        return NoteTypeDeriveService(
+            NoteImportService(llm_gateway=generation_gateway(AIFeature.NOTE_IMPORT, stand_in)),
+            llm_gateway=generation_gateway(AIFeature.NOTE_TYPE_DERIVE, stand_in),
+        )
     return NoteTypeDeriveService(NoteImportService())
 
 
@@ -244,7 +257,11 @@ async def derive_note_type(
         spec=derived.spec,
         coverage=[
             CoverageSchema(
-                sample=c.sample, passages=c.passages, unplaced=c.unplaced, checked=c.checked
+                sample=c.sample,
+                passages=c.passages,
+                unplaced=c.unplaced,
+                checked=c.checked,
+                excluded=c.excluded,
             )
             for c in derived.coverage
         ],

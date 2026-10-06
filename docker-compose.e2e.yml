@@ -137,6 +137,15 @@ services:
       # shaped by the note type, so a spec sees the same draft every run.
       # With no task queue here, an upload drafts in the API process.
       - NOTE_GENERATION_BASE_URL=http://fake-llm:8083/notes
+      # Drafting falls back to a second model when the first fails. The
+      # stand-in answers this name too, and answers it alone for a transcript
+      # that tells it the first model is down.
+      - 'AI_FALLBACKS={"note_generation": "stand-in-fallback"}'
+      # What a clinician dictates after a session is transcribed by the same
+      # stand-in, which hears the same words in every clip. With no task
+      # queue here, the dictation is transcribed and applied in the API
+      # process. Its audio goes to fake-gcs like any other upload.
+      - DICTATION_TRANSCRIPTION_BASE_URL=http://fake-llm:8083/transcription
       - CLEARINGHOUSE_WEBHOOK_SECRET=e2e-clearinghouse-webhook-shared-secret
       # The practice's tax id is stored encrypted under this key, and filing a
       # claim needs a billing profile, so without it saving one is a 500. The
@@ -444,6 +453,8 @@ services:
       dockerfile: Dockerfile.production
       args:
         NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST: localhost:${E2E_AUTH_EMULATOR_PORT:-9099}
+        # Off by default; audio-retention.spec.ts drives the setting.
+        NEXT_PUBLIC_FF_AUDIO_RETENTION: "true"
     # One API_URL serves both the browser and the server-rendered pages, so
     # the frontend runs inside the backend's network namespace: from either
     # side, localhost:<backend port> is the backend. Service names on the

@@ -195,6 +195,7 @@ class _StubGenerator(NoteGenerationService):
         session_date: datetime,
         inputs: Mapping[str, str] | None = None,
         definition: NoteTypeDefinition | None = None,
+        client_present_end_seconds: float | None = None,
         chart: ChartContext | None = None,
     ) -> GeneratedNote:
         self.last_call = {

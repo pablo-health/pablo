@@ -63,3 +63,38 @@ test("a clinician records a client's AI-notes answer and changes it", async ({
   await expect(history.nth(0)).toContainText(`Declined ${declinedOn.shown}`)
   await expect(history.nth(1)).toContainText(`Agreed ${agreedOn.shown}`)
 })
+
+test("an answer keeps how it was given: telehealth, where the client was, and who answered", async ({
+  signedInPage: page,
+  api,
+}) => {
+  const patient = await givePatient(api)
+  const today = daysAgo(0)
+
+  await page.goto(`/dashboard/patients/${patient.id}`)
+  const line = page.getByTestId("ai-consent-line")
+  await line.click()
+  const dialog = page.getByRole("dialog", { name: "AI notes" })
+  await dialog.getByLabel("Client agreed").check()
+  await dialog.getByLabel("Answered by").selectOption("parent")
+  await dialog.getByLabel("Telehealth").check()
+  await dialog.getByLabel("Where the client said they were").fill("At home")
+  await dialog.getByRole("button", { name: "Save" }).click()
+  await expect(dialog).toBeHidden()
+
+  // Stored, not held in the page: read back after a reload and from the API.
+  await page.reload()
+  await line.click()
+  const history = dialog.getByTestId("ai-consent-history").getByRole("listitem")
+  await expect(history.first()).toContainText(
+    `Agreed ${today.shown} · Telehealth · At home · Parent`,
+  )
+  const record = await api.get<{
+    current: { modality: string; client_stated_location: string; consented_by: string }
+  }>(`/api/patients/${patient.id}/ai-consent`)
+  expect(record.current).toMatchObject({
+    modality: "telehealth",
+    client_stated_location: "At home",
+    consented_by: "parent",
+  })
+})

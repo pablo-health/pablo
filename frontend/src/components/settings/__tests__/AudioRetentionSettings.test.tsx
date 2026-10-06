@@ -1,200 +1,143 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen, waitFor, fireEvent } from "@testing-library/react"
+import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { AudioRetentionSettings } from "../AudioRetentionSettings"
 import * as practicesApi from "@/lib/api/practices"
 import { ApiError } from "@/lib/api/client"
 
-function moveSliderTo(slider: HTMLInputElement, value: number) {
-  fireEvent.change(slider, { target: { value: String(value) } })
-}
-
 vi.mock("@/lib/api/practices", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api/practices")>()
   return {
     ...actual,
+    getAudioRetention: vi.fn(),
     updateAudioRetention: vi.fn(),
   }
 })
 vi.mock("@/lib/config", () => ({
   useConfig: () => ({ dataMode: "api" }),
 }))
+vi.mock("@/lib/auth-context", () => ({
+  useAuth: () => ({ loading: false }),
+}))
 
-function renderWithClient(ui: React.ReactElement) {
+function given(days: number) {
+  vi.mocked(practicesApi.getAudioRetention).mockResolvedValue({
+    practice_id: "prac_1",
+    audio_retention_days: days,
+  })
+}
+
+function renderIt() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
   return render(
-    <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
+    <QueryClientProvider client={queryClient}>
+      <AudioRetentionSettings />
+    </QueryClientProvider>,
   )
 }
+
+const onSigning = () => screen.findByRole("radio", { name: "Delete when the note is signed" })
+const afterDays = () => screen.getByRole("radio", { name: "Delete after" })
+const daysBox = () => screen.getByRole("spinbutton", { name: "Days to keep session audio" })
 
 describe("AudioRetentionSettings", () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
-  it("renders the slider with the default value when none provided", () => {
-    renderWithClient(<AudioRetentionSettings practiceId="prac_1" />)
+  it("shows a practice that keeps audio for days", async () => {
+    given(365)
+    renderIt()
 
-    const slider = screen.getByLabelText("Retention window") as HTMLInputElement
-    expect(slider.type).toBe("range")
-    expect(slider.min).toBe("30")
-    expect(slider.max).toBe("2555")
-    expect(slider.value).toBe("365")
-    expect(screen.getByTestId("audio-retention-value")).toHaveTextContent(
-      "365 days",
-    )
-  })
-
-  it("uses the initial value when supplied", () => {
-    renderWithClient(
-      <AudioRetentionSettings practiceId="prac_1" initialDays={1000} />,
-    )
-
-    expect(screen.getByTestId("audio-retention-value")).toHaveTextContent(
-      "1000 days",
-    )
-  })
-
-  it("renders BAA-aligned helper copy with the live slider value", async () => {
-    renderWithClient(
-      <AudioRetentionSettings practiceId="prac_1" initialDays={365} />,
-    )
-
-    expect(
-      screen.getByText(
-        "Recordings older than 365 days are deleted nightly; each deletion writes an audit log row.",
-      ),
-    ).toBeInTheDocument()
-
-    const slider = screen.getByLabelText("Retention window") as HTMLInputElement
-    moveSliderTo(slider, 500)
-
-    await waitFor(() => {
-      expect(screen.getByTestId("audio-retention-value")).toHaveTextContent(
-        "500 days",
-      )
-      expect(
-        screen.getByText(
-          "Recordings older than 500 days are deleted nightly; each deletion writes an audit log row.",
-        ),
-      ).toBeInTheDocument()
-    })
-  })
-
-  it("save button is disabled when slider has not changed", () => {
-    renderWithClient(
-      <AudioRetentionSettings practiceId="prac_1" initialDays={365} />,
-    )
-
+    expect(await onSigning()).not.toBeChecked()
+    expect(afterDays()).toBeChecked()
+    expect(daysBox()).toHaveValue(365)
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled()
   })
 
-  it("calls the API and shows confirmation on successful save", async () => {
+  it("shows a practice that deletes when the note is signed", async () => {
+    given(0)
+    renderIt()
+
+    expect(await onSigning()).toBeChecked()
+    expect(afterDays()).not.toBeChecked()
+  })
+
+  it("saves 0 when the clinician chooses to delete on signing", async () => {
     const user = userEvent.setup()
+    given(365)
     vi.mocked(practicesApi.updateAudioRetention).mockResolvedValue({
       practice_id: "prac_1",
-      audio_retention_days: 370,
+      audio_retention_days: 0,
     })
+    renderIt()
 
-    renderWithClient(
-      <AudioRetentionSettings practiceId="prac_1" initialDays={365} />,
-    )
-
-    const slider = screen.getByLabelText("Retention window") as HTMLInputElement
-    moveSliderTo(slider, 370)
-    await waitFor(() =>
-      expect(screen.getByTestId("audio-retention-value")).toHaveTextContent(
-        "370 days",
-      ),
-    )
-
-    const saveButton = screen.getByRole("button", { name: "Save" })
-    expect(saveButton).toBeEnabled()
-    await user.click(saveButton)
-
-    await waitFor(() => {
-      expect(practicesApi.updateAudioRetention).toHaveBeenCalledWith(
-        "prac_1",
-        370,
-        undefined,
-      )
-    })
-
-    await waitFor(() => {
-      expect(screen.getByRole("status")).toHaveTextContent("Saved")
-    })
-  })
-
-  it("shows a range error message on a 400 response", async () => {
-    const user = userEvent.setup()
-    vi.mocked(practicesApi.updateAudioRetention).mockRejectedValue(
-      new ApiError("BAD_REQUEST", "out of range", undefined, 400),
-    )
-
-    renderWithClient(
-      <AudioRetentionSettings practiceId="prac_1" initialDays={365} />,
-    )
-
-    const slider = screen.getByLabelText("Retention window") as HTMLInputElement
-    moveSliderTo(slider, 366)
+    await user.click(await onSigning())
     await user.click(screen.getByRole("button", { name: "Save" }))
 
     await waitFor(() => {
-      expect(screen.getByRole("alert")).toHaveTextContent(
-        /must be between 30 and 2555/i,
-      )
+      expect(practicesApi.updateAudioRetention).toHaveBeenCalledWith(0, undefined)
     })
+    expect(await screen.findByRole("status")).toHaveTextContent("Saved")
   })
 
-  it("shows a generic error message on unexpected failures", async () => {
+  it("saves a number of days", async () => {
     const user = userEvent.setup()
-    vi.mocked(practicesApi.updateAudioRetention).mockRejectedValue(
-      new Error("network down"),
-    )
+    given(0)
+    vi.mocked(practicesApi.updateAudioRetention).mockResolvedValue({
+      practice_id: "prac_1",
+      audio_retention_days: 30,
+    })
+    renderIt()
 
-    renderWithClient(
-      <AudioRetentionSettings practiceId="prac_1" initialDays={365} />,
-    )
-
-    const slider = screen.getByLabelText("Retention window") as HTMLInputElement
-    moveSliderTo(slider, 366)
+    await onSigning()
+    await user.clear(daysBox())
+    await user.type(daysBox(), "30")
+    expect(afterDays()).toBeChecked()
     await user.click(screen.getByRole("button", { name: "Save" }))
 
     await waitFor(() => {
-      expect(screen.getByRole("alert")).toHaveTextContent(/network down/i)
+      expect(practicesApi.updateAudioRetention).toHaveBeenCalledWith(30, undefined)
     })
   })
 
-  it("shows a saving state while the mutation is in flight", async () => {
+  it.each(["0", "2556", "1.5", ""])("refuses %j days", async (typed) => {
     const user = userEvent.setup()
-    let resolveFn: (v: { practice_id: string; audio_retention_days: number }) => void = () => {}
-    vi.mocked(practicesApi.updateAudioRetention).mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          resolveFn = resolve
-        }),
-    )
+    given(365)
+    renderIt()
 
-    renderWithClient(
-      <AudioRetentionSettings practiceId="prac_1" initialDays={365} />,
-    )
+    await onSigning()
+    await user.clear(daysBox())
+    if (typed) await user.type(daysBox(), typed)
 
-    const slider = screen.getByLabelText("Retention window") as HTMLInputElement
-    moveSliderTo(slider, 366)
+    expect(screen.getByRole("alert")).toHaveTextContent("Enter a number of days from 1 to 2555.")
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled()
+  })
+
+  it("shows the error when saving fails", async () => {
+    const user = userEvent.setup()
+    given(365)
+    vi.mocked(practicesApi.updateAudioRetention).mockRejectedValue(new Error("network down"))
+    renderIt()
+
+    await user.click(await onSigning())
     await user.click(screen.getByRole("button", { name: "Save" }))
 
-    await waitFor(() => {
-      expect(
-        screen.getByRole("button", { name: /saving/i }),
-      ).toBeDisabled()
-    })
-    expect(slider).toBeDisabled()
+    expect(await screen.findByRole("alert")).toHaveTextContent(/network down/i)
+  })
 
-    resolveFn({ practice_id: "prac_1", audio_retention_days: 366 })
+  it("tells someone who isn't the owner who can change it", async () => {
+    vi.mocked(practicesApi.getAudioRetention).mockRejectedValue(
+      new ApiError("NOT_PRACTICE_OWNER", "Only the practice owner", undefined, 403),
+    )
+    renderIt()
+
+    expect(await screen.findByText("Only the practice owner can change this.")).toBeInTheDocument()
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument()
   })
 })

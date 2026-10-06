@@ -52,6 +52,15 @@ class AuditAction(StrEnum):
     NOTE_SIGNED = "note_signed"
     NOTE_ADDENDUM_ADDED = "note_addendum_added"
     NOTE_UNLOCKED = "note_unlocked"
+    # A session's note sent to be drafted again (new inputs, or more from the
+    # clinician). The new draft is audited where it is written, as
+    # SESSION_NOTE_GENERATED with ``redraft`` in ``changes``.
+    NOTE_REDRAFT_REQUESTED = "note_redraft_requested"
+    # A clip the clinician dictated about a session after its recording
+    # stopped (``changes`` names it by id and length, never what it said), and
+    # a read of what was dictated.
+    SESSION_DICTATION_ADDED = "session_dictation_added"
+    SESSION_DICTATIONS_VIEWED = "session_dictations_viewed"
     # Recorded session audio deleted by the per-practice audio retention
     # cron (THERAPY-ab7). The action value is defined here so audit-log
     # readers and dashboards render it consistently regardless of which

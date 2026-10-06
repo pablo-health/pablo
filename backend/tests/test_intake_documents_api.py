@@ -36,9 +36,15 @@ from app.auth.patient_context import (
     PatientResolverRegistry,
     get_patient_resolver_registry,
 )
+from app.intake.items import ItemDraft
+from app.intake.starters import (
+    Starter,
+    clear_registered_intake_starters,
+    register_intake_starter,
+)
 from app.main import app as real_app
 from app.models.audit import AuditAction, ResourceType
-from app.repositories import InMemoryIntakeDocumentRepository
+from app.repositories import InMemoryIntakeDocumentRepository, InMemoryIntakePacketRepository
 from app.repositories.audit import InMemoryAuditRepository
 from app.routes import intake_documents
 from app.routes.intake_documents import (
@@ -47,8 +53,10 @@ from app.routes.intake_documents import (
     get_patient_document_values,
     get_patient_intake_document_service,
 )
+from app.routes.intake_packets import get_intake_packet_service
 from app.services.audit_service import AuditService, get_audit_service
 from app.services.intake_document_service import IntakeDocumentService
+from app.services.intake_packet_service import IntakePacketService
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -113,7 +121,7 @@ def service(documents: InMemoryIntakeDocumentRepository) -> IntakeDocumentServic
 def practice_values() -> dict[str, str]:
     """The practice's settings as a document reads them. Mutable, so a test
     can change a setting between two reads."""
-    return {"audio_retention_days": "90"}
+    return {"audio_retention": "90 days after your session", "audio_retention_days": "90"}
 
 
 @pytest.fixture
@@ -416,6 +424,7 @@ class TestPracticeValues:
 # ---------------------------------------------------------------------------
 
 STARTERS = "/api/intake/starters"
+_FORMS = "/api/intake/templates"
 
 
 class TestStarters:
@@ -432,8 +441,8 @@ class TestStarters:
         document = response.json()["document"]
         assert document["title"] == "Consent for the use of AI tools"
         assert document["published_at"] is not None
-        assert "{{audio_retention_days}}" in document["body_markdown"]
-        assert "keeps session audio for 90 days" in document["rendered_html"]
+        assert "{{audio_retention}}" in document["body_markdown"]
+        assert "Session audio is deleted 90 days after your session." in document["rendered_html"]
         listed = [d["id"] for d in practice.get(BASE).json()]
         assert document["id"] in listed
 
@@ -474,3 +483,98 @@ class TestStarters:
 
     def test_an_unknown_starter_is_404(self, practice: TestClient) -> None:
         assert practice.post(f"{STARTERS}/nothing_like_it").status_code == 404
+
+
+_REGISTERED = Starter(
+    key="cancellation_policy",
+    title="Cancellation policy",
+    body_markdown="# Cancellation policy\n\nPlease tell us a day ahead if you cannot come.",
+    document_item_key="cancellation_policy",
+    questions=(
+        ItemDraft(
+            key="cancellation_reminder",
+            item_type="yes_no",
+            label="Would you like a reminder the day before?",
+        ),
+    ),
+)
+
+_QUESTIONS_ONLY = Starter(
+    key="previous_care",
+    title="Previous care",
+    questions=(
+        ItemDraft(
+            key="previous_care",
+            item_type="free_text",
+            label="Have you seen a counselor or therapist before?",
+        ),
+    ),
+)
+
+
+class TestRegisteredStarters:
+    """Starters a deployment adds, offered and adopted like the built-ins."""
+
+    @pytest.fixture(autouse=True)
+    def _registered(self) -> Iterator[None]:
+        clear_registered_intake_starters()
+        register_intake_starter(_REGISTERED)
+        register_intake_starter(_QUESTIONS_ONLY)
+        yield
+        clear_registered_intake_starters()
+
+    @pytest.fixture
+    def forms(
+        self, practice: TestClient, documents: InMemoryIntakeDocumentRepository
+    ) -> TestClient:
+        """The same client, with a form store whose consent items resolve
+        against the practice's documents."""
+
+        def published(document_key: str) -> str | None:
+            row = documents.published_for_key(document_key)
+            return None if row is None else str(row["id"])
+
+        packets = InMemoryIntakePacketRepository()
+        real_app.dependency_overrides[get_intake_packet_service] = lambda: IntakePacketService(
+            packets, published
+        )
+        return practice
+
+    def test_they_are_listed_after_the_built_ins(self, practice: TestClient) -> None:
+        listed = [s["key"] for s in practice.get(STARTERS).json()]
+        assert listed == ["ai_tools_consent", "cancellation_policy", "previous_care"]
+
+    def test_adopting_one_publishes_the_copy_and_hands_back_its_items(
+        self, practice: TestClient
+    ) -> None:
+        body = practice.post(f"{STARTERS}/cancellation_policy").json()
+        assert body["document"]["title"] == "Cancellation policy"
+        assert body["document"]["published_at"] is not None
+        assert [(i["key"], i["item_type"]) for i in body["items"]] == [
+            ("cancellation_policy", "consent_document"),
+            ("cancellation_reminder", "yes_no"),
+        ]
+
+    def test_a_set_of_questions_hands_back_no_document(
+        self, practice: TestClient, audit_repo: InMemoryAuditRepository, mock_user_id: str
+    ) -> None:
+        body = practice.post(f"{STARTERS}/previous_care").json()
+        assert body["document"] is None
+        assert [i["key"] for i in body["items"]] == ["previous_care"]
+        assert practice.get(BASE).json() == []
+        assert _entries(audit_repo, mock_user_id) == []
+
+    @pytest.mark.parametrize("key", ["ai_tools_consent", "cancellation_policy", "previous_care"])
+    def test_its_items_publish_on_a_form(self, forms: TestClient, key: str) -> None:
+        """Built-in or registered, what adopting hands back goes live."""
+        items = forms.post(f"{STARTERS}/{key}").json()["items"]
+        template = forms.post(_FORMS, json={"name": "Intake"}).json()
+        template_id, version_id = template["id"], template["versions"][0]["id"]
+        version = f"{_FORMS}/{template_id}/versions/{version_id}"
+        saved = forms.put(f"{version}/items", json={"items": items})
+        assert saved.status_code == 200, saved.text
+
+        published = forms.post(f"{version}/publish")
+
+        assert published.status_code == 200, published.text
+        assert [i["key"] for i in published.json()["items"]] == [i["key"] for i in items]

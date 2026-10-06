@@ -11,7 +11,9 @@
  * Features:
  * - Disabled when not in "pending_review" status
  * - Quality rating is optional; signing is never gated on a rating
- * - Can include edited SOAP note
+ *
+ * Edits don't ride along: the session page saves them to the note as they
+ * are made, so signing locks what the note already holds.
  */
 
 "use client"
@@ -23,7 +25,7 @@ import { SignNoteDialog } from "@/components/notes/signing/SigningDialogs"
 import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
 import { useFinalizeSession } from "@/hooks/useSessions"
 import type { NoteSignerFields } from "@/types/notes"
-import type { SessionStatus, SOAPNoteModel } from "@/types/sessions"
+import type { SessionStatus } from "@/types/sessions"
 
 export interface FinalizeButtonProps {
   sessionId: string
@@ -31,7 +33,6 @@ export interface FinalizeButtonProps {
   qualityRating: number | null
   qualityRatingReason?: string
   qualityRatingSections?: string[]
-  soapNoteEdited?: SOAPNoteModel | null
   onSuccess?: () => void
 }
 
@@ -41,7 +42,6 @@ export function FinalizeButton({
   qualityRating,
   qualityRatingReason,
   qualityRatingSections,
-  soapNoteEdited,
   onSuccess,
 }: FinalizeButtonProps) {
   const finalizeMutation = useFinalizeSession()
@@ -62,7 +62,6 @@ export function FinalizeButton({
           qualityRatingSections.length > 0 && {
             quality_rating_sections: qualityRatingSections,
           }),
-        ...(soapNoteEdited && { soap_note_edited: soapNoteEdited }),
         signature,
       },
     })

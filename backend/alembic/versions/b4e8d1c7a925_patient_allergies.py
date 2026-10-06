@@ -13,7 +13,7 @@ the table without anything to correct and needs no row-level-security
 bracket. Idempotent, like every revision in this chain.
 
 Revision ID: b4e8d1c7a925
-Revises: d5b8e2a71c94
+Revises: d2a7c4e9f185
 Create Date: 2026-10-06
 """
 
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 revision: str = "b4e8d1c7a925"
-down_revision: str | Sequence[str] | None = "d5b8e2a71c94"
+down_revision: str | Sequence[str] | None = "d2a7c4e9f185"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

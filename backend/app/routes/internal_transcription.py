@@ -57,6 +57,7 @@ except ImportError:  # pragma: no cover -- no subscription overlay installed
     record_recorded_session = None  # type: ignore[assignment]
 from ..models import SessionStatus, UploadTranscriptToSessionRequest
 from ..models.audit import AuditAction
+from ..notes.client_present import client_present_end, is_call, segments_from_utterances
 from ..repositories import (
     get_notes_repository,
     get_patient_repository,
@@ -253,6 +254,7 @@ def process_transcription_result(
     user_id: str,
     transcript_content: str,
     transcript_format: str = "google_meet",
+    client_present_end_seconds: float | None = None,
 ) -> dict[str, str]:
     """Persist the transcript and hand SOAP generation to the shared worker.
 
@@ -351,7 +353,10 @@ def process_transcription_result(
             # multi-second LLM call; an idle SSL drop then 500'd the
             # PENDING_REVIEW write and orphaned the session in PROCESSING).
             session = session_service.prepare_transcript_session_for_generation(
-                session_id, user_id, transcript_request
+                session_id,
+                user_id,
+                transcript_request,
+                client_present_end_seconds=client_present_end_seconds,
             )
             _record_transcript_upload_audit(session, user_id)
 
@@ -897,6 +902,12 @@ def transcription_poll(
 
     _warn_if_one_sided(jobs, request.session_id, video_platform=video_platform, note_type=note_type)
     transcript = AssemblyAiTranscriptionService.merge_utterances(jobs)
+    # Measured here, from the provider's own utterance ends: the merged text
+    # keeps only each turn's start.
+    boundary = client_present_end(
+        segments_from_utterances(u for job in jobs for u in job.get("utterances", [])),
+        client_channel_expected=is_call(video_platform),
+    )
     _delete_staged_speech_objects(audio_gcs_path, request.session_id)
 
     try:
@@ -911,6 +922,7 @@ def transcription_poll(
             # none, and returns "" — so every SOAP comes back empty ("No
             # transcript provided"). Match the label to the bytes.
             transcript_format="google_meet",
+            client_present_end_seconds=boundary,
         )
     except SessionNotFoundError:
         raise HTTPException(

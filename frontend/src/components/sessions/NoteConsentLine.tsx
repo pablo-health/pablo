@@ -7,7 +7,7 @@ import { AiConsentDialog, formatConsentDate } from "@/components/patients/AiCons
 import { useAiConsent, useAsksClientsAboutAiNotes } from "@/hooks/useAiConsent"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import type { PeopleWords } from "@/lib/peopleTerm"
-import type { AiConsentEntry } from "@/types/aiConsent"
+import type { AiConsentEntry, AiConsentModality } from "@/types/aiConsent"
 
 export const NO_CONSENT_ON_FILE = "No consent on file"
 
@@ -29,7 +29,14 @@ export function noteConsentLineText(current: AiConsentEntry | null, people: Peop
  * until both the setting and the answer have loaded, so the line never shows
  * a state the data has not confirmed.
  */
-export function NoteConsentLine({ patientId }: { patientId: string }) {
+export function NoteConsentLine({
+  patientId,
+  modality,
+}: {
+  patientId: string
+  /** Where the session was, so recording the answer starts from it. */
+  modality?: AiConsentModality
+}) {
   const asks = useAsksClientsAboutAiNotes()
   const { data } = useAiConsent(asks ? patientId : undefined)
   const people = usePeopleTerm()
@@ -59,6 +66,7 @@ export function NoteConsentLine({ patientId }: { patientId: string }) {
         history={data.history}
         open={open}
         onOpenChange={setOpen}
+        modality={modality}
       />
     </>
   )

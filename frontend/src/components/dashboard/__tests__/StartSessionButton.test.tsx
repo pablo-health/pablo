@@ -268,9 +268,32 @@ describe("StartSessionButton and the client's answer about AI-assisted notes", (
 
     await waitFor(() => expect(clickThroughAnchor).toHaveBeenCalledWith(LAUNCH_URL))
     expect(recordAiConsent).toHaveBeenCalledTimes(1)
-    // No date: the server records the clinician's own today.
-    expect(recordAiConsent).toHaveBeenCalledWith("patient-1", { decision: "consented" }, undefined)
+    // No date: the server records the clinician's own today. In person, by the client.
+    expect(recordAiConsent).toHaveBeenCalledWith(
+      "patient-1",
+      { decision: "consented", modality: "in_person", consented_by: "client" },
+      undefined,
+    )
     expect(armNoHandoffFallback).toHaveBeenCalledTimes(1)
+  })
+
+  it("records who answered when a parent agreed", async () => {
+    practiceAsks(true)
+    answerOnFile(null)
+    recordAiConsent.mockResolvedValue({ current: null, history: [] })
+
+    const user = await clickStart()
+    const dialog = await screen.findByRole("dialog", { name: "No consent on file" })
+    await user.selectOptions(within(dialog).getByLabelText("Answered by"), "parent")
+    await user.click(within(dialog).getByRole("button", { name: "Parent agreed today" }))
+
+    await waitFor(() =>
+      expect(recordAiConsent).toHaveBeenCalledWith(
+        "patient-1",
+        { decision: "consented", modality: "in_person", consented_by: "parent" },
+        undefined,
+      ),
+    )
   })
 
   const PROMPTED_URL = "https://app.pablo.health/launch/intent-prompted"
@@ -388,5 +411,93 @@ describe("StartSessionButton and the client's answer about AI-assisted notes", (
 
     await waitFor(() => expect(armNoHandoffFallback).toHaveBeenCalledTimes(1))
     expect(screen.queryByRole("dialog")).toBeNull()
+  })
+})
+
+describe("StartSessionButton for a telehealth session", () => {
+  const LAUNCH_URL = "https://app.pablo.health/launch/intent-abc"
+  const ASK_URL = "https://app.pablo.health/launch/intent-ask"
+
+  beforeEach(() => {
+    createLaunchIntent.mockImplementation(
+      (_appointmentId: string, options?: { askConsentOnRecording?: boolean }) =>
+        Promise.resolve(
+          options?.askConsentOnRecording
+            ? { intent_id: "intent-ask", launch_url: ASK_URL, expires_in: 180 }
+            : { intent_id: "intent-abc", launch_url: LAUNCH_URL, expires_in: 180 },
+        ),
+    )
+  })
+
+  async function clickStart() {
+    const user = userEvent.setup()
+    renderWithProviders(
+      <StartSessionButton appointmentId="appt-1" patientId="patient-1" telehealth />,
+    )
+    await user.click(screen.getByRole("link", { name: /start session/i }))
+    return user
+  }
+
+  it("with nothing on file offers only 'Ask now' and 'Don't record'", async () => {
+    practiceAsks(true)
+    answerOnFile(null)
+
+    await clickStart()
+
+    const dialog = await screen.findByRole("dialog", { name: "No consent on file" })
+    expect(dialog).toHaveTextContent(
+      "For a telehealth session, ask once recording starts, so the client's answer is on the recording.",
+    )
+    expect(within(dialog).getByRole("button", { name: "Ask now" })).toBeInTheDocument()
+    expect(within(dialog).getByRole("button", { name: "Don't record" })).toBeInTheDocument()
+    expect(within(dialog).queryByRole("button", { name: "Record anyway" })).toBeNull()
+    expect(within(dialog).queryByRole("button", { name: /agreed today/ })).toBeNull()
+    expect(clickThroughAnchor).not.toHaveBeenCalled()
+  })
+
+  it("'Ask now' hands off an intent that says to ask on the recording", async () => {
+    practiceAsks(true)
+    answerOnFile(null)
+
+    const user = await clickStart()
+    const dialog = await screen.findByRole("dialog", { name: "No consent on file" })
+    await user.click(within(dialog).getByRole("button", { name: "Ask now" }))
+
+    await waitFor(() => expect(clickThroughAnchor).toHaveBeenCalledWith(ASK_URL))
+    expect(createLaunchIntent).toHaveBeenCalledWith("appt-1", { askConsentOnRecording: true })
+    expect(createLaunchIntent).not.toHaveBeenCalledWith("appt-1", { aiConsentPrompted: true })
+    expect(recordAiConsent).not.toHaveBeenCalled()
+  })
+
+  it("'Don't record' closes without handing off or writing", async () => {
+    practiceAsks(true)
+    answerOnFile(null)
+
+    const user = await clickStart()
+    const dialog = await screen.findByRole("dialog", { name: "No consent on file" })
+    await user.click(within(dialog).getByRole("button", { name: "Don't record" }))
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
+    expect(clickThroughAnchor).not.toHaveBeenCalled()
+    expect(recordAiConsent).not.toHaveBeenCalled()
+  })
+
+  it("hands off with no prompt for a client who agreed", async () => {
+    practiceAsks(true)
+    answerOnFile("consented")
+
+    await clickStart()
+
+    await waitFor(() => expect(armNoHandoffFallback).toHaveBeenCalledTimes(1))
+    expect(screen.queryByRole("dialog")).toBeNull()
+  })
+
+  it("still says a declined client declined", async () => {
+    practiceAsks(true)
+    answerOnFile("declined")
+
+    await clickStart()
+
+    expect(await screen.findByRole("dialog", { name: "AI-assisted notes declined" })).toBeVisible()
   })
 })

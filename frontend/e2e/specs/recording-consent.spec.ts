@@ -11,6 +11,9 @@
  *   dated answer on the chart and then hands off to the desktop app. "Record
  *   anyway" hands off an intent that tells the desktop app it was asked, so
  *   the app does not ask again.
+ * - Not asked yet, over telehealth: only "Ask now" and "Don't record". "Ask
+ *   now" hands off an intent that tells the desktop app to ask on the
+ *   recording, and the server refuses a start that does not say so.
  *
  * The desktop app is the one thing the stack cannot run. Two of its edges
  * are stood in for in the browser, and nothing else: the list of enrolled
@@ -56,13 +59,34 @@ function isoDay(at: Date): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: BROWSER_TIME_ZONE }).format(at)
 }
 
-/** A session today, twenty minutes long, starting `minutesFromNow` from now. */
+/**
+ * `hour`:00 today on the browser's calendar, as an instant.
+ *
+ * Not "now plus a few minutes": Today lists the sessions on the clinician's
+ * calendar day, and for the hour around midnight in that zone an offset from
+ * now lands on yesterday or tomorrow and the row is not there to click.
+ */
+function todayAt(hour: number): Date {
+  const guess = new Date(`${isoDay(new Date())}T${String(hour).padStart(2, "0")}:00:00Z`)
+  const zonedHour = Number(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: BROWSER_TIME_ZONE,
+      hour: "numeric",
+      hourCycle: "h23",
+    }).format(guess),
+  )
+  const behindBy = (hour - zonedHour + 24) % 24
+  return new Date(guess.getTime() + behindBy * 60 * 60 * 1000)
+}
+
+/** A session today, twenty minutes long, starting at `hour`:00 on the browser's calendar. */
 async function giveSessionToday(
   api: ApiClient,
   patient: Patient,
-  minutesFromNow: number,
+  hour: number,
+  extra: Record<string, unknown> = {},
 ): Promise<Appointment> {
-  const start = new Date(Date.now() + minutesFromNow * 60 * 1000)
+  const start = todayAt(hour)
   const end = new Date(start.getTime() + 20 * 60 * 1000)
   return api.post<Appointment>("/api/appointments", {
     patient_id: patient.id,
@@ -71,6 +95,7 @@ async function giveSessionToday(
     end_at: end.toISOString(),
     duration_minutes: 20,
     session_type: "individual",
+    ...extra,
   })
 }
 
@@ -143,7 +168,7 @@ test("a client who declined is not recorded, and the chart says when", async () 
     decision: "declined",
     effective_on: isoDay(declinedOn),
   })
-  const appointment = await giveSessionToday(api, patient, -40)
+  const appointment = await giveSessionToday(api, patient, 9)
   try {
     await startSessionFor(page, patient)
 
@@ -177,7 +202,7 @@ test("a client who declined is not recorded, and the chart says when", async () 
 test("with nothing on file, 'Client agreed today' records it and starts", async () => {
   const { page, api } = practice
   const patient = await givePatient(api)
-  const appointment = await giveSessionToday(api, patient, 20)
+  const appointment = await giveSessionToday(api, patient, 15)
   try {
     await startSessionFor(page, patient)
 
@@ -189,6 +214,11 @@ test("with nothing on file, 'Client agreed today' records it and starts", async 
     await expect(page.getByTestId("ai-consent-line")).toHaveText(
       `AI notes: agreed ${shown(new Date())}`,
     )
+    // The record says how it was given: in person, by the client.
+    const record = await api.get<{ current: { modality: string; consented_by: string } }>(
+      `/api/patients/${patient.id}/ai-consent`,
+    )
+    expect(record.current).toMatchObject({ modality: "in_person", consented_by: "client" })
   } finally {
     await api.delete(`/api/appointments/${appointment.id}`)
   }
@@ -197,12 +227,14 @@ test("with nothing on file, 'Client agreed today' records it and starts", async 
 interface Redeemed {
   appointment_id: string
   ai_consent_prompted: boolean
+  ask_consent_on_recording: boolean
+  telehealth: boolean
 }
 
 test("with nothing on file, 'Record anyway' tells the desktop app it was asked", async () => {
   const { page, api } = practice
   const patient = await givePatient(api)
-  const appointment = await giveSessionToday(api, patient, 20)
+  const appointment = await giveSessionToday(api, patient, 15)
 
   // The real server issues the intents; only the link is pointed at the stand-in page.
   const issued: { intentId: string; prompted: boolean }[] = []
@@ -248,5 +280,73 @@ test("with nothing on file, 'Record anyway' tells the desktop app it was asked",
   } finally {
     await page.unroute("**/api/launch/intent", issueForReal)
     await api.delete(`/api/appointments/${appointment.id}`)
+  }
+})
+
+test("a telehealth session with nothing on file is asked on the recording, never recorded anyway", async () => {
+  const { page, api } = practice
+  const patient = await givePatient(api)
+  const appointment = await giveSessionToday(api, patient, 17, {
+    video_link: "https://video.example/room",
+  })
+
+  const issued: { intentId: string; askNow: boolean }[] = []
+  const issueForReal = async (route: Route) => {
+    const response = await route.fetch()
+    const body = (await response.json()) as { intent_id: string }
+    issued.push({
+      intentId: body.intent_id,
+      askNow: route.request().postDataJSON().ask_consent_on_recording === true,
+    })
+    await route.fulfill({
+      response,
+      json: { ...body, launch_url: new URL(HANDOFF_PATH, page.url()).toString() },
+    })
+  }
+  await page.route("**/api/launch/intent", issueForReal)
+  try {
+    await startSessionFor(page, patient)
+
+    const dialog = page.getByRole("dialog", { name: "No consent on file" })
+    await expect(dialog).toContainText("For a telehealth session, ask once recording starts")
+    await expect(dialog.getByRole("button", { name: "Record anyway" })).toHaveCount(0)
+    await expect(dialog.getByRole("button", { name: /agreed today/ })).toHaveCount(0)
+    await expect(dialog.getByRole("button", { name: "Don't record" })).toBeVisible()
+    await dialog.getByRole("button", { name: "Ask now" }).click()
+    await expect(page).toHaveURL(new RegExp(HANDOFF_PATH))
+
+    // Redeemed as the desktop app does: it learns to ask on the recording.
+    const askNow = issued.find((intent) => intent.askNow)
+    expect(askNow).toBeDefined()
+    const handedOff = await api.post<Redeemed>("/api/launch/redeem", {
+      intent_id: askNow?.intentId,
+    })
+    expect(handedOff).toMatchObject({
+      appointment_id: appointment.id,
+      ask_consent_on_recording: true,
+      ai_consent_prompted: false,
+      telehealth: true,
+    })
+
+    // The server itself refuses to record before asking...
+    const refused = await api
+      .post(`/api/appointments/${appointment.id}/start-session`, {})
+      .then(
+        () => null,
+        (error: unknown) => error,
+      )
+    expect(refused).toBeInstanceOf(ApiError)
+    expect((refused as ApiError).status).toBe(403)
+    expect(JSON.parse((refused as ApiError).body).error.code).toBe("CLIENT_AI_CONSENT_NEEDED")
+
+    // ...and starts once the clinician is asking on the recording.
+    const started = await api.post<{ id: string }>(
+      `/api/appointments/${appointment.id}/start-session`,
+      { asking_consent_on_recording: true },
+    )
+    expect(started.id).toBeTruthy()
+  } finally {
+    await page.unroute("**/api/launch/intent", issueForReal)
+    await api.delete(`/api/appointments/${appointment.id}`).catch(() => undefined)
   }
 })

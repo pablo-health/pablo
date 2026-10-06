@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { exportSOAPToPDF, type PDFExportMetadata } from "../pdfExport"
+import { exportNoteToPDF, exportSOAPToPDF, type PDFExportMetadata, type PDFNote } from "../pdfExport"
 import { parseNarrativeBlocks } from "../narrativeParser"
 import type { SOAPNoteModel } from "@/types/sessions"
 import { createMockSOAPNote } from "@/test/factories"
@@ -363,5 +363,103 @@ describe("exportSOAPToPDF", () => {
       expect(printed()).toContain("Finalized Jan 15, 2024")
       expect(printed().some((t) => t.startsWith("Electronically signed"))).toBe(false)
     })
+  })
+})
+
+describe("exportNoteToPDF", () => {
+  let clickSpy: ReturnType<typeof vi.spyOn>
+  const printed = () => mockText.mock.calls.map((call) => call[0] as string)
+
+  const followUp: PDFNote = {
+    title: "Psychiatric follow-up",
+    sections: [
+      {
+        title: "Assessment",
+        blocks: [
+          { label: "Diagnoses", content: "- Major depressive disorder (F33.1), improving" },
+          { label: "Formulation", content: "Mood steadier." },
+        ],
+      },
+      { title: "Plan", blocks: [{ label: "Medication plan", content: "- Continue sertraline" }] },
+    ],
+  }
+
+  beforeEach(() => {
+    mockOutput = vi.fn(() => new Blob(["pdf"], { type: "application/pdf" }))
+    mockAddPage = vi.fn()
+    mockText = vi.fn()
+    mockSetFontSize = vi.fn()
+    mockSetFont = vi.fn()
+    mockSplitTextToSize = vi.fn((text: string) => text.split("\n"))
+    clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {})
+    vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    clickSpy.mockRestore()
+  })
+
+  it("prints the title, the visit's times, each section's fields in order, then the signature", () => {
+    exportNoteToPDF(
+      {
+        ...mockSession,
+        visit: [
+          "Started 11:00 AM · Ended 11:55 AM · 55 min",
+          "Psychotherapy time: 11:12 AM to 11:50 AM, 38 minutes · 38–52 minutes",
+        ],
+        signature: {
+          lines: ["Electronically signed by Sam Ortiz, PMHNP-BC"],
+          amendments: [],
+          addenda: [],
+        },
+      },
+      followUp,
+      peopleWords("clients"),
+    )
+    const text = printed()
+    const order = [
+      "Psychiatric follow-up",
+      "Client: Doe, Jane",
+      "Started 11:00 AM · Ended 11:55 AM · 55 min",
+      "Psychotherapy time: 11:12 AM to 11:50 AM, 38 minutes · 38–52 minutes",
+      "Assessment",
+      "Diagnoses:",
+      "• Major depressive disorder (F33.1), improving",
+      "Formulation:",
+      "Mood steadier.",
+      "Plan",
+      "Medication plan:",
+      "• Continue sertraline",
+      "Electronically signed by Sam Ortiz, PMHNP-BC",
+    ]
+    const positions = order.map((line) => text.indexOf(line))
+    expect(positions).not.toContain(-1)
+    expect([...positions].sort((a, b) => a - b)).toEqual(positions)
+  })
+
+  it("names the file after the note type", () => {
+    const createdLinks: HTMLAnchorElement[] = []
+    const createSpy = vi.spyOn(document, "createElement").mockImplementation((tag: string) => {
+      const el = document.constructor.prototype.createElement.call(document, tag)
+      if (tag === "a") createdLinks.push(el as HTMLAnchorElement)
+      return el
+    })
+    exportNoteToPDF(mockSession, followUp, peopleWords("clients"))
+    exportSOAPToPDF(mockSession, mockSOAPNote, peopleWords("clients"))
+    expect(createdLinks.map((l) => l.download)).toEqual([
+      "psychiatric-follow-up-doe-jane-2024-01-15.pdf",
+      "soap-note-doe-jane-2024-01-15.pdf",
+    ])
+    createSpy.mockRestore()
+  })
+
+  it("prints no heading for a note that is one body", () => {
+    exportNoteToPDF(
+      mockSession,
+      { title: "Narrative Note", sections: [{ title: "", blocks: [{ label: null, content: "Body" }] }] },
+      peopleWords("clients"),
+    )
+    expect(printed()).toContain("Body")
+    expect(printed()).not.toContain("")
   })
 })

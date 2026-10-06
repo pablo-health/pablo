@@ -14,6 +14,7 @@
 
 import { use, useState, useRef, useCallback, useEffect } from "react"
 import {
+  useRedraftSessionNote,
   useSession,
   useUpdateSessionMetadata,
   useUpdateSessionRating,
@@ -25,6 +26,10 @@ import {
 } from "@/components/sessions/TranscriptViewer"
 import { NoteViewer } from "@/components/sessions/NoteViewer"
 import { NoteConsentLine } from "@/components/sessions/NoteConsentLine"
+import { VisitTimesPanel } from "@/components/sessions/VisitTimesPanel"
+import { NoteInputsPanel } from "@/components/sessions/NoteInputsPanel"
+import { DictateMore } from "@/components/sessions/DictateMore"
+import { RedraftStatus } from "@/components/sessions/RedraftStatus"
 import { QualityRating } from "@/components/sessions/QualityRating"
 import {
   QualityRatingWithFeedback,
@@ -36,11 +41,15 @@ import { ChargeCardSection } from "@/components/payments/ChargeCardSection"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AlertCircle } from "lucide-react"
 import { useUpdateNoteEdits } from "@/hooks/useNotes"
+import { useAddSessionDictation, useSessionDictations } from "@/hooks/useDictations"
+import type { DictationClip } from "@/hooks/useDictationRecorder"
 import { useNoteSigning } from "@/hooks/useNoteSigning"
+import { useVisitPdfLines } from "@/hooks/useVisitTimes"
 import { useNoteTypeLabel } from "@/hooks/useNoteTypes"
 import { useUserTimeZone } from "@/hooks/usePreferences"
 import { pdfSignatureBlock } from "@/lib/utils/signatureBlock"
-import type { NoteContent, SOAPNoteModel } from "@/types/sessions"
+import type { RedraftEdits, RedraftNoteRequest } from "@/types/notes"
+import type { NoteContent } from "@/types/sessions"
 import { noteContentToJson } from "@/types/sessions"
 
 const HIGHLIGHT_DURATION_MS = 4000
@@ -52,11 +61,12 @@ interface PageProps {
 export default function SessionDetailPage({ params }: PageProps) {
   const { id } = use(params)
   const { data: session, isLoading, error } = useSession(id, undefined, {
-    // Poll while the note is being generated so the page updates itself
-    // without a manual refresh.
+    // Poll while the note is being generated (or drafted again) so the page
+    // updates itself without a manual refresh.
     refetchInterval: (query) => {
       const s = query.state.data?.status
-      return s === "queued" || s === "processing" ? 3000 : false
+      const drafting = s === "queued" || s === "processing"
+      return drafting || query.state.data?.note?.status === "processing" ? 3000 : false
     },
   })
   const updateRatingMutation = useUpdateSessionRating()
@@ -69,14 +79,19 @@ export default function SessionDetailPage({ params }: PageProps) {
     sections: [],
   })
 
-  // Local state for edited SOAP note (before finalization)
-  const [localSoapNoteEdited, setLocalSoapNoteEdited] = useState<SOAPNoteModel | null>(null)
-  // Last saved edit of a non-SOAP note, shown until the session refetches.
+  // Last saved edit, shown until the session refetches.
   const [localNoteEdited, setLocalNoteEdited] = useState<NoteContent | null>(null)
+  // The save in flight, if any: a redraft or a dictation waits for it, so a
+  // redraft that keeps edits sees the latest one.
+  const savingEditsRef = useRef<Promise<unknown> | null>(null)
   const updateNoteEdits = useUpdateNoteEdits()
+  const redraftNote = useRedraftSessionNote()
+  const addDictation = useAddSessionDictation()
+  const { data: dictations } = useSessionDictations(session?.id)
   const noteTypeLabel = useNoteTypeLabel()
   const { data: signing } = useNoteSigning(session?.note?.id)
   const timeZone = useUserTimeZone()
+  const visitPdf = useVisitPdfLines(session?.id)
 
   // Source linking state
   const [highlightedSegments, setHighlightedSegments] = useState<number[]>([])
@@ -125,31 +140,41 @@ export default function SessionDetailPage({ params }: PageProps) {
     setLocalRatingFeedback(feedback)
   }
 
+  // Every edit, of every note type, is saved to the note as soon as it is
+  // made — the same PATCH the standalone note page uses — so it survives a
+  // reload and is what a redraft and signing read. The local copy shows the
+  // edit until the session refetches.
   const handleNoteSave = (edited: NoteContent) => {
-    // A session under review holds SOAP edits for finalize to persist. A
-    // finalized session's note that was unlocked to correct an error has no
-    // finalize left, so every type saves straight to the note.
-    if (edited.note_type === "soap" && session?.status === "pending_review") {
-      // SOAP edits are held here and persisted by finalize (soap_note_edited).
-      const soap: SOAPNoteModel = {
-        subjective: edited.subjective,
-        objective: edited.objective,
-        assessment: edited.assessment,
-        plan: edited.plan,
-      }
-      setLocalSoapNoteEdited(soap)
-      return
-    }
-    // Finalize has no slot for any other type's content, so those edits are
-    // saved to the note straight away — the same PATCH the standalone note
-    // page uses. The local copy shows the edit until the session refetches.
     const noteId = session?.note?.id
     if (!noteId) return
     setLocalNoteEdited(edited)
-    updateNoteEdits.mutate(
-      { noteId, data: { content_edited: noteContentToJson(edited) } },
-      { onError: () => setLocalNoteEdited(null) },
-    )
+    savingEditsRef.current = updateNoteEdits
+      .mutateAsync({ noteId, data: { content_edited: noteContentToJson(edited) } })
+      .catch(() => setLocalNoteEdited(null))
+  }
+
+  // A redraft rewrites the note from the saved copy, so it waits for a save
+  // in flight, and the local copy must not mask what it returns.
+  const settleEdits = async () => {
+    await savingEditsRef.current
+    setLocalNoteEdited(null)
+  }
+
+  const handleRedraft = async (data: RedraftNoteRequest) => {
+    if (!session?.note) return
+    await settleEdits()
+    redraftNote.mutate({ sessionId: id, data })
+  }
+
+  const handleDictation = async (clip: DictationClip, edits?: RedraftEdits) => {
+    const note = session?.note
+    if (note && !note.finalized_at) await settleEdits()
+    return addDictation.mutateAsync({
+      sessionId: id,
+      audio: clip.blob,
+      durationSeconds: clip.seconds,
+      edits,
+    })
   }
 
   // Loading state
@@ -201,11 +226,7 @@ export default function SessionDetailPage({ params }: PageProps) {
   }
 
   const note = session.note
-  // localSoapNoteEdited is only ever set from a SOAP save, so tagging it
-  // "soap" here restates its type rather than imposing one.
-  const pendingEdited: NoteContent | null = localSoapNoteEdited
-    ? { note_type: "soap", ...localSoapNoteEdited }
-    : localNoteEdited
+  const pendingEdited = localNoteEdited
   // A session with no note yet doesn't say which type it will be.
   const noteHeading = note ? `${noteTypeLabel(note.note_type)} note` : "Note"
   const canReview =
@@ -220,6 +241,10 @@ export default function SessionDetailPage({ params }: PageProps) {
     !!note &&
     !note.finalized_at &&
     (session.status === "pending_review" || session.status === "finalized")
+  const redrafting = note?.status === "processing"
+  const pendingDraft = dictations?.data.findLast((d) => d.note_id === note?.id && d.draft_addendum)
+  const noteHasEdits =
+    !!pendingEdited || Object.keys(note?.content_edited ?? {}).length > 0
 
   return (
     <div className="space-y-6">
@@ -285,27 +310,38 @@ export default function SessionDetailPage({ params }: PageProps) {
 
             {/* Above the drafted sections and outside them: read from the
                 client's consent record, never part of the note. */}
-            {note && <NoteConsentLine patientId={session.patient_id} />}
+            {note && (
+              <NoteConsentLine
+                patientId={session.patient_id}
+                modality={session.video_link ? "telehealth" : undefined}
+              />
+            )}
+            {note && <VisitTimesPanel sessionId={session.id} readonly={!noteEditable} />}
+
+            {note && <RedraftStatus status={note.status} requestFailed={redraftNote.isError} />}
 
             {note ? (
-              <NoteViewer
-                note={note}
-                pendingEdited={pendingEdited}
-                pdfMetadata={{
-                  patient_name: session.patient_name,
-                  session_number: session.session_number,
-                  session_date: session.session_date,
-                  signature: pdfSignatureBlock(signing, timeZone),
-                }}
-                groundingSource={
-                  session.source === "imported"
-                    ? session.transcript.content
-                    : undefined
-                }
-                readonly={!noteEditable}
-                onSave={noteEditable ? handleNoteSave : undefined}
-                onClaimClick={handleClaimClick}
-              />
+              <div data-testid="session-note">
+                <NoteViewer
+                  note={note}
+                  pendingEdited={pendingEdited}
+                  pdfMetadata={{
+                    patient_name: session.patient_name,
+                    session_number: session.session_number,
+                    session_date: session.session_date,
+                    visit: visitPdf,
+                    signature: pdfSignatureBlock(signing, timeZone),
+                  }}
+                  groundingSource={
+                    session.source === "imported"
+                      ? session.transcript.content
+                      : undefined
+                  }
+                  readonly={!noteEditable || redrafting}
+                  onSave={noteEditable && !redrafting ? handleNoteSave : undefined}
+                  onClaimClick={handleClaimClick}
+                />
+              </div>
             ) : (
               <div className="card p-12 text-center">
                 <p className="text-neutral-500">
@@ -323,6 +359,27 @@ export default function SessionDetailPage({ params }: PageProps) {
               </p>
             )}
           </div>
+
+          {note && session.source !== "imported" && (
+            <NoteInputsPanel
+              key={note.id}
+              note={note}
+              editable={noteEditable}
+              hasEdits={noteHasEdits}
+              onRedraft={handleRedraft}
+              pending={redraftNote.isPending || updateNoteEdits.isPending}
+            />
+          )}
+
+          {note?.content && session.source !== "imported" && (noteEditable || noteIsSigned) && (
+            <DictateMore
+              sessionId={session.id}
+              signed={noteIsSigned}
+              hasEdits={noteHasEdits}
+              disabled={redrafting}
+              onSend={handleDictation}
+            />
+          )}
 
           {/* Quality Rating & Finalize Section */}
           {canReview && (
@@ -347,7 +404,6 @@ export default function SessionDetailPage({ params }: PageProps) {
                     qualityRating={localRatingFeedback.rating}
                     qualityRatingReason={localRatingFeedback.reason}
                     qualityRatingSections={localRatingFeedback.sections}
-                    soapNoteEdited={localSoapNoteEdited}
                   />
                 </div>
               </div>
@@ -355,7 +411,15 @@ export default function SessionDetailPage({ params }: PageProps) {
           )}
 
           {note && session.status === "finalized" && (
-            <NoteSignaturePanel note={note} canSign />
+            <NoteSignaturePanel
+              note={note}
+              canSign
+              draftAddendum={
+                pendingDraft?.draft_addendum
+                  ? { dictationId: pendingDraft.id, text: pendingDraft.draft_addendum }
+                  : undefined
+              }
+            />
           )}
 
           {noteIsSigned && (

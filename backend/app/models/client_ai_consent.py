@@ -18,7 +18,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 AiConsentDecision = Literal["consented", "declined"]
 
@@ -26,6 +26,15 @@ AiConsentDecision = Literal["consented", "declined"]
 #: what the client told them; ``intake_form`` is the client answering a
 #: question on an intake form, which carries the submission it came from.
 AiConsentSource = Literal["clinician", "intake_form"]
+
+#: Where the answer was given: with the client in the room, or over telehealth.
+AiConsentModality = Literal["in_person", "telehealth"]
+
+#: Who gave the answer: the client, or a parent or guardian for them.
+AiConsentGiver = Literal["client", "parent", "guardian"]
+
+#: Long enough for "at home in another city"; a place, not a note.
+CLIENT_STATED_LOCATION_MAX = 200
 
 
 class AiConsentEvent(BaseModel):
@@ -44,6 +53,11 @@ class AiConsentEvent(BaseModel):
     recorded_by_name: str | None = None
     recorded_at: datetime
     intake_submission_id: str | None = None
+    #: How the answer was given, when the clinician said. ``None`` on answers
+    #: recorded before these existed.
+    modality: AiConsentModality | None = None
+    client_stated_location: str | None = None
+    consented_by: AiConsentGiver | None = None
 
 
 class AiConsentEntry(BaseModel):
@@ -55,6 +69,9 @@ class AiConsentEntry(BaseModel):
     source: AiConsentSource
     recorded_by_name: str | None
     recorded_at: datetime
+    modality: AiConsentModality | None = None
+    client_stated_location: str | None = None
+    consented_by: AiConsentGiver | None = None
 
     @classmethod
     def from_event(cls, event: AiConsentEvent) -> AiConsentEntry:
@@ -65,6 +82,9 @@ class AiConsentEntry(BaseModel):
             source=event.source,
             recorded_by_name=event.recorded_by_name,
             recorded_at=event.recorded_at,
+            modality=event.modality,
+            client_stated_location=event.client_stated_location,
+            consented_by=event.consented_by,
         )
 
 
@@ -88,8 +108,18 @@ class AiConsentRecord(BaseModel):
 class RecordAiConsentRequest(BaseModel):
     """``POST /api/patients/{id}/ai-consent``: a clinician records an answer.
 
-    ``effective_on`` defaults to today and may not be in the future.
+    ``effective_on`` defaults to today and may not be in the future. The rest
+    say how the answer was given, and are all optional.
     """
 
     decision: AiConsentDecision
     effective_on: date | None = Field(default=None)
+    modality: AiConsentModality | None = None
+    client_stated_location: str | None = Field(default=None, max_length=CLIENT_STATED_LOCATION_MAX)
+    consented_by: AiConsentGiver | None = None
+
+    @field_validator("client_stated_location")
+    @classmethod
+    def _blank_is_none(cls, value: str | None) -> str | None:
+        stripped = value.strip() if value else ""
+        return stripped or None

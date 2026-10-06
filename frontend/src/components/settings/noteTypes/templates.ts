@@ -11,6 +11,7 @@
  */
 
 import type { PracticeNoteTypeSpec } from "@/types/noteTypes"
+import psychiatricEvaluation from "./templates/psychiatric_evaluation.json"
 import psychiatricFollowUp from "./templates/psychiatric_follow_up.json"
 
 /** A synthetic visit transcript to try a template's draft on. */
@@ -28,4 +29,7 @@ export interface NoteTypeTemplate {
   samples: SampleVisit[]
 }
 
-export const NOTE_TYPE_TEMPLATES: NoteTypeTemplate[] = [psychiatricFollowUp as NoteTypeTemplate]
+export const NOTE_TYPE_TEMPLATES: NoteTypeTemplate[] = [
+  psychiatricEvaluation as NoteTypeTemplate,
+  psychiatricFollowUp as NoteTypeTemplate,
+]

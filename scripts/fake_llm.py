@@ -25,6 +25,7 @@ stack builds it from ``scripts/e2e/fake-llm.Dockerfile``.
 from __future__ import annotations
 
 import asyncio
+import re
 from collections import Counter
 from typing import Any
 
@@ -116,19 +117,28 @@ async def structured(call: StructuredCall) -> dict[str, Any]:
 #: The refusal is not one the backend retries: the session is marked failed at once.
 REFUSES_DRAFT = "The stand-in will not draft this session."
 
+#: A transcript carrying this line is answered by the fallback model alone:
+#: every other model is unavailable, as a provider outage would leave it.
+PRIMARY_DOWN = "The first drafting model is down for this session."
+
+#: The fallback the stack names for note drafting in AI_FALLBACKS.
+FALLBACK_MODEL = "stand-in-fallback"
+
 
 class NoteCall(BaseModel):
     """A note draft request; the response schema decides the reply's shape."""
 
     response_schema: dict[str, Any]
     user_prompt: str = ""
+    model: str = ""
 
 
 def _stand_in(schema: dict[str, Any], path: str) -> Any:
     """A value of the schema's shape, the same for the same schema every run.
 
     Text says which field it fills, so a spec can find it; a list of text
-    holds one such entry; a list of objects (the sentence-to-transcript
+    holds one such entry; a list of stated diagnoses holds one diagnosis
+    with a code; any other list of objects (the sentence-to-transcript
     links a SOAP draft asks for next) is empty, which a model may also say.
     """
     kind = schema.get("type")
@@ -139,6 +149,8 @@ def _stand_in(schema: dict[str, Any], path: str) -> Any:
         }
     if kind == "array":
         items = schema.get("items", {})
+        if items.get("title") == "StatedDiagnosis":
+            return [{"label": f"Stand-in diagnosis for {path}", "code": "F00.0", "status": ""}]
         return [] if items.get("type") == "object" else [_stand_in(items, path)]
     if kind in ("integer", "number"):
         return 0
@@ -222,6 +234,8 @@ def _with_chart(content: dict[str, Any], chart: tuple[list[str], str | None]) ->
     """
     problems, allergies = chart
     for section in content.values():
+        if not isinstance(section, dict):
+            continue
         for key, value in section.items():
             if not isinstance(value, str):
                 continue
@@ -279,16 +293,98 @@ async def draft_note(call: NoteCall) -> dict[str, Any]:
     """
     if REFUSES_DRAFT in call.user_prompt:
         raise HTTPException(status_code=422, detail="draft refused")
+    if PRIMARY_DOWN in call.user_prompt and call.model != FALLBACK_MODEL:
+        raise HTTPException(status_code=503, detail="model unavailable")
     if call.response_schema.get("title") == "PracticeNoteTypeSpec":
         return {"data": DERIVED_PROPOSAL, "finish_reason": "stop"}
     note = _source_note(call.user_prompt)
     if note is not None:
         return {"data": _extracted(call.response_schema, note), "finish_reason": "stop"}
     draft = _stand_in(call.response_schema, "")
+    _fill_named(draft, _supplied_inputs(call.user_prompt))
+    _fill_named(draft, _dictated(call.user_prompt))
     chart = _chart(call.user_prompt)
     if chart is not None:
         draft = _with_chart(draft, chart)
+    if "psychotherapy_start" in call.response_schema.get("properties", {}):
+        draft["psychotherapy_start"] = _therapy_start(call.user_prompt)
     return {"data": draft, "finish_reason": "stop"}
+
+
+#: How the backend heads what a clinician dictated after the session
+#: (app.services.note_redraft.DICTATED_HEADING).
+DICTATED_HEADING = "Dictated by the clinician after the session"
+
+#: Every dictated clip transcribes to this. Its line is relocated into the
+#: field it names, so a redraft with it visibly gains it.
+DICTATION_TEXT = "Next session: Two weeks from today, same time."
+
+
+def _dictated(user_prompt: str) -> dict[str, str]:
+    """``Label: text`` lines dictated after the session, by label slug."""
+    _, found, rest = user_prompt.partition(DICTATED_HEADING)
+    values: dict[str, str] = {}
+    if not found:
+        return values
+    for line in rest.splitlines()[1:]:
+        # A prompt may number transcript lines ("[S4] ..."); the label follows.
+        label, sep, text = re.sub(r"^(\[[^\]]*\]\s*)+", "", line).partition(":")
+        if sep and text.strip():
+            values[_slug(label)] = text.strip()
+    return values
+
+
+@app.post("/transcription/v1/transcribe")
+async def transcribe() -> dict[str, str]:
+    """Dictated clips: DICTATION_TRANSCRIPTION_BASE_URL points at ``/transcription``."""
+    return {"text": DICTATION_TEXT}
+
+
+def _supplied_inputs(user_prompt: str) -> dict[str, str]:
+    """The note type's inputs as the default prompt lists them, by label slug.
+
+    ``Inputs:`` then one ``- Label: value`` line each, up to a blank line;
+    ``not provided`` is the prompt's word for none.
+    """
+    values: dict[str, str] = {}
+    _, found, rest = user_prompt.partition("\nInputs:\n")
+    if not found:
+        return values
+    for line in rest.split("\n\n", 1)[0].splitlines():
+        label, sep, value = line.removeprefix("- ").partition(":")
+        if sep and value.strip() and value.strip() != "not provided":
+            values[_slug(label)] = value.strip()
+    return values
+
+
+def _fill_named(draft: dict[str, Any], values: dict[str, str]) -> None:
+    """Write each value into the text field whose key it is named after.
+
+    So a spec can see what reached the prompt: a type with an input and a
+    field of the same name drafts that field as the input's value.
+    """
+    for section in draft.values():
+        if not isinstance(section, dict):
+            continue
+        for key, current in section.items():
+            if key in values and isinstance(current, str):
+                section[key] = values[key]
+
+
+#: The clinician's spoken cue the stand-in recognizes as the therapy portion starting.
+THERAPY_CUE = re.compile(
+    r"^\[(\d+(?::\d{2}){1,2})\][^\n]*let's get into", re.IGNORECASE | re.MULTILINE
+)
+
+
+def _therapy_start(user_prompt: str) -> dict[str, Any]:
+    """Where the therapy portion began: the turn with the clinician's cue, if any."""
+    cue = THERAPY_CUE.search(user_prompt)
+    return {
+        "transcript_time": cue.group(1) if cue else "",
+        "cued_by_clinician": cue is not None,
+        "stated_clock_time": "",
+    }
 
 
 @app.get("/_fake/health")

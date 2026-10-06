@@ -77,11 +77,12 @@
     "next-auth": {
       "@simplewebauthn/browser": "^14.0.0"
     },
-    "sharp": "^0.35.3",
-    "brace-expansion@5": "^5.0.8",
+    "sharp": "^0.35.5",
+    "brace-expansion@5": "^5.0.12",
     "@grpc/grpc-js": "^1.14.5",
     "seroval": "^1.6.8",
     "seroval-plugins": "^1.6.8",
-    "source-map-js": "^1.2.2"
+    "source-map-js": "^1.2.2",
+    "brace-expansion@1": "^1.1.21"
   }
 }

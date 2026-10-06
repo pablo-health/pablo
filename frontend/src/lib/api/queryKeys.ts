@@ -125,6 +125,9 @@ const baseQueryKeys = {
     // Patient-specific sessions (for future use)
     byPatient: (patientId: string) =>
       [...baseQueryKeys.sessions.all, "byPatient", patientId] as const,
+    allDictations: () => [...baseQueryKeys.sessions.all, "dictations"] as const,
+    dictations: (sessionId: string) =>
+      [...baseQueryKeys.sessions.allDictations(), sessionId] as const,
   },
 
   // Appointment query keys
@@ -271,6 +274,7 @@ const baseQueryKeys = {
     list: () => [...baseQueryKeys.noteTypes.all, "list"] as const,
     detail: (key: string, version?: number | null) =>
       [...baseQueryKeys.noteTypes.all, "detail", key, version ?? null] as const,
+    deriveReferences: () => [...baseQueryKeys.noteTypes.all, "derive-references"] as const,
   },
 
   // Compliance query keys (therapist-owned reminders)
@@ -335,6 +339,11 @@ const baseQueryKeys = {
       [...baseQueryKeys.aiConsent.all, patientId] as const,
     // Whether the practice asks clients about AI-assisted notes at all
     practiceSetting: () => [...baseQueryKeys.aiConsent.all, "practice-setting"] as const,
+  },
+
+  // When the practice deletes session audio
+  audioRetention: {
+    all: ["audioRetention"] as const,
   },
 
   // Medication list query keys

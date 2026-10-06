@@ -103,6 +103,10 @@ def _generate_soap(case: dict[str, Any], model: str | None) -> str:
     from backend.app.services.note_generation_service import (  # noqa: PLC0415
         RegistryNoteGenerationService,
     )
+    from backend.app.services.structured_llm_gateway import (  # noqa: PLC0415
+        get_default_structured_llm_gateway,
+        resolve_structured_llm_gateway,
+    )
 
     # The app registers builtin note types at startup; a bare script must do it
     # itself or the SOAP definition isn't in the registry. Idempotent (replace=True).
@@ -134,7 +138,14 @@ def _generate_soap(case: dict[str, Any], model: str | None) -> str:
             )
         )
 
-    service = RegistryNoteGenerationService(model=model)
+    # One model alone, with no fallback behind it, and the gateway for its
+    # provider: a ``bedrock:`` model is graded on Bedrock, not sent to Vertex.
+    service = RegistryNoteGenerationService(
+        llm_gateway=(
+            resolve_structured_llm_gateway(model) if model else get_default_structured_llm_gateway()
+        ),
+        model=model,
+    )
     note = service.generate_note("soap", transcript, patient, _DEFAULT_SESSION_DATE, chart=chart)
     return json.dumps(note.content, indent=2)
 

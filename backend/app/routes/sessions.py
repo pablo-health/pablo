@@ -11,6 +11,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
+from anyio import fail_after, to_thread
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -32,6 +33,7 @@ from ..api_errors import (
     ConflictError,
     NotFoundError,
     ServerError,
+    ServiceUnavailableError,
     UnprocessableEntityError,
 )
 from ..auth.service import (
@@ -99,7 +101,9 @@ from ..services import (
     TransientSOAPGenerationError,
     get_audit_service,
 )
+from ..services.audio_retention import AudioOnSigning
 from ..services.file_storage import FileTooLargeError, UploadTarget
+from ..services.http_structured_llm_gateway import HttpStructuredLLMGateway
 from ..services.note_import_service import (
     MAX_IMPORT_DOC_BYTES,
     DocumentTextExtractionError,
@@ -119,7 +123,7 @@ from ..services.transcription_queue_service import (
 )
 from ..settings import get_settings
 from ..utcnow import utc_now
-from .notes import get_note_generation_service
+from .notes import get_audio_on_signing, get_note_generation_service
 
 # Optional subscription extension point. When a billing overlay is
 # installed it registers ``app.routes.subscription``; otherwise the
@@ -233,7 +237,14 @@ def get_notes_repository(
 
 
 def get_note_import_service() -> NoteImportService:
-    """Get the imported-note parse service instance."""
+    """Get the imported-note parse service instance.
+
+    Under the end-to-end stack the parse goes to its stand-in; the setting
+    refuses to load outside development.
+    """
+    base_url = get_settings().note_generation_base_url
+    if base_url:
+        return NoteImportService(llm_gateway=HttpStructuredLLMGateway(base_url))
     return NoteImportService()
 
 
@@ -491,6 +502,11 @@ def _run_draft_job(
 # tiny; this only guards against accidental large uploads.
 _MAX_IMPORT_DOC_BYTES = MAX_IMPORT_DOC_BYTES
 
+# A normal parse takes about ten seconds. This leaves room for the truncation
+# retry and a slow model, and stops well short of the model client's own 180 s
+# timeout, so a stalled call comes back as "try again" rather than a 500.
+IMPORT_PARSE_TIMEOUT_SECONDS = 90.0
+
 
 def _resolve_import_session_date(override: str | None, extracted: datetime | None) -> datetime:
     """Pick the session date for an import: caller override > document > now.
@@ -549,7 +565,9 @@ async def import_session(
         )
 
     try:
-        text = extract_document_text(data, content_type=file.content_type, filename=file.filename)
+        text = await run_in_threadpool(
+            extract_document_text, data, content_type=file.content_type, filename=file.filename
+        )
     except UnsupportedDocumentTypeError as exc:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc)
@@ -567,8 +585,21 @@ async def import_session(
     # checkout -- same seam pattern as upload_session (THERAPY-da7t).
     release_db_connection()
 
+    # The parse is a blocking model call; run on the event loop it froze every
+    # other request on the instance until it returned. The worker thread carries
+    # this request's context. On timeout the thread is abandoned -- it ends at
+    # the model client's own timeout -- and the caller gets a retryable 503.
     try:
-        parsed = note_import_service.parse_soap_note(text)
+        with fail_after(IMPORT_PARSE_TIMEOUT_SECONDS):
+            parsed = await to_thread.run_sync(
+                note_import_service.parse_soap_note, text, abandon_on_cancel=True
+            )
+    except TimeoutError as exc:
+        logger.warning("Imported-note parse timed out after %.0fs", IMPORT_PARSE_TIMEOUT_SECONDS)
+        raise ServiceUnavailableError(
+            "Reading this note is taking longer than usual. Try again in a moment.",
+            code="IMPORT_PARSE_TIMEOUT",
+        ) from exc
     except ValueError as exc:
         logger.exception("Imported-note parse failed")
         raise ServerError("Could not read the SOAP note from this document.") from exc
@@ -737,6 +768,7 @@ def finalize_session(
     user: User = Depends(require_baa_acceptance),
     session_service: SessionService = Depends(get_session_service),
     audit: AuditService = Depends(get_audit_service),
+    audio_on_signing: AudioOnSigning = Depends(get_audio_on_signing),
 ) -> SessionResponse:
     """
     Finalize a session after therapist review.
@@ -779,6 +811,7 @@ def finalize_session(
             patient_id=note.patient_id,
             session_id=note.session_id,
         )
+    audio_on_signing.after_signing(note, user, http_request, audit)
 
     return SessionResponse.from_session(session, patient_name, _embed_note(note))
 
@@ -845,13 +878,21 @@ def schedule_session(
     """Create a scheduled session (pre-recording).
 
     Refused with ``CLIENT_DECLINED_AI_NOTES`` when the client declined
-    AI-assisted notes, before the trial counter is spent on a session that
-    cannot be recorded.
+    AI-assisted notes, and with ``CLIENT_AI_CONSENT_NEEDED`` for a session with
+    a video link and no answer on file unless ``asking_consent_on_recording``,
+    before the trial counter is spent on a session that cannot be recorded.
     """
     patient = session_service.patient_repo.get(request.patient_id, user.id)
     if patient is None:
         raise NotFoundError("Patient not found", code="PATIENT_NOT_FOUND")
-    consent_gate.refuse_if_declined(patient, user, http_request, audit)
+    consent_gate.refuse_unless_recordable(
+        patient,
+        user,
+        http_request,
+        audit,
+        telehealth=request.video_link is not None,
+        asking_on_recording=request.asking_consent_on_recording,
+    )
     _gate_trial_session(user.email)
     # Authorize an explicitly requested note type — same gate as
     # /api/appointments/{id}/start-session; falling back to the default
@@ -986,8 +1027,8 @@ def upload_transcript_to_session(
         # PROCESSING and the in-flight job reads the latest transcript, so
         # there's nothing to do — answer 202 either way.
         logger.info("generate-soap already enqueued for session %s (dedup)", session.id)
-    # As on upload: the end-to-end stack has no queue, so where its drafting
-    # stand-in is configured the job runs here, after the response.
+    # As in ``upload_session``: with the stand-in configured and no queue, the
+    # job runs here, after the response.
     if settings.note_generation_base_url:
         background.add_task(
             _draft_in_process,

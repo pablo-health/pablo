@@ -18,11 +18,13 @@ from typing import TYPE_CHECKING, Literal, Protocol
 if TYPE_CHECKING:
     from ..models import Patient, Transcript
 
-NoteFieldKind = Literal["text", "list", "structured"]
+NoteFieldKind = Literal["text", "list", "diagnoses", "structured"]
 """Shape of a single field within a section.
 
 - ``text``: free-form paragraph (e.g. SOAP's ``chief_complaint``)
 - ``list``: ordered list of short items (e.g. SOAP's ``interventions_used``)
+- ``diagnoses``: diagnoses as the clinician stated them, each
+  ``{label, code, status}`` (see :mod:`.diagnoses`)
 - ``structured``: nested schema (reserved for richer future fields)
 """
 

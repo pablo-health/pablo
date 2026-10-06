@@ -14,10 +14,11 @@ A definition may opt out of the auto-built prompt by setting
 the hand-tuned clinical prompt migrated from the legacy plugin.
 """
 
+import dataclasses
 import json
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -34,10 +35,27 @@ from ..models import (
 )
 from ..notes import NoteTypeDefinition, NoteTypeRegistry, get_default_registry
 from ..notes.chart_context import ChartContext, render_chart_block
+from ..notes.client_present import (
+    TimedSegment,
+    segments_from_transcript,
+    split_at_boundary,
+    split_dictated,
+)
+from ..notes.diagnoses import DIAGNOSES_KIND_LABEL, DIAGNOSES_SCHEMA, coerce_diagnoses
 from ..notes.practice_types import PromptBlocks, render_user_prompt
 from ..notes.prompts.soap import SOAP_SYSTEM_PROMPT
 from ..notes.registry import is_practice_key
+from ..notes.visit_times import PSYCHOTHERAPY_SECTION_KEY, client_present_turns
 from ..settings import get_settings
+from .ai_features import AIFeature
+from .hedged_structured_llm_gateway import generation_gateway
+from .psychotherapy_start import (
+    START_INSTRUCTIONS,
+    START_KEY,
+    START_SCHEMA,
+    attributed_start,
+    propose_start,
+)
 from .source_attribution_service import (
     build_attribution_prompt,
     build_claims_from_soap,
@@ -48,7 +66,6 @@ from .structured_llm_gateway import (
     StructuredCompletion,
     StructuredLLMGateway,
     StructuredOutputTruncatedError,
-    get_default_structured_llm_gateway,
 )
 
 logger = logging.getLogger(__name__)
@@ -119,6 +136,12 @@ _SOAP_ATTRIBUTION_SCHEMA: dict[str, Any] = {
     },
     "required": ["attributions"],
 }
+_ATTRIBUTION_SYSTEM_PROMPT = (
+    "You are an evidence-attribution assistant. Map each "
+    "claim number to the transcript segment ids (the "
+    "numbers after S in [Sn]) that support it. Return "
+    "ONLY a JSON object."
+)
 """Structured schema for Call-2. A map of arbitrary claim-number keys →
 segment-id arrays can't be constrained by the SDK's controlled-generation
 schema, and a bare ``{"type": "object"}`` makes the model return ``{}`` on a
@@ -143,6 +166,9 @@ class GeneratedNote:
     soap_note: SOAPNote | None = None
     #: Version of a practice-defined type the content was generated from.
     note_type_version: int | None = None
+    #: Where the psychotherapy portion may have begun, for a type with a
+    #: psychotherapy section (see :mod:`app.services.psychotherapy_start`).
+    psychotherapy_start: dict[str, Any] | None = None
 
 
 class RestrictedNoteGenerationError(ValueError):
@@ -173,11 +199,15 @@ class NoteGenerationService(ABC):
         session_date: datetime,
         inputs: Mapping[str, str] | None = None,
         definition: NoteTypeDefinition | None = None,
+        client_present_end_seconds: float | None = None,
         chart: ChartContext | None = None,
     ) -> GeneratedNote:
         """Generate a note of ``note_type`` from ``transcript``.
 
         ``inputs`` are the values supplied for the type's declared inputs.
+        ``client_present_end_seconds`` is where the client left the recording
+        (see :mod:`app.notes.client_present`); what the clinician said after
+        it reaches the model as a separate addendum.
         ``definition`` is the type already resolved by a caller that is
         about to release its database connection: a practice type is read
         from the database, and resolving it here would reopen a connection
@@ -216,13 +246,14 @@ class RegistryNoteGenerationService(NoteGenerationService):
     ) -> None:
         self.therapist_name = therapist_name or "Therapist"
         self.registry = registry or get_default_registry()
-        self._llm_gateway = llm_gateway or get_default_structured_llm_gateway()
+        self._llm_gateway = llm_gateway or generation_gateway(AIFeature.NOTE_GENERATION)
         self._model = model
 
     def _resolve_model(self) -> str:
         if self._model is not None:
             return self._model
-        return get_settings().ai_model
+        settings = get_settings()
+        return settings.model_for(AIFeature.NOTE_GENERATION, settings.ai_model)
 
     def generate_note(
         self,
@@ -232,12 +263,28 @@ class RegistryNoteGenerationService(NoteGenerationService):
         session_date: datetime,
         inputs: Mapping[str, str] | None = None,
         definition: NoteTypeDefinition | None = None,
+        client_present_end_seconds: float | None = None,
         chart: ChartContext | None = None,
     ) -> GeneratedNote:
         definition = definition or self.registry.get(note_type)
         _refuse_restricted(definition)
-        content = self._generate_via_registry(
-            definition, transcript, patient, session_date, inputs or {}, chart
+        # The recording's own turns; anything dictated after it has no recording times.
+        recording, dictated = split_dictated(transcript.content)
+        segments = segments_from_transcript(Transcript(format=transcript.format, content=recording))
+        asks_start = client_present_end_seconds != 0 and any(
+            s.key == PSYCHOTHERAPY_SECTION_KEY for s in definition.sections
+        )
+        content, start_mark = self._generate_via_registry(
+            definition,
+            transcript,
+            patient,
+            session_date,
+            inputs or {},
+            client_present_end_seconds,
+            segments=segments,
+            dictated=dictated,
+            asks_start=asks_start,
+            chart=chart,
         )
         if note_type == SOAP_KEY:
             soap_note = _coerce_content_to_soap_note(content)
@@ -247,8 +294,16 @@ class RegistryNoteGenerationService(NoteGenerationService):
                 content=soap_note.to_dict(),
                 soap_note=soap_note,
             )
+        start = None
+        if asks_start:
+            turns = client_present_turns(segments, client_present_end_seconds)
+            attributed = attributed_start(content, turns, self._complete_attribution)
+            start = propose_start(start_mark, attributed, turns)
         return GeneratedNote(
-            note_type=note_type, content=content, note_type_version=definition.version
+            note_type=note_type,
+            content=content,
+            note_type_version=definition.version,
+            psychotherapy_start=start,
         )
 
     def _generate_via_registry(
@@ -258,8 +313,24 @@ class RegistryNoteGenerationService(NoteGenerationService):
         patient: Patient,
         session_date: datetime,
         inputs: Mapping[str, str],
-        chart: ChartContext | None,
-    ) -> dict[str, Any]:
+        client_present_end_seconds: float | None = None,
+        *,
+        segments: Sequence[TimedSegment] = (),
+        dictated: str = "",
+        asks_start: bool = False,
+        chart: ChartContext | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        """The drafted content, and the model's mark of where therapy began."""
+        full_definition = definition
+        addendum = ""
+        if client_present_end_seconds is not None and segments:
+            split = split_at_boundary(segments, client_present_end_seconds)
+            transcript = Transcript(format="txt", content=split.session_lines or _NO_CLIENT_PRESENT)
+            # Dictated later, after the recording: addendum too.
+            addendum = "\n\n".join(p for p in (split.addendum_lines, dictated) if p)
+            if client_present_end_seconds == 0:
+                definition = _without_psychotherapy(definition)
+
         if definition.system_prompt is not None:
             system_prompt = definition.system_prompt
         elif definition.key == SOAP_KEY:
@@ -292,8 +363,13 @@ class RegistryNoteGenerationService(NoteGenerationService):
             user_prompt = _build_registry_user_prompt(
                 definition, transcript, session_date, chart_block
             )
+        if addendum:
+            user_prompt = f"{user_prompt}\n\n{_addendum_block(addendum)}"
 
         schema = _build_registry_response_schema(definition)
+        if asks_start:
+            user_prompt = f"{user_prompt}\n\n{START_INSTRUCTIONS}"
+            schema["properties"][START_KEY] = START_SCHEMA
         completion = self._complete_structured_with_retry(
             note_key=definition.key,
             system_prompt=system_prompt,
@@ -301,7 +377,24 @@ class RegistryNoteGenerationService(NoteGenerationService):
             response_schema=schema,
         )
 
-        return _coerce_registry_response(definition, completion.data)
+        # Coerced against what was asked for, then against the whole type, so
+        # a section left out of the request comes back present and empty.
+        asked = _coerce_registry_response(definition, completion.data)
+        mark = completion.data.get(START_KEY) if asks_start else None
+        return _coerce_registry_response(full_definition, asked), mark
+
+    def _complete_attribution(self, prompt: str) -> dict[str, Any]:
+        """One structured source-attribution call; see :meth:`_run_source_attribution`."""
+        settings = get_settings()
+        return self._llm_gateway.complete_structured(
+            model=self._resolve_model(),
+            system_prompt=_ATTRIBUTION_SYSTEM_PROMPT,
+            user_prompt=prompt,
+            response_schema=_SOAP_ATTRIBUTION_SCHEMA,
+            max_output_tokens=settings.note_source_attribution_max_output_tokens,
+            thinking_budget=settings.note_source_attribution_thinking_budget,
+            temperature=0.0,
+        ).data
 
     def _complete_structured_with_retry(
         self,
@@ -321,6 +414,14 @@ class RegistryNoteGenerationService(NoteGenerationService):
         cap we retry once at twice the budget before giving up. Any other
         failure (or a second truncation) raises ``ValueError`` so the caller's
         SOAP-generation-failed path runs — preserving the existing log line.
+
+        With ``ai_model_fallbacks`` configured, each of the (at most two)
+        gateway calls below is itself a sequence: the primary, each fallback,
+        the primary again, one at a time, inside 300 s (see
+        :mod:`.hedged_structured_llm_gateway`). Truncation ends that sequence
+        at once so the larger budget is tried here, and a transient failure
+        that outlasts every leg still raises
+        :class:`TransientNoteGenerationError` for the job queue's retry.
         """
         settings = get_settings()
         base_budget = settings.note_max_output_tokens
@@ -386,12 +487,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
             settings = get_settings()
             completion = self._llm_gateway.complete_structured(
                 model=self._resolve_model(),
-                system_prompt=(
-                    "You are an evidence-attribution assistant. Map each "
-                    "claim number to the transcript segment ids (the "
-                    "numbers after S in [Sn]) that support it. Return "
-                    "ONLY a JSON object."
-                ),
+                system_prompt=_ATTRIBUTION_SYSTEM_PROMPT,
                 user_prompt=prompt,
                 response_schema=_SOAP_ATTRIBUTION_SCHEMA,
                 # The output budget is shared between reasoning and output on a
@@ -487,6 +583,7 @@ class MockNoteGenerationService(NoteGenerationService):
         session_date: datetime,  # noqa: ARG002  # deterministic mock ignores date
         inputs: Mapping[str, str] | None = None,  # noqa: ARG002  # mock ignores inputs
         definition: NoteTypeDefinition | None = None,
+        client_present_end_seconds: float | None = None,  # noqa: ARG002  # mock ignores it
         chart: ChartContext | None = None,  # noqa: ARG002  # mock ignores the chart
     ) -> GeneratedNote:
         definition = definition or self.registry.get(note_type)
@@ -590,6 +687,8 @@ def _mock_registry_content(definition: NoteTypeDefinition, patient: Patient) -> 
                     f"Mock {f.label} item A ({diagnosis}).",
                     f"Mock {f.label} item B.",
                 ]
+            elif f.kind == "diagnoses":
+                section_content[f.key] = [{"label": diagnosis, "code": None, "status": None}]
             else:
                 section_content[f.key] = (
                     f"Mock {section.label} / {f.label} content for session ({diagnosis})."
@@ -599,6 +698,29 @@ def _mock_registry_content(definition: NoteTypeDefinition, patient: Patient) -> 
 
 
 # --- Registry-driven prompt + schema composition ---
+
+_NO_CLIENT_PRESENT = "(The client was not present in this recording.)"
+
+_ADDENDUM_INSTRUCTIONS = (
+    "Clinician addendum: dictated by the clinician after the session; the "
+    "client was not present. These are the clinician's own statements. Where "
+    "the addendum states risk, mental status, a prescription monitoring "
+    "check, consent, or a decision and its reasons, put it in the matching "
+    'field quoted and marked as the clinician\'s, e.g. Clinician stated: "...". '
+    "The addendum is not session time and is not something the client said. "
+    'An item covered by neither the session nor the addendum is "Not stated."; '
+    "never fill it in."
+)
+
+
+def _addendum_block(addendum_lines: str) -> str:
+    return f"{_ADDENDUM_INSTRUCTIONS}\n\n{addendum_lines}"
+
+
+def _without_psychotherapy(definition: NoteTypeDefinition) -> NoteTypeDefinition:
+    """The type minus its psychotherapy section: no client, no therapy time."""
+    sections = tuple(s for s in definition.sections if s.key != PSYCHOTHERAPY_SECTION_KEY)
+    return dataclasses.replace(definition, sections=sections)
 
 
 def _build_registry_user_prompt(
@@ -640,6 +762,7 @@ def _fields_block(definition: NoteTypeDefinition) -> str:
             kind_label = {
                 "text": "free-form string",
                 "list": "list of short strings",
+                "diagnoses": DIAGNOSES_KIND_LABEL,
                 "structured": "nested object",
             }[f.kind]
             lines.append(f"    * {f.key} ({kind_label}) — {hint}")
@@ -654,6 +777,8 @@ def _build_registry_response_schema(definition: NoteTypeDefinition) -> dict[str,
         for f in section.fields:
             if f.kind == "list":
                 fields[f.key] = {"type": "array", "items": {"type": "string"}}
+            elif f.kind == "diagnoses":
+                fields[f.key] = DIAGNOSES_SCHEMA
             elif f.kind == "structured":
                 fields[f.key] = {"type": "object"}
             else:
@@ -679,6 +804,8 @@ def _coerce_registry_response(
                     section_content[f.key] = [str(item).strip() for item in raw_value if item]
                 else:
                     section_content[f.key] = []
+            elif f.kind == "diagnoses":
+                section_content[f.key] = coerce_diagnoses(raw_value)
             elif f.kind == "structured":
                 section_content[f.key] = raw_value if isinstance(raw_value, dict) else {}
             else:

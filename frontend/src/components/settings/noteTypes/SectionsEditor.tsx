@@ -6,6 +6,7 @@ import { Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
+import type { PracticeFieldKind } from "@/types/noteTypes"
 import { FieldMessages, Labelled, RowActions, SELECT_CLASS } from "./EditorParts"
 import {
   blankField,
@@ -20,11 +21,13 @@ import {
 interface SectionsEditorProps {
   sections: DraftSection[]
   errors: FieldErrors
+  /** A field to focus when it first appears. */
+  focusUid?: string
   onChange: (sections: DraftSection[]) => void
 }
 
 /** The note's sections, each with its fields, in the order the note shows them. */
-export function SectionsEditor({ sections, errors, onChange }: SectionsEditorProps) {
+export function SectionsEditor({ sections, errors, focusUid, onChange }: SectionsEditorProps) {
   const update = (index: number, patch: Partial<DraftSection>) =>
     onChange(sections.map((s, i) => (i === index ? { ...s, ...patch } : s)))
 
@@ -66,6 +69,7 @@ export function SectionsEditor({ sections, errors, onChange }: SectionsEditorPro
               fields={section.fields}
               path={path}
               errors={errors}
+              focusUid={focusUid}
               onChange={(fields) => update(si, { fields })}
             />
           </div>
@@ -83,11 +87,13 @@ function FieldsEditor({
   fields,
   path,
   errors,
+  focusUid,
   onChange,
 }: {
   fields: DraftField[]
   path: string
   errors: FieldErrors
+  focusUid?: string
   onChange: (fields: DraftField[]) => void
 }) {
   const update = (index: number, patch: Partial<DraftField>) =>
@@ -107,7 +113,12 @@ function FieldsEditor({
                 messages={errorsAt(errors, `${fieldPath}.label`, `${fieldPath}.key`, fieldPath)}
               >
                 {(props) => (
-                  <Input {...props} value={field.label} onChange={(e) => update(fi, { label: e.target.value })} />
+                  <Input
+                    {...props}
+                    autoFocus={field.uid === focusUid}
+                    value={field.label}
+                    onChange={(e) => update(fi, { label: e.target.value })}
+                  />
                 )}
               </Labelled>
               <Labelled label="Shape" className="w-36" messages={errorsAt(errors, `${fieldPath}.kind`)}>
@@ -115,11 +126,12 @@ function FieldsEditor({
                   <select
                     {...props}
                     value={field.kind}
-                    onChange={(e) => update(fi, { kind: e.target.value === "list" ? "list" : "text" })}
+                    onChange={(e) => update(fi, { kind: e.target.value as PracticeFieldKind })}
                     className={SELECT_CLASS}
                   >
                     <option value="text">Paragraph</option>
                     <option value="list">List</option>
+                    <option value="diagnoses">Diagnoses</option>
                   </select>
                 )}
               </Labelled>

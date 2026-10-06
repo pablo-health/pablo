@@ -3,32 +3,55 @@
 /**
  * Session page note saving, against the real page component.
  *
- * SOAP edits are held locally and ride on finalize; every other note type
- * has no slot there, so its edits must reach the note's own edits endpoint.
+ * Every edit, SOAP or any other type, is saved to the note's own edits
+ * endpoint as soon as it is made, so a reload, a redraft and signing all
+ * read it from the note rather than from this page.
  */
 
 import { Suspense } from "react"
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, fireEvent, render, screen } from "@testing-library/react"
 import SessionDetailPage from "../page"
 import { createMockNote, createMockSession } from "@/test/factories"
 import type { Note } from "@/types/notes"
 import type { NoteContent } from "@/types/sessions"
 
-const { mockUseSession, mockUpdateEdits, finalizeProps } = vi.hoisted(() => ({
-  mockUseSession: vi.fn(),
-  mockUpdateEdits: vi.fn(),
-  finalizeProps: { soapNoteEdited: undefined as unknown },
+const { mockUseSession, mockSaveEdits, mockRedraft, mockAddDictation, finalizeProps } =
+  vi.hoisted(() => ({
+    mockUseSession: vi.fn(),
+    mockSaveEdits: vi.fn(),
+    mockRedraft: vi.fn(),
+    mockAddDictation: vi.fn(),
+    finalizeProps: { current: null as Record<string, unknown> | null },
+  }))
+
+vi.mock("@/hooks/useDictations", () => ({
+  useSessionDictations: () => ({ data: { data: [] } }),
+  useAddSessionDictation: () => ({ mutateAsync: mockAddDictation }),
+}))
+
+// Stand-in recorder: one button that sends a fixed clip.
+vi.mock("@/components/sessions/DictateMore", () => ({
+  DictateMore: ({
+    onSend,
+  }: {
+    onSend: (clip: { blob: Blob; seconds: number }) => Promise<unknown>
+  }) => <button onClick={() => onSend({ blob: new Blob(["v"]), seconds: 9 })}>dictate</button>,
 }))
 
 vi.mock("@/hooks/useSessions", () => ({
   useSession: () => mockUseSession(),
   useUpdateSessionMetadata: () => ({ mutate: vi.fn(), isPending: false }),
   useUpdateSessionRating: () => ({ mutateAsync: vi.fn() }),
+  useRedraftSessionNote: () => ({ mutate: mockRedraft, isPending: false, isError: false }),
 }))
 
 vi.mock("@/hooks/useNotes", () => ({
-  useUpdateNoteEdits: () => ({ mutate: mockUpdateEdits, isError: false }),
+  useUpdateNoteEdits: () => ({
+    mutateAsync: mockSaveEdits,
+    isError: false,
+    isPending: false,
+  }),
 }))
 
 vi.mock("@/hooks/useNoteTypes", () => ({
@@ -38,6 +61,27 @@ vi.mock("@/hooks/useNoteTypes", () => ({
 
 // Reads the practice setting and the client's consent record; not under test here.
 vi.mock("@/components/sessions/NoteConsentLine", () => ({ NoteConsentLine: () => null }))
+vi.mock("@/components/sessions/VisitTimesPanel", () => ({ VisitTimesPanel: () => null }))
+vi.mock("@/hooks/useVisitTimes", () => ({ useVisitPdfLines: () => [] }))
+
+// Stand-in details panel: one button that redrafts with a fixed value.
+vi.mock("@/components/sessions/NoteInputsPanel", () => ({
+  NoteInputsPanel: ({
+    onRedraft,
+    hasEdits,
+  }: {
+    onRedraft: (data: unknown) => void
+    hasEdits: boolean
+  }) => (
+    <button
+      onClick={() =>
+        onRedraft({ note_inputs: { visit_code: "99214" }, ...(hasEdits ? { edits: "keep" } : {}) })
+      }
+    >
+      redraft
+    </button>
+  ),
+}))
 
 const DAP_EDIT: NoteContent = {
   note_type: "schema",
@@ -85,8 +129,8 @@ vi.mock("@/components/sessions/QualityRatingWithFeedback", () => ({
   QualityRatingWithFeedback: () => <div />,
 }))
 vi.mock("@/components/sessions/FinalizeButton", () => ({
-  FinalizeButton: ({ soapNoteEdited }: { soapNoteEdited: unknown }) => {
-    finalizeProps.soapNoteEdited = soapNoteEdited
+  FinalizeButton: (props: Record<string, unknown>) => {
+    finalizeProps.current = props
     return <button>Finalize</button>
   },
 }))
@@ -122,9 +166,21 @@ function givenSession(
   })
 }
 
+function deferred() {
+  let resolve!: () => void
+  const promise = new Promise<void>((r) => {
+    resolve = r
+  })
+  return { promise, resolve }
+}
+
+beforeEach(() => {
+  mockSaveEdits.mockResolvedValue({})
+})
+
 afterEach(() => {
   vi.clearAllMocks()
-  finalizeProps.soapNoteEdited = undefined
+  finalizeProps.current = null
 })
 
 describe("session page note save", () => {
@@ -135,8 +191,8 @@ describe("session page note save", () => {
     expect(await screen.findByRole("heading", { name: "DAP note" })).toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "save edit" }))
 
-    expect(mockUpdateEdits).toHaveBeenCalledTimes(1)
-    expect(mockUpdateEdits.mock.calls[0][0]).toEqual({
+    expect(mockSaveEdits).toHaveBeenCalledTimes(1)
+    expect(mockSaveEdits.mock.calls[0][0]).toEqual({
       noteId: "note-9",
       data: {
         content_edited: { data: { subjective: "Edited report", observations: ["Calm"] } },
@@ -145,23 +201,37 @@ describe("session page note save", () => {
     // The saved edit is shown back as the pending edit, still typed as the
     // note's own type rather than coerced to SOAP.
     expect(JSON.parse(screen.getByTestId("pending").textContent ?? "null")).toEqual(DAP_EDIT)
-    expect(finalizeProps.soapNoteEdited).toBeNull()
   })
 
-  it("keeps SOAP edits local for finalize to persist", async () => {
-    givenSession(createMockNote({ note_type: "soap", content: {} }))
+  it("saves a SOAP edit under review to the note straight away, not at signing", async () => {
+    givenSession(createMockNote({ id: "note-2", note_type: "soap", content: {} }))
     await renderPage()
 
     expect(await screen.findByRole("heading", { name: "SOAP note" })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole("button", { name: "save edit" }))
-
-    expect(mockUpdateEdits).not.toHaveBeenCalled()
-    expect(finalizeProps.soapNoteEdited).toEqual({
-      subjective: "S",
-      objective: "O",
-      assessment: "A",
-      plan: "P",
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "save edit" }))
     })
+
+    expect(mockSaveEdits).toHaveBeenCalledWith({
+      noteId: "note-2",
+      data: { content_edited: { subjective: "S", objective: "O", assessment: "A", plan: "P" } },
+    })
+    expect(JSON.parse(screen.getByTestId("pending").textContent ?? "null")).toEqual(SOAP_EDIT)
+    // Signing locks what the note holds; it carries no body of its own.
+    expect(finalizeProps.current).not.toBeNull()
+    expect(finalizeProps.current).not.toHaveProperty("soapNoteEdited")
+  })
+
+  it("stops showing an edit the note didn't take", async () => {
+    mockSaveEdits.mockRejectedValue(new Error("nope"))
+    givenSession(createMockNote({ note_type: "soap", content: {} }))
+    await renderPage()
+
+    await act(async () => {
+      fireEvent.click(await screen.findByRole("button", { name: "save edit" }))
+    })
+
+    expect(JSON.parse(screen.getByTestId("pending").textContent ?? "null")).toBeNull()
   })
 
   it("saves a SOAP edit straight to the note once an unlocked note has no finalize left", async () => {
@@ -174,8 +244,8 @@ describe("session page note save", () => {
     expect(await screen.findByRole("heading", { name: "SOAP note" })).toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "save edit" }))
 
-    expect(mockUpdateEdits).toHaveBeenCalledTimes(1)
-    expect(mockUpdateEdits.mock.calls[0][0].noteId).toBe("note-3")
+    expect(mockSaveEdits).toHaveBeenCalledTimes(1)
+    expect(mockSaveEdits.mock.calls[0][0].noteId).toBe("note-3")
   })
 
   it("offers no save on a signed note", async () => {
@@ -187,7 +257,62 @@ describe("session page note save", () => {
 
     expect(await screen.findByRole("heading", { name: "SOAP note" })).toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "save edit" }))
-    expect(mockUpdateEdits).not.toHaveBeenCalled()
+    expect(mockSaveEdits).not.toHaveBeenCalled()
+  })
+
+  it("starts a redraft that keeps edits only once the edit is saved", async () => {
+    const save = deferred()
+    mockSaveEdits.mockReturnValue(save.promise)
+    givenSession(createMockNote({ id: "note-4", note_type: "soap", content: {} }))
+    await renderPage()
+
+    fireEvent.click(await screen.findByRole("button", { name: "save edit" }))
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "redraft" }))
+    })
+    expect(mockRedraft).not.toHaveBeenCalled()
+
+    await act(async () => save.resolve())
+    expect(mockRedraft).toHaveBeenCalledWith({
+      sessionId: "session-123",
+      data: { note_inputs: { visit_code: "99214" }, edits: "keep" },
+    })
+    // The redraft's result is what shows next, not the page's copy of the edit.
+    expect(JSON.parse(screen.getByTestId("pending").textContent ?? "null")).toBeNull()
+  })
+
+  it("sends a dictation that redrafts the note only once the edit is saved", async () => {
+    const save = deferred()
+    mockSaveEdits.mockReturnValue(save.promise)
+    givenSession(createMockNote({ id: "note-5", note_type: "soap", content: { s: 1 } }))
+    await renderPage()
+
+    fireEvent.click(await screen.findByRole("button", { name: "save edit" }))
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "dictate" }))
+    })
+    expect(mockAddDictation).not.toHaveBeenCalled()
+
+    await act(async () => save.resolve())
+    expect(mockAddDictation).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: "session-123", durationSeconds: 9 }),
+    )
+  })
+
+  it("says a redraft is running, and holds the note still meanwhile", async () => {
+    givenSession(createMockNote({ note_type: "dap", content: {}, status: "processing" }))
+    await renderPage()
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Redrafting the note…")
+    fireEvent.click(screen.getByRole("button", { name: "save edit" }))
+    expect(mockSaveEdits).not.toHaveBeenCalled()
+  })
+
+  it("says a redraft that didn't finish left the note as it was", async () => {
+    givenSession(createMockNote({ note_type: "dap", content: {}, status: "failed" }))
+    await renderPage()
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("your note hasn't changed")
   })
 
   it("names no note type while the note is still being generated", async () => {

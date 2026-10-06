@@ -28,12 +28,14 @@ import contextlib
 import itertools
 import logging
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, ClassVar, Literal
 
 from ..models import ChatMessage, QuotaStatus
 from ..reliability import Idempotency, RetryExhaustedError, RetryPolicy, acall_with_retry
+from ..settings import get_settings
 from ..utcnow import utc_now
+from .ai_features import AIFeature
 from .chat_context_bundler import (
     ContextBundle,
     ContextOverflowError,
@@ -41,6 +43,7 @@ from .chat_context_bundler import (
     assemble_context_bundle,
     default_source_selection,
 )
+from .chat_failover import failover_chat_gateway
 from .chat_llm_gateway import StreamEvent, UserAssistantTurn
 from .llm_telemetry import RetrievedDocumentRef, retrieval_span
 
@@ -279,6 +282,11 @@ class ChatTurnService:
         one ``done`` *or* ``error``. The route serializes events as
         SSE frames.
         """
+        # A deployment may give either chat feature a primary model of its own
+        # (``ai_models``); the turn is recorded under the model that ran it.
+        context = replace(
+            context, model=get_settings().model_for(_chat_feature(context), context.model)
+        )
         lock = self._conversation_locks.setdefault(context.conversation_id, asyncio.Lock())
         if lock.locked():
             raise TurnConcurrencyError(context.conversation_id)
@@ -597,7 +605,12 @@ class ChatTurnService:
             is_first_attempt = attempt_count == 1
             buffer: list[str] = []
             final: StreamEvent | None = None
-            stream = self._gateway.stream_completion(
+            # A client's own chat and a clinician's are separate features, so
+            # each gets only the fallbacks configured for it (see
+            # ``chat_failover``): a client-facing answer never inherits the
+            # clinician chat's fallback.
+            gateway = failover_chat_gateway(_chat_feature(context), self._gateway)
+            stream = gateway.stream_completion(
                 model=context.model,
                 system_prompt=system_prompt,
                 prior_turns=prior_turns,
@@ -800,6 +813,11 @@ def _error_event(*, code: str, message: str) -> TurnStreamEvent:
         kind="error",
         data={"error": code, "message": message},
     )
+
+
+def _chat_feature(context: TurnContext) -> AIFeature:
+    """Which chat feature a turn is: a client's own chat, or a clinician's."""
+    return AIFeature.PATIENT_CHAT if context.patient_principal else AIFeature.CHAT
 
 
 def _is_retryable(error_code: str | None) -> bool:

@@ -37,6 +37,7 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     DateTime,
+    Float,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
@@ -227,6 +228,10 @@ class TherapySessionRow(Base):
     notes: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Seconds into the recording when the client was last present; what the
+    # clinician dictated after it is not face-to-face time. 0 for a
+    # dictation-only recording, NULL when unknown (see app.notes.client_present).
+    client_present_end_seconds: Mapped[float | None] = mapped_column(Float)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     audio_gcs_path: Mapped[str | None] = mapped_column(Text)
     processing_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -265,6 +270,10 @@ class NoteRow(Base):
     # Values the clinician supplied for the note type's declared inputs,
     # kept so generation sees the same context every time it runs.
     note_inputs: Mapped[dict | None] = mapped_column(JSONB)
+    # The visit's psychotherapy window: the start the draft proposed and the
+    # one the clinician confirmed (see app.notes.visit_times). Kept apart from
+    # content so a redraft keeps the confirmation.
+    psychotherapy_window: Mapped[dict | None] = mapped_column(JSONB)
     # AI-generated and clinician-edited note bodies. Shape varies by
     # note_type; the registry owns validation. Mirrors the existing
     # TherapySessionRow.note_content / note_content_edited columns.
@@ -412,6 +421,72 @@ class NoteAddendumRow(Base):
     prev_digest: Mapped[str | None] = mapped_column(String(64))
     created_by: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class SessionDictationRow(Base):
+    """A clip the clinician dictated about a session after its recording stopped.
+
+    Kept apart from the session's own transcript and timing: dictation is
+    documentation time, never face-to-face or psychotherapy time, so nothing
+    here moves ``therapy_sessions`` timing and a reader of minutes adds
+    ``duration_seconds`` only where documentation time is wanted.
+
+    Append-only — no ``updated_at`` / ``deleted_at``. The transcription
+    worker fills ``transcript`` and ``used_as`` once (``transcribing`` →
+    ``transcribed`` or ``failed``); signing the draft addendum it became
+    records ``addendum_id``. Nothing rewrites what was said.
+
+    ``used_as`` is ``redraft`` when the note was unsigned and the dictation
+    went into its redraft, ``addendum`` when the note was signed and the
+    dictation became a draft addendum for the clinician to review and sign.
+
+    Readable exactly when its note is (the note-child policy).
+    """
+
+    __tablename__ = "session_dictations"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    session_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("therapy_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    note_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("notes.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("patients.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    author_user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    audio_path: Mapped[str] = mapped_column(Text, nullable=False)
+    content_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    duration_seconds: Mapped[int | None] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    transcript: Mapped[str | None] = mapped_column(Text)
+    used_as: Mapped[str | None] = mapped_column(String(20))
+    addendum_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("note_addenda.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    transcribed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('transcribing', 'transcribed', 'failed')",
+            name="ck_session_dictations_status",
+        ),
+        CheckConstraint(
+            "used_as IS NULL OR used_as IN ('redraft', 'addendum')",
+            name="ck_session_dictations_used_as",
+        ),
+    )
 
 
 class PatientClinicianRow(Base):
@@ -1647,11 +1722,26 @@ class ClientAiConsentEventRow(Base):
     recorded_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     intake_submission_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    # How the answer was given, when the clinician said: in the room or over
+    # telehealth, where the client said they were (telehealth), and who gave
+    # it — the client, or a parent or guardian for them. NULL on answers
+    # recorded before these existed, and whenever nobody said.
+    modality: Mapped[str | None] = mapped_column(String(16))
+    client_stated_location: Mapped[str | None] = mapped_column(Text)
+    consented_by: Mapped[str | None] = mapped_column(String(16))
 
     __table_args__ = (
         CheckConstraint(
             "decision IN ('consented', 'declined')",
             name="ck_client_ai_consent_events_decision",
+        ),
+        CheckConstraint(
+            "modality IS NULL OR modality IN ('in_person', 'telehealth')",
+            name="ck_client_ai_consent_events_modality",
+        ),
+        CheckConstraint(
+            "consented_by IS NULL OR consented_by IN ('client', 'parent', 'guardian')",
+            name="ck_client_ai_consent_events_consented_by",
         ),
         CheckConstraint(
             "source IN ('clinician', 'intake_form')",

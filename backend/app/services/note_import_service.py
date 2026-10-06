@@ -24,11 +24,14 @@ from datetime import date, datetime, time
 from typing import Any
 
 from ..notes import NoteTypeDefinition, NoteTypeRegistry, get_default_registry
+from ..notes.diagnoses import DIAGNOSES_KIND_LABEL
 from ..settings import get_settings
 
 # These helpers build/validate the registry-shaped JSON for a note type.
 # They are imported (not reimplemented) so an imported note is exactly the
 # same shape as a generated one; see CLAUDE.md "Don't duplicate OSS".
+from .ai_features import AIFeature
+from .hedged_structured_llm_gateway import generation_gateway
 from .note_generation_service import (
     SOAP_KEY,
     _build_registry_response_schema,
@@ -39,7 +42,6 @@ from .structured_llm_gateway import (
     StructuredCompletion,
     StructuredLLMGateway,
     StructuredOutputTruncatedError,
-    get_default_structured_llm_gateway,
 )
 
 logger = logging.getLogger(__name__)
@@ -107,7 +109,9 @@ EXTRACT_INTO_SYSTEM_PROMPT = (
     "that note's existing text into the named fields below — not to rewrite "
     "it.\n\n" + _VERBATIM_RULES + "- Place text only in a field whose label and description say "
     "it belongs there. Text that no field is meant for is left out, not "
-    "forced into the closest field.\n" + _EMPTY_FIELD_RULE
+    "forced into the closest field.\n"
+    '- One line may hold several labelled facts ("Date: ... Codes: ..."). '
+    "Place each fact in the field it belongs to; a line is not one unit.\n" + _EMPTY_FIELD_RULE
 )
 
 
@@ -340,7 +344,9 @@ def _field_guide(definition: NoteTypeDefinition) -> str:
     for section in definition.sections:
         lines.append(f"## {section.key} — {section.label}")
         for fld in section.fields:
-            kind = "list of strings" if fld.kind == "list" else "text"
+            kind = {"list": "list of strings", "diagnoses": DIAGNOSES_KIND_LABEL}.get(
+                fld.kind, "text"
+            )
             hint = f" — {fld.ai_hint}" if fld.ai_hint else ""
             lines.append(f"- {fld.key} ({kind}): {fld.label}{hint}")
     return "\n".join(lines)
@@ -467,7 +473,7 @@ class NoteImportService:
         registry: NoteTypeRegistry | None = None,
         model: str | None = None,
     ) -> None:
-        self._llm_gateway = llm_gateway or get_default_structured_llm_gateway()
+        self._llm_gateway = llm_gateway or generation_gateway(AIFeature.NOTE_IMPORT)
         self._registry = registry or get_default_registry()
         self._model = model
 
@@ -477,7 +483,9 @@ class NoteImportService:
         # far faster than the pro/thinking default. Falls back to ai_model
         # when no flash model is configured.
         settings = get_settings()
-        return self._model or settings.ai_model_flash or settings.ai_model
+        return self._model or settings.model_for(
+            AIFeature.NOTE_IMPORT, settings.ai_model_flash or settings.ai_model
+        )
 
     def _complete_with_retry(
         self,

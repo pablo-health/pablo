@@ -102,6 +102,9 @@ from app.repositories.external_calendar_event import (  # noqa: E402
 from app.repositories.patient_source_mapping import (  # noqa: E402
     InMemoryPatientSourceMappingRepository,
 )
+from app.repositories.session_dictation import (  # noqa: E402
+    InMemorySessionDictationRepository,
+)
 from app.routes.calendar_import import (  # noqa: E402
     get_patient_source_mapping_repository,
 )
@@ -139,6 +142,7 @@ from app.routes.scheduling import (  # noqa: E402
     get_google_calendar_service,
     get_outside_session_repository,
 )
+from app.routes.session_dictations import get_dictation_repository  # noqa: E402
 from app.routes.sessions import (  # noqa: E402
     get_notes_repository as get_sessions_notes_repository,
 )
@@ -255,6 +259,12 @@ def mock_notes_repo() -> InMemoryNotesRepository:
     repo = InMemoryNotesRepository()
     repo.grant_all_access()
     return repo
+
+
+@pytest.fixture
+def mock_dictation_repo() -> InMemorySessionDictationRepository:
+    """A fresh in-memory session dictation repository for each test."""
+    return InMemorySessionDictationRepository()
 
 
 @pytest.fixture
@@ -414,6 +424,7 @@ def client(
     mock_ehr_navigation_service: MockEhrNavigationService,
     mock_mapping_repo: InMemoryPatientSourceMappingRepository,
     mock_problem_repo: InMemoryPatientProblemRepository,
+    mock_dictation_repo: InMemorySessionDictationRepository,
 ) -> Any:
     """Create a TestClient with mocked dependencies."""
     # Override dependencies
@@ -423,6 +434,7 @@ def client(
     app.dependency_overrides[get_therapy_session_repository] = lambda: mock_session_repo
     app.dependency_overrides[get_session_repository] = lambda: mock_session_repo
     app.dependency_overrides[get_sessions_notes_repository] = lambda: mock_notes_repo
+    app.dependency_overrides[get_dictation_repository] = lambda: mock_dictation_repo
     app.dependency_overrides[get_patients_notes_repository] = lambda: mock_notes_repo
     app.dependency_overrides[get_notes_route_notes_repository] = lambda: mock_notes_repo
     app.dependency_overrides[get_notes_route_patient_repository] = lambda: mock_repo

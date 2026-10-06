@@ -29,6 +29,8 @@ class Note:
     note_type_version: int | None = None
     # Values supplied for the note type's declared inputs.
     note_inputs: dict[str, str] | None = None
+    # Proposed and confirmed psychotherapy window; see app.notes.visit_times.
+    psychotherapy_window: dict[str, Any] | None = None
     content: dict[str, Any] | None = None
     content_edited: dict[str, Any] | None = None
     finalized_at: datetime | None = None
@@ -38,7 +40,10 @@ class Note:
     # Lifecycle of the standalone-note dictation path: 'processing' from the
     # moment the skeleton is persisted, until the Cloud Tasks worker writes
     # 'complete' (with content) or 'failed'. Every note created any other
-    # way (no dictation, session-derived) starts and stays 'complete'.
+    # way (no dictation, session-derived) starts 'complete'. A session note
+    # being drafted again is 'processing' until the redraft lands, and
+    # 'failed' — with its content untouched — if it didn't
+    # (app.services.note_redraft).
     status: str = "complete"
     redacted_content: dict[str, Any] | None = None
     naturalized_content: dict[str, Any] | None = None

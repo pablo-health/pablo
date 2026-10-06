@@ -106,8 +106,50 @@ describe("AiConsentLine", () => {
 
     expect(mockMutateAsync).toHaveBeenCalledWith({
       patientId: "p1",
-      data: { decision: "consented", effective_on: localToday() },
+      data: { decision: "consented", effective_on: localToday(), consented_by: "client" },
     })
+  })
+
+  it("records a parent's answer over telehealth with where the client said they were", async () => {
+    const user = userEvent.setup()
+    withRecord({ current: null, history: [] })
+    render(<AiConsentLine patientId="p1" />)
+
+    await user.click(screen.getByTestId("ai-consent-line"))
+    await user.click(screen.getByLabelText("Client agreed"))
+    await user.selectOptions(screen.getByLabelText("Answered by"), "parent")
+    expect(screen.queryByLabelText("Where the client said they were")).not.toBeInTheDocument()
+    await user.click(screen.getByLabelText("Telehealth"))
+    await user.type(screen.getByLabelText("Where the client said they were"), " At home ")
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(mockMutateAsync).toHaveBeenCalledWith({
+      patientId: "p1",
+      data: {
+        decision: "consented",
+        effective_on: localToday(),
+        modality: "telehealth",
+        client_stated_location: "At home",
+        consented_by: "parent",
+      },
+    })
+  })
+
+  it("does not send a place for an answer given in person", async () => {
+    const user = userEvent.setup()
+    withRecord({ current: null, history: [] })
+    render(<AiConsentLine patientId="p1" />)
+
+    await user.click(screen.getByTestId("ai-consent-line"))
+    await user.click(screen.getByLabelText("Client agreed"))
+    await user.click(screen.getByLabelText("Telehealth"))
+    await user.type(screen.getByLabelText("Where the client said they were"), "At home")
+    await user.click(screen.getByLabelText("In person"))
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    const sent = mockMutateAsync.mock.calls[0][0].data
+    expect(sent.modality).toBe("in_person")
+    expect(sent.client_stated_location).toBeUndefined()
   })
 
   it("records a declined answer for a chosen day", async () => {
@@ -124,7 +166,7 @@ describe("AiConsentLine", () => {
 
     expect(mockMutateAsync).toHaveBeenCalledWith({
       patientId: "p1",
-      data: { decision: "declined", effective_on: "2026-09-30" },
+      data: { decision: "declined", effective_on: "2026-09-30", consented_by: "client" },
     })
   })
 
@@ -163,6 +205,26 @@ describe("AiConsentLine", () => {
     expect(items[0]).toHaveTextContent("On the intake form")
     expect(items[1]).toHaveTextContent("Agreed Oct 6, 2026")
     expect(items[1]).toHaveTextContent("Recorded by Dr. Rivera")
+  })
+
+  it("shows how each answer was given, and nothing extra for one without it", async () => {
+    const user = userEvent.setup()
+    const older = entry({ id: "a", effective_on: "2026-09-01" })
+    const latest = entry({
+      id: "b",
+      effective_on: "2026-10-06",
+      modality: "telehealth",
+      client_stated_location: "At home",
+      consented_by: "guardian",
+    })
+    withRecord({ current: latest, history: [older, latest] })
+    render(<AiConsentLine patientId="p1" />)
+
+    await user.click(screen.getByTestId("ai-consent-line"))
+
+    const items = screen.getByTestId("ai-consent-history").querySelectorAll("li")
+    expect(items[0]).toHaveTextContent("Agreed Oct 6, 2026 · Telehealth · At home · Guardian")
+    expect(items[1]).toHaveTextContent(/^Agreed Sep 1, 2026Recorded by Dr\. Rivera$/)
   })
 })
 

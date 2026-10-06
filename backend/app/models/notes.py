@@ -11,6 +11,7 @@ models for the ``/api/notes`` surface and for embedding in
 from __future__ import annotations
 
 from datetime import datetime
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -88,6 +89,26 @@ class UpdateNoteEditsRequest(BaseModel):
     content_edited: dict[str, Any]
 
 
+class RedraftEdits(StrEnum):
+    """What a redraft does with the clinician's edits to the note."""
+
+    #: Fields the clinician changed stay as written; the rest are redrafted.
+    KEEP = "keep"
+    #: The new draft replaces the note, edits included.
+    REPLACE = "replace"
+
+
+class RedraftNoteRequest(BaseModel):
+    """Draft a session's note again (``POST /api/sessions/{id}/note/redraft``).
+
+    ``note_inputs``, when present, replace the note's inputs first. ``edits``
+    is required once the note carries clinician edits.
+    """
+
+    note_inputs: dict[str, str] | None = None
+    edits: RedraftEdits | None = None
+
+
 class FinalizeNoteRequest(BaseModel):
     """Request body for ``POST /api/notes/{id}/finalize``.
 
@@ -163,6 +184,8 @@ class CreateNoteAddendumRequest(NoteSignerFields):
     """Request body for ``POST /api/notes/{id}/addenda``."""
 
     text: str = Field(max_length=20000)
+    #: The dictation this addendum was drafted from, when it was.
+    dictation_id: str | None = None
 
 
 class NoteSignatureResponse(BaseModel):

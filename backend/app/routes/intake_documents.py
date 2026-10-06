@@ -46,7 +46,7 @@ from ..db.platform_models import PracticeRow
 from ..intake.consent_statement import CURRENT_CONSENT_STATEMENT_VERSION, consent_statement
 from ..intake.documents import fill_practice_values, render_html
 from ..intake.items import ItemDraft
-from ..intake.starters import STARTERS, starter
+from ..intake.starters import intake_starters, starter
 from ..models import User  # noqa: TC001 — fastapi resolves the annotation at runtime
 from ..models.audit import AuditAction, ResourceType
 from ..models.intake_document_api import (
@@ -58,6 +58,7 @@ from ..models.intake_document_api import (
     UpdateDocumentRequest,
 )
 from ..repositories import get_intake_document_repository
+from ..services.audio_retention import retention_phrase
 from ..services.audit_service import AuditService, get_audit_service
 from ..services.intake_document_service import (
     IntakeDocumentService,
@@ -121,7 +122,10 @@ def _practice_values() -> dict[str, str]:
     )
     if practice is None:
         return {}
-    return {"audio_retention_days": str(practice.audio_retention_days)}
+    return {
+        "audio_retention": retention_phrase(practice.audio_retention_days),
+        "audio_retention_days": str(practice.audio_retention_days),
+    }
 
 
 def get_document_values(
@@ -383,7 +387,7 @@ def list_starters(
     _user: User = Depends(require_baa_acceptance),
 ) -> list[StarterSummary]:
     """The documents a practice can start from, in the order to list them."""
-    return [StarterSummary(key=s.key, title=s.title) for s in STARTERS]
+    return [StarterSummary(key=s.key, title=s.title) for s in intake_starters()]
 
 
 @starter_router.post("/{starter_key}", response_model=StarterAdoptedResponse)
@@ -398,11 +402,14 @@ def adopt_starter(
     """The practice's copy of a starter, and the items that put it on a form.
 
     Publishes the copy the first time, which is audited the way any other
-    publish is: a signature will be read against that text.
+    publish is: a signature will be read against that text. A starter that
+    is questions alone hands back its questions and no document.
     """
     chosen = starter(starter_key)
     if chosen is None:
         raise NotFoundError("Starter not found", {"starter_key": starter_key})
+    if chosen.body_markdown is None or chosen.document_item_key is None:
+        return StarterAdoptedResponse(document=None, items=list(chosen.questions))
 
     document, created = service.adopt_starter(chosen, user.id)
     if created:
