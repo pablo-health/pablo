@@ -2,7 +2,8 @@
 
 /**
  * Settings > Note types: listing, retiring and editing the practice's own
- * types, starting one from a template, and trying a draft before saving.
+ * types, starting one from a template or from the clinician's own notes, and
+ * trying a draft before saving.
  *
  * The API layer is mocked at its functions, so each test pins what the page
  * sends — above all that a template saved untouched is the template file, and
@@ -16,7 +17,7 @@ import userEvent from "@testing-library/user-event"
 import { NoteTypesPage } from "../NoteTypesPage"
 import { renderWithProviders } from "@/test/renderWithProviders"
 import { ApiError } from "@/lib/api/client"
-import type { NoteTypeSchema, PracticeNoteTypeSpec } from "@/types/noteTypes"
+import type { DeriveNoteTypeResponse, NoteTypeSchema, PracticeNoteTypeSpec } from "@/types/noteTypes"
 import template from "../../noteTypes/templates/psychiatric_follow_up.json"
 import evaluationTemplate from "../../noteTypes/templates/psychiatric_evaluation.json"
 
@@ -26,6 +27,8 @@ const mockSave = vi.fn()
 const mockRetire = vi.fn()
 const mockPreview = vi.fn()
 const mockSessions = vi.fn()
+const mockDerive = vi.fn()
+const mockReferences = vi.fn()
 
 vi.mock("@/lib/api/noteTypes", () => ({
   listNoteTypes: (...a: unknown[]) => mockList(...a),
@@ -33,6 +36,8 @@ vi.mock("@/lib/api/noteTypes", () => ({
   savePracticeNoteType: (...a: unknown[]) => mockSave(...a),
   retirePracticeNoteType: (...a: unknown[]) => mockRetire(...a),
   previewNoteDraft: (...a: unknown[]) => mockPreview(...a),
+  deriveNoteType: (...a: unknown[]) => mockDerive(...a),
+  listDeriveReferences: (...a: unknown[]) => mockReferences(...a),
 }))
 
 vi.mock("@/hooks/useSessions", () => ({
@@ -81,6 +86,7 @@ beforeEach(() => {
   )
   mockRetire.mockResolvedValue(COACH)
   mockSessions.mockReturnValue({ data: [] })
+  mockReferences.mockResolvedValue({ references: [] })
 })
 
 afterEach(() => vi.clearAllMocks())
@@ -282,5 +288,209 @@ describe("NoteTypesPage try it", () => {
 
     await waitFor(() => expect(mockPreview).toHaveBeenCalledTimes(1))
     expect(mockPreview.mock.calls[0][0].transcript).toEqual({ format: "vtt", content: "WEBVTT\n\nhi" })
+  })
+})
+
+// A synthetic sample; no real client's words.
+const STRAY = "Brought a drawing from a weekend art class."
+const SAMPLE = `Interval history: Sleeping better.\nFollow up: Four weeks.\n${STRAY}`
+
+const DERIVED_SPEC: PracticeNoteTypeSpec = {
+  label: "Follow-up visit",
+  description: "A short follow-up note.",
+  system_prompt: "Write in brief clinical prose.",
+  user_template: null,
+  sections: [
+    {
+      key: "interval",
+      label: "Interval",
+      fields: [{ key: "interval_history", label: "Interval history", kind: "text", ai_hint: "Changes since last visit." }],
+    },
+    {
+      key: "plan",
+      label: "Plan",
+      fields: [{ key: "follow_up", label: "Follow up", kind: "text", ai_hint: "When they return." }],
+    },
+  ],
+  inputs: [],
+}
+
+const DERIVED: DeriveNoteTypeResponse = {
+  spec: DERIVED_SPEC,
+  coverage: [{ sample: 0, passages: 3, unplaced: [STRAY], checked: true }],
+  guard: [],
+  reference: null,
+  suggestions: [],
+}
+
+async function proposeFromPastedSample(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByRole("button", { name: "Start from your notes" }))
+  await user.click(screen.getByLabelText("Note 1"))
+  await user.paste(SAMPLE)
+  await user.click(screen.getByRole("button", { name: "Propose a note type" }))
+  return screen.findByLabelText("Note type name")
+}
+
+describe("NoteTypesPage from your notes", () => {
+  it("opens the proposal in the editor and saves it, sending the pasted sample once", async () => {
+    mockDerive.mockResolvedValue(DERIVED)
+    const user = userEvent.setup()
+    renderWithProviders(<NoteTypesPage />)
+
+    expect(await proposeFromPastedSample(user)).toHaveValue("Follow-up visit")
+    expect(mockDerive).toHaveBeenCalledTimes(1)
+    expect(mockDerive).toHaveBeenCalledWith(
+      { samples: [SAMPLE], files: [], description: "", reference: null },
+      undefined,
+    )
+    expect(mockSave).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole("button", { name: "Save note type" }))
+    await waitFor(() => expect(mockSave).toHaveBeenCalledTimes(1))
+    expect(mockSave).toHaveBeenCalledWith("follow_up_visit", DERIVED_SPEC, undefined)
+    expect(await screen.findByRole("status")).toHaveTextContent("Saved Follow-up visit, version 4.")
+  })
+
+  it("says the notes are not kept", async () => {
+    const user = userEvent.setup()
+    renderWithProviders(<NoteTypesPage />)
+
+    await user.click(await screen.findByRole("button", { name: "Start from your notes" }))
+    expect(screen.getByText(/Your notes are used for this and not kept\./)).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Propose a note type" })).toBeDisabled()
+  })
+
+  it("shows a passage with no field, and 'Add a field for this' adds one to the editor", async () => {
+    mockDerive.mockResolvedValue(DERIVED)
+    const user = userEvent.setup()
+    renderWithProviders(<NoteTypesPage />)
+    await proposeFromPastedSample(user)
+
+    const passage = screen.getByTestId("unplaced-passage")
+    expect(passage).toHaveTextContent(STRAY)
+    await user.click(within(passage).getByRole("button", { name: "Add a field for this" }))
+
+    expect(passage).toHaveTextContent("Field added to Plan")
+    const plan = screen.getAllByRole("group", { name: "Section 2" })[0]
+    const added = within(within(plan).getByRole("group", { name: "Field 2" })).getByLabelText("Field name")
+    expect(added).toHaveValue("")
+    expect(added).toHaveFocus()
+    await user.type(added, "Other observations")
+    await user.click(screen.getByRole("button", { name: "Save note type" }))
+
+    await waitFor(() => expect(mockSave).toHaveBeenCalledTimes(1))
+    const saved = mockSave.mock.calls[0][1] as PracticeNoteTypeSpec
+    // The passage itself never goes into the definition.
+    expect(JSON.stringify(saved)).not.toContain(STRAY)
+    expect(saved.sections[1].fields).toEqual([
+      DERIVED_SPEC.sections[1].fields[0],
+      { key: "other_observations", label: "Other observations", kind: "text", ai_hint: "" },
+    ])
+  })
+
+  it("counts lines left out as not note content in one quiet line", async () => {
+    mockDerive.mockResolvedValue({ ...DERIVED, coverage: [{ ...DERIVED.coverage[0], excluded: 16 }] })
+    const user = userEvent.setup()
+    renderWithProviders(<NoteTypesPage />)
+    await proposeFromPastedSample(user)
+
+    expect(screen.getByTestId("excluded-lines")).toHaveTextContent("16 lines left out as not part of the note.")
+    expect(screen.getAllByTestId("unplaced-passage")).toHaveLength(1)
+  })
+
+  it("says nothing about left-out lines when there are none or the count is absent", async () => {
+    mockDerive.mockResolvedValue({
+      ...DERIVED,
+      coverage: [{ ...DERIVED.coverage[0], excluded: 0 }, { sample: 1, passages: 2, unplaced: [], checked: true }],
+    })
+    const user = userEvent.setup()
+    renderWithProviders(<NoteTypesPage />)
+    await proposeFromPastedSample(user)
+
+    expect(screen.queryByTestId("excluded-lines")).not.toBeInTheDocument()
+  })
+
+  it("says so when everything found a field", async () => {
+    mockDerive.mockResolvedValue({ ...DERIVED, coverage: [{ sample: 0, passages: 2, unplaced: [], checked: true }] })
+    const user = userEvent.setup()
+    renderWithProviders(<NoteTypesPage />)
+    await proposeFromPastedSample(user)
+
+    expect(screen.getByText("Everything in your notes has a field.")).toBeInTheDocument()
+    expect(screen.queryByTestId("unplaced-passage")).not.toBeInTheDocument()
+  })
+
+  it("compares with a chosen reference, adding or ignoring what it suggests", async () => {
+    mockReferences.mockResolvedValue({ references: [{ key: "ref.follow_up", label: "Follow-up checklist" }] })
+    mockDerive.mockResolvedValue({
+      ...DERIVED,
+      reference: { key: "ref.follow_up", label: "Follow-up checklist" },
+      suggestions: [
+        { label: "Risk", description: "Current risk and what was done about it." },
+        { label: "Allergies", description: "" },
+      ],
+    })
+    const user = userEvent.setup()
+    renderWithProviders(<NoteTypesPage />)
+
+    await user.click(await screen.findByRole("button", { name: "Start from your notes" }))
+    await user.type(screen.getByLabelText(/^How you write your notes/), "Interval, then plan.")
+    await user.selectOptions(screen.getByLabelText(/^Compare with/), await screen.findByRole("option", { name: "Follow-up checklist" }))
+    await user.click(screen.getByRole("button", { name: "Propose a note type" }))
+    await screen.findByLabelText("Note type name")
+    expect(mockDerive).toHaveBeenCalledWith(
+      { samples: [], files: [], description: "Interval, then plan.", reference: "ref.follow_up" },
+      undefined,
+    )
+
+    const [risk, allergies] = screen.getAllByTestId("reference-suggestion")
+    await user.click(within(allergies).getByRole("button", { name: "Ignore" }))
+    expect(screen.getAllByTestId("reference-suggestion")).toHaveLength(1)
+    await user.click(within(risk).getByRole("button", { name: "Add as a section" }))
+    expect(risk).toHaveTextContent("Section added")
+    expect(within(screen.getByRole("group", { name: "Section 3" })).getByLabelText("Section name")).toHaveValue("Risk")
+
+    await user.click(screen.getByRole("button", { name: "Save note type" }))
+    await waitFor(() => expect(mockSave).toHaveBeenCalledTimes(1))
+    expect((mockSave.mock.calls[0][1] as PracticeNoteTypeSpec).sections[2]).toEqual({
+      key: "risk",
+      label: "Risk",
+      fields: [{ key: "risk", label: "Risk", kind: "text", ai_hint: "Current risk and what was done about it." }],
+    })
+  })
+
+  it("shows the server's reason when nothing could be proposed", async () => {
+    mockDerive.mockRejectedValue(
+      new ApiError("UNPROCESSABLE", "A note type could not be proposed from these samples. Try again, or add a description.", undefined, 422),
+    )
+    const user = userEvent.setup()
+    renderWithProviders(<NoteTypesPage />)
+
+    await user.click(await screen.findByRole("button", { name: "Start from your notes" }))
+    await user.click(screen.getByLabelText("Note 1"))
+    await user.paste(SAMPLE)
+    await user.click(screen.getByRole("button", { name: "Propose a note type" }))
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("could not be proposed from these samples")
+    expect(screen.queryByLabelText("Note type name")).not.toBeInTheDocument()
+  })
+
+  it("takes at most three notes", async () => {
+    const user = userEvent.setup()
+    renderWithProviders(<NoteTypesPage />)
+
+    await user.click(await screen.findByRole("button", { name: "Start from your notes" }))
+    await user.click(screen.getByRole("button", { name: "Add another note" }))
+    await user.click(screen.getByRole("button", { name: "Add another note" }))
+    expect(screen.getByLabelText("Note 3")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Add another note" })).not.toBeInTheDocument()
+
+    for (const n of [1, 2, 3]) {
+      await user.click(screen.getByLabelText(`Note ${n}`))
+      await user.paste(SAMPLE)
+    }
+    await user.upload(screen.getByLabelText(/^Upload notes/), new File([SAMPLE], "note.txt", { type: "text/plain" }))
+    expect(screen.getByText("Use up to 3 notes.")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Propose a note type" })).toBeDisabled()
   })
 })
