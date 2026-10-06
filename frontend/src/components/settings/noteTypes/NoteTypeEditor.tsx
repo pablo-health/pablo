@@ -7,13 +7,23 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { useSavePracticeNoteType } from "@/hooks/useNoteTypes"
-import type { NoteTypeSchema } from "@/types/noteTypes"
+import type { DeriveNoteTypeResponse, DeriveSuggestion, NoteTypeSchema } from "@/types/noteTypes"
 import { SettingsCard } from "../ui"
+import { DerivedFindings } from "./DerivedFindings"
 import { FieldMessages, Labelled } from "./EditorParts"
 import { InputsEditor } from "./InputsEditor"
 import { SectionsEditor } from "./SectionsEditor"
 import { TryItPanel } from "./TryItPanel"
-import { errorsAt, fieldErrorsFrom, slugFor, specFromDraft, type FieldErrors, type NoteTypeDraft } from "./editorModel"
+import {
+  blankField,
+  blankSection,
+  errorsAt,
+  fieldErrorsFrom,
+  slugFor,
+  specFromDraft,
+  type FieldErrors,
+  type NoteTypeDraft,
+} from "./editorModel"
 import type { SampleVisit } from "./templates"
 
 interface NoteTypeEditorProps {
@@ -23,6 +33,8 @@ interface NoteTypeEditorProps {
   takenKeys: string[]
   onSaved: (saved: NoteTypeSchema) => void
   onCancel: () => void
+  /** A proposal from the clinician's notes, with what it left out. */
+  derived?: DeriveNoteTypeResponse
 }
 
 /**
@@ -33,9 +45,11 @@ interface NoteTypeEditorProps {
  * The prompts the type was loaded with (a template's, or a saved type's) are
  * carried through untouched — they are not edited here.
  */
-export function NoteTypeEditor({ initial, samples, takenKeys, onSaved, onCancel }: NoteTypeEditorProps) {
+export function NoteTypeEditor({ initial, samples, takenKeys, onSaved, onCancel, derived }: NoteTypeEditorProps) {
   const [draft, setDraft] = useState(initial)
   const [errors, setErrors] = useState<FieldErrors>({})
+  /** The field just added for an unplaced passage, so its name box takes focus. */
+  const [focusUid, setFocusUid] = useState<string | undefined>()
   const save = useSavePracticeNoteType()
   const spec = specFromDraft(draft)
 
@@ -51,6 +65,26 @@ export function NoteTypeEditor({ initial, samples, takenKeys, onSaved, onCancel 
   }
 
   const hasErrors = Object.keys(errors).length > 0
+
+  // Into the last section: it is usually where a note's loose ends go, and the
+  // clinician can move the field from there.
+  const addField = () => {
+    const field = blankField()
+    const last = draft.sections.length - 1
+    setDraft({
+      ...draft,
+      sections: draft.sections.map((s, i) => (i === last ? { ...s, fields: [...s.fields, field] } : s)),
+    })
+    setFocusUid(field.uid)
+    return draft.sections[last]?.label || `section ${last + 1}`
+  }
+  const addSection = ({ label, description }: DeriveSuggestion) => {
+    const section = blankSection()
+    setDraft({
+      ...draft,
+      sections: [...draft.sections, { ...section, label, fields: [{ ...section.fields[0], label, ai_hint: description }] }],
+    })
+  }
 
   return (
     <>
@@ -73,8 +107,15 @@ export function NoteTypeEditor({ initial, samples, takenKeys, onSaved, onCancel 
         </div>
       </SettingsCard>
 
+      {derived && <DerivedFindings derived={derived} onAddField={addField} onAddSection={addSection} />}
+
       <SettingsCard title="Sections and fields" description="What goes in each field guides the draft.">
-        <SectionsEditor sections={draft.sections} errors={errors} onChange={(sections) => setDraft({ ...draft, sections })} />
+        <SectionsEditor
+          sections={draft.sections}
+          errors={errors}
+          focusUid={focusUid}
+          onChange={(sections) => setDraft({ ...draft, sections })}
+        />
       </SettingsCard>
 
       <SettingsCard title="Appointment details" description="Filled in when you schedule a session with this note type.">
