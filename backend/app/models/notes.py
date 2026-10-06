@@ -184,6 +184,8 @@ class CreateNoteAddendumRequest(NoteSignerFields):
     """Request body for ``POST /api/notes/{id}/addenda``."""
 
     text: str = Field(max_length=20000)
+    #: The dictation this addendum was drafted from, when it was.
+    dictation_id: str | None = None
 
 
 class NoteSignatureResponse(BaseModel):

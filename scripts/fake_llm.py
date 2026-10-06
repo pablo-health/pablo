@@ -247,9 +247,39 @@ async def draft_note(call: NoteCall) -> dict[str, Any]:
         return {"data": _extracted(call.response_schema, note), "finish_reason": "stop"}
     draft = _stand_in(call.response_schema, "")
     _fill_named(draft, _supplied_inputs(call.user_prompt))
+    _fill_named(draft, _dictated(call.user_prompt))
     if "psychotherapy_start" in call.response_schema.get("properties", {}):
         draft["psychotherapy_start"] = _therapy_start(call.user_prompt)
     return {"data": draft, "finish_reason": "stop"}
+
+
+#: How the backend heads what a clinician dictated after the session
+#: (app.services.note_redraft.DICTATED_HEADING).
+DICTATED_HEADING = "Dictated by the clinician after the session"
+
+#: Every dictated clip transcribes to this. Its line is relocated into the
+#: field it names, so a redraft with it visibly gains it.
+DICTATION_TEXT = "Next session: Two weeks from today, same time."
+
+
+def _dictated(user_prompt: str) -> dict[str, str]:
+    """``Label: text`` lines dictated after the session, by label slug."""
+    _, found, rest = user_prompt.partition(DICTATED_HEADING)
+    values: dict[str, str] = {}
+    if not found:
+        return values
+    for line in rest.splitlines()[1:]:
+        # A prompt may number transcript lines ("[S4] ..."); the label follows.
+        label, sep, text = re.sub(r"^(\[[^\]]*\]\s*)+", "", line).partition(":")
+        if sep and text.strip():
+            values[_slug(label)] = text.strip()
+    return values
+
+
+@app.post("/transcription/v1/transcribe")
+async def transcribe() -> dict[str, str]:
+    """Dictated clips: DICTATION_TRANSCRIPTION_BASE_URL points at ``/transcription``."""
+    return {"text": DICTATION_TEXT}
 
 
 def _supplied_inputs(user_prompt: str) -> dict[str, str]:

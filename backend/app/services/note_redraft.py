@@ -21,10 +21,11 @@ from typing import TYPE_CHECKING, Any
 
 from ..api_errors import BadRequestError, ConflictError
 from ..db import release_db_connection
-from ..models import SessionStatus, SOAPNote
+from ..models import SessionStatus, SOAPNote, Transcript
 from ..models.enums import SessionSource
 from ..models.notes import RedraftEdits
 from ..notes import NoteTypeDefinition, get_default_registry
+from ..notes.client_present import DICTATED_HEADING
 from ..notes.practice_types import validate_note_inputs
 from .note_generation_service import SOAP_KEY, TransientNoteGenerationError
 from .note_service import NoteNotFoundError
@@ -39,9 +40,10 @@ from .session_service import (
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from ..models import Patient, TherapySession, Transcript
+    from ..models import Patient, TherapySession
     from ..models.note import Note
     from ..repositories import PatientRepository, TherapySessionRepository
+    from ..repositories.session_dictation import SessionDictationRepository
     from .note_generation_service import NoteGenerationService
     from .note_service import NoteService
 
@@ -141,11 +143,13 @@ class NoteRedraftService:
         patient_repo: PatientRepository,
         note_service: NoteService,
         note_generation_service: NoteGenerationService,
+        dictation_repo: SessionDictationRepository | None = None,
     ) -> None:
         self.session_repo = session_repo
         self.patient_repo = patient_repo
         self.note_service = note_service
         self.note_generation_service = note_generation_service
+        self.dictation_repo = dictation_repo
 
     def _redraftable(self, session_id: str, user_id: str) -> tuple[TherapySession, Note]:
         session = self.session_repo.get(session_id, user_id)
@@ -169,6 +173,10 @@ class NoteRedraftService:
                 f"Note {note.id} is already being redrafted", {"note_id": note.id}
             )
         return session, note
+
+    def check_redraftable(self, session_id: str, user_id: str) -> Note:
+        """The session's note, if it can be drafted again now; raises otherwise."""
+        return self._redraftable(session_id, user_id)[1]
 
     def start(
         self,
@@ -208,7 +216,17 @@ class NoteRedraftService:
         return note, edits == RedraftEdits.KEEP
 
     def _source_transcript(self, session: TherapySession) -> Transcript:
-        return session.transcript
+        """The session's transcript, then everything dictated for its note.
+
+        Only dictations that went into a redraft count; one that became an
+        addendum to a signed note is already in the record as that addendum.
+        """
+        dictations = self.dictation_repo.list_for_session(session.id) if self.dictation_repo else []
+        dictated = [d.transcript for d in dictations if d.used_as == "redraft" and d.transcript]
+        if not dictated:
+            return session.transcript
+        content = "\n\n".join([session.transcript.content, DICTATED_HEADING, *dictated])
+        return Transcript(format=session.transcript.format, content=content)
 
     def run(
         self,

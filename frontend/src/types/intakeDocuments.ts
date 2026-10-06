@@ -49,7 +49,7 @@ export interface UpdateDocumentInput {
   body_markdown?: string
 }
 
-/** A built-in document a practice can start from. */
+/** A document, or a set of questions, a practice can start from. */
 export interface IntakeStarter {
   key: string
   title: string
@@ -58,9 +58,10 @@ export interface IntakeStarter {
 /**
  * What adopting a starter hands back: the practice's published copy, and the
  * items that put it on a form — a consent item pointing at the copy, then
- * the starter's own questions.
+ * the starter's own questions. A starter that is questions alone has no
+ * document, and its items are just its questions.
  */
 export interface AdoptedStarter {
-  document: IntakeDocument
+  document: IntakeDocument | null
   items: IntakeItemInput[]
 }

@@ -159,6 +159,20 @@ def recording_end(segments: Sequence[TimedSegment]) -> float:
     return max((s.end for s in segments), default=0.0)
 
 
+DICTATED_HEADING = "Dictated by the clinician after the session (the client was not present):"
+"""Heads what the clinician dictated for the note after the recording stopped.
+
+A redraft appends those dictations to the session's transcript under this
+heading; they are not part of the recording and carry no recording times.
+"""
+
+
+def split_dictated(content: str) -> tuple[str, str]:
+    """The recording's transcript, and what was dictated for the note after it."""
+    recording, _, dictated = content.partition(DICTATED_HEADING)
+    return recording.rstrip(), dictated.strip()
+
+
 def split_at_boundary(segments: Sequence[TimedSegment], boundary: float) -> TranscriptSplit:
     """The turns before the boundary, and the clinician's turns after it.
 
@@ -178,6 +192,7 @@ def split_at_boundary(segments: Sequence[TimedSegment], boundary: float) -> Tran
 
 __all__ = [
     "CLIENT_SPEAKER",
+    "DICTATED_HEADING",
     "MIN_BOUNDARY_CLIENT_WORDS",
     "SPEECH_WORDS_PER_SECOND",
     "TimedSegment",
@@ -189,4 +204,5 @@ __all__ = [
     "segments_from_transcript",
     "segments_from_utterances",
     "split_at_boundary",
+    "split_dictated",
 ]

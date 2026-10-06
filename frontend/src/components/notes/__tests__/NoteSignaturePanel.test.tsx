@@ -114,6 +114,49 @@ describe("a signed note", () => {
     expect(item).toHaveTextContent("Oct 5, 2026, 4:00 PM EDT")
   })
 
+  it("offers a dictation's draft addendum, prefilled, and signs it as the dictation's", async () => {
+    const user = userEvent.setup()
+    mutations.addendum.mockResolvedValue({})
+    const current = version()
+    given({ finalized_at: SIGNED_AT, signature: current, versions: [current] })
+    render(
+      <NoteSignaturePanel
+        note={createMockNote({ finalized_at: SIGNED_AT })}
+        draftAddendum={{ dictationId: "d-1", text: "Next session: two weeks from today." }}
+      />,
+    )
+
+    const draft = screen.getByTestId("draft-addendum")
+    expect(draft).toHaveTextContent("Next session: two weeks from today.")
+    await user.click(within(draft).getByRole("button", { name: "Review and sign" }))
+    const dialog = screen.getByRole("dialog")
+    const text = within(dialog).getByLabelText("Addendum")
+    expect(text).toHaveValue("Next session: two weeks from today.")
+    await user.type(text, " Same time.")
+    await user.type(within(dialog).getByLabelText("Your name"), "{selectall}Sam Ortiz")
+    await user.click(within(dialog).getByRole("button", { name: "Sign and add" }))
+
+    expect(mutations.addendum).toHaveBeenCalledWith({
+      noteId: "note-1",
+      data: expect.objectContaining({
+        text: "Next session: two weeks from today. Same time.",
+        dictation_id: "d-1",
+      }),
+    })
+  })
+
+  it("offers no draft addendum on an unsigned note", () => {
+    given({})
+    render(
+      <NoteSignaturePanel
+        note={createMockNote({ finalized_at: null })}
+        canSign
+        draftAddendum={{ dictationId: "d-1", text: "x" }}
+      />,
+    )
+    expect(screen.queryByTestId("draft-addendum")).not.toBeInTheDocument()
+  })
+
   it("unlocks only with a reason", async () => {
     const user = userEvent.setup()
     mutations.unlock.mockResolvedValue({})

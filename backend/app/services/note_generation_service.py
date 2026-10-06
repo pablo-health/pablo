@@ -34,7 +34,12 @@ from ..models import (
     Transcript,
 )
 from ..notes import NoteTypeDefinition, NoteTypeRegistry, get_default_registry
-from ..notes.client_present import TimedSegment, segments_from_transcript, split_at_boundary
+from ..notes.client_present import (
+    TimedSegment,
+    segments_from_transcript,
+    split_at_boundary,
+    split_dictated,
+)
 from ..notes.diagnoses import DIAGNOSES_KIND_LABEL, DIAGNOSES_SCHEMA, coerce_diagnoses
 from ..notes.practice_types import render_user_prompt
 from ..notes.prompts.soap import SOAP_SYSTEM_PROMPT
@@ -255,7 +260,9 @@ class RegistryNoteGenerationService(NoteGenerationService):
     ) -> GeneratedNote:
         definition = definition or self.registry.get(note_type)
         _refuse_restricted(definition)
-        segments = segments_from_transcript(transcript)
+        # The recording's own turns; anything dictated after it has no recording times.
+        recording, dictated = split_dictated(transcript.content)
+        segments = segments_from_transcript(Transcript(format=transcript.format, content=recording))
         asks_start = client_present_end_seconds != 0 and any(
             s.key == PSYCHOTHERAPY_SECTION_KEY for s in definition.sections
         )
@@ -267,6 +274,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
             inputs or {},
             client_present_end_seconds,
             segments=segments,
+            dictated=dictated,
             asks_start=asks_start,
         )
         if note_type == SOAP_KEY:
@@ -299,6 +307,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
         client_present_end_seconds: float | None = None,
         *,
         segments: Sequence[TimedSegment] = (),
+        dictated: str = "",
         asks_start: bool = False,
     ) -> tuple[dict[str, Any], dict[str, Any] | None]:
         """The drafted content, and the model's mark of where therapy began."""
@@ -307,7 +316,8 @@ class RegistryNoteGenerationService(NoteGenerationService):
         if client_present_end_seconds is not None and segments:
             split = split_at_boundary(segments, client_present_end_seconds)
             transcript = Transcript(format="txt", content=split.session_lines or _NO_CLIENT_PRESENT)
-            addendum = split.addendum_lines
+            # Dictated later, after the recording: addendum too.
+            addendum = "\n\n".join(p for p in (split.addendum_lines, dictated) if p)
             if client_present_end_seconds == 0:
                 definition = _without_psychotherapy(definition)
 

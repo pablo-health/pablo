@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from .postgres.supervision import PostgresSupervisionRepository
     from .postgres.telehealth_connection import PostgresZoomConnectionStore
     from .remittance_hold import RemittanceHoldRepository
+    from .session_dictation import SessionDictationRepository
 
 from .allowlist import (
     AllowlistRepository,
@@ -474,6 +475,13 @@ def get_client_ai_consent_repository() -> ClientAiConsentRepository:
     return PostgresClientAiConsentRepository(_get_pg_session())
 
 
+def get_session_dictation_repository() -> SessionDictationRepository:
+    """Get the session dictation repository instance."""
+    from .postgres.session_dictation import PostgresSessionDictationRepository
+
+    return PostgresSessionDictationRepository(_get_pg_session())
+
+
 def get_medication_repository() -> MedicationRepository:
     from .postgres.medication import PostgresMedicationRepository
 
@@ -595,6 +603,7 @@ __all__ = [
     "get_payer_repository",
     "get_practice_note_type_repository",
     "get_refill_request_repository",
+    "get_session_dictation_repository",
     "get_session_repository",
     "get_supervision_repository",
     "get_user_repository",

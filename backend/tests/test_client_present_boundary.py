@@ -14,6 +14,7 @@ from app.models import Patient, Transcript
 from app.models.session import SessionResponse, TherapySession
 from app.notes import NoteTypeRegistry, register_builtin_note_types
 from app.notes.client_present import (
+    DICTATED_HEADING,
     MIN_BOUNDARY_CLIENT_WORDS,
     TimedSegment,
     client_present_end,
@@ -363,6 +364,21 @@ class TestGenerationReceivesTheAddendum:
         assert "No risk concerns stated." in call["user_prompt"].split("Clinician addendum:")[1]
         assert "client was not present in this recording" in call["user_prompt"]
         assert content["psychotherapy"] == {"interventions": ""}
+
+    def test_later_dictations_join_the_addendum_and_never_the_session(
+        self, patient: Patient
+    ) -> None:
+        dictated = "[00:00:03] Therapist: PDMP checked today, no concerns."
+        content = f"{_SESSION_WITH_TAIL}\n\n{DICTATED_HEADING}\n\n{dictated}"
+
+        gateway, _content = self._generate(patient, content, 2158.4)
+
+        transcript_part, addendum_part = gateway.calls[0]["user_prompt"].split(
+            "Clinician addendum:", 1
+        )
+        assert "PDMP checked" not in transcript_part
+        assert "PDMP checked today, no concerns." in addendum_part
+        assert "Client denies suicidal ideation" in addendum_part
 
     def test_an_unknown_boundary_leaves_the_prompt_as_it_was(self, patient: Patient) -> None:
         gateway, _content = self._generate(patient, _SESSION_WITH_TAIL, None)

@@ -15,14 +15,35 @@ import { createMockNote, createMockSession } from "@/test/factories"
 import type { Note } from "@/types/notes"
 import type { NoteContent } from "@/types/sessions"
 
-const { mockUseSession, mockUpdateEdits, mockSaveEdits, mockRedraft, finalizeProps } =
-  vi.hoisted(() => ({
-    mockUseSession: vi.fn(),
-    mockUpdateEdits: vi.fn(),
-    mockSaveEdits: vi.fn(),
-    mockRedraft: vi.fn(),
-    finalizeProps: { soapNoteEdited: undefined as unknown },
-  }))
+const {
+  mockUseSession,
+  mockUpdateEdits,
+  mockSaveEdits,
+  mockRedraft,
+  mockAddDictation,
+  finalizeProps,
+} = vi.hoisted(() => ({
+  mockUseSession: vi.fn(),
+  mockUpdateEdits: vi.fn(),
+  mockSaveEdits: vi.fn(),
+  mockRedraft: vi.fn(),
+  mockAddDictation: vi.fn(),
+  finalizeProps: { soapNoteEdited: undefined as unknown },
+}))
+
+vi.mock("@/hooks/useDictations", () => ({
+  useSessionDictations: () => ({ data: { data: [] } }),
+  useAddSessionDictation: () => ({ mutateAsync: mockAddDictation }),
+}))
+
+// Stand-in recorder: one button that sends a fixed clip.
+vi.mock("@/components/sessions/DictateMore", () => ({
+  DictateMore: ({
+    onSend,
+  }: {
+    onSend: (clip: { blob: Blob; seconds: number }) => Promise<unknown>
+  }) => <button onClick={() => onSend({ blob: new Blob(["v"]), seconds: 9 })}>dictate</button>,
+}))
 
 vi.mock("@/hooks/useSessions", () => ({
   useSession: () => mockUseSession(),
@@ -238,6 +259,24 @@ describe("session page note save", () => {
     })
     expect(mockSaveEdits.mock.invocationCallOrder[0]).toBeLessThan(
       mockRedraft.mock.invocationCallOrder[0],
+    )
+  })
+
+  it("saves SOAP edits held for finalize before a dictation redrafts the note", async () => {
+    givenSession(createMockNote({ id: "note-5", note_type: "soap", content: { s: 1 } }))
+    await renderPage()
+
+    fireEvent.click(await screen.findByRole("button", { name: "save edit" }))
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "dictate" }))
+    })
+
+    expect(mockSaveEdits).toHaveBeenCalledWith(expect.objectContaining({ noteId: "note-5" }))
+    expect(mockAddDictation).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: "session-123", durationSeconds: 9 }),
+    )
+    expect(mockSaveEdits.mock.invocationCallOrder[0]).toBeLessThan(
+      mockAddDictation.mock.invocationCallOrder[0],
     )
   })
 
